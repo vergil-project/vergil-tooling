@@ -1,9 +1,14 @@
-"""Audit, diff, and apply repository configuration for managed repos.
+"""Audit, diff, update and apply repository configuration for managed repos.
 
 Combines the managed-file checks (vergil.toml, CLAUDE.md,
 .claude/settings.json, .claude/hooks/, ...), run against a fresh shallow
 clone of the repo's ``develop`` branch, with GitHub API configuration
 auditing.
+
+``update`` converges the GitHub side, then fixes the managed files in the
+clone and proposes them as one auto-merging sync PR (epic
+vergil-project/.github#1064). ``apply``, which converges only the GitHub
+side, is deprecated in its favour.
 """
 
 from __future__ import annotations
@@ -14,9 +19,14 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import github, identity_mode
-from vergil_tooling.lib.automation_identity import automation_app_id, automation_app_slug
+from vergil_tooling.lib.automation_identity import (
+    AutomationIdentityError,
+    automation_app_id,
+    automation_app_slug,
+)
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import VergilConfig, _parse_raw_config
 from vergil_tooling.lib.develop_clone import DevelopCloneError, clone_develop
@@ -34,19 +44,47 @@ from vergil_tooling.lib.github_config import (
     format_rules_delta,
     ghas_available,
 )
+from vergil_tooling.lib.mechanized_pr import MechanizedPRError, SyncResult, open_sync_pr
 from vergil_tooling.lib.output import emit_error
 from vergil_tooling.lib.remote_config import decode_contents as _decode_contents
 from vergil_tooling.lib.remote_config import fetch_config_from_ref as _fetch_config_from_ref
 from vergil_tooling.lib.remote_config import is_not_found as _is_not_found
 from vergil_tooling.lib.repo_config import audit_local_config
+from vergil_tooling.lib.repo_config_fixes import FIXERS, CannotFix
 from vergil_tooling.lib.versions import VersionsError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+#: The automation job name of ``update``'s sync PRs: their branches are
+#: ``automation/repo-config-sync/<run-id>`` (epic vergil-project/.github#1064).
+SYNC_JOB = "repo-config-sync"
+
+SYNC_PR_TITLE = "chore(repo-config): sync the managed files with the released templates"
+
+#: The identity modes ``update`` refuses: the AI agent modes. The automation
+#: identity is for mechanized work only, and ``update`` is never agent work.
+_UPDATE_REFUSED_MODES = frozenset(
+    {identity_mode.IdentityMode.USER, identity_mode.IdentityMode.AUDIT}
+)
+
+APPLY_DEPRECATION = (
+    "vrg-github-repo-config apply is deprecated: use 'vrg-github-repo-config update', "
+    "which converges the same GitHub settings and also fixes managed-file drift "
+    "through one auto-merging sync PR. apply's behaviour is unchanged."
+)
 
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.command == "apply":
+        print(APPLY_DEPRECATION, file=sys.stderr)
 
     repo = _resolve_repo(args)
+    if args.command == "update":
+        return _in_target_org(repo, lambda: _update_repo(args, repo))
+
     # The managed-file checks read what is committed on *repo*'s develop, in a
     # fresh shallow clone, never the caller's checkout: a dirty or unrelated
     # cwd cannot change the result, and --repo audits from anywhere.
@@ -60,13 +98,22 @@ def main(argv: list[str] | None = None) -> int:
     _print_local_diff(local_diff)
     local_compliant = local_diff.is_compliant()
 
-    # Every GitHub call below targets *repo*, so mint the App token for its
-    # owner rather than the cwd org (#3220). Under target_org a missing
-    # installation for that owner raises NoInstallationError instead of
-    # falling back to ambient auth.
+    return _in_target_org(
+        repo, lambda: _audit_and_apply(args, repo, local_compliant=local_compliant)
+    )
+
+
+def _in_target_org(repo: str, run: Callable[[], int]) -> int:
+    """Run *run* with App tokens minted for *repo*'s owner.
+
+    Every GitHub call targets *repo*, so the App token is minted for its owner
+    rather than the cwd org (#3220). Under ``target_org`` a missing
+    installation for that owner raises ``NoInstallationError`` instead of
+    falling back to ambient auth.
+    """
     try:
         with github.target_org(repo.split("/", 1)[0]):
-            return _audit_and_apply(args, repo, local_compliant=local_compliant)
+            return run()
     except (github.NoInstallationError, github.AppAuthError) as exc:
         # The audit could not complete: exit 2, never the "non-compliant"
         # exit 1 that cli_main would otherwise give an auth failure (#1691).
@@ -77,11 +124,137 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
 
+def _update_repo(args: argparse.Namespace, repo: str) -> int:
+    """``update``: converge *repo*'s GitHub side, then sync its managed files by PR.
+
+    The steps: the identity gate; the GitHub-side audit and convergence,
+    shared with ``apply``; every fixer in :data:`FIXERS` on a fresh clone of
+    ``develop``; one sync PR for whatever the fixers changed
+    (:func:`open_sync_pr`); and the audit of the fixed clone.
+
+    Exit codes:
+
+    - **0:** the GitHub side converged and the managed files are in sync, or
+      a sync PR was opened this run with auto-merge confirmed on;
+    - **1:** drift that could not be fixed: a managed-file check with no
+      fixer, a fix that cannot be computed (:class:`CannotFix`), or an
+      undeclared ruleset parameter. The sync PR for the fixable drift is
+      still opened;
+    - **2:** something could not be audited or converged: an agent identity,
+      a setting not checked (a ``BypassUnreadable`` included), a GitHub write,
+      the clone or the PR failing. A setting not checked or a failed GitHub
+      write stops the run before the clone, so no PR is opened.
+    """
+    refusal = _update_identity_refusal()
+    if refusal is not None:
+        emit_error(refusal)
+        return 2
+
+    github_code = _audit_and_apply(args, repo, local_compliant=True)
+    if github_code == 2:
+        return 2
+
+    try:
+        with clone_develop(repo) as clone:
+            cannot_fix = _run_fixers(repo, clone)
+            remaining = audit_local_config(clone)
+            result = open_sync_pr(
+                repo,
+                clone,
+                job=SYNC_JOB,
+                title=SYNC_PR_TITLE,
+                body=_sync_pr_body(repo, remaining),
+            )
+    except (DevelopCloneError, MechanizedPRError) as exc:
+        emit_error(str(exc))
+        return 2
+
+    _print_sync_result(repo, result)
+    _print_local_diff(remaining)
+    if github_code == 1 or cannot_fix or not remaining.is_compliant():
+        return 1
+    return 0
+
+
+def _update_identity_refusal() -> str | None:
+    """Why ``update`` refuses this run's identity, or ``None`` when it may run.
+
+    ``update`` runs for the human and the verified org automation App, and
+    refuses the AI agent modes by name. A run whose identity cannot be
+    resolved (``$VRG_AUTOMATION_APP`` set but the token is not that App's, or
+    an agent signal beside it) is refused with the resolver's reason.
+    """
+    try:
+        mode = identity_mode.current_mode()
+    except AutomationIdentityError as exc:
+        return f"Refusing to update: the identity could not be resolved: {exc}"
+    if mode in _UPDATE_REFUSED_MODES:
+        return (
+            f"Refusing to update: the identity mode is {mode.value!r}, an AI agent mode. "
+            f"update runs only as the human or the org automation App, and the "
+            f"automation identity is never used for agent work."
+        )
+    return None
+
+
+def _run_fixers(repo: str, clone: Path) -> list[CannotFix]:
+    """Run every fixer in :data:`FIXERS` on *clone*; return what could not be fixed.
+
+    A :class:`CannotFix` is collected and never stops the fixers after it, so
+    one unfixable file does not hold back the fixes that can be made.
+    """
+    cannot_fix: list[CannotFix] = []
+    for fixer in FIXERS:
+        try:
+            changed = fixer(clone)
+        except CannotFix as exc:
+            print(f"  {repo}: {exc}")
+            cannot_fix.append(exc)
+            continue
+        if changed:
+            name = getattr(fixer, "__name__", repr(fixer))
+            print(f"  {repo}: fixed {name.removeprefix('fix_')}")
+    return cannot_fix
+
+
+def _sync_pr_body(repo: str, remaining: ConfigDiff) -> str:
+    """The sync PR's body: what it is, and what it leaves for a human.
+
+    *remaining* is the audit of the fixed clone. Every :class:`CannotFix` is
+    in it too, since a fixer and its check share one ``<name>_drift``.
+    """
+    lines = [
+        f"`vrg-github-repo-config update` found managed files on `develop` of {repo} "
+        f"that differ from the released master copies. This PR brings them in sync.",
+        "",
+        "The repo-config sync job opened it, and it merges itself once its required "
+        "checks pass. A later run replaces it while it is still open.",
+    ]
+    if remaining.items:
+        lines += ["", "Left for a human, since this run could not fix them:", ""]
+        lines += [f"- `{item.field}`: {item.actual}" for item in remaining.items]
+    return "\n".join(lines) + "\n"
+
+
+def _print_sync_result(repo: str, result: SyncResult) -> None:
+    for url in result.closed:
+        print(f"  {repo}: closed the earlier sync PR {url}")
+    if result.status == "opened":
+        print(f"  {repo}: opened sync PR {result.pr_url} (auto-merge on)")
+    else:
+        print(f"  {repo}: managed files need no sync PR")
+
+
 def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bool) -> int:
-    """Audit *repo*'s GitHub config and, for ``apply``, converge it.
+    """Audit *repo*'s GitHub config and, for ``apply`` and ``update``, converge it.
 
     Runs inside the caller's ``github.target_org`` scope for *repo*'s owner.
+    ``update`` shares this path with ``apply``, with two differences: a write
+    that fails is exit 2 for ``update`` (not converged), never ``apply``'s
+    exit 1, and a ``bypass_actors`` field skipped as unreadable makes
+    ``update`` refuse, since it converges only what it has audited.
     """
+    updating = args.command == "update"
     all_compliant = local_compliant
     # Exit codes are a contract for callers (e.g. vrg-release): 0 = compliant,
     # 1 = genuinely non-compliant, 2 = the audit could not complete. Config
@@ -130,8 +303,17 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
         return 0
 
     if github_diff.not_checked:
-        # apply converges every setting, so it needs to read them all first.
-        emit_error(f"Refusing to apply: {_not_checked_summary(repo, github_diff)}")
+        # apply and update converge every setting, so they need to read them
+        # all first: nothing is converged, and update opens no PR.
+        emit_error(f"Refusing to {args.command}: {_not_checked_summary(repo, github_diff)}")
+        return 2
+    skipped_bypass = [f for f in github_diff.skipped if f.endswith(".bypass_actors")]
+    if updating and skipped_bypass:
+        emit_error(
+            f"Refusing to update: {', '.join(skipped_bypass)} of {repo} could not be "
+            f"read with GitHub App credentials, so they were not audited. Run update "
+            f"as the human or the org automation App."
+        )
         return 2
 
     if github_diff.is_compliant():
@@ -145,7 +327,13 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
             return 2
         except RuntimeError as exc:
             emit_error(str(exc))
-            return 1
+            # apply keeps its exit 1; for update the GitHub side did not converge.
+            return 2 if updating else 1
+        except github.GitHubAPIError as exc:
+            if not updating:
+                raise
+            emit_error(f"Could not converge {repo}: {exc}")
+            return 2
         print(f"  {repo}: applied")
         for report in reports:
             preserved = ", ".join(report.preserved_settings) or "none"
@@ -177,7 +365,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    for name in ("audit", "diff", "apply"):
+    for name in ("audit", "diff", "update", "apply"):
         sp = sub.add_parser(name)
         sp.add_argument(
             "--repo",

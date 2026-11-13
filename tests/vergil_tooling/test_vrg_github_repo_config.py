@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -12,6 +13,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_github_repo_config import (
+    APPLY_DEPRECATION,
+    SYNC_PR_TITLE,
     _apply_repo,
     _audit_and_apply,
     _audit_repo,
@@ -24,7 +27,7 @@ from vergil_tooling.bin.vrg_github_repo_config import (
     main,
     parse_args,
 )
-from vergil_tooling.lib import develop_clone, github
+from vergil_tooling.lib import dependabot, develop_clone, github, gitignore, repo_config
 from vergil_tooling.lib.automation_identity import AutomationIdentityError
 from vergil_tooling.lib.config import (
     DEFAULT_VALIDATION_COMMAND,
@@ -39,6 +42,7 @@ from vergil_tooling.lib.config import (
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
     MERGE_SETTINGS_READ,
+    BypassUnreadable,
     ClassicProtectionReport,
     ConfigDiff,
     DiffItem,
@@ -47,6 +51,16 @@ from vergil_tooling.lib.github_config import (
     UndeclaredParam,
     compute_desired_state,
 )
+from vergil_tooling.lib.identity_mode import IdentityMode
+from vergil_tooling.lib.mechanized_pr import MechanizedPRError, SyncResult
+from vergil_tooling.lib.repo_config import (
+    CLAUDE_MD_MARKER_BEGIN,
+    CLAUDE_MD_MARKER_END,
+    load_claude_md_template,
+    render_claude_settings,
+    render_hook_guard_shim,
+)
+from vergil_tooling.lib.repo_config_fixes import CannotFix
 from vergil_tooling.lib.versions import ResolutionError
 
 if TYPE_CHECKING:
@@ -1493,6 +1507,11 @@ def test_config_resolution_api_error_exits_two(capsys: pytest.CaptureFixture[str
     assert "Traceback" not in err
 
 
+def _apply_notice(command: str) -> str:
+    """The stderr line ``apply``, and only ``apply``, starts with."""
+    return f"{APPLY_DEPRECATION}\n" if command == "apply" else ""
+
+
 _WINDOW_ERROR = (
     "[ci].versions pins 1.25, which is not in the go window (1.27, 1.26). "
     "Fix: remove it from [ci].versions or update the pin to a window version"
@@ -1523,7 +1542,9 @@ def test_version_window_error_in_audit_exits_two_on_one_line(
     mock_apply.assert_not_called()
     err = capsys.readouterr().err
     assert "Traceback" not in err
-    assert err == f"ERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}\n"
+    assert err == _apply_notice(command) + (
+        f"ERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}\n"
+    )
     assert err.count("ERROR:") == 1
 
 
@@ -1531,6 +1552,7 @@ def test_version_window_error_in_apply_exits_two_on_one_line(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The same failure raised while applying is reported the same way (#3670)."""
+    command = "apply"
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     with (
         patch(f"{_MODULE}._cwd_matches_repo", return_value=False),
@@ -1542,7 +1564,9 @@ def test_version_window_error_in_apply_exits_two_on_one_line(
     assert result == 2
     err = capsys.readouterr().err
     assert "Traceback" not in err
-    assert err == f"ERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}\n"
+    assert err == _apply_notice(command) + (
+        f"ERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}\n"
+    )
     assert err.count("ERROR:") == 1
 
 
@@ -1730,3 +1754,549 @@ def test_apply_reports_a_cwd_check_failure(capsys: pytest.CaptureFixture[str]) -
     assert code == 2
     assert "detected dubious ownership" in capsys.readouterr().err
     mock_local.assert_not_called()
+
+
+# -- update (epic vergil-project/.github#1064, Task 6) ------------------------
+
+
+_PR_URL = "https://github.com/o/r/pull/9"
+
+
+def _opened(*_args: object, **_kwargs: object) -> SyncResult:
+    return SyncResult(status="opened", pr_url=_PR_URL)
+
+
+def _in_sync(*_args: object, **_kwargs: object) -> SyncResult:
+    return SyncResult(status="in_sync", pr_url=None)
+
+
+def _update_env(
+    *,
+    mode: IdentityMode = IdentityMode.HUMAN,
+    github_diff: ConfigDiff | None = None,
+    sync: Callable[..., SyncResult] = _opened,
+    fixers: list[Callable[[Path], bool]] | None = None,
+) -> tuple[contextlib.ExitStack, dict[str, MagicMock]]:
+    """Patch ``update``'s collaborators: the identity, the GitHub side and the PR.
+
+    The managed-file side uses the hermetic clone and audit unless a test
+    patches them again; *fixers* replaces :data:`FIXERS` (empty by default,
+    since the hermetic clone is an empty directory).
+    """
+    stack = contextlib.ExitStack()
+    stack.enter_context(patch(f"{_MODULE}.identity_mode.current_mode", return_value=mode))
+    stack.enter_context(patch(f"{_MODULE}._resolve_config"))
+    stack.enter_context(patch(f"{_MODULE}.FIXERS", [] if fixers is None else fixers))
+    mocks = {
+        "audit": stack.enter_context(
+            patch(
+                f"{_MODULE}._audit_repo",
+                return_value=_mock_github_compliant() if github_diff is None else github_diff,
+            )
+        ),
+        "apply": stack.enter_context(patch(f"{_MODULE}._apply_repo", return_value=[])),
+        "sync": stack.enter_context(patch(f"{_MODULE}.open_sync_pr", side_effect=sync)),
+    }
+    return stack, mocks
+
+
+def test_parse_update_single_repo() -> None:
+    args = parse_args(["update", "--repo", "o/r", "--config", "v.toml"])
+    assert (args.command, args.repo, args.config) == ("update", "o/r", "v.toml")
+
+
+@pytest.mark.parametrize("mode", [IdentityMode.USER, IdentityMode.AUDIT])
+def test_update_refuses_agent_modes(mode: IdentityMode, capsys: pytest.CaptureFixture[str]) -> None:
+    stack, mocks = _update_env(mode=mode)
+    with stack, patch(f"{_MODULE}.clone_develop") as mock_clone:
+        assert main(["update", "--repo", "o/r"]) == 2
+    mocks["audit"].assert_not_called()
+    mocks["apply"].assert_not_called()
+    mocks["sync"].assert_not_called()
+    mock_clone.assert_not_called()
+    err = capsys.readouterr().err
+    assert f"Refusing to update: the identity mode is {mode.value!r}, an AI agent mode" in err
+
+
+def test_update_refuses_an_unverified_automation_identity(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stack, mocks = _update_env()
+    failure = AutomationIdentityError("the token belongs to 'other[bot]', not 'acme[bot]'")
+    with stack, patch(f"{_MODULE}.identity_mode.current_mode", side_effect=failure):
+        assert main(["update", "--repo", "o/r"]) == 2
+    mocks["audit"].assert_not_called()
+    mocks["sync"].assert_not_called()
+    assert "the token belongs to 'other[bot]'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("mode", [IdentityMode.HUMAN, IdentityMode.AUTOMATION])
+def test_update_runs_for_human_and_automation(
+    mode: IdentityMode, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stack, mocks = _update_env(mode=mode, github_diff=_mock_github_noncompliant())
+    with stack:
+        assert main(["update", "--repo", "o/r"]) == 0
+    mocks["apply"].assert_called_once()
+    mocks["sync"].assert_called_once()
+    args, kwargs = mocks["sync"].call_args
+    assert args[0] == "o/r"
+    assert kwargs["job"] == "repo-config-sync"
+    out = capsys.readouterr().out
+    assert f"o/r: opened sync PR {_PR_URL} (auto-merge on)" in out
+
+
+def test_update_converges_github_before_the_clone() -> None:
+    # The sync PR's auto-merge needs allow_auto_merge, which convergence sets.
+    calls: list[str] = []
+
+    @contextlib.contextmanager
+    def _clone(_repo: str) -> Generator[Path]:
+        calls.append("clone")
+        yield Path()
+
+    stack, mocks = _update_env(github_diff=_mock_github_noncompliant())
+    mocks_apply = mocks["apply"]
+    with stack, patch(f"{_MODULE}.clone_develop", side_effect=_clone):
+        mocks_apply.side_effect = lambda *_a: calls.append("apply") or []
+        mocks["sync"].side_effect = lambda *_a, **_k: calls.append("sync") or _opened()
+        assert main(["update", "--repo", "o/r"]) == 0
+    assert calls == ["apply", "clone", "sync"]
+
+
+def test_update_in_sync_exits_0_no_pr(capsys: pytest.CaptureFixture[str]) -> None:
+    stack, mocks = _update_env(sync=_in_sync)
+    with stack:
+        assert main(["update", "--repo", "o/r"]) == 0
+    # Still called, so that an earlier run's PR is closed (Task 4).
+    mocks["sync"].assert_called_once()
+    mocks["apply"].assert_not_called()
+    out = capsys.readouterr().out
+    assert "o/r: managed files need no sync PR" in out
+    assert "local: compliant" in out
+
+
+def test_update_reports_closed_earlier_runs(capsys: pytest.CaptureFixture[str]) -> None:
+    old = "https://github.com/o/r/pull/3"
+    stack, _ = _update_env(sync=lambda *_a, **_k: SyncResult("in_sync", None, [old]))
+    with stack:
+        assert main(["update", "--repo", "o/r"]) == 0
+    assert f"o/r: closed the earlier sync PR {old}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("bypass", [False, True])
+def test_update_unreadable_github_setting_opens_nothing(
+    bypass: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    unread: NotChecked = (
+        BypassUnreadable(field="rulesets.Tag protection.bypass_actors", permission="x")
+        if bypass
+        else NotChecked(field="security.vulnerability_alerts", permission="administration=read")
+    )
+    diff = ConfigDiff(items=_mock_github_noncompliant().items, not_checked=[unread])
+    stack, mocks = _update_env(mode=IdentityMode.AUTOMATION, github_diff=diff)
+    with stack, patch(f"{_MODULE}.clone_develop") as mock_clone:
+        assert main(["update", "--repo", "o/r"]) == 2
+    mocks["apply"].assert_not_called()
+    mock_clone.assert_not_called()
+    mocks["sync"].assert_not_called()
+    assert "Refusing to update: Could not fully audit o/r: 1 setting(s)" in capsys.readouterr().err
+
+
+def test_update_empty_bypass_read_under_automation_is_fatal(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review focus 2 through ``update``: an empty bypass read of a non-empty
+    desired list, under the automation identity, converges nothing and opens
+    no PR, with the real desired state and diff."""
+    with (
+        patch(f"{_MODULE}.identity_mode.current_mode", return_value=IdentityMode.AUTOMATION),
+        patch(f"{_MODULE}._resolve_config", return_value=_make_config()),
+        patch(f"{_MODULE}.github.is_app_mode", return_value=True),
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_fetch_with_empty_bypass()),
+        patch(f"{_MODULE}.apply_desired_state") as mock_apply,
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_delete,
+        patch(f"{_MODULE}.clone_develop") as mock_clone,
+        patch(f"{_MODULE}.open_sync_pr") as mock_sync,
+    ):
+        assert main(["update", "--repo", "o/r"]) == 2
+    mock_apply.assert_not_called()
+    mock_write.assert_not_called()
+    mock_delete.assert_not_called()
+    mock_clone.assert_not_called()
+    mock_sync.assert_not_called()
+    captured = capsys.readouterr()
+    assert "rulesets.Tag protection.bypass_actors: not checked (read back empty" in captured.out
+    assert "Refusing to update: Could not fully audit o/r: 1 setting(s) not checked" in (
+        captured.err
+    )
+
+
+def test_update_refuses_a_skipped_bypass_field(capsys: pytest.CaptureFixture[str]) -> None:
+    # A human run on an App credential skips bypass_actors: not audited, so not converged.
+    diff = ConfigDiff(items=[], skipped=["rulesets.Tag protection.bypass_actors"])
+    stack, mocks = _update_env(github_diff=diff)
+    with stack:
+        assert main(["update", "--repo", "o/r"]) == 2
+    mocks["sync"].assert_not_called()
+    err = capsys.readouterr().err
+    assert "Refusing to update: rulesets.Tag protection.bypass_actors of o/r" in err
+
+
+def test_update_skipped_security_field_is_not_a_refusal() -> None:
+    # Secret scanning on a private repo without GHAS is unmanaged, not unread.
+    diff = ConfigDiff(items=[], skipped=["security.secret_scanning"])
+    stack, mocks = _update_env(github_diff=diff)
+    with stack:
+        assert main(["update", "--repo", "o/r"]) == 0
+    mocks["sync"].assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [RuntimeError("Refusing to apply the CI-gates ruleset"), _not_found_error()],
+    ids=["refusal", "api-error"],
+)
+def test_update_failed_github_write_exits_2_opens_nothing(
+    failure: Exception, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stack, mocks = _update_env(github_diff=_mock_github_noncompliant())
+    with stack, patch(f"{_MODULE}.clone_develop") as mock_clone:
+        mocks["apply"].side_effect = failure
+        assert main(["update", "--repo", "o/r"]) == 2
+    mock_clone.assert_not_called()
+    mocks["sync"].assert_not_called()
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_apply_failed_write_keeps_exit_1() -> None:
+    # apply's behaviour is unchanged: a refused write is still exit 1.
+    stack, mocks = _update_env(github_diff=_mock_github_noncompliant())
+    with stack:
+        mocks["apply"].side_effect = RuntimeError("Refusing to apply the CI-gates ruleset")
+        assert main(["apply", "--repo", "o/r"]) == 1
+    mocks["sync"].assert_not_called()
+
+
+def test_apply_github_api_error_still_propagates() -> None:
+    # apply's behaviour is unchanged: an API error from a write is not caught.
+    stack, mocks = _update_env(github_diff=_mock_github_noncompliant())
+    with stack, pytest.raises(GitHubAPIError):
+        mocks["apply"].side_effect = _not_found_error()
+        main(["apply", "--repo", "o/r"])
+
+
+def test_update_undeclared_parameter_still_opens_pr_then_exits_1(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stack, mocks = _update_env(github_diff=_mock_github_undeclared())
+    with stack:
+        assert main(["update", "--repo", "o/r"]) == 1
+    mocks["sync"].assert_called_once()
+    assert "apply cannot resolve 1 undeclared ruleset parameter(s)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        MechanizedPRError("mechanized PR for o/r: enabling auto-merge failed: boom"),
+        develop_clone.DevelopCloneError("Could not clone the 'develop' branch of o/r: boom"),
+    ],
+    ids=["pr", "clone"],
+)
+def test_update_pr_or_clone_failure_exits_2(
+    failure: Exception, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stack, mocks = _update_env()
+    with stack:
+        if isinstance(failure, MechanizedPRError):
+            mocks["sync"].side_effect = failure
+            assert main(["update", "--repo", "o/r"]) == 2
+        else:
+            with patch(f"{_MODULE}.clone_develop", side_effect=failure):
+                assert main(["update", "--repo", "o/r"]) == 2
+    assert str(failure) in capsys.readouterr().err
+
+
+def test_update_missing_installation_exits_two(capsys: pytest.CaptureFixture[str]) -> None:
+    stack, _ = _update_env()
+    failure = github.NoInstallationError("o", ["acme"])
+    with stack, patch(f"{_MODULE}._update_identity_refusal", side_effect=failure):
+        assert main(["update", "--repo", "o/r"]) == 2
+    assert "Could not audit o/r" in capsys.readouterr().err
+
+
+def test_update_collects_cannot_fix_and_runs_every_fixer(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ran: list[str] = []
+
+    def _broken(_root: Path) -> bool:
+        ran.append("broken")
+        raise CannotFix("local.claude_md", "no template markers")
+
+    def _fixed(_root: Path) -> bool:
+        ran.append("fixed")
+        return True
+
+    _fixed.__name__ = "fix_hook_guard_shim"
+    stack, mocks = _update_env(fixers=[_broken, _fixed])
+    with stack:
+        assert main(["update", "--repo", "o/r"]) == 1
+    assert ran == ["broken", "fixed"]
+    mocks["sync"].assert_called_once()
+    out = capsys.readouterr().out
+    assert "o/r: local.claude_md: cannot fix: no template markers" in out
+    assert "o/r: fixed hook_guard_shim" in out
+
+
+# -- update on a real clone: every fixable file in one PR (review focus 1) ----
+
+
+_SYNC_TOML = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "python"
+
+[project.co-authors]
+
+[ci]
+versions = ["3.12"]
+
+[dependencies]
+vergil = "v2.1"
+"""
+
+_OPS_YML = (
+    "on:\n  schedule:\n    - cron: '7 6 * * *'\n  workflow_dispatch:\n"
+    "jobs:\n  github-config:\n"
+    "    uses: vergil-project/vergil-actions/.github/workflows/ops-github-config.yml@{pin}\n"
+)
+
+_SHIM = Path(".claude/hooks/guard.sh")
+_SETTINGS = Path(".claude/settings.json")
+_OPS = Path(".github/workflows/ops.yml")
+
+
+def _write_file(root: Path, rel: Path | str, data: str | bytes, mode: int = 0o644) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data.encode("utf-8") if isinstance(data, str) else data)
+    path.chmod(mode)
+
+
+def _claude_md(region: str) -> str:
+    return f"# CLAUDE.md\n\n{CLAUDE_MD_MARKER_BEGIN}\n{region}{CLAUDE_MD_MARKER_END}\n"
+
+
+def _write_managed_in_sync(root: Path) -> None:
+    """Every managed file correct, so the real ``audit_local_config`` passes."""
+    _write_file(root, "vergil.toml", _SYNC_TOML)
+    _write_file(root, _SHIM, render_hook_guard_shim(), 0o755)
+    _write_file(root, "CLAUDE.md", _claude_md(load_claude_md_template()))
+    _write_file(root, _SETTINGS, render_claude_settings())
+    _write_file(root, ".gitignore", gitignore.render_block("python"))
+    _write_file(root, dependabot.DEPENDABOT_PATH, dependabot.render("python"))
+    _write_file(root, _OPS, _OPS_YML.format(pin="v2.1"))
+
+
+def _drift_every_fixable_file(root: Path) -> None:
+    """Drift every file a fixer owns, each its own way."""
+    (root / _SHIM).chmod(0o644)  # right bytes, not executable (review focus 5)
+    _write_file(root, "CLAUDE.md", _claude_md("stale template region\n"))
+    _write_file(root, _SETTINGS, "{}\n")
+    _write_file(root, ".gitignore", "local-scratch/\n")
+    _write_file(root, dependabot.DEPENDABOT_PATH, "version: 2\nupdates: []\n")
+    _write_file(root, _OPS, _OPS_YML.format(pin="v2.0"))
+
+
+_FIXABLE_PATHS = {
+    _SHIM.as_posix(),
+    "CLAUDE.md",
+    _SETTINGS.as_posix(),
+    ".gitignore",
+    dependabot.DEPENDABOT_PATH.as_posix(),
+    _OPS.as_posix(),
+}
+
+
+def _origin_with(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, write: Callable[[Path], None]
+) -> None:
+    """A bare origin whose develop holds the files *write* lays down, cloned
+    through the real ``clone_develop``."""
+    for var in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{var}_NAME", "Test")
+        monkeypatch.setenv(f"GIT_{var}_EMAIL", "test@example.com")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    origin = tmp_path / "sync-origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "develop", str(origin))
+    seed = tmp_path / "sync-seed"
+    _git(tmp_path, "clone", "-q", str(origin), str(seed))
+    _git(seed, "checkout", "-q", "-b", "develop")
+    write(seed)
+    _git(seed, "add", "--all")
+    _git(seed, "commit", "-qm", "seed")
+    _git(seed, "push", "-q", "origin", "develop")
+    monkeypatch.setattr(develop_clone, "clone_url", lambda _repo: origin.as_uri())
+
+
+@dataclass(frozen=True)
+class _SyncCall:
+    job: str
+    body: str
+    changed: set[str]
+    shim_mode: int
+
+
+class _RecordingSync:
+    """Stands in for ``open_sync_pr``: records what the clone holds when it is called."""
+
+    def __init__(self) -> None:
+        self.calls: list[_SyncCall] = []
+
+    def __call__(self, repo: str, clone: Path, *, job: str, title: str, body: str) -> SyncResult:
+        assert (repo, title) == ("o/r", SYNC_PR_TITLE)
+        _git(clone, "add", "--all")
+        changed = set(_git(clone, "diff", "--cached", "--name-only").splitlines())
+        shim_mode = (clone / _SHIM).stat().st_mode & 0o777
+        self.calls.append(_SyncCall(job=job, body=body, changed=changed, shim_mode=shim_mode))
+        if not changed:
+            return SyncResult(status="in_sync", pr_url=None)
+        return SyncResult(status="opened", pr_url=_PR_URL)
+
+
+def _real_update(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, write: Callable[[Path], None]
+) -> tuple[int, _RecordingSync]:
+    """Run ``update`` with the real clone, fixers and audit; only GitHub is faked."""
+    _origin_with(tmp_path, monkeypatch, write)
+    sync = _RecordingSync()
+    with (
+        patch(f"{_MODULE}.identity_mode.current_mode", return_value=IdentityMode.AUTOMATION),
+        patch(f"{_MODULE}._resolve_config"),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
+        patch(f"{_MODULE}.clone_develop", side_effect=develop_clone.clone_develop),
+        patch(f"{_MODULE}.audit_local_config", side_effect=repo_config.audit_local_config),
+        patch(f"{_MODULE}.open_sync_pr", side_effect=sync),
+    ):
+        code = main(["update", "--repo", "o/r"])
+    return code, sync
+
+
+def test_update_real_clone_in_sync_exits_0_no_pr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code, sync = _real_update(tmp_path, monkeypatch, _write_managed_in_sync)
+    assert code == 0
+    [call] = sync.calls
+    assert call.changed == set()
+
+
+def test_update_opens_one_pr_for_all_fixable_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def _write(root: Path) -> None:
+        _write_managed_in_sync(root)
+        _drift_every_fixable_file(root)
+
+    code, sync = _real_update(tmp_path, monkeypatch, _write)
+    assert code == 0
+    [call] = sync.calls
+    assert call.job == "repo-config-sync"
+    assert call.changed == _FIXABLE_PATHS
+    assert call.shim_mode == 0o755
+    assert "Left for a human" not in call.body
+    out = capsys.readouterr().out
+    assert "local: compliant" in out
+    assert f"o/r: opened sync PR {_PR_URL} (auto-merge on)" in out
+
+
+def test_update_opens_pr_then_exits_1_for_no_fixer_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Review focus 1: drift in several managed files and a failing no-fixer
+    check at once give one PR with every fixable file, then exit 1 naming the
+    no-fixer check."""
+
+    def _write(root: Path) -> None:
+        _write_managed_in_sync(root)
+        _drift_every_fixable_file(root)
+        _write_file(root, "AGENTS.md", "# Agents\n")  # no fixer: a human removes it
+
+    code, sync = _real_update(tmp_path, monkeypatch, _write)
+    assert code == 1
+    [call] = sync.calls
+    assert call.changed == _FIXABLE_PATHS
+    assert "AGENTS.md" not in call.changed
+    assert "- `local.agents_md`:" in call.body
+    out = capsys.readouterr().out
+    assert f"o/r: opened sync PR {_PR_URL} (auto-merge on)" in out
+    assert "local: NON-COMPLIANT (1 issues)" in out
+    assert "local.agents_md" in out
+
+
+def test_update_cannot_fix_holds_back_no_other_fix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A fix that cannot be computed (CLAUDE.md without markers) still lets
+    every other fixer's change into the one PR, and the run exits 1."""
+
+    def _write(root: Path) -> None:
+        _write_managed_in_sync(root)
+        _drift_every_fixable_file(root)
+        _write_file(root, "CLAUDE.md", "# CLAUDE.md\n\nNo markers here.\n")
+
+    code, sync = _real_update(tmp_path, monkeypatch, _write)
+    assert code == 1
+    [call] = sync.calls
+    assert call.changed == _FIXABLE_PATHS - {"CLAUDE.md"}
+    assert "- `local.claude_md`:" in call.body
+    assert "o/r: local.claude_md: cannot fix:" in capsys.readouterr().out
+
+
+# -- apply is deprecated, its behaviour unchanged ----------------------------
+
+
+@pytest.mark.parametrize(
+    ("local", "github_diff", "expected"),
+    [
+        (_mock_local_compliant(), _mock_github_compliant(), 0),
+        (_mock_local_compliant(), _mock_github_noncompliant(), 0),
+        (_mock_local_noncompliant(), _mock_github_compliant(), 1),
+        (_mock_local_compliant(), _mock_github_undeclared(), 1),
+        (_mock_local_compliant(), _mock_github_not_checked(drift=True), 2),
+    ],
+    ids=["compliant", "converges", "local-drift", "undeclared", "not-checked"],
+)
+def test_apply_unchanged_and_prints_deprecation(
+    local: ConfigDiff,
+    github_diff: ConfigDiff,
+    expected: int,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fixer = MagicMock(return_value=True)
+    stack, mocks = _update_env(github_diff=github_diff, fixers=[fixer])
+    with stack, patch(f"{_MODULE}.audit_local_config", return_value=local):
+        assert main(["apply", "--repo", "o/r"]) == expected
+    # apply fixes no managed file and opens no PR, and has no identity gate.
+    fixer.assert_not_called()
+    mocks["sync"].assert_not_called()
+    err = capsys.readouterr().err
+    assert "vrg-github-repo-config apply is deprecated" in err
+    assert "use 'vrg-github-repo-config update'" in err
+
+
+@pytest.mark.parametrize("command", ["audit", "diff", "update"])
+def test_only_apply_prints_the_deprecation(
+    command: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stack, _ = _update_env()
+    with stack:
+        main([command, "--repo", "o/r"])
+    assert "deprecated" not in capsys.readouterr().err
