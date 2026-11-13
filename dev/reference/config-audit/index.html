@@ -17883,9 +17883,18 @@ audit does not guess the value. It reports the setting as not checked:</p>
 <li><strong>It is not a pass.</strong> <code>audit</code> exits 2 with a one-line error naming
   the permission, unless it also found drift in the settings it did
   read, in which case it exits 1. It never exits 0 while any setting
-  is not checked.</li>
+  is not checked. <code>diff</code>, which otherwise always exits 0, exits 2 with
+  the same error.</li>
 <li><strong><code>apply</code> refuses.</strong> It exits 2 and writes nothing, since it would
   converge settings it could not read.</li>
+<li>A repo setting that <code>GET /repos/{owner}/{repo}</code> leaves out of its
+  response, or returns as <code>null</code>, is not checked either, as
+  <code>repo_settings.&lt;field&gt;</code>, never read as <code>false</code> or <code>''</code> (#4322).
+  GitHub leaves the merge settings out for some scoped tokens. Which
+  permission it wants for them is not yet pinned down
+  (vergil-project/vergil-actions#1164), so the line says
+  <code>needs a token GitHub returns the field to</code>. A repo setting of the
+  wrong type is an error.</li>
 <li>A setting the desired state leaves unmanaged (secret scanning on a
   private repo without GHAS) is skipped as before, not listed as not
   checked.</li>
