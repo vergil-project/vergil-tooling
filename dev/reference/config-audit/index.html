@@ -17940,7 +17940,18 @@ audit does not guess the value. It reports the setting as not checked:</p>
   checked.</li>
 <li>A 403 that names no missing permission (a rate limit, for example) is
   still an error, as is any other unexpected status.</li>
+<li><strong>An empty bypass list under the automation identity is not checked.</strong>
+  GitHub answers a token that cannot see a ruleset's <code>bypass_actors</code>
+  with an empty list, not an error. The automation App's token is meant
+  to read the field (it holds Administration write), so under the
+  automation identity a ruleset whose desired bypass list is non-empty
+  and which reads back empty is reported as not checked, never as drift
+  (epic vergil-project/.github#1064):</li>
 </ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>    rulesets.Tag protection.bypass_actors: not checked (read back empty under the automation identity, so unreadable; needs administration=write)
+</code></pre></div>
+<p><code>apply</code> then refuses and converges nothing. For a human run the same
+  empty list is ordinary drift, and <code>apply</code> writes the desired list.</p>
 <h2 id="local-checks">Local checks<a class="headerlink" href="#local-checks" title="Permanent link">&para;</a></h2>
 <p><code>audit_local_config</code> runs the following, appending a <code>DiffItem</code> for each
 divergence:</p>
@@ -18134,8 +18145,8 @@ repos) and the one-time rollout (existing repos).</p>
 <h2 id="the-composed-managed-fence">The composed managed fence<a class="headerlink" href="#the-composed-managed-fence" title="Permanent link">&para;</a></h2>
 <p>The source of truth for the fleet's ignore vocabulary is a set of
 packaged data-asset <strong>fragments</strong>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>src/vergil_tooling/data/gitignore/base        # language-agnostic
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>src/vergil_tooling/data/gitignore/&lt;language&gt;  # one per managed language
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>src/vergil_tooling/data/gitignore/base        # language-agnostic
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>src/vergil_tooling/data/gitignore/&lt;language&gt;  # one per managed language
 </code></pre></div>
 <p>They are loaded at runtime via <code>importlib.resources</code> — the same idiom
 used for the <code>CLAUDE.md</code> and <code>.claude/settings.json</code> templates — and
@@ -18305,6 +18316,13 @@ order:</p>
 <td>none</td>
 </tr>
 <tr>
+<td><code>Automation branches</code></td>
+<td>branch</td>
+<td><code>refs/heads/automation/**</code></td>
+<td><code>creation</code>, <code>update</code>, <code>non_fast_forward</code></td>
+<td>the org automation App (<code>Integration</code>, its App ID) and the repository Admin role (<code>RepositoryRole</code>, <code>actor_id</code> 5)</td>
+</tr>
+<tr>
 <td><code>CI gates</code></td>
 <td>branch</td>
 <td><code>refs/heads/main</code>, <code>refs/heads/develop</code></td>
@@ -18328,11 +18346,27 @@ order:</p>
   (<a href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository#using-fnmatch-syntax">Using <code>fnmatch</code> syntax</a>).
   A pattern include names no single branch, so the classic branch-protection
   read skips it.</li>
-<li><strong>Bypass actors are not compared under the App token.</strong> The nightly audit
-  runs on a GitHub App token, which cannot read a ruleset's bypass list, so in
-  that mode it checks each ruleset's includes, enforcement and rules but not
-  its bypass actors, and lists the skipped <code>rulesets.&lt;name&gt;.bypass_actors</code>
-  fields instead. This holds for every ruleset above.</li>
+<li><strong>Automation branches</strong> keeps every identity but the org automation App
+  and the human admin off the <code>automation/</code> branches that mechanized jobs
+  push to. Their PRs merge through GitHub auto-merge, which the repo
+  settings allow (<code>allow_auto_merge</code> is <code>true</code>), so without the ruleset an
+  agent with Contents write could push to such a branch and have its
+  content merged with no human in the loop. Deletion is not restricted:
+  the branches are temporary. The App's numeric ID differs per org. The
+  tooling reads the App's slug from <code>$VRG_AUTOMATION_APP</code> or, for a human
+  run, from the org-level Actions variable <code>VRG_AUTOMATION_APP</code>, and looks
+  the ID up with <code>GET /apps/{slug}</code>. A missing variable or a failed lookup
+  fails the run (exit 2).</li>
+<li><strong>Bypass actors are not compared under an App token that is not the
+  automation identity.</strong> Today's nightly audit runs on such a token, which
+  cannot read a ruleset's bypass list, so in that mode it checks each
+  ruleset's includes, enforcement and rules but not its bypass actors, and
+  lists the skipped <code>rulesets.&lt;name&gt;.bypass_actors</code> fields instead. This
+  holds for every ruleset above. Under the automation identity they are
+  compared, and an empty read is
+  <a href="#settings-the-identity-cannot-read">not checked</a>. <code>apply</code> writes whole
+  rulesets, so it always manages the bypass lists. Bypass lists are
+  compared as sets: their order is not drift.</li>
 <li><strong>A REST refs write refused by a ruleset gives no rule text.</strong> When a
   ruleset blocks a create, update or delete made through the REST refs API
   (<code>POST</code>, <code>PATCH</code> or <code>DELETE</code> on <code>repos/{owner}/{repo}/git/refs…</code>), GitHub
@@ -18388,8 +18422,8 @@ rule (#2860). When a live rule carries a parameter key that the desired
 rule of the same <code>type</code> does not declare, the audit reports it as an
 <strong>undeclared parameter</strong>, separately from value mismatches. The message
 names the ruleset, the rule type, the key, and the live value:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>UNDECLARED PARAMETER: rulesets.Branch protection rule 'pull_request' has
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>'require_extra_approval_for_unattributed_changes' = True live, ...
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>UNDECLARED PARAMETER: rulesets.Branch protection rule 'pull_request' has
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>'require_extra_approval_for_unattributed_changes' = True live, ...
 </code></pre></div>
 <ul>
 <li><strong>It is non-compliant.</strong> The live ruleset enforces a setting the spec
