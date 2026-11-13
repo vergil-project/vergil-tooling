@@ -112,6 +112,10 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
         all_compliant = False
 
     if args.command == "diff":
+        if github_diff.not_checked:
+            # A diff that could not read every setting is incomplete (#4322).
+            emit_error(_not_checked_summary(repo, github_diff))
+            return 2
         return 0
     if args.command == "audit":
         if not all_compliant:
