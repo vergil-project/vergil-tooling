@@ -1,4 +1,4 @@
-"""Read-only views of the intake, planning and deferred queues.
+"""Read-only views of the intake, planning and deferred queues, and of the ad-hoc tasks.
 
 The intake queue is the open children of a home's ``Epic (intake): <name>``
 standing epic, oldest first; every item is *waiting* (captured, not reviewed).
@@ -32,6 +32,16 @@ naming an org other than the issue's own is refused
 Advisories are listed once per org per view. An org with no public
 ``.github`` holds no advisories, so its listing is skipped, unless one of its
 items names an advisory: then the home is resolved anyway and refused loudly.
+
+The ad-hoc view is not a review queue: it is the open tasks under every live
+``Epic (ad hoc): <repo>`` epic (``epic`` + ``ad-hoc``) in a home, grouped by
+repo and oldest first within each, each with its kind (``task``,
+``validation`` or ``deployment``), its open ``Blocked-by:`` refs and its
+state: ``blocked`` while any blocker is open, else ``ready``. The epics come
+from one label search, refused when truncated; an issue carrying those labels
+whose title is not a live epic's (an archive, in its current or legacy form)
+is skipped. A home with no ad-hoc epic, or a ``repo`` with none, is an empty
+list, not an error.
 
 Nothing here mutates GitHub: the queue epic is looked up with
 :func:`epics.find_standing_epic` (never created), and a missing queue epic is
@@ -72,6 +82,10 @@ _DEFERRED_RE = re.compile(r"^Deferred (\d{4}-\d{2}-\d{2}): (.*)$")
 _REVISIT_WHEN = "Revisit when:"
 
 QueueState = Literal["waiting", "in-progress", "ready-to-close"]
+AdhocState = Literal["ready", "blocked", "in-flight"]
+
+# The labels that give an ad-hoc task an operational kind; any other is a "task".
+_OPERATIONAL_KINDS = ("validation", "deployment")
 
 
 class QueueNotFoundError(LookupError):
@@ -92,6 +106,24 @@ class QueueItem:
     state: QueueState
     note: str
     epic: IssueRef | None
+
+
+@dataclass(frozen=True)
+class AdhocItem:
+    """One open task under an ad-hoc epic, as ``vrg-queue adhoc`` renders it.
+
+    ``kind`` is ``task``, ``validation`` or ``deployment``. ``blocked_by``
+    holds only the blockers still open; ``marks`` names what shows the task in
+    flight (empty until in-flight detection fills it).
+    """
+
+    ref: IssueRef
+    title: str
+    created_at: str
+    kind: str
+    blocked_by: tuple[IssueRef, ...]
+    state: AdhocState
+    marks: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -357,6 +389,106 @@ def deferred_items(home: str, name: str) -> list[QueueItem]:
     return [item for _, item in keyed]
 
 
+def _adhoc_epics(home: str, bare: str | None) -> list[IssueRef]:
+    """The live ad-hoc epics in *home*, lowest number first; only *bare*'s when given.
+
+    One ``epic`` + ``ad-hoc`` label search, refused when it reaches its limit.
+    A row is a live epic only when its title starts ``Epic (ad hoc): `` and is
+    not the legacy archive form ``Epic (ad hoc): <bare> — <quarter>`` (a
+    current-form archive is titled ``Archive (ad hoc): …``). Two live epics for
+    one repo are refused, never guessed between.
+    """
+    owner, home_repo = home.split("/", 1)
+    raw: Any = github.read_json(
+        "issue",
+        "list",
+        "--repo",
+        home,
+        *[arg for label in epics.ADHOC.labels for arg in ("--label", label)],
+        "--state",
+        "open",
+        "--limit",
+        str(epics.LISTING_LIMIT),
+        "--json",
+        "number,title",
+    )
+    epics.refuse_truncated(raw, epics.LISTING_LIMIT, f"the open epic + ad-hoc issues of {home}")
+    if not isinstance(raw, list):
+        raise ValueError(f"unexpected 'gh issue list' response for {home}: {raw!r}")
+    by_name: dict[str, list[int]] = {}
+    for row in raw:
+        if not isinstance(row, dict):
+            raise ValueError(f"unexpected 'gh issue list' row for {home}: {row!r}")
+        title = str(row.get("title") or "")
+        if not title.startswith(epics.ADHOC.title_prefix):
+            continue
+        if epics._LEGACY_ADHOC_ARCHIVE_RE.match(title):
+            continue
+        name = title.removeprefix(epics.ADHOC.title_prefix)
+        if bare is not None and name != bare:
+            continue
+        by_name.setdefault(name, []).append(int(row["number"]))
+    refs: list[IssueRef] = []
+    for name, numbers in by_name.items():
+        if len(numbers) > 1:
+            ordered = sorted(numbers)
+            title = f"{epics.ADHOC.title_prefix}{name}"
+            raise epics.EpicTitleAmbiguousError(
+                f"multiple ad-hoc epics titled {title!r} in {home} "
+                f"({', '.join(f'#{n}' for n in ordered)})",
+                [IssueRef(owner, home_repo, n) for n in ordered],
+            )
+        refs.append(IssueRef(owner, home_repo, numbers[0]))
+    return sorted(refs, key=lambda r: r.number)
+
+
+def _adhoc_kind(labels: set[str]) -> str:
+    """``validation`` or ``deployment`` when the task carries that label, else ``task``."""
+    for kind in _OPERATIONAL_KINDS:
+        if kind in labels:
+            return kind
+    return "task"
+
+
+def adhoc_items(home: str, *, repo: str | None = None) -> list[AdhocItem]:
+    """The open tasks under every live ad-hoc epic in *home*.
+
+    Grouped by repo (repos in name order), oldest first within each. With
+    *repo* (``owner/name``), only that repo's ad-hoc epic is read, and a repo
+    with none gives an empty list. The caller resolves *home*: for *repo*, with
+    :func:`epics.resolve_epic_home`. A failed read of the epics, a sub-issue
+    list, a task, a blocker list or a blocker's state raises, as does a
+    truncated epic search; nothing is shown short or wrongly ready.
+    """
+    bare: str | None = None
+    if repo is not None:
+        if "/" not in repo:
+            raise ValueError(f"repo must be 'owner/name' (got {repo!r})")
+        bare = repo.split("/", 1)[1]
+    items: list[AdhocItem] = []
+    for epic in _adhoc_epics(home, bare):
+        for child in epics.child_states(epic):
+            if child.state != "OPEN":
+                continue
+            view = _view(child.ref, "title,createdAt,labels")
+            labels = {str(lbl.get("name") or "") for lbl in view.get("labels") or []}
+            open_blockers = tuple(
+                dep for dep in epics.blockers_of(child.ref) if epics.issue_state(dep) != "CLOSED"
+            )
+            items.append(
+                AdhocItem(
+                    ref=child.ref,
+                    title=str(view.get("title") or ""),
+                    created_at=str(view.get("createdAt") or ""),
+                    kind=_adhoc_kind(labels),
+                    blocked_by=open_blockers,
+                    state="blocked" if open_blockers else "ready",
+                    marks=(),
+                )
+            )
+    return sorted(items, key=lambda i: (f"{i.ref.owner}/{i.ref.repo}", i.created_at, i.ref.number))
+
+
 def _age(created_at: str, now: datetime) -> str:
     created = datetime.fromisoformat(created_at)
     return f"{(now - created).days}d"
@@ -376,3 +508,28 @@ def render_text(items: Sequence[QueueItem], *, now: datetime) -> str:
 def to_json(items: Sequence[QueueItem]) -> list[dict[str, Any]]:
     """The items as JSON-serializable ``QueueItem`` dicts."""
     return [asdict(item) for item in items]
+
+
+def render_adhoc_text(items: Sequence[AdhocItem], *, now: datetime) -> str:
+    """One line per task: ``<slug>  <age>  <state>  <kind>  <title>[  — blocked by <refs>]``."""
+    lines = []
+    for item in items:
+        line = (
+            f"{item.ref.slug}  {_age(item.created_at, now)}  {item.state}  "
+            f"{item.kind}  {item.title}"
+        )
+        if item.blocked_by:
+            line += f"  — blocked by {', '.join(dep.slug for dep in item.blocked_by)}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def adhoc_to_json(items: Sequence[AdhocItem]) -> list[dict[str, Any]]:
+    """The tasks as JSON-serializable ``AdhocItem`` dicts (tuples become lists)."""
+    out: list[dict[str, Any]] = []
+    for item in items:
+        row = asdict(item)
+        row["blocked_by"] = list(row["blocked_by"])
+        row["marks"] = list(row["marks"])
+        out.append(row)
+    return out
