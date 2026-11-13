@@ -10,6 +10,7 @@ import pytest
 
 from vergil_tooling.lib.container import (
     _NPM_GLOBAL_ROOT,
+    NEVER_FORWARDED,
     PYCACHE_PREFIX,
     VERSION_WINDOW_MOUNT,
     assert_docker_available,
@@ -952,3 +953,33 @@ def test_build_container_args_never_forwards_raw_window_path(tmp_path: Path) -> 
     ]
     assert WINDOW_ENV not in bare
     assert not any(a.startswith(f"{WINDOW_ENV}=") for a in bare)
+
+
+# -- names the env-prefixes passthrough never forwards (epic .github#1095) ------
+
+
+def test_never_forwarded_names_the_window_env() -> None:
+    # The constant spells the name literally so container.py keeps importing
+    # versions.window lazily; it must still match the window module's name.
+    assert "VRG_VERSION_WINDOW" in NEVER_FORWARDED
+    assert WINDOW_ENV == "VRG_VERSION_WINDOW"
+    assert WINDOW_ENV in NEVER_FORWARDED
+
+
+def test_env_prefixes_never_forward_rustup_selection(tmp_path: Path) -> None:
+    # A RUST prefix also matches rustup's variables, and a forwarded `-e NAME`
+    # beats the image's ENV pin: the host must not select the toolchain.
+    env = {
+        "RUST_LOG": "debug",
+        "RUSTUP_TOOLCHAIN": "1.80",
+        "RUSTUP_AUTO_INSTALL": "1",
+    }
+    with patch.dict("os.environ", env, clear=True):
+        args = build_container_args(
+            tmp_path, "img:1", ["cmd"], runtime="docker", env_prefixes=("RUST",)
+        )
+    assert "RUST_LOG" in args
+    assert args[args.index("RUST_LOG") - 1] == "-e"
+    assert "RUSTUP_TOOLCHAIN" not in args
+    assert "RUSTUP_AUTO_INSTALL" not in args
+    assert not any("RUSTUP_" in a for a in args)
