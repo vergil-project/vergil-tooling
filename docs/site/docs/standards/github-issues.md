@@ -172,6 +172,8 @@ cross-forge fallback.
   on demand (idempotent). Its *closed* children are continuously drained into
   per-quarter **archives** so the live umbrella shows only in-flight work — see
   [Ad-hoc epic archiving](#ad-hoc-epic-archiving).
+  Its ready tasks are worked with `epic-implement adhoc`, which collects them
+  with [`vrg-queue adhoc`](#viewing-the-queues-vrg-queue).
 
 ### Standing epics
 
@@ -613,11 +615,23 @@ vrg-queue intake    # open intake items, oldest first
 vrg-queue planning  # open planning items: waiting / in-progress / ready-to-close
 vrg-queue deferred  # open deferred items, least recently deferred first
 vrg-queue           # all three queues, in that order
+vrg-queue adhoc     # open tasks under every live ad-hoc epic, by repo
 ```
 
 It defaults to the current org's `.github` queues; `--repo <owner>/<repo>`
 selects that repo's queue home (a self-homed private repo's own queues), and
 `--json` emits machine-readable output. It is read-only.
+
+`vrg-queue adhoc` lists the open tasks under every live ad-hoc epic, grouped by
+repo, each with a state: **ready**, **blocked** (an open `Blocked-by:`
+dependency) or **in-flight** (an open PR, a ready record, a branch, a
+worktree, a merge review or a batch marker already exists for it). It is not a
+review queue, so a bare `vrg-queue` never shows it; it appears only when
+named. Its in-flight marks are read from each repo's main clone, found under
+the repo roots: `--root DIR` (repeatable) names them, and the platform's roots
+are the default. With `--repo`, a public repo narrows the list to its own
+ad-hoc epic. The [CLI reference](../reference/cli-tools-overview.md#vrg-queue)
+gives the line format, the marks and the dispositions.
 
 ### Routing: `vrg-intake-route`
 
