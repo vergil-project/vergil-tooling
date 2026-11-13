@@ -1365,7 +1365,7 @@ def test_attach_orphans_stops_at_cap() -> None:
     assert exc.pending == [o.ref for o in orphans]
     assert str(exc) == (
         "intake epic org/.github#100 is full (95 open); 3 orphan(s) not attached: "
-        "org/tool#5, org/tool#6, org/tool#7. Run intake-review."
+        "org/tool#5, org/tool#6, org/tool#7. Run epic-review intake."
     )
 
 
@@ -1559,7 +1559,7 @@ def test_move_public_queues_stops_at_cap_without_closing() -> None:
     run.assert_not_called()  # the old epic stays open: nothing half-moved
     assert str(excinfo.value) == (
         "planning epic org/.github#101 is full (95 open); 1 queue item(s) not moved: "
-        "org/lab#10. Work the planning queue (epic-create)."
+        "org/lab#10. Run epic-review planning."
     )
 
 
@@ -1739,9 +1739,17 @@ def test_move_public_queues_moves_deferred_to_dotgithub_deferred() -> None:
 
 
 def test_queue_full_hint_deferred() -> None:
-    assert epic_audit._QUEUE_FULL_HINT["deferred"] == "Run deferred-review."
+    assert epic_audit._QUEUE_FULL_HINT["deferred"] == "Run epic-review deferred."
     # Every queue kind has a hint, so StandingEpicFull never KeyErrors.
     assert set(epic_audit._QUEUE_FULL_HINT) == set(epics.QUEUE_KIND_BY_KEY)
+
+
+def test_queue_full_hints_name_epic_review() -> None:
+    assert epic_audit._QUEUE_FULL_HINT == {
+        "intake": "Run epic-review intake.",
+        "planning": "Run epic-review planning.",
+        "deferred": "Run epic-review deferred.",
+    }
 
 
 # -- Epic documents check (epic vergil-project/.github#819) --------------------

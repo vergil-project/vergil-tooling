@@ -853,7 +853,7 @@ def test_vrg_epic_audit_close_reports_full_queue_and_exits_1(
     captured = capsys.readouterr()
     assert (
         "intake epic org/.github#100 is full (95 open); 3 orphan(s) not attached: "
-        "org/tool#5, org/tool#6, org/tool#7. Run intake-review." in captured.err
+        "org/tool#5, org/tool#6, org/tool#7. Run epic-review intake." in captured.err
     )
     assert "Orphans attached" not in captured.out
 

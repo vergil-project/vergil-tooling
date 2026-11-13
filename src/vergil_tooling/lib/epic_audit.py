@@ -795,9 +795,9 @@ def orphan_drift(org: str, *, issues: list[OpenIssue] | None = None) -> list[Orp
 
 
 _QUEUE_FULL_HINT = {
-    "intake": "Run intake-review.",
-    "planning": "Work the planning queue (epic-create).",
-    "deferred": "Run deferred-review.",
+    "intake": "Run epic-review intake.",
+    "planning": "Run epic-review planning.",
+    "deferred": "Run epic-review deferred.",
 }
 
 
