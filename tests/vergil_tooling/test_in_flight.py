@@ -83,6 +83,8 @@ class _FakeRemote:
         assert args[2] == "ls-remote"
         lines = [f"h-{b}\trefs/heads/{b}" for b in self.branches]
         lines += [f"c-{b}\trefs/vergil/pr-workflow/{b}" for b in self.relays]
+        # A ref outside both namespaces is never a mark.
+        lines.append("x-1\trefs/tags/feature/7-x")
         return "\n".join(lines)
 
 
@@ -365,12 +367,13 @@ def test_in_flight_truncated_pr_list_raises(tmp_path: Path) -> None:
 
 @pytest.fixture
 def roots(tmp_path: Path) -> Iterator[Path]:
-    """A projects root with ``org/tool`` (origin org/tool) and ``org/other`` (no origin)."""
-    for name in ("tool", "other", "plugin"):
+    """A projects root: ``org/tool``, ``org/plugin``, ``org/other`` and ``org/gitlab``."""
+    for name in ("tool", "other", "plugin", "gitlab"):
         (tmp_path / "org" / name / ".git").mkdir(parents=True)
     origins = {
         "tool": "https://github.com/org/tool.git",
         "plugin": "git@github.com:Org/Plugin.git",
+        "gitlab": "https://gitlab.com/org/tool.git",
     }
 
     def names(repo: Path) -> set[str]:
@@ -390,6 +393,10 @@ def test_find_clones_maps_repos_by_origin(roots: Path) -> None:
         "org/plugin": (roots / "org" / "plugin").resolve(),
     }
     assert in_flight.find_clones([], [roots]) == {}
+    # The checkout whose origin is on another host is not org/tool's clone.
+    assert in_flight.find_clones(["org/tool"], [roots]) == {
+        "org/tool": (roots / "org" / "tool").resolve()
+    }
 
 
 def test_in_flight_repo_without_clone_is_fatal(roots: Path) -> None:
@@ -519,3 +526,35 @@ def test_render_adhoc_text_in_flight() -> None:
     )
     assert queue_view.adhoc_to_json([item])[0]["marks"] == ["open-pr", "worktree"]
     assert queue_view.adhoc_to_json([item])[0]["disposition"] == "handed-off"
+
+
+@pytest.mark.parametrize(
+    ("blob", "match"),
+    [
+        (["not", "an", "object"], "unexpected response reading the relay ref of feature/7-x"),
+        ({"encoding": "utf-8", "content": "{}"}, "unexpected blob encoding 'utf-8'"),
+    ],
+)
+def test_in_flight_unexpected_blob_raises(tmp_path: Path, blob: Any, match: str) -> None:
+    remote = _FakeRemote(relays={"feature/7-x": _payload("7")})
+
+    def gh(*args: str) -> Any:
+        if args[0] == "api" and "/blobs/" in args[1]:
+            return blob
+        return remote.gh(*args)
+
+    with (
+        patch(f"{_MOD}.github.read_json", side_effect=gh),
+        patch(f"{_MOD}.git.read_output", side_effect=remote.git),
+        pytest.raises(InFlightError, match=match),
+    ):
+        in_flight.repo_signals(_REPO, tmp_path)
+
+
+def test_in_flight_unreadable_state_path_raises(tmp_path: Path) -> None:
+    signals = RepoSignals(_REPO, tmp_path, frozenset(), frozenset(), frozenset(), frozenset())
+    with (
+        patch("pathlib.Path.exists", side_effect=PermissionError("denied")),
+        pytest.raises(InFlightError, match=r"org/tool: cannot check .*merge-review: denied"),
+    ):
+        in_flight.marks_for(7, signals)
