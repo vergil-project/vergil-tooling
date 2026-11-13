@@ -1166,11 +1166,31 @@ def _classic_protection_drift(
 
 
 # What a repo-settings field missing from ``GET repos/{repo}`` needs. GitHub
-# leaves some fields (the merge settings among them) out of the response for a
-# token without the access it wants. Which permission that is has not been
-# pinned down (vergil-actions#1164), so the audit names none it cannot vouch
-# for (#4322).
+# leaves some fields out of the response for a token without the access it
+# wants (#4322). For the merge settings, GitHub's "Get a repository" docs
+# (https://docs.github.com/en/rest/repos/repos#get-a-repository) say: "To view
+# merge-related settings, you must have the contents:read and contents:write
+# permissions." (vergil-actions#1164, #4326). The docs state no requirement for
+# any other field, so for those the audit names no permission it cannot vouch
+# for.
+MERGE_SETTINGS_READ = "contents=read and contents=write"
 SETTING_RETURNED = "a token GitHub returns the field to"
+
+# The compared repo settings that are merge-related, so need MERGE_SETTINGS_READ.
+_MERGE_SETTINGS = frozenset(
+    {
+        "allow_auto_merge",
+        "allow_merge_commit",
+        "allow_rebase_merge",
+        "allow_squash_merge",
+        "allow_update_branch",
+        "delete_branch_on_merge",
+        "merge_commit_message",
+        "merge_commit_title",
+        "squash_merge_commit_message",
+        "squash_merge_commit_title",
+    }
+)
 
 
 class _RepoSettingsReader:
@@ -1190,8 +1210,9 @@ class _RepoSettingsReader:
     def _raw(self, name: str) -> object:
         raw = self._data.get(name)
         if raw is None:
+            permission = MERGE_SETTINGS_READ if name in _MERGE_SETTINGS else SETTING_RETURNED
             self._not_checked.append(
-                NotChecked(field=f"repo_settings.{name}", permission=SETTING_RETURNED)
+                NotChecked(field=f"repo_settings.{name}", permission=permission)
             )
         return raw
 

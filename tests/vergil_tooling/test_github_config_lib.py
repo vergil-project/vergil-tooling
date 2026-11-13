@@ -28,6 +28,7 @@ from vergil_tooling.lib.config import (
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
     _PRODUCIBLE_GATE_CATALOG,
+    MERGE_SETTINGS_READ,
     SETTING_RETURNED,
     DesiredRuleset,
     EvidenceGate,
@@ -3104,8 +3105,8 @@ def test_fetch_actual_state_missing_merge_setting_is_not_checked() -> None:
     del repo_json["merge_commit_title"]
     result = _fetch_with_repo_json(repo_json)
     assert result.not_checked == [
-        NotChecked(field="repo_settings.allow_merge_commit", permission=SETTING_RETURNED),
-        NotChecked(field="repo_settings.merge_commit_title", permission=SETTING_RETURNED),
+        NotChecked(field="repo_settings.allow_merge_commit", permission=MERGE_SETTINGS_READ),
+        NotChecked(field="repo_settings.merge_commit_title", permission=MERGE_SETTINGS_READ),
     ]
 
     desired = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
@@ -3121,7 +3122,10 @@ def test_fetch_actual_state_missing_merge_setting_is_not_checked() -> None:
 def test_fetch_actual_state_null_repo_setting_is_not_checked() -> None:
     repo_json = {**_REPO_SETTINGS_JSON, "security_and_analysis": {}, "has_wiki": None}
     result = _fetch_with_repo_json(repo_json)
-    assert [nc.field for nc in result.not_checked] == ["repo_settings.has_wiki"]
+    # has_wiki is not a merge setting: the docs name no permission for it (#4326).
+    assert result.not_checked == [
+        NotChecked(field="repo_settings.has_wiki", permission=SETTING_RETURNED)
+    ]
 
 
 def test_fetch_actual_state_every_missing_repo_setting_is_not_checked() -> None:
@@ -3129,6 +3133,26 @@ def test_fetch_actual_state_every_missing_repo_setting_is_not_checked() -> None:
     assert [nc.field for nc in result.not_checked] == [
         f"repo_settings.{name}" for name in _REPO_SETTINGS_JSON
     ]
+    # Only the merge-related settings name Contents read and write (#4326).
+    merge_related = {
+        "allow_auto_merge",
+        "allow_merge_commit",
+        "allow_rebase_merge",
+        "allow_squash_merge",
+        "allow_update_branch",
+        "delete_branch_on_merge",
+        "merge_commit_message",
+        "merge_commit_title",
+        "squash_merge_commit_message",
+        "squash_merge_commit_title",
+    }
+    assert {
+        nc.field.removeprefix("repo_settings."): nc.permission for nc in result.not_checked
+    } == {
+        name: MERGE_SETTINGS_READ if name in merge_related else SETTING_RETURNED
+        for name in _REPO_SETTINGS_JSON
+    }
+    assert MERGE_SETTINGS_READ == "contents=read and contents=write"
 
 
 def test_fetch_actual_state_unmanaged_missing_setting_is_not_reported() -> None:
