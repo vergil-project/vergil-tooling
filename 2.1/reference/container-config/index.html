@@ -1414,6 +1414,8 @@
       
         
       
+        
+      
     
     
     
@@ -1466,6 +1468,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.309/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.309
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17885,7 +17915,13 @@ the container without hard-coding its name in tooling.</p>
 repo, <code>vrg-container-run</code> resolves it from the environment or its canonical
 token file and forwards it itself (see the next section and
 <a href="../../standards/development/cpp/overview/#conancenter-audit-token">C++ Overview → ConanCenter Audit Token</a>).
-An existing <code>CONAN_AUDIT_PROVIDER_TOKEN</code> prefix is harmless but redundant.
+An existing <code>CONAN_AUDIT_PROVIDER_TOKEN</code> prefix is harmless but redundant.</p>
+<p>A few names are never forwarded, whatever prefix matches them:
+<code>VRG_VERSION_WINDOW</code> (see <a href="#vrg_version_window-a-local-version-window">below</a>),
+and rustup's <code>RUSTUP_TOOLCHAIN</code> and <code>RUSTUP_AUTO_INSTALL</code>. A forwarded variable
+overrides the image's own setting, and the Rust image selects its toolchain
+itself, so a prefix such as <code>RUST</code> cannot let the host pick another one (epic
+<a href="https://github.com/vergil-project/.github/issues/1095">vergil-project/.github#1095</a>).
 The passthrough design is specified in
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/2026-05-25-configurable-container-env-passthrough-design.md"><code>docs/specs/2026-05-25-configurable-container-env-passthrough-design.md</code></a>.</p>
 <h3 id="variables-vrg-container-run-always-sets">Variables <code>vrg-container-run</code> always sets<a class="headerlink" href="#variables-vrg-container-run-always-sets" title="Permanent link">&para;</a></h3>

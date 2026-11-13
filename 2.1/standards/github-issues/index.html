@@ -1416,6 +1416,8 @@
       
         
       
+        
+      
     
     
     
@@ -1468,6 +1470,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.309/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.309
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19306,6 +19336,17 @@ validate</strong>, each <code>Blocked-by</code> the last.</p>
 mechanism is prescribed; if a precondition is unmet, record <code>blocked</code> and stop,
 never fabricating), the procedure, the acceptance criteria, and a
 <strong>SUCCESS/FAILURE results template</strong>.</p>
+<p>To fill the scaffold instead of leaving its placeholders, pass <code>--body-file</code>
+with a Markdown file of level-2 sections: <code>## Intro</code>, <code>## Preconditions</code>,
+<code>## Procedure</code> and <code>## Acceptance</code>, all required, plus <code>## Human-run steps</code>,
+optional and for <code>--kind deployment</code> only. Each section fills its scaffold
+section (<code>## Procedure</code> fills "Commands to run" for validation and "Deploy
+steps" for deployment); a deployment file without <code>## Human-run steps</code> drops
+that scaffold section. The tool keeps the frame: the self-check rule, the
+<code>Blocked-by:</code> lines and the results template. A missing, unknown, duplicate or
+empty section is refused, naming it, and a heading line inside a fenced code
+block is content, not a section. <code>--body</code> and <code>--body-file</code> together are
+refused, since <code>## Intro</code> is the intro.</p>
 <p>Add a <strong>validation</strong> task when acceptance needs a check the pipeline's own tests
 cannot do (a cold rebuild, a live check, a deploy smoke test); provisioning and
 infrastructure work carry a cold-rebuild validation by default. Add a
