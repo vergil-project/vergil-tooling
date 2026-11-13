@@ -20578,7 +20578,8 @@ deferral — so no review skill hand-rolls them. Routes:</p>
 - <code>one-off --repo OWNER/REPO [--epic REF]</code> — move the item into the target
   repo (transfer, or recreate with a link back when GitHub refuses the
   transfer) and link it under that repo's ad-hoc epic (default <code>adhoc</code>) or the
-  named epic.
+  named epic. A planning item's <code>in-progress</code> label is removed from the moved
+  issue once the move has settled; a recreated issue never carries it.
 - <code>planning</code> — reparent the item onto the planning epic of the same queue
   home.
 - <code>split --into REF [--into REF …] --reason TEXT</code> — comment links to the
@@ -20598,7 +20599,7 @@ deferral — so no review skill hand-rolls them. Routes:</p>
 </tr>
 <tr>
 <td>planning</td>
-<td><code>defer</code>, <code>drop</code> — both refused while any development epic of the item is open</td>
+<td><code>defer</code>, <code>drop</code>, <code>one-off</code> — each refused while any development epic of the item is open</td>
 </tr>
 <tr>
 <td>ad hoc</td>
@@ -20640,7 +20641,7 @@ deferral — so no review skill hand-rolls them. Routes:</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A refused route — not allowed from the item's container, a development-epic task, a planning item with an <code>Epic:</code> marker, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it</td>
+<td>A refused route — not allowed from the item's container, a development-epic task, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it</td>
 </tr>
 <tr>
 <td>Exit codes</td>
