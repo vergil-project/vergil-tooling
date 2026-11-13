@@ -187,7 +187,6 @@ def test_desired_actions_permissions_base_only() -> None:
 def test_desired_actions_permissions_with_language_patterns() -> None:
     a = desired_actions_permissions("rust")
     assert a.patterns_allowed == [
-        "actions-rust-lang/*",
         "actions/*",
         "docker/*",
         "github/*",

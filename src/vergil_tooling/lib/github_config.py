@@ -118,7 +118,7 @@ _BASE_ACTION_PATTERNS = [
 
 _LANGUAGE_ACTION_PATTERNS: dict[str, list[str]] = {
     "python": ["astral-sh/*", "pypa/*"],
-    "rust": ["actions-rust-lang/*", "swatinem/*"],
+    "rust": ["swatinem/*"],
 }
 
 
