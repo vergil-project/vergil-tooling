@@ -54,6 +54,8 @@ def _hermetic_identity(
     monkeypatch.setattr(identity_mode, "_APP_KEY_FILE", str(absent / "app.pem"))
     monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
     monkeypatch.delenv("VRG_APP_ID", raising=False)
+    # In an automation ops job this would make every resolution call GitHub.
+    monkeypatch.delenv("VRG_AUTOMATION_APP", raising=False)
 
 
 @pytest.fixture(autouse=True)
