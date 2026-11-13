@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib.versions.extensions import go, python
+from vergil_tooling.lib.versions.extensions import go, python, rust
 from vergil_tooling.lib.versions.extensions.base import (
     ContainerEnv,
     Extension,
@@ -50,9 +50,13 @@ EXTENSIONS: dict[str, Extension] = {"python": python.python_extension}
 FLOOR_CHECKS: dict[str, FloorCheck] = {
     "python": python.check_floor,
     "go": go.check_floor,
+    "rust": rust.check_floor,
 }
 
-TOOLCHAIN_CHECKS: dict[str, ToolchainCheck] = {"python": python.check_toolchain}
+TOOLCHAIN_CHECKS: dict[str, ToolchainCheck] = {
+    "python": python.check_toolchain,
+    "rust": rust.check_toolchain,
+}
 
 CONTAINER_ENVS: dict[str, ContainerEnv] = {"python": python.container_env}
 

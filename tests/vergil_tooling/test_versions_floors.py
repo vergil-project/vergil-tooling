@@ -1,7 +1,7 @@
 """Tests for the floor and toolchain-selection checks (epic vergil-project/.github#407).
 
 :mod:`vergil_tooling.lib.versions.floors` only dispatches; the per-language rules
-live in the extensions (``python.py``, ``go.py``).
+live in the extensions (``python.py``, ``go.py``, ``rust.py``).
 """
 
 from __future__ import annotations
@@ -61,8 +61,8 @@ def _resolution(language: str, version: str) -> Resolution:
 
 
 def test_registries() -> None:
-    assert set(FLOOR_CHECKS) == {"python", "go"}
-    assert set(TOOLCHAIN_CHECKS) == {"python"}
+    assert set(FLOOR_CHECKS) == {"python", "go", "rust"}
+    assert set(TOOLCHAIN_CHECKS) == {"python", "rust"}
 
 
 def test_floor_below_oldest_warns(tmp_path: Path) -> None:
@@ -110,7 +110,7 @@ def test_go_malformed_directive_is_fatal(tmp_path: Path) -> None:
 
 
 def test_language_without_floor_check_is_silent(tmp_path: Path) -> None:
-    assert check_floors(tmp_path, _resolution("rust", "1.93"), WINDOW) == []
+    assert check_floors(tmp_path, _resolution("cpp", "gcc-14"), WINDOW) == []
 
 
 def test_no_resolution_is_silent(tmp_path: Path) -> None:
