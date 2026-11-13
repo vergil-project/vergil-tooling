@@ -92,10 +92,12 @@ the permission model — set the permissions exactly as documented.
        draft advisories in each org's `.github` that hold security
        findings, and `vrg-intake-route` and `vrg-queue planning` read
        and retarget them (see [Security Records](security-records.md)).
-       Each org's automation App (`<org>-automation`, see
+       The user App, or a human, also runs `vrg-security-record sync`,
+       which closes and reopens advisories to follow their issues. Each
+       org's automation App (`<org>-automation`, see
        [Identity Architecture](identity-architecture.md#the-org-automation-apps))
-       needs the same **Read and write** grant for the scheduled sweep,
-       which closes and reopens advisories. The audit App does **not**
+       does not need the grant: the scheduled sweep makes no
+       security-advisory call. The audit App does **not**
        get it: it is not in use today, and the decision is deferred
        until the audit identity is revived. Adding this permission to an
        existing App changes its permission set, so **each installation
@@ -372,9 +374,6 @@ After both Apps are registered, installed, and configured:
 - [ ] The user App holds **Repository security advisories: Read and
       write**, the audit App does not, and every installation has
       accepted the change
-- [ ] Each org's automation App (`<org>-automation`) holds
-      **Repository security advisories: Read and write**, and its
-      installation has accepted the change
 - [ ] Both Apps are installed on every account that owns repos the
       agents will operate on
 - [ ] The reserved `<username>-vergil-admin` App was **not** created

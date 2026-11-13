@@ -32,8 +32,9 @@ The main modules under `src/vergil_tooling/lib/`:
 - **`epic_audit.py`**, **`intake_route.py`** and **`queue_view.py`** build
   on `epics.py`: the `vrg-epic-audit` drift report and orphan pass, the
   `vrg-intake-route` mechanics and route table, and the `vrg-queue` views.
-- **`security_records.py`**: `vrg-security-record` and the security-records
-  pass of `vrg-epic-audit --close`.
+- **`security_records.py`**: `vrg-security-record`, including the
+  security-records pass of `vrg-security-record sync` (previewed by the
+  read-only `vrg-epic-audit`).
 - **`release/`**: the mechanized release workflow behind `vrg-release`:
   preflight, prepare, merge, bump, confirm, finalize, handoff, the
   orchestrator, the package-index wait, and the `update-deps` stage.

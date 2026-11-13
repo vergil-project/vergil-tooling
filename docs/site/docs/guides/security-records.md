@@ -37,8 +37,8 @@ extended to several advisories per issue by epic
   decision.
 
 Advisories **complement** issues. They don't replace them: the issue is
-what intake review routes, what a task's PR closes, and what the sweep
-follows.
+what intake review routes, what a task's PR closes, and what
+`vrg-security-record sync` follows.
 
 ### What counts as a security finding
 
@@ -75,7 +75,7 @@ security record is the durable, private home for them.
 
 The org's `.github` repo must be **public**. GitHub documents repository
 security advisories for public repos only. When `<org>/.github` is not
-public, every `vrg-security-record` command refuses, the sweep fails, and
+public, every `vrg-security-record` command refuses (`sync` included), and
 `vrg-intake-route` and `vrg-queue planning` fail when they meet a security
 item. None of them falls back to an issue-only record. Orgs with a private `.github`, and
 repos owned by a user account rather than an org, are not supported.
@@ -103,8 +103,8 @@ hand; `vrg-security-record` writes and moves them.
 
 | Label | Meaning |
 |---|---|
-| `security` | Has a private security record in the org's `.github` advisories. The sweep checks every issue with this label. |
-| `security-disclosed` | Past issue that disclosed a security problem publicly; fixed, no private record. The sweep ignores it. |
+| `security` | Has a private security record in the org's `.github` advisories. `vrg-security-record sync` checks every issue with this label. |
+| `security-disclosed` | Past issue that disclosed a security problem publicly; fixed, no private record. `vrg-security-record sync` ignores it. |
 
 ## Writing a neutral issue
 
@@ -176,8 +176,13 @@ attach mode (`--issue`) and resume (`--resume`).
 build the fix, close it with the PR. Never change an advisory's state by
 hand.
 
-The scheduled sweep (`vrg-epic-audit --close`, run by the org's automation
-App) keeps each advisory's state in step with the issues it tracks:
+`vrg-security-record sync` keeps each advisory's state in step with the
+issues it tracks. The human runs it, or the user agent, under an identity
+that holds Repository security advisories: Read and write (see
+[Permissions](#permissions)); `--dry-run` previews it and changes nothing.
+The scheduled sweep (`vrg-epic-audit --close`) does not run it: the sweep
+makes no security-advisory call, so its token needs no advisories access.
+On each run of `sync`:
 
 - the advisory is **closed** when **every** issue it tracks is closed,
   whether fixed or dropped as not planned;
@@ -185,7 +190,7 @@ App) keeps each advisory's state in step with the issues it tracks:
   reopens its advisory.
 
 A manual state change to a draft or closed advisory is overwritten on the
-next run. The sweep only moves an advisory between `draft` and `closed`.
+next run. `sync` only moves an advisory between `draft` and `closed`.
 It never touches an advisory in any other state (published, withdrawn, or
 `triage`), and never touches an unpaired external report.
 
@@ -199,20 +204,24 @@ and issue ref only. A pair is broken when:
 - an advisory is not named by any `security` issue and is not an
   external report.
 
-The sweep reports a broken pair and does not repair it; a human decides
-what to do. Broken pairs make `vrg-epic-audit --close` exit 1, after it
-has synced the rest. An org whose `.github` is private also makes it exit
-1.
+`sync` reports a broken pair and does not repair it; a human decides
+what to do. Broken pairs make `sync` exit 1, after it has synced the
+rest; `--dry-run` reports them and exits 0. An org whose `.github` is
+private makes both exit 1.
+
+Nothing runs `sync` on a schedule, so an advisory's state lags its issues
+until someone runs it, and no nightly job checks the pairs. Run it after
+closing or reopening a `security` issue, and regularly in any case.
 
 **External reports.** `.github` accepts private vulnerability reports from
 outside (see its `SECURITY.md`). GitHub marks such a report with the
 `triage` state or a submission. When no `security` issue names one, the
-sweep lists it as an *unpaired external report*, never treats it as
+`sync` lists it as an *unpaired external report*, never treats it as
 broken, and never changes it. To work on one, attach it to an issue with
 `vrg-security-record create --issue`.
 
-The sweep's output goes to the public Actions logs of `.github`, so it
-names only GHSA IDs, issue refs, labels and states, never advisory text.
+The output of `sync` can end up in a shared log or a public comment, so
+it names only GHSA IDs, issue refs, labels and states, never advisory text.
 
 ### When the issue moves
 
@@ -321,7 +330,7 @@ depends on the decision:
   names (see [Security items in planning](#security-items-in-planning));
 - a **rejected** finding (the human decided it is not a problem) is
   recorded with plain `create`, and the intake issue it creates is then
-  closed as "not planned", so the sweep closes the advisory. The human's
+  closed as "not planned", so the next `sync` closes the advisory. The human's
   reason goes into the advisory's details, never into a public record;
 - a **dropped** finding is recorded with plain `create`, and its intake
   issue stays open, so intake review decides what becomes of it.
@@ -379,10 +388,11 @@ hand:
 
 - `vrg-security-record list` shows every advisory and the issues it
   tracks;
-- `vrg-epic-audit` (read-only) prints the sweep's pass as a preview,
-  including its broken-pair report.
+- `vrg-security-record sync --dry-run` (or the read-only
+  `vrg-epic-audit`, which prints the same preview) reports what would sync
+  and every broken pair.
 
-The sweep reports a broken pair and never repairs it, so a human repairs
+`sync` reports a broken pair and never repairs it, so a human repairs
 each one it reports, by hand.
 
 ## Before a private repo goes public
@@ -406,6 +416,11 @@ The repo's epics move separately; see
 
 ## Accepted trade-offs
 
+- **Advisory states lag their issues.** No scheduled job syncs them:
+  an advisory stays a draft after its issues close, or closed after one
+  reopens, until someone runs `vrg-security-record sync`, and no nightly
+  job checks the pairs. This keeps advisories access off the scheduled
+  sweep's token.
 - **Advisories are not next to their code.** Every record is in
   `<org>/.github`, so every admin and security manager of `.github` can
   see every draft, including one about a private (for example, client)
@@ -419,8 +434,8 @@ The repo's epics move separately; see
   deliberate disclosure is accepted in exchange for a visible, queryable
   label.
 - **Agents may manage advisories.** Records are notes: the user agent
-  creates, edits and retargets them, and the sweep closes and reopens
-  them. There is no strong protection against an agent editing or closing
+  creates, edits and retargets them, and `vrg-security-record sync`,
+  which the user agent may run, closes and reopens them. There is no strong protection against an agent editing or closing
   one.
 
 ## Permissions
@@ -429,13 +444,15 @@ The repo's epics move separately; see
 identity's App token or, in human mode, the human's own `gh` login. It
 does not go through `vrg-gh api`, which stays denied to the user agent.
 
-Two Apps need **Repository security advisories: Read and write**:
+Every user App (`<username>-vergil-user`) needs **Repository security
+advisories: Read and write**, for `vrg-security-record` (`sync`
+included) and the hooks in `vrg-intake-route` and `vrg-queue`. A human
+running `vrg-security-record` in human mode needs the same access through
+their own `gh` login. `sync --dry-run` needs only Read.
 
-- every user App (`<username>-vergil-user`), for `vrg-security-record`
-  and the hooks in `vrg-intake-route` and `vrg-queue`;
-- each org's automation App (`<org>-automation`), for the sweep.
-
-The audit App does not get it; see
+The scheduled sweep (`vrg-epic-audit --close`, run by each org's
+automation App, `<org>-automation`) makes no security-advisory call, so
+it needs no advisories access. The audit App does not get it either; see
 [Account Setup](account-setup.md#step-11-register-the-app).
 
 ## Related

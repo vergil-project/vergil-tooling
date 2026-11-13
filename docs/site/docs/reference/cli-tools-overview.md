@@ -788,17 +788,18 @@ Record a security finding as a private draft advisory in `<org>/.github`
 paired with a neutral `security`-labelled intake issue (epic
 vergil-project/.github#517). `create` makes the pair (or attaches an
 advisory to an existing issue, or resumes an unfinished pair), `list` and
-`show` read records, and `retarget` moves an advisory's tracking to new
-issues. Advisory text is printed only by `show` and `list --details`. See
+`show` read records, `retarget` moves an advisory's tracking to new
+issues, and `sync` sets each paired advisory's state from its issues and
+reports broken pairs (`--dry-run` previews it). Advisory text is printed only by `show` and `list --details`. See
 [vrg-security-record](dev/security-record.md) and
 [Security Records](../guides/security-records.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_security_record` (library: `lib/security_records.py`) |
-| Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --to REF [--to REF …]` |
+| Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --to REF [--to REF …]`; `sync [--dry-run]` |
 | Preconditions | The org's `.github` is public; Repository security advisories: Read and write on the identity's App (or a human `gh` login with access) |
-| Failure mode | A partial pair exits 1 naming what exists and the exact `--resume` command that finishes it; a private `.github`, a duplicate draft, or `--details` under `VRG_EPIC_SWEEP` is refused |
+| Failure mode | A partial pair exits 1 naming what exists and the exact `--resume` command that finishes it; a private `.github`, a duplicate draft, or `--details` under `VRG_EPIC_SWEEP` is refused; `sync` exits 1 on a broken pair after syncing the rest |
 | Exit codes | 0 success, 1 refused or error, 2 bad arguments |
 | Status | Active |
 
@@ -1142,8 +1143,9 @@ home's epics once, under the home owner's App token, for this check and the
 closed-epic-with-open-child check.
 
 The report previews, without
-writing, the ad-hoc and queue-epic drains and the security-records pass that
-`--close` would run.
+writing, the ad-hoc and queue-epic drains that `--close` would run, and the
+security-records pass of `vrg-security-record sync` (`--close` does not run
+it).
 
 The org comes from the current repo's `origin` remote (there is no `--org`
 flag). `--repo OWNER/NAME` audits that repo's resolved epic home instead of
@@ -1177,12 +1179,11 @@ home.
    nativize body-only `Parent:` links, strip the retired kind labels, move a
    now-public repo's queue items under `.github`, and attach every orphan to
    its home's intake epic.
-4. Run the security-records pass, even when the orphan pass failed: each
-   paired draft advisory in the org's `.github` is set to closed once every
-   issue it tracks is closed, and back to draft while any is open; broken
-   pairs are reported, not repaired. Its output names only GHSA IDs, issue
-   refs and states, never advisory text (see
-   [Security Records](../guides/security-records.md#managing-a-record-through-its-issue)).
+
+`--close` makes no security-advisory call: it neither syncs advisory states
+nor checks advisory/issue pairs. That is `vrg-security-record sync`, run by
+the human or the user agent (see
+[Security Records](../guides/security-records.md#managing-a-record-through-its-issue)).
 
 `--close` is a human action, or the scheduled `ops-epic-sweep` workflow,
 which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
@@ -1191,8 +1192,8 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 |---|---|
 | Source | `vergil_tooling.bin.vrg_epic_audit` (checks and passes: `lib/epic_audit.py`; security pass: `lib/security_records.py`) |
 | Args | `--window-days N` (positive; default 30), `--repo OWNER/NAME`, `--epic REF`, `--close` |
-| Preconditions | Run inside a repo in the target org; GitHub App credentials for that org. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The security-records pass needs Repository security advisories: Read and write |
-| Failure mode | `--close` in an agent session is refused before any network call; a `--repo` without `/`, an org that cannot be detected, or an org with no `.github` home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and `--close` is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With `--epic`, a ref that is not an epic exits 1 |
+| Preconditions | Run inside a repo in the target org; GitHub App credentials for that org. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The read-only report's security-records preview needs Repository security advisories: Read; `--close` needs no advisories access |
+| Failure mode | `--close` in an agent session is refused before any network call; a `--repo` without `/`, an org that cannot be detected, or an org with no `.github` home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and `--close` is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. With `--epic`, a ref that is not an epic exits 1 |
 | Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, incomplete coverage, a pass failed, or error, 2 bad arguments |
 | Status | Active |
 

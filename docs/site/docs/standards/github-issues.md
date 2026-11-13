@@ -806,8 +806,8 @@ them, which also strips them from any issue still carrying them.
 
 `security` goes only on an issue paired with a private draft advisory:
 `vrg-security-record` applies it when it creates or attaches a record, and
-removes it when the last advisory an issue names stops tracking it. The sweep's
-consistency check applies only to `security`; `security-disclosed` marks a past public
+removes it when the last advisory an issue names stops tracking it. The
+consistency check of `vrg-security-record sync` applies only to `security`; `security-disclosed` marks a past public
 disclosure and is ignored by the check (see
 [Security Records](../guides/security-records.md#the-labels)).
 
