@@ -21392,7 +21392,7 @@ rebase-merged as several commits is one row).</p>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 1 other PR.
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 1 other PR.
 </code></pre></div>
 <ul>
 <li><strong>Release line.</strong> It follows the section heading on the same line,
@@ -21406,9 +21406,13 @@ rebase-merged as several commits is one row).</p>
   are ignored.</li>
 <li><strong>Rows</strong> come in merge order, oldest first. TYPE is the PR title's
   conventional-commit type (<code>-</code> when it has none), except that a
+  release back-merge (a <code>release/post-*</code> head branch) shows <code>release</code>,
+  an automation PR (an <code>automation/*</code> head branch, such as
+  <code>automation/repo-config-sync/&lt;run-id&gt;</code>) shows <code>automation</code>, and a
   dependency update (a <code>deps/update-*</code> head branch or a
-  <code>dependency-update</code> label) shows <code>deps</code> and a release back-merge (a
-  <code>release/post-*</code> head branch) shows <code>release</code>. MERGED is the PR's
+  <code>dependency-update</code> label) shows <code>deps</code>. The head branch decides
+  before the label, so an automation PR is never counted as a
+  dependency update or a development PR. MERGED is the PR's
   merge time. A TITLE over 72 characters is cut, ending in <code>…</code>.</li>
 <li><strong>A commit with no PR</strong> shows <code>PROBLEM</code> in the PR column and <code>-</code> for
   BRANCH and TYPE, with its commit date and subject, and a
@@ -21416,7 +21420,7 @@ rebase-merged as several commits is one row).</p>
 <li><strong>Nothing pending</strong> prints <code>Nothing pending release: develop and main
   are level.</code> in place of the table.</li>
 <li><strong>The summary line</strong> counts the changes: dependency updates, release
-  back-merges and other PRs, every bucket listed, plus
+  back-merges, automation PRs and other PRs, every bucket listed, plus
   <code>&lt;n&gt; PROBLEM: commits with no PR</code> only when there are some.</li>
 <li><strong>A lookup that fails or is incomplete</strong> (an API error, a missing
   branch, a truncated answer) is an error, never a partial list: the
