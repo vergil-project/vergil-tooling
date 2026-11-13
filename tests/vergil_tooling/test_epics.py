@@ -2712,7 +2712,7 @@ def test_queue_item_kind_propagates_lookup_failure() -> None:
 def test_queue_refusal_message_intake() -> None:
     assert epics.queue_refusal_message("#7", "intake") == (
         "--issue (#7) is in the intake queue; it is not buildable until it is routed. "
-        "Route it with intake-review first."
+        "Route it with epic-review intake first."
     )
 
 
@@ -3225,7 +3225,7 @@ def test_deferred_kind_fields() -> None:
     assert kind.archive_labels == ("archive", "deferred")
     assert kind.body.format(owner="org", name="org") == (
         "Perpetual deferred queue for org: evaluated items parked until their revival "
-        "conditions are met. Reviewed by deferred-review.\n"
+        "conditions are met.\n"
     )
 
 
@@ -3318,7 +3318,25 @@ def test_queue_refusal_message_deferred() -> None:
     msg = epics.queue_refusal_message("org/tool#5", "deferred")
     assert msg == (
         "--issue (org/tool#5) is in the deferred queue; it is deferred until its "
-        "revival conditions are met. Revive it with deferred-review first."
+        "revival conditions are met. Revive it with epic-review deferred first."
+    )
+
+
+def test_queue_epic_bodies_name_no_skill() -> None:
+    # A queue epic's body names no skill: skill names change, and a body stamped
+    # on an epic is not rewritten when they do.
+    skills = ("intake-review", "planning-review", "deferred-review", "epic-review", "epic-create")
+    for kind in epics.QUEUE_KINDS:
+        for skill in skills:
+            assert skill not in kind.body, (kind.key, skill)
+
+
+def test_queue_refusal_tails_name_epic_review() -> None:
+    tails = epics._QUEUE_REFUSAL_TAILS
+    assert tails["intake"].endswith("Route it with epic-review intake first.")
+    assert tails["deferred"].endswith("Revive it with epic-review deferred first.")
+    assert tails["planning"] == (
+        "it is not buildable until its epic is expanded. Expand it with epic-create first."
     )
 
 

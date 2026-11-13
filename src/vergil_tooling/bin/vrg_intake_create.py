@@ -1,11 +1,11 @@
 """Capture an intake issue and link it under its home's intake epic.
 
 An intake issue is an uncurated capture — a problem, an idea, or an
-investigation — that intake-review later routes into the epic/task model. It
-carries no kind label (the retired ``triage`` / ``idea`` / ``research`` labels
-are gone); its membership in the intake queue *is* its kind. This is the
-sanctioned path for creating one — ``vrg-gh`` denies raw ``gh issue create`` —
-used by the intake-capture skill (epic vergil-project/.github#176).
+investigation — that ``epic-review intake`` later routes into the epic/task
+model. It carries no kind label (the retired ``triage`` / ``idea`` /
+``research`` labels are gone); its membership in the intake queue *is* its
+kind. This is the sanctioned path for creating one — ``vrg-gh`` denies raw
+``gh issue create`` — used by the intake-capture skill (epic vergil-project/.github#176).
 
 Where it lands: ``--repo`` when given; otherwise the current repo's queue home
 (:func:`epics.queue_home`) — ``<org>/.github`` for a public repo, the repo
@@ -99,7 +99,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "public repo, the repo itself for a private one); use --repo to "
             "override."
         ),
-        epilog="intake-review routes the capture into the epic/task model later.",
+        epilog="epic-review intake routes the capture into the epic/task model later.",
     )
     parser.add_argument("--title", required=True, help="Issue title")
     parser.add_argument("--body", default="", help="Issue body text")

@@ -1,4 +1,4 @@
-"""View the intake, planning and deferred queues (read-only).
+"""View the intake, planning and deferred queues, and the ad-hoc tasks (read-only).
 
 ``vrg-queue intake`` lists the open items under the intake queue epic, oldest
 first. ``vrg-queue planning`` lists the open items under the planning queue
@@ -21,6 +21,13 @@ stdout, so a partial object is never taken for the whole.
 The default home is the current org's ``.github`` pair; ``--repo OWNER/REPO``
 selects that repo's queue home, which for a self-homed private repo is its own
 queue. Nothing is created or changed.
+
+``vrg-queue adhoc`` lists the open tasks under every live ad-hoc epic in the
+home, grouped by repo and oldest first, each with its kind, its open
+``Blocked-by:`` refs and its state (ready or blocked). It is not a review
+queue, so a bare ``vrg-queue`` never shows it. With ``--repo``, a public repo
+narrows the list to its own ad-hoc epic in the org's ``.github`` (none gives an
+empty list), and a self-homed private repo selects its own home.
 """
 
 from __future__ import annotations
@@ -36,6 +43,9 @@ from vergil_tooling.lib.cli import cli_main
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.queue_view import QueueItem
+
+# The ad-hoc view: a choice of its own, never in _VIEWS, so a bare run never shows it.
+_ADHOC = "adhoc"
 
 # Insertion order is the order a bare ``vrg-queue`` lists the queues in.
 _VIEWS = {
@@ -63,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         target = f"{github.current_repo().split('/', 1)[0]}/.github"
     owner = target.split("/", 1)[0]
+    if args.queue == _ADHOC:
+        return _adhoc(owner, repo=args.repo, as_json=args.json)
     # Bare mode: None marks a queue whose epic does not exist yet.
     results: dict[str, list[QueueItem] | None] = {}
     # Bare mode: the queues that could not be read, and why.
@@ -122,6 +134,36 @@ def main(argv: list[str] | None = None) -> int:
     return 1 if failures else 0
 
 
+def _adhoc(owner: str, *, repo: str | None, as_json: bool) -> int:
+    """Show the ad-hoc tasks: the org's, or one ``owner/name`` *repo*'s.
+
+    Without *repo* the home is the org's ``.github``, which must exist. With
+    it, the home is the repo's epic home: the org's ``.github`` for a public
+    repo, narrowed to its own ad-hoc epic, or a self-homed private repo itself.
+    """
+    with github.target_org(owner):
+        if repo is None:
+            home = epics.require_org_home(owner)
+            name = owner
+        else:
+            name = repo.split("/", 1)[1]
+            home = epics.resolve_epic_home(owner, name)
+        try:
+            items = queue_view.adhoc_items(home, repo=repo)
+        except github.MissingGitHubTokenError:
+            raise
+        except _VIEW_ERRORS as exc:
+            _report_failure(_ADHOC, home, name, exc)
+            return 1
+    if as_json:
+        print(json.dumps(queue_view.adhoc_to_json(items), indent=2))
+        return 0
+    print(f"{_ADHOC} queue for {name} in {home}: {len(items)} open task(s)")
+    if items:
+        print(queue_view.render_adhoc_text(items, now=datetime.now(UTC)))
+    return 0
+
+
 def _report_failure(queue: str, home: str, name: str, exc: Exception) -> None:
     """Name the queue that could not be read, and why, on stderr."""
     print(
@@ -144,20 +186,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Show the intake queue (oldest first), the planning queue "
             "(waiting / in-progress / ready-to-close), or the deferred queue "
             "(least recently deferred first). With no queue named, show all "
-            "three. Read-only."
+            "three. 'adhoc' shows the open ad-hoc tasks (ready / blocked), "
+            "grouped by repo; it is shown only when named. Read-only."
         ),
     )
     parser.add_argument(
         "queue",
         nargs="?",
-        choices=list(_VIEWS),
-        help="Which queue to show (default: all three, in order)",
+        choices=[*_VIEWS, _ADHOC],
+        help="Which queue to show (default: intake, planning and deferred, in order)",
     )
     parser.add_argument(
         "--repo",
         help=(
             "Show this repo's queue home (owner/name); a self-homed private repo "
-            "has its own queues. Default: the current org's .github queues."
+            "has its own queues. With adhoc, a public repo narrows the list to "
+            "its own ad-hoc epic. Default: the current org's .github queues."
         ),
     )
     parser.add_argument(

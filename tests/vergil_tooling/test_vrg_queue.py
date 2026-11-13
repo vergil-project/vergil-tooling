@@ -11,7 +11,7 @@ import pytest
 from vergil_tooling.bin.vrg_queue import main, parse_args
 from vergil_tooling.lib import github, queue_view, security_records
 from vergil_tooling.lib.epics import IssueRef
-from vergil_tooling.lib.queue_view import QueueItem
+from vergil_tooling.lib.queue_view import AdhocItem, QueueItem
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -401,5 +401,148 @@ def test_views_wire_to_queue_view() -> None:
     assert vrg_queue._VIEWS["intake"] is queue_view.intake_items
     assert vrg_queue._VIEWS["planning"] is queue_view.planning_items
     assert vrg_queue._VIEWS["deferred"] is queue_view.deferred_items
-    # Bare vrg-queue lists the queues in this order.
+    # Bare vrg-queue lists the queues in this order; adhoc is never among them.
     assert list(vrg_queue._VIEWS) == ["intake", "planning", "deferred"]
+
+
+# -- vrg-queue adhoc --------------------------------------------------------------
+
+_ADHOC_ITEM = AdhocItem(
+    ref=IssueRef("org", "tool", 8),
+    title="fix the thing",
+    created_at="2026-09-01T00:00:00Z",
+    kind="deployment",
+    blocked_by=(IssueRef("org", "tool", 6),),
+    state="blocked",
+    marks=(),
+)
+
+
+def test_parse_args_accepts_adhoc() -> None:
+    assert parse_args(["adhoc"]).queue == "adhoc"
+
+
+def test_vrg_queue_adhoc_text_and_json(
+    capsys: pytest.CaptureFixture[str], dotgithub_exists: MagicMock
+) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.queue_view.adhoc_items", return_value=[_ADHOC_ITEM]) as items,
+    ):
+        assert main(["adhoc"]) == 0
+        lines = capsys.readouterr().out.splitlines()
+        assert main(["adhoc", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+    # Org-wide: the org's .github, checked to exist, and no narrowing.
+    items.assert_called_with("org/.github", repo=None)
+    dotgithub_exists.assert_called_with("org", ".github")
+    assert lines[0] == "adhoc queue for org in org/.github: 1 open task(s)"
+    assert lines[1].startswith("org/tool#8  ")
+    assert lines[1].endswith("d  blocked  deployment  fix the thing  — blocked by org/tool#6")
+    assert len(lines) == 2
+    assert data == [
+        {
+            "ref": {"owner": "org", "repo": "tool", "number": 8},
+            "title": "fix the thing",
+            "created_at": "2026-09-01T00:00:00Z",
+            "kind": "deployment",
+            "blocked_by": [{"owner": "org", "repo": "tool", "number": 6}],
+            "state": "blocked",
+            "marks": [],
+        }
+    ]
+
+
+def test_vrg_queue_bare_does_not_list_adhoc(capsys: pytest.CaptureFixture[str]) -> None:
+    views = {
+        "intake": lambda _h, _n: [],
+        "planning": lambda _h, _n: [],
+        "deferred": lambda _h, _n: [],
+    }
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
+        patch.dict(f"{_MOD}._VIEWS", views),
+        patch(f"{_MOD}.queue_view.adhoc_items") as items,
+    ):
+        assert main([]) == 0
+        text = capsys.readouterr().out
+        assert main(["--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+    items.assert_not_called()
+    assert "adhoc" not in text
+    assert list(data) == ["intake", "planning", "deferred"]
+
+
+def test_vrg_queue_adhoc_repo_narrows_a_public_repo(
+    capsys: pytest.CaptureFixture[str], dotgithub_exists: MagicMock
+) -> None:
+    seen: list[str | None] = []
+
+    def _items(home: str, *, repo: str | None = None) -> list[AdhocItem]:
+        seen.append(github._target_org.get())
+        return []
+
+    with (
+        patch(f"{_MOD}.github.current_repo") as cur,
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github") as home,
+        patch(f"{_MOD}.queue_view.adhoc_items", side_effect=_items) as items,
+    ):
+        rc = main(["adhoc", "--repo", "org/no-adhoc-yet"])
+    # No ad-hoc epic for the repo is an empty list and exit 0, not an error.
+    assert rc == 0
+    cur.assert_not_called()
+    dotgithub_exists.assert_not_called()
+    home.assert_called_once_with("org", "no-adhoc-yet")
+    items.assert_called_once_with("org/.github", repo="org/no-adhoc-yet")
+    assert seen == ["org"]
+    assert capsys.readouterr().out == (
+        "adhoc queue for no-adhoc-yet in org/.github: 0 open task(s)\n"
+    )
+
+
+def test_vrg_queue_adhoc_repo_selects_a_private_home(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="other/secret"),
+        patch(f"{_MOD}.queue_view.adhoc_items", return_value=[]) as items,
+    ):
+        assert main(["adhoc", "--repo", "other/secret"]) == 0
+    items.assert_called_once_with("other/secret", repo="other/secret")
+    assert capsys.readouterr().out == "adhoc queue for secret in other/secret: 0 open task(s)\n"
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        github.GitHubAPIError(1, ["gh", "api", "graphql"], "", "HTTP 502"),
+        ValueError("the open epic + ad-hoc issues of org/.github reached its 1000-row limit"),
+    ],
+)
+def test_vrg_queue_adhoc_read_failure_exits_1(
+    capsys: pytest.CaptureFixture[str], exc: Exception
+) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.queue_view.adhoc_items", side_effect=exc),
+    ):
+        rc = main(["adhoc"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        f"vrg-queue: adhoc queue for org in org/.github could not be read: {exc}\n"
+    )
+
+
+def test_vrg_queue_adhoc_missing_token_keeps_the_guided_message(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exc = github.MissingGitHubTokenError(1, ["gh", "api"], "", "no token")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.queue_view.adhoc_items", side_effect=exc),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main(["adhoc"])
+    assert excinfo.value.code == 1
+    assert capsys.readouterr().err.startswith("vrg-queue: no GitHub token available.")

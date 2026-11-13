@@ -218,7 +218,7 @@ session counts as an agent when any identity signal says so. A human
 identity gets the same message as a warning and the tool proceeds. An absent
 file passes. The guard acts only in repos whose `origin` belongs to an
 in-scope org (`vergil-project`, `logical-minds-foundry`,
-`mnemosys-project`).
+`mnemosys-project`, `mq-rest-admin-project`).
 
 These chokepoints don't depend on Claude Code hooks, because a local file
 that disables hooks would disable a hook-based check too. `vrg-validate` is

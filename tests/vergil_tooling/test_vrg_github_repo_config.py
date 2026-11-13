@@ -37,11 +37,14 @@ from vergil_tooling.lib.config import (
 )
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
+    MERGE_SETTINGS_READ,
     ClassicProtectionReport,
     ConfigDiff,
     DiffItem,
+    FetchResult,
     NotChecked,
     UndeclaredParam,
+    compute_desired_state,
 )
 from vergil_tooling.lib.versions import ResolutionError
 
@@ -272,10 +275,13 @@ def test_audit_not_checked_with_drift_exits_one(capsys: pytest.CaptureFixture[st
     assert "security.vulnerability_alerts: not checked (needs administration=read)" in out
 
 
-def test_diff_not_checked_reports_and_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
-    code, _ = _run_main("diff", _mock_github_not_checked())
-    assert code == 0
-    assert "not checked (needs administration=read)" in capsys.readouterr().out
+def test_diff_not_checked_reports_and_exits_two(capsys: pytest.CaptureFixture[str]) -> None:
+    # A diff that could not read every setting did not complete (#4322).
+    code, _ = _run_main("diff", _mock_github_not_checked(drift=True))
+    assert code == 2
+    captured = capsys.readouterr()
+    assert "not checked (needs administration=read)" in captured.out
+    assert "Could not fully audit o/r: 2 setting(s) not checked" in captured.err
 
 
 def test_apply_refuses_when_settings_not_checked(capsys: pytest.CaptureFixture[str]) -> None:
@@ -283,6 +289,50 @@ def test_apply_refuses_when_settings_not_checked(capsys: pytest.CaptureFixture[s
     assert code == 2
     mock_apply.assert_not_called()
     assert "Refusing to apply: Could not fully audit o/r" in capsys.readouterr().err
+
+
+def _missing_merge_setting_fetch() -> FetchResult:
+    """A fetch of a compliant repo whose response left out allow_merge_commit (#4322)."""
+    state = compute_desired_state(_make_config(), visibility="public", is_org=True)
+    state.repo_settings.allow_merge_commit = False  # the placeholder for the unread field
+    return FetchResult(
+        state=state,
+        visibility="public",
+        owner_type="Organization",
+        not_checked=[
+            NotChecked(field="repo_settings.allow_merge_commit", permission=MERGE_SETTINGS_READ)
+        ],
+    )
+
+
+@pytest.mark.parametrize("command", ["audit", "diff", "apply"])
+def test_missing_merge_setting_is_not_checked_not_drift(
+    command: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A merge setting GitHub did not return is reported as not checked, never
+    # as drift; every subcommand exits 2, and apply writes nothing (#4322).
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._resolve_config", return_value=_make_config()),
+        patch(f"{_MODULE}.github.is_app_mode", return_value=False),
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_missing_merge_setting_fetch()),
+        patch(f"{_MODULE}.apply_desired_state") as mock_apply,
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+    ):
+        code = main([command, "--repo", "o/r"])
+    assert code == 2
+    mock_apply.assert_not_called()
+    mock_write.assert_not_called()
+    captured = capsys.readouterr()
+    assert "o/r: NOT FULLY AUDITED" in captured.out
+    assert (
+        "repo_settings.allow_merge_commit: not checked "
+        "(needs contents=read and contents=write)" in captured.out
+    )
+    assert "expected=" not in captured.out
+    assert "Could not fully audit o/r: 1 setting(s) not checked" in captured.err
 
 
 def test_audit_runs_local_checks_first(capsys: pytest.CaptureFixture[str]) -> None:

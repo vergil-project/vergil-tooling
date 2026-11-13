@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.308] - 2026-11-13
+
+### Bug fixes
+
+- record repo settings GitHub did not return as not checked, never as False (#4328)
+- name contents read and write in the not-checked line for a missing merge setting (#4329)
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- say the check for an apply is the human's apply exiting 0, not an agent's diff (#4332)
+
+### Features
+
+- allow one-off from the planning queue (#4335)
+- add vrg-queue adhoc (#4338)
+- add mq-rest-admin-project to the in-scope orgs and the identity docs (#4339)
+
+### Refactoring
+
+- name epic-review in queue messages and docs, and drop skill names from queue epic bodies (#4337)
+
 ## [2.1.307] - 2026-11-13
 
 ### Bug fixes

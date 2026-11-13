@@ -32,7 +32,12 @@ from vergil_tooling.lib import github, identity_mode
 # The epic's explicit org scope (epic vergil-project/.github#558, Global
 # Constraints). Repos in any other org — including the on-hold orgs — are
 # ignored, so the guard is silent there.
-IN_SCOPE_ORGS = ("vergil-project", "logical-minds-foundry", "mnemosys-project")
+IN_SCOPE_ORGS = (
+    "vergil-project",
+    "logical-minds-foundry",
+    "mnemosys-project",
+    "mq-rest-admin-project",
+)
 
 _RULE = (
     "{path} must be absent or exactly {{}} — move any rule it holds into the repo "

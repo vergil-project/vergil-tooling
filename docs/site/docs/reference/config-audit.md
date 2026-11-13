@@ -25,7 +25,7 @@ vrg-github-repo-config audit [--repo OWNER/REPO] [--config PATH]
 | Subcommands | `audit` (report), `diff` (report GitHub half only), `apply` (reconcile GitHub half) |
 | Args | `--repo OWNER/REPO` (defaults to the current git remote), `--config PATH` (local `vergil.toml`) |
 | Preconditions | Local checks clone the repo's `develop` over HTTPS, so git's credential helper must reach it (`gh auth setup-git`); GitHub checks require `gh` credentials |
-| Exit codes | 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings [not checked](#settings-the-identity-cannot-read)) |
+| Exit codes | `audit`: 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings [not checked](#settings-the-identity-cannot-read)). `diff`: 0 whether or not it finds drift, 2 could not complete (including settings not checked). `apply`: 0 converged, 1 left non-compliant (a write failed, an undeclared ruleset parameter, or managed-file drift), 2 could not complete or refused |
 | Status | Active |
 
 Every subcommand runs the managed-file checks against what is committed
@@ -74,9 +74,28 @@ audit does not guess the value. It reports the setting as not checked:
 - **It is not a pass.** `audit` exits 2 with a one-line error naming
   the permission, unless it also found drift in the settings it did
   read, in which case it exits 1. It never exits 0 while any setting
-  is not checked.
+  is not checked. `diff`, which otherwise always exits 0, exits 2 with
+  the same error.
 - **`apply` refuses.** It exits 2 and writes nothing, since it would
   converge settings it could not read.
+- **The check for an `apply` is the `apply` exiting 0.** `apply` is
+  run by the human. Under the agent identity, `diff` exits 2 on every
+  repo, since the `administration=read` settings are not checked, so a
+  `diff` an agent runs after the human's `apply` is informational only
+  and its exit code is not the verdict on the apply.
+- A repo setting that `GET /repos/{owner}/{repo}` leaves out of its
+  response, or returns as `null`, is not checked either, as
+  `repo_settings.<field>`, never read as `false` or `''` (#4322).
+  GitHub leaves the merge settings out for a token without Contents
+  read and write: its
+  [Get a repository](https://docs.github.com/en/rest/repos/repos#get-a-repository)
+  docs say viewing merge-related settings needs `contents:read` and
+  `contents:write` (vergil-project/vergil-actions#1164). So the line
+  for a missing merge setting says
+  `needs contents=read and contents=write` (#4326). The docs state no
+  requirement for any other field, so the line for one of those says
+  `needs a token GitHub returns the field to`. A repo setting of the
+  wrong type is an error.
 - A setting the desired state leaves unmanaged (secret scanning on a
   private repo without GHAS) is skipped as before, not listed as not
   checked.

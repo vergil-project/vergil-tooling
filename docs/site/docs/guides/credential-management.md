@@ -343,8 +343,8 @@ administrative activity in addition to the agent activity.
 ### Org automation Apps
 
 Each org has its own automation App, owned by the org:
-`vergil-project-automation`, `logical-minds-foundry-automation` and
-`mnemosys-project-automation` (see
+`vergil-project-automation`, `logical-minds-foundry-automation`,
+`mnemosys-project-automation` and `mq-rest-admin-project-automation` (see
 [Identity Architecture](identity-architecture.md#the-org-automation-apps)).
 CI reaches an org's App through the `APP_CLIENT_ID` and
 `APP_PRIVATE_KEY` Actions secrets. The nightly `ops` workflow uses them

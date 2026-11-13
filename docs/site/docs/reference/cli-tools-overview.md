@@ -742,7 +742,8 @@ deferral — so no review skill hand-rolls them. Routes:
 - `one-off --repo OWNER/REPO [--epic REF]` — move the item into the target
   repo (transfer, or recreate with a link back when GitHub refuses the
   transfer) and link it under that repo's ad-hoc epic (default `adhoc`) or the
-  named epic.
+  named epic. A planning item's `in-progress` label is removed from the moved
+  issue once the move has settled; a recreated issue never carries it.
 - `planning` — reparent the item onto the planning epic of the same queue
   home.
 - `split --into REF [--into REF …] --reason TEXT` — comment links to the
@@ -753,7 +754,7 @@ Which routes an item allows depends on the container epic it is in:
 | Item is in | Allowed routes |
 |---|---|
 | intake | `drop`, `defer`, `one-off`, `planning`, `split` |
-| planning | `defer`, `drop` — both refused while any development epic of the item is open |
+| planning | `defer`, `drop`, `one-off` — each refused while any development epic of the item is open |
 | ad hoc | `defer` — refused while an open PR would close the item |
 | deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split` |
 | no parent | `planning` (the `epic-create` free-text path) |
@@ -764,7 +765,7 @@ Which routes an item allows depends on the container epic it is in:
 | Source | `vergil_tooling.bin.vrg_intake_route` (mechanics and route table: `lib/intake_route.py`) |
 | Args | `<issue-ref>` (`owner/repo#N`, or `#N` in the current repo), then a route: `drop`, `defer`, `intake`, `one-off`, `planning`, `split` |
 | Preconditions | The item is a child of a container epic that allows the route (`planning` also accepts an unparented issue); GitHub App credentials for the item's org |
-| Failure mode | A refused route — not allowed from the item's container, a development-epic task, a planning item with an `Epic:` marker, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it |
+| Failure mode | A refused route — not allowed from the item's container, a development-epic task, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it |
 | Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when` or a malformed `--date`) |
 | Status | Active |
 
@@ -824,15 +825,28 @@ first; each item's note is its latest deferral
 (`Deferred <day>: <reason> | Revisit when: <conditions>`), and an item with no
 deferral comment sorts first with an empty note. A bare `vrg-queue` lists all
 three queues in that order (intake, planning, deferred). Used by the
-collect step of the three review skills (`intake-review`, `planning-review`,
-`deferred-review`) and by `epic-create`'s no-argument summary.
+collect step of `epic-review` and by `epic-create`'s no-argument summary.
+
+`vrg-queue adhoc` lists the open tasks under every live ad-hoc epic
+(`Epic (ad hoc): <repo>`, labelled `epic` + `ad-hoc`) in the home, grouped by
+repo and oldest first within each. Each line is
+`<ref>  <age>  <state>  <kind>  <title>`, followed by an em dash and
+`blocked by <refs>` when a blocker is open. The kind is `validation` or
+`deployment` from the task's label, else `task`. The state is **blocked** while
+any `Blocked-by:` dependency is open, else **ready**; only the open blockers
+are listed. The epics come from one label search; an archive carrying the same
+labels (`Archive (ad hoc): …`, or the legacy `Epic (ad hoc): <repo> — <quarter>`
+form) is skipped. With `--repo`, a public repo narrows the list to its own
+ad-hoc epic in the org's `.github`, and a repo with none gives an empty list;
+a self-homed private repo selects its own home, as for the other queues. It is
+not a review queue, so a bare `vrg-queue` never shows it.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_queue` (views: `lib/queue_view.py`) |
-| Args | `{intake,planning,deferred}` (optional; default: all three); `--repo OWNER/NAME` (that repo's queue home; default: the current org's `.github` queues); `--json` (a list of items; with no queue named, an object keyed by queue, `null` for a missing one) |
+| Args | `{intake,planning,deferred,adhoc}` (optional; default: intake, planning and deferred); `--repo OWNER/NAME` (that repo's queue home, and for `adhoc` on a public repo its own ad-hoc epic; default: the current org's `.github` queues); `--json` (a list of items; with no queue named, an object keyed by queue, `null` for a missing one) |
 | Preconditions | GitHub App credentials for the target org. The planning view also reads the org's advisories when its `.github` is public, or when a planning item has an advisory line (then a `.github` that is not public is refused): the identity needs Repository security advisories access |
-| Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a `.github` that is not public; an advisory line naming another org; a malformed response) is named on stderr as `vrg-queue: <queue> queue for <name> in <home> could not be read: <reason>` and the run exits 1; with no queue named, a text run still lists the other queues and prints `<queue> queue for <name> in <home>: not shown (failed; see stderr)` in its place, and a `--json` run prints nothing on stdout. Nothing is created |
+| Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a `.github` that is not public; an advisory line naming another org; a malformed response) is named on stderr as `vrg-queue: <queue> queue for <name> in <home> could not be read: <reason>` and the run exits 1; with no queue named, a text run still lists the other queues and prints `<queue> queue for <name> in <home>: not shown (failed; see stderr)` in its place, and a `--json` run prints nothing on stdout. For `adhoc`, a failed read of the epics, a task's sub-issues, a task, its blockers or a blocker's state, an epic search that reaches its listing limit, or two live ad-hoc epics for one repo is reported the same way (`adhoc queue for <name> in <home> could not be read`) and exits 1; no ad-hoc epic is an empty list and exit 0. Nothing is created |
 | Exit codes | 0 success, 1 error, 2 bad arguments |
 | Status | Active |
 

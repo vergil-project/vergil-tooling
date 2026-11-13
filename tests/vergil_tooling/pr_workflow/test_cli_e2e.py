@@ -312,7 +312,7 @@ def test_report_ready_refuses_intake_item(
     assert rc == 1
     err = capsys.readouterr().err
     assert "--issue (#120) is in the intake queue" in err
-    assert "Route it with intake-review first." in err
+    assert "Route it with epic-review intake first." in err
     mock_queue.assert_called_once_with("#120", default_repo="org/repo")
     assert not (in_git_repo / ".vergil" / "pr-workflow.json").exists()
 
