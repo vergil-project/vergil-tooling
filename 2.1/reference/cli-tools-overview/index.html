@@ -1412,6 +1412,8 @@
       
         
       
+        
+      
     
     
     
@@ -1464,6 +1466,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.308/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.308
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -20578,7 +20608,8 @@ deferral — so no review skill hand-rolls them. Routes:</p>
 - <code>one-off --repo OWNER/REPO [--epic REF]</code> — move the item into the target
   repo (transfer, or recreate with a link back when GitHub refuses the
   transfer) and link it under that repo's ad-hoc epic (default <code>adhoc</code>) or the
-  named epic.
+  named epic. A planning item's <code>in-progress</code> label is removed from the moved
+  issue once the move has settled; a recreated issue never carries it.
 - <code>planning</code> — reparent the item onto the planning epic of the same queue
   home.
 - <code>split --into REF [--into REF …] --reason TEXT</code> — comment links to the
@@ -20598,7 +20629,7 @@ deferral — so no review skill hand-rolls them. Routes:</p>
 </tr>
 <tr>
 <td>planning</td>
-<td><code>defer</code>, <code>drop</code> — both refused while any development epic of the item is open</td>
+<td><code>defer</code>, <code>drop</code>, <code>one-off</code> — each refused while any development epic of the item is open</td>
 </tr>
 <tr>
 <td>ad hoc</td>
@@ -20640,7 +20671,7 @@ deferral — so no review skill hand-rolls them. Routes:</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A refused route — not allowed from the item's container, a development-epic task, a planning item with an <code>Epic:</code> marker, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it</td>
+<td>A refused route — not allowed from the item's container, a development-epic task, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -20726,8 +20757,20 @@ first; each item's note is its latest deferral
 (<code>Deferred &lt;day&gt;: &lt;reason&gt; | Revisit when: &lt;conditions&gt;</code>), and an item with no
 deferral comment sorts first with an empty note. A bare <code>vrg-queue</code> lists all
 three queues in that order (intake, planning, deferred). Used by the
-collect step of the three review skills (<code>intake-review</code>, <code>planning-review</code>,
-<code>deferred-review</code>) and by <code>epic-create</code>'s no-argument summary.</p>
+collect step of <code>epic-review</code> and by <code>epic-create</code>'s no-argument summary.</p>
+<p><code>vrg-queue adhoc</code> lists the open tasks under every live ad-hoc epic
+(<code>Epic (ad hoc): &lt;repo&gt;</code>, labelled <code>epic</code> + <code>ad-hoc</code>) in the home, grouped by
+repo and oldest first within each. Each line is
+<code>&lt;ref&gt;  &lt;age&gt;  &lt;state&gt;  &lt;kind&gt;  &lt;title&gt;</code>, followed by an em dash and
+<code>blocked by &lt;refs&gt;</code> when a blocker is open. The kind is <code>validation</code> or
+<code>deployment</code> from the task's label, else <code>task</code>. The state is <strong>blocked</strong> while
+any <code>Blocked-by:</code> dependency is open, else <strong>ready</strong>; only the open blockers
+are listed. The epics come from one label search; an archive carrying the same
+labels (<code>Archive (ad hoc): …</code>, or the legacy <code>Epic (ad hoc): &lt;repo&gt; — &lt;quarter&gt;</code>
+form) is skipped. With <code>--repo</code>, a public repo narrows the list to its own
+ad-hoc epic in the org's <code>.github</code>, and a repo with none gives an empty list;
+a self-homed private repo selects its own home, as for the other queues. It is
+not a review queue, so a bare <code>vrg-queue</code> never shows it.</p>
 <table>
 <thead>
 <tr>
@@ -20742,7 +20785,7 @@ collect step of the three review skills (<code>intake-review</code>, <code>plann
 </tr>
 <tr>
 <td>Args</td>
-<td><code>{intake,planning,deferred}</code> (optional; default: all three); <code>--repo OWNER/NAME</code> (that repo's queue home; default: the current org's <code>.github</code> queues); <code>--json</code> (a list of items; with no queue named, an object keyed by queue, <code>null</code> for a missing one)</td>
+<td><code>{intake,planning,deferred,adhoc}</code> (optional; default: intake, planning and deferred); <code>--repo OWNER/NAME</code> (that repo's queue home, and for <code>adhoc</code> on a public repo its own ad-hoc epic; default: the current org's <code>.github</code> queues); <code>--json</code> (a list of items; with no queue named, an object keyed by queue, <code>null</code> for a missing one)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -20750,7 +20793,7 @@ collect step of the three review skills (<code>intake-review</code>, <code>plann
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: no queue yet</code> and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a <code>.github</code> that is not public; an advisory line naming another org; a malformed response) is named on stderr as <code>vrg-queue: &lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt; could not be read: &lt;reason&gt;</code> and the run exits 1; with no queue named, a text run still lists the other queues and prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: not shown (failed; see stderr)</code> in its place, and a <code>--json</code> run prints nothing on stdout. Nothing is created</td>
+<td>A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: no queue yet</code> and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a <code>.github</code> that is not public; an advisory line naming another org; a malformed response) is named on stderr as <code>vrg-queue: &lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt; could not be read: &lt;reason&gt;</code> and the run exits 1; with no queue named, a text run still lists the other queues and prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: not shown (failed; see stderr)</code> in its place, and a <code>--json</code> run prints nothing on stdout. For <code>adhoc</code>, a failed read of the epics, a task's sub-issues, a task, its blockers or a blocker's state, an epic search that reaches its listing limit, or two live ad-hoc epics for one repo is reported the same way (<code>adhoc queue for &lt;name&gt; in &lt;home&gt; could not be read</code>) and exits 1; no ad-hoc epic is an empty list and exit 0. Nothing is created</td>
 </tr>
 <tr>
 <td>Exit codes</td>

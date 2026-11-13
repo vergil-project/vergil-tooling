@@ -1412,6 +1412,8 @@
       
         
       
+        
+      
     
     
     
@@ -1464,6 +1466,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.308/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.308
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17836,7 +17866,7 @@ two independent halves:</p>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings <a href="#settings-the-identity-cannot-read">not checked</a>)</td>
+<td><code>audit</code>: 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings <a href="#settings-the-identity-cannot-read">not checked</a>). <code>diff</code>: 0 whether or not it finds drift, 2 could not complete (including settings not checked). <code>apply</code>: 0 converged, 1 left non-compliant (a write failed, an undeclared ruleset parameter, or managed-file drift), 2 could not complete or refused</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -17883,9 +17913,28 @@ audit does not guess the value. It reports the setting as not checked:</p>
 <li><strong>It is not a pass.</strong> <code>audit</code> exits 2 with a one-line error naming
   the permission, unless it also found drift in the settings it did
   read, in which case it exits 1. It never exits 0 while any setting
-  is not checked.</li>
+  is not checked. <code>diff</code>, which otherwise always exits 0, exits 2 with
+  the same error.</li>
 <li><strong><code>apply</code> refuses.</strong> It exits 2 and writes nothing, since it would
   converge settings it could not read.</li>
+<li><strong>The check for an <code>apply</code> is the <code>apply</code> exiting 0.</strong> <code>apply</code> is
+  run by the human. Under the agent identity, <code>diff</code> exits 2 on every
+  repo, since the <code>administration=read</code> settings are not checked, so a
+  <code>diff</code> an agent runs after the human's <code>apply</code> is informational only
+  and its exit code is not the verdict on the apply.</li>
+<li>A repo setting that <code>GET /repos/{owner}/{repo}</code> leaves out of its
+  response, or returns as <code>null</code>, is not checked either, as
+  <code>repo_settings.&lt;field&gt;</code>, never read as <code>false</code> or <code>''</code> (#4322).
+  GitHub leaves the merge settings out for a token without Contents
+  read and write: its
+  <a href="https://docs.github.com/en/rest/repos/repos#get-a-repository">Get a repository</a>
+  docs say viewing merge-related settings needs <code>contents:read</code> and
+  <code>contents:write</code> (vergil-project/vergil-actions#1164). So the line
+  for a missing merge setting says
+  <code>needs contents=read and contents=write</code> (#4326). The docs state no
+  requirement for any other field, so the line for one of those says
+  <code>needs a token GitHub returns the field to</code>. A repo setting of the
+  wrong type is an error.</li>
 <li>A setting the desired state leaves unmanaged (secret scanning on a
   private repo without GHAS) is skipped as before, not listed as not
   checked.</li>

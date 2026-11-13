@@ -1414,6 +1414,8 @@
       
         
       
+        
+      
     
     
     
@@ -1466,6 +1468,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.308/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.308
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18845,28 +18875,28 @@ states.</p>
 <tr>
 <td><strong>Intake</strong></td>
 <td>captured, unreviewed items and every orphan the sweep finds</td>
-<td><code>intake-review</code></td>
+<td><code>epic-review intake</code></td>
 <td>drop, defer, one-off, split, or to planning</td>
 </tr>
 <tr>
 <td><strong>Planning</strong></td>
 <td>items that need a full epic</td>
-<td><code>planning-review</code> picks what to plan next; <code>epic-create</code> expands one item</td>
-<td>planned (closed as "planned as #N"), defer, or drop</td>
+<td><code>epic-review planning</code> prunes it; the human picks an item and expands it with <code>epic-create</code></td>
+<td>planned (closed as "planned as #N"), defer, drop, or one-off</td>
 </tr>
 <tr>
 <td><strong>Deferred</strong></td>
 <td>evaluated items parked until their <code>Revisit when:</code> conditions are met</td>
-<td><code>deferred-review</code></td>
+<td><code>epic-review deferred</code></td>
 <td>revive (to intake, to planning, or one-off), drop, or split; a refresh re-defers in place</td>
 </tr>
 </tbody>
 </table>
 <p>Except for a planned item, which <code>epic-create</code> closes, every move out of a
 queue is applied with <a href="#routing-vrg-intake-route"><code>vrg-intake-route</code></a>; the
-review skills
-(<code>vergil-claude-plugin</code>) present items in small batches with a recommended
-route and take one human confirmation per batch.</p>
+<code>epic-review</code> skill
+(<code>vergil-claude-plugin</code>) presents items in small batches with a recommended
+route and takes one human confirmation per batch.</p>
 <h3 id="capture-vrg-intake-create">Capture: <code>vrg-intake-create</code><a class="headerlink" href="#capture-vrg-intake-create" title="Permanent link">&para;</a></h3>
 <p>Capture has near-zero friction: a one-line "don't forget X" is a valid intake
 item, with no category to choose. Create one with the sanctioned tool (the
@@ -18887,7 +18917,7 @@ path.</p>
 selects that repo's queue home (a self-homed private repo's own queues), and
 <code>--json</code> emits machine-readable output. It is read-only.</p>
 <h3 id="routing-vrg-intake-route">Routing: <code>vrg-intake-route</code><a class="headerlink" href="#routing-vrg-intake-route" title="Permanent link">&para;</a></h3>
-<p>Intake is reviewed oldest first, in small batches (the <code>intake-review</code> skill).
+<p>Intake is reviewed oldest first, in small batches (<code>epic-review intake</code>).
 For each item the reviewer checks its current state and recommends a route; the
 human confirms the batch; the route is applied with <code>vrg-intake-route</code>, which
 owns the mechanics so nothing is hand-rolled. The same tool applies the
@@ -18974,7 +19004,7 @@ ships"), or both — written so a later review can actually check it. <code>--da
 YYYY-MM-DD</code> stamps an original deferral date instead of today. Running <code>defer</code>
 on an item already in the deferred queue is a <strong>refresh</strong>: a new dated record,
 no move, no <code>Deferred from:</code> line.</p>
-<p><strong>Bringing it back.</strong> The <code>deferred-review</code> skill lists the queue with
+<p><strong>Bringing it back.</strong> <code>epic-review deferred</code> lists the queue with
 <code>vrg-queue deferred</code> (least recently deferred first), checks each item's
 conditions against their real sources, and recommends one outcome:</p>
 <table>
@@ -19052,16 +19082,19 @@ until <code>epic-create</code> retargets each such advisory to the task or tasks
 fix it; closing it earlier would close those advisories with the fix unwritten
 (see
 <a href="../../guides/security-records/#security-items-in-planning">Security items in planning</a>).</p>
-<p>Which planning item to expand next is decided in the <code>planning-review</code> skill:
-the human ranks the queue by priority and importance and picks only what will be
-implemented soon, since a plan left sitting goes stale. Each item is picked
-(handed to <code>epic-create</code>), deferred, dropped, or left in the queue.</p>
+<p><code>epic-review planning</code> only prunes the planning queue; it never picks what to
+plan next. It checks that each item is still valid and still needs a full epic,
+and leaves it in the queue, defers it, drops it, or routes it as a one-off when
+it is small enough for a repo's ad-hoc epic. Items that <code>epic-create</code> is
+expanding or has finished are only shown, never resumed. Which item to expand
+next is the human's choice, made by running <code>epic-create</code> on it; pick only what
+will be implemented soon, since a plan left sitting goes stale.</p>
 <h3 id="queue-items-are-not-buildable">Queue items are not buildable<a class="headerlink" href="#queue-items-are-not-buildable" title="Permanent link">&para;</a></h3>
 <p>An item parented under an intake, planning or deferred epic is not
 PR-workable: <code>vrg-pr-workflow report-ready</code> and <code>vrg-submit-pr</code> (and, upstream,
 the <code>issue-implement</code> skill) refuse it, naming the step to take first — route
-it with intake review, expand it with <code>epic-create</code>, or revive it with
-deferred review. Routing it out of the queue
+it with <code>epic-review intake</code>, expand it with <code>epic-create</code>, or revive it with
+<code>epic-review deferred</code>. Routing it out of the queue
 is the only way to lift the refusal. The check reads the issue's native parent,
 not a label.</p>
 <h3 id="epics-and-archives-are-not-tasks">Epics and archives are not tasks<a class="headerlink" href="#epics-and-archives-are-not-tasks" title="Permanent link">&para;</a></h3>
@@ -19285,8 +19318,14 @@ never performed by the agent — the same policy that keeps PR submission and me
 in human hands. A deploy step that needs a <strong>human identity</strong> (for example
 <code>vrg-github-repo-config apply</code>, which needs <code>administration=read</code>) goes under the
 scaffold's <strong>Human-run steps</strong> section, not the agent-safe deploy steps: the agent
-checks its preconditions, gives the human the paste-ready command, then verifies
-the result with a check it can run (for repo config, <code>vrg-github-repo-config diff</code>).</p>
+checks its preconditions, gives the human the paste-ready command, then records
+the step's check. For repo config, the check is the human's
+<code>vrg-github-repo-config apply</code> exiting 0: <code>apply</code> refuses, exiting 2 and writing
+nothing, when it cannot read every setting first. A <code>vrg-github-repo-config diff</code>
+the agent runs afterwards is informational only. Under the agent identity <code>diff</code>
+exits 2, because the admin-scoped settings are not checked; that is expected and
+is not a failure of the apply. Never treat <code>diff</code>'s exit code as the verdict on
+an apply.</p>
 
 
 
