@@ -1287,7 +1287,7 @@ PR     BRANCH                      TYPE     MERGED  TITLE
 #4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
 #4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
 #4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
-3 changes pending release: 1 dependency update, 1 release back-merge, 1 other PR.
+3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 1 other PR.
 ```
 
 - **Release line.** It follows the section heading on the same line,
@@ -1301,9 +1301,13 @@ PR     BRANCH                      TYPE     MERGED  TITLE
   are ignored.
 - **Rows** come in merge order, oldest first. TYPE is the PR title's
   conventional-commit type (`-` when it has none), except that a
+  release back-merge (a `release/post-*` head branch) shows `release`,
+  an automation PR (an `automation/*` head branch, such as
+  `automation/repo-config-sync/<run-id>`) shows `automation`, and a
   dependency update (a `deps/update-*` head branch or a
-  `dependency-update` label) shows `deps` and a release back-merge (a
-  `release/post-*` head branch) shows `release`. MERGED is the PR's
+  `dependency-update` label) shows `deps`. The head branch decides
+  before the label, so an automation PR is never counted as a
+  dependency update or a development PR. MERGED is the PR's
   merge time. A TITLE over 72 characters is cut, ending in `…`.
 - **A commit with no PR** shows `PROBLEM` in the PR column and `-` for
   BRANCH and TYPE, with its commit date and subject, and a
@@ -1311,7 +1315,7 @@ PR     BRANCH                      TYPE     MERGED  TITLE
 - **Nothing pending** prints `Nothing pending release: develop and main
   are level.` in place of the table.
 - **The summary line** counts the changes: dependency updates, release
-  back-merges and other PRs, every bucket listed, plus
+  back-merges, automation PRs and other PRs, every bucket listed, plus
   `<n> PROBLEM: commits with no PR` only when there are some.
 - **A lookup that fails or is incomplete** (an API error, a missing
   branch, a truncated answer) is an error, never a partial list: the
