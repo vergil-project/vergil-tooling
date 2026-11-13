@@ -16091,6 +16091,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#toolchain-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Toolchain Selection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#ci-gates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17475,6 +17486,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#toolchain-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Toolchain Selection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#ci-gates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17527,15 +17549,30 @@ maintainability, and long-term survivability across repositories.</p>
 </ul>
 <h2 id="tooling-expectations">Tooling Expectations<a class="headerlink" href="#tooling-expectations" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Formatting: rustfmt (canonical, zero configuration via <code>rust-toolchain.toml</code>).</li>
+<li>Formatting: rustfmt (canonical; any formatting configuration goes in
+  <code>rustfmt.toml</code>).</li>
 <li>Linting: clippy (official Rust linter, 800+ lint rules).</li>
 <li>Type checking: <code>cargo check</code> (inherent in the Rust compiler).</li>
 <li>Dependency audit and license compliance: cargo-deny (advisories, licenses,
   bans, and sources in a single tool).</li>
 <li>Coverage: cargo-llvm-cov (LLVM instrumentation, cross-platform).</li>
-<li>Toolchain pinning: <code>rust-toolchain.toml</code> (auto-installs the correct toolchain
-  via rustup).</li>
 <li>If a repository uses different tools, document the reason and equivalents.</li>
+</ul>
+<h2 id="toolchain-selection">Toolchain Selection<a class="headerlink" href="#toolchain-selection" title="Permanent link">&para;</a></h2>
+<p>Vergil selects the Rust toolchain, never the repository. Each Vergil Rust
+image pins its own installed release, so every CI leg and dev container runs
+the <code>x.y</code> series that Vergil resolved from the version window (see the
+<a href="../../runtime-version-support-policy/">Runtime Version Support Policy</a>).</p>
+<ul>
+<li>A repository declares only an <code>x.y</code> floor, through <code>rust-version</code> in its
+  root <code>Cargo.toml</code> (<code>[package]</code>, or <code>[workspace.package]</code> for a workspace).
+  <code>vrg-validate</code> warns when the floor falls below the window's oldest
+  series.</li>
+<li>A <code>rust-toolchain.toml</code> or legacy <code>rust-toolchain</code> file is an error in
+  <code>vrg-validate</code>. Delete it.</li>
+<li>A component or target the image lacks is added to the image through a
+  vergil-containers change. A repository never selects it through a toolchain
+  file, and is never exempted from the check.</li>
 </ul>
 <h2 id="ci-gates">CI Gates<a class="headerlink" href="#ci-gates" title="Permanent link">&para;</a></h2>
 <p>Every CI check is a hard gate. See
