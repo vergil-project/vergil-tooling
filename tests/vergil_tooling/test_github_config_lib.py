@@ -28,10 +28,10 @@ from vergil_tooling.lib.config import (
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
     _PRODUCIBLE_GATE_CATALOG,
+    SETTING_RETURNED,
     DesiredRuleset,
     EvidenceGate,
     FetchResult,
-    SETTING_RETURNED,
     NotChecked,
     UndeclaredParam,
     _apply_actions_permissions,

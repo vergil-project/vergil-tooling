@@ -1172,6 +1172,7 @@ def _classic_protection_drift(
 # for (#4322).
 SETTING_RETURNED = "a token GitHub returns the field to"
 
+
 class _RepoSettingsReader:
     """Strict reads of the compared repo settings from ``GET repos/{repo}`` (#4322).
 
@@ -1272,7 +1273,7 @@ def fetch_actual_state(repo: str) -> FetchResult:
     if not isinstance(repo_data, dict):
         msg = f"repos/{repo} returned {type(repo_data).__name__}, not a repository object"
         raise RuntimeError(msg)
-    repo_settings = _read_repo_settings(cast("dict[str, object]", repo_data), not_checked)
+    repo_settings = _read_repo_settings(repo_data, not_checked)
 
     ss_raw = sa.get("secret_scanning")
     ss = cast("dict[str, object]", ss_raw) if isinstance(ss_raw, dict) else {}

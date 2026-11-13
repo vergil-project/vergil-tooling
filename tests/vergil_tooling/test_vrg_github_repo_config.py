@@ -37,10 +37,10 @@ from vergil_tooling.lib.config import (
 )
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
+    SETTING_RETURNED,
     ClassicProtectionReport,
     ConfigDiff,
     DiffItem,
-    SETTING_RETURNED,
     FetchResult,
     NotChecked,
     UndeclaredParam,
