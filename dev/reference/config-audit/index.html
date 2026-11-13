@@ -17836,7 +17836,7 @@ two independent halves:</p>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings <a href="#settings-the-identity-cannot-read">not checked</a>)</td>
+<td><code>audit</code>: 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings <a href="#settings-the-identity-cannot-read">not checked</a>). <code>diff</code>: 0 whether or not it finds drift, 2 could not complete (including settings not checked). <code>apply</code>: 0 converged, 1 left non-compliant (a write failed, an undeclared ruleset parameter, or managed-file drift), 2 could not complete or refused</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -17887,6 +17887,11 @@ audit does not guess the value. It reports the setting as not checked:</p>
   the same error.</li>
 <li><strong><code>apply</code> refuses.</strong> It exits 2 and writes nothing, since it would
   converge settings it could not read.</li>
+<li><strong>The check for an <code>apply</code> is the <code>apply</code> exiting 0.</strong> <code>apply</code> is
+  run by the human. Under the agent identity, <code>diff</code> exits 2 on every
+  repo, since the <code>administration=read</code> settings are not checked, so a
+  <code>diff</code> an agent runs after the human's <code>apply</code> is informational only
+  and its exit code is not the verdict on the apply.</li>
 <li>A repo setting that <code>GET /repos/{owner}/{repo}</code> leaves out of its
   response, or returns as <code>null</code>, is not checked either, as
   <code>repo_settings.&lt;field&gt;</code>, never read as <code>false</code> or <code>''</code> (#4322).

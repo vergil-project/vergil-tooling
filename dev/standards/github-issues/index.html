@@ -19285,8 +19285,14 @@ never performed by the agent — the same policy that keeps PR submission and me
 in human hands. A deploy step that needs a <strong>human identity</strong> (for example
 <code>vrg-github-repo-config apply</code>, which needs <code>administration=read</code>) goes under the
 scaffold's <strong>Human-run steps</strong> section, not the agent-safe deploy steps: the agent
-checks its preconditions, gives the human the paste-ready command, then verifies
-the result with a check it can run (for repo config, <code>vrg-github-repo-config diff</code>).</p>
+checks its preconditions, gives the human the paste-ready command, then records
+the step's check. For repo config, the check is the human's
+<code>vrg-github-repo-config apply</code> exiting 0: <code>apply</code> refuses, exiting 2 and writing
+nothing, when it cannot read every setting first. A <code>vrg-github-repo-config diff</code>
+the agent runs afterwards is informational only. Under the agent identity <code>diff</code>
+exits 2, because the admin-scoped settings are not checked; that is expected and
+is not a failure of the apply. Never treat <code>diff</code>'s exit code as the verdict on
+an apply.</p>
 
 
 
