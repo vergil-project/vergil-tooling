@@ -1410,8 +1410,9 @@ defines are listed in
 ### vrg-github-repo-config
 
 Audit a managed repo against the canonical Vergil configuration, and
-in `apply` mode reconcile the GitHub half. Combines local filesystem
-checks (`vergil.toml`, `CLAUDE.md`, `.claude/settings.json`, hook-guard
+in `apply` mode reconcile the GitHub half. Combines managed-file
+checks, run in a fresh shallow clone of the repo's `develop` (`vergil.toml`,
+`CLAUDE.md`, `.claude/settings.json`, hook-guard
 shim, workflow pins, `.gitignore` managed fence, canonical
 `dependabot.yml`, `ops.yml` wiring)
 with GitHub-API checks (repo settings, rulesets, required-check set).
@@ -1423,7 +1424,7 @@ Runs nightly from each repo's `ops.yml` via the reusable
 |---|---|
 | Source | `vergil_tooling.bin.vrg_github_repo_config` |
 | Args | `audit` \| `diff` \| `apply`; `--repo OWNER/REPO`, `--config PATH` |
-| Preconditions | Local checks require the repo's own checkout as CWD; GitHub checks require `gh` credentials |
+| Preconditions | Local checks clone the repo's `develop` over HTTPS (git's credential helper must reach it); GitHub checks require `gh` credentials |
 | Failure mode | `DiffItem` list on drift; clean diagnostic on unreachable GitHub state |
 | Exit codes | 0 compliant, 1 non-compliant (drift), 2 audit could not complete |
 | Status | Active |

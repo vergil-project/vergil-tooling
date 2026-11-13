@@ -1,7 +1,8 @@
 """Audit, diff, and apply repository configuration for managed repos.
 
-Combines local filesystem checks (vergil.toml, CLAUDE.md,
-.claude/settings.json, .claude/hooks/) with GitHub API configuration
+Combines the managed-file checks (vergil.toml, CLAUDE.md,
+.claude/settings.json, .claude/hooks/, ...), run against a fresh shallow
+clone of the repo's ``develop`` branch, with GitHub API configuration
 auditing.
 """
 
@@ -15,6 +16,7 @@ from pathlib import Path
 from vergil_tooling.lib import github
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import VergilConfig, _parse_raw_config
+from vergil_tooling.lib.develop_clone import DevelopCloneError, clone_develop
 from vergil_tooling.lib.github_config import (
     ClassicProtectionReport,
     ConfigDiff,
@@ -40,21 +42,20 @@ from vergil_tooling.lib.versions import VersionsError
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
-    local_compliant = True
-    if args.repo and not _cwd_matches_repo(args.repo):
-        print(
-            f"\n  WARNING: --repo {args.repo} does not match the current directory's "
-            f"git remote.\n"
-            f"  Local checks skipped — cd into the repo's checkout to audit local files.\n",
-            file=sys.stderr,
-        )
-        print("  local: skipped (not in local checkout)")
-    else:
-        local_diff = audit_local_config(Path.cwd())
-        _print_local_diff(local_diff)
-        local_compliant = local_diff.is_compliant()
-
     repo = _resolve_repo(args)
+    # The managed-file checks read what is committed on *repo*'s develop, in a
+    # fresh shallow clone, never the caller's checkout: a dirty or unrelated
+    # cwd cannot change the result, and --repo audits from anywhere.
+    try:
+        with clone_develop(repo) as clone:
+            local_diff = audit_local_config(clone)
+    except DevelopCloneError as exc:
+        # Without the files the audit could not complete: exit 2, never 1.
+        emit_error(str(exc))
+        return 2
+    _print_local_diff(local_diff)
+    local_compliant = local_diff.is_compliant()
+
     # Every GitHub call below targets *repo*, so mint the App token for its
     # owner rather than the cwd org (#3220). Under target_org a missing
     # installation for that owner raises NoInstallationError instead of
