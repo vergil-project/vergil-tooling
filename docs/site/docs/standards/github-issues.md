@@ -905,5 +905,11 @@ never performed by the agent — the same policy that keeps PR submission and me
 in human hands. A deploy step that needs a **human identity** (for example
 `vrg-github-repo-config apply`, which needs `administration=read`) goes under the
 scaffold's **Human-run steps** section, not the agent-safe deploy steps: the agent
-checks its preconditions, gives the human the paste-ready command, then verifies
-the result with a check it can run (for repo config, `vrg-github-repo-config diff`).
+checks its preconditions, gives the human the paste-ready command, then records
+the step's check. For repo config, the check is the human's
+`vrg-github-repo-config apply` exiting 0: `apply` refuses, exiting 2 and writing
+nothing, when it cannot read every setting first. A `vrg-github-repo-config diff`
+the agent runs afterwards is informational only. Under the agent identity `diff`
+exits 2, because the admin-scoped settings are not checked; that is expected and
+is not a failure of the apply. Never treat `diff`'s exit code as the verdict on
+an apply.

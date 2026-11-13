@@ -256,7 +256,13 @@ def test_kind_deployment_applies_label_and_scaffold() -> None:
     assert "## Deploy steps" in body  # deployment-specific scaffold section
     # Steps the agent identity cannot run are marked human-run up front (#4176).
     assert "## Human-run steps" in body
-    assert "vrg-github-repo-config diff" in body
+    # The check for an apply is the human's apply exiting 0; an agent's diff is
+    # informational only and its exit 2 is expected (#4327).
+    prose = " ".join(body.split())
+    assert "the check is the human's `vrg-github-repo-config apply` exiting 0" in prose
+    assert "`vrg-github-repo-config diff` the agent runs afterwards is informational only" in prose
+    assert "Never treat `diff`'s exit code as the verdict on an apply." in prose
+    assert "verify with:" not in prose
     assert "release" in body.lower()  # release-as-precondition boundary
     assert "## Results" in body
     assert kwargs["body_file"] is None
