@@ -1,0 +1,38 @@
+# Fleet cargo-deny policy for Rust repos (epic vergil-project/.github#1091).
+#
+# The rust AUDIT command runs `cargo deny --config <this file> check`, so this
+# file replaces any deny.toml a repo carries. Written for cargo-deny's version 2
+# configuration schema (cargo-deny 0.20).
+
+[licenses]
+# Must equal _RUST_LICENSES_ALLOWLIST in vergil_tooling/lib/languages.py; a
+# test pins the two together. A license not listed here is rejected.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.93
+# The fleet list is wider than any one repo's dependency graph, so an allowed
+# license a repo does not use is not worth a warning on every run.
+unused-allowed-license = "allow"
+
+[advisories]
+# Version 2 defaults otherwise: every vulnerability advisory is an error, and an
+# unsound advisory is one when it applies to a direct dependency. Unmaintained
+# advisories, too, fail only for the repo's direct dependencies.
+unmaintained = "workspace"
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
