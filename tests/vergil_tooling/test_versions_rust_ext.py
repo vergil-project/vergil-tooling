@@ -151,7 +151,7 @@ def test_malformed_rust_version_is_fatal(tmp_path: Path, value: str, shown: str)
 def test_malformed_workspace_rust_version_is_fatal(tmp_path: Path) -> None:
     _cargo(
         tmp_path,
-        '[workspace.package]\nrust-version = 185\n\n'
+        "[workspace.package]\nrust-version = 185\n\n"
         '[package]\nname = "x"\nrust-version.workspace = true\n',
     )
     with pytest.raises(VersionsError, match=r"\[workspace\.package\]\.rust-version 185 is not"):
@@ -160,9 +160,7 @@ def test_malformed_workspace_rust_version_is_fatal(tmp_path: Path) -> None:
 
 def test_inherited_floor_without_workspace_value_is_fatal(tmp_path: Path) -> None:
     _cargo(tmp_path, '[package]\nname = "x"\nrust-version.workspace = true\n')
-    with pytest.raises(
-        VersionsError, match=r"\[workspace\.package\]\.rust-version is not set"
-    ):
+    with pytest.raises(VersionsError, match=r"\[workspace\.package\]\.rust-version is not set"):
         rust_ext.check_floor(tmp_path, "1.99", "1.100")
 
 
@@ -257,9 +255,7 @@ def test_floor_dispatches_with_numeric_window_order(tmp_path: Path) -> None:
 
 def test_toolchain_selection_dispatches(tmp_path: Path) -> None:
     (tmp_path / "rust-toolchain.toml").write_text('[toolchain]\nchannel = "1.99"\n')
-    assert check_toolchain_selection(tmp_path, "rust") == [
-        _toolchain_error("rust-toolchain.toml")
-    ]
+    assert check_toolchain_selection(tmp_path, "rust") == [_toolchain_error("rust-toolchain.toml")]
 
 
 def test_no_container_env_hook() -> None:
