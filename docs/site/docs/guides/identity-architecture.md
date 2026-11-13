@@ -193,6 +193,7 @@ repositories** in that org:
 | `vergil-project` | `vergil-project-automation` |
 | `logical-minds-foundry` | `logical-minds-foundry-automation` |
 | `mnemosys-project` | `mnemosys-project-automation` |
+| `mq-rest-admin-project` | `mq-rest-admin-project-automation` |
 
 These Apps are an automation identity, not a per-contributor one, and
 they are separate from the agent Apps above. Workflows reach an org's

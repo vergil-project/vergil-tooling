@@ -75,7 +75,12 @@ def test_templates_match_the_global_constraints() -> None:
         "(epic vergil-project/.github#558)."
     )
     assert AGENT_LINE == "Agents: stop and ask the human."
-    assert IN_SCOPE_ORGS == ("vergil-project", "logical-minds-foundry", "mnemosys-project")
+    assert IN_SCOPE_ORGS == (
+        "vergil-project",
+        "logical-minds-foundry",
+        "mnemosys-project",
+        "mq-rest-admin-project",
+    )
 
 
 # --- find_violations ---------------------------------------------------------
@@ -186,7 +191,7 @@ def test_in_scope_org(tmp_path: Path, org: str) -> None:
 
 
 def test_out_of_scope_org_is_silent(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    repo = _init_repo(tmp_path / "repo", origin="https://github.com/mq-rest-admin-project/x.git")
+    repo = _init_repo(tmp_path / "repo", origin="https://github.com/diogenes-project/x.git")
     _write_local(repo, '{"a": 1}')
     assert in_scope(repo) is False
     assert enforce(repo) == 0
