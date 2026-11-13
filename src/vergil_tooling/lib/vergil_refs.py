@@ -33,6 +33,9 @@ _SOURCE_RE = re.compile(r'(?m)^(vergil\s*=\s*)"[^"]*"')
 
 _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)$")
 
+#: The version part of a pin, exactly as ``_REF_RE`` group 2 matches it.
+_PIN_VERSION_RE = re.compile(r"v\d+\.\d+")
+
 
 def format_version(raw: str) -> str:
     """Normalize a user-supplied version (``2.2`` or ``v2.2``) to ``vX.Y``."""
@@ -59,6 +62,27 @@ def read_source_version(base: Path) -> str:
             message="vergil.toml [dependencies].vergil not found.",
         ) from exc
     return value
+
+
+def is_pin_version(value: object) -> bool:
+    """Whether ``value`` is a version a workflow pin can carry: a ``vX.Y`` string.
+
+    A pin rewritten to anything else would no longer be recognized as a pin,
+    so the drift would vanish from the audit while the workflow broke.
+    """
+    return isinstance(value, str) and _PIN_VERSION_RE.fullmatch(value) is not None
+
+
+def rewrite_workflow_refs(text: str, version: str) -> str:
+    """Return ``text`` with every vergil-* reusable-workflow pin set to ``version``.
+
+    Only the ``vX.Y`` after ``@`` changes; every other byte, line ends
+    included, is kept. ``version`` must pass :func:`is_pin_version`.
+    """
+    if not is_pin_version(version):
+        msg = f"not a vX.Y pin version: {version!r}"
+        raise ValueError(msg)
+    return _REF_RE.sub(lambda m: m.group(1) + version, text)
 
 
 def iter_workflow_refs(base: Path) -> Iterator[tuple[Path, str]]:

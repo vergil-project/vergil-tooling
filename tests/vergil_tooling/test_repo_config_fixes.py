@@ -1,4 +1,4 @@
-"""Tests for the managed-file fixers (epic vergil-project/.github#1064, Task 3a)."""
+"""Tests for the managed-file fixers (epic vergil-project/.github#1064, Tasks 3a and 3b)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import repo_config, repo_config_fixes
+from vergil_tooling.lib import dependabot, gitignore, repo_config, repo_config_fixes
 from vergil_tooling.lib.repo_config import (
     CLAUDE_MD_MARKER_BEGIN,
     CLAUDE_MD_MARKER_END,
@@ -21,7 +21,10 @@ from vergil_tooling.lib.repo_config_fixes import (
     CannotFix,
     fix_claude_md,
     fix_claude_settings,
+    fix_dependabot_yml,
+    fix_gitignore,
     fix_hook_guard_shim,
+    fix_workflow_refs,
 )
 
 if TYPE_CHECKING:
@@ -32,6 +35,30 @@ if TYPE_CHECKING:
 SHIM = Path(".claude/hooks/guard.sh")
 SETTINGS = Path(".claude/settings.json")
 CLAUDE_MD = Path("CLAUDE.md")
+GITIGNORE = Path(".gitignore")
+DEPENDABOT = dependabot.DEPENDABOT_PATH
+VERGIL_TOML = Path("vergil.toml")
+CI_YML = Path(".github/workflows/ci.yml")
+OPS_YML = Path(".github/workflows/ops.yml")
+
+_VERGIL_TOML = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "{lang}"
+
+[project.co-authors]
+
+[ci]
+versions = ["3.12"]
+
+[dependencies]
+vergil = "{version}"
+"""
+
+_ACTIONS = "vergil-project/vergil-actions/.github/workflows"
 
 HEAD = "# CLAUDE.md\r\n\r\nRepo-local intro.  \n\n"
 TAIL = "\n## Project overview\n\nRepo-local tail, no final newline"
@@ -63,11 +90,33 @@ def _mode(path: Path) -> int:
     return path.stat().st_mode & 0o777
 
 
+def _write_toml(root: Path, lang: str = "python", version: str = "v2.1") -> None:
+    _write(root, VERGIL_TOML, _VERGIL_TOML.format(lang=lang, version=version))
+
+
+def _workflow(*pins: str, eol: str = "\n") -> str:
+    """A workflow calling one vergil-actions workflow per pin, then a third-party action."""
+    lines = ["jobs:"]
+    for i, pin in enumerate(pins):
+        lines += [f"  job{i}:", f"    uses: {_ACTIONS}/ci-{i}.yml@{pin}"]
+    lines += [
+        "  other:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: actions/checkout@v4",
+    ]
+    return eol.join(lines) + eol
+
+
 def _write_in_sync(root: Path) -> None:
-    """Write every file a Task 3a fixer manages, each already correct."""
+    """Write every file a fixer manages, each already correct."""
     _write(root, SHIM, _managed_shim(), 0o755)
     _write(root, CLAUDE_MD, _doc(load_claude_md_template()))
     _write(root, SETTINGS, json.dumps(_settings_template()))
+    _write_toml(root)
+    _write(root, GITIGNORE, gitignore.render_block("python") + "\nlocal-scratch/\n")
+    _write(root, DEPENDABOT, dependabot.render("python"))
+    _write(root, CI_YML, _workflow("v2.1", "v2.1"))
 
 
 # --- the hook guard shim ---------------------------------------------------
@@ -260,11 +309,164 @@ def test_repo_init_renders_the_shared_settings() -> None:
     assert init_render() == render_claude_settings()
 
 
+# --- .gitignore ------------------------------------------------------------
+
+
+def test_gitignore_block_replaced_user_lines_kept(tmp_path: Path) -> None:
+    """A stale fence is rewritten and moved first; the repo's own lines are kept, in order."""
+    _write_toml(tmp_path, lang="python")
+    stale = gitignore.render_block(None)  # base-only: the python fragment is missing
+    path = _write(tmp_path, GITIGNORE, f"# repo-local\nscratch/\n{stale}*.local\n", 0o600)
+    items: list[DiffItem] = []
+    repo_config._check_gitignore(tmp_path, items)
+    assert {item.field for item in items} == {"local.gitignore"}
+
+    assert fix_gitignore(tmp_path) is True
+    expected = gitignore.render_block("python") + "# repo-local\nscratch/\n*.local\n"
+    assert path.read_text(encoding="utf-8") == expected
+    assert _mode(path) == 0o600
+    after: list[DiffItem] = []
+    repo_config._check_gitignore(tmp_path, after)
+    assert after == []
+    assert fix_gitignore(tmp_path) is False
+
+
+def test_gitignore_missing_is_created_0644(tmp_path: Path) -> None:
+    """With no vergil.toml the fence is base-only, and a missing file is created."""
+    assert fix_gitignore(tmp_path) is True
+    path = tmp_path / GITIGNORE
+    assert path.read_text(encoding="utf-8") == gitignore.render_block(None)
+    assert _mode(path) == 0o644
+
+
+def test_gitignore_bootstrap_drops_loose_managed_lines(tmp_path: Path) -> None:
+    """A file with no fence gets one; loose managed patterns go and local ones stay."""
+    _write_toml(tmp_path, lang="python")
+    path = _write(tmp_path, GITIGNORE, ".venv/\nmy-notes.txt\n")
+    assert fix_gitignore(tmp_path) is True
+    assert path.read_text(encoding="utf-8") == (
+        gitignore.render_block("python") + "\nmy-notes.txt\n"
+    )
+
+
+def test_gitignore_unloadable_config_raises_cannot_fix(tmp_path: Path) -> None:
+    """A vergil.toml that fails to load leaves the fence language unknown: nothing is written."""
+    _write(tmp_path, VERGIL_TOML, "[project]\n")
+    path = _write(tmp_path, GITIGNORE, "scratch/\n")
+    with pytest.raises(CannotFix) as caught:
+        fix_gitignore(tmp_path)
+    assert caught.value.check == "local.gitignore"
+    assert caught.value.reason.startswith("cannot resolve the fence language: ")
+    assert path.read_text(encoding="utf-8") == "scratch/\n"
+
+
+# --- dependabot.yml --------------------------------------------------------
+
+
+def test_dependabot_rendered_exactly(tmp_path: Path) -> None:
+    """A local addition is replaced by the exact canonical render, keeping the mode."""
+    _write_toml(tmp_path, lang="go")
+    path = _write(tmp_path, DEPENDABOT, dependabot.render("go") + "  # a local addition\n", 0o640)
+    items: list[DiffItem] = []
+    repo_config._check_dependabot_yml(tmp_path, items)
+    [item] = items
+    assert (item.field, item.actual) == ("local.dependabot", "differs from the canonical render")
+
+    assert fix_dependabot_yml(tmp_path) is True
+    assert path.read_bytes() == dependabot.render("go").encode("utf-8")
+    assert _mode(path) == 0o640
+    assert fix_dependabot_yml(tmp_path) is False
+
+
+def test_dependabot_missing_is_created_0644(tmp_path: Path) -> None:
+    _write_toml(tmp_path, lang="python")
+    assert fix_dependabot_yml(tmp_path) is True
+    path = tmp_path / DEPENDABOT
+    assert path.read_text(encoding="utf-8") == dependabot.render("python")
+    assert _mode(path) == 0o644
+
+
+def test_dependabot_unloadable_config_raises_cannot_fix(tmp_path: Path) -> None:
+    _write(tmp_path, VERGIL_TOML, "[project]\n")
+    with pytest.raises(CannotFix) as caught:
+        fix_dependabot_yml(tmp_path)
+    assert caught.value.check == "local.dependabot"
+    assert caught.value.reason.startswith("cannot resolve the dependabot language: ")
+    assert not (tmp_path / DEPENDABOT).exists()
+
+
+# --- workflow ref pins -----------------------------------------------------
+
+
+def test_workflow_pins_rewritten_to_vergil_toml_version(tmp_path: Path) -> None:
+    """Every drifting pin in every workflow is set to the version; nothing else changes."""
+    _write_toml(tmp_path, version="v2.3")
+    ci = _write(tmp_path, CI_YML, _workflow("v2.1", "v2.3"), 0o600)
+    ops = _write(tmp_path, OPS_YML, _workflow("v2.0", eol="\r\n"))
+    current = _write(tmp_path, Path(".github/workflows/docs.yaml"), _workflow("v2.3"))
+    items: list[DiffItem] = []
+    repo_config._check_workflow_refs(tmp_path, items)
+    assert [(i.expected, i.actual) for i in items] == [
+        ("ci.yml: v2.3", "ci.yml: v2.1"),
+        ("ops.yml: v2.3", "ops.yml: v2.0"),
+    ]
+    mtime = current.stat().st_mtime_ns
+
+    assert fix_workflow_refs(tmp_path) is True
+    assert ci.read_bytes() == _workflow("v2.3", "v2.3").encode("utf-8")
+    assert _mode(ci) == 0o600
+    assert ops.read_bytes() == _workflow("v2.3", eol="\r\n").encode("utf-8")
+    assert current.stat().st_mtime_ns == mtime
+    assert b"actions/checkout@v4" in ci.read_bytes()
+    after: list[DiffItem] = []
+    repo_config._check_workflow_refs(tmp_path, after)
+    assert after == []
+    assert fix_workflow_refs(tmp_path) is False
+
+
+@pytest.mark.parametrize("version", ['"2.3"', '"v2"', "2.3"])
+def test_workflow_pins_not_set_to_a_malformed_version(tmp_path: Path, version: str) -> None:
+    """A [dependencies].vergil that no pin can carry is drift with no fix: nothing is written."""
+    _write(tmp_path, VERGIL_TOML, f"[dependencies]\nvergil = {version}\n")
+    path = _write(tmp_path, CI_YML, _workflow("v2.1"))
+    items: list[DiffItem] = []
+    repo_config._check_workflow_refs(tmp_path, items)
+    assert len(items) == 2
+    assert items[-1].expected == "[dependencies].vergil as a vX.Y version"
+
+    with pytest.raises(CannotFix) as caught:
+        fix_workflow_refs(tmp_path)
+    assert caught.value.check == "local.workflow_ref"
+    assert "the pins cannot be set to it" in caught.value.reason
+    assert path.read_bytes() == _workflow("v2.1").encode("utf-8")
+
+
+def test_workflow_pins_without_vergil_toml_are_not_judged(tmp_path: Path) -> None:
+    """A missing vergil.toml is the vergil.toml check's to report, so nothing changes."""
+    path = _write(tmp_path, CI_YML, _workflow("v2.1"))
+    assert fix_workflow_refs(tmp_path) is False
+    assert path.read_bytes() == _workflow("v2.1").encode("utf-8")
+
+
+def test_rewrite_workflow_refs_refuses_a_malformed_version() -> None:
+    from vergil_tooling.lib.vergil_refs import rewrite_workflow_refs
+
+    with pytest.raises(ValueError, match="not a vX.Y pin version: '2.3'"):
+        rewrite_workflow_refs(_workflow("v2.1"), "2.3")
+
+
 # --- every fixer -----------------------------------------------------------
 
 
 def test_fixers_registry() -> None:
-    assert [fix_hook_guard_shim, fix_claude_md, fix_claude_settings] == FIXERS
+    assert [
+        fix_hook_guard_shim,
+        fix_claude_md,
+        fix_claude_settings,
+        fix_gitignore,
+        fix_dependabot_yml,
+        fix_workflow_refs,
+    ] == FIXERS
 
 
 def test_in_sync_root_changes_nothing(tmp_path: Path) -> None:
@@ -280,6 +482,9 @@ _CHECKS: dict[Callable[[Path], bool], Callable[[Path, list[DiffItem]], None]] = 
     fix_hook_guard_shim: repo_config._check_hook_guard_shim,
     fix_claude_md: repo_config._check_claude_md,
     fix_claude_settings: repo_config._check_claude_settings,
+    fix_gitignore: repo_config._check_gitignore,
+    fix_dependabot_yml: repo_config._check_dependabot_yml,
+    fix_workflow_refs: repo_config._check_workflow_refs,
 }
 
 #: Fixture directories per fixer: each writes one state of the managed file.
@@ -321,6 +526,83 @@ _FIXTURES: dict[Callable[[Path], bool], dict[str, Callable[[Path], object]]] = {
         "empty-object": lambda root: _write(root, SETTINGS, "{}"),
         "invalid-json": lambda root: _write(root, SETTINGS, "{"),
         "not-an-object": lambda root: _write(root, SETTINGS, "[]"),
+    },
+    fix_gitignore: {
+        "missing": lambda root: None,
+        "in-sync-base-only": lambda root: _write(root, GITIGNORE, gitignore.render_block(None)),
+        "in-sync": lambda root: (
+            _write_toml(root, lang="python"),
+            _write(root, GITIGNORE, gitignore.render_block("python") + "\nscratch/\n"),
+        ),
+        "in-sync-crlf": lambda root: (
+            _write_toml(root, lang="cpp"),
+            _write(root, GITIGNORE, gitignore.render_block("cpp").replace("\n", "\r\n")),
+        ),
+        "wrong-language": lambda root: (
+            _write_toml(root, lang="go"),
+            _write(root, GITIGNORE, gitignore.render_block("python")),
+        ),
+        "fence-not-first": lambda root: _write(
+            root, GITIGNORE, "scratch/\n" + gitignore.render_block(None)
+        ),
+        "no-final-newline": lambda root: _write(
+            root, GITIGNORE, gitignore.render_block(None) + "scratch/"
+        ),
+        "stray-managed-pattern": lambda root: _write(
+            root, GITIGNORE, gitignore.render_block(None) + gitignore.load_base()[0] + "\n"
+        ),
+        "no-fence": lambda root: _write(root, GITIGNORE, ".venv/\nscratch/\n"),
+        "unclosed-fence": lambda root: _write(
+            root, GITIGNORE, gitignore.render_block(None).replace(gitignore.MANAGED_END, "")
+        ),
+        "unloadable-config": lambda root: _write(root, VERGIL_TOML, "[project]\n"),
+    },
+    fix_dependabot_yml: {
+        "missing": lambda root: None,
+        "in-sync-no-config": lambda root: _write(root, DEPENDABOT, dependabot.render(None)),
+        "in-sync": lambda root: (
+            _write_toml(root, lang="rust"),
+            _write(root, DEPENDABOT, dependabot.render("rust")),
+        ),
+        "in-sync-unmapped-language": lambda root: (
+            _write_toml(root, lang="cpp"),
+            _write(root, DEPENDABOT, dependabot.render(None)),
+        ),
+        "wrong-language": lambda root: (
+            _write_toml(root, lang="python"),
+            _write(root, DEPENDABOT, dependabot.render("go")),
+        ),
+        "local-addition": lambda root: _write(
+            root, DEPENDABOT, dependabot.render(None) + "# local\n"
+        ),
+        "empty": lambda root: _write(root, DEPENDABOT, ""),
+        "unloadable-config": lambda root: _write(root, VERGIL_TOML, "[project]\n"),
+    },
+    fix_workflow_refs: {
+        "no-vergil-toml": lambda root: _write(root, CI_YML, _workflow("v2.0")),
+        "no-workflows": lambda root: _write_toml(root),
+        "in-sync": lambda root: (
+            _write_toml(root, version="v2.1"),
+            _write(root, CI_YML, _workflow("v2.1", "v2.1")),
+        ),
+        "one-stale-pin": lambda root: (
+            _write_toml(root, version="v2.1"),
+            _write(root, CI_YML, _workflow("v2.1", "v2.0")),
+        ),
+        "stale-pins-in-two-files": lambda root: (
+            _write_toml(root, version="v3.0"),
+            _write(root, CI_YML, _workflow("v2.1")),
+            _write(root, OPS_YML, _workflow("v2.9", eol="\r\n")),
+        ),
+        "newer-pin": lambda root: (
+            _write_toml(root, version="v2.1"),
+            _write(root, CI_YML, _workflow("v2.10")),
+        ),
+        "malformed-version": lambda root: (
+            _write_toml(root, version="2.1"),
+            _write(root, CI_YML, _workflow("v2.1")),
+        ),
+        "malformed-version-no-pins": lambda root: _write_toml(root, version="2.1"),
     },
 }
 
