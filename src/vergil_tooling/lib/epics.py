@@ -1053,14 +1053,13 @@ def queue_item_kind(ref: str, *, default_repo: str) -> str | None:
 
 
 _QUEUE_REFUSAL_TAILS = {
-    INTAKE.key: (
-        "it is not buildable until it is routed. Route it with epic-review intake first."
-    ),
+    INTAKE.key: "it is not buildable until it is routed. Route it with epic-review intake first.",
     PLANNING.key: (
         "it is not buildable until its epic is expanded. Expand it with epic-create first."
     ),
     DEFERRED.key: (
-        "it is deferred until its revival conditions are met. Revive it with epic-review deferred first."
+        "it is deferred until its revival conditions are met. "
+        "Revive it with epic-review deferred first."
     ),
 }
 
