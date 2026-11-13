@@ -651,13 +651,62 @@ def test_route_one_off_from_planning_keeps_in_progress_when_move_fails(env: Env)
 def test_route_one_off_from_planning_label_failure_fails_loudly(env: Env) -> None:
     _closed_planning_item(env)
     env.run.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
-    with pytest.raises(RuntimeError) as excinfo:
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
+    assert message.startswith("moved org/.github#352 to org/tool#900, but ")
     assert "routing one-off left the 'in-progress' label on org/tool#900" in message
     assert "HTTP 502" in message
     assert "gh issue edit 900 --repo org/tool --remove-label in-progress" in message
     assert env.native_parent[IssueRef("org", "tool", 900)] == TOOL_ADHOC
+
+
+@pytest.mark.parametrize(
+    ("failure", "detail"),
+    [
+        (github.GitHubAPIError(1, ["gh"], "", "HTTP 502"), "HTTP 502"),
+        (["not", "a", "dict"], "unexpected 'gh issue view' response"),
+    ],
+)
+def test_route_one_off_from_planning_label_read_failure_after_transfer_is_half_applied(
+    env: Env, failure: Any, detail: str
+) -> None:
+    _closed_planning_item(env)
+    plain_read = env.read_json.side_effect
+
+    def read_json(*args: str) -> object:
+        if args[-1] == "labels" and args[2] == "900":
+            if isinstance(failure, BaseException):
+                raise failure
+            return failure
+        return plain_read(*args)
+
+    env.read_json.side_effect = read_json
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith("moved org/.github#352 to org/tool#900, but ")
+    assert "could not read the labels of org/tool#900" in message
+    assert detail in message
+    assert "gh issue edit 900 --repo org/tool --remove-label in-progress" in message
+    assert env.native_parent[IssueRef("org", "tool", 900)] == TOOL_ADHOC
+    assert _label_removals(env) == []
+
+
+def test_route_one_off_from_planning_label_read_missing_token_is_left_as_it_came(
+    env: Env,
+) -> None:
+    _closed_planning_item(env)
+    plain_read = env.read_json.side_effect
+
+    def read_json(*args: str) -> object:
+        if args[-1] == "labels" and args[2] == "900":
+            raise github.MissingGitHubTokenError(1, ["gh"], "", "GH_TOKEN environment variable")
+        return plain_read(*args)
+
+    env.read_json.side_effect = read_json
+    with pytest.raises(github.MissingGitHubTokenError):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
 
 
 def test_route_recreate_never_carries_in_progress(env: Env) -> None:

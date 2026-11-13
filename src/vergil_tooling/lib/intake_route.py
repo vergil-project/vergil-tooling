@@ -437,18 +437,38 @@ def _one_off(
         _guard_open_planning_epics(ref, view, "routing one-off")
         labelled = epics.PLANNING_IN_PROGRESS_LABEL in _label_names(view)
     result = _move_one_off(ref, action, old_parent)
-    if labelled and _still_in_progress(result):
-        _remove_in_progress(result.final, doing="routing one-off")
+    if labelled:
+        try:
+            if _still_in_progress(result):
+                _remove_in_progress(result.final, doing="routing one-off")
+        except RuntimeError as exc:
+            # The move has settled: say so, so nobody re-runs a route now refused.
+            raise RouteHalfAppliedError(f"{_moved(ref, result.final)}, but {exc}") from exc
     return result
 
 
 def _still_in_progress(result: RouteResult) -> bool:
-    """Whether the routed item's final issue still carries ``in-progress``."""
+    """Whether the routed item's final issue still carries ``in-progress``.
+
+    Raise :class:`RuntimeError` with the by-hand fix when the labels cannot be read.
+    """
     if result.moved_by == "recreate":
         return False
     if result.moved_by == "none":
         return True
-    return epics.PLANNING_IN_PROGRESS_LABEL in _label_names(_view(result.final, "labels"))
+    final = result.final
+    label = epics.PLANNING_IN_PROGRESS_LABEL
+    try:
+        view = _view(final, "labels")
+    except github.MissingGitHubTokenError:
+        raise
+    except (subprocess.CalledProcessError, RuntimeError) as exc:
+        raise RuntimeError(
+            f"routing one-off could not read the labels of {final.slug} "
+            f"({' '.join(error_text(exc).split())}). If it still carries '{label}', fix it "
+            f"with: gh issue edit {final.number} --repo {_repo_of(final)} --remove-label {label}"
+        ) from exc
+    return label in _label_names(view)
 
 
 def _move_one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) -> RouteResult:
