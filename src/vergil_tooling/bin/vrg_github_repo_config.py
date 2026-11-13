@@ -9,6 +9,8 @@ auditing.
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -392,12 +394,54 @@ def _apply_repo(repo: str, config: VergilConfig) -> list[ClassicProtectionReport
 
 
 def _cwd_matches_repo(repo: str) -> bool:
-    """Check whether CWD's git origin matches the target repo."""
-    try:
-        cwd_repo = github.current_repo()
-    except Exception:
+    """Check whether CWD's git ``origin`` remote names the target repo.
+
+    The comparison is local and case-insensitive (GitHub owner and repo names
+    are), so it needs no network and no token: ``apply`` runs it inside the
+    target owner's ``target_org`` scope, where a ``gh`` lookup of an unrelated
+    checkout in another org would fail rather than read as "not this repo".
+
+    Only the answers that mean "not this repo" read as no match: a CWD that is
+    not a git checkout, has no ``origin`` remote, or whose ``origin`` is not a
+    github.com repo, or names another one. Any other failure propagates, so the
+    user sees why the current directory could not be checked (vergil-tooling#4311).
+    """
+    origin = _cwd_origin_url()
+    if origin is None:
         return False
-    return cwd_repo == repo
+    cwd_repo = github.github_remote_repo(origin)
+    return cwd_repo is not None and cwd_repo.lower() == repo.lower()
+
+
+# git's diagnostics for "the CWD is not a checkout" and "it has no such remote",
+# read under LC_ALL=C so a localized git cannot reword them.
+_NOT_A_CHECKOUT_MARKERS = ("not a git repository", "No such remote")
+
+
+def _cwd_origin_url() -> str | None:
+    """The CWD checkout's ``origin`` URL, or ``None`` when there is no such remote.
+
+    ``None`` only when git reports that the CWD is not a checkout or has no
+    ``origin``. Any other git failure (a refused ``safe.directory``, a corrupt
+    repository) raises :class:`RuntimeError` carrying git's own diagnostic,
+    which ``apply`` reports as a clean exit-2 error. Run directly rather than
+    through ``lib.git``, whose failure path echoes git's stderr: here a
+    non-checkout is an expected answer, not an error.
+    """
+    result = subprocess.run(  # noqa: S603
+        ["git", "remote", "get-url", "origin"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "LC_ALL": "C", "GIT_TERMINAL_PROMPT": "0"},
+    )
+    if result.returncode == 0:
+        return result.stdout.strip()
+    if any(marker in result.stderr for marker in _NOT_A_CHECKOUT_MARKERS):
+        return None
+    detail = result.stderr.strip() or f"git exited {result.returncode} with no message"
+    msg = f"could not read the current directory's git 'origin' remote: {detail}"
+    raise RuntimeError(msg)
 
 
 if __name__ == "__main__":
