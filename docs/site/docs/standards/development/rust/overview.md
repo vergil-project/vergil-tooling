@@ -20,7 +20,8 @@ maintainability, and long-term survivability across repositories.
 - Linting: clippy (official Rust linter, 800+ lint rules).
 - Type checking: `cargo check` (inherent in the Rust compiler).
 - Dependency audit and license compliance: cargo-deny (advisories, licenses,
-  bans, and sources in a single tool).
+  bans, and sources in a single tool), run against the fleet policy that
+  vergil-tooling packages, so a repo's own `deny.toml` is not used.
 - Coverage: cargo-llvm-cov (LLVM instrumentation, cross-platform).
 - If a repository uses different tools, document the reason and equivalents.
 

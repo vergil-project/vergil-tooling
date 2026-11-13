@@ -144,6 +144,26 @@ _GO_LICENSES_ALLOWLIST = ",".join(
     ]
 )
 
+# Rust / cargo-deny license allowlist (epic vergil-project/.github#1091). Unlike
+# the joined strings above, this stays a ``list[str]``: it is the ``[licenses]``
+# ``allow`` array of the packaged ``configs/rust/deny.toml``, which the rust
+# AUDIT command passes with ``--config``. A test pins the two equal. cargo-deny
+# evaluates each crate's SPDX expression against it, so ``MIT OR Apache-2.0``
+# passes when either term is allowed. An exception is a distinct license, so
+# ``Apache-2.0 WITH LLVM-exception`` is listed in its own right.
+_RUST_LICENSES_ALLOWLIST = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+
 # C++ license allowlist (epic vergil-project/.github#207 §4). C++/Conan has no
 # turnkey allowlist-enforcing gate the way pip-licenses / go-licenses do, so v1
 # license checking is *best-effort surfacing* (see the AUDIT commands below) and
@@ -423,7 +443,12 @@ _REGISTRY: dict[str, Language] = {
             ],
             CheckKind.TYPECHECK: [["cargo", "check"]],
             CheckKind.TEST: [["cargo", "llvm-cov", "--fail-under-lines", "100"]],
-            CheckKind.AUDIT: [["cargo", "deny", "check"]],
+            # The packaged fleet policy (epic vergil-project/.github#1091). An
+            # explicit ``--config`` replaces cargo-deny's search for a repo's
+            # own ``deny.toml``, so every Rust repo audits against the fleet
+            # policy. cargo-deny 0.20 takes ``--config`` on its root command,
+            # before ``check``.
+            CheckKind.AUDIT: [["cargo", "deny", "--config", "{configs}/rust/deny.toml", "check"]],
         },
         ecosystem=EcosystemInfo(
             build_cmd=["cargo", "build", "--release"],

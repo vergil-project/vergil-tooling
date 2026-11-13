@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import tomllib
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
 
 from vergil_tooling.lib import languages
 from vergil_tooling.lib.languages import (
+    _RUST_LICENSES_ALLOWLIST,
     _TYPESCRIPT_LICENSES_ALLOWLIST,
     COVERAGE_REPORT,
     JUNIT_REPORT,
@@ -381,9 +384,22 @@ def test_rust_test_commands() -> None:
     assert any("cargo llvm-cov" in c for c in joined)
 
 
+def _rust_deny_toml() -> Path:
+    return Path(str(files("vergil_tooling.configs"))) / "rust" / "deny.toml"
+
+
 def test_rust_audit_commands() -> None:
-    joined = _joined(language_commands("rust", CheckKind.AUDIT))
-    assert "cargo deny check" in joined
+    # cargo-deny 0.20 takes ``--config`` on the root command, before ``check``
+    # (EmbarkStudios/cargo-deny#881); after ``check`` it is a usage error.
+    assert language_commands("rust", CheckKind.AUDIT) == [
+        ["cargo", "deny", "--config", str(_rust_deny_toml()), "check"]
+    ]
+
+
+def test_rust_deny_toml_allowlist_matches_constant() -> None:
+    """The packaged cargo-deny policy carries exactly the reviewed allowlist."""
+    policy = tomllib.loads(_rust_deny_toml().read_text())
+    assert policy["licenses"]["allow"] == _RUST_LICENSES_ALLOWLIST
 
 
 # -- C++ (epic vergil-project/.github#207, T5) --------------------------------
