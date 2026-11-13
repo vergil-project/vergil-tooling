@@ -20,6 +20,13 @@ boundary is the GitHub App credential provisioned to the VM, which no
 value of this variable can change. See the design spec's Three-Layer
 Security Model.
 
+The ``automation`` mode is different: it is detected from the credential,
+never from a mode signal. ``VRG_AUTOMATION_APP`` names the org automation App
+and only decides whether verification runs; the token must then prove it is
+that App's installation token. See :mod:`vergil_tooling.lib.automation_identity`
+for the check and for what it trusts. No ``VRG_IDENTITY_MODE`` value or mode
+file can select ``automation``: such a value is unrecognized and falls through.
+
 This module covers in-VM *runtime* mode detection. It is distinct from
 ``vergil_tooling.lib.identity``, which parses the host-side
 ``identities.toml`` provisioning configuration.
@@ -32,16 +39,20 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from vergil_tooling.lib import automation_identity
+
 
 class IdentityMode(enum.Enum):
     HUMAN = "human"
     USER = "user"
     AUDIT = "audit"
+    AUTOMATION = "automation"
 
 
 class Signal(enum.Enum):
     """A source the resolver consults, in fallback order."""
 
+    AUTOMATION_APP = "automation-app"
     ENV_VAR = "env-var"
     MODE_FILE = "mode-file"
     APP_KEY = "app-pem"
@@ -50,6 +61,14 @@ class Signal(enum.Enum):
 
 
 _AGENT_MODES = frozenset({IdentityMode.USER, IdentityMode.AUDIT})
+# The modes a mode signal (the env var or the mode file) may name. AUTOMATION
+# is absent: it comes only from a verified credential.
+_SIGNAL_MODES = frozenset({IdentityMode.HUMAN, *_AGENT_MODES})
+
+
+class ContradictoryIdentityError(automation_identity.AutomationIdentityError):
+    """A credential verified as the automation App alongside an agent signal."""
+
 
 _ENV_VAR = "VRG_IDENTITY_MODE"
 _APP_ID_VAR = "VRG_APP_ID"
@@ -100,9 +119,10 @@ def _parse_mode(raw: str) -> IdentityMode | None:
     if not raw:
         return None
     try:
-        return IdentityMode(raw)
+        mode = IdentityMode(raw)
     except ValueError:
         return None
+    return mode if mode in _SIGNAL_MODES else None
 
 
 def _read_signals() -> list[SignalReading]:
@@ -147,6 +167,10 @@ def resolve() -> Resolution:
     :func:`current_mode` and the ``vrg-whoami`` CLI consult it. The
     fallback order is:
 
+    0. ``VRG_AUTOMATION_APP`` set: the token must verify as that App's
+       installation token (:func:`automation_identity.verify_token_is_app`),
+       and no agent signal may be present; then AUTOMATION. Anything else
+       raises :class:`automation_identity.AutomationIdentityError`.
     1. ``VRG_IDENTITY_MODE`` environment variable (valid value)
     2. ``~/.config/vergil/identity-mode`` written by VM provisioning
     3. presence of ``~/.config/vergil/app.pem`` (provisioned App
@@ -154,11 +178,15 @@ def resolve() -> Resolution:
     4. ``VRG_APP_ID`` environment variable resolves to USER
     5. HUMAN
 
-    The first present, recognizable signal wins. An unset env var or a
-    present-but-unparseable value is *not* a vote for HUMAN — it means
-    "fall through to the next signal."
+    Without ``VRG_AUTOMATION_APP``, steps 1-5 run exactly as before and no
+    network request is made. The first present, recognizable signal wins.
+    An unset env var or a present-but-unparseable value is *not* a vote for
+    HUMAN — it means "fall through to the next signal."
     """
     readings = _read_signals()
+    slug = automation_identity.env_slug()
+    if slug is not None:
+        return _resolve_automation(slug, readings)
     for reading in readings:
         if reading.present and reading.implied is not None:
             return Resolution(
@@ -173,6 +201,32 @@ def resolve() -> Resolution:
     )
 
 
+def _resolve_automation(slug: str, readings: list[SignalReading]) -> Resolution:
+    """Resolve to AUTOMATION for a verified *slug* token, or raise."""
+    automation_identity.verify_token_is_app(slug)
+    agent = [r for r in readings if r.present and r.implied in _AGENT_MODES]
+    if agent:
+        named = ", ".join(f"{r.detail}={r.implied.value}" for r in agent if r.implied is not None)
+        msg = (
+            f"identity signals contradict: the token is verified as the automation App "
+            f"{slug!r} (${automation_identity.AUTOMATION_ENV}), but an agent identity "
+            f"signal is also present ({named}). The automation identity is never used "
+            "for agent work."
+        )
+        raise ContradictoryIdentityError(msg)
+    automation = SignalReading(
+        signal=Signal.AUTOMATION_APP,
+        detail=f"${automation_identity.AUTOMATION_ENV}={slug}",
+        present=True,
+        implied=IdentityMode.AUTOMATION,
+    )
+    return Resolution(
+        mode=IdentityMode.AUTOMATION,
+        resolved_by=Signal.AUTOMATION_APP,
+        readings=(automation, *readings),
+    )
+
+
 def current_mode() -> IdentityMode:
     """Detect the current identity mode from the environment.
 
@@ -182,8 +236,13 @@ def current_mode() -> IdentityMode:
 
 
 def is_agent() -> bool:
-    """Return True if running as any agent identity."""
+    """Return True if running as any agent identity (never for AUTOMATION)."""
     return current_mode() in _AGENT_MODES
+
+
+def is_automation() -> bool:
+    """Return True if running as the verified org automation App."""
+    return current_mode() == IdentityMode.AUTOMATION
 
 
 def any_agent_signal() -> bool:
@@ -200,5 +259,5 @@ def any_agent_signal() -> bool:
 
 
 def is_human() -> bool:
-    """Return True if running as the human (Chief Steward)."""
+    """Return True if running as the human (Chief Steward); never for AUTOMATION."""
     return current_mode() == IdentityMode.HUMAN

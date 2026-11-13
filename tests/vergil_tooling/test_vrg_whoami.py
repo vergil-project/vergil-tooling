@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -18,6 +19,7 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
     monkeypatch.delenv("VRG_APP_ID", raising=False)
+    monkeypatch.delenv("VRG_AUTOMATION_APP", raising=False)
 
 
 def _vergil_dir(tmp_path: Path) -> Path:
@@ -119,6 +121,43 @@ class TestExplain:
         _write_app_key(tmp_path)
         assert main(["--explain"]) == 0
         assert "WARNING" not in capsys.readouterr().err
+
+
+class TestAutomation:
+    _SLUG = "vergil-project-automation"
+
+    def test_verified_token_prints_automation(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_AUTOMATION_APP", self._SLUG)
+        login = {"viewer": {"login": f"{self._SLUG}[bot]"}}
+        with patch("vergil_tooling.lib.github.graphql", return_value=login):
+            assert main(["--mode"]) == 0
+        assert capsys.readouterr().out == "automation\n"
+
+    def test_explain_names_the_automation_signal(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_AUTOMATION_APP", self._SLUG)
+        login = {"viewer": {"login": f"{self._SLUG}[bot]"}}
+        with patch("vergil_tooling.lib.github.graphql", return_value=login):
+            assert main(["--explain"]) == 0
+        out = capsys.readouterr().out
+        assert "role:          automation" in out
+        assert "resolved from: automation app (verified token)" in out
+        assert f"($VRG_AUTOMATION_APP={self._SLUG}): automation <-- resolved" in out
+
+    def test_failed_verification_exits_1_with_reason(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_AUTOMATION_APP", self._SLUG)
+        login = {"viewer": {"login": "github-actions[bot]"}}
+        with patch("vergil_tooling.lib.github.graphql", return_value=login):
+            assert main(["--mode"]) == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err.startswith("vrg-whoami: ")
+        assert "'github-actions[bot]'" in captured.err
 
 
 def test_mode_and_explain_are_mutually_exclusive() -> None:

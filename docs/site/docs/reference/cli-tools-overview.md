@@ -1379,8 +1379,16 @@ fallback signals (environment variable, mode file, App key, App ID, then
 the `human` default), and an unset value means "fall through", not
 "human". See [Account setup](../guides/account-setup.md).
 
-- `vrg-whoami` / `--mode`: the role as one token (`human`, `user` or
-  `audit`), for scripting, for example
+The `automation` role is checked before those signals, and only when
+`VRG_AUTOMATION_APP` is set. That variable names the org automation App,
+and the token must then verify as that App's installation token (GraphQL
+`viewer` login `<slug>[bot]`). A different login, a failed lookup, an empty
+variable, or an agent signal alongside it is an error. No
+`VRG_IDENTITY_MODE` value or mode file selects `automation`. Without the
+variable, resolution is unchanged and makes no network request.
+
+- `vrg-whoami` / `--mode`: the role as one token (`human`, `user`,
+  `audit` or `automation`), for scripting, for example
   `export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"`.
 - `--platform`: the platform as one token (`physical-host`, `local-vm` or
   `cloud-vm`), a second axis independent of the role, resolved from
@@ -1395,9 +1403,9 @@ the `human` default), and an unset value means "fall through", not
 |---|---|
 | Source | `vergil_tooling.bin.vrg_whoami` |
 | Args | `--mode`, `--platform`, `--explain` (mutually exclusive) |
-| Preconditions | None |
-| Failure mode | Disagreement is a warning on stderr, never an error |
-| Exit codes | 0 |
+| Preconditions | None (with `VRG_AUTOMATION_APP` set, a GitHub token) |
+| Failure mode | Disagreement is a warning on stderr, never an error; a failed automation verification exits 1 with the reason |
+| Exit codes | 0 success, 1 automation verification failed |
 | Status | Active |
 
 ### vrg-hook-guard
