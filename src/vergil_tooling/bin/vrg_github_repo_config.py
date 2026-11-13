@@ -15,11 +15,13 @@ import sys
 import tomllib
 from pathlib import Path
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, identity_mode
+from vergil_tooling.lib.automation_identity import automation_app_id, automation_app_slug
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import VergilConfig, _parse_raw_config
 from vergil_tooling.lib.develop_clone import DevelopCloneError, clone_develop
 from vergil_tooling.lib.github_config import (
+    BypassUnreadable,
     ClassicProtectionReport,
     ConfigDiff,
     DiffItem,
@@ -266,12 +268,16 @@ def _resolve_config(repo: str) -> VergilConfig:
     (vergil-tooling#2530).
 
     The local copy is the final bootstrap fallback — run ``apply`` from the
-    repo root before the file has landed on ``develop`` — safe under the trust
-    model: agents may *write* vergil.toml, but only a human runs ``apply`` and
-    owns that action, so the local copy can never be applied without human
-    oversight. The fallback is gated on the cwd matching the target repo so a
-    ``--repo other/repo`` run can never apply the current directory's unrelated
-    config.
+    repo root before the file has landed on ``develop`` — so a human can apply
+    a config that has not landed yet. Agents may *write* vergil.toml, so the
+    fallback is safe only where no agent edit can be read unreviewed. A human
+    run (``apply``) is owned by the human, who sees the checkout it runs in.
+    An automation run (``update`` in ops, epic vergil-project/.github#1064)
+    has no human in the loop, but its job runs only from ``develop`` and
+    checks out ``ref: develop``, so its working copy holds only content
+    already merged to ``develop``, never an unmerged agent edit. The fallback
+    is gated on the cwd matching the target repo so a ``--repo other/repo``
+    run can never apply the current directory's unrelated config.
     """
     config = _fetch_config_from_ref(repo, _DEFAULT_BRANCH)
     if config is not None:
@@ -293,14 +299,50 @@ def _resolve_config(repo: str) -> VergilConfig:
     raise RuntimeError(msg)
 
 
+def _bypass_mode(repo: str, *, automation: bool) -> tuple[bool, int | None]:
+    """``(skip_bypass, automation_app_id)`` for this run's identity.
+
+    *automation* is :func:`identity_mode.is_automation`, resolved by the caller.
+
+    ``bypass_actors`` are skipped only for an App token that is not the
+    automation identity (today's ops ``audit``): GitHub never shows that
+    field to it. Every other run, the human's and the automation App's,
+    manages them, so it needs the org automation App's numeric ID for the
+    automation-branch ruleset (epic vergil-project/.github#1064, spec §6.1).
+    A failed lookup raises :class:`AutomationIdentityError`.
+    """
+    if github.is_app_mode() and not automation:
+        return True, None
+    owner = repo.split("/", 1)[0]
+    return False, automation_app_id(automation_app_slug(owner))
+
+
 def _audit_repo(repo: str, config: VergilConfig) -> ConfigDiff:
-    """Compute diff between desired and actual GitHub state for a repo."""
+    """Compute diff between desired and actual GitHub state for a repo.
+
+    Under the automation identity an empty ``bypass_actors`` read of a
+    non-empty desired list is recorded as not checked
+    (:class:`BypassUnreadable`), so the audit is incomplete and ``apply``
+    refuses before writing anything.
+    """
+    # Resolved once: under VRG_AUTOMATION_APP each resolution asks GitHub.
+    automation = identity_mode.is_automation()
+    skip_bypass, app_id = _bypass_mode(repo, automation=automation)
     result = fetch_actual_state(repo)
     is_org = result.owner_type == "Organization"
     desired = compute_desired_state(
-        config, visibility=result.visibility, is_org=is_org, app_mode=github.is_app_mode()
+        config,
+        visibility=result.visibility,
+        is_org=is_org,
+        skip_bypass=skip_bypass,
+        automation_app_id=app_id,
     )
-    return compute_diff(desired=desired, actual=result.state, not_checked=result.not_checked)
+    return compute_diff(
+        desired=desired,
+        actual=result.state,
+        not_checked=result.not_checked,
+        automation=automation,
+    )
 
 
 def _format_item(item: DiffItem) -> str:
@@ -365,7 +407,13 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
     else:
         print(f"  {repo}: compliant")
     for nc in diff.not_checked:
-        print(f"    {nc.field}: not checked (needs {nc.permission})")
+        if isinstance(nc, BypassUnreadable):
+            print(
+                f"    {nc.field}: not checked (read back empty under the automation "
+                f"identity, so unreadable; needs {nc.permission})"
+            )
+        else:
+            print(f"    {nc.field}: not checked (needs {nc.permission})")
     for field_name in diff.skipped:
         if field_name.startswith("security."):
             print(
@@ -383,10 +431,21 @@ def _apply_repo(repo: str, config: VergilConfig) -> list[ClassicProtectionReport
     cross-checked against the repo's committed ci.yml on the default branch —
     the same producibility guard repo-init runs — so a routine sync can never
     (re)apply a required status check no pull_request job emits (issue #2788).
+
+    The rulesets are written whole, so their ``bypass_actors`` are never
+    skipped here: the org automation App's ID is always resolved.
     """
+    owner = repo.split("/", 1)[0]
+    app_id = automation_app_id(automation_app_slug(owner))
     result = fetch_actual_state(repo)
     is_org = result.owner_type == "Organization"
-    desired = compute_desired_state(config, visibility=result.visibility, is_org=is_org)
+    desired = compute_desired_state(
+        config,
+        visibility=result.visibility,
+        is_org=is_org,
+        skip_bypass=False,
+        automation_app_id=app_id,
+    )
     ci_yaml = _fetch_ci_workflow(repo, _DEFAULT_BRANCH)
     assert_ci_gates_producible(
         desired,

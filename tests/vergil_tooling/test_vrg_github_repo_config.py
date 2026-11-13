@@ -25,6 +25,7 @@ from vergil_tooling.bin.vrg_github_repo_config import (
     parse_args,
 )
 from vergil_tooling.lib import develop_clone, github
+from vergil_tooling.lib.automation_identity import AutomationIdentityError
 from vergil_tooling.lib.config import (
     DEFAULT_VALIDATION_COMMAND,
     CiConfig,
@@ -144,6 +145,21 @@ def _mock_github_noncompliant() -> ConfigDiff:
             DiffItem(field="repo_settings.allow_auto_merge", expected=False, actual=True),
         ]
     )
+
+
+# The org automation App the tests' runs resolve (epic vergil-project/.github#1064).
+_APP_SLUG = "acme-automation"
+_APP_ID = 7654321
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_automation_app() -> Iterator[tuple[MagicMock, MagicMock]]:
+    """Resolve the automation App's slug and ID without GitHub."""
+    with (
+        patch(f"{_MODULE}.automation_app_slug", return_value=_APP_SLUG) as mock_slug,
+        patch(f"{_MODULE}.automation_app_id", return_value=_APP_ID) as mock_id,
+    ):
+        yield mock_slug, mock_id
 
 
 @pytest.fixture(autouse=True)
@@ -293,7 +309,13 @@ def test_apply_refuses_when_settings_not_checked(capsys: pytest.CaptureFixture[s
 
 def _missing_merge_setting_fetch() -> FetchResult:
     """A fetch of a compliant repo whose response left out allow_merge_commit (#4322)."""
-    state = compute_desired_state(_make_config(), visibility="public", is_org=True)
+    state = compute_desired_state(
+        _make_config(),
+        visibility="public",
+        is_org=True,
+        skip_bypass=False,
+        automation_app_id=_APP_ID,
+    )
     state.repo_settings.allow_merge_commit = False  # the placeholder for the unread field
     return FetchResult(
         state=state,
@@ -767,7 +789,162 @@ def test_audit_repo_calls_pipeline() -> None:
     assert result.is_compliant()
 
 
+def _desired_kwargs(mock: MagicMock) -> tuple[object, object]:
+    kwargs = mock.call_args.kwargs
+    return kwargs["skip_bypass"], kwargs["automation_app_id"]
+
+
+def test_audit_repo_skips_bypass_for_non_automation_app(
+    _hermetic_automation_app: tuple[MagicMock, MagicMock],
+) -> None:
+    mock_slug, mock_id = _hermetic_automation_app
+    with (
+        patch(f"{_MODULE}.github.is_app_mode", return_value=True),
+        patch(f"{_MODULE}.identity_mode.is_automation", return_value=False),
+        patch(f"{_MODULE}.fetch_actual_state"),
+        patch(f"{_MODULE}.compute_desired_state") as mock_desired,
+        patch(f"{_MODULE}.compute_diff", return_value=ConfigDiff(items=[])) as mock_diff,
+    ):
+        _audit_repo("o/r", _make_config())
+    assert _desired_kwargs(mock_desired) == (True, None)
+    assert mock_diff.call_args.kwargs["automation"] is False
+    mock_slug.assert_not_called()
+    mock_id.assert_not_called()
+
+
+def test_audit_repo_human_resolves_app_id(
+    _hermetic_automation_app: tuple[MagicMock, MagicMock],
+) -> None:
+    mock_slug, mock_id = _hermetic_automation_app
+    with (
+        patch(f"{_MODULE}.github.is_app_mode", return_value=False),
+        patch(f"{_MODULE}.identity_mode.is_automation", return_value=False),
+        patch(f"{_MODULE}.fetch_actual_state"),
+        patch(f"{_MODULE}.compute_desired_state") as mock_desired,
+        patch(f"{_MODULE}.compute_diff", return_value=ConfigDiff(items=[])) as mock_diff,
+    ):
+        _audit_repo("o/r", _make_config())
+    assert _desired_kwargs(mock_desired) == (False, _APP_ID)
+    assert mock_diff.call_args.kwargs["automation"] is False
+    mock_slug.assert_called_once_with("o")
+    mock_id.assert_called_once_with(_APP_SLUG)
+
+
+def test_audit_repo_automation_manages_bypass_and_detects_unreadable() -> None:
+    with (
+        patch(f"{_MODULE}.github.is_app_mode", return_value=True),
+        patch(f"{_MODULE}.identity_mode.is_automation", return_value=True) as mock_auto,
+        patch(f"{_MODULE}.fetch_actual_state"),
+        patch(f"{_MODULE}.compute_desired_state") as mock_desired,
+        patch(f"{_MODULE}.compute_diff", return_value=ConfigDiff(items=[])) as mock_diff,
+    ):
+        _audit_repo("o/r", _make_config())
+    assert _desired_kwargs(mock_desired) == (False, _APP_ID)
+    assert mock_diff.call_args.kwargs["automation"] is True
+    mock_auto.assert_called_once()
+
+
+def test_app_id_lookup_failure_exits_two(capsys: pytest.CaptureFixture[str]) -> None:
+    failure = AutomationIdentityError(
+        "the org-level Actions variable VRG_AUTOMATION_APP is not set in o"
+    )
+    with (
+        patch(f"{_MODULE}._resolve_config", return_value=_make_config()),
+        patch(f"{_MODULE}.github.is_app_mode", return_value=False),
+        patch(f"{_MODULE}.automation_app_slug", side_effect=failure),
+        patch(f"{_MODULE}.fetch_actual_state") as mock_fetch,
+        patch(f"{_MODULE}.apply_desired_state") as mock_apply,
+    ):
+        code = main(["apply", "--repo", "o/r"])
+    assert code == 2
+    mock_fetch.assert_not_called()
+    mock_apply.assert_not_called()
+    assert "VRG_AUTOMATION_APP is not set in o" in capsys.readouterr().err
+
+
+def _fetch_with_empty_bypass() -> FetchResult:
+    """A repo in sync but for Tag protection's bypass list, which reads back empty."""
+    state = compute_desired_state(
+        _make_config(),
+        visibility="public",
+        is_org=True,
+        skip_bypass=False,
+        automation_app_id=_APP_ID,
+    )
+    for rs in state.rulesets:
+        if rs.name == "Tag protection":
+            rs.bypass_actors = []
+    return FetchResult(state=state, visibility="public", owner_type="Organization")
+
+
+def test_unreadable_bypass_stops_apply_before_any_write(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Under the automation identity an empty read of a non-empty desired bypass
+    # list is unreadable: nothing is converged (epic vergil-project/.github#1064).
+    with (
+        patch(f"{_MODULE}._resolve_config", return_value=_make_config()),
+        patch(f"{_MODULE}.github.is_app_mode", return_value=True),
+        patch(f"{_MODULE}.identity_mode.is_automation", return_value=True),
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_fetch_with_empty_bypass()),
+        patch(f"{_MODULE}.apply_desired_state") as mock_apply,
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_delete,
+    ):
+        code = main(["apply", "--repo", "o/r"])
+    assert code == 2
+    mock_apply.assert_not_called()
+    mock_write.assert_not_called()
+    mock_delete.assert_not_called()
+    captured = capsys.readouterr()
+    assert "o/r: NOT FULLY AUDITED" in captured.out
+    assert (
+        "rulesets.Tag protection.bypass_actors: not checked (read back empty under the "
+        "automation identity, so unreadable; needs administration=write)" in captured.out
+    )
+    assert "Refusing to apply: Could not fully audit o/r: 1 setting(s) not checked" in (
+        captured.err
+    )
+
+
+def test_human_apply_converges_emptied_bypass_list() -> None:
+    # The same read for a human run is drift, and apply converges it.
+    with (
+        patch(f"{_MODULE}._resolve_config", return_value=_make_config()),
+        patch(f"{_MODULE}.github.is_app_mode", return_value=False),
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_fetch_with_empty_bypass()),
+        patch(f"{_MODULE}._fetch_ci_workflow", return_value="ci"),
+        patch(f"{_MODULE}.assert_ci_gates_producible"),
+        patch(f"{_MODULE}.apply_desired_state", return_value=[]) as mock_apply,
+    ):
+        code = main(["apply", "--repo", "o/r"])
+    assert code == 0
+    desired = mock_apply.call_args.args[1]
+    tag = next(rs for rs in desired.rulesets if rs.name == "Tag protection")
+    assert tag.bypass_actors == [
+        {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}
+    ]
+
+
 # -- _apply_repo --------------------------------------------------------------
+
+
+def test_apply_repo_never_skips_bypass(
+    _hermetic_automation_app: tuple[MagicMock, MagicMock],
+) -> None:
+    # The rulesets are written whole, so even an App run resolves the App ID.
+    mock_slug, _ = _hermetic_automation_app
+    with (
+        patch(f"{_MODULE}.github.is_app_mode", return_value=True),
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_fetch_with_empty_bypass()),
+        patch(f"{_MODULE}.compute_desired_state") as mock_desired,
+        patch(f"{_MODULE}._fetch_ci_workflow", return_value="ci"),
+        patch(f"{_MODULE}.assert_ci_gates_producible"),
+        patch(f"{_MODULE}.apply_desired_state", return_value=[]),
+    ):
+        _apply_repo("o/r", _make_config())
+    assert _desired_kwargs(mock_desired) == (False, _APP_ID)
+    mock_slug.assert_called_once_with("o")
 
 
 def test_apply_repo_calls_pipeline() -> None:

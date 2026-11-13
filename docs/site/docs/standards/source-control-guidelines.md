@@ -131,16 +131,18 @@ Rulesets replace legacy branch protection rules. Legacy branch protection must
 not be used on any repository.
 
 **Enforce-admins-ON**: Every ruleset has an empty `bypass_actors` list except
-Tag protection, which only the repository Admin role (the human release
-identity) may bypass, to move or delete a tag. Every other ruleset applies to
-all users, including repository administrators.
+two. Tag protection may be bypassed only by the repository Admin role (the
+human release identity), to move or delete a tag. Automation branches may be
+bypassed only by the org automation App and the repository Admin role, which
+are the only identities that may write those branches. Every other ruleset
+applies to all users, including repository administrators.
 
 The rulesets are declared by `compute_desired_state()` in
 `lib/github_config.py` and checked by the config audit; the
 [rulesets table](../reference/config-audit.md#github-checks-rulesets) lists
 each one's includes, rules and bypass.
 
-Every repository requires the same four rulesets, whatever its
+Every repository requires the same five rulesets, whatever its
 `repository-type`: `compute_desired_state()` does not vary them by type, and
 only the CI gates' required checks differ from one repository to another. A
 repository that publishes no tags still carries Tag protection and Rolling tag
@@ -170,6 +172,13 @@ branch names, so a tag or branch of either shape can never appear unprotected.
    - Prevent updating or force-pushing such a branch
    - No deletion restriction, so a stray branch of that shape can be removed
    - No bypass
+
+5. **Automation branches** (targets: `automation/**`)
+   - Prevent creating, updating or force-pushing a branch under the
+     `automation/` prefix, which mechanized jobs push to and whose PRs
+     merge through GitHub auto-merge
+   - No deletion restriction: the branches are temporary
+   - Bypass: the org automation App and the repository Admin role only
 
 Rulesets are managed via the GitHub API or the repository settings UI. When
 creating or updating rulesets, verify the configuration by checking an open PR

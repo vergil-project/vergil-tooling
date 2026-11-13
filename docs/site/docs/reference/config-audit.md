@@ -101,6 +101,20 @@ audit does not guess the value. It reports the setting as not checked:
   checked.
 - A 403 that names no missing permission (a rate limit, for example) is
   still an error, as is any other unexpected status.
+- **An empty bypass list under the automation identity is not checked.**
+  GitHub answers a token that cannot see a ruleset's `bypass_actors`
+  with an empty list, not an error. The automation App's token is meant
+  to read the field (it holds Administration write), so under the
+  automation identity a ruleset whose desired bypass list is non-empty
+  and which reads back empty is reported as not checked, never as drift
+  (epic vergil-project/.github#1064):
+
+  ```text
+      rulesets.Tag protection.bypass_actors: not checked (read back empty under the automation identity, so unreadable; needs administration=write)
+  ```
+
+  `apply` then refuses and converges nothing. For a human run the same
+  empty list is ordinary drift, and `apply` writes the desired list.
 
 ## Local checks
 
@@ -419,6 +433,7 @@ order:
 | `Branch protection` | branch | `refs/heads/main`, `refs/heads/develop` | `deletion`, `non_fast_forward`, `pull_request` | none |
 | `Tag protection` | tag | `refs/tags/v*.*.*`, `refs/tags/v*.*` | `deletion`, `non_fast_forward`, `update` | repository Admin role (`RepositoryRole`, `actor_id` 5) |
 | `Rolling tag branch names` | branch | `refs/heads/v[0-9]*` | `creation`, `update`, `non_fast_forward` | none |
+| `Automation branches` | branch | `refs/heads/automation/**` | `creation`, `update`, `non_fast_forward` | the org automation App (`Integration`, its App ID) and the repository Admin role (`RepositoryRole`, `actor_id` 5) |
 | `CI gates` | branch | `refs/heads/main`, `refs/heads/develop` | `required_status_checks` (see below) | none |
 
 - **Tag protection** covers both the `vX.Y.Z` release tags and the rolling
@@ -435,11 +450,27 @@ order:
   ([Using `fnmatch` syntax](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository#using-fnmatch-syntax)).
   A pattern include names no single branch, so the classic branch-protection
   read skips it.
-- **Bypass actors are not compared under the App token.** The nightly audit
-  runs on a GitHub App token, which cannot read a ruleset's bypass list, so in
-  that mode it checks each ruleset's includes, enforcement and rules but not
-  its bypass actors, and lists the skipped `rulesets.<name>.bypass_actors`
-  fields instead. This holds for every ruleset above.
+- **Automation branches** keeps every identity but the org automation App
+  and the human admin off the `automation/` branches that mechanized jobs
+  push to. Their PRs merge through GitHub auto-merge, which the repo
+  settings allow (`allow_auto_merge` is `true`), so without the ruleset an
+  agent with Contents write could push to such a branch and have its
+  content merged with no human in the loop. Deletion is not restricted:
+  the branches are temporary. The App's numeric ID differs per org. The
+  tooling reads the App's slug from `$VRG_AUTOMATION_APP` or, for a human
+  run, from the org-level Actions variable `VRG_AUTOMATION_APP`, and looks
+  the ID up with `GET /apps/{slug}`. A missing variable or a failed lookup
+  fails the run (exit 2).
+- **Bypass actors are not compared under an App token that is not the
+  automation identity.** Today's nightly audit runs on such a token, which
+  cannot read a ruleset's bypass list, so in that mode it checks each
+  ruleset's includes, enforcement and rules but not its bypass actors, and
+  lists the skipped `rulesets.<name>.bypass_actors` fields instead. This
+  holds for every ruleset above. Under the automation identity they are
+  compared, and an empty read is
+  [not checked](#settings-the-identity-cannot-read). `apply` writes whole
+  rulesets, so it always manages the bypass lists. Bypass lists are
+  compared as sets: their order is not drift.
 - **A REST refs write refused by a ruleset gives no rule text.** When a
   ruleset blocks a create, update or delete made through the REST refs API
   (`POST`, `PATCH` or `DELETE` on `repos/{owner}/{repo}/git/refs…`), GitHub
