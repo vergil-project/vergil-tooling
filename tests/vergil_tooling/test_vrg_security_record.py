@@ -12,7 +12,7 @@ from vergil_tooling.bin import vrg_security_record
 from vergil_tooling.bin.vrg_security_record import main
 from vergil_tooling.lib import github, security_records
 from vergil_tooling.lib.epics import IssueRef
-from vergil_tooling.lib.security_records import Advisory, RetargetError
+from vergil_tooling.lib.security_records import Advisory, RetargetError, SecurityIssue
 from vergil_tooling.lib.security_records import advisory_home as real_advisory_home
 
 if TYPE_CHECKING:
@@ -65,6 +65,9 @@ def env() -> Iterator[MagicMock]:
         patch(f"{_GH}.read_json_paginated", return_value=[]) as paginated,
         patch(f"{_GH}.read_json", return_value={"body": ""}) as read_json,
         patch(f"{_GH}.detect_org", return_value="org") as detect,
+        # sync reads an org with no security issues whose .github exists.
+        patch(f"{_SR}.security_issues", return_value=[]),
+        patch(f"{_GH}.repo_exists", return_value=True),
     ):
         for name, mock in {
             "advisory_home": home,
@@ -592,6 +595,206 @@ def test_retarget_cli_refuses_bad_input(
     env.retarget.assert_not_called()
 
 
+# --- sync -------------------------------------------------------------------
+
+_REAL_LIST_ADVISORIES = security_records.list_advisories
+_STATE_URL = f"repos/{HOME}/security-advisories"
+_CLOSED_ISSUE = SecurityIssue(ISSUE, False, (GHSA,))
+
+
+def _sync(
+    env: MagicMock,
+    argv: list[str],
+    *,
+    issues: list[SecurityIssue],
+    advisories: list[Advisory] | None,
+    write: MagicMock,
+) -> int:
+    # advisories=None leaves list_advisories to the caller's own patch.
+    if advisories is not None:
+        env.list_advisories.return_value = advisories
+    with (
+        patch(f"{_SR}.security_issues", return_value=issues),
+        patch(f"{_GH}.repo_exists", return_value=True),
+        patch(f"{_GH}.write_json", write),
+    ):
+        return main(argv)
+
+
+def test_sync_sets_paired_advisory_states(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write = MagicMock()
+    reopened = IssueRef("org", "tool", 9)
+    rc = _sync(
+        env,
+        ["sync"],
+        issues=[_CLOSED_ISSUE, SecurityIssue(reopened, True, (OTHER,))],
+        advisories=[
+            Advisory(GHSA, "draft", "tool", (ISSUE,), external=False),
+            Advisory(OTHER, "closed", "tool", (reopened,), external=False),
+        ],
+        write=write,
+    )
+    assert rc == 0
+    assert write.call_args_list == [
+        call("PATCH", f"{_STATE_URL}/{GHSA}", {"state": "closed"}),
+        call("PATCH", f"{_STATE_URL}/{OTHER}", {"state": "draft"}),
+    ]
+    env.detect_org.assert_called_once_with()
+    env.advisory_home.assert_called_once_with("org")
+    assert "Security records: 2 advisory states synced, 0 broken pairs." in (
+        capsys.readouterr().out
+    )
+
+
+def test_sync_dry_run_writes_nothing(env: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
+    write = MagicMock()
+    rc = _sync(
+        env,
+        ["sync", "--dry-run"],
+        issues=[_CLOSED_ISSUE],
+        advisories=[Advisory(GHSA, "draft", "tool", (ISSUE,), external=False)],
+        write=write,
+    )
+    assert rc == 0
+    write.assert_not_called()
+    out = capsys.readouterr().out
+    assert "Security records (preview): 1 advisory state would sync, 0 broken pairs." in out
+
+
+@pytest.mark.parametrize(("argv", "expected_rc"), [(["sync"], 1), (["sync", "--dry-run"], 0)])
+def test_sync_reports_broken_pairs(
+    env: MagicMock, capsys: pytest.CaptureFixture[str], argv: list[str], expected_rc: int
+) -> None:
+    write = MagicMock()
+    rc = _sync(
+        env,
+        argv,
+        issues=[_CLOSED_ISSUE],
+        advisories=[
+            Advisory(GHSA, "draft", "tool", (ISSUE,), external=False),
+            Advisory(OTHER, "draft", "tool", (), external=False),
+        ],
+        write=write,
+    )
+    # Sync fails on a broken pair after syncing the rest; the preview only reports.
+    assert rc == expected_rc
+    assert write.call_count == (1 if expected_rc else 0)
+    out = capsys.readouterr().out
+    assert "1 broken pair." in out
+    assert f"- broken: {OTHER}: no security issue names this advisory" in out
+
+
+def test_sync_lists_external_reports_untouched(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write = MagicMock()
+    external = Advisory(OTHER, "triage", None, (), external=True)
+    rc = _sync(env, ["sync"], issues=[], advisories=[external], write=write)
+    assert rc == 0
+    write.assert_not_called()
+    out = capsys.readouterr().out
+    assert "Security records: 0 advisory states synced, 0 broken pairs." in out
+    assert f"- unpaired external report (left untouched): {OTHER}" in out
+
+
+@pytest.mark.parametrize("write_fails", [False, True])
+def test_sync_output_names_only_ids_and_states(
+    env: MagicMock, capsys: pytest.CaptureFixture[str], *, write_fails: bool
+) -> None:
+    # The raw API rows carry the private summary and description; the pass must
+    # never print them, on success or when a state write fails.
+    rows = [
+        {
+            "ghsa_id": GHSA,
+            "state": "draft",
+            "summary": SECRET,
+            "description": SECRET,
+            "affected": "tool",
+            "submission": False,
+            "tracking": [f"Tracking issue: {ISSUE.slug}"],
+        },
+        {"ghsa_id": OTHER, "state": "draft", "summary": SECRET, "tracking": []},
+    ]
+    error = github.GitHubAPIError(1, ["gh", "api"], SECRET, "HTTP 403: Forbidden")
+    write = MagicMock(side_effect=error if write_fails else None)
+    env.read_json_paginated.return_value = rows
+    with patch(f"{_SR}.list_advisories", _REAL_LIST_ADVISORIES):
+        rc = _sync(env, ["sync"], issues=[_CLOSED_ISSUE], advisories=None, write=write)
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert SECRET not in captured.out
+    assert SECRET not in captured.err
+    if write_fails:
+        assert "vrg-security-record: security records pass failed" in captured.err
+        assert "HTTP 403: Forbidden" in captured.err
+    else:
+        assert "1 advisory state synced, 1 broken pair." in captured.out
+        assert OTHER in captured.out
+
+
+def test_sync_list_failure_fails_loud(env: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
+    env.list_advisories.side_effect = _gh_error(stderr="HTTP 403: Resource not accessible")
+    rc = _sync(
+        env, ["sync", "--dry-run"], issues=[_CLOSED_ISSUE], advisories=None, write=MagicMock()
+    )
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "vrg-security-record: security records pass failed" in captured.err
+    assert "Resource not accessible" in captured.err
+    assert "Security records" not in captured.out
+
+
+def test_sync_org_without_security_items_skips_home_lookup(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An owner with no security issue and no .github has nothing to check: the
+    # advisory home is never resolved and the pass is not an error.
+    write = MagicMock()
+    with (
+        patch(f"{_SR}.security_issues", return_value=[]),
+        patch(f"{_GH}.repo_exists", return_value=False) as exists,
+        patch(f"{_GH}.write_json", write),
+    ):
+        rc = main(["sync"])
+    assert rc == 0
+    exists.assert_called_once_with("org", ".github")
+    env.advisory_home.assert_not_called()
+    write.assert_not_called()
+    assert "Security records: none." in capsys.readouterr().out
+
+
+def test_sync_missing_token_exits_1(env: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
+    missing = github.MissingGitHubTokenError(1, ["gh"], "", "set the GH_TOKEN environment variable")
+    with (
+        patch(f"{_SR}.security_issues", side_effect=missing),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main(["sync"])
+    assert excinfo.value.code == 1
+    assert "no GitHub token available" in capsys.readouterr().err
+    env.advisory_home.assert_not_called()
+
+
+def test_sync_undetectable_org_is_refused(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env.detect_org.return_value = None
+    assert main(["sync"]) == 1
+    assert "could not determine the GitHub org" in capsys.readouterr().err
+    env.advisory_home.assert_not_called()
+
+
+def test_sync_help_names_its_permission(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["sync", "--help"])
+    assert exc.value.code == 0
+    text = " ".join(capsys.readouterr().out.split())
+    assert "Repository security advisories: read and write" in text
+    assert "--dry-run" in text
+
+
 # --- private home -----------------------------------------------------------
 
 
@@ -603,6 +806,8 @@ def test_retarget_cli_refuses_bad_input(
         ["show", GHSA],
         ["show", ISSUE.slug],
         ["retarget", GHSA, "--to", ISSUE.slug],
+        ["sync"],
+        ["sync", "--dry-run"],
         None,  # create, filled in below
     ],
 )

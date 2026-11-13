@@ -15,6 +15,11 @@ neutral ``security``-labelled intake issue carrying only a pointer to it.
   issues; ``--details`` adds each summary and is refused under the sweep.
 - ``show`` prints one pair with its details, to the terminal only.
 - ``retarget`` moves an advisory's tracking to new issues.
+- ``sync`` runs the security-records pass over the org: it sets each paired
+  advisory to ``closed`` or ``draft`` from its issues and reports broken
+  pairs and unpaired external reports; ``--dry-run`` previews it. It needs
+  Repository security advisories read and write on ``<org>/.github``, which
+  the human's login and the user App hold (vergil-tooling#4313).
 
 **Output rule.** An advisory's summary and description reach stdout only
 through ``show`` and ``list --details``. Every other line, and every error,
@@ -62,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
             return _list(args)
         if args.command == "show":
             return _show(args)
+        if args.command == "sync":
+            return _sync(args)
         return _retarget(args)
     except _RefusedError as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
@@ -419,6 +426,12 @@ def _retarget(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sync(args: argparse.Namespace) -> int:
+    org = _detected_org()
+    with github.target_org(org):
+        return security_records.records_pass(org, apply=not args.dry_run, prog=_PROG)
+
+
 # --- arguments --------------------------------------------------------------
 
 
@@ -467,6 +480,25 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     retarget.add_argument("ghsa", help="The advisory's GHSA ID")
     retarget.add_argument(
         "--to", action="append", required=True, help="Target issue owner/repo#N (repeatable)"
+    )
+
+    sync = sub.add_parser(
+        "sync",
+        help="Sync advisory states to their issues and report broken pairs",
+        description=(
+            "Run the security-records pass over this repo's org: set each paired "
+            "draft advisory in <org>/.github to closed when every issue it tracks "
+            "is closed, and back to draft while any is open; report broken pairs "
+            "and unpaired external reports by ID only. Exit 1 if any pair is "
+            "broken (after syncing the rest) or the pass fails. Needs Repository "
+            "security advisories: read and write on <org>/.github (the human's gh "
+            "login or the user App); the scheduled sweep does not run it."
+        ),
+    )
+    sync.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview: report what would sync and any broken pairs, change nothing, exit 0",
     )
     return parser.parse_args(argv)
 

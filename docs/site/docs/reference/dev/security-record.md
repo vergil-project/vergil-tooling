@@ -20,6 +20,7 @@ vrg-security-record create --repo OWNER/NAME --title TEXT --body-file FILE
 vrg-security-record list [--repo OWNER/NAME] [--state {draft,closed,all}] [--details]
 vrg-security-record show (GHSA-ID | OWNER/REPO#N)
 vrg-security-record retarget GHSA-ID --to 'OWNER/REPO#N' [--to 'OWNER/REPO#N' ...]
+vrg-security-record sync [--dry-run]
 ```
 
 ## Output rule
@@ -32,7 +33,8 @@ and stderr; its response body is dropped, because for an advisory call it
 may hold the advisory text.
 
 `list --details` is refused when `VRG_EPIC_SWEEP` is set, so advisory
-text can never reach the scheduled sweep's public Actions logs.
+text can never reach the scheduled sweep's public Actions logs. `sync`
+prints no advisory text at all.
 
 ## Where things are created
 
@@ -209,7 +211,7 @@ After a failure at any step, re-run the same command: it finishes the
 job. An issue that still carries this advisory's line and label is found
 again by the listing, so an interrupted unmark is completed. The one case
 a re-run cannot reach is an issue whose `security` label was removed by
-hand while its advisory line stayed; the sweep reports it as a broken pair.
+hand while its advisory line stayed; `sync` reports it as a broken pair.
 On success it prints `Retargeted <GHSA-id> to <refs>.`
 
 The library's `retarget` also takes a `renamed=` list, which the CLI does
@@ -217,23 +219,48 @@ not expose. `vrg-intake-route` uses it for a transfer: the old number of a
 transferred issue is replaced in the tracking lines but never unmarked,
 because the old number now leads to the moved issue itself.
 
+## sync
+
+```bash
+vrg-security-record sync [--dry-run]
+```
+
+Runs the security-records pass over the current repo's org (from its
+`origin` remote; there is no `--org` flag). It lists the advisories in
+`<org>/.github` and every `security`-labelled issue in the org's managed
+repos, then sets each paired advisory to `closed` when every issue it
+tracks is closed, and back to `draft` while any is open. It only moves an
+advisory between `draft` and `closed`: it never changes a `published`,
+`withdrawn` or `triage` advisory, or an unpaired external report, which
+it lists as `unpaired external report (left untouched)`. Broken pairs are
+listed as `- broken: <GHSA-id or issue ref>: <problem>`, never repaired.
+
+Its summary line is `Security records: <n> advisory states synced, <m>
+broken pairs.` Each noun agrees with its count, so a count of 1 reads
+`1 advisory state synced` or `1 broken pair`. It exits 1 when any pair is
+broken (after syncing the rest), or when the pass fails, including when
+the org's `.github` is private. An org with no `security` issues and no
+`.github` repo prints `Security records: none.`
+
+| Flag | Meaning |
+|---|---|
+| `--dry-run` | Preview: print the pass as `Security records (preview): <n> advisory states would sync, <m> broken pairs.`, change nothing, and exit 0 even on a broken pair. |
+
+**Permission.** `sync` needs **Repository security advisories: Read and
+write** on `<org>/.github` (`--dry-run` needs Read), so it runs as the
+human's own `gh` login or the user App, never in the scheduled sweep.
+`vrg-epic-audit --close` makes no security-advisory call, so its token
+needs no advisories access (vergil-project/vergil-tooling#4313). Nothing
+runs `sync` on a schedule: run it after closing or reopening a `security`
+issue, and regularly in any case.
+
 ## Related commands
 
 These commands read or move records as part of their own work:
 
-- **`vrg-epic-audit --close`** (the scheduled sweep) syncs each paired
-  advisory's state to its issues and reports broken pairs. It only moves
-  an advisory between `draft` and `closed`: it never changes a
-  `published`, `withdrawn` or `triage` advisory, or an unpaired external
-  report, which it lists as `unpaired external report (left untouched)`.
-  Its summary line is `Security records: <n> advisory states synced, <m>
-  broken pairs.` Each noun agrees with its count, so a count of 1 reads
-  `1 advisory state synced` or `1 broken pair`. It exits 1 when any pair is broken (after syncing the
-  rest), or when the pass fails, including when the org's `.github` is
-  private. An org with no `security` issues and no `.github` repo prints
-  `Security records: none.` The read-only `vrg-epic-audit` prints the same
-  pass as a `(preview)` with `would sync`, makes no change, and does not
-  fail on a broken pair.
+- **`vrg-epic-audit`** (read-only, without `--close`) prints the same pass
+  as `sync --dry-run`. `vrg-epic-audit --close`, the scheduled sweep, does
+  not run it.
 - **`vrg-intake-route`** retargets a security item's advisories on a
   transfer, a recreate or a split. A transfer or recreate retargets
   **every** advisory the item names, in body order. A recreate retargets
@@ -266,5 +293,5 @@ These commands read or move records as part of their own work:
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Refused (a private `.github`, a duplicate, bad refs, an unreadable file, `--details` under the sweep), a partial pair, a failed retarget, a GitHub API failure, or an authentication failure |
+| 1 | Refused (a private `.github`, a duplicate, bad refs, an unreadable file, `--details` under the sweep), a partial pair, a failed retarget, a broken pair found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
 | 2 | Invalid arguments |
