@@ -17424,8 +17424,9 @@ which is the complete list of entry points. The
 <li><strong><code>epic_audit.py</code></strong>, <strong><code>intake_route.py</code></strong> and <strong><code>queue_view.py</code></strong> build
   on <code>epics.py</code>: the <code>vrg-epic-audit</code> drift report and orphan pass, the
   <code>vrg-intake-route</code> mechanics and route table, and the <code>vrg-queue</code> views.</li>
-<li><strong><code>security_records.py</code></strong>: <code>vrg-security-record</code> and the security-records
-  pass of <code>vrg-epic-audit --close</code>.</li>
+<li><strong><code>security_records.py</code></strong>: <code>vrg-security-record</code>, including the
+  security-records pass of <code>vrg-security-record sync</code> (previewed by the
+  read-only <code>vrg-epic-audit</code>).</li>
 <li><strong><code>release/</code></strong>: the mechanized release workflow behind <code>vrg-release</code>:
   preflight, prepare, merge, bump, confirm, finalize, handoff, the
   orchestrator, the package-index wait, and the <code>update-deps</code> stage.

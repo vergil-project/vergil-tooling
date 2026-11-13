@@ -20637,8 +20637,9 @@ can't be inferred:</p>
 paired with a neutral <code>security</code>-labelled intake issue (epic
 vergil-project/.github#517). <code>create</code> makes the pair (or attaches an
 advisory to an existing issue, or resumes an unfinished pair), <code>list</code> and
-<code>show</code> read records, and <code>retarget</code> moves an advisory's tracking to new
-issues. Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
+<code>show</code> read records, <code>retarget</code> moves an advisory's tracking to new
+issues, and <code>sync</code> sets each paired advisory's state from its issues and
+reports broken pairs (<code>--dry-run</code> previews it). Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
 <a href="../dev/security-record/">vrg-security-record</a> and
 <a href="../../guides/security-records/">Security Records</a>.</p>
 <table>
@@ -20655,7 +20656,7 @@ issues. Advisory text is printed only by <code>show</code> and <code>list --deta
 </tr>
 <tr>
 <td>Args</td>
-<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code></td>
+<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code>; <code>sync [--dry-run]</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -20663,7 +20664,7 @@ issues. Advisory text is printed only by <code>show</code> and <code>list --deta
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A partial pair exits 1 naming what exists and the exact <code>--resume</code> command that finishes it; a private <code>.github</code>, a duplicate draft, or <code>--details</code> under <code>VRG_EPIC_SWEEP</code> is refused</td>
+<td>A partial pair exits 1 naming what exists and the exact <code>--resume</code> command that finishes it; a private <code>.github</code>, a duplicate draft, or <code>--details</code> under <code>VRG_EPIC_SWEEP</code> is refused; <code>sync</code> exits 1 on a broken pair after syncing the rest</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -21235,8 +21236,9 @@ status, and <code>vrg-epic-docs</code> settles them. The check runs only without
 home's epics once, under the home owner's App token, for this check and the
 closed-epic-with-open-child check.</p>
 <p>The report previews, without
-writing, the ad-hoc and queue-epic drains and the security-records pass that
-<code>--close</code> would run.</p>
+writing, the ad-hoc and queue-epic drains that <code>--close</code> would run, and the
+security-records pass of <code>vrg-security-record sync</code> (<code>--close</code> does not run
+it).</p>
 <p>The org comes from the current repo's <code>origin</code> remote (there is no <code>--org</code>
 flag). <code>--repo OWNER/NAME</code> audits that repo's resolved epic home instead of
 the org's <code>.github</code>, so a private repo that self-homes its epics can be
@@ -21266,13 +21268,11 @@ home.</p>
    nativize body-only <code>Parent:</code> links, strip the retired kind labels, move a
    now-public repo's queue items under <code>.github</code>, and attach every orphan to
    its home's intake epic.</li>
-<li>Run the security-records pass, even when the orphan pass failed: each
-   paired draft advisory in the org's <code>.github</code> is set to closed once every
-   issue it tracks is closed, and back to draft while any is open; broken
-   pairs are reported, not repaired. Its output names only GHSA IDs, issue
-   refs and states, never advisory text (see
-   <a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).</li>
 </ol>
+<p><code>--close</code> makes no security-advisory call: it neither syncs advisory states
+nor checks advisory/issue pairs. That is <code>vrg-security-record sync</code>, run by
+the human or the user agent (see
+<a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).</p>
 <p><code>--close</code> is a human action, or the scheduled <code>ops-epic-sweep</code> workflow,
 which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report-only.</p>
 <table>
@@ -21293,11 +21293,11 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run inside a repo in the target org; GitHub App credentials for that org. <code>--close</code> needs a human identity or <code>VRG_EPIC_SWEEP=1</code>. The security-records pass needs Repository security advisories: Read and write</td>
+<td>Run inside a repo in the target org; GitHub App credentials for that org. <code>--close</code> needs a human identity or <code>VRG_EPIC_SWEEP=1</code>. The read-only report's security-records preview needs Repository security advisories: Read; <code>--close</code> needs no advisories access</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>--close</code> in an agent session is refused before any network call; a <code>--repo</code> without <code>/</code>, an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and <code>--close</code> is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach; a broken security pair or a failed security pass exits 1 after the rest of the run. With <code>--epic</code>, a ref that is not an epic exits 1</td>
+<td><code>--close</code> in an agent session is refused before any network call; a <code>--repo</code> without <code>/</code>, an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and <code>--close</code> is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. With <code>--epic</code>, a ref that is not an epic exits 1</td>
 </tr>
 <tr>
 <td>Exit codes</td>

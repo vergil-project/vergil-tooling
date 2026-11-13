@@ -14509,6 +14509,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sync
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17493,6 +17504,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sync
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17547,6 +17569,7 @@ it. For the policy, neutral wording and the severity mapping, see
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>vrg-security-record list [--repo OWNER/NAME] [--state {draft,closed,all}] [--details]
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>vrg-security-record show (GHSA-ID | OWNER/REPO#N)
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>vrg-security-record retarget GHSA-ID --to 'OWNER/REPO#N' [--to 'OWNER/REPO#N' ...]
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>vrg-security-record sync [--dry-run]
 </code></pre></div>
 <h2 id="output-rule">Output rule<a class="headerlink" href="#output-rule" title="Permanent link">&para;</a></h2>
 <p>An advisory's summary and description reach stdout only through <code>show</code>
@@ -17556,7 +17579,8 @@ and states. A failed GitHub call is reported with its exit status, command
 and stderr; its response body is dropped, because for an advisory call it
 may hold the advisory text.</p>
 <p><code>list --details</code> is refused when <code>VRG_EPIC_SWEEP</code> is set, so advisory
-text can never reach the scheduled sweep's public Actions logs.</p>
+text can never reach the scheduled sweep's public Actions logs. <code>sync</code>
+prints no advisory text at all.</p>
 <h2 id="where-things-are-created">Where things are created<a class="headerlink" href="#where-things-are-created" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>--repo</code> always names the <strong>affected</strong> repo, never where anything is
@@ -17756,28 +17780,57 @@ After a failure at any step, re-run the same command: it finishes the
 job. An issue that still carries this advisory's line and label is found
 again by the listing, so an interrupted unmark is completed. The one case
 a re-run cannot reach is an issue whose <code>security</code> label was removed by
-hand while its advisory line stayed; the sweep reports it as a broken pair.
+hand while its advisory line stayed; <code>sync</code> reports it as a broken pair.
 On success it prints <code>Retargeted &lt;GHSA-id&gt; to &lt;refs&gt;.</code></p>
 <p>The library's <code>retarget</code> also takes a <code>renamed=</code> list, which the CLI does
 not expose. <code>vrg-intake-route</code> uses it for a transfer: the old number of a
 transferred issue is replaced in the tracking lines but never unmarked,
 because the old number now leads to the moved issue itself.</p>
+<h2 id="sync">sync<a class="headerlink" href="#sync" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-security-record<span class="w"> </span>sync<span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
+</code></pre></div>
+<p>Runs the security-records pass over the current repo's org (from its
+<code>origin</code> remote; there is no <code>--org</code> flag). It lists the advisories in
+<code>&lt;org&gt;/.github</code> and every <code>security</code>-labelled issue in the org's managed
+repos, then sets each paired advisory to <code>closed</code> when every issue it
+tracks is closed, and back to <code>draft</code> while any is open. It only moves an
+advisory between <code>draft</code> and <code>closed</code>: it never changes a <code>published</code>,
+<code>withdrawn</code> or <code>triage</code> advisory, or an unpaired external report, which
+it lists as <code>unpaired external report (left untouched)</code>. Broken pairs are
+listed as <code>- broken: &lt;GHSA-id or issue ref&gt;: &lt;problem&gt;</code>, never repaired.</p>
+<p>Its summary line is <code>Security records: &lt;n&gt; advisory states synced, &lt;m&gt;
+broken pairs.</code> Each noun agrees with its count, so a count of 1 reads
+<code>1 advisory state synced</code> or <code>1 broken pair</code>. It exits 1 when any pair is
+broken (after syncing the rest), or when the pass fails, including when
+the org's <code>.github</code> is private. An org with no <code>security</code> issues and no
+<code>.github</code> repo prints <code>Security records: none.</code></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--dry-run</code></td>
+<td>Preview: print the pass as <code>Security records (preview): &lt;n&gt; advisory states would sync, &lt;m&gt; broken pairs.</code>, change nothing, and exit 0 even on a broken pair.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Permission.</strong> <code>sync</code> needs <strong>Repository security advisories: Read and
+write</strong> on <code>&lt;org&gt;/.github</code> (<code>--dry-run</code> needs Read), so it runs as the
+human's own <code>gh</code> login or the user App, never in the scheduled sweep.
+<code>vrg-epic-audit --close</code> makes no security-advisory call, so its token
+needs no advisories access (vergil-project/vergil-tooling#4313). Nothing
+runs <code>sync</code> on a schedule: run it after closing or reopening a <code>security</code>
+issue, and regularly in any case.</p>
 <h2 id="related-commands">Related commands<a class="headerlink" href="#related-commands" title="Permanent link">&para;</a></h2>
 <p>These commands read or move records as part of their own work:</p>
 <ul>
-<li><strong><code>vrg-epic-audit --close</code></strong> (the scheduled sweep) syncs each paired
-  advisory's state to its issues and reports broken pairs. It only moves
-  an advisory between <code>draft</code> and <code>closed</code>: it never changes a
-  <code>published</code>, <code>withdrawn</code> or <code>triage</code> advisory, or an unpaired external
-  report, which it lists as <code>unpaired external report (left untouched)</code>.
-  Its summary line is <code>Security records: &lt;n&gt; advisory states synced, &lt;m&gt;
-  broken pairs.</code> Each noun agrees with its count, so a count of 1 reads
-  <code>1 advisory state synced</code> or <code>1 broken pair</code>. It exits 1 when any pair is broken (after syncing the
-  rest), or when the pass fails, including when the org's <code>.github</code> is
-  private. An org with no <code>security</code> issues and no <code>.github</code> repo prints
-  <code>Security records: none.</code> The read-only <code>vrg-epic-audit</code> prints the same
-  pass as a <code>(preview)</code> with <code>would sync</code>, makes no change, and does not
-  fail on a broken pair.</li>
+<li><strong><code>vrg-epic-audit</code></strong> (read-only, without <code>--close</code>) prints the same pass
+  as <code>sync --dry-run</code>. <code>vrg-epic-audit --close</code>, the scheduled sweep, does
+  not run it.</li>
 <li><strong><code>vrg-intake-route</code></strong> retargets a security item's advisories on a
   transfer, a recreate or a split. A transfer or recreate retargets
   <strong>every</strong> advisory the item names, in body order. A recreate retargets
@@ -17796,7 +17849,7 @@ because the old number now leads to the moved issue itself.</p>
   them and names them by GHSA ID only (<code>advisory still tracks</code> for one,
   <code>advisories still track</code> for more):</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
 </code></pre></div>
 <p>It lists each org's advisories once per view, and skips an org whose
   <code>.github</code> is absent or not public unless one of its items has an
@@ -17817,7 +17870,7 @@ because the old number now leads to the moved issue itself.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Refused (a private <code>.github</code>, a duplicate, bad refs, an unreadable file, <code>--details</code> under the sweep), a partial pair, a failed retarget, a GitHub API failure, or an authentication failure</td>
+<td>Refused (a private <code>.github</code>, a duplicate, bad refs, an unreadable file, <code>--details</code> under the sweep), a partial pair, a failed retarget, a broken pair found by <code>sync</code> (not <code>--dry-run</code>), a GitHub API failure, or an authentication failure</td>
 </tr>
 <tr>
 <td>2</td>

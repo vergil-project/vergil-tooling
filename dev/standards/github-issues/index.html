@@ -18773,10 +18773,14 @@ queue is a signal to run intake review. The same pass, dispatched once by hand
 through <code>ops-epic-sweep</code>'s <code>workflow_dispatch</code>, is the one-time migration of an
 org's existing backlog.</p>
 <h4 id="the-security-records-pass">The security-records pass<a class="headerlink" href="#the-security-records-pass" title="Permanent link">&para;</a></h4>
-<p>After the orphan pass, <code>vrg-epic-audit --close</code> runs one pass over the draft
-advisories in the org's <code>.github</code> (see
-<a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).
-It runs even when the orphan pass failed, and the worse exit code wins.</p>
+<p>The scheduled sweep does not run the security-records pass:
+<code>vrg-epic-audit --close</code> makes no security-advisory call, so the sweep's org
+ops App needs no Repository security advisories access (see
+<a href="../../guides/identity-architecture/">Identity architecture</a>). The pass is
+<code>vrg-security-record sync</code>, which the human or the user agent runs over the
+draft advisories in the org's <code>.github</code>, under an identity that holds
+Repository security advisories: Read and write (see
+<a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).</p>
 <ul>
 <li><strong>State sync.</strong> Each paired advisory follows its <code>security</code> issues: closed
   once every issue it tracks is closed, a draft while any is open. The pass
@@ -18785,13 +18789,12 @@ It runs even when the orphan pass failed, and the worse exit code wins.</p>
 <li><strong>Consistency check.</strong> It reports broken pairs (a <code>security</code> issue with a
   missing or wrong advisory reference, or an advisory whose tracking lines are
   missing or do not point back) and does not repair them; any broken pair
-  makes the run exit 1.</li>
+  makes <code>sync</code> exit 1, after it has synced the rest.</li>
 </ul>
-<p>Its output goes to <code>.github</code>'s public Actions logs, so it names only GHSA IDs,
-issue refs, labels and states, never advisory text. The read-only
-<code>vrg-epic-audit</code> previews the same pass without changing any state. The sweep's
-org ops App needs Repository security advisories: Read and write (see
-<a href="../../guides/identity-architecture/">Identity architecture</a>).</p>
+<p>Its output names only GHSA IDs, issue refs, labels and states, never advisory
+text. <code>vrg-security-record sync --dry-run</code> and the read-only <code>vrg-epic-audit</code>
+preview the same pass without changing any state. Nothing runs it on a
+schedule, so advisory states lag their issues until someone runs it.</p>
 <h2 id="intake-planning-and-deferred-queues">Intake, planning and deferred queues<a class="headerlink" href="#intake-planning-and-deferred-queues" title="Permanent link">&para;</a></h2>
 <p>Not every capture is ready to be built. Work flows through <strong>standing queues</strong>
 before it is ready — <strong>intake → planning → ready</strong> — and an evaluated item that
@@ -19167,8 +19170,8 @@ sync (<code>vrg-ensure-label --sync</code>) deletes them from any repo that stil
 them, which also strips them from any issue still carrying them.</p>
 <p><code>security</code> goes only on an issue paired with a private draft advisory:
 <code>vrg-security-record</code> applies it when it creates or attaches a record, and
-removes it when the last advisory an issue names stops tracking it. The sweep's
-consistency check applies only to <code>security</code>; <code>security-disclosed</code> marks a past public
+removes it when the last advisory an issue names stops tracking it. The
+consistency check of <code>vrg-security-record sync</code> applies only to <code>security</code>; <code>security-disclosed</code> marks a past public
 disclosure and is ignored by the check (see
 <a href="../../guides/security-records/#the-labels">Security Records</a>).</p>
 <p><code>dependency-update</code> goes on PRs, not issues: <code>vrg-update-deps</code> and the

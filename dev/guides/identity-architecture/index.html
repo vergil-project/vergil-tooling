@@ -17940,15 +17940,13 @@ workflows use it for:</p>
   tooling uses App credentials only when it finds an App key
   (<code>VRG_APP_ID</code> or <code>~/.config/vergil/app.pem</code>). Read-only is the
   correct least privilege.</li>
-<li><strong>Repository security advisories: Read and write.</strong> The scheduled
-  sweep (<code>vrg-epic-audit --close</code> in <code>ops-epic-sweep.yml</code>) lists the
-  draft advisories in the org's <code>.github</code> and closes or reopens each
-  one to follow its issues (see <a href="../security-records/">Security Records</a>,
-  epic
-  <a href="https://github.com/vergil-project/.github/issues/517">vergil-project/.github#517</a>).
-  The user App holds the same grant (see
-  <a href="../account-setup/#step-11-register-the-app">Account Setup</a>). Each
-  installation must accept the change before the grant takes effect.</li>
+<li><strong>Repository security advisories: not needed.</strong> The scheduled
+  sweep (<code>vrg-epic-audit --close</code> in <code>ops-epic-sweep.yml</code>) makes no
+  security-advisory call. Syncing advisory states to their issues is
+  <code>vrg-security-record sync</code>, which the human or the user agent runs; the
+  user App holds Read and write for it (see
+  <a href="../security-records/#permissions">Security Records</a> and
+  <a href="../account-setup/#step-11-register-the-app">Account Setup</a>).</li>
 </ul>
 <p>Release PRs are not opened by an App. <code>vrg-release</code> runs on the
 human's host under the human's own <code>gh</code> login.</p>
