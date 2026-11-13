@@ -37,7 +37,7 @@ from vergil_tooling.lib.config import (
 )
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
-    SETTING_RETURNED,
+    MERGE_SETTINGS_READ,
     ClassicProtectionReport,
     ConfigDiff,
     DiffItem,
@@ -300,7 +300,7 @@ def _missing_merge_setting_fetch() -> FetchResult:
         visibility="public",
         owner_type="Organization",
         not_checked=[
-            NotChecked(field="repo_settings.allow_merge_commit", permission=SETTING_RETURNED)
+            NotChecked(field="repo_settings.allow_merge_commit", permission=MERGE_SETTINGS_READ)
         ],
     )
 
@@ -327,8 +327,9 @@ def test_missing_merge_setting_is_not_checked_not_drift(
     mock_write.assert_not_called()
     captured = capsys.readouterr()
     assert "o/r: NOT FULLY AUDITED" in captured.out
-    assert f"repo_settings.allow_merge_commit: not checked (needs {SETTING_RETURNED})" in (
-        captured.out
+    assert (
+        "repo_settings.allow_merge_commit: not checked "
+        "(needs contents=read and contents=write)" in captured.out
     )
     assert "expected=" not in captured.out
     assert "Could not fully audit o/r: 1 setting(s) not checked" in captured.err
