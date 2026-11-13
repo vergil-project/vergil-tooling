@@ -1,17 +1,20 @@
 """Fixers for the managed files that ``vrg-github-repo-config update`` keeps in sync.
 
-Each fixer, ``fix_<name>(root) -> bool``, writes one managed file in place
+Each fixer, ``fix_<name>(root) -> bool``, writes its managed file in place
 under ``root`` (a fresh clone of the repo's ``develop``) so that it matches
-the released master copy, and returns whether it changed anything. It asks
+the released master copy (``fix_workflow_refs`` writes every workflow
+file whose pins drift), and returns whether it changed anything. It asks
 the same ``<name>_drift`` function in :mod:`vergil_tooling.lib.repo_config`
 that the file's audit check asks, so the check reports drift exactly when
 the fixer would change something or raise :class:`CannotFix` (epic
-vergil-project/.github#1064, Task 3a).
+vergil-project/.github#1064, Tasks 3a and 3b).
 
 The fixers own only the file change: no git, no GitHub API and no PR. They
 replace the write logic of the retired per-target applicators
-(``vrg-hook-guard-shim-sync``, ``vrg-claude-md-sync`` and
-``vrg-claude-settings-sync``).
+(``vrg-hook-guard-shim-sync``, ``vrg-claude-md-sync``,
+``vrg-claude-settings-sync``, ``vrg-gitignore-sync`` and
+``vrg-dependabot-sync``) and the workflow-pin normalization of
+``vrg-update-deps``.
 """
 
 from __future__ import annotations
@@ -25,7 +28,10 @@ from vergil_tooling.lib.repo_config import (
     ManagedFileDrift,
     claude_md_drift,
     claude_settings_drift,
+    dependabot_yml_drift,
+    gitignore_drift,
     hook_guard_shim_drift,
+    workflow_refs_drift,
 )
 
 if TYPE_CHECKING:
@@ -61,26 +67,46 @@ def fix_claude_settings(root: Path) -> bool:
     return _apply(root, claude_settings_drift(root))
 
 
+def fix_gitignore(root: Path) -> bool:
+    """Rewrite ``.gitignore``'s managed fence, keeping the repo's own lines."""
+    return _apply(root, gitignore_drift(root))
+
+
+def fix_dependabot_yml(root: Path) -> bool:
+    """Replace ``.github/dependabot.yml`` with the canonical render for the repo's language."""
+    return _apply(root, dependabot_yml_drift(root))
+
+
+def fix_workflow_refs(root: Path) -> bool:
+    """Set every vergil-* workflow pin to ``[dependencies].vergil``, file by file."""
+    return _apply(root, workflow_refs_drift(root))
+
+
 #: Every managed-file fixer, in the order ``update`` runs them.
 FIXERS: list[Callable[[Path], bool]] = [
     fix_hook_guard_shim,
     fix_claude_md,
     fix_claude_settings,
+    fix_gitignore,
+    fix_dependabot_yml,
+    fix_workflow_refs,
 ]
 
 
 def _apply(root: Path, drift: ManagedFileDrift | None) -> bool:
-    """Carry out ``drift``'s fix under ``root``; ``False`` when there is no drift.
+    """Carry out ``drift``'s fixes under ``root``; ``False`` when there is no drift.
 
-    Raises :class:`CannotFix` when the file drifts but has no fix.
+    Raises :class:`CannotFix`, writing nothing, when the files drift but have
+    no fix.
     """
     if drift is None:
         return False
-    if drift.fix is None:
-        raise CannotFix(drift.item.field, str(drift.item.actual))
-    path = root / drift.fix.path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write(path, drift.fix.data, drift.fix.mode)
+    if drift.fixes is None:
+        raise CannotFix(drift.items[0].field, drift.reason)
+    for fix in drift.fixes:
+        path = root / fix.path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(path, fix.data, fix.mode)
     return True
 
 
