@@ -4,8 +4,9 @@
 Vergil configuration and, in `apply` mode, reconciles it. It combines
 two independent halves:
 
-- **Local filesystem checks** (`audit_local_config`) — pure local file
-  I/O, no network. They verify the files every managed repo checks in:
+- **Managed-file checks** (`audit_local_config`) — file I/O on a fresh
+  shallow clone of the repo's `develop` branch. They verify the files
+  every managed repo checks in:
   `vergil.toml`, `CLAUDE.md`, `.claude/settings.json`,
   `.claude/hooks/guard.sh`, reusable-workflow pins, `.gitignore`,
   `.github/dependabot.yml`, and `.github/workflows/ops.yml`.
@@ -23,13 +24,19 @@ vrg-github-repo-config audit [--repo OWNER/REPO] [--config PATH]
 | Source | `vergil_tooling.bin.vrg_github_repo_config` |
 | Subcommands | `audit` (report), `diff` (report GitHub half only), `apply` (reconcile GitHub half) |
 | Args | `--repo OWNER/REPO` (defaults to the current git remote), `--config PATH` (local `vergil.toml`) |
-| Preconditions | Local checks require running from inside the repo's own checkout; GitHub checks require `gh` credentials |
+| Preconditions | Local checks clone the repo's `develop` over HTTPS, so git's credential helper must reach it (`gh auth setup-git`); GitHub checks require `gh` credentials |
 | Exit codes | 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings [not checked](#settings-the-identity-cannot-read)) |
 | Status | Active |
 
-Local checks only run when the current directory *is* the audited
-repo's checkout — auditing a foreign `--repo` from elsewhere skips the
-local half with a warning rather than reading the wrong files.
+Every subcommand runs the managed-file checks against what is committed
+on the repo's `develop`, never the current directory. It makes a shallow
+clone (`git clone --depth 1 --branch develop`) into a temporary
+directory, runs the checks there, and removes the clone when they end.
+A dirty or unrelated working tree cannot change the result, and
+`--repo OWNER/REPO` audits that repo's files from any directory. The
+clone is plain `git` over HTTPS and authenticates through git's
+credential helper (`gh auth setup-git`), so no token appears in argv or
+the logs. A clone that fails exits 2, naming the repo.
 
 ### Where it runs — the nightly self-policing loop
 
@@ -39,7 +46,7 @@ the **nightly `ops.yml` config-audit job**: every managed repo ships
 `.github/workflows/ops.yml`, which calls the reusable
 `vergil-project/vergil-actions/.github/workflows/ops-github-config.yml`
 workflow on a daily schedule. That job runs
-`vrg-github-repo-config audit` from inside the repo checkout, so any
+`vrg-github-repo-config audit` against the repo's `develop`, so any
 `DiffItem` returns exit 1 and **turns the scheduled run red**. Drift is
 fatal where it fires: a non-conforming repo cannot silently persist.
 

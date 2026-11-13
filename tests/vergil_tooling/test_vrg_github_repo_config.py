@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -12,6 +14,7 @@ import pytest
 from vergil_tooling.bin.vrg_github_repo_config import (
     _apply_repo,
     _audit_repo,
+    _cwd_matches_repo,
     _fetch_config_from_ref,
     _load_cwd_config,
     _load_local_config,
@@ -20,7 +23,7 @@ from vergil_tooling.bin.vrg_github_repo_config import (
     main,
     parse_args,
 )
-from vergil_tooling.lib import github
+from vergil_tooling.lib import develop_clone, github
 from vergil_tooling.lib.config import (
     DEFAULT_VALIDATION_COMMAND,
     CiConfig,
@@ -42,7 +45,7 @@ from vergil_tooling.lib.github_config import (
 from vergil_tooling.lib.versions import ResolutionError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator, Iterator
 
     from tests.vergil_tooling.conftest import FakeApp
 
@@ -137,6 +140,25 @@ def _mock_github_noncompliant() -> ConfigDiff:
             DiffItem(field="repo_settings.allow_auto_merge", expected=False, actual=True),
         ]
     )
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_develop_clone(tmp_path: Path) -> Iterator[None]:
+    """Never clone from GitHub: ``clone_develop`` yields an empty local directory,
+    and the managed-file checks report compliant. A test that patches either
+    one itself, or runs the real clone against a local origin, overrides this."""
+    clone = tmp_path / "hermetic-clone"
+    clone.mkdir()
+
+    @contextlib.contextmanager
+    def _fake_clone(_repo: str) -> Generator[Path]:
+        yield clone
+
+    with (
+        patch(f"{_MODULE}.clone_develop", side_effect=_fake_clone),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+    ):
+        yield
 
 
 # -- Audit/diff mode (combined local + GitHub) --------------------------------
@@ -827,76 +849,149 @@ def test_main_apply_refusal_exits_nonzero(capsys: pytest.CaptureFixture[str]) ->
     assert "docs / docs" in capsys.readouterr().err
 
 
-# -- Local check skip on --repo mismatch --------------------------------------
+# -- Managed-file checks read a fresh clone of develop (epic .github#1064) ----
 
 
-def test_audit_skips_local_checks_on_repo_mismatch(
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ("git", *args), cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def develop_origin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A bare origin whose develop holds ``marker`` = ``develop``, cloned through
+    the real ``clone_develop`` (its URL pointed at this local origin)."""
+    for var in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{var}_NAME", "Test")
+        monkeypatch.setenv(f"GIT_{var}_EMAIL", "test@example.com")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "develop", str(origin))
+    seed = tmp_path / "seed"
+    _git(tmp_path, "clone", "-q", str(origin), str(seed))
+    _git(seed, "checkout", "-q", "-b", "develop")
+    (seed / "marker").write_text("develop\n")
+    _git(seed, "add", "marker")
+    _git(seed, "commit", "-qm", "seed")
+    _git(seed, "push", "-q", "origin", "develop")
+    monkeypatch.setattr(develop_clone, "clone_url", lambda _repo: origin.as_uri())
+    return seed
+
+
+def _recording_local_audit(seen: list[tuple[Path, str]]) -> Callable[[Path], ConfigDiff]:
+    def _audit(repo_root: Path) -> ConfigDiff:
+        seen.append((repo_root, (repo_root / "marker").read_text()))
+        return _mock_local_compliant()
+
+    return _audit
+
+
+def _github_side() -> contextlib.ExitStack:
+    stack = contextlib.ExitStack()
+    stack.enter_context(patch(f"{_MODULE}._resolve_config"))
+    stack.enter_context(patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()))
+    return stack
+
+
+def test_audit_reads_develop_not_cwd(develop_origin: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dirty checkout of the repo as cwd does not change what is audited."""
+    (develop_origin / "marker").write_text("dirty working tree\n")
+    monkeypatch.chdir(develop_origin)
+    seen: list[tuple[Path, str]] = []
+    with (
+        patch(f"{_MODULE}.clone_develop", side_effect=develop_clone.clone_develop),
+        patch(f"{_MODULE}.audit_local_config", side_effect=_recording_local_audit(seen)),
+        patch(f"{_MODULE}.github.current_repo", return_value="o/r"),
+        _github_side(),
+    ):
+        result = main(["audit"])
+    assert result == 0
+    assert len(seen) == 1
+    root, marker = seen[0]
+    assert marker == "develop\n"
+    assert root != develop_origin
+    assert root != Path.cwd()
+
+
+def test_audit_runs_without_checkout(
+    develop_origin: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """--repo from an unrelated, non-git cwd still audits the repo's files."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    seen: list[tuple[Path, str]] = []
     with (
-        patch(f"{_MODULE}.github.current_repo", return_value="local/repo"),
-        patch(f"{_MODULE}.audit_local_config") as mock_local,
-        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
-        patch(f"{_MODULE}._resolve_config"),
+        patch(f"{_MODULE}.clone_develop", side_effect=develop_clone.clone_develop),
+        patch(f"{_MODULE}.audit_local_config", side_effect=_recording_local_audit(seen)),
+        patch(
+            f"{_MODULE}.github.current_repo",
+            side_effect=subprocess.CalledProcessError(1, "gh"),
+        ),
+        _github_side(),
     ):
         result = main(["audit", "--repo", "other/repo"])
-    mock_local.assert_not_called()
     assert result == 0
-
-
-def test_audit_repo_mismatch_prints_warning_to_stderr(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    with (
-        patch(f"{_MODULE}.github.current_repo", return_value="local/repo"),
-        patch(f"{_MODULE}.audit_local_config"),
-        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
-        patch(f"{_MODULE}._resolve_config"),
-    ):
-        main(["audit", "--repo", "other/repo"])
+    assert [marker for _root, marker in seen] == ["develop\n"]
     captured = capsys.readouterr()
-    assert "WARNING" in captured.err
-    assert "other/repo" in captured.err
+    assert "local: compliant" in captured.out
+    assert "skipped" not in captured.out
+    assert "WARNING" not in captured.err
 
 
-def test_audit_repo_mismatch_reports_local_skipped(
-    capsys: pytest.CaptureFixture[str],
+@pytest.mark.parametrize("command", ["audit", "diff", "apply"])
+def test_local_noncompliance_from_clone_is_reported(command: str) -> None:
+    """Every subcommand runs the clone's checks; drift there fails audit and apply."""
+    with (
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_noncompliant()),
+        patch(f"{_MODULE}._apply_repo", return_value=[]),
+        _github_side(),
+    ):
+        result = main([command, "--repo", "o/r"])
+    assert result == (0 if command == "diff" else 1)
+
+
+def test_clone_removed_after_run(develop_origin: Path) -> None:
+    seen: list[tuple[Path, str]] = []
+    with (
+        patch(f"{_MODULE}.clone_develop", side_effect=develop_clone.clone_develop),
+        patch(f"{_MODULE}.audit_local_config", side_effect=_recording_local_audit(seen)),
+        _github_side(),
+    ):
+        assert main(["audit", "--repo", "o/r"]) == 0
+    root = seen[0][0]
+    assert not root.exists()
+    assert not root.parent.exists()
+
+
+def test_clone_failure_exits_2_naming_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """A clone that fails means the audit could not complete: exit 2, naming the
+    repo, with no GitHub-side audit and no false 'non-compliant' verdict."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    missing = tmp_path / "missing.git"
+    monkeypatch.setattr(develop_clone, "clone_url", lambda _repo: missing.as_uri())
     with (
-        patch(f"{_MODULE}.github.current_repo", return_value="local/repo"),
-        patch(f"{_MODULE}.audit_local_config"),
-        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
-        patch(f"{_MODULE}._resolve_config"),
-    ):
-        main(["audit", "--repo", "other/repo"])
-    output = capsys.readouterr().out
-    assert "local: skipped" in output
-
-
-def test_apply_skips_local_on_repo_mismatch() -> None:
-    with (
-        patch(f"{_MODULE}.github.current_repo", return_value="local/repo"),
+        patch(f"{_MODULE}.clone_develop", side_effect=develop_clone.clone_develop),
         patch(f"{_MODULE}.audit_local_config") as mock_local,
-        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
-        patch(f"{_MODULE}._resolve_config"),
-        patch(f"{_MODULE}._apply_repo", return_value=[]) as mock_apply,
+        patch(f"{_MODULE}._resolve_config") as mock_config,
+        patch(f"{_MODULE}._audit_repo") as mock_audit,
     ):
-        result = main(["apply", "--repo", "other/repo"])
+        result = main(["audit", "--repo", "other/repo"])
+    assert result == 2
     mock_local.assert_not_called()
-    mock_apply.assert_called_once()
-    assert result == 0
-
-
-def test_audit_runs_local_when_repo_matches_cwd() -> None:
-    with (
-        patch(f"{_MODULE}.github.current_repo", return_value="o/r"),
-        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()) as mock_local,
-        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
-        patch(f"{_MODULE}._resolve_config"),
-    ):
-        result = main(["audit", "--repo", "o/r"])
-    mock_local.assert_called_once()
-    assert result == 0
+    mock_config.assert_not_called()
+    mock_audit.assert_not_called()
+    err = capsys.readouterr().err
+    assert "Could not clone the 'develop' branch of other/repo" in err
+    assert "Traceback" not in err
 
 
 # -- Issue #1210: delta output for status check mismatches -------------------
@@ -1041,26 +1136,6 @@ def test_print_diff_falls_back_for_non_rules_field(
         main(["audit", "--repo", "o/r"])
     output = capsys.readouterr().out
     assert "expected=False, actual=True" in output
-
-
-# -- Local check skip on --repo mismatch --------------------------------------
-
-
-def test_audit_skips_local_when_cwd_origin_unavailable() -> None:
-    import subprocess
-
-    with (
-        patch(
-            f"{_MODULE}.github.current_repo",
-            side_effect=subprocess.CalledProcessError(1, "gh"),
-        ),
-        patch(f"{_MODULE}.audit_local_config") as mock_local,
-        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
-        patch(f"{_MODULE}._resolve_config"),
-    ):
-        result = main(["audit", "--repo", "other/repo"])
-    mock_local.assert_not_called()
-    assert result == 0
 
 
 # -- Issue #1288: bypass_actors skipped in App mode ---------------------------
@@ -1219,9 +1294,8 @@ def test_version_window_error_in_audit_exits_two_on_one_line(
     assert result == 2
     mock_apply.assert_not_called()
     err = capsys.readouterr().err
-    # The only other stderr output is the skipped-local-checks warning.
     assert "Traceback" not in err
-    assert err.endswith(f"\nERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}\n")
+    assert err == f"ERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}\n"
     assert err.count("ERROR:") == 1
 
 
@@ -1239,9 +1313,8 @@ def test_version_window_error_in_apply_exits_two_on_one_line(
         result = main(["apply", "--repo", "o/r"])
     assert result == 2
     err = capsys.readouterr().err
-    # The only other stderr output is the skipped-local-checks warning.
     assert "Traceback" not in err
-    assert err.endswith(f"\nERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}\n")
+    assert err == f"ERROR: Could not resolve the CI versions for o/r: {_WINDOW_ERROR}\n"
     assert err.count("ERROR:") == 1
 
 
@@ -1334,3 +1407,20 @@ def test_apply_with_undeclared_still_converges_value_drift(
     out = capsys.readouterr().out
     assert "o/r: applied" in out
     assert "apply cannot resolve 1 undeclared ruleset parameter(s)" in out
+
+
+# -- _cwd_matches_repo (the vergil.toml bootstrap fallback's gate) -----------
+
+
+@pytest.mark.parametrize(("cwd_repo", "expected"), [("o/r", True), ("o/other", False)])
+def test_cwd_matches_repo_compares_origin(cwd_repo: str, *, expected: bool) -> None:
+    with patch(f"{_MODULE}.github.current_repo", return_value=cwd_repo):
+        assert _cwd_matches_repo("o/r") is expected
+
+
+def test_cwd_matches_repo_false_outside_a_checkout() -> None:
+    with patch(
+        f"{_MODULE}.github.current_repo",
+        side_effect=subprocess.CalledProcessError(1, "gh"),
+    ):
+        assert _cwd_matches_repo("o/r") is False
