@@ -13,6 +13,7 @@ import pytest
 
 from vergil_tooling.bin.vrg_github_repo_config import (
     _apply_repo,
+    _audit_and_apply,
     _audit_repo,
     _cwd_matches_repo,
     _fetch_config_from_ref,
@@ -1412,15 +1413,93 @@ def test_apply_with_undeclared_still_converges_value_drift(
 # -- _cwd_matches_repo (the vergil.toml bootstrap fallback's gate) -----------
 
 
-@pytest.mark.parametrize(("cwd_repo", "expected"), [("o/r", True), ("o/other", False)])
-def test_cwd_matches_repo_compares_origin(cwd_repo: str, *, expected: bool) -> None:
-    with patch(f"{_MODULE}.github.current_repo", return_value=cwd_repo):
-        assert _cwd_matches_repo("o/r") is expected
+_GH_ORIGIN = "https://github.com/o/r.git"
 
 
-def test_cwd_matches_repo_false_outside_a_checkout() -> None:
-    with patch(
-        f"{_MODULE}.github.current_repo",
-        side_effect=subprocess.CalledProcessError(1, "gh"),
+def _git_checkout(path: Path, *remotes: tuple[str, str]) -> Path:
+    """Create a git checkout at *path* with the given ``(name, url)`` remotes."""
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True, capture_output=True)  # noqa: S607
+    for name, url in remotes:
+        subprocess.run(  # noqa: S603
+            ["git", "remote", "add", name, url],  # noqa: S607
+            cwd=path,
+            check=True,
+            capture_output=True,
+        )
+    return path
+
+
+@pytest.mark.parametrize(
+    ("origin", "expected"),
+    [
+        (_GH_ORIGIN, True),
+        ("git@github.com:O/R.git", True),
+        ("https://github.com/o/other.git", False),
+        ("https://github.com/other/r.git", False),
+        ("https://gitlab.com/o/r.git", False),
+    ],
+)
+def test_cwd_matches_repo_compares_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, origin: str, *, expected: bool
+) -> None:
+    monkeypatch.chdir(_git_checkout(tmp_path, ("origin", origin)))
+    assert _cwd_matches_repo("o/r") is expected
+
+
+def test_cwd_matches_repo_false_outside_a_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+    assert _cwd_matches_repo("o/r") is False
+
+
+def test_cwd_matches_repo_false_without_an_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(_git_checkout(tmp_path, ("upstream", _GH_ORIGIN)))
+    assert _cwd_matches_repo("o/r") is False
+
+
+def test_cwd_matches_repo_needs_no_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(_git_checkout(tmp_path, ("origin", _GH_ORIGIN)))
+    with patch(f"{_MODULE}.github.current_repo") as mock_current:
+        assert _cwd_matches_repo("o/r") is True
+    mock_current.assert_not_called()
+
+
+_DUBIOUS = "fatal: detected dubious ownership in repository at '/src'\n"
+
+
+def test_cwd_matches_repo_propagates_an_unexpected_git_error() -> None:
+    failed = subprocess.CompletedProcess(["git"], 128, stdout="", stderr=_DUBIOUS)
+    with (
+        patch(f"{_MODULE}.subprocess.run", return_value=failed) as mock_run,
+        pytest.raises(RuntimeError, match="detected dubious ownership"),
     ):
-        assert _cwd_matches_repo("o/r") is False
+        _cwd_matches_repo("o/r")
+    assert mock_run.call_args.kwargs["env"]["LC_ALL"] == "C"
+
+
+def test_cwd_matches_repo_names_a_silent_git_failure() -> None:
+    failed = subprocess.CompletedProcess(["git"], 1, stdout="", stderr="")
+    with (
+        patch(f"{_MODULE}.subprocess.run", return_value=failed),
+        pytest.raises(RuntimeError, match="git exited 1 with no message"),
+    ):
+        _cwd_matches_repo("o/r")
+
+
+def test_apply_reports_a_cwd_check_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    failed = subprocess.CompletedProcess(["git"], 128, stdout="", stderr=_DUBIOUS)
+    with (
+        patch(f"{_MODULE}._fetch_config_from_ref", side_effect=_by_ref({"develop": None})),
+        patch(f"{_MODULE}.subprocess.run", return_value=failed),
+        patch(f"{_MODULE}._load_cwd_config") as mock_local,
+    ):
+        code = _audit_and_apply(
+            argparse.Namespace(config=None, command="apply"), "o/r", local_compliant=True
+        )
+    assert code == 2
+    assert "detected dubious ownership" in capsys.readouterr().err
+    mock_local.assert_not_called()
