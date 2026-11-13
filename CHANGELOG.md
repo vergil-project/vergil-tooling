@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.309] - 2026-11-13
+
+### Bug fixes
+
+- never forward rustup's toolchain selection into a container (#4353)
+- allow only non-toolchain actions for Rust repos (#4355)
+- ignore target/ in rust repos (#4357)
+
+### Features
+
+- report in-flight ad-hoc tasks in vrg-queue adhoc (#4350)
+- add the automation identity mode, verified against the token (#4351)
+- add the Rust floor and toolchain-file checks (#4352)
+- allow auto-merge, add the automation-branch ruleset, and treat an empty bypass read as unread under automation (#4356)
+- packaged cargo-deny policy for rust (#4358)
+- operational task bodies from a sectioned file (#4359)
+- add the update subcommand and deprecate apply (#4360)
+
 ## [2.1.308] - 2026-11-13
 
 ### Bug fixes
