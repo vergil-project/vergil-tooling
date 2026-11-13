@@ -895,6 +895,18 @@ mechanism is prescribed; if a precondition is unmet, record `blocked` and stop,
 never fabricating), the procedure, the acceptance criteria, and a
 **SUCCESS/FAILURE results template**.
 
+To fill the scaffold instead of leaving its placeholders, pass `--body-file`
+with a Markdown file of level-2 sections: `## Intro`, `## Preconditions`,
+`## Procedure` and `## Acceptance`, all required, plus `## Human-run steps`,
+optional and for `--kind deployment` only. Each section fills its scaffold
+section (`## Procedure` fills "Commands to run" for validation and "Deploy
+steps" for deployment); a deployment file without `## Human-run steps` drops
+that scaffold section. The tool keeps the frame: the self-check rule, the
+`Blocked-by:` lines and the results template. A missing, unknown, duplicate or
+empty section is refused, naming it, and a heading line inside a fenced code
+block is content, not a section. `--body` and `--body-file` together are
+refused, since `## Intro` is the intro.
+
 Add a **validation** task when acceptance needs a check the pipeline's own tests
 cannot do (a cold rebuild, a live check, a deploy smoke test); provisioning and
 infrastructure work carry a cold-rebuild validation by default. Add a

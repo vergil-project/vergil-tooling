@@ -19,6 +19,7 @@ so it is never a silent orphan; recover with ``vrg-epic-move``.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from importlib import resources
 from pathlib import Path
@@ -93,13 +94,34 @@ def main(argv: list[str] | None = None) -> int:
         body = _append_blocked_by(base, deps)
         body_file = None
     elif args.kind != "task":
-        if args.body_file:
+        sections: dict[str, str] | None = None
+        if args.body_file and args.kind not in _OPERATIONAL_KINDS:
             print(
                 f"vrg-issue-create: --body-file is not compatible with --kind {args.kind} "
                 f"(the {args.kind} scaffold defines the body)",
                 file=sys.stderr,
             )
             return 1
+        if args.body_file:
+            # An operational body file fills the scaffold's sections; the
+            # scaffold keeps its frame (#4348).
+            if args.body:
+                print(
+                    f"vrg-issue-create: --body is not compatible with --body-file for "
+                    f"--kind {args.kind} (the file's '## Intro' section is the intro)",
+                    file=sys.stderr,
+                )
+                return 1
+            try:
+                text = Path(args.body_file).read_text(encoding="utf-8")
+            except OSError as exc:
+                print(f"vrg-issue-create: cannot read --body-file: {exc}", file=sys.stderr)
+                return 1
+            try:
+                sections = _parse_operational_sections(text, kind=args.kind)
+            except ValueError as exc:
+                print(f"vrg-issue-create: --body-file {args.body_file}: {exc}", file=sys.stderr)
+                return 1
         if args.kind in _OPERATIONAL_KINDS:
             try:
                 deps = [epics.parse_issue_ref(ref, default_repo=repo) for ref in args.blocked_by]
@@ -116,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         labels.append(args.kind)
-        body = _render_scaffold_body(kind=args.kind, intro=args.body, deps=deps)
+        body = _render_scaffold_body(kind=args.kind, intro=args.body, deps=deps, sections=sections)
         body_file = None
 
     # Scope every App-token call below to the issue's owner, not the cwd org.
@@ -194,7 +216,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--title", required=True, help="Issue title")
     parser.add_argument("--body", default="", help="Issue body text")
-    parser.add_argument("--body-file", help="Read the issue body from a file")
+    parser.add_argument(
+        "--body-file",
+        help="Read the issue body from a file; for --kind validation/deployment the file "
+        "holds the scaffold's '## Intro', '## Preconditions', '## Procedure' and "
+        "'## Acceptance' sections (and, for deployment, an optional '## Human-run steps')",
+    )
     parser.add_argument("--label", action="append", default=[], help="Label (repeatable)")
     parser.add_argument("--assignee", action="append", default=[], help="Assignee (repeatable)")
     parser.add_argument("--repo", help="Target repo owner/name (defaults to the current repo)")
@@ -234,7 +261,119 @@ _SCAFFOLD_INTRO = {
 }
 
 
-def _render_scaffold_body(*, kind: str, intro: str, deps: list[epics.IssueRef]) -> str:
+# An operational body file's level-2 sections, each mapped to the scaffold slot
+# it fills (#4348). The single mapping both parsing and rendering use: a kind
+# accepts a section only when its scaffold has the slot (_SLOT_PLACEHOLDERS),
+# and every accepted section is required except the _OPTIONAL_SECTIONS.
+_SECTION_SLOTS = {
+    "Intro": "intro",
+    "Preconditions": "preconditions",
+    "Procedure": "procedure",
+    "Acceptance": "acceptance",
+    "Human-run steps": "human_steps",
+}
+_OPTIONAL_SECTIONS = frozenset({"Human-run steps"})
+
+# Each operational slot's placeholder, rendered when no body file fills it, so
+# a scaffold built without --body-file is unchanged. ``intro`` falls back to
+# _SCAFFOLD_INTRO instead.
+_SLOT_PLACEHOLDERS = {
+    "validation": {
+        "preconditions": r"- \<precondition — probe or human-attested\>",
+        "procedure": r"- \<concrete validation command(s)\>",
+        "acceptance": r"- \<explicit pass/fail condition(s)\>",
+    },
+    "deployment": {
+        "preconditions": (
+            r'- \<precondition — e.g. "release vX.Y.Z is published"; target reachable\>'
+        ),
+        "procedure": r"- \<install / sync / restart command(s) the agent identity can run\>",
+        "human_steps": (
+            r"- \<command the human runs\> — check: \<what shows it succeeded, e.g. the"
+            "\n"
+            r"  human's command exits 0\>"
+        ),
+        "acceptance": r"- \<how you know the change is deployed and usable\>",
+    },
+}
+
+# An optional slot is a whole scaffold section, framed by its own template
+# with a ``{steps}`` field; a body file without the section drops it entirely.
+_OPTIONAL_SLOT_FRAMES = {"human_steps": "deployment_human_steps.md"}
+
+_HEADING = re.compile(r"^##[ \t]+(.+?)[ \t]*$")
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _kind_sections(kind: str) -> list[str]:
+    """The body-file sections *kind* accepts, in scaffold order."""
+    slots = _SLOT_PLACEHOLDERS[kind]
+    return [name for name, slot in _SECTION_SLOTS.items() if slot == "intro" or slot in slots]
+
+
+def _parse_operational_sections(text: str, *, kind: str) -> dict[str, str]:
+    """Split an operational body file into its ``## <Section>`` texts.
+
+    A ``## `` line inside a fenced code block is content, not a heading.
+    Raises ``ValueError`` naming the section on text before the first
+    section, an unknown, duplicate or empty section, or a missing required
+    one.
+    """
+    allowed = _kind_sections(kind)
+    expected = ", ".join(f"## {name}" for name in allowed)
+    preamble: list[str] = []
+    found: dict[str, list[str]] = {}
+    current: list[str] = preamble
+    fence: str | None = None
+    for line in text.splitlines():
+        heading = _HEADING.match(line) if fence is None else None
+        if heading is not None:
+            name = heading.group(1)
+            if name not in allowed:
+                msg = f"unknown section '## {name}' for --kind {kind} (expected: {expected})"
+                raise ValueError(msg)
+            if name in found:
+                msg = f"duplicate section '## {name}'"
+                raise ValueError(msg)
+            current = found[name] = []
+            continue
+        marker = _FENCE.match(line)
+        if marker is not None:
+            run = marker.group(1)
+            if fence is None:
+                fence = run
+            elif run[0] == fence[0] and len(run) >= len(fence) and line.strip() == run:
+                fence = None
+        current.append(line)
+    if any(line.strip() for line in preamble):
+        msg = f"text before the first section (expected: {expected})"
+        raise ValueError(msg)
+    missing = [n for n in allowed if n not in found and n not in _OPTIONAL_SECTIONS]
+    if missing:
+        names = ", ".join(f"## {name}" for name in missing)
+        msg = f"missing required section(s): {names}"
+        raise ValueError(msg)
+    sections: dict[str, str] = {}
+    for name, lines in found.items():
+        content = "\n".join(lines).strip("\n").rstrip()
+        if not content.strip():
+            msg = f"section '## {name}' is empty"
+            raise ValueError(msg)
+        sections[name] = content
+    return sections
+
+
+def _read_template(name: str) -> str:
+    return resources.files("vergil_tooling.data").joinpath(name).read_text(encoding="utf-8")
+
+
+def _render_scaffold_body(
+    *,
+    kind: str,
+    intro: str,
+    deps: list[epics.IssueRef],
+    sections: dict[str, str] | None = None,
+) -> str:
     """Build a scaffolded issue body from the *kind*'s template.
 
     Each scaffolded kind has its own ``<kind>_task_body.md`` template. The
@@ -244,16 +383,35 @@ def _render_scaffold_body(*, kind: str, intro: str, deps: list[epics.IssueRef]) 
     *deps* (operational only) are rendered as machine-parseable ``Blocked-by:``
     reflinks under a Dependencies heading (or omitted entirely when there are
     none); a template without a ``{blocked_by}`` field simply ignores them.
+
+    *sections* (operational only) are a parsed body file's section texts
+    (``_parse_operational_sections``); each fills its slot, and with *sections*
+    given an optional section the file lacks is dropped. Without *sections*,
+    every slot renders its placeholder.
     """
-    template = (
-        resources.files("vergil_tooling.data")
-        .joinpath(f"{kind}_task_body.md")
-        .read_text(encoding="utf-8")
-    )
+    template = _read_template(f"{kind}_task_body.md")
     blocked_by = ""
     if deps:
         blocked_by = "## Dependencies (merge-first)\n\n" + epics.render_blocked_by(deps) + "\n"
-    return template.format(intro=intro or _SCAFFOLD_INTRO[kind], blocked_by=blocked_by)
+    filled = {_SECTION_SLOTS[name]: text for name, text in (sections or {}).items()}
+    slots = {
+        "intro": filled.get("intro") or intro or _SCAFFOLD_INTRO[kind],
+        "blocked_by": blocked_by,
+    }
+    for slot, placeholder in _SLOT_PLACEHOLDERS.get(kind, {}).items():
+        text = placeholder if sections is None else filled.get(slot)
+        frame = _OPTIONAL_SLOT_FRAMES.get(slot)
+        if text is None:
+            if frame is None:
+                # _parse_operational_sections guarantees every required section.
+                msg = f"no text for required scaffold slot {slot!r} (--kind {kind})"
+                raise ValueError(msg)
+            slots[slot] = ""
+        elif frame is None:
+            slots[slot] = text
+        else:
+            slots[slot] = _read_template(frame).format(steps=text).rstrip("\n") + "\n\n"
+    return template.format(**slots)
 
 
 def _append_blocked_by(base: str, deps: list[epics.IssueRef]) -> str:
