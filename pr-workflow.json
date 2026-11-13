@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "issue": "4366",
+  "branch": "feature/4366-adhoc-queue-docs",
+  "base": "origin/develop",
+  "status": "ready",
+  "created_at": "2026-11-13T23:46:12Z",
+  "updated_at": "2026-11-13T23:46:12Z",
+  "git": {
+    "base_sha": "95fe814835a880f5f8b5fd8c491b82462a4d906d",
+    "head_sha": "052bf6cf490da7031f5112b5f5dea8cc13bb6c83"
+  },
+  "pr_metadata": {
+    "title": "docs(queue): document vrg-queue adhoc and name epic-review in the queue-item refusal",
+    "summary": "Documents vrg-queue adhoc (states, --root, shown only when named) in github-issues.md and ties it to epic-implement adhoc, and makes the CLI reference's queue-item refusal passage name epic-review intake, epic-create and epic-review deferred, closing the doc gaps found by epic 1077's documentation review.",
+    "notes": "Merge review: done: eligible; accepted-risk 0\nDocs only: docs/site/docs/standards/github-issues.md and docs/site/docs/reference/cli-tools-overview.md. The new github-issues.md paragraph summarizes the vrg-queue adhoc reference entry and links to it for the line format, marks and dispositions.",
+    "linkage": "Ref"
+  },
+  "submitted": null
+}
