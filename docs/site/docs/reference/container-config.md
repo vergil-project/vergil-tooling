@@ -41,6 +41,13 @@ repo, `vrg-container-run` resolves it from the environment or its canonical
 token file and forwards it itself (see the next section and
 [C++ Overview → ConanCenter Audit Token](../standards/development/cpp/overview.md#conancenter-audit-token)).
 An existing `CONAN_AUDIT_PROVIDER_TOKEN` prefix is harmless but redundant.
+
+A few names are never forwarded, whatever prefix matches them:
+`VRG_VERSION_WINDOW` (see [below](#vrg_version_window-a-local-version-window)),
+and rustup's `RUSTUP_TOOLCHAIN` and `RUSTUP_AUTO_INSTALL`. A forwarded variable
+overrides the image's own setting, and the Rust image selects its toolchain
+itself, so a prefix such as `RUST` cannot let the host pick another one (epic
+[vergil-project/.github#1095](https://github.com/vergil-project/.github/issues/1095)).
 The passthrough design is specified in
 [`docs/specs/2026-05-25-configurable-container-env-passthrough-design.md`](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/2026-05-25-configurable-container-env-passthrough-design.md).
 

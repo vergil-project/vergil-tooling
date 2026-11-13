@@ -224,6 +224,17 @@ def workspace_mount_args(repo_root: Path) -> list[str]:
 # the container cannot see (issue #3392).
 VERSION_WINDOW_MOUNT = "/run/vergil/version-window.json"
 
+# Host variables the env-prefixes passthrough never forwards, whatever the
+# repo's ``[container].env-prefixes``. ``VRG_VERSION_WINDOW`` names a host path
+# the container cannot see (it is rewritten to the mount instead). rustup's
+# ``RUSTUP_TOOLCHAIN`` and ``RUSTUP_AUTO_INSTALL`` would override the image's
+# toolchain pin, since a forwarded ``-e NAME`` beats the image's ``ENV``
+# (epic vergil-project/.github#1095, spec §6.4). The names are literal so this
+# module keeps importing ``versions.window`` lazily.
+NEVER_FORWARDED: frozenset[str] = frozenset(
+    {"VRG_VERSION_WINDOW", "RUSTUP_TOOLCHAIN", "RUSTUP_AUTO_INSTALL"}
+)
+
 
 def version_window_override(environ: Mapping[str, str] | None = None) -> Path | None:
     """Return the absolute host file named by ``VRG_VERSION_WINDOW``, or ``None``.
@@ -282,8 +293,13 @@ def build_container_args(
 
     *version_window* is a host ``window.json`` (see :func:`version_window_override`):
     it is bind-mounted read-only at :data:`VERSION_WINDOW_MOUNT` and
-    ``VRG_VERSION_WINDOW`` is set to that mount. ``VRG_VERSION_WINDOW`` is never
-    forwarded by the env-prefixes passthrough, so a host path cannot leak in.
+    ``VRG_VERSION_WINDOW`` is set to that mount.
+
+    The env-prefixes passthrough never forwards a name in
+    :data:`NEVER_FORWARDED`: ``VRG_VERSION_WINDOW``, so a host path cannot leak
+    in, and rustup's ``RUSTUP_TOOLCHAIN`` and ``RUSTUP_AUTO_INSTALL``, so the
+    host cannot override the image's toolchain pin. *env_names* and *extra_env*
+    are not filtered.
     """
     from vergil_tooling.lib.versions.window import WINDOW_ENV
 
@@ -319,7 +335,7 @@ def build_container_args(
     if env_prefixes:
         prefixes = tuple(env_prefixes)
         for name in os.environ:
-            if name.startswith(prefixes) and name != WINDOW_ENV:
+            if name.startswith(prefixes) and name not in NEVER_FORWARDED:
                 container_args.extend(["-e", name])
 
     if version_window is not None:
