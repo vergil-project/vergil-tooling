@@ -31,7 +31,9 @@ routes each container allows:
   own repo is just reparented. On every path the parent is read back, and one
   other than the target epic fails loudly with :class:`RouteHalfAppliedError`
   naming the item, where it is and how to recover it, as does a link or
-  read-back that fails outright.
+  read-back that fails outright. A planning item's ``in-progress`` label is
+  removed from its final issue once the move has settled (a recreate never
+  carries it).
 - **planning** — reparent onto the planning epic of the same queue home.
 - **split** — the replacement tasks already exist (made with
   ``vrg-issue-create``); comment the links and the reason, then close.
@@ -49,8 +51,8 @@ advisories alone.
 
 A task in a development epic, an epic, and an unparented issue are refused
 (``planning`` alone accepts an unparented issue: the ``epic-create`` free-text
-path), the refusal naming the parent. A planning item refuses drop and defer
-while any of its development epics is open (one an ``Epic:`` marker names, or
+path), the refusal naming the parent. A planning item refuses drop, defer and
+one-off while any of its development epics is open (one an ``Epic:`` marker names, or
 one whose body carries a ``Planning:`` line for it; #4001, #4170). An
 ad-hoc item refuses defer while an open PR would close it. A private repo's item
 is never routed to a public repo or epic. The whole route runs under the item
@@ -146,7 +148,7 @@ RouteAction = Drop | Defer | OneOff | ToPlanning | ToIntake | Split
 # development epic, an archive) allows nothing.
 ROUTES: dict[str | None, frozenset[type]] = {
     "intake": frozenset({Drop, Defer, OneOff, ToPlanning, Split}),
-    "planning": frozenset({Defer, Drop}),
+    "planning": frozenset({Defer, Drop, OneOff}),
     "ad-hoc": frozenset({Defer}),
     "deferred": frozenset({Defer, ToIntake, ToPlanning, OneOff, Drop, Split}),
     None: frozenset({ToPlanning}),
@@ -225,7 +227,7 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         _guard_visibility(ref, _repo_of(intake))
         _link(intake, ref)
         return RouteResult(final=ref, moved_by="none")
-    return _one_off(ref, action, parent)
+    return _one_off(ref, action, parent, kind)
 
 
 def _check_eligible(ref: IssueRef, action: RouteAction, parent: IssueRef | None) -> str | None:
@@ -321,9 +323,10 @@ def _planning_epic_states(ref: IssueRef, view: dict[str, Any]) -> dict[IssueRef,
 
 
 def _guard_open_planning_epics(ref: IssueRef, view: dict[str, Any], doing: str) -> None:
-    """Refuse *doing* (dropping or deferring) a planning item while an epic of it is open.
+    """Refuse *doing* a planning item while an epic of it is open.
 
-    Once every development epic is closed nothing is left to orphan (#4170).
+    *doing* is the route: dropping, deferring or routing one-off. Once every
+    development epic is closed nothing is left to orphan (#4170).
     """
     open_epics = [
         epic.slug for epic, state in _planning_epic_states(ref, view).items() if state == "OPEN"
@@ -373,22 +376,34 @@ def _defer(ref: IssueRef, action: Defer, kind: str | None, parent: IssueRef, day
         f"and lose the 'Deferred from:' line):\n\n{body}"
     )
     if epics.PLANNING_IN_PROGRESS_LABEL in _label_names(view):
-        label = epics.PLANNING_IN_PROGRESS_LABEL
         try:
-            github.run(
-                "issue", "edit", str(ref.number), "--repo", _repo_of(ref), "--remove-label", label
-            )
-        except subprocess.CalledProcessError as exc:
-            raise RuntimeError(
-                f"{stranded}: removing the '{label}' label failed "
-                f"({' '.join(error_text(exc).split())}). Fix it with: gh issue edit "
-                f"{ref.number} --repo {_repo_of(ref)} --remove-label {label}. {by_hand}"
-            ) from exc
+            _remove_in_progress(ref, doing="deferring")
+        except RuntimeError as exc:
+            raise RuntimeError(f"{stranded}, and {exc}. {by_hand}") from exc
     try:
         _comment(ref, body)
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
             f"{stranded}: posting it failed ({' '.join(error_text(exc).split())}). {by_hand}"
+        ) from exc
+
+
+def _remove_in_progress(target: IssueRef, *, doing: str) -> None:
+    """Remove the planning ``in-progress`` label from *target*.
+
+    Raise :class:`RuntimeError` naming *doing* (the route that removes it) and
+    the command that removes it by hand when the edit fails.
+    """
+    label = epics.PLANNING_IN_PROGRESS_LABEL
+    try:
+        github.run(
+            "issue", "edit", str(target.number), "--repo", _repo_of(target), "--remove-label", label
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"{doing} left the '{label}' label on {target.slug}: removing it failed "
+            f"({' '.join(error_text(exc).split())}). Fix it with: gh issue edit "
+            f"{target.number} --repo {_repo_of(target)} --remove-label {label}"
         ) from exc
 
 
@@ -406,7 +421,57 @@ def _guard_visibility(ref: IssueRef, *targets: str) -> None:
         )
 
 
-def _one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) -> RouteResult:
+def _one_off(
+    ref: IssueRef, action: OneOff, old_parent: IssueRef | None, kind: str | None
+) -> RouteResult:
+    """Route *ref* one-off; a planning item is guarded first and loses ``in-progress`` after.
+
+    The guard runs before anything that can create the target's ad-hoc epic.
+    The label comes off the item's final issue once the move has settled: a
+    recreate never carries it, and a transfer keeps it only when the target
+    repo has the label, so each is read rather than assumed.
+    """
+    labelled = False
+    if kind == epics.PLANNING.key:
+        view = _view(ref, "labels,comments")
+        _guard_open_planning_epics(ref, view, "routing one-off")
+        labelled = epics.PLANNING_IN_PROGRESS_LABEL in _label_names(view)
+    result = _move_one_off(ref, action, old_parent)
+    if labelled:
+        try:
+            if _still_in_progress(result):
+                _remove_in_progress(result.final, doing="routing one-off")
+        except RuntimeError as exc:
+            # The move has settled: say so, so nobody re-runs a route now refused.
+            raise RouteHalfAppliedError(f"{_moved(ref, result.final)}, but {exc}") from exc
+    return result
+
+
+def _still_in_progress(result: RouteResult) -> bool:
+    """Whether the routed item's final issue still carries ``in-progress``.
+
+    Raise :class:`RuntimeError` with the by-hand fix when the labels cannot be read.
+    """
+    if result.moved_by == "recreate":
+        return False
+    if result.moved_by == "none":
+        return True
+    final = result.final
+    label = epics.PLANNING_IN_PROGRESS_LABEL
+    try:
+        view = _view(final, "labels")
+    except github.MissingGitHubTokenError:
+        raise
+    except (subprocess.CalledProcessError, RuntimeError) as exc:
+        raise RuntimeError(
+            f"routing one-off could not read the labels of {final.slug} "
+            f"({' '.join(error_text(exc).split())}). If it still carries '{label}', fix it "
+            f"with: gh issue edit {final.number} --repo {_repo_of(final)} --remove-label {label}"
+        ) from exc
+    return label in _label_names(view)
+
+
+def _move_one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) -> RouteResult:
     source = _repo_of(ref)
     dest = action.repo
     if dest.count("/") != 1 or not all(dest.split("/")):
@@ -705,7 +770,9 @@ def _recreate(
     )
     names = [str(label.get("name", "")) for label in raw.get("labels") or []]
     registry = {entry["name"] for entry in load_labels()["labels"]}
-    kept = [name for name in names if name not in RETIRED_LABELS]
+    # A routed one-off is never an epic-create session underway: in-progress stays behind.
+    dropped = {*RETIRED_LABELS, epics.PLANNING_IN_PROGRESS_LABEL}
+    kept = [name for name in names if name not in dropped]
     carried = [name for name in kept if name in registry]
     uncarried = [name for name in kept if name not in registry]
     if carried:
