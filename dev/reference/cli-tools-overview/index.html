@@ -20226,7 +20226,12 @@ It is the sanctioned issue-creation path: <code>vrg-gh</code> denies raw
 <code>gh issue create</code>. <code>--epic</code> takes <code>adhoc</code>, <code>intake</code>, <code>planning</code>, <code>#N</code> (read
 against the target repo's epic home) or <code>owner/repo#N</code>. <code>--kind</code> stamps an
 operational (<code>validation</code>, <code>deployment</code>) or <code>retrospective</code> label and body
-scaffold, and <code>--blocked-by</code> stamps a <code>Blocked-by:</code> reference. If the link
+scaffold, and <code>--blocked-by</code> stamps a <code>Blocked-by:</code> reference. With
+<code>--kind validation</code> or <code>--kind deployment</code>, <code>--body-file</code> fills the scaffold
+from a file's <code>## Intro</code>, <code>## Preconditions</code>, <code>## Procedure</code> and
+<code>## Acceptance</code> sections (all required) and, for deployment only, an optional
+<code>## Human-run steps</code>; the scaffold keeps its frame. <code>--kind retrospective</code>
+refuses <code>--body-file</code>. If the link
 fails after creation, the created issue's URL is reported for recovery with
 <code>vrg-epic-move</code>.</p>
 <table>
