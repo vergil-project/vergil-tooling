@@ -797,7 +797,8 @@ def test_pending_section_renders_rows_in_order(capsys: pytest.CaptureFixture[str
     ]
     assert section[5].endswith("docs(batch): document batched same-repo PRs")
     assert section[6] == (
-        "4 changes pending release: 1 dependency update, 1 release back-merge, 2 other PRs."
+        "4 changes pending release: 1 dependency update, 1 release back-merge, "
+        "0 automation PRs, 2 other PRs."
     )
     assert len(section) == 7
     # The section sits after the worktree sections, before the summary lines.
@@ -875,7 +876,34 @@ def test_no_pr_change_is_problem(capsys: pytest.CaptureFixture[str]) -> None:
     assert section[3] == f"  PROBLEM: {sha7} reached develop without a PR"
     assert section[4] == (
         "1 change pending release: 0 dependency updates, 0 release back-merges, "
-        "0 other PRs, 1 PROBLEM: commits with no PR."
+        "0 automation PRs, 0 other PRs, 1 PROBLEM: commits with no PR."
+    )
+
+
+def test_automation_pr_shows_as_automation(capsys: pytest.CaptureFixture[str]) -> None:
+    sync = _change(
+        4301,
+        "automation/repo-config-sync/123",
+        "chore(repo-config): sync managed files",
+        ChangeKind.AUTOMATION,
+        "automation",
+        _ago(2),
+        sha=1,
+    )
+    dev = _change(4302, "feature/4302-x", "feat: x", ChangeKind.OTHER, "feat", _ago(1), sha=2)
+    rc, _ = _run([], publish=True, pending=_pending(sync, dev))
+    out = capsys.readouterr().out
+    assert rc == 0
+    section = _section(out)
+    rows = [line.split()[:3] for line in section[2:4]]
+    assert rows == [
+        ["#4301", "automation/repo-config-sync/123", "automation"],
+        ["#4302", "feature/4302-x", "feat"],
+    ]
+    # Counted apart from development (other) PRs.
+    assert section[4] == (
+        "2 changes pending release: 0 dependency updates, 0 release back-merges, "
+        "1 automation PR, 1 other PR."
     )
 
 
@@ -885,12 +913,15 @@ def test_pending_summary_counts_buckets() -> None:
         _change(2, "deps/update-2", "chore(deps): b", ChangeKind.DEPS, "deps", _NOW),
         _change(3, "release/post-1", "chore(release): c", ChangeKind.RELEASE, "release", _NOW),
         _change(4, "feature/4-d", "feat: d", ChangeKind.OTHER, "feat", _NOW),
+        _change(5, "automation/a/1", "chore: e", ChangeKind.AUTOMATION, "automation", _NOW),
+        _change(6, "automation/a/2", "chore: f", ChangeKind.AUTOMATION, "automation", _NOW),
+        _change(7, "automation/b/3", "chore: g", ChangeKind.AUTOMATION, "automation", _NOW),
         _change(None, None, "e", ChangeKind.NO_PR, "-", _NOW),
         _change(None, None, "f", ChangeKind.NO_PR, "-", _NOW),
     ]
     assert _pending_summary(changes) == (
-        "6 changes pending release: 2 dependency updates, 1 release back-merge, "
-        "1 other PR, 2 PROBLEM: commits with no PR."
+        "9 changes pending release: 2 dependency updates, 1 release back-merge, "
+        "3 automation PRs, 1 other PR, 2 PROBLEM: commits with no PR."
     )
 
 

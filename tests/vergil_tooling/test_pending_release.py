@@ -301,6 +301,21 @@ def test_classify_deps_by_label_or_branch_alone() -> None:
     assert classify("fix!: break", None, []) == (ChangeKind.OTHER, "fix")
 
 
+def test_classify_automation_branch() -> None:
+    # An automation PR is its own type, apart from development PRs, whatever
+    # its title's conventional type or its labels (epic .github#1064).
+    assert classify(
+        "chore(repo-config): sync managed files", "automation/repo-config-sync/123", []
+    ) == (ChangeKind.AUTOMATION, "automation")
+    assert classify("chore: bump", "automation/other-job/9", ["dependency-update"]) == (
+        ChangeKind.AUTOMATION,
+        "automation",
+    )
+    # Only the branch prefix counts: a lookalike name is not automation.
+    assert classify("feat: x", "feature/1-automation", []) == (ChangeKind.OTHER, "feat")
+    assert classify("feat: x", "automationx/1", []) == (ChangeKind.OTHER, "feat")
+
+
 # --- gather_pending_release: mapping --------------------------------------------
 
 

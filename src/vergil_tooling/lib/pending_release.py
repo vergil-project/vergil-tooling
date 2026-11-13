@@ -73,6 +73,9 @@ _CONVENTIONAL_RE = re.compile(r"^([a-z]+)(\([^)]*\))?!?:")
 _RELEASE_BRANCH_PREFIX = "release/post-"
 _DEPS_BRANCH_PREFIX = "deps/update-"
 _DEPS_LABEL = "dependency-update"
+# Mechanized PRs are opened from ``automation/<job>/<run-id>`` branches
+# (epic vergil-project/.github#1064).
+_AUTOMATION_BRANCH_PREFIX = "automation/"
 
 # ``scheme://user[:secret]@`` in a URL: the userinfo is removed from every
 # error reason. The match runs to the last ``@`` before the path, so a secret
@@ -93,6 +96,7 @@ class ChangeKind(enum.Enum):
 
     DEPS = "deps"
     RELEASE = "release"
+    AUTOMATION = "automation"
     OTHER = "other"
     NO_PR = "no-pr"
 
@@ -122,7 +126,7 @@ class PendingChange:
     """The PR title, or the commit subject for :attr:`ChangeKind.NO_PR`."""
     kind: ChangeKind
     type_label: str
-    """``deps``, ``release``, the conventional type, or ``-``."""
+    """``deps``, ``release``, ``automation``, the conventional type, or ``-``."""
     merged_ts: float
     """Epoch seconds: the PR's merge time, or the commit date for NO_PR."""
     shas: tuple[str, ...]
@@ -233,6 +237,10 @@ def classify(title: str, branch: str | None, labels: Sequence[str]) -> tuple[Cha
     """The kind and TYPE label of a PR, from its *title*, head *branch* and *labels*."""
     if branch is not None and branch.startswith(_RELEASE_BRANCH_PREFIX):
         return ChangeKind.RELEASE, "release"
+    # The branch decides before the dependency-update label: an automation
+    # PR is never counted as a dependency update or a development PR.
+    if branch is not None and branch.startswith(_AUTOMATION_BRANCH_PREFIX):
+        return ChangeKind.AUTOMATION, "automation"
     if (branch is not None and branch.startswith(_DEPS_BRANCH_PREFIX)) or _DEPS_LABEL in labels:
         return ChangeKind.DEPS, "deps"
     m = _CONVENTIONAL_RE.match(title)
