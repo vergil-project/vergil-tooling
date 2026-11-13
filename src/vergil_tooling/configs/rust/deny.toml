@@ -20,9 +20,6 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.93
-# The fleet list is wider than any one repo's dependency graph, so an allowed
-# license a repo does not use is not worth a warning on every run.
-unused-allowed-license = "allow"
 
 [advisories]
 # Version 2 defaults otherwise: every vulnerability advisory is an error, and an
