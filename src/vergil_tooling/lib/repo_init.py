@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import subprocess
@@ -325,8 +324,7 @@ def render_claude_settings() -> str:
     parsing. The marketplace definition lives only in the user settings, so
     nothing is seeded (epic vergil-project/.github#558).
     """
-    data = json.loads(_load_data_file("claude_settings.json"))
-    return json.dumps(data, indent=2) + "\n"
+    return repo_config.render_claude_settings()
 
 
 def _load_license(license_type: str) -> str:

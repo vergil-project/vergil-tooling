@@ -145,8 +145,9 @@ not installed, its `jq` fallback refuses input it cannot check. An older
 copy that lets such input through, a local edit, or a CRLF copy is drift.
 The check reports one `DiffItem(field="local.hook_guard_shim", ...)`:
 `missing` when the file is absent, `unreadable (…)` when it cannot be
-read, or `differs from the packaged shim (stale or locally edited)`. It
-compares content only, not the file mode.
+read, `differs from the packaged shim (stale or locally edited)`, or,
+for the right bytes without every execute bit, `not executable (mode
+…)`: Claude Code cannot run a hook that is not executable.
 
 Fix it with `vrg-hook-guard-shim-sync --write`, which replaces the file
 with the packaged shim, mode `0755`, for one repo;
