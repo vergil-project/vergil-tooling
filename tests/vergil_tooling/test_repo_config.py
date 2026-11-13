@@ -104,6 +104,7 @@ class TestHookGuardShim:
         hooks_dir.mkdir(parents=True)
         path = hooks_dir / "guard.sh"
         path.write_bytes(data)
+        path.chmod(0o755)
         return path
 
     def test_missing_reports_missing(self, tmp_path: Path) -> None:
@@ -578,6 +579,7 @@ def _write_compliant_repo(root: Path) -> None:
     hooks_dir = root / ".claude" / "hooks"
     hooks_dir.mkdir(parents=True)
     (hooks_dir / "guard.sh").write_bytes(_SHIM_PATH.read_bytes())
+    (hooks_dir / "guard.sh").chmod(0o755)
     (root / "CLAUDE.md").write_text(f"# CLAUDE.md\n\n{_BEGIN}\n{_TEMPLATE_TEXT}{_END}\n")
     (root / ".claude" / "settings.json").write_text(json.dumps(_SETTINGS_TEMPLATE))
     # A fully compliant repo carries the fenced managed .gitignore for its
