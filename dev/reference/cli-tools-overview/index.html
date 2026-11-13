@@ -21564,9 +21564,16 @@ in <code>lib/identity_mode.py</code>. Ask <code>vrg-whoami</code>; never infer i
 fallback signals (environment variable, mode file, App key, App ID, then
 the <code>human</code> default), and an unset value means "fall through", not
 "human". See <a href="../../guides/account-setup/">Account setup</a>.</p>
+<p>The <code>automation</code> role is checked before those signals, and only when
+<code>VRG_AUTOMATION_APP</code> is set. That variable names the org automation App,
+and the token must then verify as that App's installation token (GraphQL
+<code>viewer</code> login <code>&lt;slug&gt;[bot]</code>). A different login, a failed lookup, an empty
+variable, or an agent signal alongside it is an error. No
+<code>VRG_IDENTITY_MODE</code> value or mode file selects <code>automation</code>. Without the
+variable, resolution is unchanged and makes no network request.</p>
 <ul>
-<li><code>vrg-whoami</code> / <code>--mode</code>: the role as one token (<code>human</code>, <code>user</code> or
-  <code>audit</code>), for scripting, for example
+<li><code>vrg-whoami</code> / <code>--mode</code>: the role as one token (<code>human</code>, <code>user</code>,
+  <code>audit</code> or <code>automation</code>), for scripting, for example
   <code>export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"</code>.</li>
 <li><code>--platform</code>: the platform as one token (<code>physical-host</code>, <code>local-vm</code> or
   <code>cloud-vm</code>), a second axis independent of the role, resolved from
@@ -21595,15 +21602,15 @@ the <code>human</code> default), and an unset value means "fall through", not
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>None</td>
+<td>None (with <code>VRG_AUTOMATION_APP</code> set, a GitHub token)</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Disagreement is a warning on stderr, never an error</td>
+<td>Disagreement is a warning on stderr, never an error; a failed automation verification exits 1 with the reason</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0</td>
+<td>0 success, 1 automation verification failed</td>
 </tr>
 <tr>
 <td>Status</td>
