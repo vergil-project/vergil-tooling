@@ -222,6 +222,22 @@ def test_create_pr_passes_labels() -> None:
     assert mock_read.call_args.args[-4:] == ("--label", "dependency-update", "--label", "x")
 
 
+def test_create_pr_passes_repo_when_given() -> None:
+    """A caller outside any checkout of the repo names it with --repo."""
+    with patch(
+        "vergil_tooling.lib.github.read_output", return_value="https://github.com/o/r/pull/4"
+    ) as mock_read:
+        github.create_pr(repo="o/r", base="develop", title="t", body_file="/b", head="h")
+    args = mock_read.call_args.args
+    assert args[args.index("--repo") + 1] == "o/r"
+
+
+def test_create_pr_omits_repo_by_default() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="u") as mock_read:
+        github.create_pr(base="main", title="t", body_file="/b")
+    assert "--repo" not in mock_read.call_args.args
+
+
 def test_create_issue_returns_url_and_builds_command() -> None:
     with patch(
         "vergil_tooling.lib.github.read_output",

@@ -1,13 +1,16 @@
 """Audit, diff, and apply repository configuration for managed repos.
 
-Combines local filesystem checks (vergil.toml, CLAUDE.md,
-.claude/settings.json, .claude/hooks/) with GitHub API configuration
+Combines the managed-file checks (vergil.toml, CLAUDE.md,
+.claude/settings.json, .claude/hooks/, ...), run against a fresh shallow
+clone of the repo's ``develop`` branch, with GitHub API configuration
 auditing.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -15,6 +18,7 @@ from pathlib import Path
 from vergil_tooling.lib import github
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import VergilConfig, _parse_raw_config
+from vergil_tooling.lib.develop_clone import DevelopCloneError, clone_develop
 from vergil_tooling.lib.github_config import (
     ClassicProtectionReport,
     ConfigDiff,
@@ -40,21 +44,20 @@ from vergil_tooling.lib.versions import VersionsError
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
-    local_compliant = True
-    if args.repo and not _cwd_matches_repo(args.repo):
-        print(
-            f"\n  WARNING: --repo {args.repo} does not match the current directory's "
-            f"git remote.\n"
-            f"  Local checks skipped — cd into the repo's checkout to audit local files.\n",
-            file=sys.stderr,
-        )
-        print("  local: skipped (not in local checkout)")
-    else:
-        local_diff = audit_local_config(Path.cwd())
-        _print_local_diff(local_diff)
-        local_compliant = local_diff.is_compliant()
-
     repo = _resolve_repo(args)
+    # The managed-file checks read what is committed on *repo*'s develop, in a
+    # fresh shallow clone, never the caller's checkout: a dirty or unrelated
+    # cwd cannot change the result, and --repo audits from anywhere.
+    try:
+        with clone_develop(repo) as clone:
+            local_diff = audit_local_config(clone)
+    except DevelopCloneError as exc:
+        # Without the files the audit could not complete: exit 2, never 1.
+        emit_error(str(exc))
+        return 2
+    _print_local_diff(local_diff)
+    local_compliant = local_diff.is_compliant()
+
     # Every GitHub call below targets *repo*, so mint the App token for its
     # owner rather than the cwd org (#3220). Under target_org a missing
     # installation for that owner raises NoInstallationError instead of
@@ -391,12 +394,54 @@ def _apply_repo(repo: str, config: VergilConfig) -> list[ClassicProtectionReport
 
 
 def _cwd_matches_repo(repo: str) -> bool:
-    """Check whether CWD's git origin matches the target repo."""
-    try:
-        cwd_repo = github.current_repo()
-    except Exception:
+    """Check whether CWD's git ``origin`` remote names the target repo.
+
+    The comparison is local and case-insensitive (GitHub owner and repo names
+    are), so it needs no network and no token: ``apply`` runs it inside the
+    target owner's ``target_org`` scope, where a ``gh`` lookup of an unrelated
+    checkout in another org would fail rather than read as "not this repo".
+
+    Only the answers that mean "not this repo" read as no match: a CWD that is
+    not a git checkout, has no ``origin`` remote, or whose ``origin`` is not a
+    github.com repo, or names another one. Any other failure propagates, so the
+    user sees why the current directory could not be checked (vergil-tooling#4311).
+    """
+    origin = _cwd_origin_url()
+    if origin is None:
         return False
-    return cwd_repo == repo
+    cwd_repo = github.github_remote_repo(origin)
+    return cwd_repo is not None and cwd_repo.lower() == repo.lower()
+
+
+# git's diagnostics for "the CWD is not a checkout" and "it has no such remote",
+# read under LC_ALL=C so a localized git cannot reword them.
+_NOT_A_CHECKOUT_MARKERS = ("not a git repository", "No such remote")
+
+
+def _cwd_origin_url() -> str | None:
+    """The CWD checkout's ``origin`` URL, or ``None`` when there is no such remote.
+
+    ``None`` only when git reports that the CWD is not a checkout or has no
+    ``origin``. Any other git failure (a refused ``safe.directory``, a corrupt
+    repository) raises :class:`RuntimeError` carrying git's own diagnostic,
+    which ``apply`` reports as a clean exit-2 error. Run directly rather than
+    through ``lib.git``, whose failure path echoes git's stderr: here a
+    non-checkout is an expected answer, not an error.
+    """
+    result = subprocess.run(  # noqa: S603
+        ["git", "remote", "get-url", "origin"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "LC_ALL": "C", "GIT_TERMINAL_PROMPT": "0"},
+    )
+    if result.returncode == 0:
+        return result.stdout.strip()
+    if any(marker in result.stderr for marker in _NOT_A_CHECKOUT_MARKERS):
+        return None
+    detail = result.stderr.strip() or f"git exited {result.returncode} with no message"
+    msg = f"could not read the current directory's git 'origin' remote: {detail}"
+    raise RuntimeError(msg)
 
 
 if __name__ == "__main__":

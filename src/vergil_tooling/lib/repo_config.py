@@ -3,19 +3,34 @@
 Checks files on disk — vergil.toml, CLAUDE.md, .claude/settings.json,
 .claude/hooks/guard.sh, .gitignore, .github/dependabot.yml and
 .github/workflows/ops.yml — without making any API calls.
+
+A managed file that ``vrg-github-repo-config update`` can fix has one
+``<name>_drift`` function here, which both its ``_check_*`` and its fixer in
+:mod:`vergil_tooling.lib.repo_config_fixes` call. It returns the
+:class:`ManagedFileDrift` (the audit items and the writes that remove them), or
+``None`` when the file is correct, so the check and the fixer share one
+definition of the correct file and cannot disagree (epic
+vergil-project/.github#1064, Task 3a).
 """
 
 from __future__ import annotations
 
 import importlib.resources
 import json
+import stat
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import dependabot, gitignore
 from vergil_tooling.lib.config import ConfigError, declared_primary_language, read_config
 from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
-from vergil_tooling.lib.vergil_refs import iter_workflow_refs, read_source_version
+from vergil_tooling.lib.vergil_refs import (
+    is_pin_version,
+    iter_workflow_refs,
+    read_source_version,
+    rewrite_workflow_refs,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -29,9 +44,75 @@ HOOK_GUARD_SHIM_TEMPLATE = "hook_guard_shim.sh"
 #: Where the hook guard shim lives in a repo, relative to its root.
 HOOK_GUARD_SHIM_PATH = ".claude/hooks/guard.sh"
 
+#: Where the Claude settings live in a repo, relative to its root.
+CLAUDE_SETTINGS_PATH = ".claude/settings.json"
+
+#: Where CLAUDE.md lives in a repo, relative to its root.
+CLAUDE_MD_PATH = "CLAUDE.md"
+
+#: Where the managed ``.gitignore`` lives in a repo, relative to its root.
+GITIGNORE_PATH = ".gitignore"
+
+#: The mode the hook guard shim is written with.
+HOOK_GUARD_SHIM_MODE = 0o755
+
+#: The mode a newly created managed file other than the shim is written with.
+NEW_FILE_MODE = 0o644
+
+#: Every execute bit; a shim missing any of them is drift.
+_EXEC_BITS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+
 #: The CLAUDE.md line budget (epic vergil-project/.github#558), counted as
 #: ``len(text.splitlines())`` so a trailing newline is not an extra line.
 CLAUDE_MD_MAX_LINES = 200
+
+
+@dataclass(frozen=True)
+class FileFix:
+    """The write that makes one managed file correct.
+
+    ``path`` is relative to the repo root. The fixer replaces the whole file
+    with ``data`` and leaves it at ``mode``.
+    """
+
+    path: str
+    data: bytes
+    mode: int
+
+
+@dataclass(frozen=True)
+class ManagedFileDrift:
+    """Why a managed file is not correct, and how to make it so.
+
+    ``items`` is what the audit reports, never empty. ``fixes`` is the writes
+    that make the files correct, one per file, so one check can cover several
+    files (the workflow pins do), or ``None`` when no fix can be computed (for
+    example, a CLAUDE.md with no template markers).
+    """
+
+    items: tuple[DiffItem, ...]
+    fixes: tuple[FileFix, ...] | None
+
+    @classmethod
+    def single(cls, item: DiffItem, fix: FileFix | None) -> ManagedFileDrift:
+        """One audit item, made correct by at most one write."""
+        return cls(items=(item,), fixes=None if fix is None else (fix,))
+
+    @property
+    def reason(self) -> str:
+        """Why the files are not correct: the audit items' actual values, joined."""
+        return "; ".join(str(item.actual) for item in self.items)
+
+
+def _report(drift: ManagedFileDrift | None, items: list[DiffItem]) -> None:
+    """Append ``drift``'s audit items, if there is drift, to ``items``."""
+    if drift is not None:
+        items.extend(drift.items)
+
+
+def _file_mode(path: Path) -> int:
+    """The mode a fix leaves a file at: its own, or 0644 for a new file."""
+    return path.stat().st_mode & 0o777 if path.is_file() else NEW_FILE_MODE
 
 
 def _read_data_file(name: str) -> str:
@@ -49,6 +130,15 @@ def render_hook_guard_shim() -> str:
     packaged file raises; it is never treated as an empty shim.
     """
     return _read_data_file(HOOK_GUARD_SHIM_TEMPLATE)
+
+
+def render_claude_settings() -> str:
+    """Return the ``.claude/settings.json`` text: the packaged template.
+
+    The audit requires the repo file to equal the template after JSON
+    parsing; this is the text ``vrg-github-repo-init`` and the fixer write.
+    """
+    return json.dumps(_load_settings_template(), indent=2) + "\n"
 
 
 def _load_template() -> str:
@@ -95,28 +185,43 @@ def _check_gitignore(repo_root: Path, items: list[DiffItem]) -> None:
     fence is not judged at all: the check appends one explicit failure naming
     the config error instead of a false compliant/differs verdict (#3451).
     """
-    gitignore_path = repo_root / ".gitignore"
-    text = gitignore_path.read_text(encoding="utf-8") if gitignore_path.is_file() else ""
+    _report(gitignore_drift(repo_root), items)
+
+
+def gitignore_drift(repo_root: Path) -> ManagedFileDrift | None:
+    """Return how ``.gitignore`` drifts, or ``None`` when its managed fence is correct.
+
+    The verdict is :func:`gitignore.check`'s and the fix is
+    :func:`gitignore.sync`'s text, which ``check`` drifts exactly when it
+    would change: the fence is rewritten to the canonical block and moved to
+    the top, and the repo's own lines are kept (on a bootstrap, less the
+    managed vocabulary). The file is read in text mode, so its line ends
+    never count; a fixed file is written with LF line ends, keeping its mode,
+    or 0644 for a new file. A ``vergil.toml`` that fails to load is drift
+    with no fix: the fence language is unknown (#3451).
+    """
+    path = repo_root / GITIGNORE_PATH
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
 
     try:
         lang = _gitignore_language(repo_root)
     except ConfigError as exc:
-        items.append(
-            DiffItem(
-                field="local.gitignore",
-                expected="resolvable [project].primary-language",
-                actual=f"cannot resolve the fence language: {exc}",
-            )
+        item = DiffItem(
+            field="local.gitignore",
+            expected="resolvable [project].primary-language",
+            actual=f"cannot resolve the fence language: {exc}",
         )
-        return
+        return ManagedFileDrift.single(item, None)
     compliance = gitignore.check(text, lang)
     if compliance.compliant:
-        return
-
-    for reason in compliance.reasons:
-        items.append(
-            DiffItem(field="local.gitignore", expected="vergil-managed fence", actual=reason)
-        )
+        return None
+    items = tuple(
+        DiffItem(field="local.gitignore", expected="vergil-managed fence", actual=reason)
+        for reason in compliance.reasons
+    )
+    data = gitignore.sync(text, lang).text.encode("utf-8")
+    fix = FileFix(path=GITIGNORE_PATH, data=data, mode=_file_mode(path))
+    return ManagedFileDrift(items=items, fixes=(fix,))
 
 
 def _check_dependabot_yml(repo_root: Path, items: list[DiffItem]) -> None:
@@ -131,28 +236,48 @@ def _check_dependabot_yml(repo_root: Path, items: list[DiffItem]) -> None:
     not judged at all: the check appends one explicit failure naming the config
     error instead of comparing against a silent actions-only render (#3451).
     """
+    _report(dependabot_yml_drift(repo_root), items)
+
+
+def dependabot_yml_drift(repo_root: Path) -> ManagedFileDrift | None:
+    """Return how ``.github/dependabot.yml`` drifts, or ``None`` when it is canonical.
+
+    The file is fully managed: the verdict is :func:`dependabot.check`'s and
+    the fix replaces the whole file with :func:`dependabot.render` for the
+    repo's language, local additions included, keeping its mode, or 0644 for
+    a new file. The file is read in text mode, so its line ends never count.
+    A ``vergil.toml`` that fails to load is drift with no fix: the language
+    is unknown (#3451).
+    """
     path = repo_root / dependabot.DEPENDABOT_PATH
     text = path.read_text(encoding="utf-8") if path.is_file() else None
 
     try:
         lang = dependabot.resolve_language(repo_root)
     except ConfigError as exc:
-        items.append(
-            DiffItem(
-                field="local.dependabot",
-                expected="resolvable [project].primary-language",
-                actual=f"cannot resolve the dependabot language: {exc}",
-            )
+        item = DiffItem(
+            field="local.dependabot",
+            expected="resolvable [project].primary-language",
+            actual=f"cannot resolve the dependabot language: {exc}",
         )
-        return
-    for reason in dependabot.check(text, lang):
-        items.append(
-            DiffItem(
-                field="local.dependabot",
-                expected="canonical report-only dependabot.yml",
-                actual=reason,
-            )
+        return ManagedFileDrift.single(item, None)
+    reasons = dependabot.check(text, lang)
+    if not reasons:
+        return None
+    items = tuple(
+        DiffItem(
+            field="local.dependabot",
+            expected="canonical report-only dependabot.yml",
+            actual=reason,
         )
+        for reason in reasons
+    )
+    fix = FileFix(
+        path=dependabot.DEPENDABOT_PATH.as_posix(),
+        data=dependabot.render(lang).encode("utf-8"),
+        mode=_file_mode(path),
+    )
+    return ManagedFileDrift(items=items, fixes=(fix,))
 
 
 def _check_required_workflows(repo_root: Path, items: list[DiffItem]) -> None:
@@ -247,33 +372,54 @@ CLAUDE_MD_MARKER_END = "<!-- vergil:template:claude-md:end -->"
 
 
 def _check_claude_md(repo_root: Path, items: list[DiffItem]) -> None:
-    claude_md = repo_root / "CLAUDE.md"
-    if not claude_md.is_file():
-        items.append(
-            DiffItem(
-                field="local.claude_md",
-                expected="present",
-                actual="missing",
-            )
-        )
-        return
+    _report(claude_md_drift(repo_root), items)
 
-    lines = claude_md.read_text(encoding="utf-8").splitlines()
+
+def claude_md_drift(repo_root: Path) -> ManagedFileDrift | None:
+    """Return how CLAUDE.md's template region drifts, or ``None`` when it matches.
+
+    Only the region between the markers is managed. The fix replaces the
+    lines between the two marker lines with the template, verbatim, and
+    keeps every byte outside them, the marker lines and their line ends
+    included, and the file's mode. A region that matches apart from blank
+    lines next to the markers is not drift. A missing CLAUDE.md, or one with
+    absent or malformed markers, is drift with no fix: where the region
+    belongs cannot be known without guessing.
+    """
+    claude_md = repo_root / CLAUDE_MD_PATH
+    if not claude_md.is_file():
+        item = DiffItem(field="local.claude_md", expected="present", actual="missing")
+        return ManagedFileDrift.single(item, None)
+
+    # Decoded from bytes, never read in text mode, so the line ends the fix
+    # keeps survive unchanged. ``splitlines`` with and without ``keepends``
+    # split at the same places, so a marker index is valid in both lists.
+    text = claude_md.read_bytes().decode("utf-8")
+    lines = text.splitlines()
     try:
         begin, end = claude_md_marker_lines(lines)
     except ClaudeMdMarkerError as exc:
-        items.append(
-            DiffItem(
-                field="local.claude_md",
-                expected="well-formed template markers",
-                actual=str(exc),
-            )
+        item = DiffItem(
+            field="local.claude_md",
+            expected="well-formed template markers",
+            actual=str(exc),
         )
-        return
+        return ManagedFileDrift.single(item, None)
 
     divergence = claude_md_region_divergence(lines, begin, end)
-    if divergence is not None:
-        items.append(divergence)
+    if divergence is None:
+        return None
+    raw_lines = text.splitlines(keepends=True)
+    template = load_claude_md_template()
+    if not template.endswith("\n"):
+        template += "\n"
+    new_text = "".join(raw_lines[: begin + 1]) + template + "".join(raw_lines[end:])
+    fix = FileFix(
+        path=CLAUDE_MD_PATH,
+        data=new_text.encode("utf-8"),
+        mode=claude_md.stat().st_mode & 0o777,
+    )
+    return ManagedFileDrift.single(divergence, fix)
 
 
 class ClaudeMdMarkerError(ValueError):
@@ -296,7 +442,7 @@ def claude_md_marker_lines(lines: list[str]) -> tuple[int, int]:
     marker line matches after stripping surrounding whitespace. Raises
     :class:`ClaudeMdMarkerError` unless there is exactly one begin marker
     followed by exactly one end marker. This is the one marker parser: the
-    audit and ``vrg-claude-md-sync`` both use it.
+    audit, its fixer and ``vrg-claude-md-sync`` all use it.
     """
     begins = [i for i, line in enumerate(lines) if line.strip() == CLAUDE_MD_MARKER_BEGIN]
     ends = [i for i, line in enumerate(lines) if line.strip() == CLAUDE_MD_MARKER_END]
@@ -410,90 +556,109 @@ def _first_divergence(
 
 
 def _check_hook_guard_shim(repo_root: Path, items: list[DiffItem]) -> None:
-    """Require ``.claude/hooks/guard.sh`` to match the packaged shim byte for byte.
+    _report(hook_guard_shim_drift(repo_root), items)
 
-    A stale copy (one that does not fail closed) or a local edit is drift.
-    The comparison is on bytes, so a CRLF copy, which bash cannot run, is
-    drift too. An unreadable file is reported, never passed.
+
+def hook_guard_shim_drift(repo_root: Path) -> ManagedFileDrift | None:
+    """Return how ``.claude/hooks/guard.sh`` drifts, or ``None`` when it is correct.
+
+    Correct is the packaged shim byte for byte, with every execute bit set:
+    Claude Code cannot run a non-executable hook. A stale copy (one that does
+    not fail closed) or a local edit is drift. The comparison is on bytes, so
+    a CRLF copy, which bash cannot run, is drift too. The fix writes the
+    packaged shim, mode 0755. An unreadable file is reported, never passed,
+    and has no fix.
     """
     shim_path = repo_root / HOOK_GUARD_SHIM_PATH
+    managed = render_hook_guard_shim().encode("utf-8")
+    fix = FileFix(path=HOOK_GUARD_SHIM_PATH, data=managed, mode=HOOK_GUARD_SHIM_MODE)
     if not shim_path.is_file():
-        items.append(
-            DiffItem(
-                field="local.hook_guard_shim",
-                expected="present",
-                actual="missing",
-            )
-        )
-        return
+        item = DiffItem(field="local.hook_guard_shim", expected="present", actual="missing")
+        return ManagedFileDrift.single(item, fix)
     try:
         current = shim_path.read_bytes()
     except OSError as exc:
-        items.append(
-            DiffItem(
-                field="local.hook_guard_shim",
-                expected="readable",
-                actual=f"unreadable ({exc})",
-            )
+        item = DiffItem(
+            field="local.hook_guard_shim",
+            expected="readable",
+            actual=f"unreadable ({exc})",
         )
-        return
-    if current != render_hook_guard_shim().encode("utf-8"):
-        items.append(
-            DiffItem(
-                field="local.hook_guard_shim",
-                expected="matches the packaged shim (src/vergil_tooling/data/hook_guard_shim.sh)",
-                actual="differs from the packaged shim (stale or locally edited)",
-            )
+        return ManagedFileDrift.single(item, None)
+    if current != managed:
+        item = DiffItem(
+            field="local.hook_guard_shim",
+            expected="matches the packaged shim (src/vergil_tooling/data/hook_guard_shim.sh)",
+            actual="differs from the packaged shim (stale or locally edited)",
         )
+        return ManagedFileDrift.single(item, fix)
+    mode = shim_path.stat().st_mode
+    if mode & _EXEC_BITS != _EXEC_BITS:
+        item = DiffItem(
+            field="local.hook_guard_shim",
+            expected="executable (mode 0755)",
+            actual=f"not executable (mode {mode & 0o777:04o})",
+        )
+        return ManagedFileDrift.single(item, fix)
+    return None
 
 
 def _check_claude_settings(repo_root: Path, items: list[DiffItem]) -> None:
-    settings_path = repo_root / ".claude" / "settings.json"
+    _report(claude_settings_drift(repo_root), items)
+
+
+def claude_settings_drift(repo_root: Path) -> ManagedFileDrift | None:
+    """Return how ``.claude/settings.json`` drifts, or ``None`` when it is correct.
+
+    The file is fully managed: correct is equal to the template after JSON
+    parsing, so key order and whitespace never count. The fix replaces the
+    whole file with :func:`render_claude_settings` (it never merges keys),
+    keeping the file's mode, or 0644 for a new file. A file that is not
+    valid JSON or not a JSON object is replaced too. An unreadable file is
+    reported and has no fix.
+    """
+    settings_path = repo_root / CLAUDE_SETTINGS_PATH
     if not settings_path.is_file():
-        items.append(
-            DiffItem(
-                field="local.claude_settings",
-                expected="present",
-                actual="missing",
-            )
-        )
-        return
+        item = DiffItem(field="local.claude_settings", expected="present", actual="missing")
+        return ManagedFileDrift.single(item, _claude_settings_fix(NEW_FILE_MODE))
 
     try:
-        raw = json.loads(settings_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        items.append(
-            DiffItem(
-                field="local.claude_settings",
-                expected="valid JSON",
-                actual=str(exc),
-            )
-        )
-        return
+        text = settings_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        item = DiffItem(field="local.claude_settings", expected="valid JSON", actual=str(exc))
+        return ManagedFileDrift.single(item, None)
+
+    fix = _claude_settings_fix(settings_path.stat().st_mode & 0o777)
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        item = DiffItem(field="local.claude_settings", expected="valid JSON", actual=str(exc))
+        return ManagedFileDrift.single(item, fix)
 
     if not isinstance(raw, dict):
-        items.append(
-            DiffItem(
-                field="local.claude_settings",
-                expected="JSON object",
-                actual=type(raw).__name__,
-            )
+        item = DiffItem(
+            field="local.claude_settings",
+            expected="JSON object",
+            actual=type(raw).__name__,
         )
-        return
+        return ManagedFileDrift.single(item, fix)
 
     template = _load_settings_template()
     if raw == template:
-        return
-    items.append(
-        DiffItem(
-            field="local.claude_settings",
-            expected=(
-                "equal to the template (src/vergil_tooling/data/claude_settings.json) "
-                "after JSON parsing"
-            ),
-            actual=_describe_settings_drift(raw, template),
-        )
+        return None
+    item = DiffItem(
+        field="local.claude_settings",
+        expected=(
+            "equal to the template (src/vergil_tooling/data/claude_settings.json) "
+            "after JSON parsing"
+        ),
+        actual=_describe_settings_drift(raw, template),
     )
+    return ManagedFileDrift.single(item, fix)
+
+
+def _claude_settings_fix(mode: int) -> FileFix:
+    data = render_claude_settings().encode("utf-8")
+    return FileFix(path=CLAUDE_SETTINGS_PATH, data=data, mode=mode)
 
 
 def _describe_settings_drift(raw: dict[str, Any], template: dict[str, Any]) -> str:
@@ -511,10 +676,27 @@ def _check_workflow_refs(repo_root: Path, items: list[DiffItem]) -> None:
     marketplace source repo — the plugin repo still consumes vergil-actions at a
     pinned version.
     """
+    _report(workflow_refs_drift(repo_root), items)
+
+
+def workflow_refs_drift(repo_root: Path) -> ManagedFileDrift | None:
+    """Return how the workflows' vergil-* pins drift, or ``None`` when they all match.
+
+    Each pin under ``.github/workflows`` that differs from
+    ``[dependencies].vergil`` is one audit item. The fix rewrites every
+    workflow file with such a pin, changing only the pins' versions and
+    keeping every other byte and the file's mode. A vergil.toml that cannot
+    be read is not judged here: ``_check_vergil_toml`` reports it. A
+    ``[dependencies].vergil`` that is not a ``vX.Y`` version is drift with
+    no fix (one more item names it), since a pin rewritten to it would no
+    longer be recognized as a pin.
+    """
     try:
         expected = read_source_version(repo_root)
     except (UpdateDepsError, OSError, ValueError):
-        return  # vergil.toml problems are reported by _check_vergil_toml
+        return None  # vergil.toml problems are reported by _check_vergil_toml
+    items: list[DiffItem] = []
+    stale: dict[Path, None] = {}  # the files to rewrite, in order
     for path, actual in iter_workflow_refs(repo_root):
         if actual != expected:
             items.append(
@@ -524,3 +706,30 @@ def _check_workflow_refs(repo_root: Path, items: list[DiffItem]) -> None:
                     actual=f"{path.name}: {actual}",
                 )
             )
+            stale[path] = None
+    if not items:
+        return None
+    if not is_pin_version(expected):
+        items.append(
+            DiffItem(
+                field="local.workflow_ref",
+                expected="[dependencies].vergil as a vX.Y version",
+                actual=f"[dependencies].vergil is {expected!r}; the pins cannot be set to it",
+            )
+        )
+        return ManagedFileDrift(items=tuple(items), fixes=None)
+    fixes = tuple(_workflow_refs_fix(repo_root, path, expected) for path in stale)
+    return ManagedFileDrift(items=tuple(items), fixes=fixes)
+
+
+def _workflow_refs_fix(repo_root: Path, path: Path, version: str) -> FileFix:
+    """The write that sets every vergil-* pin in the workflow at ``path`` to ``version``.
+
+    Decoded from bytes, never read in text mode, so the line ends survive.
+    """
+    text = path.read_bytes().decode("utf-8")
+    return FileFix(
+        path=path.relative_to(repo_root).as_posix(),
+        data=rewrite_workflow_refs(text, version).encode("utf-8"),
+        mode=_file_mode(path),
+    )

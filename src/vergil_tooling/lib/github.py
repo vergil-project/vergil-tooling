@@ -1128,8 +1128,14 @@ def create_pr(
     body_file: str,
     head: str | None = None,
     labels: Sequence[str] = (),
+    repo: str | None = None,
 ) -> str:
     """Create a pull request and return its URL.
+
+    *repo* (``OWNER/REPO``) is passed as ``--repo``, so the PR is opened in that
+    repo whatever the cwd. A caller outside any checkout of it (the
+    mechanized-PR flow, epic vergil-project/.github#1064) passes it, with
+    *head*. ``None`` leaves ``gh`` to resolve the repo from the cwd, unchanged.
 
     *head* names the source branch explicitly (``gh pr create --head``). It is
     required when the PR is opened from outside the branch's worktree — the
@@ -1141,6 +1147,8 @@ def create_pr(
     visible unlabelled — the dependency-update release gate depends on that.
     """
     args = ["pr", "create", "--base", base, "--title", title, "--body-file", body_file]
+    if repo is not None:
+        args += ["--repo", repo]
     if head is not None:
         args += ["--head", head]
     for label in labels:

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.307] - 2026-11-13
+
+### Bug fixes
+
+- narrow the catch-all exception in the cwd repo match (#4316)
+
+### Chores
+
+- uv lock --upgrade
+
+### Features
+
+- audit managed files in a fresh clone of develop (#4310)
+- show automation PRs as their own type (#4312)
+- add fixers for the hook-guard shim, CLAUDE.md and Claude settings (#4314)
+- add the mechanized-PR library (#4315)
+- add fixers for .gitignore, dependabot.yml and workflow ref pins (#4318)
+- move the advisory-state sync out of vrg-epic-audit --close into vrg-security-record sync (#4320)
+
 ## [2.1.306] - 2026-11-12
 
 ### Bug fixes

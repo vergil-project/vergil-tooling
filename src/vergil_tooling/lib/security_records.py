@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import contextlib
 import re
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -527,9 +528,9 @@ def classify(advisories: Sequence[Advisory], issues: Sequence[SecurityIssue]) ->
     return Classification(paired=paired, external=external, broken=broken)
 
 
-# The states the sweep keeps in step with the issues. Any other state (a
+# The states the sync keeps in step with the issues. Any other state (a
 # published or withdrawn advisory, or a triage-state report a pair adopted) is
-# a human's decision, so the sweep never moves an advisory out of it.
+# a human's decision, so the sync never moves an advisory out of it.
 _SYNCED_STATES = ("draft", "closed")
 
 
@@ -560,9 +561,55 @@ def sync_states(home: str, classification: Classification, issues: Sequence[Secu
     """Apply :func:`pending_syncs` to *home* and return the number of advisories changed.
 
     Stops at the first failed write, which propagates scrubbed of its stdout;
-    the next sweep retries whatever is still out of step.
+    the next sync retries whatever is still out of step.
     """
     changes = pending_syncs(classification, issues)
     for ghsa_id, state in changes:
         set_state(home, ghsa_id, state)
     return len(changes)
+
+
+def records_pass(org: str, *, apply: bool, prog: str) -> int:
+    """The security-records pass over *org*; *apply* False previews it without writing.
+
+    Lists the advisories in the org's advisory home, syncs each paired
+    advisory's ``draft``/``closed`` state to its issues (:func:`sync_states`),
+    and reports broken pairs and unpaired external reports. It needs
+    **Repository security advisories: read** on ``<org>/.github``, and with
+    *apply* also **write**. *prog* prefixes the failure line on stderr.
+
+    Its output names only GHSA IDs, issue refs and states, never advisory
+    text: every advisory read it makes projects the text away, and
+    :class:`Advisory` has no text field. The advisory home is resolved only
+    when the org has a ``security`` issue or a ``.github`` repo; with neither
+    there is nothing to check. A private ``.github`` is refused loudly, never
+    skipped: :class:`PrivateHomeError` propagates to the caller, whose message
+    already names the program.
+
+    Exit 1 when the pass fails, or, with *apply*, when any pair is broken
+    (after syncing the rest). The preview reports broken pairs without failing.
+    """
+    mode = "" if apply else " (preview)"
+    try:
+        issues = security_issues(org)
+        if not issues and not github.repo_exists(org, ".github"):
+            print(f"Security records{mode}: none.")
+            return 0
+        home = advisory_home(org)
+        result = classify(list_advisories(home), issues)
+        synced = sync_states(home, result, issues) if apply else len(pending_syncs(result, issues))
+    except github.MissingGitHubTokenError:
+        raise
+    except github.GitHubAPIError as exc:
+        print(f"{prog}: security records pass failed: {exc}", file=sys.stderr)
+        return 1
+    verb = "synced" if apply else "would sync"
+    states = "advisory state" if synced == 1 else "advisory states"
+    broken = len(result.broken)
+    pairs = "broken pair" if broken == 1 else "broken pairs"
+    print(f"Security records{mode}: {synced} {states} {verb}, {broken} {pairs}.")
+    for line in result.broken:
+        print(f"- broken: {line}")
+    for advisory in result.external:
+        print(f"- unpaired external report (left untouched): {advisory.ghsa_id}")
+    return 1 if apply and result.broken else 0

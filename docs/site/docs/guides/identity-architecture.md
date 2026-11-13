@@ -224,15 +224,13 @@ Three of the App's permissions matter to the tooling in this repo:
   tooling uses App credentials only when it finds an App key
   (`VRG_APP_ID` or `~/.config/vergil/app.pem`). Read-only is the
   correct least privilege.
-- **Repository security advisories: Read and write.** The scheduled
-  sweep (`vrg-epic-audit --close` in `ops-epic-sweep.yml`) lists the
-  draft advisories in the org's `.github` and closes or reopens each
-  one to follow its issues (see [Security Records](security-records.md),
-  epic
-  [vergil-project/.github#517](https://github.com/vergil-project/.github/issues/517)).
-  The user App holds the same grant (see
-  [Account Setup](account-setup.md#step-11-register-the-app)). Each
-  installation must accept the change before the grant takes effect.
+- **Repository security advisories: not needed.** The scheduled
+  sweep (`vrg-epic-audit --close` in `ops-epic-sweep.yml`) makes no
+  security-advisory call. Syncing advisory states to their issues is
+  `vrg-security-record sync`, which the human or the user agent runs; the
+  user App holds Read and write for it (see
+  [Security Records](security-records.md#permissions) and
+  [Account Setup](account-setup.md#step-11-register-the-app)).
 
 Release PRs are not opened by an App. `vrg-release` runs on the
 human's host under the human's own `gh` login.
