@@ -701,9 +701,7 @@ def _adhoc(
     with (
         patch(f"{_MOD}.github.read_json", side_effect=gh),
         patch(f"{_MOD}.epics.child_states", side_effect=lambda epic: children[epic.number]),
-        patch(
-            f"{_MOD}.epics.blockers_of", side_effect=lambda ref: blocked.get(ref.number, [])
-        ),
+        patch(f"{_MOD}.epics.blockers_of", side_effect=lambda ref: blocked.get(ref.number, [])),
         patch(f"{_MOD}.epics.issue_state", side_effect=lambda ref: (states or {})[ref.number]),
     ):
         items = queue_view.adhoc_items("org/.github", repo=repo)
@@ -808,9 +806,7 @@ def test_adhoc_items_blocked_state() -> None:
         5: [IssueRef("org", "vergil-tooling", 42)],
     }
     states = {40: "CLOSED", 41: "OPEN", 42: "CLOSED"}
-    items, _ = _adhoc(
-        _ADHOC_LISTING[:1], children, views, blockers=blockers, states=states
-    )
+    items, _ = _adhoc(_ADHOC_LISTING[:1], children, views, blockers=blockers, states=states)
     held, free = items
     assert held.state == "blocked"
     assert held.blocked_by == (IssueRef("org", "docs", 41),)
@@ -848,6 +844,21 @@ def test_adhoc_repo_without_epic_is_empty() -> None:
     assert items == []
 
 
+@pytest.mark.parametrize(
+    ("listing", "match"),
+    [
+        ({"message": "not a list"}, "unexpected 'gh issue list' response"),
+        (["not a row"], "unexpected 'gh issue list' row"),
+    ],
+)
+def test_adhoc_items_malformed_search_raises(listing: Any, match: str) -> None:
+    with (
+        patch(f"{_MOD}.github.read_json", return_value=listing),
+        pytest.raises(ValueError, match=match),
+    ):
+        queue_view.adhoc_items("org/.github")
+
+
 def test_adhoc_items_no_epics_is_empty() -> None:
     assert _adhoc([], {}, {})[0] == []
 
@@ -872,9 +883,8 @@ def test_adhoc_items_sub_issue_read_failure_raises() -> None:
 def test_adhoc_items_blocker_read_failure_raises(failing: str) -> None:
     gh = _FakeGh({3: _view("t", "2026-10-20T00:00:00Z")}, listing=_ADHOC_LISTING[:1])
     failure = github.GitHubAPIError(1, ["gh", "api"], "", "HTTP 403")
-    blockers: Any = (
-        failure if failing == "blockers_of" else [IssueRef("org", "vergil-tooling", 40)]
-    )
+    dep = IssueRef("org", "vergil-tooling", 40)
+    blockers: Any = failure if failing == "blockers_of" else [dep]
     state: Any = failure if failing == "issue_state" else "OPEN"
     with (
         patch(f"{_MOD}.github.read_json", side_effect=gh),

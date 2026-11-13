@@ -830,8 +830,8 @@ collect step of `epic-review` and by `epic-create`'s no-argument summary.
 `vrg-queue adhoc` lists the open tasks under every live ad-hoc epic
 (`Epic (ad hoc): <repo>`, labelled `epic` + `ad-hoc`) in the home, grouped by
 repo and oldest first within each. Each line is
-`<ref>  <age>  <state>  <kind>  <title>`, followed by
-`  — blocked by <refs>` when a blocker is open. The kind is `validation` or
+`<ref>  <age>  <state>  <kind>  <title>`, followed by an em dash and
+`blocked by <refs>` when a blocker is open. The kind is `validation` or
 `deployment` from the task's label, else `task`. The state is **blocked** while
 any `Blocked-by:` dependency is open, else **ready**; only the open blockers
 are listed. The epics come from one label search; an archive carrying the same

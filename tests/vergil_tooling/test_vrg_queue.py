@@ -529,7 +529,9 @@ def test_vrg_queue_adhoc_read_failure_exits_1(
     assert rc == 1
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err == (f"vrg-queue: adhoc queue for org in org/.github could not be read: {exc}\n")
+    assert captured.err == (
+        f"vrg-queue: adhoc queue for org in org/.github could not be read: {exc}\n"
+    )
 
 
 def test_vrg_queue_adhoc_missing_token_keeps_the_guided_message(
