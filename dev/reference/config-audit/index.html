@@ -17890,9 +17890,14 @@ audit does not guess the value. It reports the setting as not checked:</p>
 <li>A repo setting that <code>GET /repos/{owner}/{repo}</code> leaves out of its
   response, or returns as <code>null</code>, is not checked either, as
   <code>repo_settings.&lt;field&gt;</code>, never read as <code>false</code> or <code>''</code> (#4322).
-  GitHub leaves the merge settings out for some scoped tokens. Which
-  permission it wants for them is not yet pinned down
-  (vergil-project/vergil-actions#1164), so the line says
+  GitHub leaves the merge settings out for a token without Contents
+  read and write: its
+  <a href="https://docs.github.com/en/rest/repos/repos#get-a-repository">Get a repository</a>
+  docs say viewing merge-related settings needs <code>contents:read</code> and
+  <code>contents:write</code> (vergil-project/vergil-actions#1164). So the line
+  for a missing merge setting says
+  <code>needs contents=read and contents=write</code> (#4326). The docs state no
+  requirement for any other field, so the line for one of those says
   <code>needs a token GitHub returns the field to</code>. A repo setting of the
   wrong type is an error.</li>
 <li>A setting the desired state leaves unmanaged (secret scanning on a
