@@ -2042,7 +2042,7 @@ def test_reject_if_operational_task_passes_for_plain_task() -> None:
 @pytest.mark.parametrize(
     ("kind", "phrases"),
     [
-        ("intake", ("is in the intake queue", "Route it with intake-review first.")),
+        ("intake", ("is in the intake queue", "Route it with epic-review intake first.")),
         ("planning", ("is in the planning queue", "Expand it with epic-create first.")),
     ],
 )

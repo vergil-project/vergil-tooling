@@ -581,15 +581,15 @@ states.
 
 | Queue | Holds | Reviewed by | Leaves by |
 |---|---|---|---|
-| **Intake** | captured, unreviewed items and every orphan the sweep finds | `intake-review` | drop, defer, one-off, split, or to planning |
-| **Planning** | items that need a full epic | `planning-review` picks what to plan next; `epic-create` expands one item | planned (closed as "planned as #N"), defer, or drop |
-| **Deferred** | evaluated items parked until their `Revisit when:` conditions are met | `deferred-review` | revive (to intake, to planning, or one-off), drop, or split; a refresh re-defers in place |
+| **Intake** | captured, unreviewed items and every orphan the sweep finds | `epic-review intake` | drop, defer, one-off, split, or to planning |
+| **Planning** | items that need a full epic | `epic-review planning` prunes it; the human picks an item and expands it with `epic-create` | planned (closed as "planned as #N"), defer, drop, or one-off |
+| **Deferred** | evaluated items parked until their `Revisit when:` conditions are met | `epic-review deferred` | revive (to intake, to planning, or one-off), drop, or split; a refresh re-defers in place |
 
 Except for a planned item, which `epic-create` closes, every move out of a
 queue is applied with [`vrg-intake-route`](#routing-vrg-intake-route); the
-review skills
-(`vergil-claude-plugin`) present items in small batches with a recommended
-route and take one human confirmation per batch.
+`epic-review` skill
+(`vergil-claude-plugin`) presents items in small batches with a recommended
+route and takes one human confirmation per batch.
 
 ### Capture: `vrg-intake-create`
 
@@ -621,7 +621,7 @@ selects that repo's queue home (a self-homed private repo's own queues), and
 
 ### Routing: `vrg-intake-route`
 
-Intake is reviewed oldest first, in small batches (the `intake-review` skill).
+Intake is reviewed oldest first, in small batches (`epic-review intake`).
 For each item the reviewer checks its current state and recommends a route; the
 human confirms the batch; the route is applied with `vrg-intake-route`, which
 owns the mechanics so nothing is hand-rolled. The same tool applies the
@@ -693,7 +693,7 @@ YYYY-MM-DD` stamps an original deferral date instead of today. Running `defer`
 on an item already in the deferred queue is a **refresh**: a new dated record,
 no move, no `Deferred from:` line.
 
-**Bringing it back.** The `deferred-review` skill lists the queue with
+**Bringing it back.** `epic-review deferred` lists the queue with
 `vrg-queue deferred` (least recently deferred first), checks each item's
 conditions against their real sources, and recommends one outcome:
 
@@ -735,18 +735,21 @@ fix it; closing it earlier would close those advisories with the fix unwritten
 (see
 [Security items in planning](../guides/security-records.md#security-items-in-planning)).
 
-Which planning item to expand next is decided in the `planning-review` skill:
-the human ranks the queue by priority and importance and picks only what will be
-implemented soon, since a plan left sitting goes stale. Each item is picked
-(handed to `epic-create`), deferred, dropped, or left in the queue.
+`epic-review planning` only prunes the planning queue; it never picks what to
+plan next. It checks that each item is still valid and still needs a full epic,
+and leaves it in the queue, defers it, drops it, or routes it as a one-off when
+it is small enough for a repo's ad-hoc epic. Items that `epic-create` is
+expanding or has finished are only shown, never resumed. Which item to expand
+next is the human's choice, made by running `epic-create` on it; pick only what
+will be implemented soon, since a plan left sitting goes stale.
 
 ### Queue items are not buildable
 
 An item parented under an intake, planning or deferred epic is not
 PR-workable: `vrg-pr-workflow report-ready` and `vrg-submit-pr` (and, upstream,
 the `issue-implement` skill) refuse it, naming the step to take first — route
-it with intake review, expand it with `epic-create`, or revive it with
-deferred review. Routing it out of the queue
+it with `epic-review intake`, expand it with `epic-create`, or revive it with
+`epic-review deferred`. Routing it out of the queue
 is the only way to lift the refusal. The check reads the issue's native parent,
 not a label.
 

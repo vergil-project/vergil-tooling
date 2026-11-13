@@ -825,8 +825,7 @@ first; each item's note is its latest deferral
 (`Deferred <day>: <reason> | Revisit when: <conditions>`), and an item with no
 deferral comment sorts first with an empty note. A bare `vrg-queue` lists all
 three queues in that order (intake, planning, deferred). Used by the
-collect step of the three review skills (`intake-review`, `planning-review`,
-`deferred-review`) and by `epic-create`'s no-argument summary.
+collect step of `epic-review` and by `epic-create`'s no-argument summary.
 
 | Attribute | Value |
 |---|---|

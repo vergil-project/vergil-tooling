@@ -603,7 +603,7 @@ INTAKE = StandingKind(
     archive_labels=("archive", "intake"),
     body=(
         "Perpetual intake queue for {name}: every captured, unreviewed item and "
-        "every orphan the sweep finds. Reviewed oldest first by intake-review.\n"
+        "every orphan the sweep finds, reviewed oldest first.\n"
     ),
     archive_body="Intake items for {name} closed in {quarter}. Managed automatically.\n",
 )
@@ -614,10 +614,7 @@ PLANNING = StandingKind(
     labels=("epic", "planning"),
     archive_prefix="Archive (planning): ",
     archive_labels=("archive", "planning"),
-    body=(
-        "Perpetual planning queue for {name}: items that need a full epic, each "
-        "tracked through its epic-create session.\n"
-    ),
+    body="Perpetual planning queue for {name}: items that need a full epic.\n",
     archive_body="Planning items for {name} closed in {quarter}. Managed automatically.\n",
 )
 DEFERRED = StandingKind(
@@ -629,7 +626,7 @@ DEFERRED = StandingKind(
     archive_labels=("archive", "deferred"),
     body=(
         "Perpetual deferred queue for {name}: evaluated items parked until their "
-        "revival conditions are met. Reviewed by deferred-review.\n"
+        "revival conditions are met.\n"
     ),
     archive_body="Deferred items for {name} closed in {quarter}. Managed automatically.\n",
 )
@@ -1056,12 +1053,13 @@ def queue_item_kind(ref: str, *, default_repo: str) -> str | None:
 
 
 _QUEUE_REFUSAL_TAILS = {
-    INTAKE.key: "it is not buildable until it is routed. Route it with intake-review first.",
+    INTAKE.key: "it is not buildable until it is routed. Route it with epic-review intake first.",
     PLANNING.key: (
         "it is not buildable until its epic is expanded. Expand it with epic-create first."
     ),
     DEFERRED.key: (
-        "it is deferred until its revival conditions are met. Revive it with deferred-review first."
+        "it is deferred until its revival conditions are met. "
+        "Revive it with epic-review deferred first."
     ),
 }
 
