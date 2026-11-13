@@ -21716,8 +21716,10 @@ defines are listed in
 </tbody>
 </table>
 <h3 id="vrg-github-repo-config">vrg-github-repo-config<a class="headerlink" href="#vrg-github-repo-config" title="Permanent link">&para;</a></h3>
-<p>Audit a managed repo against the canonical Vergil configuration, and
-in <code>apply</code> mode reconcile the GitHub half. Combines managed-file
+<p>Audit a managed repo against the canonical Vergil configuration. In
+<code>update</code> mode it also reconciles the GitHub half and proposes the
+managed-file fixes as one auto-merging sync PR; <code>apply</code>, which
+reconciles only the GitHub half, is deprecated. Combines managed-file
 checks, run in a fresh shallow clone of the repo's <code>develop</code> (<code>vergil.toml</code>,
 <code>CLAUDE.md</code>, <code>.claude/settings.json</code>, hook-guard
 shim, workflow pins, <code>.gitignore</code> managed fence, canonical
@@ -21740,7 +21742,7 @@ Runs nightly from each repo's <code>ops.yml</code> via the reusable
 </tr>
 <tr>
 <td>Args</td>
-<td><code>audit</code> | <code>diff</code> | <code>apply</code>; <code>--repo OWNER/REPO</code>, <code>--config PATH</code></td>
+<td><code>audit</code> | <code>diff</code> | <code>update</code> | <code>apply</code> (deprecated); <code>--repo OWNER/REPO</code>, <code>--config PATH</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -21752,7 +21754,7 @@ Runs nightly from each repo's <code>ops.yml</code> via the reusable
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 compliant, 1 non-compliant (drift), 2 audit could not complete</td>
+<td>0 compliant (for <code>update</code>: converged and in sync, or a sync PR opened with auto-merge on), 1 non-compliant (drift; for <code>update</code>, drift it could not fix), 2 could not complete</td>
 </tr>
 <tr>
 <td>Status</td>
