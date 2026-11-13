@@ -579,7 +579,9 @@ def test_vrg_queue_adhoc_no_repo_roots_fails(capsys: pytest.CaptureFixture[str])
         assert main(["adhoc"]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err == f"vrg-queue: adhoc queue for org in org/.github could not be read: {msg}\n"
+    assert (
+        captured.err == f"vrg-queue: adhoc queue for org in org/.github could not be read: {msg}\n"
+    )
 
 
 def test_vrg_queue_adhoc_repo_without_clone_exits_1(capsys: pytest.CaptureFixture[str]) -> None:

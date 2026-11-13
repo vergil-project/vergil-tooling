@@ -190,8 +190,7 @@ def _closing_issue(repo: str, row: dict[str, Any], closing: Any) -> set[int]:
         number = int(closing["number"])
     except (KeyError, TypeError, ValueError) as exc:
         msg = (
-            f"{repo}: PR #{row.get('number')} has a malformed closing issue reference: "
-            f"{closing!r}"
+            f"{repo}: PR #{row.get('number')} has a malformed closing issue reference: {closing!r}"
         )
         raise InFlightError(msg) from exc
     return {number} if _same_repo(f"{owner}/{name}", repo) else set()

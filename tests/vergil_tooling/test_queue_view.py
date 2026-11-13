@@ -692,9 +692,7 @@ def _no_marks_clones(repos: Any, roots: Any) -> dict[str, Path]:
 
 
 def _no_marks_signals(repo: str, clone: Path) -> in_flight.RepoSignals:
-    return in_flight.RepoSignals(
-        repo, clone, frozenset(), frozenset(), frozenset(), frozenset()
-    )
+    return in_flight.RepoSignals(repo, clone, frozenset(), frozenset(), frozenset(), frozenset())
 
 
 def _adhoc(

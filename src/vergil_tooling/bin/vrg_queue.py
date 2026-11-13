@@ -149,9 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     return 1 if failures else 0
 
 
-def _adhoc(
-    owner: str, *, repo: str | None, roots: Sequence[Path] | None, as_json: bool
-) -> int:
+def _adhoc(owner: str, *, repo: str | None, roots: Sequence[Path] | None, as_json: bool) -> int:
     """Show the ad-hoc tasks: the org's, or one ``owner/name`` *repo*'s.
 
     Without *repo* the home is the org's ``.github``, which must exist. With

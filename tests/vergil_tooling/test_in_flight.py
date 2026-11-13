@@ -86,9 +86,7 @@ class _FakeRemote:
         return "\n".join(lines)
 
 
-def _signals(
-    remote: _FakeRemote, clone: Path, *, local: tuple[str, ...] = ()
-) -> RepoSignals:
+def _signals(remote: _FakeRemote, clone: Path, *, local: tuple[str, ...] = ()) -> RepoSignals:
     with (
         patch(f"{_MOD}.github.read_json", side_effect=remote.gh),
         patch(f"{_MOD}.git.read_output", side_effect=remote.git),
@@ -112,8 +110,8 @@ def test_in_flight_open_pr_closing_the_issue(tmp_path: Path) -> None:
     prs = [{"number": 90, "headRefName": "fix-thing", "closingIssuesReferences": [_closing(7)]}]
     remote = _FakeRemote(prs=prs)
     assert _marks(7, remote, tmp_path) == ("open-pr",)
+    listing = next(c for c in remote.gh_calls if c[:2] == ("pr", "list"))
     assert _marks(8, remote, tmp_path) == ()
-    [listing] = [c for c in remote.gh_calls if c[:2] == ("pr", "list")]
     assert listing == (
         "pr",
         "list",
@@ -168,7 +166,7 @@ def test_in_flight_unfrozen_relay_is_not_report_ready(tmp_path: Path) -> None:
 def test_in_flight_report_ready_batch_member(tmp_path: Path) -> None:
     remote = _FakeRemote(
         relays={
-            "feature/7-batch-x": _payload("#7", issues=["#7", "#9"]),
+            "feature/7-batch-x": _payload("7", issues=["7", "org/tool#9"]),
             "feature/11-y": _payload("11"),
         }
     )
@@ -205,9 +203,7 @@ def test_in_flight_relay_issue_forms(tmp_path: Path) -> None:
         ({**_payload("7"), "status": "weird"}, "invalid status"),
     ],
 )
-def test_in_flight_malformed_relay_payload_raises(
-    tmp_path: Path, payload: Any, match: str
-) -> None:
+def test_in_flight_malformed_relay_payload_raises(tmp_path: Path, payload: Any, match: str) -> None:
     remote = _FakeRemote(relays={"feature/7-x": payload})
     with pytest.raises(InFlightError, match=match):
         _signals(remote, tmp_path)
@@ -486,7 +482,9 @@ def test_adhoc_items_no_roots_on_the_platform_raises(tmp_path: Path) -> None:
     listing = [{"number": 100, "title": "Epic (ad hoc): tool"}]
     view = {"title": "t", "createdAt": "2026-09-01T00:00:00Z", "labels": []}
     with (
-        patch(f"{_QV}.github.read_json", side_effect=lambda *a: listing if a[1] == "list" else view),
+        patch(
+            f"{_QV}.github.read_json", side_effect=lambda *a: listing if a[1] == "list" else view
+        ),
         patch(
             f"{_QV}.epics.child_states",
             return_value=[ChildState(IssueRef("org", "tool", 3), "OPEN", "t")],
