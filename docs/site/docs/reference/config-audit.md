@@ -25,7 +25,7 @@ vrg-github-repo-config audit [--repo OWNER/REPO] [--config PATH]
 | Subcommands | `audit` (report), `diff` (report GitHub half only), `apply` (reconcile GitHub half) |
 | Args | `--repo OWNER/REPO` (defaults to the current git remote), `--config PATH` (local `vergil.toml`) |
 | Preconditions | Local checks clone the repo's `develop` over HTTPS, so git's credential helper must reach it (`gh auth setup-git`); GitHub checks require `gh` credentials |
-| Exit codes | 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings [not checked](#settings-the-identity-cannot-read)) |
+| Exit codes | `audit`: 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings [not checked](#settings-the-identity-cannot-read)). `diff`: 0 whether or not it finds drift, 2 could not complete (including settings not checked). `apply`: 0 converged, 1 left non-compliant (a write failed, an undeclared ruleset parameter, or managed-file drift), 2 could not complete or refused |
 | Status | Active |
 
 Every subcommand runs the managed-file checks against what is committed
@@ -78,6 +78,11 @@ audit does not guess the value. It reports the setting as not checked:
   the same error.
 - **`apply` refuses.** It exits 2 and writes nothing, since it would
   converge settings it could not read.
+- **The check for an `apply` is the `apply` exiting 0.** `apply` is
+  run by the human. Under the agent identity, `diff` exits 2 on every
+  repo, since the `administration=read` settings are not checked, so a
+  `diff` an agent runs after the human's `apply` is informational only
+  and its exit code is not the verdict on the apply.
 - A repo setting that `GET /repos/{owner}/{repo}` leaves out of its
   response, or returns as `null`, is not checked either, as
   `repo_settings.<field>`, never read as `false` or `''` (#4322).
