@@ -1463,8 +1463,10 @@ defines are listed in
 
 ### vrg-github-repo-config
 
-Audit a managed repo against the canonical Vergil configuration, and
-in `apply` mode reconcile the GitHub half. Combines managed-file
+Audit a managed repo against the canonical Vergil configuration. In
+`update` mode it also reconciles the GitHub half and proposes the
+managed-file fixes as one auto-merging sync PR; `apply`, which
+reconciles only the GitHub half, is deprecated. Combines managed-file
 checks, run in a fresh shallow clone of the repo's `develop` (`vergil.toml`,
 `CLAUDE.md`, `.claude/settings.json`, hook-guard
 shim, workflow pins, `.gitignore` managed fence, canonical
@@ -1477,10 +1479,10 @@ Runs nightly from each repo's `ops.yml` via the reusable
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_github_repo_config` |
-| Args | `audit` \| `diff` \| `apply`; `--repo OWNER/REPO`, `--config PATH` |
+| Args | `audit` \| `diff` \| `update` \| `apply` (deprecated); `--repo OWNER/REPO`, `--config PATH` |
 | Preconditions | Local checks clone the repo's `develop` over HTTPS (git's credential helper must reach it); GitHub checks require `gh` credentials |
 | Failure mode | `DiffItem` list on drift; clean diagnostic on unreachable GitHub state |
-| Exit codes | 0 compliant, 1 non-compliant (drift), 2 audit could not complete |
+| Exit codes | 0 compliant (for `update`: converged and in sync, or a sync PR opened with auto-merge on), 1 non-compliant (drift; for `update`, drift it could not fix), 2 could not complete |
 | Status | Active |
 
 ### vrg-dependabot-audit
