@@ -6,14 +6,14 @@ import re
 import subprocess
 import tomllib
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pytest
 import yaml
 
 from vergil_tooling.lib import dependabot, github, gitignore, repo_init
-from vergil_tooling.lib.config import CiConfig, ProjectConfig, _parse_raw_config
+from vergil_tooling.lib.config import _ENUMS, CiConfig, ProjectConfig, _parse_raw_config
 from vergil_tooling.lib.github_config import ClassicProtectionReport
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
@@ -673,6 +673,52 @@ class TestRenderCiWorkflow:
         assert "container-tag:" not in content
         # typescript is CodeQL-supported, so run-codeql must NOT be disabled.
         assert "run-codeql: false" not in content
+
+    def test_rust_workflow_runs_codeql(self) -> None:
+        # The CI-gates ruleset requires CodeQL for rust, so ci.yml must not skip
+        # it: a skipped job leaves every PR blocked on green checks (issue #4381).
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "rust"
+        ctx.resolution = _resolved("rust")
+        ctx.release_model = "tagged-release"
+        content = render_ci_workflow(ctx)
+        assert "language: rust" in content
+        assert "run-codeql: false" not in content
+
+    @pytest.mark.parametrize("language", [*sorted(_ENUMS["primary-language"]), ""])
+    def test_codeql_run_matches_ruleset_requirement(self, language: str) -> None:
+        # For every primary language (and none), ci.yml runs CodeQL exactly when
+        # the CI-gates ruleset requires its checks, so the ruleset never waits
+        # on a check the workflow skips (issue #4381).
+        from vergil_tooling.lib.github_config import desired_ci_gates_ruleset
+
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = language
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "tagged-release"
+        runs_codeql = "run-codeql: false" not in render_ci_workflow(ctx)
+
+        project = ProjectConfig(
+            repository_type="library",
+            versioning_scheme="semver",
+            branching_model="library-release",
+            release_model="tagged-release",
+            primary_language=language or None,
+        )
+        ruleset = desired_ci_gates_ruleset(
+            project, CiConfig(versions=["latest"], integration_tests=False), ghas=True
+        )
+        required = {
+            str(check["context"])
+            for rule in ruleset.rules
+            if rule["type"] == "required_status_checks"
+            for check in cast("dict[str, list[dict[str, object]]]", rule["parameters"])[
+                "required_status_checks"
+            ]
+        }
+        requires_codeql = "security / codeql" in required
+        assert requires_codeql == ("CodeQL" in required)
+        assert runs_codeql == requires_codeql
 
     def test_no_language_workflow(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
