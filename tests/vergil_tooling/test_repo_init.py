@@ -605,7 +605,7 @@ class TestRenderOpsWorkflow:
         ctx = RepoInitContext(org="vergil-project", name="vergil-actions")
         yaml = repo_init.render_ops_workflow(ctx)
         minute = repo_init._ops_cron_minute("vergil-project", "vergil-actions")
-        assert f"- cron: '{minute} 6 * * *'" in yaml
+        assert f"- cron: '{minute} 1 * * *'" in yaml
         assert "ops-github-config.yml@v2.1" in yaml
         assert "workflow_dispatch:" in yaml
 
