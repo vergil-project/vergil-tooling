@@ -19774,8 +19774,12 @@ the one-commit-per-issue check run before any push; either failing records
 nothing. The state records the list as <code>issues</code> (its first entry is also
 <code>issue</code>), in the local file and the relay ref alike, and a re-run must name the
 same list in the same order. Once the state is recorded, the members' batch
-markers are removed. A single <code>--issue</code> records no <code>issues</code> key and behaves
-exactly as before.</p>
+markers are removed and <code>report-ready</code> prints
+<code>{"ok": true, "status": "ready", "issues": […]}</code>. The printed <code>issues</code> are this
+repo's <code>#N</code> refs, the form <code>batch-start</code> and <code>batch-show</code> print, whatever form
+<code>--issue</code> took; the recorded <code>issues</code> keep each value as given (<code>N</code>, or
+<code>owner/repo#N</code>), the form <code>vrg-submit-pr</code> reads. A single <code>--issue</code> records no
+<code>issues</code> key, prints none, and behaves exactly as before.</p>
 <p>The batch hard rules are: 2 to 8 issues, none listed twice, every one in
 this repo, a task (not an epic, archive or queue item), not operational, not
 directly Blocked-by an open deployment task and opened by a trusted author,
@@ -19794,8 +19798,8 @@ takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/rep
   <code>{"ok": true, "resumed": &lt;bool&gt;, "issues": […], "base_sha": "&lt;sha&gt;"}</code>. A
   refusal writes nothing. The same list over existing markers is a resume
   that changes nothing; any other existing marker is refused.</li>
-<li><code>batch-show --issue &lt;N&gt;</code> prints the issue's batch as one JSON object and
-  exits 0, exits 1 with nothing on stdout when the issue is in no batch, and
+<li><code>batch-show --issue &lt;N&gt;</code> prints the issue's batch as one JSON object,
+  <code>{"issues": ["#10", "#11"], "base_sha": "&lt;sha&gt;"}</code>, and exits 0, exits 1 with nothing on stdout when the issue is in no batch, and
   exits 2 on any other failure.</li>
 <li><code>batch-extract --issue &lt;N&gt;</code> rewrites every other member's marker without
   the issue (removing the last one's when fewer than two remain) and removes
