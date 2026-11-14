@@ -2344,9 +2344,7 @@ class TestCheckWorkflowsRegistered:
                 "vergil_tooling.lib.repo_init.github.read_json_paginated",
                 side_effect=registered,
             ) as listed,
-            patch(
-                "vergil_tooling.lib.repo_init.github.run", side_effect=run_side_effect
-            ) as gh_run,
+            patch("vergil_tooling.lib.repo_init.github.run", side_effect=run_side_effect) as gh_run,
             patch("vergil_tooling.lib.repo_init.time.sleep") as sleep,
         ):
             check_workflows_registered(ctx)
@@ -2433,9 +2431,7 @@ class TestCheckWorkflowsRegistered:
         sleep.assert_called_with(repo_init._REGISTRATION_POLL_SECS)
 
     def test_api_error_while_listing_workflows_surfaces(self) -> None:
-        error = github.GitHubAPIError(
-            1, ("gh", "api"), "", "gh: Server Error (HTTP 500)\n"
-        )
+        error = github.GitHubAPIError(1, ("gh", "api"), "", "gh: Server Error (HTTP 500)\n")
         with pytest.raises(github.GitHubAPIError):
             self._run(registered=[error])
 
