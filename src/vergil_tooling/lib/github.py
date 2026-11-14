@@ -1098,6 +1098,32 @@ def post_json_once(
     return cast("dict[str, Any]", payload)
 
 
+def post_json_with_status(
+    endpoint: str, body: dict[str, object]
+) -> subprocess.CompletedProcess[str]:
+    """POST a JSON *body* to *endpoint* once with ``gh api -i`` and return the result.
+
+    The caller reads ``returncode`` and decides what a failure means; this
+    raises only :class:`MissingGitHubTokenError`. ``-i`` puts the HTTP status
+    line first on stdout (:func:`http_status_line`), even on the failure where
+    ``gh`` reports no status of its own: an error status whose JSON-typed body
+    is empty makes ``gh`` exit 1 with only Go's ``unexpected end of JSON
+    input`` (#4371). It is never retried, so a POST whose failure hid a landed
+    create is never repeated; the caller re-reads the resource to find out.
+    """
+    cmd = ("gh", "api", endpoint, "-X", "POST", "-i", "--input", "-")
+    kwargs: dict[str, Any] = {}
+    env = _gh_env()
+    if env is not None:
+        kwargs["env"] = env
+    result = subprocess.run(  # noqa: S603
+        cmd, input=json.dumps(body), check=False, text=True, capture_output=True, **kwargs
+    )
+    if result.returncode != 0 and _is_missing_token_error(result.stderr):
+        raise MissingGitHubTokenError(result.returncode, cmd, result.stdout, result.stderr)
+    return result
+
+
 def delete(endpoint: str) -> None:
     """Call gh api with DELETE method."""
     _run_with_retry(

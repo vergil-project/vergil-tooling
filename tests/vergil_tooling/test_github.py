@@ -1600,6 +1600,56 @@ class TestPostJsonOnce:
         assert mock_run.call_count == 1
 
 
+class TestPostJsonWithStatus:
+    """``post_json_with_status`` POSTs once with ``-i`` and returns the result (#4371)."""
+
+    def test_posts_body_with_include_and_returns_the_result(self) -> None:
+        cp = _completed(stdout="HTTP/2.0 201 Created\r\n\r\n{}")
+        with patch("vergil_tooling.lib.github.subprocess.run", return_value=cp) as mock_run:
+            result = github.post_json_with_status("repos/o/r/pages", {"k": "v"})
+        assert result is cp
+        mock_run.assert_called_once_with(
+            ("gh", "api", "repos/o/r/pages", "-X", "POST", "-i", "--input", "-"),
+            input='{"k": "v"}',
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+
+    def test_passes_the_app_token_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(github, "_gh_env", lambda: {"GH_TOKEN": "t"})
+        with patch(
+            "vergil_tooling.lib.github.subprocess.run", return_value=_completed()
+        ) as mock_run:
+            github.post_json_with_status("repos/o/r/pages", {})
+        assert mock_run.call_args.kwargs["env"] == {"GH_TOKEN": "t"}
+
+    def test_failure_is_returned_not_raised_or_retried(self) -> None:
+        # gh's report of an error status with an empty JSON body: the status
+        # line is on stdout only because of -i.
+        cp = _completed(
+            returncode=1,
+            stdout="HTTP/2.0 500 Internal Server Error\nContent-Length: 0\r\n\r\n",
+            stderr="unexpected end of JSON input",
+        )
+        with (
+            patch("vergil_tooling.lib.github.subprocess.run", return_value=cp) as mock_run,
+            patch("vergil_tooling.lib.retry.time.sleep"),
+        ):
+            result = github.post_json_with_status("repos/o/r/pages", {})
+        assert mock_run.call_count == 1
+        assert result.returncode == 1
+        assert github.http_status_line(result) == "HTTP/2.0 500 Internal Server Error"
+
+    def test_missing_token_raises_the_distinct_error(self) -> None:
+        cp = _completed(returncode=4, stderr="set the GH_TOKEN environment variable")
+        with (
+            patch("vergil_tooling.lib.github.subprocess.run", return_value=cp),
+            pytest.raises(github.MissingGitHubTokenError),
+        ):
+            github.post_json_with_status("repos/o/r/pages", {})
+
+
 def test_write_json_sends_body_via_stdin() -> None:
     with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
         mock_run.return_value = _completed()
