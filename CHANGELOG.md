@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.311] - 2026-11-14
+
+### Bug fixes
+
+- check every workflow is registered and work around GitHub missing some (#4383)
+- run CodeQL for rust from the one CodeQL language set the ruleset uses (#4387)
+- skip the language stages, loudly, on a repo not bootstrapped yet (#4390)
+
+### CI
+
+- move the nightly ops cron to the 01:xx UTC hour (#4386)
+
+### Features
+
+- lint all targets with clippy, tests included (#4385)
+- run rustdoc examples in the Rust test gate (#4388)
+
 ## [2.1.310] - 2026-11-14
 
 ### Bug fixes
