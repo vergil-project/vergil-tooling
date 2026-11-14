@@ -1,7 +1,7 @@
 # Fleet cargo-deny policy for Rust repos (epic vergil-project/.github#1091).
 #
-# The rust AUDIT command runs `cargo deny --config <this file> check`, so this
-# file replaces any deny.toml a repo carries. Written for cargo-deny's version 2
+# The rust AUDIT command runs `cargo deny --format json --config <this file>
+# check --show-stats`, so this file replaces any deny.toml a repo carries. Written for cargo-deny's version 2
 # configuration schema (cargo-deny 0.20).
 
 [licenses]
