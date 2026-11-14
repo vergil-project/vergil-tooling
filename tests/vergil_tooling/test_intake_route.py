@@ -70,6 +70,9 @@ class Env:
         # Sub-issue listings GitHub still shows although the child's parent
         # field says otherwise: epic -> stale children (#4004).
         self.stale_listing: dict[IssueRef, set[IssueRef]] = {}
+        # Children an epic's sub-issue list lacks although their parent field
+        # names it, until a link lands (#4291): epic -> missing children.
+        self.unlisted: dict[IssueRef, set[IssueRef]] = {}
         self.epic_state = "open"
         # Bare repo name -> its live ad-hoc epic.
         self.adhoc_epics: dict[str, IssueRef] = {"tool": TOOL_ADHOC, ".github": ADHOC_DOTGITHUB}
@@ -113,6 +116,7 @@ class Env:
 
     def attach(self, epic: IssueRef, task: IssueRef) -> None:
         self.native_parent[task] = epic
+        self.unlisted.get(epic, set()).discard(task)
 
     def link(self, epic: IssueRef, task: IssueRef) -> None:
         """addSubIssue: refused while *epic* lists *task* but its parent reads elsewhere."""
@@ -133,6 +137,7 @@ class Env:
     def native_children(self, epic: IssueRef) -> list[IssueRef]:
         """The epic's sub-issue list: its children by parent field, plus stale listings."""
         listed = {task for task, parent in self.native_parent.items() if parent == epic}
+        listed -= self.unlisted.get(epic, set())
         return sorted(listed | self.stale_listing.get(epic, set()), key=lambda ref: ref.slug)
 
     def find_standing_epic(self, kind: epics.StandingKind, home: str, name: str) -> IssueRef | None:
@@ -2072,17 +2077,19 @@ def test_route_one_off_rerun_listing_that_stays_fails_loudly(env: Env) -> None:
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(MOVED, OneOff(repo="org/tool"), today=TODAY)
     assert str(excinfo.value) == (
-        "removed the stale queue listing of org/tool#900, but it is still listed as a "
-        "sub-issue of org/.github#7, not settled under org/.github#11. Re-check with vrg-queue "
-        "in a minute; if it is still wrong, set the parent of org/tool#900 to org/.github#11 "
-        "and remove it from the sub-issues of org/.github#7 in the GitHub UI"
+        "settled org/tool#900 under org/.github#11, but it is still listed as a sub-issue of "
+        "org/.github#7 on reading it back. Re-check with vrg-queue in a minute; if it is still "
+        "wrong, link org/tool#900 under org/.github#11 in the GitHub UI, and only then remove "
+        "it from the sub-issues of any queue epic that still lists it"
     )
 
 
 def test_route_one_off_rerun_parent_that_moves_fails_loudly(env: Env) -> None:
     _moved_but_still_listed(env)
     env.sleep.side_effect = lambda *_: env.native_parent.update({MOVED: None})
-    with pytest.raises(intake_route.RouteHalfAppliedError, match="but it is unparented, not"):
+    with pytest.raises(
+        intake_route.RouteHalfAppliedError, match="but it is unparented on reading it back"
+    ):
         route(MOVED, OneOff(repo="org/tool"), today=TODAY)
 
 
@@ -2093,8 +2100,156 @@ def test_route_one_off_rerun_remove_failure_fails_loudly(env: Env) -> None:
         route(MOVED, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
     assert message.startswith(
-        "org/tool#900 is under org/.github#11 but a queue epic still listed it, and clearing "
-        "that listing or reading it back failed ("
+        "org/tool#900 reads org/.github#11 as its parent but was not settled there, and "
+        "settling it or reading it back failed ("
     )
     assert "HTTP 502" in message
-    assert "remove it from the sub-issues of org/.github#7 in the GitHub UI" in message
+    assert "link org/tool#900 under org/.github#11 in the GitHub UI" in message
+
+
+def test_route_one_off_rerun_missing_token_is_left_as_it_came(env: Env) -> None:
+    _moved_but_still_listed(env)
+    env.remove_child.side_effect = github.MissingGitHubTokenError(1, ["gh"], "", "GH_TOKEN")
+    with pytest.raises(github.MissingGitHubTokenError):
+        route(MOVED, OneOff(repo="org/tool"), today=TODAY)
+
+
+def _parent_field_only(env: Env) -> None:
+    """The #4168 follow-up state: the parent field reads the ad-hoc epic, which does
+    not list the item; the intake epic still holds its only real link."""
+    _moved_but_still_listed(env)
+    env.unlisted[TOOL_ADHOC] = {MOVED}
+
+
+def test_route_one_off_rerun_relinks_before_clearing_when_the_target_lacks_it(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _parent_field_only(env)
+    order: list[str] = []
+    env.reparent_child.side_effect = lambda *a: order.append("link") or env.link(*a)
+    env.remove_child.side_effect = lambda *a: order.append("unlink") or env.detach(*a)
+    result = route(MOVED, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=MOVED, moved_by="none")
+    # Linked under the target first, so removing the queue listing cannot orphan it.
+    assert order == ["link", "unlink"]
+    env.reparent_child.assert_called_once_with(TOOL_ADHOC, MOVED)
+    env.remove_child.assert_called_once_with(INTAKE, MOVED)
+    assert MOVED in env.native_children(TOOL_ADHOC)
+    assert MOVED not in env.native_children(INTAKE)
+    err = capsys.readouterr().err
+    assert (
+        "intake-route: org/tool#900's parent reads org/.github#11, but org/.github#11 does "
+        "not list it as a sub-issue; linking it again"
+    ) in err
+
+
+def test_route_one_off_rerun_relink_with_no_queue_listing_settles(env: Env) -> None:
+    env.parent = TOOL_ADHOC
+    env.native_parent[MOVED] = TOOL_ADHOC
+    env.unlisted[TOOL_ADHOC] = {MOVED}
+    result = route(MOVED, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=MOVED, moved_by="none")
+    env.reparent_child.assert_called_once_with(TOOL_ADHOC, MOVED)
+    env.remove_child.assert_not_called()
+
+
+def test_route_one_off_rerun_relink_that_does_not_list_it_removes_nothing(env: Env) -> None:
+    _parent_field_only(env)
+    env.reparent_child.side_effect = None  # the link never lands
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(MOVED, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith(
+        "linked org/tool#900 under org/.github#11 again, but org/.github#11 still does not "
+        "list it; no queue listing was removed."
+    )
+    env.remove_child.assert_not_called()
+    assert MOVED in env.native_children(INTAKE)
+
+
+def test_route_one_off_transfer_link_the_target_does_not_list_is_linked_again(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The parent field reads the target after the first link, but the target's
+    # sub-issue list lacks the item: the next round links it again (#4291).
+    sleeps = iter(range(1, 100))
+
+    def hide_after_first_link(*_: object) -> None:
+        if next(sleeps) == 1:
+            env.unlisted[TOOL_ADHOC] = {MOVED}
+
+    env.sleep.side_effect = hide_after_first_link
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=MOVED, moved_by="transfer")
+    assert env.reparent_child.call_args_list == [call(TOOL_ADHOC, MOVED)] * 2
+    err = capsys.readouterr().err
+    assert (
+        "org/tool#900 is not listed as a sub-issue of org/.github#11 (its parent reads "
+        "org/.github#11) after linking it under org/.github#11 (round 1/4); linking it again"
+    ) in err
+
+
+def test_route_one_off_transfer_never_listed_names_the_rerun(env: Env) -> None:
+    env.reparent_child.side_effect = lambda *a: (
+        env.link(*a) or env.unlisted.setdefault(TOOL_ADHOC, set()).add(MOVED)
+    )
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert str(excinfo.value) == (
+        "moved org/.github#352 to org/tool#900, but it is not listed as a sub-issue of "
+        "org/.github#11 (its parent reads org/.github#11), not settled under org/.github#11; "
+        "the route is half-applied. Fix it with: vrg-intake-route 'org/tool#900' one-off "
+        "--repo org/tool --epic 'org/.github#11'"
+    )
+    assert env.reparent_child.call_count == intake_route._SETTLE_ROUNDS
+
+
+def test_route_one_off_same_repo_parent_field_only_fails_loudly(env: Env) -> None:
+    # The single read-back of a plain link checks the target's listing too.
+    env.native_parent[ITEM] = ADHOC_DOTGITHUB
+    env.unlisted[ADHOC_DOTGITHUB] = {ITEM}
+    env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
+    with pytest.raises(intake_route.RouteHalfAppliedError, match="not listed as a sub-issue"):
+        route(ITEM, OneOff(repo="org/.github"), today=TODAY)
+
+
+def test_route_one_off_still_listed_outside_the_rerun_search_names_the_ui(env: Env) -> None:
+    # A source repo that keeps its own queues: a re-run of the moved item would
+    # not search its intake epic, so the by-hand recovery is named instead.
+    own_intake = IssueRef("org", "priv", 5)
+    env.parent = own_intake
+    env.kinds[own_intake] = "intake"
+    env.stale_listing[own_intake] = {MOVED}
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert "still listed as a sub-issue of org/priv#5" in message
+    assert "remove org/tool#900 from the sub-issues of org/priv#5 in the GitHub UI" in message
+    assert "vrg-intake-route" not in message
+
+
+def test_route_one_off_still_listed_lookup_failure_names_the_ui(env: Env) -> None:
+    env.stale_listing[INTAKE] = {MOVED}
+    with (
+        patch(
+            f"{_MOD}.epics.find_standing_epic",
+            side_effect=github.GitHubAPIError(1, ["gh"], "", "HTTP 502"),
+        ),
+        pytest.raises(intake_route.RouteHalfAppliedError) as excinfo,
+    ):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert "remove org/tool#900 from the sub-issues of org/.github#7 in the GitHub UI" in str(
+        excinfo.value
+    )
+
+
+def test_route_one_off_still_listed_lookup_missing_token_is_left_as_it_came(env: Env) -> None:
+    env.stale_listing[INTAKE] = {MOVED}
+    with (
+        patch(
+            f"{_MOD}.epics.find_standing_epic",
+            side_effect=github.MissingGitHubTokenError(1, ["gh"], "", "GH_TOKEN"),
+        ),
+        pytest.raises(github.MissingGitHubTokenError),
+    ):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
