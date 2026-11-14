@@ -20,10 +20,19 @@ if TYPE_CHECKING:
 
 _GO_VERSION_RE = re.compile(r'Version\s*=\s*"([^"]+)"')
 
+# The command that refreshes a language's committed lockfile after a version
+# bump. Each runs in the repo's dev container (see _run_lockfile_maintenance),
+# never on the host. ``cargo update --workspace`` updates only the workspace's
+# own packages, so the lockfile picks up the bumped version and no dependency
+# is upgraded (https://doc.rust-lang.org/cargo/commands/cargo-update.html).
 _LOCKFILE_COMMANDS: dict[str, list[str]] = {
     "python": ["uv", "lock"],
     "rust": ["cargo", "update", "--workspace"],
 }
+
+# Runs a command in the repo's dev container: the language image, the
+# workspace mounts and the resolved toolchain environment validation uses.
+_CONTAINER_RUN = ("vrg-container-run", "--")
 
 _DEFAULT_VERSION_FILES: dict[str, str] = {
     "python": "pyproject.toml",
@@ -195,12 +204,28 @@ def _write_version(version_file: Path, language: str, old: str, new: str) -> Non
 
 
 def _run_lockfile_maintenance(repo_root: Path, language: str) -> None:
+    """Refresh *language*'s lockfile for the bumped version, in the dev container.
+
+    The lock command runs through ``vrg-container-run``, so a release needs no
+    host toolchain for any language and the lockfile is written by the same
+    ``uv`` or ``cargo`` that validation checks it with (#4407). A missing or
+    stopped container runtime, or a failing lock command, raises
+    :class:`subprocess.CalledProcessError` after its output is shown.
+    """
     cmd = _LOCKFILE_COMMANDS.get(language)
     if cmd is None:
         return
     try:
-        result = subprocess.run(cmd, cwd=repo_root, check=True, capture_output=True, text=True)  # noqa: S603
+        result = subprocess.run(  # noqa: S603
+            [*_CONTAINER_RUN, *cmd],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
     except subprocess.CalledProcessError as exc:
+        if exc.stdout:
+            print(exc.stdout, end="")
         if exc.stderr:
             print(exc.stderr, end="", file=sys.stderr)
         raise

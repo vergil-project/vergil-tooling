@@ -438,13 +438,16 @@ To roll a release back with `vrg-promote`, follow the
 Print or bump the repo's version. `show` prints the current version
 (`--major-minor` for `X.Y` only, `--ref` to read it from a git ref); `bump`
 increments `patch` (default), `minor` or `major` and prints the new version.
-Used by the CD workflows to read the release version.
+For a Python or Rust repo, `bump` then refreshes the lockfile (`uv lock`,
+`cargo update --workspace`) in the dev container, through
+`vrg-container-run`, so no host toolchain is needed. Used by the CD
+workflows to read the release version.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_version` |
 | Args | `show [--major-minor] [--ref REF]`, `bump [{patch,minor,major}]` |
-| Preconditions | Run from the repo root |
+| Preconditions | Run from the repo root; `bump` in a Python or Rust repo needs a running container runtime |
 | Failure mode | An unreadable version raises an uncaught error |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
