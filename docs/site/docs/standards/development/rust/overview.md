@@ -17,7 +17,9 @@ maintainability, and long-term survivability across repositories.
 
 - Formatting: rustfmt (canonical; any formatting configuration goes in
   `rustfmt.toml`).
-- Linting: clippy (official Rust linter, 800+ lint rules).
+- Linting: clippy (official Rust linter, 800+ lint rules), run on all targets
+  (`cargo clippy --all-targets -- -D warnings`), so the library, binaries,
+  tests, examples and benches are linted and any warning fails the gate.
 - Type checking: `cargo check` (inherent in the Rust compiler).
 - Dependency audit and license compliance: cargo-deny (advisories, licenses,
   bans, and sources in a single tool), run against the fleet policy that
