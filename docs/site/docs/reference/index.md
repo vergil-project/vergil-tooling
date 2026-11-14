@@ -26,6 +26,7 @@ the dev-tree override venv.
 | [vrg-submit-pr](dev/submit-pr.md) | Standards-compliant PR submission wrapper |
 | [vrg-pr-workflow](cli-tools-overview.md#vrg-pr-workflow) | Record and manage the PR handoff state that `vrg-submit-pr` reads |
 | [vrg-pr-await](cli-tools-overview.md#vrg-pr-await) | Block until a PR's checks or reviews settle, then print its state |
+| [vrg-pr-review-comments](cli-tools-overview.md#vrg-pr-review-comments) | List a PR's inline review comments, read-only |
 | [vrg-await](cli-tools-overview.md#vrg-await) | Block until a `.vergil/` channel file appears or changes |
 | [vrg-audit-approve](cli-tools-overview.md#vrg-audit-approve) | Post the `vergil-audit/approved` check-run on a PR's head commit |
 | [vrg-release](dev/release.md) | Run the full release workflow, ending with the dependency update |

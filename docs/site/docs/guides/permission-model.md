@@ -226,6 +226,11 @@ instead of by pair:
 - **`user`** — denied entirely, which closes the escape hatch that
   individual hook-based blocks cannot fully cover.
 
+The user identity's one read it needs from the raw API, a PR's inline
+review comments, goes through the dedicated read-only
+[`vrg-pr-review-comments`](../reference/cli-tools-overview.md#vrg-pr-review-comments)
+rather than an exception in this refusal.
+
 ### Credential Selection
 
 `vrg-gh` is responsible for choosing which account's token to use
@@ -251,7 +256,8 @@ token `gh` runs with:
 `vrg-epic-docs`, `vrg-epic-link`, `vrg-epic-move`, `vrg-epic-rollup`,
 `vrg-finalize-pr`, `vrg-fleet-sync`, `vrg-github-repo-config`,
 `vrg-github-repo-init`, `vrg-intake-create`, `vrg-intake-route`,
-`vrg-issue-create`, `vrg-pr-await`, `vrg-pr-workflow`, `vrg-promote`,
+`vrg-issue-create`, `vrg-pr-await`, `vrg-pr-review-comments`,
+`vrg-pr-workflow`, `vrg-promote`,
 `vrg-queue`, `vrg-release`, `vrg-repo-status`,
 `vrg-resolve-tracking-issue`, `vrg-roadmap`, `vrg-ruling`,
 `vrg-ruling-reply`, `vrg-scope-change`, `vrg-security-record`,

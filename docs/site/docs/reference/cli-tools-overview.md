@@ -271,6 +271,36 @@ indefinitely by design.
 | Exit codes | 0 settled, 1 error |
 | Status | Active |
 
+### vrg-pr-review-comments
+
+List a pull request's inline (line-level) review comments. It reads
+`GET repos/{owner}/{repo}/pulls/{n}/comments`, every page, through
+`lib/github.py`'s paginated read helper, with the App token minted for the
+`--repo` owner. `vrg-gh pr view --json reviews,comments` returns only review
+bodies and conversation comments, and `vrg-gh` refuses `gh api` for the user
+identity, so this is the user agent's way to read them. It is strictly
+read-only and widens no `vrg-gh` allowlist. The plugin's
+`epic-retrospective` sweep consumes it.
+
+Without `--json` it prints one block per comment (`<path>:<line> by
+<author> at <created_at> (comment <id>, review <id>, reply to <id>)`, the
+comment URL, then the body indented), or one line saying the PR has none.
+`--json` prints a JSON array of objects with the keys `id`, `author`,
+`path`, `line`, `review_id`, `in_reply_to_id`, `created_at`, `body` and
+`url`, in API order. `line` is `null` for an outdated comment (one on a line
+the PR no longer has), `author` is `null` for a deleted account,
+`review_id` is `null` when GitHub gives none, and `in_reply_to_id` is
+`null` for a comment that starts a thread.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_pr_review_comments` |
+| Args | `--repo <owner>/<repo>`, `--pr N`, `--json` |
+| Preconditions | GitHub App credentials for the `--repo` owner |
+| Failure mode | A GitHub API failure, or a response that is not a list of well-formed comments, prints `ERROR:` on stderr and exits 1; it never prints a partial or empty list in its place |
+| Exit codes | 0 success, 1 GitHub API failure or malformed response, 2 bad arguments |
+| Status | Active |
+
 ### vrg-await
 
 Block until a `.vergil/` channel file appears or changes, then print its
