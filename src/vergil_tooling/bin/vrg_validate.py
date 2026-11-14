@@ -18,7 +18,9 @@ A repo with none of its language's manifests (a Rust repo with no
 ``Cargo.toml`` yet) is not bootstrapped: the image warmup skips it, and so
 do the install and language stages here, each recorded as a warning that
 names the missing manifests (issue #4384). See
-:func:`~vergil_tooling.lib.container_cache.unbootstrapped_manifests`.
+:func:`~vergil_tooling.lib.container_cache.unbootstrapped_manifests`. A repo
+with none of its manifests but with sources of its language (a branch that
+deletes ``Cargo.toml``, say) is not unstarted: its install stage fails.
 
 ``--all-versions`` (Python only) adds one test stage per resolved CI version
 after the test stage, so the coverage gate runs on every interpreter PR-CI
@@ -46,7 +48,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, git, progress
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.container_cache import unbootstrapped_manifests
+from vergil_tooling.lib.container_cache import language_sources, unbootstrapped_manifests
 from vergil_tooling.lib.languages import (
     COVERAGE_REPORT,
     JUNIT_REPORT,
@@ -584,6 +586,76 @@ def _not_bootstrapped_stage(name: str, language: str, missing: list[str]) -> Sta
     return Stage(name, fn, mode="warn")
 
 
+# How many source paths the sources-without-manifest failure names.
+_SOURCES_SHOWN = 3
+
+
+def _sources_without_manifest_stage(language: str, missing: list[str], sources: list[str]) -> Stage:
+    """The install stage, failed: the repo has sources but none of its manifests.
+
+    Such a repo has lost its manifest (a branch that deletes ``Cargo.toml``)
+    or never got one (sources added without it), so it is not the unstarted
+    repo :func:`_not_bootstrapped_stage` skips (issue #4384). The stage is
+    ``fail_fast``, like the install it replaces, so no language stage runs on
+    the broken repo.
+    """
+    shown = ", ".join(sources[:_SOURCES_SHOWN])
+    if len(sources) > _SOURCES_SHOWN:
+        shown += f" and {len(sources) - _SOURCES_SHOWN} more"
+    msg = (
+        f"no {', '.join(missing)}, but the repo has {language} sources ({shown}); "
+        f"only a repo with no sources is skipped as not bootstrapped yet, so add the "
+        f"{'manifest' if len(missing) == 1 else 'manifests'} or remove the sources"
+    )
+
+    def fn(_ctx: object) -> None:
+        raise ValidationError(msg)
+
+    return Stage("install", fn, mode="fail_fast")
+
+
+def _repo_files(repo_root: Path) -> list[str]:
+    """The repo's tracked and untracked, not ignored, files that exist on disk."""
+    out = git.read_output(
+        "-C", str(repo_root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"
+    )
+    return [path for path in out.split("\0") if path and (repo_root / path).is_file()]
+
+
+def _bootstrap_state(language: str, repo_root: Path) -> tuple[list[str], list[str]]:
+    """Return *language*'s missing manifests and its sources in the repo.
+
+    Both are empty for a bootstrapped repo. The manifests are non-empty only
+    when every one is missing
+    (:func:`~vergil_tooling.lib.container_cache.unbootstrapped_manifests`);
+    the repo's files are listed only then.
+    """
+    missing = unbootstrapped_manifests(language, repo_root)
+    if not missing:
+        return [], []
+    return missing, language_sources(language, _repo_files(repo_root))
+
+
+def _install_stage(
+    language: str,
+    install_cmds: list[list[str]],
+    missing: list[str],
+    sources: list[str],
+) -> Stage | None:
+    """The install stage for *language*, or ``None`` when it has no install.
+
+    With every manifest missing it is skipped, loudly, when the repo has no
+    sources, and failed when it has some.
+    """
+    if missing and sources:
+        return _sources_without_manifest_stage(language, missing, sources)
+    if not install_cmds:
+        return None
+    if missing:
+        return _not_bootstrapped_stage("install", language, missing)
+    return _command_stage("install", install_cmds, mode="fail_fast")
+
+
 def _python_test_stage(
     *,
     parallel: bool,
@@ -748,19 +820,20 @@ def _build_stages(
             for kind, cmds in kind_cmds
         ]
         kind_cmds = [(kind, cmds) for kind, cmds in kind_cmds if cmds]
-        unbootstrapped = unbootstrapped_manifests(language, repo_root)
-        if kind_cmds and unbootstrapped:
+        missing, sources = _bootstrap_state(language, repo_root)
+        if kind_cmds and missing and not sources:
             install_cmds = language_commands(
                 language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
             )
             names = (["install"] if install_cmds else []) + [kind.value for kind, _ in kind_cmds]
-            stages.extend(_not_bootstrapped_stage(name, language, unbootstrapped) for name in names)
+            stages.extend(_not_bootstrapped_stage(name, language, missing) for name in names)
         elif kind_cmds:
             install_cmds = language_commands(
                 language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
             )
-            if install_cmds:
-                stages.append(_command_stage("install", install_cmds, mode="fail_fast"))
+            install = _install_stage(language, install_cmds, missing, sources)
+            if install is not None:
+                stages.append(install)
             for kind, cmds in kind_cmds:
                 if language == "rust" and kind is CheckKind.TEST:
                     stages.append(
@@ -804,11 +877,10 @@ def _build_stages(
                 install_cmds = language_commands(
                     language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
                 )
-                unbootstrapped = unbootstrapped_manifests(language, repo_root)
-                if install_cmds and unbootstrapped:
-                    stages.append(_not_bootstrapped_stage("install", language, unbootstrapped))
-                elif install_cmds:
-                    stages.append(_command_stage("install", install_cmds, mode="fail_fast"))
+                missing, sources = _bootstrap_state(language, repo_root)
+                install = _install_stage(language, install_cmds, missing, sources)
+                if install is not None:
+                    stages.append(install)
 
             def custom_fn(_ctx: object) -> None:
                 _check_custom_validator(Path(custom))

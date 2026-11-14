@@ -31,6 +31,7 @@ from vergil_tooling.lib.container_cache import (
     compute_cache_hash,
     ensure_cached_image,
     find_cached_image,
+    language_sources,
     missing_warmup_files,
     parse_cache_image_ref,
     provision_dev_image,
@@ -1940,6 +1941,31 @@ def test_unbootstrapped_other_languages(tmp_path: Path, lang: str, manifest: str
 
 def test_unbootstrapped_unknown_language_is_never_unbootstrapped(tmp_path: Path) -> None:
     assert unbootstrapped_manifests("cobol", tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("lang", "source"),
+    [
+        ("python", "pkg/mod.py"),
+        ("rust", "src/lib.rs"),
+        ("go", "main.go"),
+        ("cpp", "include/x.hpp"),
+        ("typescript", "src/index.ts"),
+    ],
+)
+def test_language_sources_picks_the_language_files(lang: str, source: str) -> None:
+    paths = ["README.md", "vergil.toml", "scripts/bin/validate-local", source]
+    assert language_sources(lang, paths) == [source]
+
+
+def test_language_sources_is_sorted_and_language_specific() -> None:
+    paths = ["src/main.rs", "build.rs", "tool.py"]
+    assert language_sources("rust", paths) == ["build.rs", "src/main.rs"]
+    assert language_sources("python", paths) == ["tool.py"]
+
+
+def test_language_sources_unknown_language_has_none() -> None:
+    assert language_sources("cobol", ["x.cbl"]) == []
 
 
 def test_warmup_command_skipped_when_manifests_absent(tmp_path: Path) -> None:

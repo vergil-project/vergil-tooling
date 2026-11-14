@@ -24,15 +24,18 @@ from vergil_tooling.bin.vrg_validate import (
     _default_test_version,
     _find_custom_validator,
     _in_dev_container,
+    _install_stage,
     _interpreter_version,
     _not_bootstrapped_stage,
     _probe_xdist,
     _python_test_stage,
     _python_version_test_stage,
+    _repo_files,
     _resolve_test_workers,
     _run_common_checks,
     _skip_conan_audit_scan,
     _skip_rust_doctests_without_lib,
+    _sources_without_manifest_stage,
     _test_context,
     main,
 )
@@ -1529,8 +1532,12 @@ _NOT_BOOTSTRAPPED = "skipped: no Cargo.toml (rust repo not bootstrapped yet)"
 
 
 @pytest.fixture
-def real_bootstrap_check() -> Iterator[None]:
-    """Restore the real bootstrapped-ness test the autouse fixture stubs out."""
+def real_bootstrap_check(tmp_path: Path) -> Iterator[None]:
+    """Restore the real bootstrapped-ness test the autouse fixture stubs out.
+
+    The repo root is made a git repo, since the test lists its files with git.
+    """
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)  # noqa: S607
     with patch(_MOD + ".unbootstrapped_manifests", side_effect=unbootstrapped_manifests):
         yield
 
@@ -1665,3 +1672,103 @@ def test_not_bootstrapped_stage_names_every_missing_manifest(
     )
     m_warn.assert_called_once_with(reason)
     assert f"NOTICE: lint: {reason}" in capsys.readouterr().out
+
+
+# -- Sources with no manifest are not unbootstrapped (issue #4384, R1) ---------
+
+_SOURCES_NO_MANIFEST = (
+    "no Cargo.toml, but the repo has rust sources (src/lib.rs); only a repo with no "
+    "sources is skipped as not bootstrapped yet, so add the manifest or remove the sources"
+)
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_rust_sources_without_cargo_toml_fail_install(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A branch that deletes Cargo.toml, or adds sources without one, must not
+    # pass every language gate as a warning.
+    _write_config(tmp_path, "rust")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("")
+    rc, ran = _run_validate(tmp_path, [])
+    assert rc == 1
+    assert ran == []
+    record = read_record(tmp_path)
+    assert record.not_passed[0] == "install"
+    assert "lint" not in record.passed
+    assert _SOURCES_NO_MANIFEST in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_rust_sources_without_cargo_toml_stage_shape(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("")
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages(None, "rust", tmp_path)
+    language_stages = [s for s in stages if s.name != "common"]
+    assert [s.name for s in language_stages] == ["install", "lint", "typecheck", "test", "audit"]
+    assert language_stages[0].mode == "fail_fast"
+    with pytest.raises(ValidationError, match="add the manifest or remove the sources"):
+        language_stages[0].fn(None)
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_rust_sources_without_cargo_toml_check_custom_fails_install(tmp_path: Path) -> None:
+    _write_config(tmp_path, "rust")
+    (tmp_path / "main.rs").write_text("")
+    rc, ran = _run_validate(tmp_path, ["--check", "custom"], custom="/path/to/custom")
+    assert rc == 1
+    assert ran == []
+    assert read_record(tmp_path).not_passed[0] == "install"
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_other_language_sources_do_not_block_the_skip(tmp_path: Path) -> None:
+    # A Rust repo's helper scripts are not Rust sources.
+    _write_config(tmp_path, "rust")
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "helper.py").write_text("")
+    rc, ran = _run_validate(tmp_path, [])
+    assert rc == 0
+    assert ran == []
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_ignored_and_deleted_sources_do_not_block_the_skip(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("target/\n")
+    (tmp_path / "target").mkdir()
+    (tmp_path / "target" / "build.rs").write_text("")
+    gone = tmp_path / "gone.rs"
+    gone.write_text("")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "gone.rs"], check=True)  # noqa: S607
+    gone.unlink()
+    assert _repo_files(tmp_path) == [".gitignore"]
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("lint", "rust", tmp_path)
+    assert [s.mode for s in stages] == ["warn", "warn"]
+
+
+def test_install_stage_choices() -> None:
+    cmds = [["cargo", "fetch"]]
+    assert _install_stage("rust", [], [], []) is None
+    assert _install_stage("rust", [], ["Cargo.toml"], []) is None
+    assert _install_stage("rust", cmds, [], []).mode == "fail_fast"  # type: ignore[union-attr]
+    assert _install_stage("rust", cmds, ["Cargo.toml"], []).mode == "warn"  # type: ignore[union-attr]
+    failed = _install_stage("rust", [], ["Cargo.toml"], ["src/lib.rs"])
+    assert failed is not None
+    assert failed.mode == "fail_fast"
+
+
+def test_sources_without_manifest_stage_names_at_most_three_sources() -> None:
+    sources = ["a.py", "b.py", "c.py", "d.py", "e.py"]
+    stage = _sources_without_manifest_stage("python", ["pyproject.toml", "uv.lock"], sources)
+    assert stage.name == "install"
+    msg = (
+        "no pyproject.toml, uv.lock, but the repo has python sources (a.py, b.py, c.py "
+        "and 2 more); only a repo with no sources is skipped as not bootstrapped yet, "
+        "so add the manifests or remove the sources"
+    )
+    with pytest.raises(ValidationError) as exc:
+        stage.fn(None)
+    assert str(exc.value) == msg

@@ -28,7 +28,7 @@ from vergil_tooling.lib.package import orgs, repo_setup
 from vergil_tooling.lib.versions.extensions import container_env
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
 
 _SELF_PROJECT_NAME = "vergil-tooling"
 
@@ -208,6 +208,30 @@ def unbootstrapped_manifests(lang: str, repo_root: Path) -> list[str]:
     groups = _WARMUP_REQUIRES.get(lang, [])
     missing = missing_warmup_files(lang, repo_root)
     return missing if groups and len(missing) == len(groups) else []
+
+
+# File suffixes of each language's own sources. A repo with none of its
+# manifests but with sources like these is not unstarted: it has lost its
+# manifest, or never got one, so vrg-validate fails it rather than skip its
+# language stages (issue #4384).
+_SOURCE_SUFFIXES: dict[str, tuple[str, ...]] = {
+    "python": (".py", ".pyi"),
+    "rust": (".rs",),
+    "go": (".go",),
+    "cpp": (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"),
+    "typescript": (".ts", ".tsx", ".mts", ".cts"),
+}
+
+
+def language_sources(lang: str, paths: Iterable[str]) -> list[str]:
+    """Return the paths in *paths* that are *lang* source files, sorted.
+
+    Always empty for a language with no source suffixes declared.
+    """
+    suffixes = _SOURCE_SUFFIXES.get(lang)
+    if not suffixes:
+        return []
+    return sorted(path for path in paths if path.endswith(suffixes))
 
 
 def _warmup_command(lang: str, repo_root: Path) -> str:

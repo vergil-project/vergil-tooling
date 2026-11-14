@@ -165,6 +165,14 @@ manifest is missing: a repository with some of them, such as a
 `pyproject.toml` with no `uv.lock`, runs the stages and fails on the
 gap, as does a `Cargo.toml` that `cargo fetch` cannot resolve.
 
+The skip also needs the repository to hold no source files of its
+language (`.rs` for Rust, `.py` for Python, and so on), tracked or
+untracked, ignored files left out. A repository with sources but none of
+its manifests, such as a branch that deletes `Cargo.toml` from an
+existing crate or adds Rust sources without one, has lost its manifest
+rather than never had one: its install stage fails, naming the missing
+manifests and the first sources found, and no language stage runs.
+
 ### Custom validator
 
 Last, `vrg-validate` runs the repository's custom validator, when it has
