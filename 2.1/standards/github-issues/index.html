@@ -1418,6 +1418,8 @@
       
         
       
+        
+      
     
     
     
@@ -1470,6 +1472,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.310/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.310
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18438,7 +18468,9 @@ cross-forge fallback.</p>
   <code>vrg-adhoc-epic ensure --repo &lt;owner&gt;/&lt;repo&gt;</code> creates a repo's ad-hoc epic
   on demand (idempotent). Its <em>closed</em> children are continuously drained into
   per-quarter <strong>archives</strong> so the live umbrella shows only in-flight work — see
-  <a href="#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>.</li>
+  <a href="#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>.
+  Its ready tasks are worked with <code>epic-implement adhoc</code>, which collects them
+  with <a href="#viewing-the-queues-vrg-queue"><code>vrg-queue adhoc</code></a>.</li>
 </ul>
 <h3 id="standing-epics">Standing epics<a class="headerlink" href="#standing-epics" title="Permanent link">&para;</a></h3>
 <p>The ad-hoc epic is one of four kinds of <strong>standing epic</strong> — perpetual
@@ -18942,10 +18974,21 @@ path.</p>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-queue<span class="w"> </span>planning<span class="w">  </span><span class="c1"># open planning items: waiting / in-progress / ready-to-close</span>
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>vrg-queue<span class="w"> </span>deferred<span class="w">  </span><span class="c1"># open deferred items, least recently deferred first</span>
 <a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>vrg-queue<span class="w">           </span><span class="c1"># all three queues, in that order</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>vrg-queue<span class="w"> </span>adhoc<span class="w">     </span><span class="c1"># open tasks under every live ad-hoc epic, by repo</span>
 </code></pre></div>
 <p>It defaults to the current org's <code>.github</code> queues; <code>--repo &lt;owner&gt;/&lt;repo&gt;</code>
 selects that repo's queue home (a self-homed private repo's own queues), and
 <code>--json</code> emits machine-readable output. It is read-only.</p>
+<p><code>vrg-queue adhoc</code> lists the open tasks under every live ad-hoc epic, grouped by
+repo, each with a state: <strong>ready</strong>, <strong>blocked</strong> (an open <code>Blocked-by:</code>
+dependency) or <strong>in-flight</strong> (an open PR, a ready record, a branch, a
+worktree, a merge review or a batch marker already exists for it). It is not a
+review queue, so a bare <code>vrg-queue</code> never shows it; it appears only when
+named. Its in-flight marks are read from each repo's main clone, found under
+the repo roots: <code>--root DIR</code> (repeatable) names them, and the platform's roots
+are the default. With <code>--repo</code>, a public repo narrows the list to its own
+ad-hoc epic. The <a href="../../reference/cli-tools-overview/#vrg-queue">CLI reference</a>
+gives the line format, the marks and the dispositions.</p>
 <h3 id="routing-vrg-intake-route">Routing: <code>vrg-intake-route</code><a class="headerlink" href="#routing-vrg-intake-route" title="Permanent link">&para;</a></h3>
 <p>Intake is reviewed oldest first, in small batches (<code>epic-review intake</code>).
 For each item the reviewer checks its current state and recommends a route; the

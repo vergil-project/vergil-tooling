@@ -1416,6 +1416,8 @@
       
         
       
+        
+      
     
     
     
@@ -1468,6 +1470,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.310/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.310
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18022,6 +18052,16 @@ order:</p>
    against <code>develop</code>, with squash auto-merge turned on and read back.
    An earlier run's sync PR is closed and its branch deleted first,
    whether or not there is new drift. With no change, no PR is opened.</li>
+<li><strong>Wait until merged.</strong> <code>update</code> then watches the PR until it has
+   merged. Auto-merge only speeds this up; the watch never depends on
+   it. A PR whose branch falls behind <code>develop</code> is updated and the
+   watch goes on, up to 5 branch updates. A PR whose checks are green
+   on an up-to-date branch is merged by the watch itself. A failed
+   check, a conflict, a PR closed by someone else, the update cap or
+   the deadline ends the watch, naming the PR and the reason. The
+   deadline is <code>$VRG_MECHANIZED_PR_DEADLINE</code> seconds, 2400 (40
+   minutes) by default, so the watch ends inside the one hour the ops
+   job's App installation token lasts.</li>
 <li><strong>The verdict.</strong> The fixed clone is audited again. A check that has
    no fixer (a missing or invalid <code>vergil.toml</code>, a CLAUDE.md over the
    length limit, an <code>AGENTS.md</code>, a missing or unwired <code>ops.yml</code>) still
@@ -18041,15 +18081,15 @@ PR has merged, <code>vrg-finalize-pr</code> brings a local <code>develop</code> 
 <tbody>
 <tr>
 <td>0</td>
-<td>The GitHub side converged and the managed files are in sync, or a sync PR was opened with auto-merge confirmed on</td>
+<td>The GitHub side converged and the managed files are in sync: no sync PR was needed, or the one opened this run merged</td>
 </tr>
 <tr>
 <td>1</td>
-<td>Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, or an undeclared ruleset parameter. The sync PR for the fixable drift is still opened</td>
+<td>Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, or an undeclared ruleset parameter. The sync PR for the fixable drift is still opened, and exit 1 applies once it has merged</td>
 </tr>
 <tr>
 <td>2</td>
-<td>Something could not be audited or converged: an agent identity, a setting not checked, a failed GitHub write, clone or PR. A setting not checked or a failed write opens nothing</td>
+<td>Something could not be audited or converged: an agent identity, a setting not checked, a failed GitHub write, clone or PR, or a sync PR that did not merge (the error names the PR and the reason). 2 outranks 1. A setting not checked or a failed write opens nothing</td>
 </tr>
 </tbody>
 </table>
