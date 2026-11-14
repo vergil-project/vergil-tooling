@@ -28,11 +28,13 @@ builder reads it (:mod:`vergil_tooling.lib.validate_record`).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -454,6 +456,79 @@ def _skip_conan_audit_scan(cmds: list[list[str]]) -> list[list[str]]:
     return kept
 
 
+_RUST_DOCTEST_CMD = ["cargo", "test", "--doc"]
+# Cargo's library target kinds: any of them makes ``cargo test --doc`` select a
+# library target instead of refusing with "no library targets found".
+_RUST_LIB_KINDS = frozenset({"lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro"})
+
+
+def _rust_lib_packages(repo_root: Path) -> tuple[list[str], list[str]]:
+    """Return the default-member package names with and without a library target.
+
+    ``cargo test --doc`` runs on the workspace's default members and refuses
+    with "no library targets found" when none of them has a library target,
+    so this reads exactly those packages from ``cargo metadata --no-deps``. A
+    probe that cannot run, exits non-zero or prints unexpected output raises
+    :class:`ValidationError` (issue #4378).
+    """
+    cmd = ["cargo", "metadata", "--no-deps", "--format-version", "1"]
+    try:
+        result = subprocess.run(  # noqa: S603
+            cmd,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=300,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        msg = f"library-target probe could not run `{' '.join(cmd)}`: {exc}"
+        raise ValidationError(msg) from exc
+    if result.returncode != 0:
+        msg = (
+            f"library-target probe failed: `{' '.join(cmd)}` exited "
+            f"{result.returncode}: {result.stderr.strip()}"
+        )
+        raise ValidationError(msg)
+    try:
+        metadata = json.loads(result.stdout)
+        defaults = set(metadata["workspace_default_members"])
+        with_lib: list[str] = []
+        without_lib: list[str] = []
+        for package in metadata["packages"]:
+            if package["id"] not in defaults:
+                continue
+            kinds = {kind for target in package["targets"] for kind in target["kind"]}
+            (with_lib if kinds & _RUST_LIB_KINDS else without_lib).append(package["name"])
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        msg = f"library-target probe: unexpected `cargo metadata` output: {exc!r}"
+        raise ValidationError(msg) from exc
+    return with_lib, without_lib
+
+
+def _skip_rust_doctests_without_lib(cmds: list[list[str]], repo_root: Path) -> list[list[str]]:
+    """Drop ``cargo test --doc`` when no default-member package has a library target.
+
+    Rustdoc examples run only for a library target, and on a crate with none
+    (a plain ``cargo new`` binary) ``cargo test --doc`` exits non-zero with
+    "no library targets found", which would fail the TEST stage of a repo
+    with no doctest to run. The probe runs at stage time, after the install
+    stage has fetched the dependencies, and only when the command is present.
+    """
+    if _RUST_DOCTEST_CMD not in cmds:
+        return cmds
+    with_lib, without_lib = _rust_lib_packages(repo_root)
+    if with_lib:
+        return cmds
+    print(
+        "NOTICE: skipping `cargo test --doc` — no library target in "
+        f"{', '.join(without_lib) or 'the workspace default members'}; "
+        "rustdoc examples run only for a library target.",
+        file=sys.stderr,
+    )
+    return [cmd for cmd in cmds if cmd != _RUST_DOCTEST_CMD]
+
+
 def _command_stage(
     label: str,
     cmds: list[list[str]] | Callable[[], list[list[str]]],
@@ -650,6 +725,15 @@ def _build_stages(
             if install_cmds:
                 stages.append(_command_stage("install", install_cmds, mode="fail_fast"))
             for kind, cmds in kind_cmds:
+                if language == "rust" and kind is CheckKind.TEST:
+                    stages.append(
+                        _command_stage(
+                            kind.value,
+                            partial(_skip_rust_doctests_without_lib, cmds, repo_root),
+                            mode="fail_defer",
+                        )
+                    )
+                    continue
                 if language != "python" or kind is not CheckKind.TEST:
                     stages.append(_command_stage(kind.value, cmds, mode="fail_defer"))
                     continue

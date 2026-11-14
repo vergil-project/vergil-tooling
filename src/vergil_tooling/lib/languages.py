@@ -453,6 +453,9 @@ _REGISTRY: dict[str, Language] = {
             # stable rustc refuses, and the dev image ships stable only.
             # Doctests therefore count toward no coverage; the 100% line gate
             # is met by the unit and integration tests alone (issue #4378).
+            # ``cargo test --doc`` refuses a crate with no library target, so
+            # vrg-validate drops it when no default-member package has one
+            # (``_skip_rust_doctests_without_lib``).
             CheckKind.TEST: [
                 ["cargo", "llvm-cov", "--fail-under-lines", "100"],
                 ["cargo", "test", "--doc"],

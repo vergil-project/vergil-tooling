@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import mock_open, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator, Iterator
 
 import pytest
 
@@ -29,6 +31,7 @@ from vergil_tooling.bin.vrg_validate import (
     _resolve_test_workers,
     _run_common_checks,
     _skip_conan_audit_scan,
+    _skip_rust_doctests_without_lib,
     _test_context,
     main,
 )
@@ -761,6 +764,148 @@ def test_skip_conan_audit_scan_can_empty_the_list() -> None:
     env = {k: v for k, v in os.environ.items() if k != _CONAN_AUDIT_TOKEN_ENV}
     with patch.dict(os.environ, env, clear=True):
         assert _skip_conan_audit_scan([["conan", "audit", "scan", "."]]) == []
+
+
+# -- _skip_rust_doctests_without_lib (issue #4378) ------------------------------
+
+_RUST_TEST_CMDS = [
+    ["cargo", "llvm-cov", "--fail-under-lines", "100"],
+    ["cargo", "test", "--doc"],
+]
+
+
+def _package(name: str, *kinds: list[str]) -> dict[str, object]:
+    return {
+        "id": f"{name}-id",
+        "name": name,
+        "targets": [{"kind": k, "name": name} for k in kinds],
+    }
+
+
+def _metadata(packages: list[dict[str, object]], defaults: list[str]) -> str:
+    return json.dumps(
+        {
+            "packages": packages,
+            "workspace_members": [p["id"] for p in packages],
+            "workspace_default_members": [f"{name}-id" for name in defaults],
+        }
+    )
+
+
+@contextmanager
+def _cargo_metadata(stdout: str, returncode: int = 0, stderr: str = "") -> Generator[MagicMock]:
+    completed = subprocess.CompletedProcess(
+        ["cargo", "metadata"], returncode, stdout=stdout, stderr=stderr
+    )
+    with patch(_MOD + ".subprocess.run", return_value=completed) as m_run:
+        yield m_run
+
+
+def test_rust_doctests_kept_for_a_lib_crate(tmp_path: Path) -> None:
+    stdout = _metadata([_package("app", ["lib"], ["bin"])], ["app"])
+    with _cargo_metadata(stdout) as m_run:
+        assert _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path) == _RUST_TEST_CMDS
+    assert m_run.call_args.args[0] == ["cargo", "metadata", "--no-deps", "--format-version", "1"]
+    assert m_run.call_args.kwargs["cwd"] == tmp_path
+
+
+@pytest.mark.parametrize("kind", ["rlib", "dylib", "cdylib", "staticlib", "proc-macro"])
+def test_rust_doctests_kept_for_every_library_kind(tmp_path: Path, kind: str) -> None:
+    stdout = _metadata([_package("lib", [kind])], ["lib"])
+    with _cargo_metadata(stdout):
+        assert _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path) == _RUST_TEST_CMDS
+
+
+def test_rust_doctests_dropped_for_a_bin_only_crate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stdout = _metadata([_package("tool", ["bin"], ["test"])], ["tool"])
+    with _cargo_metadata(stdout):
+        result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
+    assert result == [["cargo", "llvm-cov", "--fail-under-lines", "100"]]
+    err = capsys.readouterr().err
+    assert "skipping `cargo test --doc`" in err
+    assert "no library target in tool" in err
+
+
+def test_rust_doctests_judge_only_the_default_members(tmp_path: Path) -> None:
+    # A library outside the default members is not selected by `cargo test`,
+    # so it does not keep the doctest command.
+    packages = [_package("cli", ["bin"]), _package("core", ["lib"])]
+    with _cargo_metadata(_metadata(packages, ["cli"])):
+        result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
+    assert result == [["cargo", "llvm-cov", "--fail-under-lines", "100"]]
+
+
+def test_rust_doctests_kept_when_any_default_member_has_a_lib(tmp_path: Path) -> None:
+    packages = [_package("cli", ["bin"]), _package("core", ["lib"])]
+    with _cargo_metadata(_metadata(packages, ["cli", "core"])):
+        assert _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path) == _RUST_TEST_CMDS
+
+
+def test_rust_doctests_notice_with_no_default_members(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with _cargo_metadata(_metadata([], [])):
+        result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
+    assert result == [["cargo", "llvm-cov", "--fail-under-lines", "100"]]
+    assert "the workspace default members" in capsys.readouterr().err
+
+
+def test_rust_doctests_no_probe_without_the_command(tmp_path: Path) -> None:
+    cmds = [["cargo", "llvm-cov", "--fail-under-lines", "100"]]
+    with patch(_MOD + ".subprocess.run") as m_run:
+        assert _skip_rust_doctests_without_lib(cmds, tmp_path) == cmds
+    m_run.assert_not_called()
+
+
+def test_rust_doctests_probe_failure_is_loud(tmp_path: Path) -> None:
+    with (
+        _cargo_metadata("", returncode=101, stderr="could not find Cargo.toml"),
+        pytest.raises(ValidationError, match=r"probe failed: .* exited 101: could not find"),
+    ):
+        _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
+
+
+@pytest.mark.parametrize("exc", [OSError("no cargo"), subprocess.TimeoutExpired("cargo", 300)])
+def test_rust_doctests_probe_that_cannot_run_is_loud(tmp_path: Path, exc: Exception) -> None:
+    with (
+        patch(_MOD + ".subprocess.run", side_effect=exc),
+        pytest.raises(ValidationError, match="probe could not run"),
+    ):
+        _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "not json",
+        json.dumps({"packages": []}),
+        json.dumps({"packages": [{"id": "x"}], "workspace_default_members": ["x"]}),
+        json.dumps({"packages": None, "workspace_default_members": []}),
+    ],
+)
+def test_rust_doctests_unexpected_metadata_is_loud(tmp_path: Path, stdout: str) -> None:
+    with (
+        _cargo_metadata(stdout),
+        pytest.raises(ValidationError, match="unexpected `cargo metadata` output"),
+    ):
+        _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
+
+
+def test_rust_test_stage_probes_at_stage_time(tmp_path: Path) -> None:
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("test", "rust", tmp_path)
+    assert [s.name for s in stages] == ["install", "test"]
+    stdout = _metadata([_package("tool", ["bin"])], ["tool"])
+    with (
+        _cargo_metadata(stdout),
+        patch(_MOD + ".progress.run", return_value=0) as m_progress,
+    ):
+        stages[1].fn(None)
+    assert [c.args[0] for c in m_progress.call_args_list] == [
+        ["cargo", "llvm-cov", "--fail-under-lines", "100"]
+    ]
 
 
 def test_build_stages_drops_audit_when_only_scan_and_no_token() -> None:
