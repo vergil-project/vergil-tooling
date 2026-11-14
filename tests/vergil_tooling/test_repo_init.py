@@ -705,7 +705,9 @@ class TestRenderCiWorkflow:
             release_model="tagged-release",
             primary_language=language or None,
         )
-        ruleset = desired_ci_gates_ruleset(project, CiConfig(versions=["latest"]), ghas=True)
+        ruleset = desired_ci_gates_ruleset(
+            project, CiConfig(versions=["latest"], integration_tests=False), ghas=True
+        )
         required = {
             str(check["context"])
             for rule in ruleset.rules

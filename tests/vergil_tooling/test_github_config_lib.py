@@ -505,7 +505,7 @@ def test_codeql_languages_are_primary_languages() -> None:
     from vergil_tooling.lib.config import _ENUMS
     from vergil_tooling.lib.github_config import CODEQL_LANGUAGES
 
-    assert CODEQL_LANGUAGES <= _ENUMS["primary-language"]
+    assert CODEQL_LANGUAGES.issubset(_ENUMS["primary-language"])
 
 
 def test_ci_gates_no_codeql_without_language() -> None:
