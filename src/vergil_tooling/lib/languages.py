@@ -98,6 +98,22 @@ PYTHON_REPORT_FILES = (
     LICENSES_REPORT,
 )
 
+# cargo-deny's JSON diagnostics from the rust AUDIT gate's own run, the audit
+# gate's evidence (vergil-project/vergil-tooling#4394). The name is the
+# contract with vergil-actions' ``ci-audit.yml``, which stages it for rust.
+# cargo-deny writes JSON Lines (one object per line) to stderr and has no
+# output-file flag, so the AUDIT command redirects its stderr here.
+CARGO_DENY_REPORT = "cargo-deny.json"
+
+# The workspace-root report files the Rust gate commands emit: the TEST gate's
+# Cobertura coverage and the AUDIT gate's cargo-deny diagnostics. Rust has no
+# JUnit report yet: stable ``cargo test`` cannot write one, and the image has no
+# reporter that can (vergil-project/vergil-tooling#4394).
+RUST_REPORT_FILES = (
+    COVERAGE_REPORT,
+    CARGO_DENY_REPORT,
+)
+
 # The pip-audit input: every package pinned in ``uv.lock`` — all dependency
 # groups and extras, not just the synced ``dev`` environment (issue #3498). An
 # installed-environment audit never saw a ``docs``-only pin, so a vulnerable
@@ -163,6 +179,23 @@ _RUST_LICENSES_ALLOWLIST = [
     "Unicode-3.0",
     "Zlib",
 ]
+
+# The rust AUDIT command (issue #4394). One ``cargo deny check`` run both gates
+# and writes the evidence: ``--format json`` (a root option, like ``--config``)
+# makes its diagnostics JSON Lines, and ``check --show-stats`` adds a closing
+# ``summary`` record even on a clean run, so the report is never empty. Neither
+# flag changes what is checked. cargo-deny writes diagnostics to stderr and has
+# no output-file flag, so the shell sends stderr to the report, prints the
+# report back to stderr for the log, and exits with cargo-deny's own status.
+# ``2>`` is plain POSIX ``sh``: ``tee`` would need ``pipefail`` to keep that
+# status, which the image's ``sh`` (dash) lacks. ``cat`` failing fails the gate.
+_RUST_AUDIT_SCRIPT = (
+    'cargo deny --format json --config "{configs}/rust/deny.toml" check --show-stats '
+    f"2>{CARGO_DENY_REPORT}; "
+    "rc=$?; "
+    f"cat {CARGO_DENY_REPORT} >&2 || exit 1; "
+    'exit "$rc"'
+)
 
 # C++ license allowlist (epic vergil-project/.github#207 §4). C++/Conan has no
 # turnkey allowlist-enforcing gate the way pip-licenses / go-licenses do, so v1
@@ -456,16 +489,33 @@ _REGISTRY: dict[str, Language] = {
             # ``cargo test --doc`` refuses a crate with no library target, so
             # vrg-validate drops it when no default-member package has one
             # (``_skip_rust_doctests_without_lib``).
+            #
+            # The one coverage run also writes the gate's evidence (issue
+            # #4394): ``--cobertura --output-path`` exports Cobertura XML to
+            # ``coverage.xml`` instead of printing the summary table, and
+            # ``--fail-under-lines`` still gates on llvm-cov's own line summary,
+            # not on the converted XML. ``--show-missing-lines`` prints the
+            # uncovered lines, so a failing gate still says why once the table
+            # is gone.
             CheckKind.TEST: [
-                ["cargo", "llvm-cov", "--fail-under-lines", "100"],
+                [
+                    "cargo",
+                    "llvm-cov",
+                    "--fail-under-lines",
+                    "100",
+                    "--show-missing-lines",
+                    "--cobertura",
+                    "--output-path",
+                    COVERAGE_REPORT,
+                ],
                 ["cargo", "test", "--doc"],
             ],
             # The packaged fleet policy (epic vergil-project/.github#1091). An
             # explicit ``--config`` replaces cargo-deny's search for a repo's
             # own ``deny.toml``, so every Rust repo audits against the fleet
             # policy. cargo-deny 0.20 takes ``--config`` on its root command,
-            # before ``check``.
-            CheckKind.AUDIT: [["cargo", "deny", "--config", "{configs}/rust/deny.toml", "check"]],
+            # before ``check``. See ``_RUST_AUDIT_SCRIPT`` for the report.
+            CheckKind.AUDIT: [["sh", "-c", _RUST_AUDIT_SCRIPT]],
         },
         ecosystem=EcosystemInfo(
             build_cmd=["cargo", "build", "--release"],

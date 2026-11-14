@@ -35,7 +35,8 @@ if TYPE_CHECKING:
 #: vergil-project/.github#568 added ``paad/code-reviews/`` after it so the
 #: report files of any paad review run never show in a worktree. Epic
 #: vergil-project/.github#1091 then filled the empty rust fragment with
-#: ``target/``, Cargo's build directory, a deliberate addition. The
+#: ``target/``, Cargo's build directory, a deliberate addition, and #4394 added
+#: ``cargo-deny.json``, the rust audit gate's report, beside it. The
 #: lossless-split invariant below proves ``base ∪ all-fragments`` still
 #: reconstitutes exactly this set, so a future fragment edit that silently drops
 #: or invents a pattern fails CI. This is the regression guard the monolith used
@@ -90,6 +91,7 @@ _LEGACY_GITIGNORE_PATTERNS: tuple[str, ...] = (
     "*.so",
     "CMakeUserPresets.json",
     "target/",
+    "cargo-deny.json",
 )
 
 
@@ -241,8 +243,8 @@ def test_compose_unknown_language_is_base_only() -> None:
     assert gitignore.compose("shell") == gitignore.load_base()
 
 
-def test_rust_fragment_ignores_cargo_target() -> None:
-    assert gitignore.load_fragment("rust") == ["target/"]
+def test_rust_fragment_ignores_cargo_target_and_audit_report() -> None:
+    assert gitignore.load_fragment("rust") == ["target/", "cargo-deny.json"]
 
 
 def test_load_fragment_unknown_is_empty() -> None:

@@ -23,8 +23,12 @@ maintainability, and long-term survivability across repositories.
 - Type checking: `cargo check` (inherent in the Rust compiler).
 - Dependency audit and license compliance: cargo-deny (advisories, licenses,
   bans, and sources in a single tool), run against the fleet policy that
-  vergil-tooling packages, so a repo's own `deny.toml` is not used.
-- Coverage: cargo-llvm-cov (LLVM instrumentation, cross-platform).
+  vergil-tooling packages, so a repo's own `deny.toml` is not used. The
+  gating run writes its JSON diagnostics to `cargo-deny.json`, the audit
+  gate's evidence.
+- Coverage: cargo-llvm-cov (LLVM instrumentation, cross-platform), held to
+  100% line coverage. The gating run writes Cobertura XML to `coverage.xml`,
+  the test gate's evidence.
 - If a repository uses different tools, document the reason and equivalents.
 
 ## Toolchain Selection

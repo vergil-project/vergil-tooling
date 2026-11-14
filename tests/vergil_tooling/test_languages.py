@@ -13,6 +13,7 @@ from vergil_tooling.lib import languages
 from vergil_tooling.lib.languages import (
     _RUST_LICENSES_ALLOWLIST,
     _TYPESCRIPT_LICENSES_ALLOWLIST,
+    CARGO_DENY_REPORT,
     COVERAGE_REPORT,
     JUNIT_REPORT,
     LICENSES_REPORT,
@@ -21,6 +22,7 @@ from vergil_tooling.lib.languages import (
     PIP_AUDIT_REQUIREMENTS,
     PYTHON_REPORT_FILES,
     RUFF_REPORT,
+    RUST_REPORT_FILES,
     Cardinality,
     CheckKind,
     EcosystemInfo,
@@ -385,9 +387,19 @@ def test_rust_typecheck_commands() -> None:
 def test_rust_test_commands() -> None:
     # ``cargo llvm-cov`` runs ``cargo test --tests`` and skips doctests, so a
     # separate ``cargo test --doc`` runs them (issue #4378). The coverage
-    # command keeps its 100% line gate.
+    # command keeps its 100% line gate and writes Cobertura XML to
+    # ``coverage.xml`` from the same run (issue #4394).
     assert language_commands("rust", CheckKind.TEST) == [
-        ["cargo", "llvm-cov", "--fail-under-lines", "100"],
+        [
+            "cargo",
+            "llvm-cov",
+            "--fail-under-lines",
+            "100",
+            "--show-missing-lines",
+            "--cobertura",
+            "--output-path",
+            COVERAGE_REPORT,
+        ],
         ["cargo", "test", "--doc"],
     ]
 
@@ -397,11 +409,27 @@ def _rust_deny_toml() -> Path:
 
 
 def test_rust_audit_commands() -> None:
-    # cargo-deny 0.20 takes ``--config`` on the root command, before ``check``
-    # (EmbarkStudios/cargo-deny#881); after ``check`` it is a usage error.
+    # cargo-deny 0.20 takes ``--config`` (and ``--format``) on the root
+    # command, before ``check`` (EmbarkStudios/cargo-deny#881); after ``check``
+    # it is a usage error. Its stderr is the JSON report (issue #4394).
     assert language_commands("rust", CheckKind.AUDIT) == [
-        ["cargo", "deny", "--config", str(_rust_deny_toml()), "check"]
+        [
+            "sh",
+            "-c",
+            f'cargo deny --format json --config "{_rust_deny_toml()}" check --show-stats '
+            f"2>{CARGO_DENY_REPORT}; rc=$?; cat {CARGO_DENY_REPORT} >&2 || exit 1; "
+            'exit "$rc"',
+        ]
     ]
+
+
+def test_rust_report_files_contract() -> None:
+    """The rust report names match vergil-actions' staging (issue #4394)."""
+    assert RUST_REPORT_FILES == ("coverage.xml", "cargo-deny.json")
+    assert CARGO_DENY_REPORT == "cargo-deny.json"
+    test_cmd = language_commands("rust", CheckKind.TEST)[0]
+    assert test_cmd[test_cmd.index("--output-path") + 1] == COVERAGE_REPORT
+    assert f"2>{CARGO_DENY_REPORT};" in language_commands("rust", CheckKind.AUDIT)[0][2]
 
 
 def test_rust_deny_toml_allowlist_matches_constant() -> None:

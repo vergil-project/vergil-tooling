@@ -41,7 +41,7 @@ from vergil_tooling.bin.vrg_validate import (
 )
 from vergil_tooling.lib.config import ConfigError, TestConfig
 from vergil_tooling.lib.container_cache import unbootstrapped_manifests
-from vergil_tooling.lib.languages import CheckKind
+from vergil_tooling.lib.languages import CheckKind, language_commands
 from vergil_tooling.lib.validate_record import RECORD_PATH, read_record
 
 _MOD = "vergil_tooling.bin.vrg_validate"
@@ -777,10 +777,9 @@ def test_skip_conan_audit_scan_can_empty_the_list() -> None:
 
 # -- _skip_rust_doctests_without_lib (issue #4378) ------------------------------
 
-_RUST_TEST_CMDS = [
-    ["cargo", "llvm-cov", "--fail-under-lines", "100"],
-    ["cargo", "test", "--doc"],
-]
+# The registry's rust TEST commands: the coverage run, then the doctest run.
+_RUST_TEST_CMDS = language_commands("rust", CheckKind.TEST)
+_RUST_COVERAGE_CMD = _RUST_TEST_CMDS[0]
 
 
 def _package(name: str, *kinds: list[str]) -> dict[str, object]:
@@ -831,7 +830,7 @@ def test_rust_doctests_dropped_for_a_bin_only_crate(
     stdout = _metadata([_package("tool", ["bin"], ["test"])], ["tool"])
     with _cargo_metadata(stdout):
         result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
-    assert result == [["cargo", "llvm-cov", "--fail-under-lines", "100"]]
+    assert result == [_RUST_COVERAGE_CMD]
     err = capsys.readouterr().err
     assert "skipping `cargo test --doc`" in err
     assert "no library target in tool" in err
@@ -843,7 +842,7 @@ def test_rust_doctests_judge_only_the_default_members(tmp_path: Path) -> None:
     packages = [_package("cli", ["bin"]), _package("core", ["lib"])]
     with _cargo_metadata(_metadata(packages, ["cli"])):
         result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
-    assert result == [["cargo", "llvm-cov", "--fail-under-lines", "100"]]
+    assert result == [_RUST_COVERAGE_CMD]
 
 
 def test_rust_doctests_kept_when_any_default_member_has_a_lib(tmp_path: Path) -> None:
@@ -857,12 +856,12 @@ def test_rust_doctests_notice_with_no_default_members(
 ) -> None:
     with _cargo_metadata(_metadata([], [])):
         result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
-    assert result == [["cargo", "llvm-cov", "--fail-under-lines", "100"]]
+    assert result == [_RUST_COVERAGE_CMD]
     assert "the workspace default members" in capsys.readouterr().err
 
 
 def test_rust_doctests_no_probe_without_the_command(tmp_path: Path) -> None:
-    cmds = [["cargo", "llvm-cov", "--fail-under-lines", "100"]]
+    cmds = [_RUST_COVERAGE_CMD]
     with patch(_MOD + ".subprocess.run") as m_run:
         assert _skip_rust_doctests_without_lib(cmds, tmp_path) == cmds
     m_run.assert_not_called()
@@ -913,7 +912,16 @@ def test_rust_test_stage_probes_at_stage_time(tmp_path: Path) -> None:
     ):
         stages[1].fn(None)
     assert [c.args[0] for c in m_progress.call_args_list] == [
-        ["cargo", "llvm-cov", "--fail-under-lines", "100"]
+        [
+            "cargo",
+            "llvm-cov",
+            "--fail-under-lines",
+            "100",
+            "--show-missing-lines",
+            "--cobertura",
+            "--output-path",
+            "coverage.xml",
+        ]
     ]
 
 
