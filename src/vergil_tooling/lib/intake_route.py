@@ -835,9 +835,7 @@ def _settle_parent(
             f"under {epic.slug} (round {attempt}/{_SETTLE_ROUNDS}); {next_step}",
             file=sys.stderr,
         )
-    raise _parent_mismatch(
-        item, epic, task, placement, duplicate=duplicate, old_parent=old_parent
-    )
+    raise _parent_mismatch(item, epic, task, placement, duplicate=duplicate, old_parent=old_parent)
 
 
 # The placement of a task whose parent field names the epic its sub-issue list lacks.
