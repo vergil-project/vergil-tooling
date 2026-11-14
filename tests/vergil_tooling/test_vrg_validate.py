@@ -1753,8 +1753,10 @@ def test_install_stage_choices() -> None:
     cmds = [["cargo", "fetch"]]
     assert _install_stage("rust", [], [], []) is None
     assert _install_stage("rust", [], ["Cargo.toml"], []) is None
-    assert _install_stage("rust", cmds, [], []).mode == "fail_fast"  # type: ignore[union-attr]
-    assert _install_stage("rust", cmds, ["Cargo.toml"], []).mode == "warn"  # type: ignore[union-attr]
+    for missing, mode in (([], "fail_fast"), (["Cargo.toml"], "warn")):
+        stage = _install_stage("rust", cmds, missing, [])
+        assert stage is not None
+        assert stage.mode == mode
     failed = _install_stage("rust", [], ["Cargo.toml"], ["src/lib.rs"])
     assert failed is not None
     assert failed.mode == "fail_fast"
