@@ -72,7 +72,17 @@ order:
    against `develop`, with squash auto-merge turned on and read back.
    An earlier run's sync PR is closed and its branch deleted first,
    whether or not there is new drift. With no change, no PR is opened.
-5. **The verdict.** The fixed clone is audited again. A check that has
+5. **Wait until merged.** `update` then watches the PR until it has
+   merged. Auto-merge only speeds this up; the watch never depends on
+   it. A PR whose branch falls behind `develop` is updated and the
+   watch goes on, up to 5 branch updates. A PR whose checks are green
+   on an up-to-date branch is merged by the watch itself. A failed
+   check, a conflict, a PR closed by someone else, the update cap or
+   the deadline ends the watch, naming the PR and the reason. The
+   deadline is `$VRG_MECHANIZED_PR_DEADLINE` seconds, 2400 (40
+   minutes) by default, so the watch ends inside the one hour the ops
+   job's App installation token lasts.
+6. **The verdict.** The fixed clone is audited again. A check that has
    no fixer (a missing or invalid `vergil.toml`, a CLAUDE.md over the
    length limit, an `AGENTS.md`, a missing or unwired `ops.yml`) still
    fails the run, and the PR body lists it for a human.
@@ -85,9 +95,9 @@ PR has merged, `vrg-finalize-pr` brings a local `develop` up to date.
 
 | Exit | Meaning |
 |---|---|
-| 0 | The GitHub side converged and the managed files are in sync, or a sync PR was opened with auto-merge confirmed on |
-| 1 | Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, or an undeclared ruleset parameter. The sync PR for the fixable drift is still opened |
-| 2 | Something could not be audited or converged: an agent identity, a setting not checked, a failed GitHub write, clone or PR. A setting not checked or a failed write opens nothing |
+| 0 | The GitHub side converged and the managed files are in sync: no sync PR was needed, or the one opened this run merged |
+| 1 | Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, or an undeclared ruleset parameter. The sync PR for the fixable drift is still opened, and exit 1 applies once it has merged |
+| 2 | Something could not be audited or converged: an agent identity, a setting not checked, a failed GitHub write, clone or PR, or a sync PR that did not merge (the error names the PR and the reason). 2 outranks 1. A setting not checked or a failed write opens nothing |
 
 ## The `apply` command (deprecated)
 
