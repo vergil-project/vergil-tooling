@@ -525,22 +525,9 @@ def _cd_release_secrets(language: str | None) -> list[str]:
     return secrets_map.get(language or "", [])
 
 
-_CODEQL_LANGUAGES = frozenset(
-    {
-        "python",
-        "go",
-        "cpp",
-        "csharp",
-        "javascript",
-        "typescript",
-        "swift",
-        "kotlin",
-    }
-)
-
-
 def render_ci_workflow(ctx: RepoInitContext) -> str:
     """Render .github/workflows/ci.yml."""
+    from vergil_tooling.lib.github_config import CODEQL_LANGUAGES
     from vergil_tooling.lib.languages import CheckKind, language_commands
 
     lang_yaml = ctx.primary_language or ""
@@ -629,7 +616,9 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             ]
         )
 
-    if ctx.primary_language not in _CODEQL_LANGUAGES:
+    # The same set decides whether the CI-gates ruleset requires CodeQL, so the
+    # ruleset never waits on a check this ci.yml skips (issue #4381).
+    if ctx.primary_language not in CODEQL_LANGUAGES:
         lines.append("      run-codeql: false\n")
 
     # Docs build gate — emitted on pull_request when the repo publishes docs, so

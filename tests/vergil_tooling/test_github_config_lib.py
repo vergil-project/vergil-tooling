@@ -469,9 +469,7 @@ def test_ci_gates_codeql_for_supported_language() -> None:
 
 
 def test_ci_gates_codeql_for_cpp() -> None:
-    # cpp is CodeQL-supported (epic vergil-project/.github#207 T7): the
-    # github_config list must stay aligned with repo_init._CODEQL_LANGUAGES,
-    # which already lists cpp.
+    # cpp is CodeQL-supported (epic vergil-project/.github#207 T7).
     r = desired_ci_gates_ruleset(_project(language="cpp"), _ci(versions=["clang-20"]), ghas=True)
     names = _check_names(r)
     assert "security / codeql" in names
@@ -492,17 +490,22 @@ def test_ci_gates_codeql_for_typescript() -> None:
     assert "CodeQL" in names
 
 
-def test_codeql_supported_languages_align_with_repo_init() -> None:
-    # The github_config gate-emission set and repo_init's CI-rendering set must
-    # agree on typescript, or a TS repo would get a required CodeQL check with no
-    # job to satisfy it (or vice versa). Assert alignment on both cpp and
-    # typescript (epic vergil-project/.github#284 T6, #207 T7).
-    from vergil_tooling.lib.github_config import _CODEQL_SUPPORTED_LANGUAGES
-    from vergil_tooling.lib.repo_init import _CODEQL_LANGUAGES
+def test_ci_gates_codeql_for_rust() -> None:
+    # CodeQL analyzes Rust, so a GHAS Rust repo requires both CodeQL checks;
+    # repo-init's ci.yml runs CodeQL for it from the same set (issue #4381).
+    r = desired_ci_gates_ruleset(_project(language="rust"), _ci(), ghas=True)
+    names = _check_names(r)
+    assert "security / codeql" in names
+    assert "CodeQL" in names
 
-    for lang in ("cpp", "typescript"):
-        assert lang in _CODEQL_SUPPORTED_LANGUAGES
-        assert lang in _CODEQL_LANGUAGES
+
+def test_codeql_languages_are_primary_languages() -> None:
+    # CODEQL_LANGUAGES is keyed by primary-language name: an entry outside the
+    # enum can never match a repo, so it would only hide a drift (issue #4381).
+    from vergil_tooling.lib.config import _ENUMS
+    from vergil_tooling.lib.github_config import CODEQL_LANGUAGES
+
+    assert CODEQL_LANGUAGES <= _ENUMS["primary-language"]
 
 
 def test_ci_gates_no_codeql_without_language() -> None:
