@@ -256,8 +256,7 @@ token `gh` runs with:
 `vrg-epic-docs`, `vrg-epic-link`, `vrg-epic-move`, `vrg-epic-rollup`,
 `vrg-finalize-pr`, `vrg-fleet-sync`, `vrg-github-repo-config`,
 `vrg-github-repo-init`, `vrg-intake-create`, `vrg-intake-route`,
-`vrg-issue-create`, `vrg-pr-await`, `vrg-pr-review-comments`,
-`vrg-pr-workflow`, `vrg-promote`,
+`vrg-issue-create`, `vrg-pr-await`, `vrg-pr-workflow`, `vrg-promote`,
 `vrg-queue`, `vrg-release`, `vrg-repo-status`,
 `vrg-resolve-tracking-issue`, `vrg-roadmap`, `vrg-ruling`,
 `vrg-ruling-reply`, `vrg-scope-change`, `vrg-security-record`,
@@ -265,6 +264,8 @@ token `gh` runs with:
 
 `vrg-package` calls `gh` only: it lists and downloads releases, and
 verifies their attestations, when it builds the package index.
+`vrg-pr-review-comments` calls `gh` only too: it mints its token for the
+`--repo` owner, so it never reads the `origin` remote.
 
 These tools call `git` only: `vrg-commit`, `vrg-container-cache`,
 `vrg-container-run`, `vrg-reword`, `vrg-scorecard`, `vrg-validate`,

@@ -284,11 +284,13 @@ read-only and widens no `vrg-gh` allowlist. The plugin's
 
 Without `--json` it prints one block per comment (`<path>:<line> by
 <author> at <created_at> (comment <id>, review <id>, reply to <id>)`, the
-comment URL, then the body indented), or one line saying the PR has none.
+comment URL, then the body indented; `:<line>` is left out when `line` is
+`null`), or one line saying the PR has none.
 `--json` prints a JSON array of objects with the keys `id`, `author`,
 `path`, `line`, `review_id`, `in_reply_to_id`, `created_at`, `body` and
-`url`, in API order. `line` is `null` for an outdated comment (one on a line
-the PR no longer has), `author` is `null` for a deleted account,
+`url`, in API order. `line` is `null` for a comment not on a current line of
+the diff (a file-level comment, or an outdated one on a line the PR no longer
+has), `author` is `null` for a deleted account,
 `review_id` is `null` when GitHub gives none, and `in_reply_to_id` is
 `null` for a comment that starts a thread.
 

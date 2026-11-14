@@ -17,8 +17,9 @@ widens no ``vrg-gh`` allowlist.
   returns them, or a single line saying the PR has none.
 - ``--json`` prints a JSON array of objects with the keys ``id``, ``author``,
   ``path``, ``line``, ``review_id``, ``in_reply_to_id``, ``created_at``,
-  ``body`` and ``url``. ``line`` is ``null`` for a comment on a line the PR no
-  longer has (an outdated comment), ``author`` is ``null`` for a deleted
+  ``body`` and ``url``. ``line`` is ``null`` for a comment that is not on a
+  current line of the diff: a file-level comment, or an outdated one on a line
+  the PR no longer has. ``author`` is ``null`` for a deleted
   account, ``review_id`` is ``null`` when GitHub gives none, and
   ``in_reply_to_id`` is ``null`` for a comment that starts a thread.
 
@@ -200,14 +201,16 @@ def format_text(repo: str, pr: int, comments: list[ReviewComment]) -> str:
         return f"{repo}#{pr} has no inline review comments."
     blocks = []
     for comment in comments:
-        line = "outdated" if comment.line is None else str(comment.line)
+        # A null line is a file-level comment or an outdated one; the API's
+        # line field alone cannot tell which, so name neither.
+        where = comment.path if comment.line is None else f"{comment.path}:{comment.line}"
         refs = [f"comment {comment.id}"]
         if comment.review_id is not None:
             refs.append(f"review {comment.review_id}")
         if comment.in_reply_to_id is not None:
             refs.append(f"reply to {comment.in_reply_to_id}")
         author = comment.author if comment.author is not None else "(deleted user)"
-        header = f"{comment.path}:{line} by {author} at {comment.created_at} ({', '.join(refs)})"
+        header = f"{where} by {author} at {comment.created_at} ({', '.join(refs)})"
         body = "\n".join(f"    {text}" for text in comment.body.splitlines()) or "    (empty)"
         blocks.append(f"{header}\n{comment.url}\n{body}")
     return "\n\n".join(blocks)

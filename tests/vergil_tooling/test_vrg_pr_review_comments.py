@@ -263,14 +263,14 @@ def test_format_text_empty() -> None:
     assert format_text("o/r", 5, []) == "o/r#5 has no inline review comments."
 
 
-def test_format_text_outdated_reply_from_deleted_user() -> None:
+def test_format_text_lineless_reply_from_deleted_user() -> None:
     text = format_text(
         "o/r",
         5,
         [_comment(user=None, line=None, pull_request_review_id=None, in_reply_to_id=9)],
     )
     assert text.splitlines()[0] == (
-        "src/app.py:outdated by (deleted user) at 2026-11-01T12:00:00Z (comment 11, reply to 9)"
+        "src/app.py by (deleted user) at 2026-11-01T12:00:00Z (comment 11, reply to 9)"
     )
 
 
