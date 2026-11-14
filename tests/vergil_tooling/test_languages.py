@@ -369,9 +369,12 @@ def test_rust_install_commands() -> None:
 
 
 def test_rust_lint_commands() -> None:
-    joined = _joined(language_commands("rust", CheckKind.LINT))
-    assert any("cargo fmt" in c for c in joined)
-    assert any("cargo clippy" in c for c in joined)
+    # clippy lints every target (tests, examples and benches included), not
+    # only the lib and bins it checks with no target flag (#4379).
+    assert language_commands("rust", CheckKind.LINT) == [
+        ["cargo", "fmt", "--all", "--", "--check"],
+        ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
+    ]
 
 
 def test_rust_typecheck_commands() -> None:

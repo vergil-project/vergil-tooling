@@ -439,7 +439,11 @@ _REGISTRY: dict[str, Language] = {
             CheckKind.INSTALL: [["cargo", "fetch"]],
             CheckKind.LINT: [
                 ["cargo", "fmt", "--all", "--", "--check"],
-                ["cargo", "clippy", "--", "-D", "warnings"],
+                # ``--all-targets`` is ``--lib --bins --tests --benches
+                # --examples``; with no target flag clippy checks only the lib
+                # and bins, so ``tests/`` and ``#[cfg(test)]`` code went unlinted
+                # (vergil-project/vergil-tooling#4379).
+                ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
             ],
             CheckKind.TYPECHECK: [["cargo", "check"]],
             CheckKind.TEST: [["cargo", "llvm-cov", "--fail-under-lines", "100"]],
