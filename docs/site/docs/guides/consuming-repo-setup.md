@@ -124,7 +124,12 @@ so an interrupted run resumes where it stopped:
 7. Scaffold the MkDocs site under `docs/site/` (when docs publishing
    is on).
 8. Create and push `develop` and `main`, and make `develop` the
-   default branch.
+   default branch. Then check that GitHub registered every workflow
+   file on the default branch. GitHub sometimes misses some, so when any
+   are missing the wizard switches the default branch to the other
+   branch and back, which makes GitHub register them, and checks again.
+   Any still missing after a short wait stop the run, named. A resumed
+   run checks again.
 9. Apply the GitHub settings, rulesets and labels.
 10. Configure GitHub Pages (when docs publishing is on).
 

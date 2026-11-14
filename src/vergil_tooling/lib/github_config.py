@@ -342,26 +342,20 @@ def desired_automation_branch_ruleset(app_id: int | None) -> DesiredRuleset:
 _GITHUB_ACTIONS_INTEGRATION_ID = 15368
 _GHAS_INTEGRATION_ID = 57789
 
-_CODEQL_SUPPORTED_LANGUAGES = frozenset(
-    {
-        "python",
-        "go",
-        "rust",
-        # cpp aligns this list with repo_init._CODEQL_LANGUAGES, which already
-        # lists cpp — the two must agree (epic vergil-project/.github#207 T7).
-        "cpp",
-        # typescript is keyed by the *primary-language* name here, because this
-        # set is tested against ``project.primary_language`` (see
-        # ``desired_ci_gates_ruleset`` below). The CodeQL analysis identifier is
-        # ``javascript-typescript``, but that ``typescript → javascript-typescript``
-        # mapping belongs to the reusable CI Action (epic
-        # vergil-project/.github#284 T7), not here — the emitted ``ci.yml``
-        # ``language:`` stays ``typescript`` for container resolution. Like cpp,
-        # this list must stay aligned with repo_init._CODEQL_LANGUAGES, which
-        # already lists typescript (epic vergil-project/.github#284 T6).
-        "typescript",
-    }
-)
+# The primary languages CodeQL analyzes: the single definition behind both the
+# CI-gates ruleset (``security / codeql`` and the GHAS ``CodeQL`` check are
+# required only for these) and ``vrg-github-repo-init``'s rendered ``ci.yml``
+# (``run-codeql: false`` for every other language), so a repo is never required
+# to report a CodeQL check its CI skips (vergil-project/vergil-tooling#4381).
+#
+# It is keyed by *primary-language* name, a subset of ``primary-language`` in
+# ``config._ENUMS``, because it is tested against ``project.primary_language``.
+# Two of those names are not CodeQL analysis identifiers: ``typescript`` maps to
+# ``javascript-typescript`` and ``cpp`` to ``c-cpp``. That mapping belongs to
+# the reusable CI Action (vergil-actions ``actions/ci/security/codeql``, epic
+# vergil-project/.github#284 T7), not here: the emitted ``ci.yml``
+# ``language:`` stays the primary-language name for container resolution.
+CODEQL_LANGUAGES = frozenset({"python", "go", "rust", "cpp", "typescript"})
 
 
 def _make_check(context: str) -> dict[str, object]:
@@ -454,7 +448,7 @@ def desired_ci_gates_ruleset(
         checks.append(_make_ghas_check("Semgrep OSS"))
 
     # CodeQL for supported languages — requires GHAS-backed code scanning
-    if ghas and lang in _CODEQL_SUPPORTED_LANGUAGES:
+    if ghas and lang in CODEQL_LANGUAGES:
         checks.append(_make_check("security / codeql"))
         checks.append(_make_ghas_check("CodeQL"))
 

@@ -14,6 +14,14 @@ validator that is present but unusable still fails (issue #3650).
 Checks run as progress-framework stages: install is fail_fast,
 everything else is fail_defer so all failures are reported in one run.
 
+A repo with none of its language's manifests (a Rust repo with no
+``Cargo.toml`` yet) is not bootstrapped: the image warmup skips it, and so
+do the install and language stages here, each recorded as a warning that
+names the missing manifests (issue #4384). See
+:func:`~vergil_tooling.lib.container_cache.unbootstrapped_manifests`. A repo
+with none of its manifests but with sources of its language (a branch that
+deletes ``Cargo.toml``, say) is not unstarted: its install stage fails.
+
 ``--all-versions`` (Python only) adds one test stage per resolved CI version
 after the test stage, so the coverage gate runs on every interpreter PR-CI
 tests, not only the dev container's (issue #3547).
@@ -28,16 +36,19 @@ builder reads it (:mod:`vergil_tooling.lib.validate_record`).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, git, progress
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.container_cache import language_sources, unbootstrapped_manifests
 from vergil_tooling.lib.languages import (
     COVERAGE_REPORT,
     JUNIT_REPORT,
@@ -454,6 +465,79 @@ def _skip_conan_audit_scan(cmds: list[list[str]]) -> list[list[str]]:
     return kept
 
 
+_RUST_DOCTEST_CMD = ["cargo", "test", "--doc"]
+# Cargo's library target kinds: any of them makes ``cargo test --doc`` select a
+# library target instead of refusing with "no library targets found".
+_RUST_LIB_KINDS = frozenset({"lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro"})
+
+
+def _rust_lib_packages(repo_root: Path) -> tuple[list[str], list[str]]:
+    """Return the default-member package names with and without a library target.
+
+    ``cargo test --doc`` runs on the workspace's default members and refuses
+    with "no library targets found" when none of them has a library target,
+    so this reads exactly those packages from ``cargo metadata --no-deps``. A
+    probe that cannot run, exits non-zero or prints unexpected output raises
+    :class:`ValidationError` (issue #4378).
+    """
+    cmd = ["cargo", "metadata", "--no-deps", "--format-version", "1"]
+    try:
+        result = subprocess.run(  # noqa: S603
+            cmd,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=300,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        msg = f"library-target probe could not run `{' '.join(cmd)}`: {exc}"
+        raise ValidationError(msg) from exc
+    if result.returncode != 0:
+        msg = (
+            f"library-target probe failed: `{' '.join(cmd)}` exited "
+            f"{result.returncode}: {result.stderr.strip()}"
+        )
+        raise ValidationError(msg)
+    try:
+        metadata = json.loads(result.stdout)
+        defaults = set(metadata["workspace_default_members"])
+        with_lib: list[str] = []
+        without_lib: list[str] = []
+        for package in metadata["packages"]:
+            if package["id"] not in defaults:
+                continue
+            kinds = {kind for target in package["targets"] for kind in target["kind"]}
+            (with_lib if kinds & _RUST_LIB_KINDS else without_lib).append(package["name"])
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        msg = f"library-target probe: unexpected `cargo metadata` output: {exc!r}"
+        raise ValidationError(msg) from exc
+    return with_lib, without_lib
+
+
+def _skip_rust_doctests_without_lib(cmds: list[list[str]], repo_root: Path) -> list[list[str]]:
+    """Drop ``cargo test --doc`` when no default-member package has a library target.
+
+    Rustdoc examples run only for a library target, and on a crate with none
+    (a plain ``cargo new`` binary) ``cargo test --doc`` exits non-zero with
+    "no library targets found", which would fail the TEST stage of a repo
+    with no doctest to run. The probe runs at stage time, after the install
+    stage has fetched the dependencies, and only when the command is present.
+    """
+    if _RUST_DOCTEST_CMD not in cmds:
+        return cmds
+    with_lib, without_lib = _rust_lib_packages(repo_root)
+    if with_lib:
+        return cmds
+    print(
+        "NOTICE: skipping `cargo test --doc` — no library target in "
+        f"{', '.join(without_lib) or 'the workspace default members'}; "
+        "rustdoc examples run only for a library target.",
+        file=sys.stderr,
+    )
+    return [cmd for cmd in cmds if cmd != _RUST_DOCTEST_CMD]
+
+
 def _command_stage(
     label: str,
     cmds: list[list[str]] | Callable[[], list[list[str]]],
@@ -477,6 +561,99 @@ def _command_stage(
             raise ValidationError(msg)
 
     return Stage(label, fn, mode=mode)
+
+
+def _not_bootstrapped_stage(name: str, language: str, missing: list[str]) -> Stage:
+    """A language stage skipped, loudly, because the repo has no manifest yet.
+
+    The test of bootstrapped-ness is the image warmup's
+    (:func:`~vergil_tooling.lib.container_cache.unbootstrapped_manifests`), so
+    a freshly initialised repo the image build skips warming is not then
+    failed by validation's install stage (issue #4384). The stage is recorded
+    ``warn`` (⚠, with the reason on its row and in the summary), never ``ok``,
+    so the skip cannot pass unnoticed; ``warn`` still counts as passed, so the
+    run can reach merge review. Adding the manifest runs the stage for real.
+    """
+    reason = (
+        f"skipped: no {', '.join(missing)} ({language} repo not bootstrapped yet); "
+        f"add {'it' if len(missing) == 1 else 'them'} to run the {name} stage"
+    )
+
+    def fn(_ctx: object) -> None:
+        print(f"NOTICE: {name}: {reason}")
+        progress.mark_warn(reason)
+
+    return Stage(name, fn, mode="warn")
+
+
+# How many source paths the sources-without-manifest failure names.
+_SOURCES_SHOWN = 3
+
+
+def _sources_without_manifest_stage(language: str, missing: list[str], sources: list[str]) -> Stage:
+    """The install stage, failed: the repo has sources but none of its manifests.
+
+    Such a repo has lost its manifest (a branch that deletes ``Cargo.toml``)
+    or never got one (sources added without it), so it is not the unstarted
+    repo :func:`_not_bootstrapped_stage` skips (issue #4384). The stage is
+    ``fail_fast``, like the install it replaces, so no language stage runs on
+    the broken repo.
+    """
+    shown = ", ".join(sources[:_SOURCES_SHOWN])
+    if len(sources) > _SOURCES_SHOWN:
+        shown += f" and {len(sources) - _SOURCES_SHOWN} more"
+    msg = (
+        f"no {', '.join(missing)}, but the repo has {language} sources ({shown}); "
+        f"only a repo with no sources is skipped as not bootstrapped yet, so add the "
+        f"{'manifest' if len(missing) == 1 else 'manifests'} or remove the sources"
+    )
+
+    def fn(_ctx: object) -> None:
+        raise ValidationError(msg)
+
+    return Stage("install", fn, mode="fail_fast")
+
+
+def _repo_files(repo_root: Path) -> list[str]:
+    """The repo's tracked and untracked, not ignored, files that exist on disk."""
+    out = git.read_output(
+        "-C", str(repo_root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"
+    )
+    return [path for path in out.split("\0") if path and (repo_root / path).is_file()]
+
+
+def _bootstrap_state(language: str, repo_root: Path) -> tuple[list[str], list[str]]:
+    """Return *language*'s missing manifests and its sources in the repo.
+
+    Both are empty for a bootstrapped repo. The manifests are non-empty only
+    when every one is missing
+    (:func:`~vergil_tooling.lib.container_cache.unbootstrapped_manifests`);
+    the repo's files are listed only then.
+    """
+    missing = unbootstrapped_manifests(language, repo_root)
+    if not missing:
+        return [], []
+    return missing, language_sources(language, _repo_files(repo_root))
+
+
+def _install_stage(
+    language: str,
+    install_cmds: list[list[str]],
+    missing: list[str],
+    sources: list[str],
+) -> Stage | None:
+    """The install stage for *language*, or ``None`` when it has no install.
+
+    With every manifest missing it is skipped, loudly, when the repo has no
+    sources, and failed when it has some.
+    """
+    if missing and sources:
+        return _sources_without_manifest_stage(language, missing, sources)
+    if not install_cmds:
+        return None
+    if missing:
+        return _not_bootstrapped_stage("install", language, missing)
+    return _command_stage("install", install_cmds, mode="fail_fast")
 
 
 def _python_test_stage(
@@ -643,13 +820,30 @@ def _build_stages(
             for kind, cmds in kind_cmds
         ]
         kind_cmds = [(kind, cmds) for kind, cmds in kind_cmds if cmds]
-        if kind_cmds:
+        missing, sources = _bootstrap_state(language, repo_root)
+        if kind_cmds and missing and not sources:
             install_cmds = language_commands(
                 language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
             )
-            if install_cmds:
-                stages.append(_command_stage("install", install_cmds, mode="fail_fast"))
+            names = (["install"] if install_cmds else []) + [kind.value for kind, _ in kind_cmds]
+            stages.extend(_not_bootstrapped_stage(name, language, missing) for name in names)
+        elif kind_cmds:
+            install_cmds = language_commands(
+                language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
+            )
+            install = _install_stage(language, install_cmds, missing, sources)
+            if install is not None:
+                stages.append(install)
             for kind, cmds in kind_cmds:
+                if language == "rust" and kind is CheckKind.TEST:
+                    stages.append(
+                        _command_stage(
+                            kind.value,
+                            partial(_skip_rust_doctests_without_lib, cmds, repo_root),
+                            mode="fail_defer",
+                        )
+                    )
+                    continue
                 if language != "python" or kind is not CheckKind.TEST:
                     stages.append(_command_stage(kind.value, cmds, mode="fail_defer"))
                     continue
@@ -683,8 +877,10 @@ def _build_stages(
                 install_cmds = language_commands(
                     language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
                 )
-                if install_cmds:
-                    stages.append(_command_stage("install", install_cmds, mode="fail_fast"))
+                missing, sources = _bootstrap_state(language, repo_root)
+                install = _install_stage(language, install_cmds, missing, sources)
+                if install is not None:
+                    stages.append(install)
 
             def custom_fn(_ctx: object) -> None:
                 _check_custom_validator(Path(custom))

@@ -369,9 +369,12 @@ def test_rust_install_commands() -> None:
 
 
 def test_rust_lint_commands() -> None:
-    joined = _joined(language_commands("rust", CheckKind.LINT))
-    assert any("cargo fmt" in c for c in joined)
-    assert any("cargo clippy" in c for c in joined)
+    # clippy lints every target (tests, examples and benches included), not
+    # only the lib and bins it checks with no target flag (#4379).
+    assert language_commands("rust", CheckKind.LINT) == [
+        ["cargo", "fmt", "--all", "--", "--check"],
+        ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
+    ]
 
 
 def test_rust_typecheck_commands() -> None:
@@ -380,8 +383,13 @@ def test_rust_typecheck_commands() -> None:
 
 
 def test_rust_test_commands() -> None:
-    joined = _joined(language_commands("rust", CheckKind.TEST))
-    assert any("cargo llvm-cov" in c for c in joined)
+    # ``cargo llvm-cov`` runs ``cargo test --tests`` and skips doctests, so a
+    # separate ``cargo test --doc`` runs them (issue #4378). The coverage
+    # command keeps its 100% line gate.
+    assert language_commands("rust", CheckKind.TEST) == [
+        ["cargo", "llvm-cov", "--fail-under-lines", "100"],
+        ["cargo", "test", "--doc"],
+    ]
 
 
 def _rust_deny_toml() -> Path:

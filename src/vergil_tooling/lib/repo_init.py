@@ -7,10 +7,11 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from importlib import metadata, resources
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -524,22 +525,9 @@ def _cd_release_secrets(language: str | None) -> list[str]:
     return secrets_map.get(language or "", [])
 
 
-_CODEQL_LANGUAGES = frozenset(
-    {
-        "python",
-        "go",
-        "cpp",
-        "csharp",
-        "javascript",
-        "typescript",
-        "swift",
-        "kotlin",
-    }
-)
-
-
 def render_ci_workflow(ctx: RepoInitContext) -> str:
     """Render .github/workflows/ci.yml."""
+    from vergil_tooling.lib.github_config import CODEQL_LANGUAGES
     from vergil_tooling.lib.languages import CheckKind, language_commands
 
     lang_yaml = ctx.primary_language or ""
@@ -628,7 +616,9 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             ]
         )
 
-    if ctx.primary_language not in _CODEQL_LANGUAGES:
+    # The same set decides whether the CI-gates ruleset requires CodeQL, so the
+    # ruleset never waits on a check this ci.yml skips (issue #4381).
+    if ctx.primary_language not in CODEQL_LANGUAGES:
         lines.append("      run-codeql: false\n")
 
     # Docs build gate — emitted on pull_request when the repo publishes docs, so
@@ -833,7 +823,7 @@ def render_ops_workflow(ctx: RepoInitContext) -> str:
         "\n"
         "on:\n"
         "  schedule:\n"
-        f"    - cron: '{minute} 6 * * *'\n"
+        f"    - cron: '{minute} 1 * * *'\n"
         "  workflow_dispatch:\n"
         "\n"
         "permissions:\n"
@@ -1532,6 +1522,130 @@ def step_branch_structure(ctx: RepoInitContext) -> None:
     print("  Default branch set to develop.")
 
 
+_WORKFLOWS_DIR = ".github/workflows"
+# How long the check waits for GitHub to register the workflows after the
+# default-branch toggle: up to _REGISTRATION_POLLS reads, _REGISTRATION_POLL_SECS apart.
+_REGISTRATION_POLLS = 12
+_REGISTRATION_POLL_SECS = 5
+
+
+def _default_branch(repo: str) -> str:
+    """The repo's default branch as GitHub reports it."""
+    data = github.read_json("api", f"repos/{repo}")
+    branch = data.get("default_branch") if isinstance(data, dict) else None
+    if not isinstance(branch, str) or not branch:
+        msg = f"GET repos/{repo} returned no default_branch: {data!r}"
+        raise TypeError(msg)
+    return branch
+
+
+def _workflow_files(repo: str, branch: str) -> set[str]:
+    """Paths of the workflow files under ``.github/workflows/`` on *branch*.
+
+    A branch with no ``.github/workflows/`` directory (HTTP 404) has none; any
+    other failure raises.
+    """
+    endpoint = f"repos/{repo}/contents/{_WORKFLOWS_DIR}?ref={branch}"
+    try:
+        entries = github.read_json("api", endpoint)
+    except github.GitHubAPIError as exc:
+        if "(HTTP 404)" in (exc.stderr or ""):
+            return set()
+        raise
+    if not isinstance(entries, list):
+        msg = f"GET {endpoint} returned {entries!r}, not a directory listing"
+        raise TypeError(msg)
+    paths: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            msg = f"GET {endpoint} returned an entry with no path: {entry!r}"
+            raise TypeError(msg)
+        path = cast("str", entry["path"])
+        if entry.get("type") == "file" and path.endswith((".yml", ".yaml")):
+            paths.add(path)
+    return paths
+
+
+def _registered_workflows(repo: str) -> set[str]:
+    """Paths of the workflows GitHub Actions has registered for *repo*."""
+    endpoint = f"repos/{repo}/actions/workflows"
+    paths: set[str] = set()
+    for workflow in github.read_json_paginated(endpoint, "workflows"):
+        if not isinstance(workflow, dict) or not isinstance(workflow.get("path"), str):
+            msg = f"GET {endpoint} returned a workflow with no path: {workflow!r}"
+            raise TypeError(msg)
+        paths.add(cast("str", workflow["path"]))
+    return paths
+
+
+def _missing_workflows(repo: str, files: set[str]) -> list[str]:
+    """The workflow files in *files* that GitHub has not registered, sorted."""
+    return sorted(files - _registered_workflows(repo))
+
+
+def _toggle_default_branch(repo: str, default: str) -> None:
+    """Switch *repo*'s default branch away from *default* and back.
+
+    WORKAROUND for an upstream GitHub bug: GitHub sometimes registers only some
+    of a new repository's workflow files, and the missing ones exist on the
+    default branch but never appear in the Actions workflow list (reported in
+    tazama-lf/rule-studio-devtestops#15 and
+    https://github.com/orgs/community/discussions/25219; seen here on
+    vergil-fixture-python-lib, vergil-project/vergil-tooling#4376). Changing the
+    default branch and changing it back makes GitHub register them. Remove this
+    workaround once GitHub fixes the bug; its removal is tracked from
+    vergil-project/.github#1129.
+    """
+    other = "develop" if default == "main" else "main"
+    github.run("repo", "edit", repo, "--default-branch", other)
+    try:
+        github.run("repo", "edit", repo, "--default-branch", default)
+    except subprocess.CalledProcessError as exc:
+        emit_error(
+            f"setting the default branch of {repo} back to {default} failed, so it is "
+            f"now {other}: {exc}\nSet it back with: gh repo edit {repo} "
+            f"--default-branch {default}"
+        )
+        raise SystemExit(1) from exc
+
+
+def check_workflows_registered(ctx: RepoInitContext) -> None:
+    """Check GitHub registered every workflow file on the default branch (#4376).
+
+    Runs after step 8 whether step 8 ran or was skipped, so a resumed run checks
+    too. When some are missing it applies :func:`_toggle_default_branch`, then
+    checks again for a bounded time. Any still missing stop the run, named.
+    """
+    print("Checking workflow registration...")
+    default = _default_branch(ctx.repo)
+    files = _workflow_files(ctx.repo, default)
+    if not files:
+        print(f"  No workflow files on {default}; nothing to check.")
+        return
+    print(f"  Workflow files on {default}: {', '.join(sorted(files))}")
+    missing = _missing_workflows(ctx.repo, files)
+    if not missing:
+        print("  All workflows registered; no workaround needed.")
+        return
+    print(f"  Not registered: {', '.join(missing)}")
+    print(f"  Applying the workaround: default branch away from {default} and back.")
+    _toggle_default_branch(ctx.repo, default)
+    for attempt in range(_REGISTRATION_POLLS):
+        if attempt:
+            time.sleep(_REGISTRATION_POLL_SECS)
+        missing = _missing_workflows(ctx.repo, files)
+        if not missing:
+            print("  All workflows registered after the workaround.")
+            return
+    waited = (_REGISTRATION_POLLS - 1) * _REGISTRATION_POLL_SECS
+    emit_error(
+        f"GitHub has not registered these workflows of {ctx.repo}, {waited} seconds "
+        f"after the default-branch workaround: {', '.join(missing)}. They are on "
+        f"{default} but missing from GET repos/{ctx.repo}/actions/workflows."
+    )
+    raise SystemExit(1)
+
+
 def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState, *, ghas: bool) -> None:
     """Fail loudly when the CI-gates ruleset requires a check ci.yml never emits.
 
@@ -1783,8 +1897,12 @@ def run_wizard(ctx: RepoInitContext) -> None:
                 # The later steps render from step 3's answers: rebuild them
                 # from the committed vergil.toml, or stop (#3977).
                 restore_generated_config(ctx)
-            continue
-        func()
+        else:
+            func()
+        if step_num == 8:
+            # Every resumed run checks too: a run stopped by this check skips
+            # step 8 when it is re-run (#4376).
+            check_workflows_registered(ctx)
 
     print("\nRepository bootstrap complete!")
     print(f"  Repo: https://github.com/{ctx.repo}")

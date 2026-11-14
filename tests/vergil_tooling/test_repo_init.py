@@ -1,18 +1,19 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import subprocess
 import tomllib
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pytest
 import yaml
 
 from vergil_tooling.lib import dependabot, github, gitignore, repo_init
-from vergil_tooling.lib.config import CiConfig, ProjectConfig, _parse_raw_config
+from vergil_tooling.lib.config import _ENUMS, CiConfig, ProjectConfig, _parse_raw_config
 from vergil_tooling.lib.github_config import ClassicProtectionReport
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
@@ -24,6 +25,7 @@ from vergil_tooling.lib.repo_init import (
     _remote_branch_exists,
     _resolve,
     _resolve_versions,
+    check_workflows_registered,
     cwd_repo_slug,
     derive_clone_parent,
     detect_completed_steps,
@@ -603,7 +605,7 @@ class TestRenderOpsWorkflow:
         ctx = RepoInitContext(org="vergil-project", name="vergil-actions")
         yaml = repo_init.render_ops_workflow(ctx)
         minute = repo_init._ops_cron_minute("vergil-project", "vergil-actions")
-        assert f"- cron: '{minute} 6 * * *'" in yaml
+        assert f"- cron: '{minute} 1 * * *'" in yaml
         assert "ops-github-config.yml@v2.1" in yaml
         assert "workflow_dispatch:" in yaml
 
@@ -671,6 +673,52 @@ class TestRenderCiWorkflow:
         assert "container-tag:" not in content
         # typescript is CodeQL-supported, so run-codeql must NOT be disabled.
         assert "run-codeql: false" not in content
+
+    def test_rust_workflow_runs_codeql(self) -> None:
+        # The CI-gates ruleset requires CodeQL for rust, so ci.yml must not skip
+        # it: a skipped job leaves every PR blocked on green checks (issue #4381).
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "rust"
+        ctx.resolution = _resolved("rust")
+        ctx.release_model = "tagged-release"
+        content = render_ci_workflow(ctx)
+        assert "language: rust" in content
+        assert "run-codeql: false" not in content
+
+    @pytest.mark.parametrize("language", [*sorted(_ENUMS["primary-language"]), ""])
+    def test_codeql_run_matches_ruleset_requirement(self, language: str) -> None:
+        # For every primary language (and none), ci.yml runs CodeQL exactly when
+        # the CI-gates ruleset requires its checks, so the ruleset never waits
+        # on a check the workflow skips (issue #4381).
+        from vergil_tooling.lib.github_config import desired_ci_gates_ruleset
+
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = language
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "tagged-release"
+        runs_codeql = "run-codeql: false" not in render_ci_workflow(ctx)
+
+        project = ProjectConfig(
+            repository_type="library",
+            versioning_scheme="semver",
+            branching_model="library-release",
+            release_model="tagged-release",
+            primary_language=language or None,
+        )
+        ruleset = desired_ci_gates_ruleset(
+            project, CiConfig(versions=["latest"], integration_tests=False), ghas=True
+        )
+        required = {
+            str(check["context"])
+            for rule in ruleset.rules
+            if rule["type"] == "required_status_checks"
+            for check in cast("dict[str, list[dict[str, object]]]", rule["parameters"])[
+                "required_status_checks"
+            ]
+        }
+        requires_codeql = "security / codeql" in required
+        assert requires_codeql == ("CodeQL" in required)
+        assert runs_codeql == requires_codeql
 
     def test_no_language_workflow(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -1849,6 +1897,7 @@ class TestStepScaffoldLanguage:
                 "vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step("gh-pages")
             ),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            patch("vergil_tooling.lib.repo_init.check_workflows_registered"),
             patch("vergil_tooling.lib.repo_init.cwd_repo_slug", return_value=None),
         ):
             run_wizard(ctx)
@@ -2308,6 +2357,206 @@ class TestStepBranchStructureExtended:
             step_branch_structure(ctx)
 
 
+_REPO = "vergil-project/vergil-vm"
+_WF = ".github/workflows"
+_ALL_WORKFLOWS = [f"{_WF}/cd.yml", f"{_WF}/ci.yml", f"{_WF}/epic-rollup.yml", f"{_WF}/ops.yml"]
+
+
+def _contents(paths: list[str]) -> list[dict[str, str]]:
+    return [{"path": p, "type": "file"} for p in paths]
+
+
+def _registered(paths: list[str]) -> list[object]:
+    return [{"path": p, "state": "active"} for p in paths]
+
+
+class TestCheckWorkflowsRegistered:
+    """Every workflow file on the default branch must be registered (#4376)."""
+
+    def _run(
+        self,
+        *,
+        registered: list[Any],
+        files: Any = None,
+        default: str = "develop",
+        run_side_effect: Any = None,
+    ) -> tuple[Any, Any, Any, Any]:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        listing = _contents(_ALL_WORKFLOWS) if files is None else files
+        reads = [{"default_branch": default}, listing]
+        with (
+            patch("vergil_tooling.lib.repo_init.github.read_json", side_effect=reads) as read,
+            patch(
+                "vergil_tooling.lib.repo_init.github.read_json_paginated",
+                side_effect=registered,
+            ) as listed,
+            patch("vergil_tooling.lib.repo_init.github.run", side_effect=run_side_effect) as gh_run,
+            patch("vergil_tooling.lib.repo_init.time.sleep") as sleep,
+        ):
+            check_workflows_registered(ctx)
+        return read, listed, gh_run, sleep
+
+    def test_all_registered_needs_no_workaround(self, capsys: pytest.CaptureFixture[str]) -> None:
+        read, listed, gh_run, _ = self._run(registered=[_registered(_ALL_WORKFLOWS)])
+        read.assert_any_call("api", f"repos/{_REPO}/contents/{_WF}?ref=develop")
+        listed.assert_called_once_with(f"repos/{_REPO}/actions/workflows", "workflows")
+        gh_run.assert_not_called()
+        out = capsys.readouterr().out
+        assert f"{_WF}/epic-rollup.yml" in out
+        assert "no workaround needed" in out
+
+    def test_extra_registered_workflows_and_non_workflow_files_are_ignored(self) -> None:
+        files = [
+            *_contents(_ALL_WORKFLOWS),
+            {"path": f"{_WF}/README.md", "type": "file"},
+            {"path": f"{_WF}/shared", "type": "dir"},
+        ]
+        registered = _registered([*_ALL_WORKFLOWS, "dynamic/pages/pages-build-deployment"])
+        _, _, gh_run, _ = self._run(registered=[registered], files=files)
+        gh_run.assert_not_called()
+
+    def test_missing_then_registered_after_toggle(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # The observed failure: only one of the four registered; the toggle fixes it.
+        only_cd = _registered([f"{_WF}/cd.yml"])
+        _, listed, gh_run, sleep = self._run(
+            registered=[only_cd, only_cd, _registered(_ALL_WORKFLOWS)]
+        )
+        assert gh_run.call_args_list == [
+            (("repo", "edit", _REPO, "--default-branch", "main"),),
+            (("repo", "edit", _REPO, "--default-branch", "develop"),),
+        ]
+        assert listed.call_count == 3
+        sleep.assert_called_once()
+        out = capsys.readouterr().out
+        assert f"Not registered: {_WF}/ci.yml, {_WF}/epic-rollup.yml, {_WF}/ops.yml" in out
+        assert "Applying the workaround" in out
+        assert "registered after the workaround" in out
+
+    def test_main_default_toggles_through_develop(self) -> None:
+        _, _, gh_run, _ = self._run(
+            default="main",
+            registered=[_registered([]), _registered(_ALL_WORKFLOWS)],
+        )
+        assert gh_run.call_args_list == [
+            (("repo", "edit", _REPO, "--default-branch", "develop"),),
+            (("repo", "edit", _REPO, "--default-branch", "main"),),
+        ]
+
+    def test_still_missing_after_toggle_fails_naming_the_paths(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        stuck = _registered([f"{_WF}/cd.yml", f"{_WF}/ci.yml"])
+        polls = repo_init._REGISTRATION_POLLS
+        with pytest.raises(SystemExit) as exc:
+            self._run(registered=[stuck] * (polls + 1))
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert f"{_WF}/epic-rollup.yml, {_WF}/ops.yml" in err
+        assert f"{_WF}/ci.yml" not in err
+
+    def test_bounded_wait(self) -> None:
+        stuck = _registered([])
+        polls = repo_init._REGISTRATION_POLLS
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.github.read_json",
+                side_effect=[{"default_branch": "develop"}, _contents(_ALL_WORKFLOWS)],
+            ),
+            patch(
+                "vergil_tooling.lib.repo_init.github.read_json_paginated",
+                side_effect=[stuck] * (polls + 1),
+            ) as listed,
+            patch("vergil_tooling.lib.repo_init.github.run"),
+            patch("vergil_tooling.lib.repo_init.time.sleep") as sleep,
+            pytest.raises(SystemExit),
+        ):
+            check_workflows_registered(ctx)
+        assert listed.call_count == polls + 1
+        assert sleep.call_count == polls - 1
+        sleep.assert_called_with(repo_init._REGISTRATION_POLL_SECS)
+
+    def test_api_error_while_listing_workflows_surfaces(self) -> None:
+        error = github.GitHubAPIError(1, ("gh", "api"), "", "gh: Server Error (HTTP 500)\n")
+        with pytest.raises(github.GitHubAPIError):
+            self._run(registered=[error])
+
+    def test_api_error_while_reading_files_surfaces(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        error = github.GitHubAPIError(1, ("gh", "api"), "", "gh: Forbidden (HTTP 403)\n")
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.github.read_json",
+                side_effect=[{"default_branch": "develop"}, error],
+            ),
+            patch("vergil_tooling.lib.repo_init.github.read_json_paginated") as listed,
+            pytest.raises(github.GitHubAPIError),
+        ):
+            check_workflows_registered(ctx)
+        listed.assert_not_called()
+
+    def test_no_workflows_directory_has_nothing_to_check(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        missing_dir = github.GitHubAPIError(1, ("gh", "api"), "", "gh: Not Found (HTTP 404)\n")
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.github.read_json",
+                side_effect=[{"default_branch": "develop"}, missing_dir],
+            ),
+            patch("vergil_tooling.lib.repo_init.github.read_json_paginated") as listed,
+        ):
+            check_workflows_registered(ctx)
+        listed.assert_not_called()
+        assert "No workflow files on develop" in capsys.readouterr().out
+
+    def test_failed_switch_back_names_the_branch_left_as_default(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        def gh_run(*args: str) -> None:
+            if args[-1] == "develop":
+                raise github.GitHubAPIError(1, ("gh", *args), "", "gh: boom (HTTP 502)\n")
+
+        with pytest.raises(SystemExit) as exc:
+            self._run(registered=[_registered([])], run_side_effect=gh_run)
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "it is now main" in err
+        assert f"gh repo edit {_REPO} --default-branch develop" in err
+
+    def test_failed_first_switch_surfaces(self) -> None:
+        error = github.GitHubAPIError(1, ("gh",), "", "gh: boom (HTTP 502)\n")
+        with pytest.raises(github.GitHubAPIError):
+            self._run(registered=[_registered([])], run_side_effect=error)
+
+    @pytest.mark.parametrize(
+        ("repo_json", "listing", "registered"),
+        [
+            ({}, [], []),
+            ({"default_branch": "develop"}, {"path": "x"}, []),
+            ({"default_branch": "develop"}, [{"type": "file"}], []),
+            ({"default_branch": "develop"}, _contents([f"{_WF}/ci.yml"]), [{"id": 1}]),
+        ],
+    )
+    def test_malformed_responses_raise(
+        self, repo_json: Any, listing: Any, registered: list[object]
+    ) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.github.read_json",
+                side_effect=[repo_json, listing],
+            ),
+            patch(
+                "vergil_tooling.lib.repo_init.github.read_json_paginated",
+                return_value=registered,
+            ),
+            pytest.raises(TypeError),
+        ):
+            check_workflows_registered(ctx)
+
+
 class TestStepGithubConfigExtended:
     def test_classic_protection_cleanup_reported(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
@@ -2364,6 +2613,56 @@ class TestStepGithubConfigExtended:
 
 
 class TestRunWizard:
+    @pytest.mark.parametrize("remote_completed", [set(), {1, 8}])
+    def test_checks_workflow_registration_after_step_8_run_or_skipped(
+        self, remote_completed: set[int]
+    ) -> None:
+        # A run stopped by the check skips step 8 when re-run, so the check
+        # runs after step 8 either way, before step 9 (#4376).
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        order: list[str] = []
+
+        def record(name: str) -> Any:
+            return lambda *a, **kw: order.append(name)
+
+        steps = [
+            "step_create_repo",
+            "step_clone",
+            "step_generate_config",
+            "step_scaffold_config_files",
+            "step_scaffold_language",
+            "step_ci_cd_workflows",
+            "step_docs_site",
+            "step_branch_structure",
+            "step_github_config",
+            "step_github_pages",
+        ]
+        with contextlib.ExitStack() as stack:
+            for name in steps:
+                stack.enter_context(
+                    patch(f"vergil_tooling.lib.repo_init.{name}", side_effect=record(name))
+                )
+            stack.enter_context(
+                patch(
+                    "vergil_tooling.lib.repo_init._check_remote_steps",
+                    return_value=remote_completed,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "vergil_tooling.lib.repo_init.check_workflows_registered",
+                    side_effect=record("check"),
+                )
+            )
+            stack.enter_context(
+                patch("vergil_tooling.lib.repo_init.cwd_repo_slug", return_value=None)
+            )
+            run_wizard(ctx)
+
+        assert order.count("check") == 1
+        assert order.index("check") == order.index("step_github_config") - 1
+        assert ("step_branch_structure" in order) == (8 not in remote_completed)
+
     def test_skips_completed_local_steps(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.completed_steps = {3, 4}
@@ -2394,6 +2693,7 @@ class TestRunWizard:
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
             patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            patch("vergil_tooling.lib.repo_init.check_workflows_registered"),
             # Local resume state is trusted only when CWD is the target's own
             # clone (#2717); here it is, so the step 3/4 markers apply.
             patch(
@@ -2451,6 +2751,7 @@ class TestRunWizard:
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
             patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            patch("vergil_tooling.lib.repo_init.check_workflows_registered"),
             # Adopt runs in the target's own clone, whose log carries markers for
             # every past init step — the exact history that must be ignored.
             patch(
@@ -2505,6 +2806,7 @@ class TestRunWizard:
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
             patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            patch("vergil_tooling.lib.repo_init.check_workflows_registered"),
             # Standing inside the `.github` repo, whose log carries step 3/4/5
             # markers that must be ignored for the unrelated `docs` target.
             patch(
@@ -2554,6 +2856,7 @@ class TestRunWizard:
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
             patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            patch("vergil_tooling.lib.repo_init.check_workflows_registered"),
             # CWD is the target's own clone, so the log is read — and its failure
             # degrades to "no local completions" rather than raising.
             patch(
@@ -2597,6 +2900,7 @@ class TestRunWizard:
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
             patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            patch("vergil_tooling.lib.repo_init.check_workflows_registered"),
             # CWD is not the target's clone, so local resume state is not trusted
             # and the git log is not even read.
             patch("vergil_tooling.lib.repo_init.cwd_repo_slug", return_value=None),
@@ -2868,6 +3172,7 @@ class TestRestoreGeneratedConfig:
             patch("vergil_tooling.lib.repo_init.step_github_config"),
             patch("vergil_tooling.lib.repo_init.step_github_pages"),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value={1}),
+            patch("vergil_tooling.lib.repo_init.check_workflows_registered"),
             patch(
                 "vergil_tooling.lib.repo_init.cwd_repo_slug",
                 return_value="vergil-project/demo",

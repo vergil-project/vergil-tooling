@@ -31,12 +31,14 @@ from vergil_tooling.lib.container_cache import (
     compute_cache_hash,
     ensure_cached_image,
     find_cached_image,
+    language_sources,
     missing_warmup_files,
     parse_cache_image_ref,
     provision_dev_image,
     resolve_base_digest,
     sanitize_branch,
     sanitize_repo,
+    unbootstrapped_manifests,
     vergil_tooling_setup_command,
 )
 
@@ -1891,6 +1893,79 @@ def test_missing_warmup_files_partial_bootstrap_reports_only_the_gap(tmp_path: P
 
 def test_missing_warmup_files_unknown_language_has_no_requirements(tmp_path: Path) -> None:
     assert missing_warmup_files("cobol", tmp_path) == []
+
+
+# -- unbootstrapped_manifests (vrg-validate's skip test, issue #4384) ----------
+
+
+def test_unbootstrapped_rust_with_no_cargo_toml(tmp_path: Path) -> None:
+    assert unbootstrapped_manifests("rust", tmp_path) == ["Cargo.toml"]
+
+
+def test_unbootstrapped_rust_with_cargo_toml_is_bootstrapped(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "x"\n')
+    assert unbootstrapped_manifests("rust", tmp_path) == []
+
+
+def test_unbootstrapped_python_with_no_manifest(tmp_path: Path) -> None:
+    assert unbootstrapped_manifests("python", tmp_path) == ["pyproject.toml", "uv.lock"]
+
+
+def test_unbootstrapped_partial_bootstrap_is_not_unbootstrapped(tmp_path: Path) -> None:
+    # The warmup skips a pyproject.toml with no uv.lock, but validation must run
+    # on it and fail: a half-made project is broken, not unstarted.
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n')
+    assert missing_warmup_files("python", tmp_path) == ["uv.lock"]
+    assert unbootstrapped_manifests("python", tmp_path) == []
+
+
+def test_unbootstrapped_cpp_needs_every_group_missing(tmp_path: Path) -> None:
+    assert unbootstrapped_manifests("cpp", tmp_path) == [
+        "conanfile.txt or conanfile.py",
+        "CMakeLists.txt",
+        "conan.lock",
+    ]
+    (tmp_path / "conanfile.py").write_text("")
+    assert unbootstrapped_manifests("cpp", tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("lang", "manifest"),
+    [("go", "go.mod"), ("typescript", "package.json")],
+)
+def test_unbootstrapped_other_languages(tmp_path: Path, lang: str, manifest: str) -> None:
+    assert manifest in unbootstrapped_manifests(lang, tmp_path)
+    (tmp_path / manifest).write_text("")
+    assert unbootstrapped_manifests(lang, tmp_path) == []
+
+
+def test_unbootstrapped_unknown_language_is_never_unbootstrapped(tmp_path: Path) -> None:
+    assert unbootstrapped_manifests("cobol", tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("lang", "source"),
+    [
+        ("python", "pkg/mod.py"),
+        ("rust", "src/lib.rs"),
+        ("go", "main.go"),
+        ("cpp", "include/x.hpp"),
+        ("typescript", "src/index.ts"),
+    ],
+)
+def test_language_sources_picks_the_language_files(lang: str, source: str) -> None:
+    paths = ["README.md", "vergil.toml", "scripts/bin/validate-local", source]
+    assert language_sources(lang, paths) == [source]
+
+
+def test_language_sources_is_sorted_and_language_specific() -> None:
+    paths = ["src/main.rs", "build.rs", "tool.py"]
+    assert language_sources("rust", paths) == ["build.rs", "src/main.rs"]
+    assert language_sources("python", paths) == ["tool.py"]
+
+
+def test_language_sources_unknown_language_has_none() -> None:
+    assert language_sources("cobol", ["x.cbl"]) == []
 
 
 def test_warmup_command_skipped_when_manifests_absent(tmp_path: Path) -> None:
