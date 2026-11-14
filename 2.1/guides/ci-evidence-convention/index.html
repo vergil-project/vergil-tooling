@@ -1420,6 +1420,8 @@
       
         
       
+        
+      
     
     
     
@@ -1472,6 +1474,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.312/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.312
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18086,6 +18116,31 @@ security SARIF are <strong>not</strong> per-version:</p>
 </tr>
 </tbody>
 </table>
+<p>A Rust repository's gates write their reports at the workspace root under
+these names, before <code>ci-test.yml</code> and <code>ci-audit.yml</code> stage them:</p>
+<table>
+<thead>
+<tr>
+<th>Gate</th>
+<th>Report file at the workspace root</th>
+<th>Written by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>test</code></td>
+<td><code>coverage.xml</code> (Cobertura)</td>
+<td>the gating <code>cargo llvm-cov --cobertura --output-path coverage.xml</code> run</td>
+</tr>
+<tr>
+<td><code>audit</code></td>
+<td><code>cargo-deny.json</code> (JSON Lines)</td>
+<td>the gating <code>cargo deny --format json … check --show-stats</code> run, its stderr</td>
+</tr>
+</tbody>
+</table>
+<p>Rust writes no <code>junit.xml</code> yet: stable <code>cargo test</code> cannot write JUnit, and
+the Rust image has no reporter that can.</p>
 <p><code>quality-common.log</code> is the transcript of <code>vrg-validate --check common</code> and
 <code>quality-custom.log</code> the transcript of <code>vrg-validate --check custom</code>, each
 captured once per run by the <code>quality / common</code> and <code>quality / custom</code> jobs.

@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.312/">
       
       
         <link rel="next" href="../v2.1.310/">
@@ -1427,6 +1427,8 @@
       
         
       
+        
+      
     
     
     
@@ -1482,6 +1484,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.312/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.312
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17599,6 +17629,7 @@ The Rust lint gate ran cargo clippy with no target flag, which checks only the l
 <li>feat(rust): run rustdoc examples in the Rust test gate with cargo test --doc</li>
 </ul>
 <p>cargo llvm-cov runs cargo test --tests, so no rustdoc example was ever built or run. The TEST check now runs cargo test --doc after the coverage command. cargo llvm-cov --doctests needs rustdoc's nightly-only -Z unstable-options --persist-doctests, which the stable dev image refuses. The 100% line gate is unchanged.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.311/v2.1.311-ci-evidence.tar.gz">Download →</a></p>
 
 
 
