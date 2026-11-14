@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.311/">
       
       
         <link rel="next" href="../v2.1.309/">
@@ -1425,6 +1425,8 @@
       
         
       
+        
+      
     
     
     
@@ -1480,6 +1482,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.311/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.311
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17562,6 +17592,7 @@ Adds vrg-queue adhoc to the github-issues queue view and ad-hoc epic passage, na
 open_sync_pr no longer returns once auto-merge is on. It now waits until the PR has merged through pr_merge.wait_until_merged: a behind branch is updated, a ready PR is merged whether or not auto-merge is on, and a failed check, conflict, closed PR, the update cap of 5 or the deadline (VRG_MECHANIZED_PR_DEADLINE, 40 minutes by default) stops the wait naming the PR. The shared loop pieces of pr_merge are factored out so wait_and_merge keeps its behaviour. vrg-github-repo-config update exits 0 only once the sync PR merged and 2 when it did not.</li>
 </ul>
 <p>Ref vergil-project/vergil-tooling#4370</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.310/v2.1.310-ci-evidence.tar.gz">Download →</a></p>
 
 
 

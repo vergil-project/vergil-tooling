@@ -1418,6 +1418,8 @@
       
         
       
+        
+      
     
     
     
@@ -1470,6 +1472,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.311/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.311
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18116,7 +18146,12 @@ so an interrupted run resumes where it stopped:</p>
 <li>Scaffold the MkDocs site under <code>docs/site/</code> (when docs publishing
    is on).</li>
 <li>Create and push <code>develop</code> and <code>main</code>, and make <code>develop</code> the
-   default branch.</li>
+   default branch. Then check that GitHub registered every workflow
+   file on the default branch. GitHub sometimes misses some, so when any
+   are missing the wizard switches the default branch to the other
+   branch and back, which makes GitHub register them, and checks again.
+   Any still missing after a short wait stop the run, named. A resumed
+   run checks again.</li>
 <li>Apply the GitHub settings, rulesets and labels.</li>
 <li>Configure GitHub Pages (when docs publishing is on).</li>
 </ol>
