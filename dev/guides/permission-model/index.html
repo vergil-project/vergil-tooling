@@ -18831,6 +18831,10 @@ instead of by pair:</p>
 <li><strong><code>user</code></strong> — denied entirely, which closes the escape hatch that
   individual hook-based blocks cannot fully cover.</li>
 </ul>
+<p>The user identity's one read it needs from the raw API, a PR's inline
+review comments, goes through the dedicated read-only
+<a href="../../reference/cli-tools-overview/#vrg-pr-review-comments"><code>vrg-pr-review-comments</code></a>
+rather than an exception in this refusal.</p>
 <h3 id="credential-selection">Credential Selection<a class="headerlink" href="#credential-selection" title="Permanent link">&para;</a></h3>
 <p><code>vrg-gh</code> is responsible for choosing which account's token to use
 per-command. See <a href="../credential-management/">Credential Management</a>
@@ -18857,7 +18861,9 @@ token <code>gh</code> runs with:</p>
 <code>vrg-ruling-reply</code>, <code>vrg-scope-change</code>, <code>vrg-security-record</code>,
 <code>vrg-submit-pr</code>, <code>vrg-update-deps</code> and <code>vrg-upstream-refresh</code>.</p>
 <p><code>vrg-package</code> calls <code>gh</code> only: it lists and downloads releases, and
-verifies their attestations, when it builds the package index.</p>
+verifies their attestations, when it builds the package index.
+<code>vrg-pr-review-comments</code> calls <code>gh</code> only too: it mints its token for the
+<code>--repo</code> owner, so it never reads the <code>origin</code> remote.</p>
 <p>These tools call <code>git</code> only: <code>vrg-commit</code>, <code>vrg-container-cache</code>,
 <code>vrg-container-run</code>, <code>vrg-reword</code>, <code>vrg-scorecard</code>, <code>vrg-validate</code>,
 <code>vrg-version</code> and <code>vrg-vm</code>. <code>vrg-vm</code> also runs <code>git config</code> inside

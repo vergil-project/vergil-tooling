@@ -13924,6 +13924,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-pr-review-comments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-pr-review-comments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-await" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18543,6 +18554,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-pr-review-comments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-pr-review-comments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-await" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19849,6 +19871,60 @@ indefinitely by design.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 settled, 1 error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-pr-review-comments">vrg-pr-review-comments<a class="headerlink" href="#vrg-pr-review-comments" title="Permanent link">&para;</a></h3>
+<p>List a pull request's inline (line-level) review comments. It reads
+<code>GET repos/{owner}/{repo}/pulls/{n}/comments</code>, every page, through
+<code>lib/github.py</code>'s paginated read helper, with the App token minted for the
+<code>--repo</code> owner. <code>vrg-gh pr view --json reviews,comments</code> returns only review
+bodies and conversation comments, and <code>vrg-gh</code> refuses <code>gh api</code> for the user
+identity, so this is the user agent's way to read them. It is strictly
+read-only and widens no <code>vrg-gh</code> allowlist. The plugin's
+<code>epic-retrospective</code> sweep consumes it.</p>
+<p>Without <code>--json</code> it prints one block per comment (<code>&lt;path&gt;:&lt;line&gt; by
+&lt;author&gt; at &lt;created_at&gt; (comment &lt;id&gt;, review &lt;id&gt;, reply to &lt;id&gt;)</code>, the
+comment URL, then the body indented; <code>:&lt;line&gt;</code> is left out when <code>line</code> is
+<code>null</code>), or one line saying the PR has none.
+<code>--json</code> prints a JSON array of objects with the keys <code>id</code>, <code>author</code>,
+<code>path</code>, <code>line</code>, <code>review_id</code>, <code>in_reply_to_id</code>, <code>created_at</code>, <code>body</code> and
+<code>url</code>, in API order. <code>line</code> is <code>null</code> for a comment not on a current line of
+the diff (a file-level comment, or an outdated one on a line the PR no longer
+has), <code>author</code> is <code>null</code> for a deleted account,
+<code>review_id</code> is <code>null</code> when GitHub gives none, and <code>in_reply_to_id</code> is
+<code>null</code> for a comment that starts a thread.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_pr_review_comments</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo &lt;owner&gt;/&lt;repo&gt;</code>, <code>--pr N</code>, <code>--json</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>GitHub App credentials for the <code>--repo</code> owner</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A GitHub API failure, or a response that is not a list of well-formed comments, prints <code>ERROR:</code> on stderr and exits 1; it never prints a partial or empty list in its place</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success, 1 GitHub API failure or malformed response, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
