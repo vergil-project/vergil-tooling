@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from vergil_tooling.lib import github, release
+from vergil_tooling.lib.markdown_escape import escape_inline
 
 # gh search returns at most 1000 results, however many pages it follows.
 _SEARCH_LIMIT = 1000
@@ -101,7 +102,7 @@ def _by_date(items: list[ActivityItem]) -> dict[str, list[ActivityItem]]:
 
 
 def _line(item: ActivityItem) -> str:
-    return f"- [{item.repo}#{item.number}]({item.url}) {item.title}"
+    return f"- [{item.repo}#{item.number}]({item.url}) {escape_inline(item.title)}"
 
 
 def _short(repo: str) -> str:

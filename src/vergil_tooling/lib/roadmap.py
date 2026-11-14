@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from vergil_tooling.lib import epics, github, release
+from vergil_tooling.lib.markdown_escape import escape_inline
 
 
 @dataclass(frozen=True)
@@ -103,7 +104,7 @@ def gather(org: str | None = None, *, home: str | None = None) -> list[EpicSumma
 def _row(epic: EpicSummary) -> str:
     """One markdown table row for an epic (repos stacked in-cell)."""
     repos = "<br>".join(r.split("/")[-1] for r in epic.repos) if epic.repos else "—"
-    title = epic.title.replace("|", "\\|")
+    title = escape_inline(epic.title)
     return (
         f"| [#{epic.number}]({epic.url}) {title} "
         f"| {epic.closed}/{epic.total} | {repos} | {epic.created} |"
@@ -125,7 +126,7 @@ def render(summaries: list[EpicSummary], org: str | None = None, *, home: str | 
         "",
     ]
     for milestone in sorted(by_milestone):
-        lines.append(f"## {milestone}")
+        lines.append(f"## {escape_inline(milestone)}")
         lines.append("")
         lines.append("| Epic | Done | Repos | Created |")
         lines.append("| --- | --- | --- | --- |")

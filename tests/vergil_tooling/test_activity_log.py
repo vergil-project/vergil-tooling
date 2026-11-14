@@ -214,3 +214,25 @@ def test_render_pages_layout() -> None:
 
 def test_render_pages_empty() -> None:
     assert list(activity_log.render_pages([])) == ["index.md"]
+
+
+# Hostile titles: tag-like, script-like, link-like and a pipe.
+_HOSTILE_TITLES = (
+    ("<b>bold</b>", "&lt;b&gt;bold&lt;/b&gt;"),
+    ("<script>alert(1)</script>", "&lt;script&gt;alert(1)&lt;/script&gt;"),
+    ("[x](javascript:alert(1))", "\\[x\\](javascript:alert(1))"),
+    ("a|b", "a\\|b"),
+)
+
+
+def test_activity_line_escapes_title() -> None:
+    for title, escaped in _HOSTILE_TITLES:
+        item = ActivityItem("vergil-project/vergil-tooling", 7, title, "u7", "2026-06-28")
+        line = activity_log._line(item)
+        assert line == f"- [vergil-project/vergil-tooling#7](u7) {escaped}"
+        assert "<" not in line
+        # The pipe is escaped exactly once.
+        assert "\\\\|" not in line
+        # Every page that lists the item carries the escaped title.
+        for page in activity_log.render_pages([item]).values():
+            assert "<" not in page
