@@ -446,7 +446,20 @@ _REGISTRY: dict[str, Language] = {
                 ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
             ],
             CheckKind.TYPECHECK: [["cargo", "check"]],
-            CheckKind.TEST: [["cargo", "llvm-cov", "--fail-under-lines", "100"]],
+            # ``cargo llvm-cov`` runs ``cargo test --tests``, which never builds
+            # or runs a rustdoc example, so ``cargo test --doc`` runs them as a
+            # second command. ``cargo llvm-cov --doctests`` is not used: it
+            # passes rustdoc ``-Z unstable-options --persist-doctests``, which
+            # stable rustc refuses, and the dev image ships stable only.
+            # Doctests therefore count toward no coverage; the 100% line gate
+            # is met by the unit and integration tests alone (issue #4378).
+            # ``cargo test --doc`` refuses a crate with no library target, so
+            # vrg-validate drops it when no default-member package has one
+            # (``_skip_rust_doctests_without_lib``).
+            CheckKind.TEST: [
+                ["cargo", "llvm-cov", "--fail-under-lines", "100"],
+                ["cargo", "test", "--doc"],
+            ],
             # The packaged fleet policy (epic vergil-project/.github#1091). An
             # explicit ``--config`` replaces cargo-deny's search for a repo's
             # own ``deny.toml``, so every Rust repo audits against the fleet

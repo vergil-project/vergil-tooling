@@ -383,8 +383,13 @@ def test_rust_typecheck_commands() -> None:
 
 
 def test_rust_test_commands() -> None:
-    joined = _joined(language_commands("rust", CheckKind.TEST))
-    assert any("cargo llvm-cov" in c for c in joined)
+    # ``cargo llvm-cov`` runs ``cargo test --tests`` and skips doctests, so a
+    # separate ``cargo test --doc`` runs them (issue #4378). The coverage
+    # command keeps its 100% line gate.
+    assert language_commands("rust", CheckKind.TEST) == [
+        ["cargo", "llvm-cov", "--fail-under-lines", "100"],
+        ["cargo", "test", "--doc"],
+    ]
 
 
 def _rust_deny_toml() -> Path:
