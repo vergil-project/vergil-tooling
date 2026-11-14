@@ -213,8 +213,12 @@ the one-commit-per-issue check run before any push; either failing records
 nothing. The state records the list as `issues` (its first entry is also
 `issue`), in the local file and the relay ref alike, and a re-run must name the
 same list in the same order. Once the state is recorded, the members' batch
-markers are removed. A single `--issue` records no `issues` key and behaves
-exactly as before.
+markers are removed and `report-ready` prints
+`{"ok": true, "status": "ready", "issues": […]}`. The printed `issues` are this
+repo's `#N` refs, the form `batch-start` and `batch-show` print, whatever form
+`--issue` took; the recorded `issues` keep each value as given (`N`, or
+`owner/repo#N`), the form `vrg-submit-pr` reads. A single `--issue` records no
+`issues` key, prints none, and behaves exactly as before.
 
 The batch hard rules are: 2 to 8 issues, none listed twice, every one in
 this repo, a task (not an epic, archive or queue item), not operational, not
@@ -235,8 +239,8 @@ takes `--issue` as `N`, `#N` or `owner/repo#N` for this clone's repo:
   `{"ok": true, "resumed": <bool>, "issues": […], "base_sha": "<sha>"}`. A
   refusal writes nothing. The same list over existing markers is a resume
   that changes nothing; any other existing marker is refused.
-- `batch-show --issue <N>` prints the issue's batch as one JSON object and
-  exits 0, exits 1 with nothing on stdout when the issue is in no batch, and
+- `batch-show --issue <N>` prints the issue's batch as one JSON object,
+  `{"issues": ["#10", "#11"], "base_sha": "<sha>"}`, and exits 0, exits 1 with nothing on stdout when the issue is in no batch, and
   exits 2 on any other failure.
 - `batch-extract --issue <N>` rewrites every other member's marker without
   the issue (removing the last one's when fewer than two remain) and removes
