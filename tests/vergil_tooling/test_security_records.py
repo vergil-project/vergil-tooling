@@ -405,6 +405,9 @@ class Issues:
         self.labels: dict[IssueRef, set[str]] = {}
         self.bodies: dict[IssueRef, str] = {}
         self.comments: dict[IssueRef, list[str]] = {}
+        # Transferred issues: old ref -> current ref. A read at the old number
+        # follows the redirect; every other call there gets a 404, as on GitHub.
+        self.moved: dict[IssueRef, IssueRef] = {}
         self.description = f"{SECRET}\n\nTracking issue: org/.github#10"
         # Per-advisory descriptions, for tests with several advisories; any
         # GHSA ID not listed here shares ``description``.
@@ -435,6 +438,12 @@ class Issues:
         if self.fail_on is not None and self.fail_on in key:
             raise github.GitHubAPIError(1, ("gh", "api", key), SECRET, "HTTP 500")
 
+    def _not_moved(self, endpoint: str) -> IssueRef:
+        ref = self._ref(endpoint)
+        if ref in self.moved:
+            raise github.GitHubAPIError(1, ("gh", "api", endpoint), None, "Not Found (HTTP 404)")
+        return ref
+
     def read_json(self, *args: str) -> Any:
         endpoint = args[1]
         self._maybe_fail(f"GET {endpoint}")
@@ -443,7 +452,13 @@ class Issues:
             description = self.descriptions.get(ghsa_id, self.description)
             return {"summary": SECRET, "description": description}
         ref = self._ref(endpoint)
-        return {"labels": sorted(self.labels[ref]), "body": self.bodies[ref]}
+        ref = self.moved.get(ref, ref)
+        return {
+            "number": ref.number,
+            "repository_url": f"https://api.github.com/repos/{ref.owner}/{ref.repo}",
+            "labels": sorted(self.labels[ref]),
+            "body": self.bodies[ref],
+        }
 
     def write_json(self, method: str, endpoint: str, body: dict[str, object]) -> None:
         self._maybe_fail(f"{method} {endpoint}")
@@ -455,7 +470,7 @@ class Issues:
             else:
                 self.description = str(body["description"])
             return
-        ref = self._ref(endpoint)
+        ref = self._not_moved(endpoint)
         if endpoint.endswith("/labels"):
             self.labels[ref] |= {str(name) for name in cast("list[object]", body["labels"])}
         elif endpoint.endswith("/comments"):
@@ -478,7 +493,7 @@ class Issues:
                 for ref in sorted(self.labels, key=lambda r: r.number)
                 if (ref.owner, ref.repo) == (owner, repo) and "security" in self.labels[ref]
             ]
-        return list(self.comments[self._ref(endpoint)])
+        return list(self.comments[self._not_moved(endpoint)])
 
     def patches(self) -> list[tuple[str, str, dict[str, object]]]:
         return [w for w in self.writes if "security-advisories" in w[1]]
@@ -791,6 +806,59 @@ def test_retarget_never_unmarks_a_renamed_issue_that_carries_the_line(issues: Is
     assert not [w for w in issues.writes if "/issues/10" in w[1]]
     assert issues.labels[A] == {"security"}
     assert issues.comments[A] == []
+
+
+# --- retarget: a dropped issue that was transferred (issue #4299) ---------------
+
+
+def test_retarget_onto_a_transferred_issue_leaves_it_marked(issues: Issues) -> None:
+    """The old number tracked, the issue moved to the target: nothing to unmark."""
+    issues.add(C, "Moved.")
+    issues.moved[A] = C
+    notes = retarget(HOME, GHSA, (C,))
+    assert notes == (
+        "org/.github#10 was transferred to org/tool#12, a target: "
+        "nothing left to unmark at org/.github#10",
+    )
+    assert issues.labels[C] == {"security"}
+    assert issues.bodies[C] == f"Moved.\n\n{advisory_line(HOME, GHSA)}"
+    assert issues.comments[C] == []
+    assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
+    assert not [w for w in issues.writes if "/issues/10" in w[1]]
+
+
+def test_retarget_follows_a_transfer_to_an_issue_not_targeted(issues: Issues) -> None:
+    """The old number tracked, the issue moved elsewhere: unmark it where it is."""
+    issues.add(D, f"Moved.\n\n{advisory_line(HOME, GHSA)}", {"security", "bug"})
+    issues.add(C, "")
+    issues.moved[A] = D
+    notes = retarget(HOME, GHSA, (C,))
+    assert notes == (
+        "org/.github#10 was transferred to org/tool#13: followed the transfer and "
+        "unmarked org/tool#13",
+    )
+    assert issues.labels[D] == {"bug"}
+    assert issues.bodies[D] == "Moved."
+    assert issues.comments[D] == [MOVED]
+    assert issues.labels[C] == {"security"}
+    assert not [w for w in issues.writes if "/issues/10" in w[1]]
+
+
+def test_retarget_follows_a_transfer_to_an_issue_with_no_line(issues: Issues) -> None:
+    issues.add(D, "Moved, line removed.", {"bug"})
+    issues.add(C, "")
+    issues.moved[A] = D
+    notes = retarget(HOME, GHSA, (C,))
+    assert notes == (
+        "org/.github#10 was transferred to org/tool#13: followed the transfer and "
+        "org/tool#13 has no line for this advisory, nothing to unmark",
+    )
+    assert not [w for w in issues.writes if "/issues/10" in w[1] or "/issues/13" in w[1]]
+
+
+def test_retarget_reports_no_notes_without_a_transfer(issues: Issues) -> None:
+    _dropping_a(issues)
+    assert retarget(HOME, GHSA, (C,)) == ()
 
 
 def test_retarget_never_touches_an_issue_naming_another_advisory(issues: Issues) -> None:

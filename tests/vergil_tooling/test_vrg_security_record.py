@@ -571,6 +571,18 @@ def test_retarget_cli_moves_tracking(env: MagicMock, capsys: pytest.CaptureFixtu
     assert f"Retargeted {GHSA} to {ISSUE.slug}, {second.slug}." in capsys.readouterr().out
 
 
+def test_retarget_cli_prints_each_transfer_note(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    note = (
+        f"org/.github#10 was transferred to {ISSUE.slug}, a target: "
+        "nothing left to unmark at org/.github#10"
+    )
+    env.retarget.return_value = (note,)
+    assert main(["retarget", GHSA, "--to", ISSUE.slug]) == 0
+    assert capsys.readouterr().out == f"{GHSA}: {note}.\nRetargeted {GHSA} to {ISSUE.slug}.\n"
+
+
 def test_retarget_cli_failure_exits_nonzero(
     env: MagicMock, capsys: pytest.CaptureFixture[str]
 ) -> None:
