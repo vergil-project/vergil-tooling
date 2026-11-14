@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.312] - 2026-11-14
+
+### Bug fixes
+
+- write coverage.xml and cargo-deny.json from the rust test and audit gates (#4396)
+
 ## [2.1.311] - 2026-11-14
 
 ### Bug fixes
