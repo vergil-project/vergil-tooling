@@ -31,7 +31,9 @@ one-commit-per-issue check run before anything is pushed, and either failing
 records nothing. The ordered list is recorded as the state's ``issues`` (in the
 local file and the relay ref alike), and a re-run must name the same list in
 the same order. Once the state is recorded, the members' batch markers are
-removed. A single ``--issue`` behaves exactly as before.
+removed. The JSON response lists the issues as this repo's ``#N`` refs, the
+form ``batch-start`` and ``batch-show`` print, while the state keeps each one as
+given (#4297). A single ``--issue`` behaves exactly as before.
 
 ``batch-start``, ``batch-extract`` and ``batch-show`` manage the batch marker
 (:mod:`vergil_tooling.lib.pr_workflow.batch_marker`, epic
@@ -597,7 +599,10 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
     response: dict[str, object] = {"ok": True, "status": state.status}
     if batch:
         _remove_batch_markers(marker_refs)
-        response["issues"] = state.all_issues
+        # Printed as this repo's #N refs, the form batch-start and batch-show
+        # print, so a reader matches the lists as they are (#4297). The state
+        # keeps the values as given: vrg-submit-pr reads them from it.
+        response["issues"] = marker_refs
     if linkage_warning:
         response["warning"] = linkage_warning
     _emit(response)
