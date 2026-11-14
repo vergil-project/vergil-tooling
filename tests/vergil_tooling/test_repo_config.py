@@ -327,6 +327,17 @@ class TestClaudeMdTemplate:
         [line] = [ln for ln in _TEMPLATE_TEXT.splitlines() if "main worktree is read-only" in ln]
         assert "ignored `build/` scratch" in line
 
+    def test_template_validation_section_allows_ad_hoc_container_runs(self) -> None:
+        # The Validation section routes every tool through vrg-container-run,
+        # allows one-off ad hoc runs while working, and keeps a full
+        # vrg-validate as the finishing gate, replacing the older rule that
+        # vrg-validate was the only permitted validation command.
+        section = _TEMPLATE_TEXT.split("## Validation\n", 1)[1].split("\n## ", 1)[0]
+        assert "vrg-container-run -- vrg-validate" in section
+        assert "ad hoc" in section
+        assert "never directly on the host" in section
+        assert "is the only validation command" not in _TEMPLATE_TEXT
+
     def test_previous_template_files_are_gone(self) -> None:
         assert not (_TEMPLATE_PATH.parent / "claude_md_consumer_previous.md").exists()
         assert not (_TEMPLATE_PATH.parent / "claude_settings_previous.json").exists()
