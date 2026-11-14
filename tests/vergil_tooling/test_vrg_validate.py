@@ -1723,6 +1723,31 @@ def test_rust_sources_without_cargo_toml_check_custom_fails_install(tmp_path: Pa
     assert read_record(tmp_path).not_passed[0] == "install"
 
 
+# -- The doctest probe (issue #4378) on a repo with no Cargo.toml (issue #4384) --
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+@pytest.mark.parametrize("sources", [False, True], ids=["unbootstrapped", "sources-no-manifest"])
+def test_rust_without_cargo_toml_never_probes_for_doctests(tmp_path: Path, sources: bool) -> None:
+    # The library-target probe runs `cargo metadata`, which fails with no
+    # Cargo.toml; an unbootstrapped repo's test stage is a skip and a repo
+    # with sources but no manifest stops at its install, so neither probes.
+    _write_config(tmp_path, "rust")
+    if sources:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "lib.rs").write_text("")
+    with patch(_MOD + "._rust_lib_packages") as m_probe:
+        rc, _ran = _run_validate(tmp_path, ["--check", "test"])
+    m_probe.assert_not_called()
+    assert rc == (1 if sources else 0)
+    record = read_record(tmp_path)
+    if sources:
+        assert record.not_passed[0] == "install"
+        assert "test" not in record.passed
+    else:
+        assert record.passed == ("install", "test")
+
+
 @pytest.mark.usefixtures("real_bootstrap_check")
 def test_other_language_sources_do_not_block_the_skip(tmp_path: Path) -> None:
     # A Rust repo's helper scripts are not Rust sources.
