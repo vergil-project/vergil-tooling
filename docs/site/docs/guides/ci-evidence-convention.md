@@ -215,6 +215,17 @@ security SARIF are **not** per-version:
 | `quality` | `quality-common.log`, `quality-custom.log`, `quality-ruff-<ver>.json`, `quality-mypy-<ver>.xml` |
 | `security`| `python.sarif`, `trivy-results.sarif`, `semgrep-results.sarif`      |
 
+A Rust repository's gates write their reports at the workspace root under
+these names, before `ci-test.yml` and `ci-audit.yml` stage them:
+
+| Gate    | Report file at the workspace root | Written by                                                         |
+| ------- | --------------------------------- | ------------------------------------------------------------------ |
+| `test`  | `coverage.xml` (Cobertura)        | the gating `cargo llvm-cov --cobertura --output-path coverage.xml` run |
+| `audit` | `cargo-deny.json` (JSON Lines)    | the gating `cargo deny --format json … check --show-stats` run, its stderr |
+
+Rust writes no `junit.xml` yet: stable `cargo test` cannot write JUnit, and
+the Rust image has no reporter that can.
+
 `quality-common.log` is the transcript of `vrg-validate --check common` and
 `quality-custom.log` the transcript of `vrg-validate --check custom`, each
 captured once per run by the `quality / common` and `quality / custom` jobs.

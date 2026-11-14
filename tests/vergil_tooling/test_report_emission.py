@@ -8,12 +8,17 @@ assertions live in ``test_languages.py``.
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import subprocess
 import sys
 from typing import TYPE_CHECKING
 
+import pytest
+
 from vergil_tooling.lib.languages import (
+    CARGO_DENY_REPORT,
     COVERAGE_REPORT,
     JUNIT_REPORT,
     LICENSES_REPORT,
@@ -158,3 +163,61 @@ def test_audit_pip_licenses_writes_report(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / LICENSES_REPORT).is_file()
+
+
+# -- Rust AUDIT: cargo-deny's stderr is the report (issue #4394) ---------------
+#
+# cargo-deny is not in this image, so a stand-in ``cargo`` on PATH plays it:
+# JSON Lines on stderr and a chosen exit status. The real tool's output is
+# proven in the prod-rust image (the issue's evidence comment).
+
+_FAKE_CARGO = """#!/bin/sh
+printf '%s\\n' "$@" > "$FAKE_CARGO_ARGS"
+echo '{"type":"diagnostic","fields":{"severity":"error"}}' >&2
+echo '{"type":"summary","fields":{}}' >&2
+exit "$FAKE_CARGO_RC"
+"""
+
+
+def _run_rust_audit(tmp_path: Path, rc: int) -> subprocess.CompletedProcess[str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    cargo = bin_dir / "cargo"
+    cargo.write_text(_FAKE_CARGO)
+    cargo.chmod(0o755)
+    work = tmp_path / "work"
+    work.mkdir(exist_ok=True)
+    (cmd,) = language_commands("rust", CheckKind.AUDIT)
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "FAKE_CARGO_ARGS": str(tmp_path / "args.txt"),
+        "FAKE_CARGO_RC": str(rc),
+    }
+    return subprocess.run(cmd, cwd=work, env=env, capture_output=True, text=True, check=False)
+
+
+@pytest.mark.parametrize("rc", [0, 1, 2])
+def test_rust_audit_writes_report_and_keeps_cargo_deny_status(tmp_path: Path, rc: int) -> None:
+    """The AUDIT script writes cargo-deny's stderr to the report and exits with its status."""
+    result = _run_rust_audit(tmp_path, rc)
+
+    assert result.returncode == rc, result.stdout + result.stderr
+    report = (tmp_path / "work" / CARGO_DENY_REPORT).read_text()
+    records = [json.loads(line) for line in report.splitlines()]
+    assert [r["type"] for r in records] == ["diagnostic", "summary"]
+    # The report is echoed to stderr, so the gate's log still shows it.
+    assert result.stderr == report
+    args = (tmp_path / "args.txt").read_text().splitlines()
+    assert args[:3] == ["deny", "--format", "json"]
+    assert args[-2:] == ["check", "--show-stats"]
+
+
+def test_rust_audit_fails_when_report_cannot_be_written(tmp_path: Path) -> None:
+    """A report path that cannot be opened fails the gate rather than passing silently."""
+    (tmp_path / "work").mkdir()
+    (tmp_path / "work" / CARGO_DENY_REPORT).mkdir()
+
+    result = _run_rust_audit(tmp_path, 0)
+
+    assert result.returncode != 0
+    assert not (tmp_path / "args.txt").exists()  # cargo-deny never ran
