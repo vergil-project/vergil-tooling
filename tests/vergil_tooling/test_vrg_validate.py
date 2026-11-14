@@ -25,6 +25,7 @@ from vergil_tooling.bin.vrg_validate import (
     _find_custom_validator,
     _in_dev_container,
     _interpreter_version,
+    _not_bootstrapped_stage,
     _probe_xdist,
     _python_test_stage,
     _python_version_test_stage,
@@ -36,7 +37,9 @@ from vergil_tooling.bin.vrg_validate import (
     main,
 )
 from vergil_tooling.lib.config import ConfigError, TestConfig
+from vergil_tooling.lib.container_cache import unbootstrapped_manifests
 from vergil_tooling.lib.languages import CheckKind
+from vergil_tooling.lib.validate_record import RECORD_PATH, read_record
 
 _MOD = "vergil_tooling.bin.vrg_validate"
 
@@ -53,6 +56,9 @@ def _container_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         patch(_MOD + "._probe_xdist", return_value=False),
         patch(_MOD + ".git.commit_sha", return_value="0" * 40),
         patch(_MOD + ".git.working_tree_status", return_value=""),
+        # The tests' repo roots hold no manifests; the bootstrap skip has its
+        # own tests, which restore the real check.
+        patch(_MOD + ".unbootstrapped_manifests", return_value=[]),
     ):
         yield
 
@@ -1515,3 +1521,147 @@ def test_check_custom_rejects_all_versions() -> None:
     with pytest.raises(SystemExit) as exc:
         main(["--check", "custom", "--all-versions"])
     assert exc.value.code == 2
+
+
+# -- A repo not bootstrapped yet (issue #4384) ---------------------------------
+
+_NOT_BOOTSTRAPPED = "skipped: no Cargo.toml (rust repo not bootstrapped yet)"
+
+
+@pytest.fixture
+def real_bootstrap_check() -> Iterator[None]:
+    """Restore the real bootstrapped-ness test the autouse fixture stubs out."""
+    with patch(_MOD + ".unbootstrapped_manifests", side_effect=unbootstrapped_manifests):
+        yield
+
+
+def _run_validate(
+    tmp_path: Path, argv: list[str], *, custom: str | None = None
+) -> tuple[int, list[str]]:
+    """Run main() for real on a rust repo at *tmp_path*; return rc and the commands run."""
+    ran: list[str] = []
+
+    def mock_run(cmd: tuple[str, ...] | list[str], *, check: bool = True) -> int:
+        ran.append(" ".join(cmd))
+        return 1 if cmd[0] == "cargo" else 0
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._versions_resolve", return_value=("1.90",)),
+        patch(_MOD + "._run_common_checks", return_value=0) as m_common,
+        patch(_MOD + "._find_custom_validator", return_value=custom),
+        patch(_MOD + "._check_custom_validator"),
+        patch(_MOD + ".progress.run", side_effect=mock_run),
+    ):
+        rc = main(argv)
+    if "--check" not in argv:
+        m_common.assert_called_once()
+    return rc, ran
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_unbootstrapped_rust_skips_language_stages_loudly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_config(tmp_path, "rust")
+    rc, ran = _run_validate(tmp_path, [], custom="/path/to/custom")
+    assert rc == 0
+    # No cargo command ran; the common checks and the custom validator did.
+    assert ran == ["/path/to/custom"]
+    record = read_record(tmp_path)
+    assert record.full
+    assert record.not_passed == ()
+    assert record.passed == ("common", "install", "lint", "typecheck", "test", "audit", "custom")
+    out = capsys.readouterr().out
+    for stage in ("install", "lint", "typecheck", "test", "audit"):
+        assert f"NOTICE: {stage}: {_NOT_BOOTSTRAPPED}; add it to run the {stage} stage" in out
+    # Each skip is a warning row and a summary line, never a silent ✓.
+    assert "warnings (non-fatal):" in out
+    assert f"install — {_NOT_BOOTSTRAPPED}" in out
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
+    _write_config(tmp_path, "rust")
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages(None, "rust", tmp_path)
+    language_stages = [s for s in stages if s.name != "common"]
+    assert [s.name for s in language_stages] == ["install", "lint", "typecheck", "test", "audit"]
+    assert all(s.mode == "warn" for s in language_stages)
+    _run_validate(tmp_path, [])
+    data = json.loads((tmp_path / RECORD_PATH).read_text())
+    status = {stage["name"]: stage["status"] for stage in data["stages"]}
+    assert status == {
+        "common": "ok",
+        "install": "warn",
+        "lint": "warn",
+        "typecheck": "warn",
+        "test": "warn",
+        "audit": "warn",
+    }
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_bootstrapped_rust_with_failing_fetch_still_fails(tmp_path: Path) -> None:
+    _write_config(tmp_path, "rust")
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "x"\n')
+    rc, ran = _run_validate(tmp_path, [])
+    assert rc == 1
+    # The install stage is fail_fast: its first cargo command failed and stopped it.
+    assert ran[0].startswith("cargo ")
+    assert read_record(tmp_path).not_passed[0] == "install"
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_unbootstrapped_rust_single_check_is_skipped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_config(tmp_path, "rust")
+    rc, ran = _run_validate(tmp_path, ["--check", "lint"])
+    assert rc == 0
+    assert ran == []
+    assert read_record(tmp_path).passed == ("install", "lint")
+    assert f"NOTICE: lint: {_NOT_BOOTSTRAPPED}" in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_unbootstrapped_rust_check_custom_skips_install_runs_validator(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_config(tmp_path, "rust")
+    rc, ran = _run_validate(tmp_path, ["--check", "custom"], custom="/path/to/custom")
+    assert rc == 0
+    assert ran == ["/path/to/custom"]
+    assert read_record(tmp_path).passed == ("install", "custom")
+    assert f"NOTICE: install: {_NOT_BOOTSTRAPPED}" in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_unbootstrapped_python_all_versions_skips_every_test_stage(tmp_path: Path) -> None:
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("test", "python", tmp_path, all_versions=("3.12", "3.14"))
+    assert [s.name for s in stages] == ["install", "test"]
+    assert all(s.mode == "warn" for s in stages)
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_partially_bootstrapped_python_runs_its_stages(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n')
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("lint", "python", tmp_path)
+    assert [s.name for s in stages] == ["install", "lint"]
+    assert stages[0].mode == "fail_fast"
+
+
+def test_not_bootstrapped_stage_names_every_missing_manifest(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stage = _not_bootstrapped_stage("lint", "python", ["pyproject.toml", "uv.lock"])
+    with patch(_MOD + ".progress.mark_warn") as m_warn:
+        stage.fn(None)
+    reason = (
+        "skipped: no pyproject.toml, uv.lock (python repo not bootstrapped yet); "
+        "add them to run the lint stage"
+    )
+    m_warn.assert_called_once_with(reason)
+    assert f"NOTICE: lint: {reason}" in capsys.readouterr().out

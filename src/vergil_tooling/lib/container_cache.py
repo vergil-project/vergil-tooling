@@ -194,6 +194,22 @@ def missing_warmup_files(lang: str, repo_root: Path) -> list[str]:
     ]
 
 
+def unbootstrapped_manifests(lang: str, repo_root: Path) -> list[str]:
+    """Return *lang*'s missing manifests when the repo has none of them, else ``[]``.
+
+    The same table as the image warmup (:data:`_WARMUP_REQUIRES`), read
+    strictly: a repo is *unbootstrapped* only when **every** group is
+    unsatisfied, as in a freshly initialised repo with no crate or project yet.
+    vrg-validate skips its language stages, loudly, for such a repo (issue
+    #4384). A partial bootstrap (``pyproject.toml`` with no ``uv.lock``, say)
+    is not this state: the warmup may skip it, but validation runs and fails
+    on it, so a broken project never passes as an unstarted one.
+    """
+    groups = _WARMUP_REQUIRES.get(lang, [])
+    missing = missing_warmup_files(lang, repo_root)
+    return missing if groups and len(missing) == len(groups) else []
+
+
 def _warmup_command(lang: str, repo_root: Path) -> str:
     """Return the warmup shell command, or ``""`` when it cannot run.
 

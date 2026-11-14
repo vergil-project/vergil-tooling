@@ -14,6 +14,12 @@ validator that is present but unusable still fails (issue #3650).
 Checks run as progress-framework stages: install is fail_fast,
 everything else is fail_defer so all failures are reported in one run.
 
+A repo with none of its language's manifests (a Rust repo with no
+``Cargo.toml`` yet) is not bootstrapped: the image warmup skips it, and so
+do the install and language stages here, each recorded as a warning that
+names the missing manifests (issue #4384). See
+:func:`~vergil_tooling.lib.container_cache.unbootstrapped_manifests`.
+
 ``--all-versions`` (Python only) adds one test stage per resolved CI version
 after the test stage, so the coverage gate runs on every interpreter PR-CI
 tests, not only the dev container's (issue #3547).
@@ -40,6 +46,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, git, progress
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.container_cache import unbootstrapped_manifests
 from vergil_tooling.lib.languages import (
     COVERAGE_REPORT,
     JUNIT_REPORT,
@@ -554,6 +561,29 @@ def _command_stage(
     return Stage(label, fn, mode=mode)
 
 
+def _not_bootstrapped_stage(name: str, language: str, missing: list[str]) -> Stage:
+    """A language stage skipped, loudly, because the repo has no manifest yet.
+
+    The test of bootstrapped-ness is the image warmup's
+    (:func:`~vergil_tooling.lib.container_cache.unbootstrapped_manifests`), so
+    a freshly initialised repo the image build skips warming is not then
+    failed by validation's install stage (issue #4384). The stage is recorded
+    ``warn`` (⚠, with the reason on its row and in the summary), never ``ok``,
+    so the skip cannot pass unnoticed; ``warn`` still counts as passed, so the
+    run can reach merge review. Adding the manifest runs the stage for real.
+    """
+    reason = (
+        f"skipped: no {', '.join(missing)} ({language} repo not bootstrapped yet); "
+        f"add {'it' if len(missing) == 1 else 'them'} to run the {name} stage"
+    )
+
+    def fn(_ctx: object) -> None:
+        print(f"NOTICE: {name}: {reason}")
+        progress.mark_warn(reason)
+
+    return Stage(name, fn, mode="warn")
+
+
 def _python_test_stage(
     *,
     parallel: bool,
@@ -718,7 +748,14 @@ def _build_stages(
             for kind, cmds in kind_cmds
         ]
         kind_cmds = [(kind, cmds) for kind, cmds in kind_cmds if cmds]
-        if kind_cmds:
+        unbootstrapped = unbootstrapped_manifests(language, repo_root)
+        if kind_cmds and unbootstrapped:
+            install_cmds = language_commands(
+                language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
+            )
+            names = (["install"] if install_cmds else []) + [kind.value for kind, _ in kind_cmds]
+            stages.extend(_not_bootstrapped_stage(name, language, unbootstrapped) for name in names)
+        elif kind_cmds:
             install_cmds = language_commands(
                 language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
             )
@@ -767,7 +804,10 @@ def _build_stages(
                 install_cmds = language_commands(
                     language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
                 )
-                if install_cmds:
+                unbootstrapped = unbootstrapped_manifests(language, repo_root)
+                if install_cmds and unbootstrapped:
+                    stages.append(_not_bootstrapped_stage("install", language, unbootstrapped))
+                elif install_cmds:
                     stages.append(_command_stage("install", install_cmds, mode="fail_fast"))
 
             def custom_fn(_ctx: object) -> None:
