@@ -834,7 +834,7 @@ def render_ops_workflow(ctx: RepoInitContext) -> str:
         "\n"
         "on:\n"
         "  schedule:\n"
-        f"    - cron: '{minute} 6 * * *'\n"
+        f"    - cron: '{minute} 1 * * *'\n"
         "  workflow_dispatch:\n"
         "\n"
         "permissions:\n"
