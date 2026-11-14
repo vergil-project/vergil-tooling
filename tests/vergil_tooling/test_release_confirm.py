@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from vergil_tooling.lib import ci_evidence
 from vergil_tooling.lib.release.confirm import (
     _CD_POLL_ATTEMPTS,
     confirm_develop,
@@ -977,3 +978,140 @@ def test_run_conclusion_reads_run_level_conclusion() -> None:
     args = read.call_args.args
     assert args[:5] == ("run", "view", "--repo", "owner/repo", "123")
     assert args[5:] == ("--json", "conclusion", "--jq", ".conclusion")
+
+
+# --- A failed CD release job names its recovery (#4405) -----------------
+
+_RELEASE_PR = "https://github.com/owner/repo/pull/10"
+_PR_HEAD = "feedface1234"
+_FAILED_RELEASE = [_job("docs / docs"), _job("release / release", conclusion="failure")]
+
+
+def _resumed_ctx() -> ReleaseContext:
+    """A resumed release: prepare adopted the merged release PR."""
+    ctx = _ctx()
+    ctx.release_pr_url = _RELEASE_PR
+    return ctx
+
+
+def _confirm_failed_release(ctx: ReleaseContext, **ci_lookup: object) -> ReleaseError:
+    """Run confirm_main over a CD run whose release job failed; return the error."""
+    with (
+        patch(_MOD + "._watch_cd", return_value=("222", "https://run/222")),
+        patch(_MOD + "._settled_run_jobs", return_value=_FAILED_RELEASE),
+        patch(_MOD + ".github.head_sha", return_value=_PR_HEAD) as head_sha,
+        patch(_MOD + ".ci_evidence.select_ci_run", **ci_lookup) as select,
+        patch(_MOD + "._verify_artifacts") as verify_artifacts,
+        pytest.raises(ReleaseError, match="Release job did not succeed") as raised,
+    ):
+        confirm_main(ctx)
+    verify_artifacts.assert_not_called()
+    if ctx.release_pr_url is not None:
+        head_sha.assert_called_once_with(_RELEASE_PR)
+        select.assert_called_once_with("owner/repo", _PR_HEAD)
+    return raised.value
+
+
+def test_failed_release_job_prints_exact_recovery_steps() -> None:
+    err = _confirm_failed_release(_resumed_ctx(), return_value={"id": 111})
+    assert err.phase == "confirm-main"
+    assert str(err) == (
+        "Release job did not succeed (conclusion: 'failure'). Resuming alone re-judges "
+        "the same failed CD run. Once the cause is fixed and the fix is released, "
+        "recover this release: "
+        "(1) `gh run rerun 111 --repo owner/repo` (the release PR's CI run, so CD "
+        "harvests fresh evidence); "
+        "(2) `gh run watch 111 --repo owner/repo --exit-status`; "
+        "(3) `gh run rerun 222 --repo owner/repo` (the failed CD run on main); "
+        "(4) `gh run watch 222 --repo owner/repo --exit-status`; "
+        "(5) `vrg-release --resume 2.1.0`."
+    )
+
+
+def test_failed_release_job_ci_lookup_failure_is_named_not_masking() -> None:
+    err = _confirm_failed_release(
+        _resumed_ctx(),
+        side_effect=ci_evidence.NoQualifyingRunError(_PR_HEAD),
+    )
+    message = str(err)
+    assert message.startswith("Release job did not succeed (conclusion: 'failure').")
+    assert f"`gh run list --repo owner/repo --workflow CI --commit {_PR_HEAD}`" in message
+    assert f"no completed+success CI run for head SHA {_PR_HEAD}" in message
+    # The CD steps still carry the failed run's ID.
+    assert "`gh run rerun 222 --repo owner/repo`" in message
+    assert "`vrg-release --resume 2.1.0`" in message
+
+
+def test_failed_release_job_ci_api_error_is_named() -> None:
+    err = _confirm_failed_release(
+        _resumed_ctx(),
+        side_effect=subprocess.CalledProcessError(1, ["gh", "api"], stderr="HTTP 502"),
+    )
+    assert "it could not be looked up:" in str(err)
+    assert "`gh run rerun 222 --repo owner/repo`" in str(err)
+
+
+def test_failed_release_job_without_release_pr_says_so() -> None:
+    ctx = _ctx()
+    assert ctx.release_pr_url is None
+    with patch(_MOD + ".github.head_sha") as head_sha:
+        err = _confirm_failed_release(ctx, return_value={"id": 111})
+    head_sha.assert_not_called()
+    assert "the release PR is not recorded" in str(err)
+    assert "`gh run rerun 222 --repo owner/repo`" in str(err)
+
+
+def test_release_job_not_found_carries_no_recovery() -> None:
+    ctx = _resumed_ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("222", "https://run/222")),
+        patch(_MOD + "._settled_run_jobs", return_value=[_job("docs / docs")]),
+        patch(_MOD + ".github.head_sha") as head_sha,
+        pytest.raises(ReleaseError, match=r"^Release job 'release / release' not found"),
+    ):
+        confirm_main(ctx)
+    head_sha.assert_not_called()
+
+
+def test_successful_release_job_makes_no_recovery_lookup() -> None:
+    ctx = _resumed_ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("222", "https://run/222")),
+        patch(_MOD + "._settled_run_jobs", return_value=_MAIN_JOBS_OK),
+        patch(_MOD + ".github.head_sha") as head_sha,
+        patch(_MOD + ".ci_evidence.select_ci_run") as select,
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)
+    head_sha.assert_not_called()
+    select.assert_not_called()
+
+
+def test_resume_after_failed_release_job_judges_the_rerun_attempt() -> None:
+    """The recovery end to end: the first run fails at the release job; once the
+    human re-runs CD, ``--resume`` watches the same run's new attempt and passes."""
+    ctx = _resumed_ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("222", "https://run/222")),
+        patch(
+            _MOD + "._fetch_run_jobs", side_effect=[_FAILED_RELEASE, _MAIN_JOBS_OK]
+        ) as fetch,
+        patch(_MOD + ".github.head_sha", return_value=_PR_HEAD),
+        patch(_MOD + ".ci_evidence.select_ci_run", return_value={"id": 111}),
+        patch(_MOD + "._verify_artifacts") as verify_artifacts,
+    ):
+        with pytest.raises(ReleaseError, match="gh run rerun 222"):
+            confirm_main(ctx)
+        verify_artifacts.assert_not_called()
+        confirm_main(ctx)  # the resume, after the re-run succeeded
+    assert fetch.call_count == 2
+    verify_artifacts.assert_called_once_with(ctx)
+    assert ctx.cd_run_id == "222"
+
+
+def test_resume_while_rerun_still_fails_keeps_failing_loudly() -> None:
+    """A re-run that fails again is re-judged and refused, with the steps again."""
+    ctx = _resumed_ctx()
+    for _ in range(2):
+        err = _confirm_failed_release(ctx, return_value={"id": 111})
+        assert "(5) `vrg-release --resume 2.1.0`" in str(err)
