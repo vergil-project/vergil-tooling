@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -994,7 +995,7 @@ def _resumed_ctx() -> ReleaseContext:
     return ctx
 
 
-def _confirm_failed_release(ctx: ReleaseContext, **ci_lookup: object) -> ReleaseError:
+def _confirm_failed_release(ctx: ReleaseContext, **ci_lookup: Any) -> ReleaseError:
     """Run confirm_main over a CD run whose release job failed; return the error."""
     with (
         patch(_MOD + "._watch_cd", return_value=("222", "https://run/222")),
@@ -1093,9 +1094,7 @@ def test_resume_after_failed_release_job_judges_the_rerun_attempt() -> None:
     ctx = _resumed_ctx()
     with (
         patch(_MOD + "._watch_cd", return_value=("222", "https://run/222")),
-        patch(
-            _MOD + "._fetch_run_jobs", side_effect=[_FAILED_RELEASE, _MAIN_JOBS_OK]
-        ) as fetch,
+        patch(_MOD + "._fetch_run_jobs", side_effect=[_FAILED_RELEASE, _MAIN_JOBS_OK]) as fetch,
         patch(_MOD + ".github.head_sha", return_value=_PR_HEAD),
         patch(_MOD + ".ci_evidence.select_ci_run", return_value={"id": 111}),
         patch(_MOD + "._verify_artifacts") as verify_artifacts,
