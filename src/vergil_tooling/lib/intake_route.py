@@ -17,7 +17,10 @@ routes each container allows:
   repo's ad-hoc epic (or a named finite epic). A move *transfers* the issue,
   keeping its history; when GitHub refuses the transfer it falls back to
   recreating the item in the target repo with a link back and closing the
-  original with a pointer — and says so on stderr. A transfer carries the
+  original with a pointer — and says so on stderr. Before a transfer the item
+  is unlinked from its queue epic, so no link is left for the transfer to
+  carry over minutes after the route reported success (#4291); a refused
+  transfer links it back before the recreate. A transfer can still carry the
   item's old parent across (sometimes only after a delay), so the moved
   issue is *reparented* with ``replaceParent`` and its final parent verified
   after a settle delay, replaced again if the old parent came back late
@@ -33,7 +36,9 @@ routes each container allows:
   naming the item, where it is and how to recover it, as does a link or
   read-back that fails outright. A planning item's ``in-progress`` label is
   removed from its final issue once the move has settled (a recreate never
-  carries it).
+  carries it). A re-run on an item already in the target repo and under the
+  target epic, which a queue epic still lists as a sub-issue, removes that
+  stale listing and reads the item back twice instead of being refused (#4291).
 - **planning** — reparent onto the planning epic of the same queue home.
 - **split** — the replacement tasks already exist (made with
   ``vrg-issue-create``); comment the links and the reason, then close.
@@ -185,7 +190,18 @@ def _repo_of(ref: IssueRef) -> str:
 
 def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
     parent = epics.parent_of(ref)
-    kind = _check_eligible(ref, action, parent)
+    try:
+        kind = _check_eligible(ref, action, parent)
+    except RouteRefusedError:
+        # A re-run of a one-off that already moved the item, while a queue epic
+        # still lists it, clears that listing instead of being refused (#4291).
+        if (
+            isinstance(action, OneOff)
+            and parent is not None
+            and _clear_stale_queue_listing(ref, action, parent)
+        ):
+            return RouteResult(final=ref, moved_by="none")
+        raise
     if isinstance(action, Drop):
         if kind == epics.PLANNING.key:
             _guard_open_planning_epics(ref, _view(ref, "labels,comments"), "dropping")
@@ -499,11 +515,14 @@ def _move_one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) ->
         return RouteResult(final=ref, moved_by="none")
     # Read before the move: a transfer drops labels the target repo lacks.
     ghsas = _item_advisories(ref)
+    unlinked = _unlink_before_transfer(ref, old_parent)
     try:
         output = github.read_output("issue", "transfer", str(ref.number), dest, "--repo", source)
     except github.MissingGitHubTokenError:
         raise
     except subprocess.CalledProcessError as exc:
+        if unlinked is not None:
+            _relink_after_failed_transfer(ref, unlinked, dest, exc)
         new = _recreate(ref, dest, exc, ghsas)
         # A recreated issue has no parent to carry over: link it, then check.
         _link_and_check(ref, epic, new, None)
@@ -527,6 +546,53 @@ def _move_one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) ->
             pending = _transfer_recovery(ghsas[index:], final)
             raise RuntimeError(f"{ref.slug} moved to {final.slug}, but {pending}") from exc
     return RouteResult(final=final, moved_by="transfer")
+
+
+def _unlink_before_transfer(ref: IssueRef, old_parent: IssueRef | None) -> IssueRef | None:
+    """Unlink *ref* from its queue epic before a transfer; return that epic, or None.
+
+    A transfer carries the item's sub-issue link across on its own schedule,
+    sometimes minutes after the route has checked and reported the move done
+    (#4291), so the queue epic listed it again. With no link left at transfer
+    time there is nothing to carry. An item whose parent is only a body
+    ``Parent:`` line has no native link to remove. Nothing has moved yet, so
+    a failure here says so.
+    """
+    if old_parent is None or epics.native_parent_of(ref) != old_parent:
+        return None
+    try:
+        epics.remove_child(old_parent, ref)
+        current = epics.native_parent_of(ref)
+    except (github.GitHubAPIError, RuntimeError) as exc:
+        raise RouteHalfAppliedError(
+            f"unlinking {ref.slug} from {old_parent.slug} before its transfer failed "
+            f"({error_text(exc)}); nothing was moved. Check where it is with vrg-queue; if it "
+            f"is unparented, fix it with: vrg-epic-move --task {quoted_slug(ref)} "
+            f"--epic {quoted_slug(old_parent)}, then route it again"
+        ) from exc
+    if current is not None:
+        raise RouteHalfAppliedError(
+            f"unlinked {ref.slug} from {old_parent.slug} before its transfer, but it is "
+            f"{_placement(current)}; nothing was moved. Check where it is with vrg-queue, "
+            "then route it again"
+        )
+    return old_parent
+
+
+def _relink_after_failed_transfer(
+    ref: IssueRef, old_parent: IssueRef, dest: str, transfer_error: subprocess.CalledProcessError
+) -> None:
+    """Put *ref* back under *old_parent* when the transfer is refused, before the recreate."""
+    try:
+        epics.add_child(old_parent, ref)
+    except (github.GitHubAPIError, RuntimeError) as exc:
+        raise RouteHalfAppliedError(
+            f"the transfer of {ref.slug} to {dest} failed "
+            f"({' '.join(error_text(transfer_error).split())}), and linking it back under "
+            f"{old_parent.slug} failed ({error_text(exc)}); it is unparented and nothing was "
+            f"moved. Fix it with: vrg-epic-move --task {quoted_slug(ref)} "
+            f"--epic {quoted_slug(old_parent)}, then route it again"
+        ) from exc
 
 
 def _not_retargeted(ghsas: tuple[str, ...]) -> str:
@@ -602,6 +668,94 @@ def _retarget(
     """Move advisory *ghsa* (homed in *ref*'s org ``.github``) to track *targets*."""
     home = security_records.advisory_home(ref.owner)
     security_records.retarget(home, ghsa, targets, renamed=renamed)
+
+
+def _one_off_target(item: IssueRef, action: OneOff) -> IssueRef | None:
+    """The epic *action* names for *item*, found without creating one; None if absent."""
+    dest = action.repo
+    if action.epic == epics.ADHOC.sentinel:
+        owner, bare = dest.split("/", 1)
+        return epics.find_standing_epic(epics.ADHOC, epics.resolve_epic_home(owner, bare), bare)
+    target = epics.qualify_epic_ref(action.epic, repo=dest)
+    return target if target.owner == item.owner else None
+
+
+def _queue_epics(item: IssueRef) -> list[IssueRef]:
+    """The live queue epics a one-off of *item* can have come from, never created.
+
+    Those of *item*'s own queue home and of its org's ``.github`` (a one-off
+    transfers within the org), one of each kind that allows the route.
+    """
+    homes = dict.fromkeys(
+        (epics.queue_home(_repo_of(item)), epics.queue_home(f"{item.owner}/.github"))
+    )
+    found = (
+        epics.find_standing_epic(kind, home, name)
+        for home, name in homes
+        for kind in epics.QUEUE_KINDS
+        if OneOff in ROUTES[kind.key]
+    )
+    return [epic for epic in dict.fromkeys(found) if epic is not None]
+
+
+def _clear_stale_queue_listing(item: IssueRef, action: OneOff, parent: IssueRef) -> bool:
+    """Finish a one-off that left only a stale queue listing behind (#4291).
+
+    Applies when *item* is already in the target repo and its parent reads the
+    target epic, while a queue epic's sub-issue list (what the queue views
+    read) still holds it. Each such listing is removed, and the item must then
+    hold, on two reads a settle delay apart, its parent at the target epic and
+    no queue epic listing it. Return False, changing nothing, when the item is
+    not in that state, so the caller's refusal stands.
+    """
+    if action.repo != _repo_of(item) or _one_off_target(item, action) != parent:
+        return False
+    queues = _queue_epics(item)
+    stale = [queue for queue in queues if item in epics.native_children(queue)]
+    if not stale:
+        return False
+    fix = (
+        f"Re-check with vrg-queue in a minute; if it is still wrong, set the parent of "
+        f"{item.slug} to {parent.slug} and remove it from the sub-issues of "
+        f"{', '.join(queue.slug for queue in stale)} in the GitHub UI"
+    )
+    try:
+        for queue in stale:
+            print(
+                f"intake-route: {item.slug} is under {parent.slug}, but {queue.slug} still "
+                "lists it as a sub-issue; removing the stale listing",
+                file=sys.stderr,
+            )
+            epics.remove_child(queue, item)
+        placement = _settled_placement(item, parent, queues)
+    except (github.GitHubAPIError, RuntimeError) as exc:
+        raise RouteHalfAppliedError(
+            f"{item.slug} is under {parent.slug} but a queue epic still listed it, and "
+            f"clearing that listing or reading it back failed ({error_text(exc)}). {fix}"
+        ) from exc
+    if placement:
+        raise RouteHalfAppliedError(
+            f"removed the stale queue listing of {item.slug}, but it is {placement}, "
+            f"not settled under {parent.slug}. {fix}"
+        )
+    return True
+
+
+def _settled_placement(item: IssueRef, parent: IssueRef, queues: list[IssueRef]) -> str:
+    """Read *item* back twice, a settle delay apart; empty when it holds under *parent*.
+
+    Otherwise the placement text of the first read that does not: another
+    parent, or a queue epic in *queues* that still lists it.
+    """
+    for _ in range(2):
+        time.sleep(_SETTLE_SECONDS)
+        current = epics.native_parent_of(item)
+        if current != parent:
+            return _placement(current)
+        listing = next((queue for queue in queues if item in epics.native_children(queue)), None)
+        if listing is not None:
+            return f"still listed as a sub-issue of {listing.slug}"
+    return ""
 
 
 def _settle_parent(
@@ -732,7 +886,8 @@ def _parent_mismatch(
         return RouteHalfAppliedError(
             f"{moved}, but it is {placement}, not settled under {epic.slug}; the route is "
             "half-applied. Re-check with vrg-queue in a minute; if it is still listed "
-            f"there, remove {task.slug} from the sub-issues of the old epic in the GitHub UI"
+            f"there, clear it with: vrg-intake-route {quoted_slug(task)} one-off "
+            f"--repo {_repo_of(task)} --epic {quoted_slug(epic)}"
         )
     return RouteHalfAppliedError(
         f"{moved}, but it is {placement}, not under {epic.slug}; the route is half-applied. "

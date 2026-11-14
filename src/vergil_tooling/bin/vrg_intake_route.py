@@ -19,7 +19,9 @@ private item headed somewhere public) exits 1 with the reason on stderr. So
 does a one-off whose item does not end up under its target epic: the message
 names where the item is and how to recover (the ``vrg-epic-move`` fix for a
 wrong parent, the GitHub UI when GitHub keeps refusing the link as a duplicate
-sub-issue), and ``Routed`` is never printed for it.
+sub-issue, a re-run of the one-off when a queue epic still lists the moved
+item), and ``Routed`` is never printed for it. That re-run, on the moved item
+with its own repo as ``--repo``, removes the stale queue listing.
 """
 
 from __future__ import annotations
