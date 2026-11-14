@@ -198,6 +198,12 @@ succeeded:
    `security` label when no other advisory line remains, in one edit. An
    issue that also names other advisories keeps their lines and the
    label. An issue that names only other advisories is never touched.
+   An issue that was **transferred** since it was tracked is never
+   written at its old number, which GitHub answers with a 404. If it now
+   lives at one of the targets, nothing is left to unmark: it keeps its
+   line and label. Otherwise the unmark follows the transfer and acts on
+   the issue at its current ref. Either way a line
+   `<GHSA-id>: <old-ref> was transferred to <ref>: …` says which it did.
 
 An issue naming several advisories needs one `retarget` per advisory.
 Run them one after another, never in parallel: each rewrites the issue's
