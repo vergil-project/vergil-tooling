@@ -143,6 +143,36 @@ as `quality / common`.
 for `[project].primary-language`. Pass `--check lint`, `typecheck`,
 `test` or `audit` to run one stage.
 
+A repository with none of its language's manifests is not bootstrapped
+yet, such as a Rust repository that `vrg-github-repo-init` created with
+no `Cargo.toml`. The manifests are the ones the dev image's warmup needs:
+
+| Language | Manifests |
+|---|---|
+| Python | `pyproject.toml`, `uv.lock` |
+| Rust | `Cargo.toml` |
+| Go | `go.mod` |
+| C++ | `conanfile.txt` or `conanfile.py`, `CMakeLists.txt`, `conan.lock` |
+| TypeScript | `package.json`, `package-lock.json` |
+
+For such a repository the install, lint, typecheck, test and audit
+stages do not run. Each is recorded as a warning (⚠) whose reason names
+the missing manifests, for example `skipped: no Cargo.toml (rust repo
+not bootstrapped yet)`, on its row and in the run summary. The common
+checks and the custom validator still run. A warning counts as passed,
+so the run can reach merge review. The skip applies only when every
+manifest is missing: a repository with some of them, such as a
+`pyproject.toml` with no `uv.lock`, runs the stages and fails on the
+gap, as does a `Cargo.toml` that `cargo fetch` cannot resolve.
+
+The skip also needs the repository to hold no source files of its
+language (`.rs` for Rust, `.py` for Python, and so on), tracked or
+untracked, ignored files left out. A repository with sources but none of
+its manifests, such as a branch that deletes `Cargo.toml` from an
+existing crate or adds Rust sources without one, has lost its manifest
+rather than never had one: its install stage fails, naming the missing
+manifests and the first sources found, and no language stage runs.
+
 ### Custom validator
 
 Last, `vrg-validate` runs the repository's custom validator, when it has
