@@ -1010,6 +1010,9 @@ def _confirm_failed_release(ctx: ReleaseContext, **ci_lookup: Any) -> ReleaseErr
     if ctx.release_pr_url is not None:
         head_sha.assert_called_once_with(_RELEASE_PR)
         select.assert_called_once_with("owner/repo", _PR_HEAD)
+    else:
+        head_sha.assert_not_called()
+        select.assert_not_called()
     return raised.value
 
 
@@ -1055,9 +1058,8 @@ def test_failed_release_job_ci_api_error_is_named() -> None:
 def test_failed_release_job_without_release_pr_says_so() -> None:
     ctx = _ctx()
     assert ctx.release_pr_url is None
-    with patch(_MOD + ".github.head_sha") as head_sha:
-        err = _confirm_failed_release(ctx, return_value={"id": 111})
-    head_sha.assert_not_called()
+    # The helper asserts that no head-SHA or CI-run lookup ran.
+    err = _confirm_failed_release(ctx, return_value={"id": 111})
     assert "the release PR is not recorded" in str(err)
     assert "`gh run rerun 222 --repo owner/repo`" in str(err)
 
