@@ -16,11 +16,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import develop_clone, github, mechanized_pr
+from vergil_tooling.lib import develop_clone, github, mechanized_pr, pr_merge
 from vergil_tooling.lib.develop_clone import clone_develop
 from vergil_tooling.lib.mechanized_pr import (
     AUTOMATION_BRANCH_PREFIX,
     MechanizedPRError,
+    PRNotMergedError,
     SyncResult,
     branch_name,
     open_sync_pr,
@@ -65,6 +66,8 @@ class FakeGitHub:
     mutations: list[dict[str, object]] = field(default_factory=list)
     auto_merge: dict[str, str] | None = None
     confirm_auto_merge: bool = True
+    waits: list[tuple[str, str, int]] = field(default_factory=list)
+    wait_failure: BaseException | None = None
 
     def branches(self) -> list[str]:
         out = _git(self.origin, "for-each-ref", "--format=%(refname:short)", "refs/heads/")
@@ -132,6 +135,13 @@ class FakeGitHub:
             self.auto_merge = {"mergeMethod": "SQUASH"}
         return {"enablePullRequestAutoMerge": {"pullRequest": {"number": 1}}}
 
+    def wait_until_merged(self, pr: str, *, strategy: str, deadline_secs: int) -> None:
+        """Stands in for ``pr_merge.wait_until_merged`` (tested in test_pr_merge)."""
+        assert self.auto_merge is not None, "the wait starts only after auto-merge is on"
+        self.waits.append((pr, strategy, deadline_secs))
+        if self.wait_failure is not None:
+            raise self.wait_failure
+
     def pr_calls(self) -> list[tuple[str, ...]]:
         return [call for call in self.calls if call[0] == "pr"]
 
@@ -164,6 +174,8 @@ def fake(origin: Path, monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     for name in ("read_json_paginated", "read_json", "run", "delete_if_exists", "create_pr"):
         monkeypatch.setattr(github, name, getattr(api, name))
     monkeypatch.setattr(github, "graphql", api.graphql)
+    monkeypatch.setattr(pr_merge, "wait_until_merged", api.wait_until_merged)
+    monkeypatch.delenv("VRG_MECHANIZED_PR_DEADLINE", raising=False)
     return api
 
 
@@ -239,7 +251,7 @@ def test_changes_pushed_on_new_branch_and_pr_opened(
 
     result = _sync(clone)
 
-    assert result == SyncResult(status="opened", pr_url=fake.prs[0].url, closed=[])
+    assert result == SyncResult(status="merged", pr_url=fake.prs[0].url, closed=[])
     assert sorted(fake.branches()) == [BRANCH, "develop"]
     assert _git(origin, "rev-parse", f"{BRANCH}^") == develop
     assert _git(origin, "log", "-1", "--format=%s", BRANCH) == "chore: sync"
@@ -277,7 +289,7 @@ def test_branch_without_pr_under_own_prefix_deleted(
 
     result = _sync(clone)
 
-    assert result.status == "opened"
+    assert result.status == "merged"
     assert result.closed == []
     assert sorted(fake.branches()) == [BRANCH, "develop"]
     assert _git(origin, "show", f"{BRANCH}:vergil.toml") == "v2"
@@ -545,3 +557,78 @@ def test_auto_merge_with_other_method_not_confirmed(fake: FakeGitHub, clone: Pat
 
     with pytest.raises(MechanizedPRError, match="auto-merge is not confirmed"):
         _sync(clone)
+
+
+# --- Wait until merged (vergil-tooling#4370) ---------------------------------
+
+
+def test_opened_pr_is_watched_until_merged_with_the_default_deadline(
+    fake: FakeGitHub, clone: Path
+) -> None:
+    (clone / "vergil.toml").write_text("v2\n")
+
+    result = _sync(clone)
+
+    assert result.status == "merged"
+    assert fake.waits == [(fake.prs[0].url, "squash", 2400)]
+
+
+def test_in_sync_clone_waits_for_nothing(fake: FakeGitHub, clone: Path) -> None:
+    assert _sync(clone).status == "in_sync"
+    assert fake.waits == []
+
+
+def test_deadline_follows_the_env_override(
+    fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VRG_MECHANIZED_PR_DEADLINE", "600")
+    (clone / "vergil.toml").write_text("v2\n")
+
+    _sync(clone)
+
+    assert fake.waits == [(fake.prs[0].url, "squash", 600)]
+
+
+@pytest.mark.parametrize("raw", ["0", "-5", "forty", "1.5"])
+def test_malformed_deadline_raises_before_any_pr(
+    fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    monkeypatch.setenv("VRG_MECHANIZED_PR_DEADLINE", raw)
+    (clone / "vergil.toml").write_text("v2\n")
+
+    with pytest.raises(MechanizedPRError, match="VRG_MECHANIZED_PR_DEADLINE must be a positive"):
+        _sync(clone)
+
+    assert fake.prs == []
+    assert fake.branches() == ["develop"]
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (pr_merge.MergeAbortError("Checks failed on PR x: ci / test"), "Checks failed on PR x"),
+        (
+            pr_merge.MergeDeadlineError("PR x did not merge within the 2400s deadline"),
+            "within the 2400s deadline",
+        ),
+        (
+            github.GitHubAPIError(1, ("gh", "pr", "view"), "", "HTTP 401: Bad credentials"),
+            "the wait until merged failed: ",
+        ),
+    ],
+    ids=["abort", "deadline", "api-error"],
+)
+def test_pr_that_does_not_merge_raises_naming_it(
+    fake: FakeGitHub, clone: Path, failure: BaseException, reason: str
+) -> None:
+    fake.wait_failure = failure
+    (clone / "vergil.toml").write_text("v2\n")
+
+    with pytest.raises(PRNotMergedError) as excinfo:
+        _sync(clone)
+
+    url = fake.prs[0].url
+    assert excinfo.value.pr_url == url
+    assert reason in excinfo.value.reason
+    assert str(excinfo.value).startswith(f"mechanized PR for {REPO}: {url} did not merge: ")
+    assert isinstance(excinfo.value, MechanizedPRError)

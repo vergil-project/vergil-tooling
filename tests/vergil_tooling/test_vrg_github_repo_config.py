@@ -52,7 +52,7 @@ from vergil_tooling.lib.github_config import (
     compute_desired_state,
 )
 from vergil_tooling.lib.identity_mode import IdentityMode
-from vergil_tooling.lib.mechanized_pr import MechanizedPRError, SyncResult
+from vergil_tooling.lib.mechanized_pr import MechanizedPRError, PRNotMergedError, SyncResult
 from vergil_tooling.lib.repo_config import (
     CLAUDE_MD_MARKER_BEGIN,
     CLAUDE_MD_MARKER_END,
@@ -1762,8 +1762,8 @@ def test_apply_reports_a_cwd_check_failure(capsys: pytest.CaptureFixture[str]) -
 _PR_URL = "https://github.com/o/r/pull/9"
 
 
-def _opened(*_args: object, **_kwargs: object) -> SyncResult:
-    return SyncResult(status="opened", pr_url=_PR_URL)
+def _merged(*_args: object, **_kwargs: object) -> SyncResult:
+    return SyncResult(status="merged", pr_url=_PR_URL)
 
 
 def _in_sync(*_args: object, **_kwargs: object) -> SyncResult:
@@ -1774,7 +1774,7 @@ def _update_env(
     *,
     mode: IdentityMode = IdentityMode.HUMAN,
     github_diff: ConfigDiff | None = None,
-    sync: Callable[..., SyncResult] = _opened,
+    sync: Callable[..., SyncResult] = _merged,
     fixers: list[Callable[[Path], bool]] | None = None,
 ) -> tuple[contextlib.ExitStack, dict[str, MagicMock]]:
     """Patch ``update``'s collaborators: the identity, the GitHub side and the PR.
@@ -1843,7 +1843,7 @@ def test_update_runs_for_human_and_automation(
     assert args[0] == "o/r"
     assert kwargs["job"] == "repo-config-sync"
     out = capsys.readouterr().out
-    assert f"o/r: opened sync PR {_PR_URL} (auto-merge on)" in out
+    assert f"o/r: sync PR {_PR_URL} merged" in out
 
 
 def test_update_converges_github_before_the_clone() -> None:
@@ -1859,7 +1859,7 @@ def test_update_converges_github_before_the_clone() -> None:
     mocks_apply = mocks["apply"]
     with stack, patch(f"{_MODULE}.clone_develop", side_effect=_clone):
         mocks_apply.side_effect = lambda *_a: calls.append("apply") or []
-        mocks["sync"].side_effect = lambda *_a, **_k: calls.append("sync") or _opened()
+        mocks["sync"].side_effect = lambda *_a, **_k: calls.append("sync") or _merged()
         assert main(["update", "--repo", "o/r"]) == 0
     assert calls == ["apply", "clone", "sync"]
 
@@ -2019,6 +2019,27 @@ def test_update_pr_or_clone_failure_exits_2(
     assert str(failure) in capsys.readouterr().err
 
 
+def test_update_pr_that_does_not_merge_exits_2_naming_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    failure = PRNotMergedError("o/r", _PR_URL, "Checks failed on PR x: ci / test")
+    stack, mocks = _update_env()
+    with stack:
+        mocks["sync"].side_effect = failure
+        assert main(["update", "--repo", "o/r"]) == 2
+    err = capsys.readouterr().err
+    assert f"mechanized PR for o/r: {_PR_URL} did not merge: Checks failed on PR x" in err
+
+
+def test_update_unmerged_pr_outranks_unfixable_drift() -> None:
+    # Exit 1 (drift it cannot fix) applies only once the PR merged; 2 outranks it.
+    failure = PRNotMergedError("o/r", _PR_URL, "PR x did not merge within the 2400s deadline.")
+    stack, mocks = _update_env(github_diff=_mock_github_undeclared())
+    with stack:
+        mocks["sync"].side_effect = failure
+        assert main(["update", "--repo", "o/r"]) == 2
+
+
 def test_update_missing_installation_exits_two(capsys: pytest.CaptureFixture[str]) -> None:
     stack, _ = _update_env()
     failure = github.NoInstallationError("o", ["acme"])
@@ -2168,7 +2189,7 @@ class _RecordingSync:
         self.calls.append(_SyncCall(job=job, body=body, changed=changed, shim_mode=shim_mode))
         if not changed:
             return SyncResult(status="in_sync", pr_url=None)
-        return SyncResult(status="opened", pr_url=_PR_URL)
+        return SyncResult(status="merged", pr_url=_PR_URL)
 
 
 def _real_update(
@@ -2214,7 +2235,7 @@ def test_update_opens_one_pr_for_all_fixable_drift(
     assert "Left for a human" not in call.body
     out = capsys.readouterr().out
     assert "local: compliant" in out
-    assert f"o/r: opened sync PR {_PR_URL} (auto-merge on)" in out
+    assert f"o/r: sync PR {_PR_URL} merged" in out
 
 
 def test_update_opens_pr_then_exits_1_for_no_fixer_check(
@@ -2236,7 +2257,7 @@ def test_update_opens_pr_then_exits_1_for_no_fixer_check(
     assert "AGENTS.md" not in call.changed
     assert "- `local.agents_md`:" in call.body
     out = capsys.readouterr().out
-    assert f"o/r: opened sync PR {_PR_URL} (auto-merge on)" in out
+    assert f"o/r: sync PR {_PR_URL} merged" in out
     assert "local: NON-COMPLIANT (1 issues)" in out
     assert "local.agents_md" in out
 

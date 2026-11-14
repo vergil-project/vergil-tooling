@@ -6,7 +6,7 @@ clone of the repo's ``develop`` branch, with GitHub API configuration
 auditing.
 
 ``update`` converges the GitHub side, then fixes the managed files in the
-clone and proposes them as one auto-merging sync PR (epic
+clone and proposes them as one sync PR, which it watches until merged (epic
 vergil-project/.github#1064). ``apply``, which converges only the GitHub
 side, is deprecated in its favour.
 """
@@ -71,7 +71,7 @@ _UPDATE_REFUSED_MODES = frozenset(
 APPLY_DEPRECATION = (
     "vrg-github-repo-config apply is deprecated: use 'vrg-github-repo-config update', "
     "which converges the same GitHub settings and also fixes managed-file drift "
-    "through one auto-merging sync PR. apply's behaviour is unchanged."
+    "through one sync PR. apply's behaviour is unchanged."
 )
 
 
@@ -134,16 +134,19 @@ def _update_repo(args: argparse.Namespace, repo: str) -> int:
 
     Exit codes:
 
-    - **0:** the GitHub side converged and the managed files are in sync, or
-      a sync PR was opened this run with auto-merge confirmed on;
+    - **0:** the GitHub side converged and the managed files are in sync:
+      no sync PR was needed, or the one opened this run merged;
     - **1:** drift that could not be fixed: a managed-file check with no
       fixer, a fix that cannot be computed (:class:`CannotFix`), or an
       undeclared ruleset parameter. The sync PR for the fixable drift is
-      still opened;
+      still opened, and exit 1 applies only once it has merged;
     - **2:** something could not be audited or converged: an agent identity,
       a setting not checked (a ``BypassUnreadable`` included), a GitHub write,
-      the clone or the PR failing. A setting not checked or a failed GitHub
-      write stops the run before the clone, so no PR is opened.
+      the clone or the PR failing, or a sync PR that did not merge (a failed
+      check, a conflict, a closed PR, the branch-update cap or the deadline;
+      the error names the PR and the reason). 2 outranks 1. A setting not
+      checked or a failed GitHub write stops the run before the clone, so no
+      PR is opened.
     """
     refusal = _update_identity_refusal()
     if refusal is not None:
@@ -227,8 +230,9 @@ def _sync_pr_body(repo: str, remaining: ConfigDiff) -> str:
         f"`vrg-github-repo-config update` found managed files on `develop` of {repo} "
         f"that differ from the released master copies. This PR brings them in sync.",
         "",
-        "The repo-config sync job opened it, and it merges itself once its required "
-        "checks pass. A later run replaces it while it is still open.",
+        "The repo-config sync job opened it and watches it until it merges, updating "
+        "the branch when `develop` moves and merging it once its required checks pass. "
+        "A later run replaces it while it is still open.",
     ]
     if remaining.items:
         lines += ["", "Left for a human, since this run could not fix them:", ""]
@@ -239,8 +243,8 @@ def _sync_pr_body(repo: str, remaining: ConfigDiff) -> str:
 def _print_sync_result(repo: str, result: SyncResult) -> None:
     for url in result.closed:
         print(f"  {repo}: closed the earlier sync PR {url}")
-    if result.status == "opened":
-        print(f"  {repo}: opened sync PR {result.pr_url} (auto-merge on)")
+    if result.status == "merged":
+        print(f"  {repo}: sync PR {result.pr_url} merged")
     else:
         print(f"  {repo}: managed files need no sync PR")
 

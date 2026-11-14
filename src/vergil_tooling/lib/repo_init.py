@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 from vergil_tooling.lib import dependabot, git, github, gitignore, lang_scaffold, repo_config
 from vergil_tooling.lib.config import _ENUMS
 from vergil_tooling.lib.labels import sync_labels
-from vergil_tooling.lib.output import emit_error
+from vergil_tooling.lib.output import emit_error, emit_warning
 
 _CHECKPOINT_RE = re.compile(r"chore\(init\): step (\d+) -")
 
@@ -1611,6 +1611,76 @@ def step_github_config(ctx: RepoInitContext) -> None:
     print("  Labels synced.")
 
 
+# The Pages source step 10 asks for: a legacy build from the root of gh-pages.
+_PAGES_SOURCE: dict[str, str] = {"branch": "gh-pages", "path": "/"}
+
+
+def _read_pages_site(repo: str) -> dict[str, Any] | None:
+    """The repo's GitHub Pages site, or ``None`` when it has none (HTTP 404).
+
+    Any other failure raises: only GitHub's own "no site" answer reads as absent.
+    """
+    try:
+        site = github.read_json("api", f"repos/{repo}/pages")
+    except github.GitHubAPIError as exc:
+        if "(HTTP 404)" in (exc.stderr or ""):
+            return None
+        raise
+    if not isinstance(site, dict):
+        msg = f"GET repos/{repo}/pages returned {site!r}, not a JSON object"
+        raise TypeError(msg)
+    return site
+
+
+def _require_pages_source(repo: str, site: dict[str, Any]) -> None:
+    """Stop unless *site* publishes from :data:`_PAGES_SOURCE` with a legacy build."""
+    source = site.get("source")
+    build_type = site.get("build_type")
+    matches = (
+        isinstance(source, dict)
+        and source.get("branch") == _PAGES_SOURCE["branch"]
+        and source.get("path") == _PAGES_SOURCE["path"]
+        and build_type in (None, "legacy")
+    )
+    if not matches:
+        emit_error(
+            f"{repo} already has a GitHub Pages site with source {source!r} "
+            f"(build_type {build_type!r}), not the gh-pages branch at / with a legacy "
+            "build. Change or remove it on GitHub, then re-run vrg-github-repo-init."
+        )
+        raise SystemExit(1)
+
+
+def _create_pages_site(repo: str) -> None:
+    """Create the Pages site, checking GitHub's state when the POST reports a failure.
+
+    GitHub has answered a Pages create that landed with an error status and an
+    empty JSON-typed body, which ``gh`` reports only as ``unexpected end of JSON
+    input`` (#4371). So a failed POST is followed by a GET: a site with the
+    requested source means the create landed, and the failure is shown as a
+    warning; anything else stops with the POST's HTTP status and ``gh``'s error.
+    A 409 "GitHub Pages is already enabled" from a site created since the first
+    GET takes the same path.
+    """
+    endpoint = f"repos/{repo}/pages"
+    result = github.post_json_with_status(endpoint, {"source": dict(_PAGES_SOURCE)})
+    if result.returncode == 0:
+        print("  Pages site created.")
+        return
+    status = github.http_status_line(result).strip() or "no HTTP status"
+    detail = (result.stderr or "").strip() or "no error output"
+    site = _read_pages_site(repo)
+    if site is None:
+        emit_error(f"creating the GitHub Pages site for {repo} failed: {status}: {detail}")
+        raise SystemExit(1)
+    _require_pages_source(repo, site)
+    emit_warning(
+        f"the POST to {endpoint} reported a failure ({status}: {detail}), but GitHub "
+        "now has the Pages site with the gh-pages source, so the create landed."
+    )
+    print("  Pages site present (the create landed despite the reported failure).")
+
+
 def step_github_pages(ctx: RepoInitContext) -> None:
     """Step 10: Configure GitHub Pages."""
     if not ctx.publish_docs:
@@ -1627,12 +1697,12 @@ def step_github_pages(ctx: RepoInitContext) -> None:
         git.run("checkout", "develop")
         print("  Created gh-pages branch.")
 
-    github.write_json(
-        "POST",
-        f"repos/{ctx.repo}/pages",
-        {"source": {"branch": "gh-pages", "path": "/"}},
-    )
-    print("  Pages source configured.")
+    site = _read_pages_site(ctx.repo)
+    if site is None:
+        _create_pages_site(ctx.repo)
+    else:
+        _require_pages_source(ctx.repo, site)
+        print("  Pages site already exists with the gh-pages source.")
 
     homepage = f"https://{ctx.org}.github.io/{ctx.name}/"
     github.write_json(

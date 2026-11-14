@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.310] - 2026-11-14
+
+### Bug fixes
+
+- drop unused-allowed-license from the packaged deny.toml (#4368)
+- make the Pages step idempotent and report the create's HTTP status (#4373)
+
+### Chores
+
+- uv lock --upgrade (#4364)
+
+### Documentation
+
+- document vrg-queue adhoc and name epic-review in the queue-item refusal (#4369)
+
+### Features
+
+- watch sync PRs until merged, updating a branch that falls behind develop (#4372)
+
 ## [2.1.309] - 2026-11-13
 
 ### Bug fixes

@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from vergil_tooling.lib import dependabot, gitignore, repo_init
+from vergil_tooling.lib import dependabot, github, gitignore, repo_init
 from vergil_tooling.lib.config import CiConfig, ProjectConfig, _parse_raw_config
 from vergil_tooling.lib.github_config import ClassicProtectionReport
 from vergil_tooling.lib.repo_init import (
@@ -2032,25 +2032,168 @@ class TestStepGithubConfig:
         assert desired.repo_settings.allow_auto_merge is True
 
 
+_PAGES_ENDPOINT = "repos/vergil-project/vergil-vm/pages"
+_HOMEPAGE_PATCH = (
+    "PATCH",
+    "repos/vergil-project/vergil-vm",
+    {"homepage": "https://vergil-project.github.io/vergil-vm/"},
+)
+
+
+def _pages_site(branch: str = "gh-pages", path: str = "/", build_type: str = "legacy") -> Any:
+    return {"source": {"branch": branch, "path": path}, "build_type": build_type}
+
+
+def _pages_404() -> github.GitHubAPIError:
+    return github.GitHubAPIError(
+        1, ("gh", "api", _PAGES_ENDPOINT), "", "gh: Not Found (HTTP 404)\n"
+    )
+
+
+def _post_result(returncode: int, status: str, stderr: str = "") -> Any:
+    return subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout=f"{status}\nX: y\r\n\r\n", stderr=stderr
+    )
+
+
 class TestStepGithubPages:
-    def test_creates_gh_pages_branch_and_configures(self) -> None:
+    """Step 10 creates or confirms the Pages site, then sets the homepage (#4371)."""
+
+    def _run(
+        self,
+        *,
+        reads: list[Any],
+        post: Any = None,
+        branch_exists: bool = True,
+    ) -> tuple[Any, Any, Any]:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         ctx.publish_docs = True
-
-        write_json_calls: list[tuple[str, str, dict[str, object]]] = []
-
-        def mock_write_json(method: str, endpoint: str, body: dict[str, object]) -> None:
-            write_json_calls.append((method, endpoint, body))
-
         with (
-            patch("vergil_tooling.lib.repo_init.github.run"),
-            patch("vergil_tooling.lib.repo_init.github.write_json", side_effect=mock_write_json),
-            patch("vergil_tooling.lib.repo_init._remote_branch_exists", return_value=False),
+            patch("vergil_tooling.lib.repo_init.github.read_json", side_effect=reads) as read,
+            patch(
+                "vergil_tooling.lib.repo_init.github.post_json_with_status", return_value=post
+            ) as create,
+            patch("vergil_tooling.lib.repo_init.github.write_json") as write,
+            patch("vergil_tooling.lib.repo_init._remote_branch_exists", return_value=branch_exists),
             patch("vergil_tooling.lib.repo_init.git.run"),
         ):
             step_github_pages(ctx)
+        return read, create, write
 
-        assert any("repos/vergil-project/vergil-vm/pages" in c[1] for c in write_json_calls)
+    def test_create_succeeds_then_sets_homepage(self) -> None:
+        _, create, write = self._run(
+            reads=[_pages_404()], post=_post_result(0, "HTTP/2.0 201 Created")
+        )
+        create.assert_called_once_with(
+            _PAGES_ENDPOINT, {"source": {"branch": "gh-pages", "path": "/"}}
+        )
+        write.assert_called_once_with(*_HOMEPAGE_PATCH)
+
+    def test_creates_gh_pages_branch_when_missing(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.publish_docs = True
+        with (
+            patch("vergil_tooling.lib.repo_init.github.read_json", side_effect=[_pages_404()]),
+            patch(
+                "vergil_tooling.lib.repo_init.github.post_json_with_status",
+                return_value=_post_result(0, "HTTP/2.0 201 Created"),
+            ),
+            patch("vergil_tooling.lib.repo_init.github.write_json"),
+            patch("vergil_tooling.lib.repo_init._remote_branch_exists", return_value=False),
+            patch("vergil_tooling.lib.repo_init.git.run") as git_run,
+        ):
+            step_github_pages(ctx)
+        git_run.assert_any_call("push", "origin", "gh-pages")
+
+    def test_existing_site_with_requested_source_is_done(self) -> None:
+        # A re-run after the create landed: no POST, so no 409.
+        _, create, write = self._run(reads=[_pages_site()])
+        create.assert_not_called()
+        write.assert_called_once_with(*_HOMEPAGE_PATCH)
+
+    def test_post_409_already_enabled_with_requested_source_is_done(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        post = _post_result(
+            1, "HTTP/2.0 409 Conflict", "gh: GitHub Pages is already enabled. (HTTP 409)\n"
+        )
+        read, _, write = self._run(reads=[_pages_404(), _pages_site()], post=post)
+        assert read.call_count == 2
+        write.assert_called_once_with(*_HOMEPAGE_PATCH)
+        assert "HTTP/2.0 409 Conflict" in capsys.readouterr().err
+
+    def test_landed_create_reported_as_empty_json_failure_warns_and_continues(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The observed failure: an error status with an empty JSON-typed body,
+        # which gh reports only as Go's parse error; the GET shows the site.
+        post = _post_result(
+            1, "HTTP/2.0 500 Internal Server Error", "unexpected end of JSON input\n"
+        )
+        _, _, write = self._run(reads=[_pages_404(), _pages_site()], post=post)
+        write.assert_called_once_with(*_HOMEPAGE_PATCH)
+        err = capsys.readouterr().err
+        assert "HTTP/2.0 500 Internal Server Error" in err
+        assert "unexpected end of JSON input" in err
+
+    def test_real_create_error_surfaces_status_and_message(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        post = _post_result(
+            1,
+            "HTTP/2.0 422 Unprocessable Entity",
+            "gh: The gh-pages branch must exist before Pages can be enabled. (HTTP 422)\n",
+        )
+        with pytest.raises(SystemExit) as exc:
+            self._run(reads=[_pages_404(), _pages_404()], post=post)
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "HTTP/2.0 422 Unprocessable Entity" in err
+        assert "must exist before Pages can be enabled. (HTTP 422)" in err
+
+    def test_failed_post_without_status_still_errors(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        post = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
+        with pytest.raises(SystemExit):
+            self._run(reads=[_pages_404(), _pages_404()], post=post)
+        assert "no HTTP status: no error output" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        "site",
+        [
+            _pages_site(branch="main"),
+            _pages_site(path="/docs"),
+            _pages_site(build_type="workflow"),
+            {"build_type": "legacy"},
+        ],
+    )
+    def test_existing_site_with_another_source_is_a_loud_error(
+        self, site: Any, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as exc:
+            self._run(reads=[site])
+        assert exc.value.code == 1
+        assert "already has a GitHub Pages site" in capsys.readouterr().err
+
+    def test_landed_create_with_another_source_is_a_loud_error(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        post = _post_result(1, "HTTP/2.0 409 Conflict", "gh: already enabled (HTTP 409)\n")
+        with pytest.raises(SystemExit):
+            self._run(reads=[_pages_404(), _pages_site(branch="main")], post=post)
+        assert "already has a GitHub Pages site" in capsys.readouterr().err
+
+    def test_get_error_other_than_404_raises(self) -> None:
+        denied = github.GitHubAPIError(
+            1, ("gh", "api", _PAGES_ENDPOINT), "", "gh: Forbidden (HTTP 403)\n"
+        )
+        with pytest.raises(github.GitHubAPIError):
+            self._run(reads=[denied])
+
+    def test_get_non_object_raises(self) -> None:
+        with pytest.raises(TypeError, match="not a JSON object"):
+            self._run(reads=[[1]])
 
     def test_skips_when_docs_disabled(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
@@ -2218,20 +2361,6 @@ class TestStepGithubConfigExtended:
         assert exc.value.code == 1
         assert re.search(r"^ERROR: \[ci\]\.versions pins 1\.25", capsys.readouterr().err, re.M)
         mock_apply.assert_not_called()
-
-
-class TestStepGithubPagesExtended:
-    def test_skips_branch_creation_when_exists(self) -> None:
-        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
-        ctx.publish_docs = True
-
-        with (
-            patch(
-                "vergil_tooling.lib.repo_init.github.write_json",
-            ),
-            patch("vergil_tooling.lib.repo_init._remote_branch_exists", return_value=True),
-        ):
-            step_github_pages(ctx)
 
 
 class TestRunWizard:
