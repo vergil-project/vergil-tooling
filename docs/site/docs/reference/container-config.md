@@ -78,6 +78,13 @@ as the CI docs jobs do. If that Python does not satisfy `requires-python`, uv
 fails the build; there is no fallback
 ([#3414](https://github.com/vergil-project/vergil-tooling/issues/3414)).
 
+For a **Rust** repo, `vrg-container-run` sets no toolchain variable. The Rust
+image pins rustup to its own installed release itself (`RUSTUP_TOOLCHAIN`, with
+`RUSTUP_AUTO_INSTALL=0`), and the passthrough never forwards those two names
+(see [`env-prefixes`](#env-prefixes)), so neither a repo file nor the host can
+select another toolchain
+([epic vergil-project/.github#1095](https://github.com/vergil-project/.github/issues/1095)).
+
 For a **cpp** repo, `vrg-container-run` also forwards
 `CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER` when it can resolve one: from the
 environment if set and not blank, else from `~/.config/vergil/conan.env`, else

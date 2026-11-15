@@ -532,7 +532,9 @@ chosen, and why.
 **`dev-rust`**
 :   Base: `base` (Ubuntu 24.04), with the series' pinned Rust release
     installed by a pinned `rustup-init`, and `gcc`/`libc6-dev` from Ubuntu
-    as the C linker.
+    as the C linker. The image pins rustup to that release
+    (`RUSTUP_TOOLCHAIN`, with auto-install off), so a repo's
+    `rust-toolchain.toml` cannot select or download another toolchain.
 
 **`dev-cpp-clang`**
 :   Base: `base` (Ubuntu 24.04), with Clang from apt.llvm.org's noble
