@@ -789,7 +789,19 @@ deferral — so no review skill hand-rolls them. Routes:
   named epic. A planning item's `in-progress` label is removed from the moved
   issue once the move has settled; a recreated issue never carries it.
 - `planning` — reparent the item onto the planning epic of the same queue
-  home.
+  home. It also takes a **follow-on brainstorm** out of a development epic: a
+  task titled `Follow-on brainstorm: …` whose native parent is a development
+  epic. A brainstorm never gates its epic's work, so moving it suspends
+  nothing. The parent is replaced in one step, then the hand-off is recorded
+  with a comment on the epic, for the retrospective's §5, and one on the item:
+
+  ```text
+  Follow-on brainstorm handed to planning: <item-ref> (now under <planning-epic-ref>)
+  Handed to planning from: <epic-ref>
+  ```
+
+  If a record fails after the move, the command fails loudly and prints every
+  comment still to post by hand.
 - `split --into REF [--into REF …] --reason TEXT` — comment links to the
   replacement tasks (already created with `vrg-issue-create`) and close.
 
@@ -802,14 +814,15 @@ Which routes an item allows depends on the container epic it is in:
 | ad hoc | `defer` — refused while an open PR would close the item |
 | deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split` |
 | no parent | `planning` (the `epic-create` free-text path) |
-| a development epic, or anything else | none — refused, naming the parent |
+| a development epic | `planning` for a follow-on brainstorm only; any other task is refused, naming the parent |
+| anything else | none — refused, naming the parent |
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_intake_route` (mechanics and route table: `lib/intake_route.py`) |
 | Args | `<issue-ref>` (`owner/repo#N`, or `#N` in the current repo), then a route: `drop`, `defer`, `intake`, `one-off`, `planning`, `split` |
-| Preconditions | The item is a child of a container epic that allows the route (`planning` also accepts an unparented issue); GitHub App credentials for the item's org |
-| Failure mode | A refused route — not allowed from the item's container, a development-epic task, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it |
+| Preconditions | The item is a child of a container epic that allows the route (`planning` also accepts an unparented issue and a follow-on brainstorm under a development epic); GitHub App credentials for the item's org |
+| Failure mode | A refused route — not allowed from the item's container, a development-epic task other than a follow-on brainstorm sent to planning, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it |
 | Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when` or a malformed `--date`) |
 | Status | Active |
 
