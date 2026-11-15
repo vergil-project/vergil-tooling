@@ -7,10 +7,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git, github, version
+from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.merge import known_pr_state, wait_and_merge
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
+
+_PHASE = "back-merge-bump"
+_BUMP_SUBJECT = "chore(release): bump version to {}"
 
 
 def back_merge_and_bump(ctx: ReleaseContext) -> None:
@@ -27,6 +31,9 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     rather than re-creating the branch. A closed, unmerged PR is not adopted.
     The context is never persisted: a resume re-runs this stage, so every
     path must record ``bump_merge_sha`` for confirm-develop (#3329).
+
+    With no PR yet, the post branch an earlier run left behind is reused
+    rather than re-created (#4415): see :func:`_checkout_post_branch`.
     """
     branch = f"release/post-{ctx.version}"
 
@@ -60,14 +67,17 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     print("Fetching main...")
     git.run("fetch", "--tags", "--force", "origin", "main")
 
-    print(f"Creating branch: {branch}")
-    git.run("checkout", "-b", branch, "origin/main")
+    # Re-runnable after a failure part-way through (#4415): an earlier run may
+    # have left the post branch, a partial bump or the bump commit behind.
+    next_ver = _checkout_post_branch(ctx, branch)
+    if next_ver is None:
+        next_ver = version.bump(ctx.work_root)
+        print(f"Bumped version to {next_ver}")
+        git.run("add", "-A")
+        git.run("commit", "-m", _BUMP_SUBJECT.format(next_ver))
 
-    next_ver = version.bump(ctx.work_root)
-    print(f"Bumped version to {next_ver}")
-    git.run("add", "-A")
-    git.run("commit", "-m", f"chore(release): bump version to {next_ver}")
-
+    # Idempotent: a no-op when origin already has this tip, which
+    # _checkout_post_branch has checked is the only remote state it accepts.
     git.run("push", "-u", "origin", branch)
 
     pr_url = _create_bump_pr(ctx, next_ver)
@@ -78,6 +88,174 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     ctx.bump_pr_url = pr_url
     ctx.bump_merge_sha = _merge_commit(pr_url)
     ctx.next_version = next_ver
+
+
+def _checkout_post_branch(ctx: ReleaseContext, branch: str) -> str | None:
+    """Check out *branch* for the bump, creating it or reusing an earlier run's.
+
+    Returns the bumped version when the branch already carries this stage's
+    bump commit (the bump is then skipped), else None. With no local or
+    remote *branch*, it is created at ``origin/main``, as on a first run.
+    An existing branch is reused only when it holds nothing but this stage's
+    own work (see :func:`_resume_post_branch`); any other state raises a
+    ``ReleaseError`` naming the branch, and nothing is reset or pushed over.
+    """
+    remote_tip = _remote_tip(branch)
+    if not git.ref_exists(f"refs/heads/{branch}"):
+        if remote_tip is None:
+            print(f"Creating branch: {branch}")
+            git.run("checkout", "-b", branch, "origin/main")
+            return None
+        _require_clean(branch, "check out the pushed branch")
+        print(f"Branch {branch} is on origin at {remote_tip} — checking it out to resume.")
+        git.run("checkout", "-b", branch, remote_tip)
+        return _resume_post_branch(ctx, branch, remote_tip)
+
+    local_tip = git.commit_sha(f"refs/heads/{branch}")
+    if remote_tip is not None and remote_tip != local_tip:
+        raise ReleaseError(
+            phase=_PHASE,
+            command=f"git ls-remote --heads origin {branch}",
+            message=(
+                f"Branch '{branch}' exists locally at {local_tip} and on origin at "
+                f"{remote_tip}. An earlier back-merge-bump pushes exactly its local "
+                f"tip, so the two should match. Refusing to push over either side; "
+                f"reconcile them before resuming."
+            ),
+        )
+    if git.current_branch() != branch:
+        _require_clean(branch, "switch to it")
+        print(f"Switching to existing branch: {branch}")
+        git.run("checkout", branch)
+    return _resume_post_branch(ctx, branch, local_tip)
+
+
+def _resume_post_branch(ctx: ReleaseContext, branch: str, tip: str) -> str | None:
+    """Check that the checked-out *branch*, at *tip*, holds only this stage's work.
+
+    Accepted states, from an earlier run that failed part-way:
+
+    * at ``origin/main`` with no commit of its own: the bump still has to run.
+      A partial bump left uncommitted in the worktree (the bump failed in its
+      lockfile step, say) is discarded first, so the bump is not applied
+      twice; see :func:`_discard_partial_bump`.
+    * one commit on ``origin/main``, this stage's bump to the version after
+      main's, with a clean worktree: the bump is done; its version is returned.
+
+    Anything else (a branch that does not contain ``origin/main``, other or
+    extra commits, a bump to another version, uncommitted changes on top of
+    the bump commit) raises a ``ReleaseError`` and changes nothing.
+    """
+    main_tip = git.commit_sha("origin/main")
+    if not git.is_ancestor(main_tip, tip):
+        raise ReleaseError(
+            phase=_PHASE,
+            command=f"git merge-base --is-ancestor origin/main {branch}",
+            message=(
+                f"Branch '{branch}' (at {tip}) does not contain origin/main "
+                f"({main_tip}), so it is not an earlier back-merge-bump's branch. "
+                f"Refusing to reuse or reset it; remove or reconcile it before resuming."
+            ),
+        )
+    expected = version.next_version(version.show(ctx.repo_root, ref=main_tip))
+    subject = _BUMP_SUBJECT.format(expected)
+    commits = git.read_output("log", "--format=%H %s", f"{main_tip}..{tip}").splitlines()
+
+    if not commits:
+        print(f"Reusing branch {branch}: at origin/main, the bump not yet committed.")
+        _discard_partial_bump(ctx, branch, expected)
+        return None
+
+    if len(commits) == 1 and commits[0].partition(" ")[2] == subject:
+        tip_version = version.show(ctx.repo_root, ref=tip)
+        if tip_version != expected:
+            raise ReleaseError(
+                phase=_PHASE,
+                command=f"git show {tip}:{version.VERSION_FILE}",
+                message=(
+                    f"Branch '{branch}' has the commit '{subject}', but its "
+                    f"{version.VERSION_FILE} reads {tip_version}. Refusing to reuse it."
+                ),
+            )
+        _require_clean(branch, "reuse its bump commit")
+        print(f"Reusing branch {branch}: version already bumped to {expected}.")
+        return expected
+
+    listed = "\n".join(f"  {line}" for line in commits)
+    raise ReleaseError(
+        phase=_PHASE,
+        command=f"git log origin/main..{branch}",
+        message=(
+            f"Branch '{branch}' has commits that are not back-merge-bump's own "
+            f"(at most one, '{subject}'):\n{listed}\n"
+            f"Refusing to reuse or reset it; remove or reconcile it before resuming."
+        ),
+    )
+
+
+def _discard_partial_bump(ctx: ReleaseContext, branch: str, expected: str) -> None:
+    """Restore a partial version bump an earlier run left uncommitted.
+
+    The bump is redone from ``origin/main``, so the leftover must be nothing
+    but that bump: changes to tracked files :func:`version.bump` writes, with
+    VERSION among them already at *expected*. Anything else (an untracked
+    file, another path, VERSION at another value) is refused, never discarded.
+    """
+    changed = _changed_paths()
+    untracked = git.read_output("ls-files", "--others", "--exclude-standard").splitlines()
+    if not changed and not untracked:
+        return
+    allowed = version.bump_paths(ctx.work_root)
+    unexpected = sorted({*(p for p in changed if p not in allowed), *untracked})
+    version_file = ctx.work_root / version.VERSION_FILE
+    current = version_file.read_text().strip() if version_file.is_file() else None
+    if unexpected or version.VERSION_FILE not in changed or current != expected:
+        raise ReleaseError(
+            phase=_PHASE,
+            command="git status --porcelain",
+            message=(
+                f"Branch '{branch}' is at origin/main but its worktree has uncommitted "
+                f"changes that are not a partial bump to {expected} "
+                f"(changed: {', '.join(changed) or 'none'}; "
+                f"untracked: {', '.join(untracked) or 'none'}; "
+                f"{version.VERSION_FILE}: {current}). Refusing to discard them; "
+                f"commit, move or remove them before resuming."
+            ),
+        )
+    print(f"Discarding a partial bump to {expected} left by an earlier run: {', '.join(changed)}")
+    git.run("checkout", "HEAD", "--", *changed)
+
+
+def _changed_paths() -> list[str]:
+    """Tracked paths whose index or worktree content differs from HEAD."""
+    return git.read_output("diff", "--name-only", "--no-renames", "HEAD").splitlines()
+
+
+def _require_clean(branch: str, action: str) -> None:
+    """Refuse to *action* on *branch* while the worktree has uncommitted changes."""
+    changed = _changed_paths()
+    untracked = git.read_output("ls-files", "--others", "--exclude-standard").splitlines()
+    if changed or untracked:
+        raise ReleaseError(
+            phase=_PHASE,
+            command="git status --porcelain",
+            message=(
+                f"Cannot {action} for '{branch}': the release worktree has uncommitted "
+                f"changes (changed: {', '.join(changed) or 'none'}; "
+                f"untracked: {', '.join(untracked) or 'none'}). Refusing to carry or "
+                f"discard them; commit, move or remove them before resuming."
+            ),
+        )
+
+
+def _remote_tip(branch: str) -> str | None:
+    """The commit *branch* is at on origin, fetched locally, or None if absent."""
+    listing = git.read_output("ls-remote", "--heads", "origin", f"refs/heads/{branch}")
+    if not listing:
+        return None
+    tip = listing.split()[0]
+    git.run("fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
+    return tip
 
 
 def _merge_commit(pr_url: str) -> str | None:
