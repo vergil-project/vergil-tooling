@@ -132,7 +132,9 @@ def render_readme(staging_dir: Path) -> str:
         gates_line = "- This archive holds no gate directories.\n"
 
     if sbom_dir.is_dir():
-        sbom_files = sorted(p.relative_to(sbom_dir).as_posix() for p in sbom_dir.rglob("*") if p.is_file())
+        sbom_files = sorted(
+            p.relative_to(sbom_dir).as_posix() for p in sbom_dir.rglob("*") if p.is_file()
+        )
         sbom_line = (
             "- `gates/sbom/` — the release's package SBOM "
             f"({_code_list(sbom_files)}), also a standalone\n"
