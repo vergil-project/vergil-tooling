@@ -21,6 +21,7 @@ from vergil_tooling.lib.ci_evidence import (
     evidence_manifest_name,
     load_harvested_gates_from_state,
     read_harvest_state,
+    render_readme,
     sha256_file,
     validate_completeness,
     write_checks_json,
@@ -160,12 +161,58 @@ def test_write_manifest(tmp_path: Path) -> None:
     assert text.index('"alpha"') < text.index('"beta"')
 
 
+def _stage_gates(staging: Path, names: tuple[str, ...]) -> None:
+    for name in names:
+        gate = staging / "evidence" / "gates" / name
+        gate.mkdir(parents=True)
+        (gate / "evidence.json").write_text("{}")
+
+
 def test_write_readme(tmp_path: Path) -> None:
     staging = tmp_path / "s"
     (staging / "evidence").mkdir(parents=True)
     p = write_readme(staging)
     assert p == staging / "evidence" / "README.md"
-    assert "evidence" in p.read_text().lower()
+    assert p.read_text() == render_readme(staging)
+
+
+def test_readme_names_the_gates_present_and_the_sbom(tmp_path: Path) -> None:
+    staging = tmp_path / "s"
+    _stage_gates(staging, ("test", "audit"))
+    sbom = tmp_path / "sbom.cdx.json"
+    sbom.write_text("{}")
+    copy_sbom(sbom, staging)
+
+    text = render_readme(staging)
+
+    assert "This archive holds `gates/audit/`, `gates/test/`." in text
+    assert "- `gates/sbom/` — the release's package SBOM (`sbom.cdx.json`)" in text
+    assert "no package SBOM" not in text
+    # The SBOM directory is not listed as a gate.
+    assert "`gates/sbom/`, " not in text
+    assert ", `gates/sbom/`" not in text
+
+
+def test_readme_without_sbom_says_so(tmp_path: Path) -> None:
+    staging = tmp_path / "s"
+    _stage_gates(staging, ("security",))
+
+    text = render_readme(staging)
+
+    assert "This archive holds `gates/security/`." in text
+    assert "This release built no package SBOM, so the archive has no `gates/sbom/`." in text
+    assert "package SBOM (" not in text
+
+
+def test_readme_with_no_gates_tree(tmp_path: Path) -> None:
+    staging = tmp_path / "s"
+    (staging / "evidence").mkdir(parents=True)
+
+    text = render_readme(staging)
+
+    assert "This archive holds no gate directories." in text
+    assert "`gates/<gate>/`" not in text
+    assert "no package SBOM" in text
 
 
 def test_copy_sbom(tmp_path: Path) -> None:

@@ -76,9 +76,14 @@ def evidence_manifest_name(tag: str) -> str:
     return f"{tag}-ci-evidence-manifest.json"
 
 
-# Fixed human-orientation text written into ``evidence/README.md``. A module
-# constant (not inline) so the archive's README is defined in exactly one place.
-_README_TEXT = """\
+# The SBOM's directory under ``evidence/gates/``. It sits beside the gate
+# directories but is not a gate: it has no ``evidence.json`` and no manifest entry.
+_SBOM_DIRNAME = "sbom"
+
+# The parts of ``evidence/README.md`` that never vary. The layout between them is
+# rendered from the assembled tree by :func:`render_readme` (issue #4402), so the
+# README describes only the entries the archive actually holds.
+_README_HEAD = """\
 # CI Evidence Archive
 
 This archive is the durable, machine-verifiable evidence bundle for a release.
@@ -88,17 +93,57 @@ It captures the complete output of every required CI gate at release time.
 
 - `manifest.json` — top-level machine index (schema 1.0): release identity,
   provenance (release PR, validated head SHA, CI run URLs), per-gate tools,
-  metrics, and a `sha256` for every file.
+  metrics, and a `sha256` for every gate file.
 - `checks.json` — the raw check-run snapshot (name → conclusion).
-- `gates/<gate>/` — each required gate's report files plus its `evidence.json`
-  fragment. The `gates/sbom/` entry holds the release SBOM.
+"""
 
+_README_TAIL = """
 ## Verifying integrity
 
 Each file listed in `manifest.json` carries a `sha256`. Recompute it over the
 extracted file and compare to prove the archive is intact. The bundle is also
 covered by a build-provenance attestation on the GitHub Release.
 """
+
+
+def _code_list(items: Sequence[str]) -> str:
+    """Join *items* as a comma-separated list of Markdown code spans."""
+    return ", ".join(f"`{item}`" for item in items)
+
+
+def render_readme(staging_dir: Path) -> str:
+    """Render ``evidence/README.md`` from the entries under ``evidence/gates/``.
+
+    Each gate directory present is named, and the SBOM line says whether this
+    archive holds ``gates/sbom/``: a release that builds no package has no SBOM,
+    so a fixed text naming it would describe an entry that is not there.
+    """
+    gates_root = _evidence_root(staging_dir) / "gates"
+    entries = sorted(p for p in gates_root.iterdir() if p.is_dir()) if gates_root.is_dir() else []
+    gate_dirs = [f"gates/{p.name}/" for p in entries if p.name != _SBOM_DIRNAME]
+    sbom_dir = gates_root / _SBOM_DIRNAME
+
+    if gate_dirs:
+        gates_line = (
+            "- `gates/<gate>/` — each required gate's report files plus its\n"
+            f"  `evidence.json` fragment. This archive holds {_code_list(gate_dirs)}.\n"
+        )
+    else:
+        gates_line = "- This archive holds no gate directories.\n"
+
+    if sbom_dir.is_dir():
+        sbom_files = sorted(
+            p.relative_to(sbom_dir).as_posix() for p in sbom_dir.rglob("*") if p.is_file()
+        )
+        sbom_line = (
+            "- `gates/sbom/` — the release's package SBOM "
+            f"({_code_list(sbom_files)}), also a standalone\n"
+            "  Release asset. It is not a gate and has no `manifest.json` entry.\n"
+        )
+    else:
+        sbom_line = "- This release built no package SBOM, so the archive has no `gates/sbom/`.\n"
+
+    return _README_HEAD + gates_line + sbom_line + _README_TAIL
 
 
 @dataclass(frozen=True)
@@ -250,9 +295,13 @@ def write_checks_json(conclusions: Mapping[str, str], staging_dir: Path) -> Path
 
 
 def write_readme(staging_dir: Path) -> Path:
-    """Write the fixed human-orientation README to ``evidence/README.md``."""
+    """Write the human-orientation README to ``evidence/README.md``.
+
+    Rendered by :func:`render_readme` from the tree as it stands, so call it
+    after every gate directory and the optional SBOM are in place.
+    """
     path = _evidence_root(staging_dir) / "README.md"
-    path.write_text(_README_TEXT, encoding="utf-8")
+    path.write_text(render_readme(staging_dir), encoding="utf-8")
     return path
 
 
@@ -368,7 +417,7 @@ def read_harvest_state(staging_dir: Path) -> HarvestState:
 
 def copy_sbom(sbom_file: Path, staging_dir: Path) -> Path:
     """Copy an already-built SBOM into ``evidence/gates/sbom/``."""
-    dest_dir = _evidence_root(staging_dir) / "gates" / "sbom"
+    dest_dir = _evidence_root(staging_dir) / "gates" / _SBOM_DIRNAME
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / sbom_file.name
     shutil.copyfile(sbom_file, dest)
@@ -935,9 +984,10 @@ def run_assemble(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     write_checks_json(state.checks, staging_dir)
-    write_readme(staging_dir)
     if sbom_file is not None:
         copy_sbom(sbom_file, staging_dir)
+    # After the SBOM copy: the README describes the tree as assembled.
+    write_readme(staging_dir)
 
     gates = load_harvested_gates_from_state(state, staging_dir)
     ctx = HarvestContext(

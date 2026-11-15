@@ -45,7 +45,7 @@ mechanism fleet-wide:
 - **Consumer side** (publish-time harvest in `vergil-tooling`). A single
   language-agnostic command, `vrg-ci-evidence`, downloads every
   `ci-evidence-*` artifact, validates completeness, assembles the bundle tree
-  plus a `manifest.json` index with per-file `sha256`, and produces
+  plus a `manifest.json` index with a `sha256` for each gate file, and produces
   `v{version}-ci-evidence.tar.gz`.
 
 The **only** cross-repo coupling is the `ci-evidence-*` artifact name and the
@@ -284,17 +284,20 @@ v{version}-ci-evidence.tar.gz
    │   ├─ test/              # coverage-<ver>.xml, junit-<ver>.xml (per Python version), evidence.json
    │   ├─ audit/             # pip-audit-<ver>.json, licenses-<ver>.json (per Python version), evidence.json
    │   ├─ quality/           # quality-common.log, quality-custom.log, quality-ruff-<ver>.json, quality-mypy-<ver>.xml (per Python version), evidence.json
-   │   └─ sbom/              # sbom.cdx.json
+   │   └─ sbom/              # sbom.cdx.json (only when the release built a package SBOM)
    └─ README.md              # human orientation for the archive
 ```
 
 - `manifest.json` is the curated, per-gate machine index (schema below).
 - `checks.json` is the **raw** check-run snapshot — distinct from the manifest's
   curated view — capturing every check's name, conclusion, timing, and log URL.
-- `gates/sbom/` is populated by copying the SBOM already built during publish
-  (also a standalone Release asset) into the bundle at harvest time, so the
-  archive stays fully self-contained.
-- `README.md` is a fixed human orientation for the archive.
+- `gates/sbom/` is present only when the release built a package SBOM. The
+  assemble step copies the SBOM already built during publish (also a
+  standalone Release asset) into the bundle, so the archive stays fully
+  self-contained. A release that builds no package has no `gates/sbom/`.
+- `README.md` is a human orientation for the archive, generated from the
+  entries assembled: it names each gate directory present and says whether
+  the archive holds `gates/sbom/`.
 
 A standalone copy of `manifest.json` is also attached as a small, separate
 Release asset, so a tool can read the summary without downloading the full
@@ -357,8 +360,13 @@ read by auditors; they populate as producers are updated.
 
 Two trust properties are load-bearing:
 
-1. **Every file carries a `sha256`.** An auditor can prove the archive is intact
-   and unmodified.
+1. **Every gate file carries a `sha256`.** Each file under a gate directory
+   has a `manifest.json` entry with its `sha256`, so an auditor can prove the
+   gate evidence is intact and unmodified. The manifest hashes nothing else:
+   `README.md`, `checks.json` and the SBOM under `gates/sbom/` have no
+   manifest entry. They are covered by the build-provenance attestation over
+   the whole bundle (and the SBOM also by its own Release asset), not by the
+   manifest.
 2. **`missing_gates` is explicit.** A required gate that produced no evidence is
    recorded as data, never silently dropped.
 
@@ -391,8 +399,8 @@ A successful verification turns "here is a tarball" into "here is a tarball
 cryptographically proven to be the genuine output of this pipeline for this
 commit." This is the chain-of-custody core of the mechanism.
 
-**2. Verify every file's integrity.** Unpack the archive and confirm each file's
-`sha256` matches its `manifest.json` entry:
+**2. Verify every gate file's integrity.** Unpack the archive and confirm each
+gate file's `sha256` matches its `manifest.json` entry:
 
 ```bash
 tar -xzf v2.1.129-ci-evidence.tar.gz
