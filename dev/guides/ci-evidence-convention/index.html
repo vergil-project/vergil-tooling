@@ -18160,7 +18160,12 @@ these names, before <code>ci-test.yml</code> and <code>ci-audit.yml</code> stage
 <tr>
 <td><code>test</code></td>
 <td><code>coverage.xml</code> (Cobertura)</td>
-<td>the gating <code>cargo llvm-cov --cobertura --output-path coverage.xml</code> run</td>
+<td>the gating <code>cargo llvm-cov report --cobertura --output-path coverage.xml</code> run</td>
+</tr>
+<tr>
+<td><code>test</code></td>
+<td><code>junit.xml</code> (JUnit)</td>
+<td>the gating <code>cargo llvm-cov nextest</code> run, copied from <code>target/nextest/vergil/junit.xml</code></td>
 </tr>
 <tr>
 <td><code>audit</code></td>
@@ -18169,8 +18174,15 @@ these names, before <code>ci-test.yml</code> and <code>ci-audit.yml</code> stage
 </tr>
 </tbody>
 </table>
-<p>Rust writes no <code>junit.xml</code> yet: stable <code>cargo test</code> cannot write JUnit, and
-the Rust image has no reporter that can.</p>
+<p>The test gate runs the tests once with cargo-nextest under cargo-llvm-cov,
+using the <code>vergil</code> nextest profile that vergil-tooling packages, which turns
+on nextest's JUnit report. One coverage report from that run then gates on
+100% line coverage. Both files are written whether the gate passes or fails.
+Rustdoc examples run in a separate <code>cargo test --doc</code> step, which writes no
+report, because nextest does not run doctests. CI does not stage the Rust
+<code>junit.xml</code> yet: vergil-actions takes it up when its report table is derived
+from vergil-tooling
+(<a href="https://github.com/vergil-project/vergil-actions/issues/1216">vergil-actions#1216</a>).</p>
 <p><code>quality-common.log</code> is the transcript of <code>vrg-validate --check common</code> and
 <code>quality-custom.log</code> the transcript of <code>vrg-validate --check custom</code>, each
 captured once per run by the <code>quality / common</code> and <code>quality / custom</code> jobs.
