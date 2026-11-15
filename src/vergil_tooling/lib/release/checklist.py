@@ -37,6 +37,11 @@ def render(stages: Sequence[str], checked: Iterable[str] = ()) -> str:
 _ITEM_RE = re.compile(r"^\s*-\s*\[([ xX])\]\s*(\S+)\s*$")
 
 
+def has_block(body: str) -> bool:
+    """True when *body* carries a delimited checklist block (possibly malformed)."""
+    return BEGIN in body or END in body
+
+
 def _block_inner(body: str) -> str:
     if BEGIN not in body or END not in body:
         msg = "no vrg-release progress block found in issue body"

@@ -20,6 +20,11 @@ class ReleaseContext:
 
     issue_number: int | None = None
     issue_url: str | None = None
+    # The stage checklist block the tracking issue is created with, rendered
+    # by the orchestrator once preflight has run. Carrying it in the issue's
+    # creation body means there is never an issue without one, so an interrupt
+    # anywhere in prepare leaves a release that --resume can pick up (#4367).
+    progress_block: str | None = None
     release_branch: str | None = None
     release_pr_url: str | None = None
 
