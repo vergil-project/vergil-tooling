@@ -237,11 +237,9 @@ manual `/compact` still works.
 
 Any other content is one
 `DiffItem(field="local.claude_settings", ...)` whose actual value names
-each top-level key that is missing, unexpected or different. Fix it with
-`vrg-claude-settings-sync --write`, which replaces the file with the
-template for one repo; `vrg-fleet-sync --target claude-settings` does the
-same across the fleet, one PR per drifted repo (see the
-[CLI Tools Overview](cli-tools-overview.md#vrg-claude-settings-sync)).
+each top-level key that is missing, unexpected or different.
+[`update`](#the-update-command) fixes it by replacing the file with the
+template.
 
 ### `_check_hook_guard_shim` — the whole file
 
@@ -256,11 +254,8 @@ read, `differs from the packaged shim (stale or locally edited)`, or,
 for the right bytes without every execute bit, `not executable (mode
 …)`: Claude Code cannot run a hook that is not executable.
 
-Fix it with `vrg-hook-guard-shim-sync --write`, which replaces the file
-with the packaged shim, mode `0755`, for one repo;
-`vrg-fleet-sync --target hook-guard-shim` does the same across the
-fleet, one PR per drifted repo (see the
-[CLI Tools Overview](cli-tools-overview.md#vrg-hook-guard-shim-sync)).
+[`update`](#the-update-command) fixes it by replacing the file with the
+packaged shim, mode `0755`.
 
 ### `CLAUDE.md` and `AGENTS.md` — the instruction file
 
@@ -273,12 +268,10 @@ verbatim. Content outside the markers belongs to the repo and is never
 compared. A file with no markers fails with
 `DiffItem(field="local.claude_md", expected="well-formed template markers",
 actual="no template markers")`; a region that differs names the first
-divergent template line and `CLAUDE.md` line. Fix a differing region
-with `vrg-claude-md-sync --write`, which replaces only the marked region
-with the template for one repo; `vrg-fleet-sync --target claude-md` does
-the same across the fleet, one PR per drifted repo (see the
-[CLI Tools Overview](cli-tools-overview.md#vrg-claude-md-sync)). Neither
-repairs missing or malformed markers: that stays a hand fix.
+divergent template line and `CLAUDE.md` line.
+[`update`](#the-update-command) fixes a differing region by replacing
+only the marked region with the template. It does not repair missing or
+malformed markers: that stays a hand fix.
 
 `CLAUDE.md` is held to a line budget of **200 lines**, counted as
 `len(text.splitlines())` over the whole file, template region included: a
@@ -333,12 +326,11 @@ report-only render for its `[project].primary-language` (epic
 [vergil-project/.github#420](https://github.com/vergil-project/.github/issues/420)):
 a `github-actions` entry plus the language's ecosystem, each with
 `open-pull-requests-limit: 0`. The comparison is an exact match with no
-local additions — the same `lib/dependabot.py::check` that
-`vrg-dependabot-sync --check` uses. Each failure is reported as
+local additions, through `lib/dependabot.py::check`. Each failure is reported as
 `DiffItem(field="local.dependabot", expected="canonical report-only dependabot.yml",
 actual=<reason>)`, where the reason is `missing .github/dependabot.yml`
-or `differs from the canonical render`. Fix either with
-`vrg-dependabot-sync --write`.
+or `differs from the canonical render`.
+[`update`](#the-update-command) fixes either by writing the render.
 
 No `vergil.toml`, or no declared language, means the actions-only
 render. A `vergil.toml` that fails to load is **not** treated as
@@ -379,9 +371,8 @@ src/vergil_tooling/data/gitignore/<language>  # one per managed language
 They are loaded at runtime via `importlib.resources` — the same idiom
 used for the `CLAUDE.md` and `.claude/settings.json` templates — and
 `lib/gitignore.py` *composes* `base + <language>` into an order-stable,
-de-duplicated pattern list. Scaffolding, the applicator
-(`vrg-gitignore-sync`), and the audit all render through that one module,
-so they cannot diverge.
+de-duplicated pattern list. Scaffolding, the `update` fixer and the
+audit all render through that one module, so they cannot diverge.
 
 **Composed per language.** A repo's block is the union of the
 language-agnostic `base` (editors, OS, secrets, logs, Vergil internals
@@ -400,8 +391,8 @@ between a `# >>> vergil-managed: base + <language> …` begin marker and a
 (`lib/gitignore.py::check`) is **fenced-only**: it requires a well-formed
 fence whose body equals the composed block for the repo's language
 **exactly**, with no managed pattern left loose outside the fence, in the
-exact layout `vrg-gitignore-sync --write` produces: the fence first and a
-trailing newline, so the audit drifts exactly when `--write` would change
+exact layout the `update` fixer writes: the fence first and a
+trailing newline, so the audit drifts exactly when the fixer would change
 the file (#3568). (The
 transitional legacy monolith-superset acceptance and the monolithic
 `gitignore.baseline` asset were removed in epic
@@ -410,15 +401,16 @@ once the whole fleet was fenced.)
 
 **Local additions are expected.** Genuinely repo-local lines live
 *outside* the fence and are never asserted against; a repo freely adds
-its own entries below the managed block (`--write` moves any above it to
+its own entries below the managed block (the fixer moves any above it to
 below it, in order).
 
 **Editing a fragment in vergil-tooling itself.** The installed
-`vrg-gitignore-sync` composes from the installed package's data, so after
-a fragment edit it reports "already in sync" and leaves this repo's own
-fence stale (`vrg-validate` fails on it). Resync from the worktree's
-source with
-`PYTHONPATH=src python3 -m vergil_tooling.bin.vrg_gitignore_sync --write`.
+`vrg-github-repo-config update` composes from the installed package's
+data, so after a fragment edit this repo's own fence stays stale
+(`vrg-validate` fails on it) until the change is released. Resync from
+the worktree's source by running the fixer from `src/` at the worktree
+root:
+`PYTHONPATH=src python3 -c 'from pathlib import Path; from vergil_tooling.lib.repo_config_fixes import fix_gitignore; fix_gitignore(Path("."))'`.
 
 ### Propagation — the rolling `vX.Y` pin
 
@@ -433,11 +425,11 @@ that line — including its fragment set. So:
 
 Because the fence must match the composed block *exactly* (not merely be
 a superset), a fragment change is applied — not auto-satisfied — by
-re-running `vrg-gitignore-sync`, which rewrites the managed block in
-place and leaves the genuinely repo-local section untouched. The fleet driver runs
-that applicator across every repo as reviewed per-repo PRs; the rolling
-pin delivers the new fragments to the tool, and the applicator writes the
-fence.
+the [`update`](#the-update-command) fixer, which rewrites the managed
+block in place and leaves the genuinely repo-local section untouched. The
+nightly ops run's `update` does this in every repo, one sync PR each; the
+rolling pin delivers the new fragments to the tool, and the fixer writes
+the fence.
 
 ## New repos are born conforming
 

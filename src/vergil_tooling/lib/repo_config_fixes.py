@@ -10,10 +10,8 @@ the fixer would change something or raise :class:`CannotFix` (epic
 vergil-project/.github#1064, Tasks 3a and 3b).
 
 The fixers own only the file change: no git, no GitHub API and no PR. They
-replace the write logic of the retired per-target applicators
-(``vrg-hook-guard-shim-sync``, ``vrg-claude-md-sync``,
-``vrg-claude-settings-sync``, ``vrg-gitignore-sync`` and
-``vrg-dependabot-sync``) and the workflow-pin normalization of
+took over the write logic of the per-target sync applicators that epic
+vergil-project/.github#1064 retired, and the workflow-pin normalization of
 ``vrg-update-deps``.
 """
 

@@ -31,11 +31,9 @@ Two halves keep Dependabot to reporting:
   `.github/dependabot.yml`, where every `updates` entry carries
   `open-pull-requests-limit: 0`. `vrg-validate` rejects any entry
   without it, and the nightly config audit's `local.dependabot` check
-  flags a missing or non-canonical file. `vrg-dependabot-sync` writes
-  the file for one repo, and `vrg-fleet-sync --target dependabot`
-  sweeps it across the fleet. See the
-  [GitHub Config Audit reference](config-audit.md) and the
-  [CLI Tools Overview](cli-tools-overview.md#vrg-dependabot-sync).
+  flags a missing or non-canonical file, and the nightly
+  `vrg-github-repo-config update` rewrites it in a sync PR. See the
+  [GitHub Config Audit reference](config-audit.md#the-update-command).
 
 ## Where it runs
 
