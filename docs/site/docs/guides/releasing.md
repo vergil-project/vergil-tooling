@@ -189,6 +189,30 @@ earlier stage passed. A second wait would add nothing. It would also
 fail the stage on a docs publish failure that `confirm-develop` has
 already deferred.
 
+### A failed release job
+
+When the CD release job on `main` does not succeed, `confirm-main`
+fails, and the release PR is already merged. `vrg-release --resume`
+alone cannot recover it: it watches the latest attempt of the same CD
+run and judges that same failed release job again. `vrg-release` does
+not re-run the job itself, since only you can tell that the cause is
+fixed. The `confirm-main` failure, on the terminal and on the tracking
+issue, lists the recovery steps with the run IDs filled in:
+
+1. `gh run rerun <ci-run> --repo <repo>`: re-run the release PR's CI
+   run. The release job's evidence gate harvests that run's artifacts,
+   so a fix that changes what CI writes reaches the gate only through a
+   fresh CI attempt.
+2. `gh run watch <ci-run> --repo <repo> --exit-status`.
+3. `gh run rerun <cd-run> --repo <repo>`: re-run the failed CD run on
+   `main`.
+4. `gh run watch <cd-run> --repo <repo> --exit-status`.
+5. `vrg-release --resume <version>`.
+
+Run them once the fix for the cause is released. Stop at any watch that
+fails. The resume judges the CD run's new attempt through the same
+release-job gate.
+
 ### Stale job records
 
 The confirm stages wait a bounded time for every CD job to reach

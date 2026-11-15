@@ -10,11 +10,12 @@ readable yet" (#3137).
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import git, github, progress, retry
+from vergil_tooling.lib import ci_evidence, git, github, progress, retry
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.subprocess import watch_workflow
 
@@ -37,7 +38,7 @@ def confirm_main(ctx: ReleaseContext) -> None:
     ctx.cd_run_url = run_url
 
     jobs = _settled_run_jobs(ctx, run_id, (_is_release_job,))
-    _verify_release_job(jobs)
+    _verify_release_job(jobs, recovery=lambda: _failed_release_recovery(ctx, run_id))
 
     if not _record_publish_state(
         ctx, run_id, jobs, deferred_label="Publish deferred (release is valid)"
@@ -294,7 +295,9 @@ def _is_release_job(name: str) -> bool:
     return name.rsplit(" / ", 1)[-1] == _RELEASE_JOB_LEAF
 
 
-def _verify_release_job(jobs: list[dict[str, Any]]) -> None:
+def _verify_release_job(
+    jobs: list[dict[str, Any]], *, recovery: Callable[[], str] | None = None
+) -> None:
     """Hard gate: the release job must exist and have concluded ``success``.
 
     Identified by its leaf segment ``release`` (see ``_is_release_job``), which
@@ -302,15 +305,23 @@ def _verify_release_job(jobs: list[dict[str, Any]]) -> None:
     inline ``cd / release`` while still rejecting a ``release``-prefixed decoy —
     the release job is the single load-bearing assertion. A renamed/absent
     release job fails closed (#1853, #2001).
+
+    A release job that ran and did not succeed appends *recovery*'s text (the
+    re-run steps, #4405) to the error. It is called only on that failure, so a
+    passing release makes none of its lookups; it never turns the failure into
+    anything but a raise.
     """
     for job in jobs:
         if _is_release_job(job.get("name", "")):
             conclusion = job.get("conclusion")
             if conclusion != "success":
+                message = f"Release job did not succeed (conclusion: '{conclusion}')."
+                if recovery is not None:
+                    message = f"{message} {recovery()}"
                 raise ReleaseError(
                     phase="confirm-main",
                     command=f"verify job '{_RELEASE_JOB_NAME}'",
-                    message=(f"Release job did not succeed (conclusion: '{conclusion}')."),
+                    message=message,
                 )
             return
     raise ReleaseError(
@@ -318,6 +329,73 @@ def _verify_release_job(jobs: list[dict[str, Any]]) -> None:
         command=f"verify job '{_RELEASE_JOB_NAME}'",
         message=f"Release job '{_RELEASE_JOB_NAME}' not found in the workflow run.",
     )
+
+
+def _failed_release_recovery(ctx: ReleaseContext, cd_run_id: str) -> str:
+    """The exact steps that recover a release whose CD release job failed (#4405).
+
+    ``--resume`` re-enters confirm-main, which judges the latest attempt of
+    the CD run on main's tip: resuming alone re-judges the same failed run.
+    The human re-runs it once the cause is fixed and released. The release PR's
+    CI run is re-run first, because the release job's evidence gate harvests
+    that run's artifacts (``ci_evidence.select_ci_run``, newest same-named
+    artifact per #3171): a fix to what CI writes reaches the gate only through
+    a fresh CI attempt. Each re-run is watched with ``--exit-status`` before
+    the next step, so a failed re-run stops the recovery loudly, and the final
+    ``--resume`` judges the new attempt through the unchanged gate.
+
+    vrg-release prints these rather than running them, as it does every other
+    CD and publish-index re-run (``tracking.comment_publish_deferred``,
+    ``package_index``): only the human can tell that the cause has been fixed.
+    """
+    repo = ctx.repo
+    steps = [
+        *_ci_rerun_steps(ctx),
+        f"`gh run rerun {cd_run_id} --repo {repo}` (the failed CD run on main)",
+        f"`gh run watch {cd_run_id} --repo {repo} --exit-status`",
+        f"`vrg-release --resume {ctx.version}`",
+    ]
+    numbered = "; ".join(f"({i}) {step}" for i, step in enumerate(steps, start=1))
+    return (
+        "Resuming alone re-judges the same failed CD run. Once the cause is fixed "
+        f"and the fix is released, recover this release: {numbered}."
+    )
+
+
+def _ci_rerun_steps(ctx: ReleaseContext) -> list[str]:
+    """The re-run and watch steps for the release PR's CI run.
+
+    The run is the one the CD evidence gate harvests: the newest completed and
+    successful ``CI`` run for the release PR's head commit. A lookup that
+    fails is named in the step, never dropped, and never replaces the release
+    job's own failure.
+    """
+    repo = ctx.repo
+    if ctx.release_pr_url is None:
+        return [
+            "re-run the release PR's CI run and watch it to completion (the release PR "
+            "is not recorded, so its run could not be identified)"
+        ]
+    head_sha: str | None = None
+    try:
+        head_sha = github.head_sha(ctx.release_pr_url)
+        run = ci_evidence.select_ci_run(repo, head_sha)
+    except (subprocess.CalledProcessError, ValueError, ci_evidence.NoQualifyingRunError) as exc:
+        where = (
+            f"`gh run list --repo {repo} --workflow CI --commit {head_sha}`"
+            if head_sha
+            else f"the checks of {ctx.release_pr_url}"
+        )
+        return [
+            f"re-run the release PR's CI run and watch it to completion: find it with "
+            f"{where} (it could not be looked up: {exc})"
+        ]
+    run_id = run["id"]
+    return [
+        f"`gh run rerun {run_id} --repo {repo}` (the release PR's CI run, so CD "
+        "harvests fresh evidence)",
+        f"`gh run watch {run_id} --repo {repo} --exit-status`",
+    ]
 
 
 def _job_family(name: str) -> str:
