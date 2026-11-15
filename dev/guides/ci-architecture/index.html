@@ -18303,7 +18303,9 @@ named <code>security</code>, the checks report as:</p>
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="nt">container-suffix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python</span>
 </code></pre></div>
 <p>CodeQL is skipped when <code>run-codeql</code> is <code>false</code> (set for languages
-CodeQL does not support) or when <code>upload-sarif</code> is <code>false</code> (set for
+CodeQL does not support; <code>vrg-github-repo-init</code> reads the same language
+set as the <a href="#ci-gates">CI gates</a> ruleset, so a repo is never required to
+report a CodeQL check its CI skips) or when <code>upload-sarif</code> is <code>false</code> (set for
 private repositories without GitHub Advanced Security).
 <code>container-suffix</code> is a deprecated no-op here, and the old
 standards-compliance job is gone: PR issue linkage is now checked by
@@ -18539,7 +18541,7 @@ is the local command. Nothing else needs to be added to the repository.</p>
 </tr>
 <tr>
 <td><code>security / codeql</code>, <code>CodeQL</code></td>
-<td>GHAS is available and CodeQL supports the language</td>
+<td>GHAS is available and CodeQL supports the language (<code>python</code>, <code>go</code>, <code>rust</code>, <code>cpp</code> or <code>typescript</code>)</td>
 </tr>
 <tr>
 <td><code>Trivy</code>, <code>Semgrep OSS</code></td>
