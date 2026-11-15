@@ -1592,9 +1592,9 @@ def _toggle_default_branch(repo: str, default: str) -> None:
     tazama-lf/rule-studio-devtestops#15 and
     https://github.com/orgs/community/discussions/25219; seen here on
     vergil-fixture-python-lib, vergil-project/vergil-tooling#4376). Changing the
-    default branch and changing it back makes GitHub register them. Remove this
-    workaround once GitHub fixes the bug; its removal is tracked from
-    vergil-project/.github#1129.
+    default branch and changing it back makes GitHub register them. The
+    workaround is kept on purpose, with no removal tracked: it stays until GitHub
+    fixes the bug upstream or Vergil moves off GitHub.
     """
     other = "develop" if default == "main" else "main"
     github.run("repo", "edit", repo, "--default-branch", other)
