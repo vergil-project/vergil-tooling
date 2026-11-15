@@ -421,9 +421,7 @@ def test_rust_test_commands() -> None:
 def test_rust_nextest_toml_turns_on_junit_for_the_vergil_profile() -> None:
     """The packaged tool config defines the profile the TEST command selects."""
     config = tomllib.loads(_rust_nextest_toml().read_text())
-    assert config == {
-        "profile": {"vergil": {"fail-fast": False, "junit": {"path": JUNIT_REPORT}}}
-    }
+    assert config == {"profile": {"vergil": {"fail-fast": False, "junit": {"path": JUNIT_REPORT}}}}
     script = language_commands("rust", CheckKind.TEST)[0][2]
     assert "NEXTEST_PROFILE=vergil " in script
     assert f"target/nextest/vergil/{JUNIT_REPORT}" in script
