@@ -46,7 +46,7 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import config, git, progress
+from vergil_tooling.lib import audit_retry, config, git, progress
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.container_cache import language_sources, unbootstrapped_manifests
 from vergil_tooling.lib.languages import (
@@ -543,15 +543,20 @@ def _command_stage(
     cmds: list[list[str]] | Callable[[], list[list[str]]],
     *,
     mode: StageMode,
+    run_cmd: Callable[[list[str]], int] | None = None,
 ) -> Stage:
-    """Run *cmds* as one stage; a callable is resolved when the stage runs."""
+    """Run *cmds* as one stage; a callable is resolved when the stage runs.
+
+    Each command runs through *run_cmd*, which returns its exit code; the
+    default is a plain :func:`progress.run`.
+    """
 
     def fn(_ctx: object) -> None:
         resolved = cmds if isinstance(cmds, list) else cmds()
         failed = 0
         for cmd in resolved:
             print(f"Running ({label}): {' '.join(cmd)}")
-            rc = progress.run(cmd, check=False)
+            rc = run_cmd(cmd) if run_cmd is not None else progress.run(cmd, check=False)
             if rc != 0:
                 failed += 1
                 if mode == "fail_fast":
@@ -561,6 +566,18 @@ def _command_stage(
             raise ValidationError(msg)
 
     return Stage(label, fn, mode=mode)
+
+
+def _run_audit_command(cmd: list[str]) -> int:
+    """Run one AUDIT command, giving ``pip-audit`` its network retry (#4423).
+
+    ``pip-audit`` alone talks to a remote feed per package, so only it gets
+    :func:`~vergil_tooling.lib.audit_retry.run_pip_audit`'s bounded retry on
+    a network or timeout error; every other command runs once.
+    """
+    if cmd and cmd[0] == "pip-audit":
+        return audit_retry.run_pip_audit(cmd)
+    return progress.run(cmd, check=False)
 
 
 def _not_bootstrapped_stage(name: str, language: str, missing: list[str]) -> Stage:
@@ -841,6 +858,13 @@ def _build_stages(
                             kind.value,
                             partial(_skip_rust_doctests_without_lib, cmds, repo_root),
                             mode="fail_defer",
+                        )
+                    )
+                    continue
+                if kind is CheckKind.AUDIT:
+                    stages.append(
+                        _command_stage(
+                            kind.value, cmds, mode="fail_defer", run_cmd=_run_audit_command
                         )
                     )
                     continue
