@@ -416,7 +416,7 @@ it by hand. Add what an agent needs for your repo (overview, commands,
 constraints) after the end marker, and link reference material from your
 site docs rather than copying it in.
 
-The nightly config audit requires the region to match the template
+The config audit requires the region to match the template
 verbatim and the whole file to stay at or under **200 lines**. The repo
 has no `AGENTS.md`: `CLAUDE.md` is the one instruction file. Keep
 `.claude/settings.local.json` absent or exactly `{}`. In repos in the
@@ -468,7 +468,7 @@ never produces.
 
 Alongside it:
 
-- **`ops.yml`** — runs the config audit on a daily, per-repo
+- **`ops.yml`** — runs `vrg-github-repo-config update` on a daily, per-repo
   staggered `cron` schedule (see Step 7).
 - **`epic-rollup.yml`** — on any issue close, closes the parent epic
   once all of its tasks are closed.
@@ -542,12 +542,15 @@ audit, and both are checked nightly:
    refreshes the block.
 
 2. **Your repo must carry a scheduled `ops.yml` wired to the config
-   audit.** `.github/workflows/ops.yml` must call the reusable
+   job.** `.github/workflows/ops.yml` must call the reusable
    `ops-github-config.yml` workflow **on a `cron` schedule**. That
-   scheduled job is what runs the audit each night.
+   scheduled job is what runs `vrg-github-repo-config update` each
+   night.
 
-Both are **fatal in the nightly audit**: any drift returns exit 1 and
-turns the scheduled `ops.yml` run red. `vrg-github-repo-init` writes
+The nightly `update` fixes a drifted managed block through a sync PR
+that merges within the run. The `ops.yml` wiring has no fixer: a run
+that finds it wrong exits 1 and turns red, as it does for any other
+drift with no fixer. `vrg-github-repo-init` writes
 both, so a new or adopted repo starts conforming.
 
 You never bump a pin to receive fragment changes: every repo tracks the

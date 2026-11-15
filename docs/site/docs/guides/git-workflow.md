@@ -23,8 +23,11 @@ new issue  →  branch  →  commit  →  PR  →  (human review)  →  merge  �
   `git commit` is blocked.**
 - `vrg-submit-pr` creates the PR with issue linkage. **Raw
   `gh pr create` is blocked.**
-- Merging is **manual**. Auto-merge is disabled org-wide as of
-  2026-04-22.
+- Merging is **manual**. Every repo allows auto-merge
+  (`allow_auto_merge`) so that the mechanized sync PRs
+  `vrg-github-repo-config update` opens on `automation/` branches merge
+  on CI alone (epic vergil-project/.github#1064). Agents cannot turn
+  auto-merge on for a PR, and the human merges every development PR.
 - After merge, `vrg-finalize-pr` pulls develop, deletes the merged
   branch and its worktree, and prunes remote refs.
 

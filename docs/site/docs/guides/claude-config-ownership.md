@@ -7,7 +7,7 @@ sweeps check against.
 
 Epic
 [vergil-project/.github#558](https://github.com/vergil-project/.github/issues/558)
-brought every managed repo in line with it. The nightly config audit and the
+brought every managed repo in line with it. The nightly config update and the
 agent chokepoints now enforce its mechanical rules, and the
 [recurring review](#recurring-review) keeps the rest current.
 
@@ -223,7 +223,7 @@ in-scope org (`vergil-project`, `logical-minds-foundry`,
 These chokepoints don't depend on Claude Code hooks, because a local file
 that disables hooks would disable a hook-based check too. `vrg-validate` is
 not a chokepoint: it runs inside a dev container, where it sees neither the
-main checkout's working tree nor the identity. The nightly config audit does
+main checkout's working tree nor the identity. The nightly config update does
 not check this file either, because a CI checkout has no local file.
 
 The `CLAUDE.md` template region also states the rule, so agents know it
@@ -244,11 +244,12 @@ not check that relocated copy.
 Two layers keep the files matching this model: what a machine can check,
 and what needs judgment.
 
-### Mechanical: the nightly config audit
+### Mechanical: the nightly config update
 
-`vrg-github-repo-config audit` runs in each managed repo's scheduled
+`vrg-github-repo-config update` runs in each managed repo's scheduled
 `ops.yml` job (see [GitHub Config Audit](../reference/config-audit.md)).
-It checks the following, each a hard failure with no transition window:
+It checks the following, with no transition window. What it cannot fix
+through its sync PR is a hard failure:
 
 - the repo `CLAUDE.md` is at most 200 lines;
 - the template markers are present, and the region between them is the
@@ -298,7 +299,7 @@ prompt-audit` itself is tracked in intake item
 
 - [Permission Model](permission-model.md): the permission layers these
   settings files configure
-- [GitHub Config Audit](../reference/config-audit.md): the nightly audit
+- [GitHub Config Audit](../reference/config-audit.md): the audit and nightly update
   that enforces the mechanical rules
 - [Consuming Repo Setup](consuming-repo-setup.md): how a repo gets its
   settings and `CLAUDE.md` from the templates

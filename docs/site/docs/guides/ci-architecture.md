@@ -429,8 +429,10 @@ generates it, for a new repository or for an existing one with
   required check and fails if it does not.
 
 After that, `vrg-github-repo-config` keeps the repository in line:
-`audit` reports drift, `diff` shows it, and `apply` reconciles the
-GitHub side, including the ruleset. `vrg-container-run -- vrg-validate`
+`audit` reports drift, `diff` shows the GitHub side's, and `update`,
+run nightly by `ops.yml`, reconciles the GitHub side, including the
+ruleset, and fixes the managed files through one sync PR (`apply`, which
+reconciles only the GitHub side, is deprecated). `vrg-container-run -- vrg-validate`
 is the local command. Nothing else needs to be added to the repository.
 
 ## CI gates

@@ -111,7 +111,7 @@ Either way, the repository ends up with:
 | `.claude/hooks/guard.sh` | Hook-guard shim that blocks raw `git`/`gh` in agent sessions |
 | `.gitignore` | The vergil-managed ignore block for your language, including `.worktrees/` |
 | `.github/dependabot.yml` | The canonical report-only Dependabot config: every entry has `open-pull-requests-limit: 0`, so Dependabot never opens a PR |
-| `.github/workflows/` | `ci.yml`, `ops.yml` (nightly config audit, branch sweep and Dependabot alert audit), `epic-rollup.yml`, and `cd.yml` when the repo publishes releases or docs |
+| `.github/workflows/` | `ci.yml`, `ops.yml` (nightly config update and fleet sync, branch sweep and Dependabot alert audit), `epic-rollup.yml`, and `cd.yml` when the repo publishes releases or docs |
 
 `.claude/settings.json` is the packaged template
 [`claude_settings.json`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/claude_settings.json),

@@ -1512,17 +1512,18 @@ checks, run in a fresh shallow clone of the repo's `develop` (`vergil.toml`,
 shim, workflow pins, `.gitignore` managed fence, canonical
 `dependabot.yml`, `ops.yml` wiring)
 with GitHub-API checks (repo settings, rulesets, required-check set).
-Runs nightly from each repo's `ops.yml` via the reusable
-`ops-github-config.yml` workflow, where drift is fatal. See the
-[GitHub Config Audit reference](config-audit.md).
+`update` runs nightly, as the org automation App, from each repo's
+`ops.yml` via the reusable `ops-github-config.yml` workflow; drift it
+cannot fix turns the run red. `update` refuses the agent identity modes.
+See the [GitHub Config Audit reference](config-audit.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_github_repo_config` |
-| Args | `audit` \| `diff` \| `update` \| `apply` (deprecated); `--repo OWNER/REPO`, `--config PATH` |
-| Preconditions | Local checks clone the repo's `develop` over HTTPS (git's credential helper must reach it); GitHub checks require `gh` credentials |
+| Args | `audit` \| `diff` \| `update` \| `apply` (deprecated); `--repo OWNER/REPO`, `--config PATH`; `--in-tree-templates` (`audit` only, vergil-tooling only) |
+| Preconditions | Local checks clone the repo's `develop` over HTTPS (git's credential helper must reach it); GitHub checks require `gh` credentials; `update` needs the `human` or `automation` identity mode |
 | Failure mode | `DiffItem` list on drift; clean diagnostic on unreachable GitHub state |
-| Exit codes | 0 compliant (for `update`: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for `update`, drift it could not fix), 2 could not complete (for `update`, also a sync PR that did not merge) |
+| Exit codes | 0 compliant (for `diff`: whether or not it finds drift; for `update`: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for `update`, drift it could not fix), 2 could not complete, including a setting not checked (for `update`, also an agent identity or a sync PR that did not merge) |
 | Status | Active |
 
 ### vrg-dependabot-audit
