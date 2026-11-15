@@ -18826,7 +18826,9 @@ the tasks, pausing and resuming as blockers allow) → <code>epic-retrospective<
   brainstorming the follow-on epic(s) is a <strong>forward-looking</strong> concern that <strong>no
   longer defines the end of an epic</strong>: seed it at creation only when a known
   enabling chain already exists, otherwise accrue it during implementation or
-  skip it. Its outcomes are recorded in the retrospective.</li>
+  skip it. Its outcomes are recorded in the retrospective. A brainstorm that
+  is ready before its epic finishes moves to the planning queue with
+  <code>vrg-intake-route &lt;ref&gt; planning</code>, which records the hand-off on the epic.</li>
 </ul>
 <p>The bookends need no new closing mechanism — they ride the existing rollup. A
 finite epic rolls up only when every child is closed, and the retrospective is
