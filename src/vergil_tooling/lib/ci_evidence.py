@@ -417,7 +417,7 @@ def read_harvest_state(staging_dir: Path) -> HarvestState:
 
 def copy_sbom(sbom_file: Path, staging_dir: Path) -> Path:
     """Copy an already-built SBOM into ``evidence/gates/sbom/``."""
-    dest_dir = _evidence_root(staging_dir) / "gates" / "sbom"
+    dest_dir = _evidence_root(staging_dir) / "gates" / _SBOM_DIRNAME
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / sbom_file.name
     shutil.copyfile(sbom_file, dest)

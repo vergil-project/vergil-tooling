@@ -45,7 +45,7 @@ mechanism fleet-wide:
 - **Consumer side** (publish-time harvest in `vergil-tooling`). A single
   language-agnostic command, `vrg-ci-evidence`, downloads every
   `ci-evidence-*` artifact, validates completeness, assembles the bundle tree
-  plus a `manifest.json` index with per-file `sha256`, and produces
+  plus a `manifest.json` index with a `sha256` for each gate file, and produces
   `v{version}-ci-evidence.tar.gz`.
 
 The **only** cross-repo coupling is the `ci-evidence-*` artifact name and the
@@ -360,8 +360,13 @@ read by auditors; they populate as producers are updated.
 
 Two trust properties are load-bearing:
 
-1. **Every file carries a `sha256`.** An auditor can prove the archive is intact
-   and unmodified.
+1. **Every gate file carries a `sha256`.** Each file under a gate directory
+   has a `manifest.json` entry with its `sha256`, so an auditor can prove the
+   gate evidence is intact and unmodified. The manifest hashes nothing else:
+   `README.md`, `checks.json` and the SBOM under `gates/sbom/` have no
+   manifest entry. They are covered by the build-provenance attestation over
+   the whole bundle (and the SBOM also by its own Release asset), not by the
+   manifest.
 2. **`missing_gates` is explicit.** A required gate that produced no evidence is
    recorded as data, never silently dropped.
 
@@ -394,8 +399,8 @@ A successful verification turns "here is a tarball" into "here is a tarball
 cryptographically proven to be the genuine output of this pipeline for this
 commit." This is the chain-of-custody core of the mechanism.
 
-**2. Verify every file's integrity.** Unpack the archive and confirm each file's
-`sha256` matches its `manifest.json` entry:
+**2. Verify every gate file's integrity.** Unpack the archive and confirm each
+gate file's `sha256` matches its `manifest.json` entry:
 
 ```bash
 tar -xzf v2.1.129-ci-evidence.tar.gz
