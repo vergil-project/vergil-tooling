@@ -18362,7 +18362,10 @@ VM. The dual-identity model uses one stanza per role.</p>
 <li><strong>Query identity with <code>vrg-whoami</code>, never a single environment
   variable.</strong> <code>VRG_IDENTITY_MODE</code> is only the first of five fallback
   steps (env var → mode file → <code>app.pem</code> → <code>VRG_APP_ID</code> → human); an
-  unset value means "fall through," not "default to human." Ask the
+  unset value means "fall through," not "default to human." (The
+  <code>automation</code> mode is checked before all five, and only in a CI job
+  that sets <code>VRG_AUTOMATION_APP</code>; see
+  <a href="../identity-architecture/#identity-modes">Identity modes</a>.) Ask the
   authoritative resolver instead: <code>vrg-whoami</code> prints the resolved role,
   <code>vrg-whoami --mode</code> emits a single token for scripting
   (<code>export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"</code>), and

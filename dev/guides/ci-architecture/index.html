@@ -18489,8 +18489,10 @@ generates it, for a new repository or for an existing one with
   required check and fails if it does not.</li>
 </ul>
 <p>After that, <code>vrg-github-repo-config</code> keeps the repository in line:
-<code>audit</code> reports drift, <code>diff</code> shows it, and <code>apply</code> reconciles the
-GitHub side, including the ruleset. <code>vrg-container-run -- vrg-validate</code>
+<code>audit</code> reports drift, <code>diff</code> shows the GitHub side's, and <code>update</code>,
+run nightly by <code>ops.yml</code>, reconciles the GitHub side, including the
+ruleset, and fixes the managed files through one sync PR (<code>apply</code>, which
+reconciles only the GitHub side, is deprecated). <code>vrg-container-run -- vrg-validate</code>
 is the local command. Nothing else needs to be added to the repository.</p>
 <h2 id="ci-gates">CI gates<a class="headerlink" href="#ci-gates" title="Permanent link">&para;</a></h2>
 <p>The <code>CI gates</code> ruleset requires these checks. The list is computed from

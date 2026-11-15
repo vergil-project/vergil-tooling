@@ -18542,7 +18542,7 @@ rule, the engineering principles and the paad policy pointer. Don't edit
 it by hand. Add what an agent needs for your repo (overview, commands,
 constraints) after the end marker, and link reference material from your
 site docs rather than copying it in.</p>
-<p>The nightly config audit requires the region to match the template
+<p>The config audit requires the region to match the template
 verbatim and the whole file to stay at or under <strong>200 lines</strong>. The repo
 has no <code>AGENTS.md</code>: <code>CLAUDE.md</code> is the one instruction file. Keep
 <code>.claude/settings.local.json</code> absent or exactly <code>{}</code>. In repos in the
@@ -18590,7 +18590,7 @@ report, and refuses to apply one that requires a check <code>ci.yml</code>
 never produces.</p>
 <p>Alongside it:</p>
 <ul>
-<li><strong><code>ops.yml</code></strong> — runs the config audit on a daily, per-repo
+<li><strong><code>ops.yml</code></strong> — runs <code>vrg-github-repo-config update</code> on a daily, per-repo
   staggered <code>cron</code> schedule (see Step 7).</li>
 <li><strong><code>epic-rollup.yml</code></strong> — on any issue close, closes the parent epic
   once all of its tasks are closed.</li>
@@ -18655,13 +18655,16 @@ audit, and both are checked nightly:</p>
 </li>
 <li>
 <p><strong>Your repo must carry a scheduled <code>ops.yml</code> wired to the config
-   audit.</strong> <code>.github/workflows/ops.yml</code> must call the reusable
+   job.</strong> <code>.github/workflows/ops.yml</code> must call the reusable
    <code>ops-github-config.yml</code> workflow <strong>on a <code>cron</code> schedule</strong>. That
-   scheduled job is what runs the audit each night.</p>
+   scheduled job is what runs <code>vrg-github-repo-config update</code> each
+   night.</p>
 </li>
 </ol>
-<p>Both are <strong>fatal in the nightly audit</strong>: any drift returns exit 1 and
-turns the scheduled <code>ops.yml</code> run red. <code>vrg-github-repo-init</code> writes
+<p>The nightly <code>update</code> fixes a drifted managed block through a sync PR
+that merges within the run. The <code>ops.yml</code> wiring has no fixer: a run
+that finds it wrong exits 1 and turns red, as it does for any other
+drift with no fixer. <code>vrg-github-repo-init</code> writes
 both, so a new or adopted repo starts conforming.</p>
 <p>You never bump a pin to receive fragment changes: every repo tracks the
 rolling <code>vergil-tooling@vX.Y</code> tag, so an updated fragment released under

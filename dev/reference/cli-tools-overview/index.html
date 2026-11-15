@@ -21835,9 +21835,10 @@ checks, run in a fresh shallow clone of the repo's <code>develop</code> (<code>v
 shim, workflow pins, <code>.gitignore</code> managed fence, canonical
 <code>dependabot.yml</code>, <code>ops.yml</code> wiring)
 with GitHub-API checks (repo settings, rulesets, required-check set).
-Runs nightly from each repo's <code>ops.yml</code> via the reusable
-<code>ops-github-config.yml</code> workflow, where drift is fatal. See the
-<a href="../config-audit/">GitHub Config Audit reference</a>.</p>
+<code>update</code> runs nightly, as the org automation App, from each repo's
+<code>ops.yml</code> via the reusable <code>ops-github-config.yml</code> workflow; drift it
+cannot fix turns the run red. <code>update</code> refuses the agent identity modes.
+See the <a href="../config-audit/">GitHub Config Audit reference</a>.</p>
 <table>
 <thead>
 <tr>
@@ -21852,11 +21853,11 @@ Runs nightly from each repo's <code>ops.yml</code> via the reusable
 </tr>
 <tr>
 <td>Args</td>
-<td><code>audit</code> | <code>diff</code> | <code>update</code> | <code>apply</code> (deprecated); <code>--repo OWNER/REPO</code>, <code>--config PATH</code></td>
+<td><code>audit</code> | <code>diff</code> | <code>update</code> | <code>apply</code> (deprecated); <code>--repo OWNER/REPO</code>, <code>--config PATH</code>; <code>--in-tree-templates</code> (<code>audit</code> only, vergil-tooling only)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Local checks clone the repo's <code>develop</code> over HTTPS (git's credential helper must reach it); GitHub checks require <code>gh</code> credentials</td>
+<td>Local checks clone the repo's <code>develop</code> over HTTPS (git's credential helper must reach it); GitHub checks require <code>gh</code> credentials; <code>update</code> needs the <code>human</code> or <code>automation</code> identity mode</td>
 </tr>
 <tr>
 <td>Failure mode</td>
@@ -21864,7 +21865,7 @@ Runs nightly from each repo's <code>ops.yml</code> via the reusable
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 compliant (for <code>update</code>: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for <code>update</code>, drift it could not fix), 2 could not complete (for <code>update</code>, also a sync PR that did not merge)</td>
+<td>0 compliant (for <code>diff</code>: whether or not it finds drift; for <code>update</code>: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for <code>update</code>, drift it could not fix), 2 could not complete, including a setting not checked (for <code>update</code>, also an agent identity or a sync PR that did not merge)</td>
 </tr>
 <tr>
 <td>Status</td>

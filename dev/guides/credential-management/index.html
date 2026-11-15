@@ -18343,7 +18343,8 @@ administrative activity in addition to the agent activity.</p>
 <a href="../identity-architecture/#the-org-automation-apps">Identity Architecture</a>).
 CI reaches an org's App through the <code>APP_CLIENT_ID</code> and
 <code>APP_PRIVATE_KEY</code> Actions secrets. The nightly <code>ops</code> workflow uses them
-for the config audit, the branch sweep and the <code>dependabot-audit</code> job.
+for the <code>github-config</code> job (<code>vrg-github-repo-config update</code>, the
+automatic fleet sync), the branch sweep and the <code>dependabot-audit</code> job.
 The <code>epic-rollup</code> and epic-sweep workflows use them to close epics and
 tasks. The <code>cd-release</code> workflow uses them to dispatch to the org's
 <code>packages</code> repository (see
@@ -18352,13 +18353,19 @@ tasks. The <code>cd-release</code> workflow uses them to dispatch to the org's
 repositories, not per contributor, so a leaked key reaches every repo
 in that org. It does not reach the other orgs, which have their own
 Apps and keys. Its permission set is not listed in the Account Setup
-tables. Read the exact permissions from the App's settings page before
-you assess the impact. Its Administration permission is read-only, so
-the key cannot change repo settings or rulesets. With Dependabot
-alerts: Read, the key can read a repo's open alerts, including on a
-private repo. With Repository security advisories: Read and write, it
-can read and change the draft advisories in the org's <code>.github</code>, which
-hold the details of unfixed security findings (see
+tables; the vergil-actions
+<a href="https://vergil-project.github.io/vergil-actions/configuration/">configuration reference</a>
+lists it. Read the exact permissions from the App's settings page before
+you assess the impact. The key mints tokens with every permission the
+App holds, whatever the workflows' scoped tokens request. With
+Administration: Read and write, it can change repo settings and
+rulesets, including the bypass lists. With Contents, Pull requests and
+Workflows: Read and write, it can push branches (workflow files
+included), open PRs and merge any whose required checks pass, and it is a bypass actor of every
+repo's <code>Automation branches</code> ruleset. With Dependabot alerts: Read, it
+can read a repo's open alerts, including on a private repo. The App
+holds no Repository security advisories permission, so it cannot read
+the draft advisories in the org's <code>.github</code> (see
 <a href="../security-records/">Security Records</a>).</p>
 <p><strong>Contain and restore.</strong> Follow the same steps as for an agent App key:
 delete the key, suspend the installation if access must stop at once,
