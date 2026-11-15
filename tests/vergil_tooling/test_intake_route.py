@@ -1183,7 +1183,9 @@ def test_route_planning_brainstorm_epic_record_failure_names_both_comments(env: 
         route(ITEM, ToPlanning(), today=TODAY)
     message = str(excinfo.value)
     assert env.native_parent[ITEM] == PLANNING
-    assert "org/.github#352 moved from org/.github#400 to the planning epic org/.github#8" in message
+    assert (
+        "org/.github#352 moved from org/.github#400 to the planning epic org/.github#8" in message
+    )
     assert "HTTP 502" in message
     assert (
         "on org/.github#400: Follow-on brainstorm handed to planning: org/.github#352 "
