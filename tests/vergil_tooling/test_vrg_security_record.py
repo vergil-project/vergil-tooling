@@ -612,9 +612,7 @@ def test_retarget_cli_refuses_bad_input(
 _REASON = "the epic was closed as not planned"
 
 
-def _close_result(
-    closed: bool = True, notes: tuple[str, ...] = ()
-) -> security_records.CloseResult:
+def _close_result(closed: bool = True, notes: tuple[str, ...] = ()) -> security_records.CloseResult:
     return security_records.CloseResult(issues=(ISSUE, EXISTING), notes=notes, closed=closed)
 
 

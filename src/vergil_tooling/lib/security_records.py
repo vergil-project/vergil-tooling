@@ -420,9 +420,7 @@ def _with_tracking(description: str, targets: Sequence[IssueRef]) -> str:
 
 
 @contextlib.contextmanager
-def _step(
-    ghsa_id: str, step: str, error: type[RuntimeError] = RetargetError
-) -> Generator[None]:
+def _step(ghsa_id: str, step: str, error: type[RuntimeError] = RetargetError) -> Generator[None]:
     """Turn any failure inside one step into *error*, a :class:`RetargetError` by default.
 
     The message names the advisory and the step; a ``gh`` failure is scrubbed
