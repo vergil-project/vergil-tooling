@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.313] - 2026-11-15
+
+### Bug fixes
+
+- escape issue and PR titles in the roadmap and activity pages (#4400)
+- settle a one-off only once the queue epic has let go of it (#4404)
+- print report-ready's batch issues in batch-show's #N form (#4406)
+- never unmark a transferred issue at its old number in retarget (#4408)
+- name the re-run steps when the CD release job fails (#4409)
+- refresh the lockfile in the dev container after a version bump (#4410)
+
+### Features
+
+- relax the managed validation rule to allow ad hoc container runs (#4401)
+- add vrg-pr-review-comments to list a PR's inline review comments read-only (#4403)
+
 ## [2.1.312] - 2026-11-14
 
 ### Bug fixes
