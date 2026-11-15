@@ -17947,7 +17947,7 @@ mechanism fleet-wide:</p>
 <li><strong>Consumer side</strong> (publish-time harvest in <code>vergil-tooling</code>). A single
   language-agnostic command, <code>vrg-ci-evidence</code>, downloads every
   <code>ci-evidence-*</code> artifact, validates completeness, assembles the bundle tree
-  plus a <code>manifest.json</code> index with per-file <code>sha256</code>, and produces
+  plus a <code>manifest.json</code> index with a <code>sha256</code> for each gate file, and produces
   <code>v{version}-ci-evidence.tar.gz</code>.</li>
 </ul>
 <p>The <strong>only</strong> cross-repo coupling is the <code>ci-evidence-*</code> artifact name and the
@@ -18257,17 +18257,20 @@ self-describing and verifiable:</p>
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>   │   ├─ test/              # coverage-&lt;ver&gt;.xml, junit-&lt;ver&gt;.xml (per Python version), evidence.json
 <a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>   │   ├─ audit/             # pip-audit-&lt;ver&gt;.json, licenses-&lt;ver&gt;.json (per Python version), evidence.json
 <a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>   │   ├─ quality/           # quality-common.log, quality-custom.log, quality-ruff-&lt;ver&gt;.json, quality-mypy-&lt;ver&gt;.xml (per Python version), evidence.json
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>   │   └─ sbom/              # sbom.cdx.json
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>   │   └─ sbom/              # sbom.cdx.json (only when the release built a package SBOM)
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>   └─ README.md              # human orientation for the archive
 </code></pre></div>
 <ul>
 <li><code>manifest.json</code> is the curated, per-gate machine index (schema below).</li>
 <li><code>checks.json</code> is the <strong>raw</strong> check-run snapshot — distinct from the manifest's
   curated view — capturing every check's name, conclusion, timing, and log URL.</li>
-<li><code>gates/sbom/</code> is populated by copying the SBOM already built during publish
-  (also a standalone Release asset) into the bundle at harvest time, so the
-  archive stays fully self-contained.</li>
-<li><code>README.md</code> is a fixed human orientation for the archive.</li>
+<li><code>gates/sbom/</code> is present only when the release built a package SBOM. The
+  assemble step copies the SBOM already built during publish (also a
+  standalone Release asset) into the bundle, so the archive stays fully
+  self-contained. A release that builds no package has no <code>gates/sbom/</code>.</li>
+<li><code>README.md</code> is a human orientation for the archive, generated from the
+  entries assembled: it names each gate directory present and says whether
+  the archive holds <code>gates/sbom/</code>.</li>
 </ul>
 <p>A standalone copy of <code>manifest.json</code> is also attached as a small, separate
 Release asset, so a tool can read the summary without downloading the full
@@ -18352,8 +18355,13 @@ so it ships <code>metrics: {}</code> for <strong>every</strong> gate. The fields
 read by auditors; they populate as producers are updated.</p>
 <p>Two trust properties are load-bearing:</p>
 <ol>
-<li><strong>Every file carries a <code>sha256</code>.</strong> An auditor can prove the archive is intact
-   and unmodified.</li>
+<li><strong>Every gate file carries a <code>sha256</code>.</strong> Each file under a gate directory
+   has a <code>manifest.json</code> entry with its <code>sha256</code>, so an auditor can prove the
+   gate evidence is intact and unmodified. The manifest hashes nothing else:
+   <code>README.md</code>, <code>checks.json</code> and the SBOM under <code>gates/sbom/</code> have no
+   manifest entry. They are covered by the build-provenance attestation over
+   the whole bundle (and the SBOM also by its own Release asset), not by the
+   manifest.</li>
 <li><strong><code>missing_gates</code> is explicit.</strong> A required gate that produced no evidence is
    recorded as data, never silently dropped.</li>
 </ol>
@@ -18378,8 +18386,8 @@ repository's workflow and the released commit. Verify it with:</p>
 <p>A successful verification turns "here is a tarball" into "here is a tarball
 cryptographically proven to be the genuine output of this pipeline for this
 commit." This is the chain-of-custody core of the mechanism.</p>
-<p><strong>2. Verify every file's integrity.</strong> Unpack the archive and confirm each file's
-<code>sha256</code> matches its <code>manifest.json</code> entry:</p>
+<p><strong>2. Verify every gate file's integrity.</strong> Unpack the archive and confirm each
+gate file's <code>sha256</code> matches its <code>manifest.json</code> entry:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>tar<span class="w"> </span>-xzf<span class="w"> </span>v2.1.129-ci-evidence.tar.gz
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">cd</span><span class="w"> </span>evidence
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="c1"># For each gate file listed in manifest.json:</span>
