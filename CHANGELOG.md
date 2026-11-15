@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.315] - 2026-11-15
+
+### Bug fixes
+
+- retry pip-audit on transient network errors in the audit stage (#4434)
+- render the evidence README from the entries assembled (#4437)
+
+### Documentation
+
+- bring the docs in line with the automatic fleet sync (#4428)
+- move the shipped VM plans 2 and 3 to completed (#4435)
+- document fixture runs and fix stale Rust, evidence and release-recovery docs (#4436)
+- say the workflow-registration workaround is kept on purpose (#4438)
+
+### Features
+
+- add close, which closes a draft advisory with a reason posted on its issues (#4431)
+- let the planning route take a follow-on brainstorm out of a development epic (#4432)
+
 ## [2.1.314] - 2026-11-15
 
 ### Bug fixes
