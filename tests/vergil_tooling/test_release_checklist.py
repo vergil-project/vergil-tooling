@@ -46,6 +46,19 @@ def test_parse_raises_when_no_block() -> None:
         checklist.parse("## Release 2.1.0\n")
 
 
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("## Release 2.1.0\n", False),
+        (checklist.render(["audit"]), True),
+        (checklist.BEGIN + "\n- [ ] audit\n", True),
+        ("- [ ] audit\n" + checklist.END, True),
+    ],
+)
+def test_has_block_sees_either_marker(body: str, *, expected: bool) -> None:
+    assert checklist.has_block(body) is expected
+
+
 def test_upsert_appends_when_absent() -> None:
     body = checklist.upsert("## Release 2.1.0\n", ["audit"])
     assert "## Release 2.1.0" in body

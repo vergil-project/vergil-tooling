@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.progress import Stage, mark_warn
 from vergil_tooling.lib.promote import promote
-from vergil_tooling.lib.release import package_index
+from vergil_tooling.lib.release import checklist, package_index
 from vergil_tooling.lib.release.bump import back_merge_and_bump
 from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
 from vergil_tooling.lib.release.conflict import merge_main_into_release
@@ -62,8 +62,8 @@ class ReleaseState:
     allow_pending_deps: bool = False
 
 
-def _audit_stage(_state: ReleaseState) -> None:
-    run_audit()
+def _audit_stage(state: ReleaseState) -> None:
+    run_audit(state.repo_root)
 
 
 def _preflight_stage(state: ReleaseState) -> None:
@@ -77,6 +77,10 @@ def _preflight_stage(state: ReleaseState) -> None:
     )
     ctx.promote = state.promote
     ctx.without_deps = state.without_deps
+    # The read-only stages before prepare ran before the issue existed, so the
+    # checklist the issue is created with has them ticked already (#4367).
+    names = _stage_names()
+    ctx.progress_block = checklist.render(names, checked=names[: names.index("prepare")])
     state.ctx = ctx
 
 

@@ -250,11 +250,11 @@ read the `origin` remote, which resolves the org whose GitHub App
 token `gh` runs with:
 
 `vrg-activity-log`, `vrg-adhoc-epic`, `vrg-audit-approve`,
-`vrg-branch-sweep`, `vrg-ci-evidence`, `vrg-ci-sync`,
+`vrg-branch-sweep`, `vrg-ci-evidence`,
 `vrg-container-docs`, `vrg-dependabot-audit`, `vrg-docs-stage`,
 `vrg-ensure-label`, `vrg-epic-audit`, `vrg-epic-create`,
 `vrg-epic-docs`, `vrg-epic-link`, `vrg-epic-move`, `vrg-epic-rollup`,
-`vrg-finalize-pr`, `vrg-fleet-sync`, `vrg-github-repo-config`,
+`vrg-finalize-pr`, `vrg-github-repo-config`,
 `vrg-github-repo-init`, `vrg-intake-create`, `vrg-intake-route`,
 `vrg-issue-create`, `vrg-pr-await`, `vrg-pr-workflow`, `vrg-promote`,
 `vrg-queue`, `vrg-release`, `vrg-repo-status`,

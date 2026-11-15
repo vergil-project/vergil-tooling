@@ -21,7 +21,7 @@ import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import github, identity_mode
+from vergil_tooling.lib import github, identity_mode, in_tree_audit
 from vergil_tooling.lib.automation_identity import (
     AutomationIdentityError,
     automation_app_id,
@@ -51,6 +51,7 @@ from vergil_tooling.lib.remote_config import fetch_config_from_ref as _fetch_con
 from vergil_tooling.lib.remote_config import is_not_found as _is_not_found
 from vergil_tooling.lib.repo_config import audit_local_config
 from vergil_tooling.lib.repo_config_fixes import FIXERS, CannotFix
+from vergil_tooling.lib.self_repo import is_self_repo
 from vergil_tooling.lib.versions import VersionsError
 
 if TYPE_CHECKING:
@@ -88,19 +89,56 @@ def main(argv: list[str] | None = None) -> int:
     # The managed-file checks read what is committed on *repo*'s develop, in a
     # fresh shallow clone, never the caller's checkout: a dirty or unrelated
     # cwd cannot change the result, and --repo audits from anywhere.
+    in_tree = args.command == "audit" and args.in_tree_templates
     try:
         with clone_develop(repo) as clone:
-            local_diff = audit_local_config(clone)
+            local_compliant = _audit_local_in_tree(repo, clone) if in_tree else _audit_local(clone)
     except DevelopCloneError as exc:
         # Without the files the audit could not complete: exit 2, never 1.
         emit_error(str(exc))
         return 2
-    _print_local_diff(local_diff)
-    local_compliant = local_diff.is_compliant()
+    if local_compliant is None:
+        return 2
 
     return _in_target_org(
         repo, lambda: _audit_and_apply(args, repo, local_compliant=local_compliant)
     )
+
+
+def _audit_local(clone: Path) -> bool:
+    """Audit the clone's managed files with the installed templates; print the report."""
+    diff = audit_local_config(clone)
+    print_local_diff(diff)
+    return diff.is_compliant()
+
+
+def _audit_local_in_tree(repo: str, clone: Path) -> bool | None:
+    """Audit the clone's managed files with the clone's own source tree (#4414).
+
+    ``audit --in-tree-templates`` is for vergil-tooling alone, which holds the
+    master templates (``vrg-release`` passes it when releasing vergil-tooling):
+    the managed files of its ``develop`` are checked against the templates
+    being released, not the installed release's. Returns whether they are
+    compliant, or ``None`` when the audit could not complete: *repo*'s
+    ``develop`` is not vergil-tooling, or the source-tree audit failed. The
+    report is printed by the source-tree process.
+    """
+    if not is_self_repo(clone):
+        emit_error(
+            f"--in-tree-templates audits vergil-tooling only, and {repo}'s develop "
+            "is not the vergil-tooling project (its pyproject.toml does not name it)."
+        )
+        return None
+    code = in_tree_audit.run(clone)
+    if code == in_tree_audit.COMPLIANT:
+        return True
+    if code == in_tree_audit.NON_COMPLIANT:
+        return False
+    emit_error(
+        f"The in-tree audit of {repo}'s managed files could not complete "
+        f"(exit {code}); its output is above."
+    )
+    return None
 
 
 def _in_target_org(repo: str, run: Callable[[], int]) -> int:
@@ -173,7 +211,7 @@ def _update_repo(args: argparse.Namespace, repo: str) -> int:
         return 2
 
     _print_sync_result(repo, result)
-    _print_local_diff(remaining)
+    print_local_diff(remaining)
     if github_code == 1 or cannot_fix or not remaining.is_compliant():
         return 1
     return 0
@@ -379,6 +417,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "--config",
             help="Local path to vergil.toml (overrides remote fetch)",
         )
+        if name == "audit":
+            sp.add_argument(
+                "--in-tree-templates",
+                action="store_true",
+                help=(
+                    "vergil-tooling only: check its managed files against the templates "
+                    "in its develop's source tree instead of the installed release's"
+                ),
+            )
 
     return parser.parse_args(argv)
 
@@ -557,7 +604,7 @@ def _format_undeclared(param: UndeclaredParam) -> str:
     )
 
 
-def _print_local_diff(diff: ConfigDiff) -> None:
+def print_local_diff(diff: ConfigDiff) -> None:
     """Print local config audit results."""
     if diff.is_compliant():
         print("  local: compliant")

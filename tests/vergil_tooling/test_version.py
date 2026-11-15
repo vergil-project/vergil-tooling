@@ -8,7 +8,14 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib.version import VersionSyncError, bump, show, show_major_minor
+from vergil_tooling.lib.version import (
+    VersionSyncError,
+    bump,
+    bump_paths,
+    next_version,
+    show,
+    show_major_minor,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -573,3 +580,59 @@ def test_bump_invalid_part_raises(tmp_path: Path) -> None:
     (tmp_path / "VERSION").write_text("1.0.0\n")
     with pytest.raises(ValueError, match="part must be"):
         bump(tmp_path, "rc")
+
+
+# -- next_version() and bump_paths() tests (#4415) ----------------------------
+
+
+@pytest.mark.parametrize(
+    ("part", "expected"), [("patch", "1.2.4"), ("minor", "1.3.0"), ("major", "2.0.0")]
+)
+def test_next_version_matches_bump(tmp_path: Path, part: str, expected: str) -> None:
+    _write_toml(tmp_path)
+    (tmp_path / "VERSION").write_text("1.2.3\n")
+    assert next_version("1.2.3", part) == expected
+    assert bump(tmp_path, part) == expected
+
+
+def test_next_version_invalid_part_raises() -> None:
+    with pytest.raises(ValueError, match="part must be"):
+        next_version("1.0.0", "rc")
+
+
+def test_bump_paths_rust(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "rust")
+    assert bump_paths(tmp_path) == {
+        "VERSION",
+        "Cargo.toml",
+        "Cargo.lock",
+        ".claude-plugin/plugin.json",
+    }
+
+
+def test_bump_paths_python(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "python")
+    assert bump_paths(tmp_path) == {
+        "VERSION",
+        "pyproject.toml",
+        "uv.lock",
+        ".claude-plugin/plugin.json",
+    }
+
+
+def test_bump_paths_go(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "go")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "version.go").write_text('package pkg\n\nVersion = "1.0.5"\n')
+    assert bump_paths(tmp_path) == {"VERSION", "pkg/version.go", ".claude-plugin/plugin.json"}
+
+
+def test_bump_paths_go_without_version_file(tmp_path: Path) -> None:
+    """With no version.go, bump writes none, so none is listed."""
+    _write_toml(tmp_path, "go")
+    assert bump_paths(tmp_path) == {"VERSION", ".claude-plugin/plugin.json"}
+
+
+def test_bump_paths_generic(tmp_path: Path) -> None:
+    _write_toml(tmp_path)
+    assert bump_paths(tmp_path) == {"VERSION", ".claude-plugin/plugin.json"}

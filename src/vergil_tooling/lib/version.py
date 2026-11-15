@@ -30,6 +30,12 @@ _LOCKFILE_COMMANDS: dict[str, list[str]] = {
     "rust": ["cargo", "update", "--workspace"],
 }
 
+# The lockfile each _LOCKFILE_COMMANDS entry rewrites, relative to the repo root.
+_LOCKFILES: dict[str, str] = {
+    "python": "uv.lock",
+    "rust": "Cargo.lock",
+}
+
 # Runs a command in the repo's dev container: the language image, the
 # workspace mounts and the resolved toolchain environment validation uses.
 _CONTAINER_RUN = ("vrg-container-run", "--")
@@ -267,3 +273,34 @@ def bump(repo_root: Path, part: str = "patch") -> str:
     if language is not None:
         _run_lockfile_maintenance(repo_root, language)
     return new_version
+
+
+def next_version(current: str, part: str = "patch") -> str:
+    """The version :func:`bump` moves *current* to, without writing anything."""
+    if part not in _VALID_PARTS:
+        msg = f"part must be one of {sorted(_VALID_PARTS)}, got '{part}'"
+        raise ValueError(msg)
+    return _increment_version(current, part)
+
+
+def bump_paths(repo_root: Path) -> frozenset[str]:
+    """Every path, relative to *repo_root*, that :func:`bump` may write.
+
+    The same discovery :func:`bump` runs: VERSION, the language's version
+    file, the secondary version files and the language's lockfile. A path is
+    listed whether or not it exists, since a lock command may create it.
+    """
+    paths = {VERSION_FILE, *_SECONDARY_VERSION_FILES}
+    language = read_config(repo_root).project.primary_language
+    if language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
+        try:
+            lang_file = _discover_version_file(repo_root, language)
+        except (FileNotFoundError, ValueError):
+            # bump() writes no language file then, so none is listed: a dirty
+            # path outside this set is refused by the caller, never ignored.
+            pass
+        else:
+            paths.add(lang_file.relative_to(repo_root).as_posix())
+    if language is not None and language in _LOCKFILES:
+        paths.add(_LOCKFILES[language])
+    return frozenset(paths)

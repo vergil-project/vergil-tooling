@@ -152,8 +152,8 @@ issue and ticks its box in the issue's stage checklist.
 
 | Stage | Mode | What it does |
 |---|---|---|
-| `audit` | fail-fast | Runs `vrg-github-repo-config audit` on the repo. `--skip-audit` skips it |
-| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), and runs the [dependency-update gate](#the-dependency-update-gate). Creates the `release/<version>` managed worktree |
+| `audit` | fail-fast | Runs `vrg-github-repo-config audit` on the repo. Releasing vergil-tooling itself adds `--in-tree-templates`, so its managed files are checked against the templates being released, not the installed release's (see the [config audit reference](../reference/config-audit.md#auditing-vergil-tooling-against-its-own-templates)). `--skip-audit` skips it |
+| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), and runs the [dependency-update gate](#the-dependency-update-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it |
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
@@ -190,6 +190,36 @@ right run, and `close-finalize` runs `vrg-finalize-pr` only when every
 earlier stage passed. A second wait would add nothing. It would also
 fail the stage on a docs publish failure that `confirm-develop` has
 already deferred.
+
+### An interrupted release
+
+An interrupt (Ctrl-C) or a crash can stop `vrg-release` at any point.
+What a re-run does depends on how far the stopped run got:
+
+- **Stopped before the tracking issue was opened.** `preflight` has
+  created the local `release/<version>` branch and its managed worktree
+  in `.worktrees/`, but nothing is pushed and no issue records the
+  release. Run `vrg-release` again, with the same arguments. A fresh
+  start adopts the leftover branch and worktree and fast-forwards them
+  to `develop`, as long as nothing on them can be lost: the branch was
+  never pushed (`origin` is asked directly), it has no commit `develop`
+  lacks, and the worktree is clean and on the branch. Otherwise it
+  stops with `Release branch 'release/<version>' already exists` and
+  the reason, and leaves everything in place for you to inspect. It
+  never deletes a branch or a worktree.
+- **Stopped after the tracking issue was opened.** The issue is created
+  with its stage checklist in its body, so it is always resumable:
+  run `vrg-release --resume`. A fresh `vrg-release` refuses, since a
+  tracking issue already exists for the version. The resume adopts the
+  local release branch and worktree, unpushed or not, and the `prepare`
+  stage skips what the stopped run already did.
+
+A tracking issue opened by an older `vrg-release` can lack the stage
+checklist, if that run was interrupted in `prepare`. `--resume` takes
+it over when the `release/<version>` branch exists, locally or on
+`origin`: the branch shows the fresh start's checks passed, and
+`prepare` writes the checklist. With no branch it refuses; close the
+issue and run `vrg-release` again.
 
 ### A failed release job
 
@@ -693,8 +723,10 @@ gh run list --repo vergil-project/vergil-tooling \
 ## Release tracking artifacts
 
 Each release has a tracking issue, `release: <version>`, which
-`vrg-release` creates in its `prepare` stage. Its body carries the
-stage checklist, and each tracked stage adds a comment when it
+`vrg-release` creates in its `prepare` stage. The issue is created with
+the stage checklist in its body (see
+[An interrupted release](#an-interrupted-release)), and each tracked
+stage adds a comment when it
 completes or fails:
 
 - The `prepare` comment names the release branch, the release PR and

@@ -123,6 +123,21 @@ def test_preflight_stage_populates_ctx() -> None:
     assert ctx.promote is False
 
 
+def test_preflight_stage_renders_the_checklist_the_issue_is_created_with() -> None:
+    # #4367: the stages before prepare are ticked; prepare onward are open.
+    from vergil_tooling.lib.release import checklist
+
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    ctx = _ctx()
+    with patch(_MOD + ".preflight", return_value=ctx):
+        _preflight_stage(state)
+    assert ctx.progress_block is not None
+    names = [stage.name for stage in build_stages()]
+    pairs = checklist.parse(ctx.progress_block)
+    assert [name for name, _ in pairs] == names
+    assert [name for name, done in pairs if done] == ["audit", "preflight"]
+
+
 def test_preflight_stage_passes_allow_pending_deps() -> None:
     state = ReleaseState(
         version_override=None,
@@ -141,7 +156,7 @@ def test_audit_stage_runs_audit() -> None:
     state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
     with patch(_MOD + ".run_audit") as m_audit:
         _audit_stage(state)
-    m_audit.assert_called_once_with()
+    m_audit.assert_called_once_with(Path("/tmp/repo"))  # noqa: S108
 
 
 def test_tracked_stage_comments_on_success() -> None:

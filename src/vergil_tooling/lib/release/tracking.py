@@ -96,8 +96,22 @@ def find_existing_tracking_issue(repo: str, version: str) -> str | None:
 
 
 def create_tracking_issue(ctx: ReleaseContext) -> None:
-    """Create a release tracking issue and populate ctx."""
-    body = f"## Release {ctx.version}\n\nRepo: {ctx.repo}\n"
+    """Create a release tracking issue, its stage checklist included, and populate ctx.
+
+    The checklist (``ctx.progress_block``) is part of the creation body, never
+    a later edit, so no interrupt can leave an open tracking issue that
+    ``vrg-release --resume`` refuses for want of one (#4367).
+    """
+    if not ctx.progress_block:
+        raise ReleaseError(
+            phase="prepare",
+            command="create_tracking_issue",
+            message=(
+                "No stage checklist on the release context — preflight did not run; "
+                "refusing to create a tracking issue that --resume could not adopt."
+            ),
+        )
+    body = f"## Release {ctx.version}\n\nRepo: {ctx.repo}\n\n{ctx.progress_block}\n"
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(body)
         tmp_path = f.name

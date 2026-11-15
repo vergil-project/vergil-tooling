@@ -14,12 +14,14 @@ from vergil_tooling.lib.managed_worktree import (
     ManagedWorktreeError,
     adopt_worktree,
     create_worktree,
+    worktree_path,
 )
 from vergil_tooling.lib.package import PackageError
 from vergil_tooling.lib.package.index import published
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import find_existing_tracking_issue
+from vergil_tooling.lib.self_repo import is_self_repo
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
 from vergil_tooling.lib.update_deps.pr import FIX_TASK_PREFIX
 
@@ -408,17 +410,15 @@ def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> 
 
     All release branch work happens in the worktree, so the root checkout's HEAD
     never moves while the release runs (#1578). A fresh run refuses an existing
-    release branch (the lock); a resume adopts it — creating the local branch
-    from origin if needed, then attaching a worktree (#1612).
+    release branch (the lock), unless it is the leftover of an interrupted run
+    that recorded nothing, which it adopts (#4367, :func:`_adopt_unrecorded_branch`);
+    a resume adopts it — creating the local branch from origin if needed, then
+    attaching a worktree (#1612).
     """
     exists = git.ref_exists(branch) or git.ref_exists(f"origin/{branch}")
-    if exists and not resume:
-        raise ReleaseError(
-            phase="preflight",
-            command=f"git rev-parse {branch}",
-            message=f"Release branch '{branch}' already exists.",
-        )
     try:
+        if exists and not resume:
+            return _adopt_unrecorded_branch(repo_root, branch)
         if resume and exists:
             if not git.ref_exists(branch):
                 git.run("branch", branch, f"origin/{branch}")
@@ -430,6 +430,102 @@ def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> 
             command=f"git worktree add {branch}",
             message=str(exc),
         ) from exc
+
+
+def _adopt_unrecorded_branch(repo_root: Path, branch: str) -> Path:
+    """Adopt a release branch an interrupted fresh run left with no record (#4367).
+
+    Preflight creates the release branch and its worktree before prepare opens
+    the tracking issue, so a run stopped in between (an interrupt, a crash)
+    leaves a local branch that nothing records and that a fresh run would
+    otherwise refuse as an existing release. A fresh run reaches this only
+    after it has confirmed that no open tracking issue exists for the version.
+
+    The branch is adopted only when nothing on it can be lost: it is local, it
+    was never pushed (``ls-remote`` asks origin itself, not the possibly stale
+    remote-tracking refs), it has no commit ``develop`` lacks, and its managed
+    worktree, if one is there, is clean and on the branch. The worktree is then
+    reused (or attached) and fast-forwarded to ``develop``. Anything else
+    refuses with the reason. Nothing is ever deleted.
+    """
+    exists = f"Release branch '{branch}' already exists"
+    if not git.ref_exists(branch):
+        raise ReleaseError(
+            phase="preflight",
+            command=f"git rev-parse origin/{branch}",
+            message=(
+                f"{exists} on origin, so an earlier release pushed it. If its "
+                "tracking issue is open, finish it with `vrg-release --resume`; "
+                "otherwise find out what it holds before removing it."
+            ),
+        )
+    command = f"git ls-remote --heads origin refs/heads/{branch}"
+    try:
+        on_origin = git.read_output("ls-remote", "--heads", "origin", f"refs/heads/{branch}")
+    except subprocess.CalledProcessError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=command,
+            message=f"{exists} locally, and origin could not be asked whether it was pushed.",
+            detail=error_text(exc),
+        ) from exc
+    if on_origin:
+        raise ReleaseError(
+            phase="preflight",
+            command=command,
+            message=(
+                f"{exists} and was pushed to origin, so it may hold release work. If "
+                "its tracking issue is open, finish it with `vrg-release --resume`; "
+                "otherwise find out what it holds before removing it."
+            ),
+        )
+    ahead = git.commits_ahead("develop", branch)
+    if ahead:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"git rev-list --count develop..{branch}",
+            message=(
+                f"{exists} locally with {ahead} commit(s) develop lacks, and no open "
+                "tracking issue records it. Find out what those commits are before "
+                "removing the branch and its worktree."
+            ),
+        )
+    path = worktree_path(repo_root, branch)
+    if path.exists():
+        _check_leftover_worktree(path, branch)
+    path = adopt_worktree(repo_root, branch=branch)
+    git.run("-C", str(path), "merge", "--ff-only", "develop")
+    print(
+        f"Adopted '{branch}' and its worktree {path}: an earlier run stopped before "
+        "recording anything (not pushed, no commits, no tracking issue)."
+    )
+    return path
+
+
+def _check_leftover_worktree(path: Path, branch: str) -> None:
+    """Refuse a leftover worktree path unless it is a clean checkout of *branch*."""
+    current = git.read_output("-C", str(path), "rev-parse", "--abbrev-ref", "HEAD")
+    if current != branch:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"git -C {path} rev-parse --abbrev-ref HEAD",
+            message=(
+                f"Release branch '{branch}' already exists, and its worktree path "
+                f"{path} is on '{current}', not on it. Find out what is there before "
+                "removing it."
+            ),
+        )
+    status = git.read_output("-C", str(path), "status", "--porcelain")
+    if status:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"git -C {path} status --porcelain",
+            message=(
+                f"Release branch '{branch}' already exists, and its worktree {path} "
+                "has uncommitted changes. Find out what they are before removing it."
+            ),
+            detail=status,
+        )
 
 
 def _compute_release_version(current: str, override: str) -> str:
@@ -482,9 +578,17 @@ def _check_host_prerequisites() -> None:
         ) from exc
 
 
-def run_audit() -> None:
-    """Standalone audit stage: resolve the repo and audit its GitHub config."""
-    audit_repo_config(check_gh_auth())
+def run_audit(repo_root: Path) -> None:
+    """Standalone audit stage: resolve the repo and audit its configuration.
+
+    Releasing vergil-tooling itself (*repo_root* is the self repo) audits its
+    managed files against the templates in the source tree being released,
+    not the installed release's: a template change on develop also updates
+    vergil-tooling's own managed files, so the installed templates would
+    report drift that is not there (issue #4414). The GitHub-side audit, and
+    every other repo's audit, are unchanged.
+    """
+    audit_repo_config(check_gh_auth(), in_tree_templates=is_self_repo(repo_root))
 
 
 def check_gh_auth() -> str:
@@ -540,9 +644,12 @@ def _check_branch_and_tree() -> None:
         )
 
 
-def audit_repo_config(repo: str) -> None:
+def audit_repo_config(repo: str, *, in_tree_templates: bool = False) -> None:
+    command: tuple[str, ...] = ("vrg-github-repo-config", "audit", "--repo", repo)
+    if in_tree_templates:
+        command = (*command, "--in-tree-templates")
     result = subprocess.run(  # noqa: S603
-        ("vrg-github-repo-config", "audit", "--repo", repo),  # noqa: S607
+        command,
         check=False,
         capture_output=True,
         text=True,
@@ -559,7 +666,7 @@ def audit_repo_config(repo: str) -> None:
         message = "Repository configuration audit could not complete."
     raise ReleaseError(
         phase="preflight",
-        command=f"vrg-github-repo-config audit --repo {repo}",
+        command=" ".join(command),
         message=message,
         detail=result.stdout + result.stderr,
     )

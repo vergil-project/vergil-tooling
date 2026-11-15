@@ -126,7 +126,7 @@ def render_hook_guard_shim() -> str:
 
     The file is fully managed: the audit requires a repo's copy to match it
     byte for byte, ``vrg-github-repo-init`` writes it for a new repo, and
-    ``vrg-hook-guard-shim-sync`` writes it for an existing one. A missing
+    ``vrg-github-repo-config update`` writes it for an existing one. A missing
     packaged file raises; it is never treated as an empty shim.
     """
     return _read_data_file(HOOK_GUARD_SHIM_TEMPLATE)
@@ -442,7 +442,7 @@ def claude_md_marker_lines(lines: list[str]) -> tuple[int, int]:
     marker line matches after stripping surrounding whitespace. Raises
     :class:`ClaudeMdMarkerError` unless there is exactly one begin marker
     followed by exactly one end marker. This is the one marker parser: the
-    audit, its fixer and ``vrg-claude-md-sync`` all use it.
+    audit and its fixer both use it.
     """
     begins = [i for i, line in enumerate(lines) if line.strip() == CLAUDE_MD_MARKER_BEGIN]
     ends = [i for i, line in enumerate(lines) if line.strip() == CLAUDE_MD_MARKER_END]

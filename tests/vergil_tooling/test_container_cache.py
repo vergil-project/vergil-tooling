@@ -20,7 +20,6 @@ from vergil_tooling.lib.container_cache import (
     _build_cached_image,
     _compose_setup,
     _image_is_launchable,
-    _is_self_repo,
     _is_transient_pull_error,
     _sanitize_branch,
     _warmup_command,
@@ -1170,37 +1169,6 @@ def test_ensure_repo_name_included_in_hash(tmp_path: Path) -> None:
 
     assert len(built_tags) == 2
     assert built_tags[0] != built_tags[1], "repos with identical files must get distinct image tags"
-
-
-# -- _is_self_repo ------------------------------------------------------------
-
-
-def test_is_self_repo_true(tmp_path: Path) -> None:
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text('[project]\nname = "vergil-tooling"\n')
-    assert _is_self_repo(tmp_path) is True
-
-
-def test_is_self_repo_false_different_name(tmp_path: Path) -> None:
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text('[project]\nname = "my-app"\n')
-    assert _is_self_repo(tmp_path) is False
-
-
-def test_is_self_repo_false_no_pyproject(tmp_path: Path) -> None:
-    assert _is_self_repo(tmp_path) is False
-
-
-def test_is_self_repo_false_no_project_table(tmp_path: Path) -> None:
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text("[tool.ruff]\nline-length = 100\n")
-    assert _is_self_repo(tmp_path) is False
-
-
-def test_is_self_repo_false_invalid_toml(tmp_path: Path) -> None:
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text("not valid [[[toml content")
-    assert _is_self_repo(tmp_path) is False
 
 
 # -- _build_cached_image self-repo skip ----------------------------------------

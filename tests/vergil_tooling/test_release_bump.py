@@ -27,6 +27,21 @@ def _no_closed_pr() -> Iterator[MagicMock]:
         yield m
 
 
+@pytest.fixture(autouse=True)
+def _no_post_branch() -> Iterator[None]:
+    """No post branch, local or on origin, unless a test says otherwise.
+
+    The fresh path first looks for a post branch an earlier run left behind
+    (#4415); these mocked tests start with none. The resume paths are tested
+    against real repositories in ``test_release_bump_resume.py``.
+    """
+    with (
+        patch(_MOD + ".git.ref_exists", return_value=False),
+        patch(_MOD + ".git.read_output", return_value=""),
+    ):
+        yield
+
+
 _MERGE_SHA = "b4c4me4ge5ha"
 
 

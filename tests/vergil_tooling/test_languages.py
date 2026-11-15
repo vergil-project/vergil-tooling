@@ -384,24 +384,47 @@ def test_rust_typecheck_commands() -> None:
     assert "cargo check" in joined
 
 
+def _rust_nextest_toml() -> Path:
+    return Path(str(files("vergil_tooling.configs"))) / "rust" / "nextest.toml"
+
+
 def test_rust_test_commands() -> None:
-    # ``cargo llvm-cov`` runs ``cargo test --tests`` and skips doctests, so a
-    # separate ``cargo test --doc`` runs them (issue #4378). The coverage
-    # command keeps its 100% line gate and writes Cobertura XML to
-    # ``coverage.xml`` from the same run (issue #4394).
+    # One nextest run under cargo-llvm-cov, then one report from its profiles:
+    # the 100% line gate, Cobertura ``coverage.xml`` (issue #4394) and the
+    # nextest JUnit report copied to ``junit.xml`` (issue #4395). Nextest runs
+    # no doctests, so a separate ``cargo test --doc`` runs them (issue #4378).
     assert language_commands("rust", CheckKind.TEST) == [
         [
-            "cargo",
-            "llvm-cov",
-            "--fail-under-lines",
-            "100",
-            "--show-missing-lines",
-            "--cobertura",
-            "--output-path",
-            COVERAGE_REPORT,
+            "sh",
+            "-c",
+            "rm -f coverage.xml junit.xml target/nextest/vergil/junit.xml; "
+            "cargo llvm-cov clean --workspace || exit 1; "
+            "NEXTEST_PROFILE=vergil cargo llvm-cov nextest --no-report "
+            f'--tool-config-file "vergil:{_rust_nextest_toml()}"; '
+            "test_rc=$?; "
+            "cargo llvm-cov report --fail-under-lines 100 --show-missing-lines "
+            "--cobertura --output-path coverage.xml; "
+            "cov_rc=$?; "
+            "if [ -f target/nextest/vergil/junit.xml ]; then "
+            "cp target/nextest/vergil/junit.xml junit.xml || exit 1; "
+            'elif [ "$test_rc" -eq 0 ]; then '
+            'echo "error: cargo-nextest wrote no JUnit report at '
+            'target/nextest/vergil/junit.xml" >&2; exit 1; '
+            "fi; "
+            '[ "$test_rc" -ne 0 ] && exit "$test_rc"; '
+            'exit "$cov_rc"',
         ],
         ["cargo", "test", "--doc"],
     ]
+
+
+def test_rust_nextest_toml_turns_on_junit_for_the_vergil_profile() -> None:
+    """The packaged tool config defines the profile the TEST command selects."""
+    config = tomllib.loads(_rust_nextest_toml().read_text())
+    assert config == {"profile": {"vergil": {"fail-fast": False, "junit": {"path": JUNIT_REPORT}}}}
+    script = language_commands("rust", CheckKind.TEST)[0][2]
+    assert "NEXTEST_PROFILE=vergil " in script
+    assert f"target/nextest/vergil/{JUNIT_REPORT}" in script
 
 
 def _rust_deny_toml() -> Path:
@@ -424,11 +447,12 @@ def test_rust_audit_commands() -> None:
 
 
 def test_rust_report_files_contract() -> None:
-    """The rust report names match vergil-actions' staging (issue #4394)."""
-    assert RUST_REPORT_FILES == ("coverage.xml", "cargo-deny.json")
+    """The rust report names match vergil-actions' staging (issues #4394, #4395)."""
+    assert RUST_REPORT_FILES == ("coverage.xml", "junit.xml", "cargo-deny.json")
     assert CARGO_DENY_REPORT == "cargo-deny.json"
-    test_cmd = language_commands("rust", CheckKind.TEST)[0]
-    assert test_cmd[test_cmd.index("--output-path") + 1] == COVERAGE_REPORT
+    test_script = language_commands("rust", CheckKind.TEST)[0][2]
+    assert f"--output-path {COVERAGE_REPORT};" in test_script
+    assert f" {JUNIT_REPORT} || exit 1;" in test_script
     assert f"2>{CARGO_DENY_REPORT};" in language_commands("rust", CheckKind.AUDIT)[0][2]
 
 

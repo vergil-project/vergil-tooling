@@ -1,0 +1,22 @@
+# Fleet cargo-nextest settings for the rust TEST gate
+# (vergil-project/vergil-tooling#4395).
+#
+# The TEST command passes this file as a tool config
+# (`--tool-config-file vergil:<this file>`) and selects its profile with
+# `NEXTEST_PROFILE=vergil`. A tool config ranks below a repo's own
+# `.config/nextest.toml`, so the repo's settings still apply: the `vergil`
+# profile inherits the repo's `[profile.default]`, and only what is set here is
+# added on top (https://nexte.st/docs/configuration/#hierarchical-configuration).
+# The gate depends on this profile's JUnit path, so a repo must not define a
+# `[profile.vergil]` of its own.
+
+[profile.vergil]
+# Run every test even after one fails, so the JUnit report lists them all. A
+# failing test still fails the run (https://nexte.st/docs/running/).
+fail-fast = false
+
+[profile.vergil.junit]
+# Nextest writes this under its store directory, `target/nextest/vergil/junit.xml`
+# with the default `store.dir`; the TEST command copies it to the repo root
+# (https://nexte.st/docs/machine-readable/junit/).
+path = "junit.xml"

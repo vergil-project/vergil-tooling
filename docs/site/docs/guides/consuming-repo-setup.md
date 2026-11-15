@@ -244,8 +244,8 @@ packaged template
 [`hook_guard_shim.sh`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/hook_guard_shim.sh).
 No per-clone configuration is required. The file is fully managed: the
 config audit requires it to match the packaged shim byte for byte, and
-`vrg-hook-guard-shim-sync --write` (or `vrg-fleet-sync --target
-hook-guard-shim` across the fleet) replaces a stale or edited copy.
+`vrg-github-repo-config update` (run nightly by `ops.yml`) replaces a
+stale or edited copy.
 
 All branch/context checks (detached HEAD, protected branches,
 branch prefix, issue number) live in `vrg-commit` itself. See the
@@ -538,8 +538,8 @@ audit, and both are checked nightly:
    **exactly**, with no managed pattern left loose outside the fence. A
    language with no fragment of its own — or a repo that declares none —
    gets the base-only block. Genuinely repo-local entries live outside the
-   fence and are never touched; run `vrg-gitignore-sync` to write or
-   refresh the block.
+   fence and are never touched; `vrg-github-repo-config update` writes or
+   refreshes the block.
 
 2. **Your repo must carry a scheduled `ops.yml` wired to the config
    audit.** `.github/workflows/ops.yml` must call the reusable
@@ -552,19 +552,20 @@ both, so a new or adopted repo starts conforming.
 
 You never bump a pin to receive fragment changes: every repo tracks the
 rolling `vergil-tooling@vX.Y` tag, so an updated fragment released under
-that line is picked up on the next `vrg-gitignore-sync` run — and the
-nightly audit flags the drift until you run it.
+that line is picked up on the next `vrg-github-repo-config update` run,
+which the nightly `ops.yml` job makes, opening one sync PR for the
+drifted files.
 
 Repos also carry a canonical, **report-only** `.github/dependabot.yml`
 (epic vergil-project/.github#420): Dependabot alerts stay on, but every
 `updates` entry sets `open-pull-requests-limit: 0`, so Dependabot never
 opens a PR. The file is an exact match of the render for your
 `[project].primary-language` — no local additions. `vrg-github-repo-init`
-writes it, and `vrg-dependabot-sync --write` writes or refreshes it.
+writes it, and `vrg-github-repo-config update` writes or refreshes it.
 `vrg-validate` rejects any `dependabot.yml` entry whose
 `open-pull-requests-limit` is missing (Dependabot then defaults to 5) or
-not `0`, and the nightly audit flags a missing or non-canonical file
-until you run `vrg-dependabot-sync --write`.
+not `0`, and the nightly `update` rewrites a missing or non-canonical
+file.
 
 The same nightly run also fails while the repo has **any** open
 Dependabot alert: its `dependabot-audit` job runs

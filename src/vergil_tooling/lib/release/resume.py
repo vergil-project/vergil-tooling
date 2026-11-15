@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import git, github
 from vergil_tooling.lib.release import checklist
 from vergil_tooling.lib.release.context import ReleaseError
 
@@ -65,6 +65,35 @@ def _open_release_issues(repo: str) -> list[tuple[str, int, str]]:
     return issues
 
 
+def _check_blockless_issue_resumable(version: str, number: int) -> None:
+    """Refuse to resume an issue with no progress block unless its release branch exists.
+
+    A tracking issue is created with its checklist (#4367), so an issue without
+    one was opened by an older vrg-release that was interrupted in prepare, or
+    by hand. Preflight creates the release branch only once a fresh start's
+    checks have passed, so the branch's existence shows they did: resume then
+    re-runs the pipeline, prepare adopting what was done, and prepare writes the
+    checklist. With no branch, nothing shows the checks passed, and a resume,
+    which skips them, must not start the release.
+    """
+    branch = f"release/{version}"
+    if git.ref_exists(branch) or git.ref_exists(f"origin/{branch}"):
+        print(
+            f"Tracking issue #{number} has no vrg-release progress block (it was "
+            f"interrupted before one was written); resuming on '{branch}'."
+        )
+        return
+    raise ReleaseError(
+        phase="resume",
+        command="checklist",
+        message=(
+            f"Tracking issue #{number} has no vrg-release progress block, and no "
+            f"release branch '{branch}' exists, so nothing shows that a fresh "
+            "start's checks passed. Close the issue and re-run vrg-release."
+        ),
+    )
+
+
 def find_resume_target(
     repo: str, stages: Sequence[str], *, version: str | None = None
 ) -> tuple[str, int]:
@@ -95,6 +124,9 @@ def find_resume_target(
             ),
         )
     found_version, number, body = issues[0]
+    if not checklist.has_block(body):
+        _check_blockless_issue_resumable(found_version, number)
+        return found_version, number
     try:
         checklist.first_unchecked(body, stages)
     except checklist.ChecklistError as exc:

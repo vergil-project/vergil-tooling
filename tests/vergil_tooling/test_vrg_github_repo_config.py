@@ -249,6 +249,78 @@ def test_audit_github_noncompliant_returns_one() -> None:
         assert main(["audit", "--repo", "o/r"]) == 1
 
 
+# -- audit --in-tree-templates (vergil-tooling's own release, #4414) ----------
+
+
+@contextlib.contextmanager
+def _in_tree(*, self_repo: bool = True, code: int = 0) -> Generator[tuple[MagicMock, MagicMock]]:
+    """The in-tree path with the clone's self-repo test and child exit code fixed.
+
+    The installed-template audit must never run on this path."""
+    with (
+        patch(f"{_MODULE}.is_self_repo", return_value=self_repo),
+        patch(f"{_MODULE}.in_tree_audit.run", return_value=code) as mock_run,
+        patch(f"{_MODULE}.audit_local_config", side_effect=AssertionError("installed audit")),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()) as mock_github,
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}._resolve_config"),
+    ):
+        yield mock_run, mock_github
+
+
+def test_parse_args_in_tree_templates_is_audit_only() -> None:
+    assert parse_args(["audit", "--in-tree-templates"]).in_tree_templates is True
+    assert parse_args(["audit"]).in_tree_templates is False
+    with pytest.raises(SystemExit):
+        parse_args(["update", "--in-tree-templates"])
+
+
+def test_audit_in_tree_compliant_runs_the_github_side(tmp_path: Path) -> None:
+    with _in_tree(code=0) as (mock_run, mock_github):
+        assert main(["audit", "--repo", "o/vergil-tooling", "--in-tree-templates"]) == 0
+    mock_run.assert_called_once_with(tmp_path / "hermetic-clone")
+    mock_github.assert_called_once()
+
+
+def test_audit_in_tree_drift_returns_one() -> None:
+    with _in_tree(code=10) as (_, mock_github):
+        assert main(["audit", "--repo", "o/vergil-tooling", "--in-tree-templates"]) == 1
+    mock_github.assert_called_once()
+
+
+def test_audit_in_tree_github_drift_returns_one() -> None:
+    with _in_tree(code=0) as (_, mock_github):
+        mock_github.return_value = _mock_github_noncompliant()
+        assert main(["audit", "--repo", "o/vergil-tooling", "--in-tree-templates"]) == 1
+
+
+def test_audit_in_tree_failure_exits_two(capsys: pytest.CaptureFixture[str]) -> None:
+    with _in_tree(code=1) as (_, mock_github):
+        assert main(["audit", "--repo", "o/vergil-tooling", "--in-tree-templates"]) == 2
+    mock_github.assert_not_called()
+    assert "in-tree audit of o/vergil-tooling's managed files could not complete (exit 1)" in (
+        capsys.readouterr().err
+    )
+
+
+def test_audit_in_tree_refuses_another_repo(capsys: pytest.CaptureFixture[str]) -> None:
+    with _in_tree(self_repo=False) as (mock_run, mock_github):
+        assert main(["audit", "--repo", "o/r", "--in-tree-templates"]) == 2
+    mock_run.assert_not_called()
+    mock_github.assert_not_called()
+    assert "--in-tree-templates audits vergil-tooling only" in capsys.readouterr().err
+
+
+def test_audit_without_the_flag_never_runs_in_tree() -> None:
+    with (
+        patch(f"{_MODULE}.in_tree_audit.run", side_effect=AssertionError("in-tree")),
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
+        patch(f"{_MODULE}._resolve_config"),
+    ):
+        assert main(["audit", "--repo", "o/r"]) == 0
+
+
 def test_diff_always_returns_zero() -> None:
     with (
         patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
@@ -1291,7 +1363,7 @@ def test_print_diff_shows_delta_for_rules_mismatch(
 def test_print_local_diff_shows_delta_for_rules_mismatch(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from vergil_tooling.bin.vrg_github_repo_config import _print_local_diff
+    from vergil_tooling.bin.vrg_github_repo_config import print_local_diff
 
     expected_rules: list[dict[str, object]] = [
         {
@@ -1325,7 +1397,7 @@ def test_print_local_diff_shows_delta_for_rules_mismatch(
             )
         ]
     )
-    _print_local_diff(diff)
+    print_local_diff(diff)
     output = capsys.readouterr().out
     assert "missing (1)" in output
     assert "security / trivy (integration_id: 15368)" in output

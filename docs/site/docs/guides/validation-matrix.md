@@ -37,11 +37,15 @@ The config check runs on every `vrg-validate` invocation, whatever
 `--check` selects. It fails when the repo's versions do not resolve
 against the published window (a pin outside the window, an app pin of
 more than one version, an unreadable window) or when a file selects the
-toolchain behind Vergil's back (for Python, `.python-version`). A
+toolchain behind Vergil's back (for Python, `.python-version`; for
+Rust, `rust-toolchain.toml` or the legacy `rust-toolchain`). A
 declared floor that falls below the window's oldest version, or an
-upper bound that excludes its newest (for Python, `requires-python`),
-is printed as a warning and does not fail. See
-[Python version management](../standards/development/python/version-management.md#toolchain-selection-in-the-repo).
+upper bound that excludes its newest (for Python, `requires-python`;
+for Go, the `go.mod` `go` directive; for Rust, the root `Cargo.toml`'s
+`rust-version`), is printed as a warning and does not fail. See
+[Python version management](../standards/development/python/version-management.md#toolchain-selection-in-the-repo)
+and the Rust standards'
+[Toolchain Selection](../standards/development/rust/overview.md#toolchain-selection).
 
 ## Agent and Git Wrappers
 
