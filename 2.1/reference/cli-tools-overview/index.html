@@ -1424,6 +1424,8 @@
       
         
       
+        
+      
     
     
     
@@ -1476,6 +1478,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.314/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.314
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14383,83 +14413,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-gitignore-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-gitignore-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-dependabot-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-dependabot-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-claude-settings-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-claude-settings-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-claude-md-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-claude-md-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-hook-guard-shim-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-hook-guard-shim-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-fleet-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-fleet-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-ci-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-ci-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#vrg-container-run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19013,83 +18966,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-gitignore-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-gitignore-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-dependabot-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-dependabot-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-claude-settings-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-claude-settings-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-claude-md-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-claude-md-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-hook-guard-shim-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-hook-guard-shim-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-fleet-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-fleet-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#vrg-ci-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-ci-sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#vrg-container-run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -22106,358 +21982,6 @@ later build once the lock is committed
 </tr>
 </tbody>
 </table>
-<h3 id="vrg-gitignore-sync">vrg-gitignore-sync<a class="headerlink" href="#vrg-gitignore-sync" title="Permanent link">&para;</a></h3>
-<p>Single-repo applicator for the vergil-managed <code>.gitignore</code> block. Reads
-<code>&lt;repo&gt;/.gitignore</code>, resolves the fence language from
-<code>[project].primary-language</code> (normalized to base-only for any language
-without a managed fragment), and either checks (default) or writes the
-composed <code>base + &lt;language&gt;</code> managed block through <code>lib/gitignore.py</code> —
-the same module the config audit renders through, so applicator and
-audit cannot diverge. It owns <strong>only</strong> the file change: it has no git or
-PR knowledge. <code>--write</code> rewrites the fenced block, moves it to the top of
-the file, and drops any exact repeat of one of the fence's own patterns
-outside it (the fence is the single source of truth), leaving genuinely
-repo-local lines untouched and in order. <code>--check</code> reports drift exactly
-when <code>--write</code> would change the file, so <code>--write</code> then <code>--check</code> always
-passes (#3568). See the
-<a href="../config-audit/#the-composed-managed-fence">GitHub Config Audit reference</a>.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>vergil_tooling.bin.vrg_gitignore_sync</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td><code>--repo PATH</code> (default: CWD); mutually exclusive <code>--check</code> (default) | <code>--write</code></td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td>A repo whose language resolves from <code>[project].primary-language</code> (no <code>vergil.toml</code> or no declared language → base-only; a <code>vergil.toml</code> that fails to load is an error, exit 2)</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td><code>--check</code> prints each drift reason to stderr; <code>--write</code> succeeds whenever the language resolves (prints <code>already in sync</code> or the synced path)</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 ok, 1 <code>--check</code> drift, 2 usage error or a <code>vergil.toml</code> that fails to load (the config error is printed to stderr; nothing is written)</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
-<h3 id="vrg-dependabot-sync">vrg-dependabot-sync<a class="headerlink" href="#vrg-dependabot-sync" title="Permanent link">&para;</a></h3>
-<p>Single-repo applicator for the canonical <strong>report-only</strong>
-<code>.github/dependabot.yml</code> (epic vergil-project/.github#420). Resolves the
-repo's <code>[project].primary-language</code> and either checks (default) or writes
-the render from <code>lib/dependabot.py</code>: a <code>github-actions</code> entry plus the
-language's ecosystem (<code>python</code> → <code>uv</code>, <code>go</code> → <code>gomod</code>, <code>rust</code> → <code>cargo</code>,
-<code>typescript</code> → <code>npm</code>; any other language gets
-<code>github-actions</code> only), every entry at <code>open-pull-requests-limit: 0</code> so
-Dependabot never opens a PR. The file is <strong>exact match</strong>: <code>--write</code>
-replaces local additions. It owns <strong>only</strong> the file change and has no git
-or PR knowledge.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>vergil_tooling.bin.vrg_dependabot_sync</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td><code>--repo PATH</code> (default: CWD); mutually exclusive <code>--check</code> (default) | <code>--write</code></td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td>A repo whose language resolves from <code>[project].primary-language</code> (no <code>vergil.toml</code> or no declared language → <code>github-actions</code> only; a <code>vergil.toml</code> that fails to load is an error, exit 2)</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td><code>--check</code> prints <code>missing .github/dependabot.yml</code> or <code>differs from the canonical render</code> to stderr; <code>--write</code> succeeds whenever the language resolves (prints <code>already in sync</code> or <code>wrote .github/dependabot.yml (&lt;lang or none&gt;)</code>)</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 ok, 1 <code>--check</code> drift, 2 usage error or a <code>vergil.toml</code> that fails to load (the config error is printed to stderr; nothing is written)</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
-<h3 id="vrg-claude-settings-sync">vrg-claude-settings-sync<a class="headerlink" href="#vrg-claude-settings-sync" title="Permanent link">&para;</a></h3>
-<p>Single-repo applicator for the managed <code>.claude/settings.json</code>
-(<a href="https://github.com/vergil-project/vergil-tooling/issues/4056">#4056</a>).
-It checks (default) or writes the packaged template as rendered by
-<code>repo_init.render_claude_settings()</code>, the same render
-<code>vrg-github-repo-init</code> writes. The file is <strong>fully managed</strong>: <code>--check</code>
-uses the config audit's comparison (equal to the template after JSON
-parsing, so key order and whitespace don't count), and <code>--write</code>
-replaces the whole file, atomically, never merging keys. A repo with no
-<code>.claude/settings.json</code> gets one. A file already equal after parsing is
-left untouched, so <code>--check</code> drifts exactly when <code>--write</code> would change
-the file, and after <code>--write</code> the audit's <code>_check_claude_settings</code>
-passes. It owns <strong>only</strong> the file change and has no git or PR knowledge.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>vergil_tooling.bin.vrg_claude_settings_sync</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td><code>--repo PATH</code> (default: CWD); mutually exclusive <code>--check</code> (default) | <code>--write</code></td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td>None beyond a repository root; <code>vergil.toml</code> is not read</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td><code>--check</code> prints <code>missing .claude/settings.json</code>, <code>.claude/settings.json is not valid JSON (…)</code> or <code>.claude/settings.json differs from the template</code> to stderr; <code>--write</code> prints <code>already in sync</code> or <code>wrote .claude/settings.json</code></td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 ok, 1 <code>--check</code> drift, 2 usage error</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
-<h3 id="vrg-claude-md-sync">vrg-claude-md-sync<a class="headerlink" href="#vrg-claude-md-sync" title="Permanent link">&para;</a></h3>
-<p>Single-repo applicator for the template region of <code>CLAUDE.md</code>
-(<a href="https://github.com/vergil-project/vergil-tooling/issues/3868">#3868</a>).
-Only the lines between <code>&lt;!-- vergil:template:claude-md:begin --&gt;</code> and
-<code>&lt;!-- vergil:template:claude-md:end --&gt;</code> are managed. It checks (default)
-or writes that region against the packaged
-<code>claude_md_consumer.md</code> template, using the config audit's own marker
-parser and comparison (blank lines next to the markers don't count).
-<code>--write</code> replaces the lines between the two marker lines with the
-template, verbatim and atomically, and leaves every byte outside them
-alone, the marker lines and their line ends included. A region already in
-sync is left untouched, so <code>--check</code> drifts exactly when <code>--write</code> would
-change the file, and after <code>--write</code> the audit's <code>_check_claude_md</code>
-passes. A <code>CLAUDE.md</code> that is missing, has no markers, or has malformed
-or duplicated markers is an error in both modes, naming the cause, and
-nothing is written: the tool never guesses where the region belongs. It
-owns <strong>only</strong> the file change and has no git or PR knowledge.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>vergil_tooling.bin.vrg_claude_md_sync</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td><code>--repo PATH</code> (default: CWD); mutually exclusive <code>--check</code> (default) | <code>--write</code></td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td>A <code>CLAUDE.md</code> with exactly one begin marker followed by one end marker; <code>vergil.toml</code> is not read</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td><code>--check</code> prints <code>CLAUDE.md template region differs from the template (expected …; found …)</code> to stderr; <code>--write</code> prints <code>already in sync</code> or <code>wrote the CLAUDE.md template region</code>; either mode prints <code>cannot sync: missing CLAUDE.md</code> or <code>cannot sync: CLAUDE.md has &lt;marker problem&gt;</code> to stderr and exits 2</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 ok, 1 <code>--check</code> drift, 2 usage error or a <code>CLAUDE.md</code> that is missing or has no well-formed marker pair</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
-<h3 id="vrg-hook-guard-shim-sync">vrg-hook-guard-shim-sync<a class="headerlink" href="#vrg-hook-guard-shim-sync" title="Permanent link">&para;</a></h3>
-<p>Single-repo applicator for the managed <code>.claude/hooks/guard.sh</code>
-(<a href="https://github.com/vergil-project/vergil-tooling/issues/4109">#4109</a>).
-It checks (default) or writes the packaged hook guard shim,
-<code>hook_guard_shim.sh</code>, the same shim <code>vrg-github-repo-init</code> writes. The
-file is <strong>fully managed</strong>: <code>--check</code> uses the config audit's comparison
-(byte for byte, so a stale copy, a local edit or a CRLF copy is drift)
-and also requires every execute bit, since Claude Code cannot run a
-non-executable hook. <code>--write</code> replaces the whole file atomically and
-leaves it mode <code>0755</code>. A repo with no shim gets one. A shim that already
-matches and is executable is left untouched, so <code>--check</code> drifts exactly
-when <code>--write</code> would change the file, and after <code>--write</code> the audit's
-<code>_check_hook_guard_shim</code> passes. A shim that exists but cannot be read is
-an error in both modes, never a pass. It owns <strong>only</strong> the file change
-and has no git or PR knowledge.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>vergil_tooling.bin.vrg_hook_guard_shim_sync</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td><code>--repo PATH</code> (default: CWD); mutually exclusive <code>--check</code> (default) | <code>--write</code></td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td>None beyond a repository root; <code>vergil.toml</code> is not read</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td><code>--check</code> prints <code>missing .claude/hooks/guard.sh</code>, <code>.claude/hooks/guard.sh differs from the packaged shim</code> or <code>.claude/hooks/guard.sh is not executable</code> to stderr; <code>--write</code> prints <code>already in sync</code> or <code>wrote .claude/hooks/guard.sh</code>; either mode prints <code>cannot read .claude/hooks/guard.sh: …</code> to stderr and exits 2</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 ok, 1 <code>--check</code> drift, 2 usage error or an unreadable shim</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
-<h3 id="vrg-fleet-sync">vrg-fleet-sync<a class="headerlink" href="#vrg-fleet-sync" title="Permanent link">&para;</a></h3>
-<p>Propagate a vergil-managed file across a fleet of repositories, opening
-<strong>one PR per repo whose file drifts</strong>. <code>--target</code> picks the file:
-<code>gitignore</code> (default) syncs the managed <code>.gitignore</code> block via
-<code>vrg-gitignore-sync --write</code>; <code>dependabot</code> writes the report-only
-<code>.github/dependabot.yml</code> via <code>vrg-dependabot-sync --write</code> (branch slug
-<code>dependabot-config</code>, filed under epic vergil-project/.github#420);
-<code>claude-settings</code> replaces <code>.claude/settings.json</code> with the packaged
-template via <code>vrg-claude-settings-sync --write</code> (branch slug
-<code>claude-settings-sync</code>), so a template change can be rolled out to every
-repo the config audit would otherwise fail; <code>claude-md</code> replaces the
-marked template region of <code>CLAUDE.md</code> with the packaged template via
-<code>vrg-claude-md-sync --write</code> (branch slug <code>claude-md-sync</code>), leaving
-everything outside the markers alone. A repo whose <code>CLAUDE.md</code> is missing
-or has no well-formed marker pair is an error for that repo, never a
-skip; <code>hook-guard-shim</code> replaces <code>.claude/hooks/guard.sh</code> with the
-packaged hook guard shim, mode <code>0755</code>, via
-<code>vrg-hook-guard-shim-sync --write</code> (branch slug <code>hook-guard-shim-sync</code>),
-so a stale shim that does not fail closed is brought in line. A repo
-whose shim cannot be read is an error for that repo, never a skip. A
-target's epic links only repos in the epic's own org: a repo in another
-org (read from the clone with <code>gh repo view</code>) is filed under its own
-ad-hoc epic, and the issue body still names the target's epic, because
-<code>vrg-issue-create</code> refuses a cross-org link. It
-drives the generic fleet-sweep driver (<code>lib/fleet_sweep.py</code>): per repo it
-creates a worktree, shells out to the target's applicator, commits,
-and runs <code>report-ready</code>. Like every agent-run task it <strong>never submits or
-merges</strong> — it stops at <code>report-ready</code>, leaving submission and merge to the
-human. <code>--dry-run</code> reports the verdict a live run would reach per repo
-(would change, naming the epic it would be filed under, or skip) from a
-disposable probe worktree, without opening an issue, branch, commit, or
-PR. Each target previews with its applicator's <code>--check</code>
-(<code>vrg-gitignore-sync --check</code>, <code>vrg-dependabot-sync --check</code>,
-<code>vrg-claude-settings-sync --check</code>, <code>vrg-claude-md-sync --check</code> or
-<code>vrg-hook-guard-shim-sync --check</code>), whose
-drift verdict is exactly the change <code>--write</code> would make.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>vergil_tooling.bin.vrg_fleet_sync</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td><code>--repos PATH [PATH …]</code> (required, local clone paths); <code>--target {claude-md,claude-settings,dependabot,gitignore,hook-guard-shim}</code> (default <code>gitignore</code>); <code>--dry-run</code></td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td>The target's applicator (<code>vrg-gitignore-sync</code>, <code>vrg-dependabot-sync</code>, <code>vrg-claude-settings-sync</code>, <code>vrg-claude-md-sync</code> or <code>vrg-hook-guard-shim-sync</code>) on PATH; each <code>--repos</code> path a local clone; git/<code>gh</code> credentials for the sweep</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td>Any repo that errors is recorded and reported in the per-repo status lines</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 all repos ok, 1 one or more repos errored</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
-<h3 id="vrg-ci-sync">vrg-ci-sync<a class="headerlink" href="#vrg-ci-sync" title="Permanent link">&para;</a></h3>
-<p>Fleet sweep that strips the retired <code>versions:</code> / <code>container-tag:</code> inputs
-from each repo's <code>.github/workflows/ci.yml</code>, opening one PR per repo whose
-file drifts. It stops at <code>report-ready</code> and never submits or merges.
-<code>--dry-run</code> reports each repo's verdict without opening anything. A repo
-whose <code>ci.yml</code> cannot be understood is left unchanged and listed in the
-report.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>vergil_tooling.bin.vrg_ci_sync</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td><code>--repos PATH...</code> (required, local clones), <code>--dry-run</code></td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td>Local clones of the target repos; GitHub App credentials</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td>Per-repo errors are reported in the summary</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 success, 1 any repo errored</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
 <h3 id="vrg-container-run">vrg-container-run<a class="headerlink" href="#vrg-container-run" title="Permanent link">&para;</a></h3>
 <p>Run arbitrary commands inside a dev container. Auto-detects the
 project language to select the Docker image; falls back to
@@ -22530,8 +22054,12 @@ be gitignored. The managed base gitignore covers the default layout
 <code>mkdocs.staged.yml</code>). If a generated path is not ignored, including a
 staged copy that the repo has committed, the command refuses before
 writing anything and lists the paths. To fix it, stop tracking any
-committed copies (<code>vrg-git rm --cached &lt;path&gt;</code>), then run
-<code>vrg-gitignore-sync</code>.</p>
+committed copies (<code>vrg-git rm --cached &lt;path&gt;</code>). The managed
+<code>.gitignore</code> fence itself is fixed on <code>develop</code>, not in your checkout:
+<a href="../config-audit/#the-update-command"><code>vrg-github-repo-config update</code></a>,
+run by the human or by the nightly ops job, corrects it through a sync
+PR. Once that PR has merged, bring your branch up to date with
+<code>develop</code>.</p>
 <p><code>serve</code> stages once, at startup. Edits to the docs pages reload as usual,
 but edits to <code>mkdocs.yml</code>, <code>CHANGELOG.md</code> or <code>releases/</code> take effect only
 after a restart.</p>

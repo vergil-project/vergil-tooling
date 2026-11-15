@@ -1424,6 +1424,8 @@
       
         
       
+        
+      
     
     
     
@@ -1476,6 +1478,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.314/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.314
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18587,7 +18617,9 @@ chosen, and why.</p>
 <p><strong><code>dev-rust</code></strong>
 :   Base: <code>base</code> (Ubuntu 24.04), with the series' pinned Rust release
     installed by a pinned <code>rustup-init</code>, and <code>gcc</code>/<code>libc6-dev</code> from Ubuntu
-    as the C linker.</p>
+    as the C linker. The image pins rustup to that release
+    (<code>RUSTUP_TOOLCHAIN</code>, with auto-install off), so a repo's
+    <code>rust-toolchain.toml</code> cannot select or download another toolchain.</p>
 <p><strong><code>dev-cpp-clang</code></strong>
 :   Base: <code>base</code> (Ubuntu 24.04), with Clang from apt.llvm.org's noble
     packages (<code>llvm-toolchain-noble-&lt;major&gt;</code>). Includes clang,

@@ -1426,6 +1426,8 @@
       
         
       
+        
+      
     
     
     
@@ -1478,6 +1480,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.314/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.314
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17710,9 +17740,13 @@ maintainability, and long-term survivability across repositories.</p>
   vergil-tooling packages, so a repo's own <code>deny.toml</code> is not used. The
   gating run writes its JSON diagnostics to <code>cargo-deny.json</code>, the audit
   gate's evidence.</li>
-<li>Coverage: cargo-llvm-cov (LLVM instrumentation, cross-platform), held to
-  100% line coverage. The gating run writes Cobertura XML to <code>coverage.xml</code>,
-  the test gate's evidence.</li>
+<li>Testing: cargo-nextest runs the unit and integration tests and writes a
+  JUnit report to <code>junit.xml</code>. Rustdoc examples run separately with
+  <code>cargo test --doc</code>, because nextest does not run doctests.</li>
+<li>Coverage: cargo-llvm-cov (LLVM instrumentation, cross-platform) measures
+  that nextest run, held to 100% line coverage. Its report writes Cobertura
+  XML to <code>coverage.xml</code>. <code>coverage.xml</code> and <code>junit.xml</code> are the test gate's
+  evidence.</li>
 <li>If a repository uses different tools, document the reason and equivalents.</li>
 </ul>
 <h2 id="toolchain-selection">Toolchain Selection<a class="headerlink" href="#toolchain-selection" title="Permanent link">&para;</a></h2>

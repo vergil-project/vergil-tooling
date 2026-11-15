@@ -1422,6 +1422,8 @@
       
         
       
+        
+      
     
     
     
@@ -1474,6 +1476,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.314/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.314
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17528,6 +17558,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#an-interrupted-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An interrupted release
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#a-failed-release-job" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17868,6 +17909,17 @@
     <span class="md-ellipsis">
       
         The vrg-release pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-interrupted-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An interrupted release
       
     </span>
   </a>
@@ -18327,12 +18379,12 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>audit</code></td>
 <td>fail-fast</td>
-<td>Runs <code>vrg-github-repo-config audit</code> on the repo. <code>--skip-audit</code> skips it</td>
+<td>Runs <code>vrg-github-repo-config audit</code> on the repo. Releasing vergil-tooling itself adds <code>--in-tree-templates</code>, so its managed files are checked against the templates being released, not the installed release's (see the <a href="../../reference/config-audit/#auditing-vergil-tooling-against-its-own-templates">config audit reference</a>). <code>--skip-audit</code> skips it</td>
 </tr>
 <tr>
 <td><code>preflight</code></td>
 <td>fail-fast</td>
-<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code> matching <code>origin/develop</code>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, and runs the <a href="#the-dependency-update-gate">dependency-update gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree</td>
+<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code> matching <code>origin/develop</code>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, and runs the <a href="#the-dependency-update-gate">dependency-update gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it</td>
 </tr>
 <tr>
 <td><code>prepare</code></td>
@@ -18417,6 +18469,34 @@ right run, and <code>close-finalize</code> runs <code>vrg-finalize-pr</code> onl
 earlier stage passed. A second wait would add nothing. It would also
 fail the stage on a docs publish failure that <code>confirm-develop</code> has
 already deferred.</p>
+<h3 id="an-interrupted-release">An interrupted release<a class="headerlink" href="#an-interrupted-release" title="Permanent link">&para;</a></h3>
+<p>An interrupt (Ctrl-C) or a crash can stop <code>vrg-release</code> at any point.
+What a re-run does depends on how far the stopped run got:</p>
+<ul>
+<li><strong>Stopped before the tracking issue was opened.</strong> <code>preflight</code> has
+  created the local <code>release/&lt;version&gt;</code> branch and its managed worktree
+  in <code>.worktrees/</code>, but nothing is pushed and no issue records the
+  release. Run <code>vrg-release</code> again, with the same arguments. A fresh
+  start adopts the leftover branch and worktree and fast-forwards them
+  to <code>develop</code>, as long as nothing on them can be lost: the branch was
+  never pushed (<code>origin</code> is asked directly), it has no commit <code>develop</code>
+  lacks, and the worktree is clean and on the branch. Otherwise it
+  stops with <code>Release branch 'release/&lt;version&gt;' already exists</code> and
+  the reason, and leaves everything in place for you to inspect. It
+  never deletes a branch or a worktree.</li>
+<li><strong>Stopped after the tracking issue was opened.</strong> The issue is created
+  with its stage checklist in its body, so it is always resumable:
+  run <code>vrg-release --resume</code>. A fresh <code>vrg-release</code> refuses, since a
+  tracking issue already exists for the version. The resume adopts the
+  local release branch and worktree, unpushed or not, and the <code>prepare</code>
+  stage skips what the stopped run already did.</li>
+</ul>
+<p>A tracking issue opened by an older <code>vrg-release</code> can lack the stage
+checklist, if that run was interrupted in <code>prepare</code>. <code>--resume</code> takes
+it over when the <code>release/&lt;version&gt;</code> branch exists, locally or on
+<code>origin</code>: the branch shows the fresh start's checks passed, and
+<code>prepare</code> writes the checklist. With no branch it refuses; close the
+issue and run <code>vrg-release</code> again.</p>
 <h3 id="a-failed-release-job">A failed release job<a class="headerlink" href="#a-failed-release-job" title="Permanent link">&para;</a></h3>
 <p>When the CD release job on <code>main</code> does not succeed, <code>confirm-main</code>
 fails, and the release PR is already merged. <code>vrg-release --resume</code>
@@ -18878,8 +18958,10 @@ as a failed run. It still fails finalize (issue #3316).</p>
 </code></pre></div>
 <h2 id="release-tracking-artifacts">Release tracking artifacts<a class="headerlink" href="#release-tracking-artifacts" title="Permanent link">&para;</a></h2>
 <p>Each release has a tracking issue, <code>release: &lt;version&gt;</code>, which
-<code>vrg-release</code> creates in its <code>prepare</code> stage. Its body carries the
-stage checklist, and each tracked stage adds a comment when it
+<code>vrg-release</code> creates in its <code>prepare</code> stage. The issue is created with
+the stage checklist in its body (see
+<a href="#an-interrupted-release">An interrupted release</a>), and each tracked
+stage adds a comment when it
 completes or fails:</p>
 <ul>
 <li>The <code>prepare</code> comment names the release branch, the release PR and

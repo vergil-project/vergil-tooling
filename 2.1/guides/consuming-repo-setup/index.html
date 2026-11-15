@@ -1424,6 +1424,8 @@
       
         
       
+        
+      
     
     
     
@@ -1476,6 +1478,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.314/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.314
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18344,8 +18374,8 @@ packaged template
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/hook_guard_shim.sh"><code>hook_guard_shim.sh</code></a>.
 No per-clone configuration is required. The file is fully managed: the
 config audit requires it to match the packaged shim byte for byte, and
-<code>vrg-hook-guard-shim-sync --write</code> (or <code>vrg-fleet-sync --target
-hook-guard-shim</code> across the fleet) replaces a stale or edited copy.</p>
+<code>vrg-github-repo-config update</code> (run nightly by <code>ops.yml</code>) replaces a
+stale or edited copy.</p>
 <p>All branch/context checks (detached HEAD, protected branches,
 branch prefix, issue number) live in <code>vrg-commit</code> itself. See the
 <a href="../../reference/hooks/pre-commit/">Claude Code Hook Guard reference</a>.</p>
@@ -18620,8 +18650,8 @@ audit, and both are checked nightly:</p>
    <strong>exactly</strong>, with no managed pattern left loose outside the fence. A
    language with no fragment of its own — or a repo that declares none —
    gets the base-only block. Genuinely repo-local entries live outside the
-   fence and are never touched; run <code>vrg-gitignore-sync</code> to write or
-   refresh the block.</p>
+   fence and are never touched; <code>vrg-github-repo-config update</code> writes or
+   refreshes the block.</p>
 </li>
 <li>
 <p><strong>Your repo must carry a scheduled <code>ops.yml</code> wired to the config
@@ -18635,18 +18665,19 @@ turns the scheduled <code>ops.yml</code> run red. <code>vrg-github-repo-init</co
 both, so a new or adopted repo starts conforming.</p>
 <p>You never bump a pin to receive fragment changes: every repo tracks the
 rolling <code>vergil-tooling@vX.Y</code> tag, so an updated fragment released under
-that line is picked up on the next <code>vrg-gitignore-sync</code> run — and the
-nightly audit flags the drift until you run it.</p>
+that line is picked up on the next <code>vrg-github-repo-config update</code> run,
+which the nightly <code>ops.yml</code> job makes, opening one sync PR for the
+drifted files.</p>
 <p>Repos also carry a canonical, <strong>report-only</strong> <code>.github/dependabot.yml</code>
 (epic vergil-project/.github#420): Dependabot alerts stay on, but every
 <code>updates</code> entry sets <code>open-pull-requests-limit: 0</code>, so Dependabot never
 opens a PR. The file is an exact match of the render for your
 <code>[project].primary-language</code> — no local additions. <code>vrg-github-repo-init</code>
-writes it, and <code>vrg-dependabot-sync --write</code> writes or refreshes it.
+writes it, and <code>vrg-github-repo-config update</code> writes or refreshes it.
 <code>vrg-validate</code> rejects any <code>dependabot.yml</code> entry whose
 <code>open-pull-requests-limit</code> is missing (Dependabot then defaults to 5) or
-not <code>0</code>, and the nightly audit flags a missing or non-canonical file
-until you run <code>vrg-dependabot-sync --write</code>.</p>
+not <code>0</code>, and the nightly <code>update</code> rewrites a missing or non-canonical
+file.</p>
 <p>The same nightly run also fails while the repo has <strong>any</strong> open
 Dependabot alert: its <code>dependabot-audit</code> job runs
 <code>vrg-dependabot-audit</code>, which exits 1 on an open alert and 2 when it

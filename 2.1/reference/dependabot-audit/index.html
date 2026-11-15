@@ -1424,6 +1424,8 @@
       
         
       
+        
+      
     
     
     
@@ -1476,6 +1478,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.314/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.314
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17723,11 +17753,9 @@ turns an open alert into a failing run.</p>
   <code>.github/dependabot.yml</code>, where every <code>updates</code> entry carries
   <code>open-pull-requests-limit: 0</code>. <code>vrg-validate</code> rejects any entry
   without it, and the nightly config audit's <code>local.dependabot</code> check
-  flags a missing or non-canonical file. <code>vrg-dependabot-sync</code> writes
-  the file for one repo, and <code>vrg-fleet-sync --target dependabot</code>
-  sweeps it across the fleet. See the
-  <a href="../config-audit/">GitHub Config Audit reference</a> and the
-  <a href="../cli-tools-overview/#vrg-dependabot-sync">CLI Tools Overview</a>.</li>
+  flags a missing or non-canonical file, and the nightly
+  <code>vrg-github-repo-config update</code> rewrites it in a sync PR. See the
+  <a href="../config-audit/#the-update-command">GitHub Config Audit reference</a>.</li>
 </ul>
 <h2 id="where-it-runs">Where it runs<a class="headerlink" href="#where-it-runs" title="Permanent link">&para;</a></h2>
 <p>Every managed repo's nightly <code>ops.yml</code> calls the reusable
