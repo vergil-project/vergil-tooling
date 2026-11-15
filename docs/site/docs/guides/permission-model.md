@@ -226,6 +226,11 @@ instead of by pair:
 - **`user`** — denied entirely, which closes the escape hatch that
   individual hook-based blocks cannot fully cover.
 
+The user identity's one read it needs from the raw API, a PR's inline
+review comments, goes through the dedicated read-only
+[`vrg-pr-review-comments`](../reference/cli-tools-overview.md#vrg-pr-review-comments)
+rather than an exception in this refusal.
+
 ### Credential Selection
 
 `vrg-gh` is responsible for choosing which account's token to use
@@ -259,6 +264,8 @@ token `gh` runs with:
 
 `vrg-package` calls `gh` only: it lists and downloads releases, and
 verifies their attestations, when it builds the package index.
+`vrg-pr-review-comments` calls `gh` only too: it mints its token for the
+`--repo` owner, so it never reads the `origin` remote.
 
 These tools call `git` only: `vrg-commit`, `vrg-container-cache`,
 `vrg-container-run`, `vrg-reword`, `vrg-scorecard`, `vrg-validate`,

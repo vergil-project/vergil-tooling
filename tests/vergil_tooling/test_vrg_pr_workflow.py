@@ -390,7 +390,8 @@ def test_report_ready_batch_records_ordered_issues(
     _branch(ready_clone, "feat: b (#12)", "fix: a (#10)", "docs: c (#11)")
     assert _report("12", "10", "acme/tools#11") == 0
     out = json.loads(capsys.readouterr().out)
-    assert out == {"ok": True, "status": "ready", "issues": ["12", "10", "acme/tools#11"]}
+    # Printed in batch-show's #N form, recorded as given (#4297).
+    assert out == {"ok": True, "status": "ready", "issues": ["#12", "#10", "#11"]}
     rules.assert_called_once_with(["#12", "#10", "acme/tools#11"], repo="acme/tools")
     payload = json.loads(_state_file(ready_clone).read_text())
     assert payload["issue"] == "12"

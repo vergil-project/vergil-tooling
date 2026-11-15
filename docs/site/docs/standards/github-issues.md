@@ -652,7 +652,15 @@ planning and deferred reviews' decisions. From intake:
 A move **transfers** the issue, keeping its history; if GitHub refuses the
 transfer, the item is recreated in the target repo with a link back and the
 original closed with a pointer. Either way the resulting issue is re-linked under
-its new parent. A route is refused when the item's container epic does not allow
+its new parent. The item is unlinked from its queue epic before the transfer,
+so the transfer has no old link to carry back. The route confirms the new link
+from the target epic's sub-issue list as well as the issue's parent field. If
+the target epic does not list a moved item, or a queue epic still does,
+re-running the same one-off on the moved issue, with its own repo as `--repo`,
+links it under the target epic first and only then removes the stale queue
+listing. The re-run looks only at the queue epics of the moved issue's queue
+home and of its org's `.github`; for a stale listing anywhere else, the
+failure names the epic to remove it from in the GitHub UI. A route is refused when the item's container epic does not allow
 it (see [`vrg-intake-route`](../reference/cli-tools-overview.md#vrg-intake-route)
 for the route table), for a cross-org target, and for a private item headed to a
 public repo or epic.

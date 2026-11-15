@@ -300,3 +300,29 @@ def test_gather_defaults_org_to_current_repo_owner() -> None:
     # The derived org drives both the epic query and the child rollup.
     assert "logical-minds-foundry/.github" in mock_read.call_args.args
     assert mock_children.call_args.args[0].owner == "logical-minds-foundry"
+
+
+# Hostile titles: tag-like, script-like, link-like and a pipe.
+_HOSTILE_TITLES = (
+    ("<b>bold</b>", "&lt;b&gt;bold&lt;/b&gt;"),
+    ("<script>alert(1)</script>", "&lt;script&gt;alert(1)&lt;/script&gt;"),
+    ("[x](javascript:alert(1))", "\\[x\\](javascript:alert(1))"),
+    ("a|b", "a\\|b"),
+)
+
+
+def test_roadmap_row_escapes_title() -> None:
+    for title, escaped in _HOSTILE_TITLES:
+        row = roadmap._row(EpicSummary(9, title, "2026-06-28", None, (), 0, 0, "u9"))
+        prefix = "| [#9](u9) "
+        assert row == f"{prefix}{escaped} | 0/0 | — | 2026-06-28 |"
+        assert "<" not in row
+        # The pipe is escaped exactly once.
+        assert "\\\\|" not in row
+
+
+def test_render_escapes_milestone_title() -> None:
+    summary = EpicSummary(9, "t", "2026-06-28", "<i>v3</i> | *x*", (), 0, 0, "u9")
+    out = roadmap.render([summary], "vergil-project")
+    assert "## &lt;i&gt;v3&lt;/i&gt; \\| \\*x\\*" in out
+    assert "<i>" not in out

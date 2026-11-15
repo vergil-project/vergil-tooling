@@ -418,10 +418,12 @@ def _retarget(args: argparse.Namespace) -> int:
     with github.target_org(org):
         home = security_records.advisory_home(org)
         try:
-            security_records.retarget(home, ghsa_id, targets)
+            notes = security_records.retarget(home, ghsa_id, targets)
         except security_records.RetargetError as exc:
             print(f"{_PROG}: {_reason(exc)}", file=sys.stderr)
             return 1
+    for note in notes:
+        print(f"{ghsa_id}: {note}.")
     print(f"Retargeted {ghsa_id} to {', '.join(ref.slug for ref in targets)}.")
     return 0
 

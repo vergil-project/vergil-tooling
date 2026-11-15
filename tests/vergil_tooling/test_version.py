@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -237,7 +238,7 @@ def test_bump_claude_plugin(tmp_path: Path) -> None:
 # -- lockfile maintenance tests -----------------------------------------------
 
 
-def test_bump_python_runs_uv_lock(tmp_path: Path) -> None:
+def test_bump_python_runs_uv_lock_in_container(tmp_path: Path) -> None:
     import subprocess as _sp
 
     _write_toml(tmp_path, "python")
@@ -247,7 +248,7 @@ def test_bump_python_runs_uv_lock(tmp_path: Path) -> None:
     with patch("vergil_tooling.lib.version.subprocess.run", return_value=cp) as mock_run:
         bump(tmp_path)
         mock_run.assert_called_once_with(
-            ["uv", "lock"],
+            ["vrg-container-run", "--", "uv", "lock"],
             cwd=tmp_path,
             check=True,
             capture_output=True,
@@ -255,19 +256,96 @@ def test_bump_python_runs_uv_lock(tmp_path: Path) -> None:
         )
 
 
-def test_bump_rust_runs_cargo_update(tmp_path: Path) -> None:
+def test_bump_rust_runs_cargo_update_in_container(tmp_path: Path) -> None:
+    """The Rust lock refresh needs no host cargo: it runs in the dev container (#4407)."""
     _write_toml(tmp_path, "rust")
     (tmp_path / "VERSION").write_text("0.1.0\n")
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "example"\nversion = "0.1.0"\n')
     with patch("vergil_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
         mock_run.assert_called_once_with(
-            ["cargo", "update", "--workspace"],
+            ["vrg-container-run", "--", "cargo", "update", "--workspace"],
             cwd=tmp_path,
             check=True,
             capture_output=True,
             text=True,
         )
+
+
+def test_bump_rust_lockfile_refresh_runs_after_cargo_toml_bump(tmp_path: Path) -> None:
+    """The container sees the bumped Cargo.toml, so cargo writes the new version."""
+    _write_toml(tmp_path, "rust")
+    (tmp_path / "VERSION").write_text("0.1.0\n")
+    cargo_toml = tmp_path / "Cargo.toml"
+    cargo_toml.write_text('[package]\nname = "example"\nversion = "0.1.0"\n')
+    seen: list[str] = []
+
+    def _record(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(cargo_toml.read_text())
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="")
+
+    with patch("vergil_tooling.lib.version.subprocess.run", side_effect=_record):
+        bump(tmp_path)
+    assert len(seen) == 1
+    assert 'version = "0.1.1"' in seen[0]
+
+
+def test_lockfile_refresh_no_container_runtime_is_loud(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """vrg-container-run's refusal with no runtime stops the bump and is shown."""
+    import subprocess as _sp
+
+    from vergil_tooling.lib.version import _run_lockfile_maintenance
+
+    err = _sp.CalledProcessError(1, ["vrg-container-run", "--", "cargo", "update", "--workspace"])
+    err.stdout = ""
+    err.stderr = "ERROR: no container runtime found (need docker or nerdctl)\n"
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run", side_effect=err),
+        pytest.raises(_sp.CalledProcessError) as excinfo,
+    ):
+        _run_lockfile_maintenance(tmp_path, "rust")
+    assert excinfo.value.cmd[:2] == ["vrg-container-run", "--"]
+    assert "no container runtime found" in capsys.readouterr().err
+
+
+def test_lockfile_refresh_failure_shows_container_stdout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """vrg-container-run's header (image, command) is on stdout: show it on failure."""
+    import subprocess as _sp
+
+    from vergil_tooling.lib.version import _run_lockfile_maintenance
+
+    err = _sp.CalledProcessError(101, ["vrg-container-run", "--", "cargo", "update"])
+    err.stdout = "Image:    ghcr.io/vergil-project/prod-rust:1.90\n"
+    err.stderr = "error: failed to load manifest\n"
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run", side_effect=err),
+        pytest.raises(_sp.CalledProcessError),
+    ):
+        _run_lockfile_maintenance(tmp_path, "rust")
+    captured = capsys.readouterr()
+    assert "prod-rust" in captured.out
+    assert "failed to load manifest" in captured.err
+
+
+def test_lockfile_refresh_success_relays_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import subprocess as _sp
+
+    from vergil_tooling.lib.version import _run_lockfile_maintenance
+
+    cp = _sp.CompletedProcess(
+        args=[], returncode=0, stdout="Language: rust\n", stderr="Updating example\n"
+    )
+    with patch("vergil_tooling.lib.version.subprocess.run", return_value=cp):
+        _run_lockfile_maintenance(tmp_path, "rust")
+    captured = capsys.readouterr()
+    assert captured.out == "Language: rust\n"
+    assert captured.err == "Updating example\n"
 
 
 def test_bump_generic_skips_lockfile(tmp_path: Path) -> None:

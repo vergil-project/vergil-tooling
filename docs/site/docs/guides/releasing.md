@@ -76,7 +76,9 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
    `vrg-release` is a human-only command: it refuses to run under an
    agent identity. It needs a running container runtime (docker or
    nerdctl) and an authenticated `gh`; it generates the changelog with
-   `git-cliff` in the dev container, through `vrg-container-run`. It
+   `git-cliff`, and refreshes the lockfile after the version bump, in the
+   dev container, through `vrg-container-run`, so the host needs no
+   language toolchain. It
    drives the whole release through the stages listed in
    [The `vrg-release` pipeline](#the-vrg-release-pipeline) below, in a
    managed worktree, so the root checkout is never switched off
@@ -155,7 +157,7 @@ issue and ticks its box in the issue's stage checklist.
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
-| `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, and merges it to `develop`. Records the back-merge's merge commit |
+| `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, refreshes the lockfile in the dev container (`uv lock` for Python, `cargo update --workspace` for Rust), and merges it to `develop`. Records the back-merge's merge commit |
 | `teardown-worktree` | deferred | Removes the release worktree and returns to the root checkout |
 | `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed docs publish is deferred |
 | `promote` | deferred | Moves the rolling `vX.Y` tag to the new release (skipped with `--no-promote`) |
@@ -188,6 +190,30 @@ right run, and `close-finalize` runs `vrg-finalize-pr` only when every
 earlier stage passed. A second wait would add nothing. It would also
 fail the stage on a docs publish failure that `confirm-develop` has
 already deferred.
+
+### A failed release job
+
+When the CD release job on `main` does not succeed, `confirm-main`
+fails, and the release PR is already merged. `vrg-release --resume`
+alone cannot recover it: it watches the latest attempt of the same CD
+run and judges that same failed release job again. `vrg-release` does
+not re-run the job itself, since only you can tell that the cause is
+fixed. The `confirm-main` failure, on the terminal and on the tracking
+issue, lists the recovery steps with the run IDs filled in:
+
+1. `gh run rerun <ci-run> --repo <repo>`: re-run the release PR's CI
+   run. The release job's evidence gate harvests that run's artifacts,
+   so a fix that changes what CI writes reaches the gate only through a
+   fresh CI attempt.
+2. `gh run watch <ci-run> --repo <repo> --exit-status`.
+3. `gh run rerun <cd-run> --repo <repo>`: re-run the failed CD run on
+   `main`.
+4. `gh run watch <cd-run> --repo <repo> --exit-status`.
+5. `vrg-release --resume <version>`.
+
+Run them once the fix for the cause is released. Stop at any watch that
+fails. The resume judges the CD run's new attempt through the same
+release-job gate.
 
 ### Stale job records
 

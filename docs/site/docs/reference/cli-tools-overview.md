@@ -213,8 +213,12 @@ the one-commit-per-issue check run before any push; either failing records
 nothing. The state records the list as `issues` (its first entry is also
 `issue`), in the local file and the relay ref alike, and a re-run must name the
 same list in the same order. Once the state is recorded, the members' batch
-markers are removed. A single `--issue` records no `issues` key and behaves
-exactly as before.
+markers are removed and `report-ready` prints
+`{"ok": true, "status": "ready", "issues": […]}`. The printed `issues` are this
+repo's `#N` refs, the form `batch-start` and `batch-show` print, whatever form
+`--issue` took; the recorded `issues` keep each value as given (`N`, or
+`owner/repo#N`), the form `vrg-submit-pr` reads. A single `--issue` records no
+`issues` key, prints none, and behaves exactly as before.
 
 The batch hard rules are: 2 to 8 issues, none listed twice, every one in
 this repo, a task (not an epic, archive or queue item), not operational, not
@@ -235,8 +239,8 @@ takes `--issue` as `N`, `#N` or `owner/repo#N` for this clone's repo:
   `{"ok": true, "resumed": <bool>, "issues": […], "base_sha": "<sha>"}`. A
   refusal writes nothing. The same list over existing markers is a resume
   that changes nothing; any other existing marker is refused.
-- `batch-show --issue <N>` prints the issue's batch as one JSON object and
-  exits 0, exits 1 with nothing on stdout when the issue is in no batch, and
+- `batch-show --issue <N>` prints the issue's batch as one JSON object,
+  `{"issues": ["#10", "#11"], "base_sha": "<sha>"}`, and exits 0, exits 1 with nothing on stdout when the issue is in no batch, and
   exits 2 on any other failure.
 - `batch-extract --issue <N>` rewrites every other member's marker without
   the issue (removing the last one's when fewer than two remain) and removes
@@ -269,6 +273,38 @@ indefinitely by design.
 | Preconditions | GitHub App credentials for the PR's org |
 | Failure mode | Exits 1 with an error if the PR is already merged or the PR cannot be read |
 | Exit codes | 0 settled, 1 error |
+| Status | Active |
+
+### vrg-pr-review-comments
+
+List a pull request's inline (line-level) review comments. It reads
+`GET repos/{owner}/{repo}/pulls/{n}/comments`, every page, through
+`lib/github.py`'s paginated read helper, with the App token minted for the
+`--repo` owner. `vrg-gh pr view --json reviews,comments` returns only review
+bodies and conversation comments, and `vrg-gh` refuses `gh api` for the user
+identity, so this is the user agent's way to read them. It is strictly
+read-only and widens no `vrg-gh` allowlist. The plugin's
+`epic-retrospective` sweep consumes it.
+
+Without `--json` it prints one block per comment (`<path>:<line> by
+<author> at <created_at> (comment <id>, review <id>, reply to <id>)`, the
+comment URL, then the body indented; `:<line>` is left out when `line` is
+`null`), or one line saying the PR has none.
+`--json` prints a JSON array of objects with the keys `id`, `author`,
+`path`, `line`, `review_id`, `in_reply_to_id`, `created_at`, `body` and
+`url`, in API order. `line` is `null` for a comment not on a current line of
+the diff (a file-level comment, or an outdated one on a line the PR no longer
+has), `author` is `null` for a deleted account,
+`review_id` is `null` when GitHub gives none, and `in_reply_to_id` is
+`null` for a comment that starts a thread.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_pr_review_comments` |
+| Args | `--repo <owner>/<repo>`, `--pr N`, `--json` |
+| Preconditions | GitHub App credentials for the `--repo` owner |
+| Failure mode | A GitHub API failure, or a response that is not a list of well-formed comments, prints `ERROR:` on stderr and exits 1; it never prints a partial or empty list in its place |
+| Exit codes | 0 success, 1 GitHub API failure or malformed response, 2 bad arguments |
 | Status | Active |
 
 ### vrg-await
@@ -402,13 +438,16 @@ To roll a release back with `vrg-promote`, follow the
 Print or bump the repo's version. `show` prints the current version
 (`--major-minor` for `X.Y` only, `--ref` to read it from a git ref); `bump`
 increments `patch` (default), `minor` or `major` and prints the new version.
-Used by the CD workflows to read the release version.
+For a Python or Rust repo, `bump` then refreshes the lockfile (`uv lock`,
+`cargo update --workspace`) in the dev container, through
+`vrg-container-run`, so no host toolchain is needed. Used by the CD
+workflows to read the release version.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_version` |
 | Args | `show [--major-minor] [--ref REF]`, `bump [{patch,minor,major}]` |
-| Preconditions | Run from the repo root |
+| Preconditions | Run from the repo root; `bump` in a Python or Rust repo needs a running container runtime |
 | Failure mode | An unreadable version raises an uncaught error |
 | Exit codes | 0 success, 1 error |
 | Status | Active |

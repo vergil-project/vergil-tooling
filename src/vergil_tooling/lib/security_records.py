@@ -65,7 +65,7 @@ _LIST_JQ = (
 _DUPLICATE_JQ = (
     "[.[] | {ghsa_id, summary, names: [(.vulnerabilities // [])[] | .package.name // empty]}]"
 )
-_ISSUE_JQ = '{labels: [.labels[].name], body: (.body // "")}'
+_ISSUE_JQ = '{number, repository_url, labels: [.labels[].name], body: (.body // "")}'
 _SECURITY_ISSUES_JQ = '[.[] | select(.pull_request == null) | {number, state, body: (.body // "")}]'
 
 
@@ -296,9 +296,22 @@ def set_state(home: str, ghsa_id: str, state: Literal["draft", "closed"]) -> Non
         github.write_json("PATCH", f"{_advisories(home)}/{ghsa_id}", {"state": state})
 
 
-def _issue_labels_body(ref: IssueRef) -> tuple[set[str], str]:
+def _issue_state(ref: IssueRef) -> tuple[IssueRef, set[str], str]:
+    """*ref*'s current ref, labels and body.
+
+    The current ref differs from *ref* only when the issue was transferred:
+    the read at its old number follows GitHub's redirect to the moved issue,
+    while writes and sub-resource reads at the old number fail with a 404.
+    """
     raw: Any = github.read_json("api", _issue_endpoint(ref), "--jq", _ISSUE_JQ)
-    return {str(name) for name in raw.get("labels") or []}, str(raw.get("body") or "")
+    owner, repo = str(raw["repository_url"]).rstrip("/").split("/")[-2:]
+    current = IssueRef(owner=owner, repo=repo, number=int(raw["number"]))
+    return current, {str(name) for name in raw.get("labels") or []}, str(raw.get("body") or "")
+
+
+def _issue_labels_body(ref: IssueRef) -> tuple[set[str], str]:
+    _current, present, body = _issue_state(ref)
+    return present, body
 
 
 def _append_line(text: str, line: str) -> str:
@@ -321,7 +334,7 @@ def _moved_comment(moved_to: Sequence[IssueRef]) -> str:
     return f"Security record moved to {', '.join(ref.slug for ref in moved_to)}"
 
 
-def unmark_issue(ref: IssueRef, ghsa_id: str, moved_to: Sequence[IssueRef]) -> None:
+def unmark_issue(ref: IssueRef, ghsa_id: str, moved_to: Sequence[IssueRef]) -> str | None:
     """Drop *ref*'s line naming *ghsa_id*; say where it moved.
 
     An issue may name several advisories (:func:`parse_advisory_refs`). If no
@@ -336,13 +349,40 @@ def unmark_issue(ref: IssueRef, ghsa_id: str, moved_to: Sequence[IssueRef]) -> N
     naming this advisory, so a re-run of :func:`retarget` finishes it) or
     neither. That makes it idempotent: once the PATCH has landed the line is
     gone and a re-run does nothing, so the comment is never posted twice.
+
+    A *ref* that was **transferred** (its read leads to an issue under another
+    ref) is never written at its old number. If the issue it moved to is in
+    *moved_to*, nothing is left to unmark: that issue is a target itself, and
+    unmarking it would undo the retarget. Otherwise the unmark follows the
+    transfer and acts on the issue's current ref. Either way it returns a
+    one-line note, naming only refs, that says which it did; it returns
+    ``None`` for an issue that was not transferred.
     """
     if not moved_to:
         raise ValueError(f"unmark {ref.slug}: no issue the record moved to")
-    endpoint = _issue_endpoint(ref)
-    present, body = _issue_labels_body(ref)
+    current, present, body = _issue_state(ref)
+    if current == ref:
+        _unmark_current(ref, present, body, ghsa_id, moved_to)
+        return None
+    if current in moved_to:
+        return (
+            f"{ref.slug} was transferred to {current.slug}, a target: "
+            f"nothing left to unmark at {ref.slug}"
+        )
+    if _unmark_current(current, present, body, ghsa_id, moved_to):
+        outcome = f"unmarked {current.slug}"
+    else:
+        outcome = f"{current.slug} has no line for this advisory, nothing to unmark"
+    return f"{ref.slug} was transferred to {current.slug}: followed the transfer and {outcome}"
+
+
+def _unmark_current(
+    ref: IssueRef, present: set[str], body: str, ghsa_id: str, moved_to: Sequence[IssueRef]
+) -> bool:
+    """:func:`unmark_issue` at the issue's current *ref*; ``True`` if it named *ghsa_id*."""
     if ghsa_id not in parse_advisory_refs(body):
-        return
+        return False
+    endpoint = _issue_endpoint(ref)
     comment = _moved_comment(moved_to)
     existing = github.read_json_paginated(f"{endpoint}/comments", jq="[.[] | .body]")
     if comment not in existing:
@@ -355,6 +395,7 @@ def unmark_issue(ref: IssueRef, ghsa_id: str, moved_to: Sequence[IssueRef]) -> N
     if SECURITY_LABEL in present and not parse_advisory_refs(remaining):
         update["labels"] = sorted(present - {SECURITY_LABEL})
     github.write_json("PATCH", endpoint, update)
+    return True
 
 
 def _with_tracking(description: str, targets: Sequence[IssueRef]) -> str:
@@ -385,7 +426,7 @@ def retarget(
     targets: Sequence[IssueRef],
     *,
     renamed: Sequence[IssueRef] = (),
-) -> None:
+) -> tuple[str, ...]:
     """Move advisory *ghsa_id*'s tracking to *targets*.
 
     In order: mark every target, replace every ``Tracking issue:`` line with
@@ -409,6 +450,10 @@ def retarget(
     *renamed* names old numbers of issues that are themselves a target (a
     transferred issue): their tracking line is replaced but they are never
     unmarked, since the old number now leads to the moved issue itself.
+
+    A dropped issue that was transferred but is not named in *renamed* is
+    never written at its old number (:func:`unmark_issue`). The return value
+    holds one note per such issue, saying what the unmark did.
     """
     wanted = tuple(dict.fromkeys(targets))
     if not wanted:
@@ -427,10 +472,14 @@ def retarget(
             for issue in security_issues(home.split("/", 1)[0])
             if ghsa_id in issue.ghsa_ids
         ]
+    notes: list[str] = []
     for ref in dict.fromkeys((*previous, *marked)):
         if ref not in wanted and ref not in renamed:
             with _step(ghsa_id, f"unmarking {ref.slug}"):
-                unmark_issue(ref, ghsa_id, wanted)
+                note = unmark_issue(ref, ghsa_id, wanted)
+            if note is not None:
+                notes.append(note)
+    return tuple(notes)
 
 
 def security_issues(org: str) -> list[SecurityIssue]:
