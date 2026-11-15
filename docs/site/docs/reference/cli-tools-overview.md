@@ -1643,8 +1643,12 @@ be gitignored. The managed base gitignore covers the default layout
 `mkdocs.staged.yml`). If a generated path is not ignored, including a
 staged copy that the repo has committed, the command refuses before
 writing anything and lists the paths. To fix it, stop tracking any
-committed copies (`vrg-git rm --cached <path>`), then run
-`vrg-github-repo-config update`.
+committed copies (`vrg-git rm --cached <path>`). The managed
+`.gitignore` fence itself is fixed on `develop`, not in your checkout:
+[`vrg-github-repo-config update`](config-audit.md#the-update-command),
+run by the human or by the nightly ops job, corrects it through a sync
+PR. Once that PR has merged, bring your branch up to date with
+`develop`.
 
 `serve` stages once, at startup. Edits to the docs pages reload as usual,
 but edits to `mkdocs.yml`, `CHANGELOG.md` or `releases/` take effect only

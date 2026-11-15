@@ -638,7 +638,8 @@ def test_stage_sources_refuses_unignored_paths_before_writing(
     # No CHANGELOG.md, so no staged changelog is written or checked.
     assert "changelog.md" not in err
     assert "vrg-git rm --cached" in err
-    assert "vrg-github-repo-config update" in err
+    assert "fence on develop is fixed by vrg-github-repo-config update" in err
+    assert "bring this branch up to date with develop" in err
     assert not (repo / "docs" / "site" / "mkdocs.staged.yml").exists()
     assert _git(repo, "status", "--porcelain") == ""
 

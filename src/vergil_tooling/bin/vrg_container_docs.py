@@ -226,9 +226,10 @@ def _stage_sources(repo_root: Path, config: str) -> str | None:
         emit_error(
             "docs staging would write paths that are not gitignored:\n"
             f"{listing}\n"
-            "Stop tracking any of these that are committed "
-            "(vrg-git rm --cached <path>), then run vrg-github-repo-config update so the "
-            "managed .gitignore covers the staged docs paths."
+            "Stop tracking any of these that are committed (vrg-git rm --cached <path>).\n"
+            "The managed .gitignore fence on develop is fixed by vrg-github-repo-config "
+            "update, run by the human or the nightly ops job, through a sync PR; once it "
+            "has merged, bring this branch up to date with develop."
         )
         return None
 
