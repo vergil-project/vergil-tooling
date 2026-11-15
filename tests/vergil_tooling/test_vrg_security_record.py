@@ -607,6 +607,90 @@ def test_retarget_cli_refuses_bad_input(
     env.retarget.assert_not_called()
 
 
+# --- close (issue #4000) ----------------------------------------------------
+
+_REASON = "the epic was closed as not planned"
+
+
+def _close_result(
+    closed: bool = True, notes: tuple[str, ...] = ()
+) -> security_records.CloseResult:
+    return security_records.CloseResult(issues=(ISSUE, EXISTING), notes=notes, closed=closed)
+
+
+def test_close_cli_closes_and_names_the_issues(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with patch(f"{_SR}.close_record", return_value=_close_result()) as close:
+        assert main(["close", GHSA, "--reason", f" {_REASON} "]) == 0
+    close.assert_called_once_with(HOME, GHSA, _REASON)
+    captured = capsys.readouterr()
+    assert captured.out == (
+        f"Closed {GHSA} in {HOME}; the reason is on {ISSUE.slug}, {EXISTING.slug}.\n"
+    )
+    assert _REASON not in captured.out
+    assert captured.err == ""
+
+
+def test_close_cli_reports_an_already_closed_record_and_its_notes(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    note = f"org/.github#10 was transferred to {ISSUE.slug}: commented there"
+    result = _close_result(closed=False, notes=(note,))
+    with patch(f"{_SR}.close_record", return_value=result):
+        assert main(["close", GHSA, "--reason", _REASON]) == 0
+    assert capsys.readouterr().out == (
+        f"{GHSA}: {note}.\n"
+        f"{GHSA} was already closed in {HOME}; the reason is on {ISSUE.slug}, {EXISTING.slug}.\n"
+    )
+
+
+def test_close_cli_failure_exits_nonzero(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    error = security_records.CloseError(f"advisory {GHSA}: open issue {ISSUE.slug}; close")
+    with patch(f"{_SR}.close_record", side_effect=error):
+        assert main(["close", GHSA, "--reason", _REASON]) == 1
+    assert capsys.readouterr().err == (
+        f"vrg-security-record: advisory {GHSA}: open issue {ISSUE.slug}; close\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["close", "nope", "--reason", _REASON], "GHSA must be a GHSA ID"),
+        (["close", GHSA, "--reason", "  "], "--reason: the close reason is empty"),
+        (["close", GHSA, "--reason", "a\nb"], "--reason: the close reason must be one line"),
+    ],
+)
+def test_close_cli_refuses_bad_input(
+    env: MagicMock, capsys: pytest.CaptureFixture[str], argv: list[str], message: str
+) -> None:
+    with patch(f"{_SR}.close_record") as close:
+        assert main(argv) == 1
+    assert message in capsys.readouterr().err
+    close.assert_not_called()
+    env.advisory_home.assert_not_called()
+
+
+def test_close_cli_requires_a_reason(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["close", GHSA])
+    assert exc.value.code == 2
+    assert "--reason" in capsys.readouterr().err
+
+
+def test_close_cli_undetectable_org_is_refused(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env.detect_org.return_value = None
+    with patch(f"{_SR}.close_record") as close:
+        assert main(["close", GHSA, "--reason", _REASON]) == 1
+    assert "could not determine the GitHub org" in capsys.readouterr().err
+    close.assert_not_called()
+
+
 # --- sync -------------------------------------------------------------------
 
 _REAL_LIST_ADVISORIES = security_records.list_advisories
@@ -820,6 +904,7 @@ def test_sync_help_names_its_permission(capsys: pytest.CaptureFixture[str]) -> N
         ["retarget", GHSA, "--to", ISSUE.slug],
         ["sync"],
         ["sync", "--dry-run"],
+        ["close", GHSA, "--reason", "dropped"],
         None,  # create, filled in below
     ],
 )
