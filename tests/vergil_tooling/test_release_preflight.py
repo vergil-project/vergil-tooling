@@ -481,14 +481,137 @@ def test_acquire_release_worktree_creates_local_branch_from_origin_on_resume() -
     m_run.assert_called_once_with("branch", "release/2.1.0", "origin/release/2.1.0")
 
 
-def test_acquire_release_worktree_fails_if_branch_exists() -> None:
+def test_acquire_release_worktree_refuses_a_branch_only_on_origin() -> None:
     from vergil_tooling.lib.release.preflight import _acquire_release_worktree
 
     with (
-        patch(_MOD + ".git.ref_exists", return_value=True),
-        pytest.raises(ReleaseError, match="already exists"),
+        patch(_MOD + ".git.ref_exists", side_effect=lambda ref: ref.startswith("origin/")),
+        patch(_MOD + ".adopt_worktree") as m_adopt,
+        pytest.raises(ReleaseError, match="already exists on origin"),
     ):
         _acquire_release_worktree(Path("/tmp/repo"), "release/2.1.0", resume=False)  # noqa: S108
+    m_adopt.assert_not_called()
+
+
+class _Leftover:
+    """Git stand-ins for a local release branch an interrupted fresh run left (#4367).
+
+    *pushed* is what ``ls-remote`` reports, *ahead* the commits develop lacks,
+    and *head*/*status* what the leftover worktree, when present, reports.
+    """
+
+    def __init__(
+        self,
+        *,
+        pushed: str = "",
+        ahead: int = 0,
+        head: str = "release/2.1.0",
+        status: str = "",
+        ls_remote_error: bool = False,
+    ) -> None:
+        self.pushed = pushed
+        self.ahead = ahead
+        self.head = head
+        self.status = status
+        self.ls_remote_error = ls_remote_error
+        self.runs: list[tuple[str, ...]] = []
+
+    def read_output(self, *args: str) -> str:
+        if args[0] == "ls-remote":
+            if self.ls_remote_error:
+                raise subprocess.CalledProcessError(128, ("git", *args), stderr="unreachable")
+            return self.pushed
+        if args[2:] == ("rev-parse", "--abbrev-ref", "HEAD"):
+            return self.head
+        if args[2:] == ("status", "--porcelain"):
+            return self.status
+        msg = f"unexpected git read: {args}"
+        raise AssertionError(msg)
+
+    def run(self, *args: str) -> None:
+        self.runs.append(args)
+
+
+def _acquire_leftover(
+    tmp_path: Path, leftover: _Leftover, *, worktree_present: bool = False
+) -> tuple[Path, Path]:
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
+
+    wt = tmp_path / ".worktrees" / "release-2.1.0"
+    if worktree_present:
+        wt.mkdir(parents=True)
+    with (
+        patch(_MOD + ".git.ref_exists", side_effect=lambda ref: ref == "release/2.1.0"),
+        patch(_MOD + ".git.read_output", side_effect=leftover.read_output),
+        patch(_MOD + ".git.commits_ahead", return_value=leftover.ahead),
+        patch(_MOD + ".git.run", side_effect=leftover.run),
+        patch(_MOD + ".adopt_worktree", return_value=wt) as m_adopt,
+        patch(_MOD + ".create_worktree") as m_create,
+    ):
+        result = _acquire_release_worktree(tmp_path, "release/2.1.0", resume=False)
+    m_adopt.assert_called_once_with(tmp_path, branch="release/2.1.0")
+    m_create.assert_not_called()
+    return result, wt
+
+
+def test_acquire_release_worktree_adopts_an_unrecorded_local_branch(tmp_path: Path) -> None:
+    # The 2026-11-15 case: preflight made the branch and worktree, then the
+    # run was interrupted before prepare opened the tracking issue.
+    leftover = _Leftover()
+    result, wt = _acquire_leftover(tmp_path, leftover, worktree_present=True)
+    assert result == wt
+    assert leftover.runs == [("-C", str(wt), "merge", "--ff-only", "develop")]
+
+
+def test_acquire_release_worktree_reattaches_an_unrecorded_branch_with_no_worktree(
+    tmp_path: Path,
+) -> None:
+    leftover = _Leftover(head="never-asked")
+    result, wt = _acquire_leftover(tmp_path, leftover)
+    assert result == wt
+    assert leftover.runs == [("-C", str(wt), "merge", "--ff-only", "develop")]
+
+
+@pytest.mark.parametrize(
+    ("leftover", "match"),
+    [
+        (_Leftover(pushed="abc123\trefs/heads/release/2.1.0"), "was pushed to origin"),
+        (_Leftover(ls_remote_error=True), "could not be asked"),
+        (_Leftover(ahead=2), "2 commit\\(s\\) develop lacks"),
+    ],
+)
+def test_acquire_release_worktree_refuses_a_branch_that_may_hold_work(
+    tmp_path: Path, leftover: _Leftover, match: str
+) -> None:
+    with pytest.raises(ReleaseError, match=match):
+        _acquire_leftover(tmp_path, leftover, worktree_present=True)
+    assert leftover.runs == []
+
+
+@pytest.mark.parametrize(
+    ("leftover", "match"),
+    [
+        (_Leftover(head="develop"), "is on 'develop', not on it"),
+        (_Leftover(status=" M CHANGELOG.md"), "has uncommitted changes"),
+    ],
+)
+def test_acquire_release_worktree_refuses_a_leftover_worktree_that_may_hold_work(
+    tmp_path: Path, leftover: _Leftover, match: str
+) -> None:
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
+
+    (tmp_path / ".worktrees" / "release-2.1.0").mkdir(parents=True)
+    with (
+        patch(_MOD + ".git.ref_exists", side_effect=lambda ref: ref == "release/2.1.0"),
+        patch(_MOD + ".git.read_output", side_effect=leftover.read_output),
+        patch(_MOD + ".git.commits_ahead", return_value=0),
+        patch(_MOD + ".git.run", side_effect=leftover.run),
+        patch(_MOD + ".adopt_worktree") as m_adopt,
+        pytest.raises(ReleaseError, match=match),
+    ):
+        _acquire_release_worktree(tmp_path, "release/2.1.0", resume=False)
+    m_adopt.assert_not_called()
+    assert leftover.runs == []
 
 
 def test_acquire_release_worktree_wraps_worktree_error() -> None:

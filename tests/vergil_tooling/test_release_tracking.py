@@ -125,8 +125,14 @@ def test_cursor_returns_first_unchecked() -> None:
         assert cursor(ctx, ["audit", "prepare"]) == "prepare"
 
 
-def test_create_tracking_issue() -> None:
+def _creatable_ctx() -> ReleaseContext:
     ctx = _ctx()
+    ctx.progress_block = checklist.render(["audit", "prepare"], checked={"audit"})
+    return ctx
+
+
+def test_create_tracking_issue() -> None:
+    ctx = _creatable_ctx()
     with patch(
         _MOD + ".github.read_output",
         return_value="https://github.com/owner/repo/issues/42",
@@ -136,8 +142,35 @@ def test_create_tracking_issue() -> None:
     assert ctx.issue_url == "https://github.com/owner/repo/issues/42"
 
 
-def test_create_tracking_issue_extracts_number_from_url() -> None:
+def test_create_tracking_issue_creates_the_issue_with_its_checklist() -> None:
+    # #4367: the checklist is in the creation body, never a later edit, so an
+    # interrupt right after `gh issue create` still leaves a resumable issue.
+    ctx = _creatable_ctx()
+    bodies: list[str] = []
+
+    def fake_read_output(*args: str) -> str:
+        bodies.append(Path(args[args.index("--body-file") + 1]).read_text())
+        return "https://github.com/owner/repo/issues/42"
+
+    with patch(_MOD + ".github.read_output", side_effect=fake_read_output):
+        create_tracking_issue(ctx)
+    assert len(bodies) == 1
+    assert checklist.first_unchecked(bodies[0], ["audit", "prepare"]) == "prepare"
+    assert bodies[0].startswith("## Release 2.1.0\n\nRepo: owner/repo\n")
+
+
+def test_create_tracking_issue_refuses_without_a_checklist() -> None:
     ctx = _ctx()
+    with (
+        patch(_MOD + ".github.read_output") as m_read,
+        pytest.raises(ReleaseError, match="No stage checklist"),
+    ):
+        create_tracking_issue(ctx)
+    m_read.assert_not_called()
+
+
+def test_create_tracking_issue_extracts_number_from_url() -> None:
+    ctx = _creatable_ctx()
     with patch(
         _MOD + ".github.read_output",
         return_value="https://github.com/owner/repo/issues/999",
@@ -318,7 +351,7 @@ def test_close_tracking_issue() -> None:
 
 
 def test_create_tracking_issue_bad_url() -> None:
-    ctx = _ctx()
+    ctx = _creatable_ctx()
     with (
         patch(_MOD + ".github.read_output", return_value="not-a-url"),
         pytest.raises(ValueError, match="Could not extract issue number"),
