@@ -105,15 +105,26 @@ artifact. It is the gate's self-description:
 | `files`   | array of strings  | The report file names present in the artifact.                |
 
 **Current limitations (shipped state).** The `tools` and `metrics` values above
-show the **intended shape**, not what every bundle carries today. Verified
-against the v2.1.195 bundle:
+show the **intended shape**, not what every bundle carries today:
 
-- The `security` gate's `tools` array currently ships **empty** (`[]`) — the
-  scanners run and emit their SARIF, but the fragment does not yet enumerate
-  them. (The `test`, `audit`, and `quality` gates do populate `tools`.)
 - `metrics` currently ships **empty** (`{}`) for **every** gate; the
   `findings_by_severity` / `coverage_pct` / `tests` summaries are the target
   shape, not yet populated.
+- The `quality` gate's `tools` always names Python's tools (ruff and mypy),
+  and on a non-Python repository it holds no lint or typecheck report. A
+  Rust repository's `quality` gate therefore carries only its common and
+  custom transcripts. The fix is part of the single source of truth for the
+  report files
+  ([vergil-tooling#4416](https://github.com/vergil-project/vergil-tooling/issues/4416)).
+- The `test` and `audit` gates name their tools and hold their reports only
+  for a language with an entry in vergil-actions' report table
+  ([`ci/evidence/reports`](https://vergil-project.github.io/vergil-actions/actions/ci-evidence-reports/)),
+  today Python and Rust. For any other language (today go, cpp and
+  typescript) those two gates ship an empty `tools` array and no report,
+  with a warning on each leg.
+- Since vergil-actions v2.1.75 the `security` gate names its scanners
+  (`trivy` and `semgrep`, plus `codeql` when its job ran and passed), where
+  it used to ship an empty `tools` array.
 
 These are producer-side gaps, not schema changes: the fields exist and the
 consumer reads them; they populate as producers are updated.
@@ -229,10 +240,16 @@ using the `vergil` nextest profile that vergil-tooling packages, which turns
 on nextest's JUnit report. One coverage report from that run then gates on
 100% line coverage. Both files are written whether the gate passes or fails.
 Rustdoc examples run in a separate `cargo test --doc` step, which writes no
-report, because nextest does not run doctests. CI does not stage the Rust
-`junit.xml` yet: vergil-actions takes it up when its report table is derived
-from vergil-tooling
-([vergil-actions#1216](https://github.com/vergil-project/vergil-actions/issues/1216)).
+report, because nextest does not run doctests.
+
+`ci-test.yml` and `ci-audit.yml` stage each leg's reports with version-suffixed
+names, as for Python: `coverage-<ver>.xml`, `junit-<ver>.xml` and
+`cargo-deny-<ver>.json`. The names they stage come from a per-language table
+in vergil-actions
+([`ci/evidence/reports`](https://vergil-project.github.io/vergil-actions/actions/ci-evidence-reports/)),
+which must match the names these gates write. The Rust test entry requires
+`junit.xml` from vergil-actions v2.1.76, so a Rust repository needs a
+vergil-tooling release whose test gate writes it (2.1.314 or later).
 
 `quality-common.log` is the transcript of `vrg-validate --check common` and
 `quality-custom.log` the transcript of `vrg-validate --check custom`, each
@@ -333,10 +350,10 @@ the provenance anchor, and a per-gate summary with per-file `sha256`:
 | `missing_gates`  | Names of required gates that produced no evidence — recorded as data, never silently dropped. |
 
 **Current limitations (shipped state).** As with the `evidence.json` fragment,
-the `metrics` and (for `security`) `tools` values shown are the **intended
-shape**. In the v2.1.195 bundle the manifest ships `metrics: {}` for **every**
-gate and an empty `tools: []` for the `security` gate. The fields are present
-and read by auditors; they populate as producers are updated.
+the `metrics` and `tools` values shown are the **intended shape**: the
+manifest carries each gate's fragment as it is, with the gaps listed there,
+so it ships `metrics: {}` for **every** gate. The fields are present and
+read by auditors; they populate as producers are updated.
 
 Two trust properties are load-bearing:
 
