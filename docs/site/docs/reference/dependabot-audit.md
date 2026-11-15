@@ -22,16 +22,16 @@ vrg-dependabot-audit --repo OWNER/REPO
 
 Two halves keep Dependabot to reporting:
 
-- **Alerts are on.** `vrg-github-repo-config apply` enables
-  vulnerability alerts on every repo, public or private, and the
-  nightly config audit flags any repo where they are off.
+- **Alerts are on.** `vrg-github-repo-config update`, which runs
+  nightly, enables vulnerability alerts on every repo, public or
+  private, and the config audit flags any repo where they are off.
 - **Dependabot never opens a PR.** The repo setting for Dependabot
   security updates stays disabled, which the config audit also
   enforces. Version-update PRs are suppressed by the canonical
   `.github/dependabot.yml`, where every `updates` entry carries
   `open-pull-requests-limit: 0`. `vrg-validate` rejects any entry
-  without it, and the nightly config audit's `local.dependabot` check
-  flags a missing or non-canonical file, and the nightly
+  without it, the config audit's `local.dependabot` check flags a
+  missing or non-canonical file, and the nightly
   `vrg-github-repo-config update` rewrites it in a sync PR. See the
   [GitHub Config Audit reference](config-audit.md#the-update-command).
 
@@ -70,7 +70,7 @@ stderr, prefixed `vrg-dependabot-audit:`. The common causes are:
 
 | Diagnostic | Cause |
 |---|---|
-| `Dependabot alerts are disabled for OWNER/REPO` | Alerts are off on the repo. Run `vrg-github-repo-config apply`. |
+| `Dependabot alerts are disabled for OWNER/REPO` | Alerts are off on the repo. Run `vrg-github-repo-config update` as the human, or wait for the nightly run. |
 | `token lacks the 'Dependabot alerts: Read' permission for OWNER/REPO` | The token or GitHub App cannot read alerts (HTTP 403). |
 | `repository OWNER/REPO not found or not accessible` | The repo does not exist or the token cannot see it (HTTP 404). |
 | `the GitHub App has no installation for owner '…'` | No App installation for the repo's owner. |

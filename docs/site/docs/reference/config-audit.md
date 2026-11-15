@@ -133,20 +133,28 @@ fixing it, and it has no identity gate. Since it shares its code path
 with `update`, it also converges the auto-merge setting and the
 `Automation branches` ruleset.
 
-### Where it runs — the nightly self-policing loop
+## Where it runs — the nightly self-policing loop
 
-The audit is not part of `vrg-validate` (that would add per-commit
-overhead for a check that only needs to catch slow drift). Its home is
-the **nightly `ops.yml` config-audit job**: every managed repo ships
-`.github/workflows/ops.yml`, which calls the reusable
+The config check is not part of `vrg-validate` (that would add
+per-commit overhead for a check that only needs to catch slow drift).
+Its home is the **nightly `ops.yml` `github-config` job**: every managed
+repo ships `.github/workflows/ops.yml`, which calls the reusable
 `vergil-project/vergil-actions/.github/workflows/ops-github-config.yml`
 workflow on a daily schedule. That job runs
-`vrg-github-repo-config audit` against the repo's `develop`, so any
-`DiffItem` returns exit 1 and **turns the scheduled run red**. Drift is
-fatal where it fires: a non-conforming repo cannot silently persist.
+`vrg-github-repo-config update` on the repo as the org automation App
+(identity mode `automation`), with a token scoped to the calling repo.
+It runs only from `develop`, checks out `develop`, and is capped at 60
+minutes, the life of the App's installation token (see the vergil-actions
+[ops-github-config](https://vergil-project.github.io/vergil-actions/workflows/ops-github-config/)
+reference).
 
-`vrg-release` also gates on the GitHub half of this audit, so a repo
-whose required-check set has drifted cannot release until reconciled.
+Drift that a fixer can correct arrives as one sync PR, which merges
+within the run. Anything `update` cannot converge, fix or audit gives a
+non-zero [exit code](#update-exit-codes) and **turns the scheduled run
+red**, so a non-conforming repo cannot silently persist.
+
+`vrg-release` also runs `audit` before it releases, so a repo whose
+configuration has drifted cannot release until it is reconciled.
 
 ### Settings the identity cannot read
 
@@ -171,13 +179,14 @@ audit does not guess the value. It reports the setting as not checked:
   read, in which case it exits 1. It never exits 0 while any setting
   is not checked. `diff`, which otherwise always exits 0, exits 2 with
   the same error.
-- **`apply` refuses.** It exits 2 and writes nothing, since it would
-  converge settings it could not read.
-- **The check for an `apply` is the `apply` exiting 0.** `apply` is
-  run by the human. Under the agent identity, `diff` exits 2 on every
-  repo, since the `administration=read` settings are not checked, so a
-  `diff` an agent runs after the human's `apply` is informational only
-  and its exit code is not the verdict on the apply.
+- **`update` and `apply` refuse.** They exit 2 and write nothing, since
+  they would converge settings they could not read.
+- **The check for an `update` is the `update` exiting 0.** `update` is
+  run by the human or the org automation App, never by an agent. Under
+  the agent identity, `diff` exits 2 on every repo, since the
+  `administration=read` settings are not checked, so a `diff` an agent
+  runs after an `update` is informational only and its exit code is not
+  the verdict on the update.
 - A repo setting that `GET /repos/{owner}/{repo}` leaves out of its
   response, or returns as `null`, is not checked either, as
   `repo_settings.<field>`, never read as `false` or `''` (#4322).
@@ -208,8 +217,8 @@ audit does not guess the value. It reports the setting as not checked:
       rulesets.Tag protection.bypass_actors: not checked (read back empty under the automation identity, so unreadable; needs administration=write)
   ```
 
-  `apply` then refuses and converges nothing. For a human run the same
-  empty list is ordinary drift, and `apply` writes the desired list.
+  `update` then refuses and converges nothing. For a human run the same
+  empty list is ordinary drift, and `update` writes the desired list.
 
 ## Local checks
 
@@ -364,7 +373,7 @@ nothing else for the file (#3451).
 
 A **wiring validator** for a *present* `ops.yml`. It asserts the file
 (a) exists, (b) references `ops-github-config.yml` (so a repo cannot
-carry an `ops.yml` that omits the config audit), and (c) carries a
+carry an `ops.yml` that omits the nightly config job), and (c) carries a
 scheduled (`cron`) trigger — because a wired-but-unscheduled `ops.yml`
 (e.g. `workflow_dispatch` only) would pass a bare wiring check yet never
 run nightly, silently defeating the self-policing mechanism.
@@ -441,8 +450,8 @@ tag** `vX.Y`, never a specific patch. The nightly `ops.yml` job installs
 that line — including its fragment set. So:
 
 > change a fragment → release a `vergil-tooling` patch under `vX.Y` →
-> **every repo's nightly audit flags the fence as drifted** until its
-> managed block is re-rendered.
+> **every repo's nightly `update` finds the fence drifted** and opens a
+> sync PR that re-renders its managed block.
 
 Because the fence must match the composed block *exactly* (not merely be
 a superset), a fragment change is applied — not auto-satisfied — by
@@ -502,11 +511,11 @@ Alerts are read from `GET /repos/{repo}/vulnerability-alerts` (204 means
 on, 404 means off). A 403 for a missing permission is reported as
 [not checked](#settings-the-identity-cannot-read); any other status is an
 error, never a silent "off".
-`apply` turns alerts on with `PUT` on that endpoint (or off with
-`DELETE`), and sets `dependabot_security_updates` through the repo's
-`security_and_analysis` settings. `apply` is a human action: it needs
-Administration write access, which the org automation Apps do not
-have.
+`update` (like the deprecated `apply`) turns alerts on with `PUT` on that
+endpoint (or off with `DELETE`), and sets `dependabot_security_updates`
+through the repo's `security_and_analysis` settings. That needs
+Administration write access, which the human and the org automation
+Apps hold and the agent Apps do not.
 
 ## GitHub checks — rulesets
 
@@ -548,14 +557,16 @@ order:
   the ID up with `GET /apps/{slug}`. A missing variable or a failed lookup
   fails the run (exit 2).
 - **Bypass actors are not compared under an App token that is not the
-  automation identity.** Today's nightly audit runs on such a token, which
-  cannot read a ruleset's bypass list, so in that mode it checks each
-  ruleset's includes, enforcement and rules but not its bypass actors, and
-  lists the skipped `rulesets.<name>.bypass_actors` fields instead. This
-  holds for every ruleset above. Under the automation identity they are
-  compared, and an empty read is
-  [not checked](#settings-the-identity-cannot-read). `apply` writes whole
-  rulesets, so it always manages the bypass lists. Bypass lists are
+  automation identity**, such as an agent App's token or a CI
+  `GITHUB_TOKEN`. Such a token cannot read a ruleset's bypass list, so in
+  that mode the audit checks each ruleset's includes, enforcement and
+  rules but not its bypass actors, and lists the skipped
+  `rulesets.<name>.bypass_actors` fields instead. This holds for every
+  ruleset above, and `update` refuses to converge on such a token. Under
+  the human's login and the automation identity they are compared, and
+  under the automation identity an empty read is
+  [not checked](#settings-the-identity-cannot-read). `update` and `apply`
+  write whole rulesets, so they always manage the bypass lists. Bypass lists are
   compared as sets: their order is not drift.
 - **A REST refs write refused by a ruleset gives no rule text.** When a
   ruleset blocks a create, update or delete made through the REST refs API
@@ -592,9 +603,9 @@ version-agnostic CI model (epic
   workflow emits — for example a stale per-version check surviving a matrix
   reduction — is reported as drift rather than silently sitting "expected, never
   reported" and blocking every PR.
-- **Apply-time producibility guard.** Before `apply` writes anything, it
-  fetches the repo's committed `.github/workflows/ci.yml` from `develop` and
-  refuses (exit 1) if the desired `CI gates` ruleset requires a context no
+- **Apply-time producibility guard.** Before `update` or `apply` writes
+  anything, it fetches the repo's committed `.github/workflows/ci.yml` from
+  `develop` and refuses (exit 2 for `update`, 1 for `apply`) if the desired `CI gates` ruleset requires a context no
   `pull_request` job in that file emits — the same guard repo-init runs
   against the ci.yml it generates. A missing `ci.yml` is also a refusal, never
   a skip: with no workflow, no required check could ever report.
@@ -622,10 +633,10 @@ UNDECLARED PARAMETER: rulesets.Branch protection rule 'pull_request' has
 
 - **It is non-compliant.** The live ruleset enforces a setting the spec
   never chose, so `audit` exits 1, the same as any other drift.
-- **`apply` cannot fix it.** The ruleset `PUT` leaves out the key, so
-  GitHub applies its default again. `apply` still fixes any value drift,
-  writes nothing when the only issues are undeclared parameters, and
-  exits 1 with a pointer to the decision.
+- **`update` and `apply` cannot fix it.** The ruleset `PUT` leaves out
+  the key, so GitHub applies its default again. They still fix any value
+  drift, write nothing when the only issues are undeclared parameters,
+  and exit 1 with a pointer to the decision.
 - **Resolve it in the spec.** Either declare the key with an explicit
   value in the desired ruleset in `lib/github_config.py`, or add it to
   `_STRIP_RULE_PARAMS` if it should be ignored. Keys on that list

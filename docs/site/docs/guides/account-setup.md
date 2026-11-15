@@ -314,7 +314,10 @@ Notes:
 - **Query identity with `vrg-whoami`, never a single environment
   variable.** `VRG_IDENTITY_MODE` is only the first of five fallback
   steps (env var → mode file → `app.pem` → `VRG_APP_ID` → human); an
-  unset value means "fall through," not "default to human." Ask the
+  unset value means "fall through," not "default to human." (The
+  `automation` mode is checked before all five, and only in a CI job
+  that sets `VRG_AUTOMATION_APP`; see
+  [Identity modes](identity-architecture.md#identity-modes).) Ask the
   authoritative resolver instead: `vrg-whoami` prints the resolved role,
   `vrg-whoami --mode` emits a single token for scripting
   (`export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"`), and

@@ -868,8 +868,9 @@ def compute_desired_state(
     """Compute the full desired GitHub configuration from a repo's VergilConfig.
 
     *skip_bypass* leaves every ruleset's ``bypass_actors`` unmanaged. It is
-    true only for an App token that is not the automation identity (today's
-    ops ``audit``), which GitHub never shows the field to. Otherwise
+    true only for an App token that is not the automation identity (an agent
+    App's token or a CI ``GITHUB_TOKEN``), which GitHub never shows the field
+    to. Otherwise
     *automation_app_id*, the org automation App's numeric ID, is required: it
     is the automation-branch ruleset's bypass actor. A missing ID without
     *skip_bypass* raises rather than leaving that ruleset unmanaged.
