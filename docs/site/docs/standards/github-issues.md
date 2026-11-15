@@ -940,13 +940,13 @@ deploy steps (install/sync/restart). Where deploying needs a **release**
 (bump/tag/publish), that release is a **human-gated precondition** — attested,
 never performed by the agent — the same policy that keeps PR submission and merge
 in human hands. A deploy step that needs a **human identity** (for example
-`vrg-github-repo-config apply`, which needs `administration=read`) goes under the
-scaffold's **Human-run steps** section, not the agent-safe deploy steps: the agent
-checks its preconditions, gives the human the paste-ready command, then records
-the step's check. For repo config, the check is the human's
-`vrg-github-repo-config apply` exiting 0: `apply` refuses, exiting 2 and writing
-nothing, when it cannot read every setting first. A `vrg-github-repo-config diff`
-the agent runs afterwards is informational only. Under the agent identity `diff`
-exits 2, because the admin-scoped settings are not checked; that is expected and
-is not a failure of the apply. Never treat `diff`'s exit code as the verdict on
-an apply.
+`vrg-github-repo-config update`, which refuses the agent identity modes) goes
+under the scaffold's **Human-run steps** section, not the agent-safe deploy steps:
+the agent checks its preconditions, gives the human the paste-ready command, then
+records the step's check. For repo config, the check is the human's
+`vrg-github-repo-config update` exiting 0 (in sync, or its sync PR merged):
+`update` refuses, exiting 2 and writing nothing, when it cannot read every
+setting first. A `vrg-github-repo-config diff` the agent runs afterwards is
+informational only. Under the agent identity `diff` exits 2, because the
+admin-scoped settings are not checked; that is expected and is not a failure of
+the update. Never treat `diff`'s exit code as the verdict on an update.

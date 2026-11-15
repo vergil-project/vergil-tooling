@@ -70,7 +70,7 @@ stderr, prefixed `vrg-dependabot-audit:`. The common causes are:
 
 | Diagnostic | Cause |
 |---|---|
-| `Dependabot alerts are disabled for OWNER/REPO` | Alerts are off on the repo. Run `vrg-github-repo-config apply`. |
+| `Dependabot alerts are disabled for OWNER/REPO` | Alerts are off on the repo. Run `vrg-github-repo-config update` as the human, or wait for the nightly run. |
 | `token lacks the 'Dependabot alerts: Read' permission for OWNER/REPO` | The token or GitHub App cannot read alerts (HTTP 403). |
 | `repository OWNER/REPO not found or not accessible` | The repo does not exist or the token cannot see it (HTTP 404). |
 | `the GitHub App has no installation for owner '…'` | No App installation for the repo's owner. |
