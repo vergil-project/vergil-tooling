@@ -18339,11 +18339,9 @@ Context-full auto-compaction (<code>autoCompactEnabled</code>) is left on, and
 manual <code>/compact</code> still works.</p>
 <p>Any other content is one
 <code>DiffItem(field="local.claude_settings", ...)</code> whose actual value names
-each top-level key that is missing, unexpected or different. Fix it with
-<code>vrg-claude-settings-sync --write</code>, which replaces the file with the
-template for one repo; <code>vrg-fleet-sync --target claude-settings</code> does the
-same across the fleet, one PR per drifted repo (see the
-<a href="../cli-tools-overview/#vrg-claude-settings-sync">CLI Tools Overview</a>).</p>
+each top-level key that is missing, unexpected or different.
+<a href="#the-update-command"><code>update</code></a> fixes it by replacing the file with the
+template.</p>
 <h3 id="_check_hook_guard_shim-the-whole-file"><code>_check_hook_guard_shim</code> — the whole file<a class="headerlink" href="#_check_hook_guard_shim-the-whole-file" title="Permanent link">&para;</a></h3>
 <p><code>.claude/hooks/guard.sh</code> must match the packaged shim,
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/data/hook_guard_shim.sh"><code>hook_guard_shim.sh</code></a>,
@@ -18355,11 +18353,8 @@ The check reports one <code>DiffItem(field="local.hook_guard_shim", ...)</code>:
 read, <code>differs from the packaged shim (stale or locally edited)</code>, or,
 for the right bytes without every execute bit, <code>not executable (mode
 …)</code>: Claude Code cannot run a hook that is not executable.</p>
-<p>Fix it with <code>vrg-hook-guard-shim-sync --write</code>, which replaces the file
-with the packaged shim, mode <code>0755</code>, for one repo;
-<code>vrg-fleet-sync --target hook-guard-shim</code> does the same across the
-fleet, one PR per drifted repo (see the
-<a href="../cli-tools-overview/#vrg-hook-guard-shim-sync">CLI Tools Overview</a>).</p>
+<p><a href="#the-update-command"><code>update</code></a> fixes it by replacing the file with the
+packaged shim, mode <code>0755</code>.</p>
 <h3 id="claudemd-and-agentsmd-the-instruction-file"><code>CLAUDE.md</code> and <code>AGENTS.md</code> — the instruction file<a class="headerlink" href="#claudemd-and-agentsmd-the-instruction-file" title="Permanent link">&para;</a></h3>
 <p><code>CLAUDE.md</code> must hold exactly one pair of template markers,
 <code>&lt;!-- vergil:template:claude-md:begin --&gt;</code> and
@@ -18370,12 +18365,10 @@ verbatim. Content outside the markers belongs to the repo and is never
 compared. A file with no markers fails with
 <code>DiffItem(field="local.claude_md", expected="well-formed template markers",
 actual="no template markers")</code>; a region that differs names the first
-divergent template line and <code>CLAUDE.md</code> line. Fix a differing region
-with <code>vrg-claude-md-sync --write</code>, which replaces only the marked region
-with the template for one repo; <code>vrg-fleet-sync --target claude-md</code> does
-the same across the fleet, one PR per drifted repo (see the
-<a href="../cli-tools-overview/#vrg-claude-md-sync">CLI Tools Overview</a>). Neither
-repairs missing or malformed markers: that stays a hand fix.</p>
+divergent template line and <code>CLAUDE.md</code> line.
+<a href="#the-update-command"><code>update</code></a> fixes a differing region by replacing
+only the marked region with the template. It does not repair missing or
+malformed markers: that stays a hand fix.</p>
 <p><code>CLAUDE.md</code> is held to a line budget of <strong>200 lines</strong>, counted as
 <code>len(text.splitlines())</code> over the whole file, template region included: a
 file of exactly 200 lines passes, 201 fails, and a trailing newline is not
@@ -18421,12 +18414,11 @@ report-only render for its <code>[project].primary-language</code> (epic
 <a href="https://github.com/vergil-project/.github/issues/420">vergil-project/.github#420</a>):
 a <code>github-actions</code> entry plus the language's ecosystem, each with
 <code>open-pull-requests-limit: 0</code>. The comparison is an exact match with no
-local additions — the same <code>lib/dependabot.py::check</code> that
-<code>vrg-dependabot-sync --check</code> uses. Each failure is reported as
+local additions, through <code>lib/dependabot.py::check</code>. Each failure is reported as
 <code>DiffItem(field="local.dependabot", expected="canonical report-only dependabot.yml",
 actual=&lt;reason&gt;)</code>, where the reason is <code>missing .github/dependabot.yml</code>
-or <code>differs from the canonical render</code>. Fix either with
-<code>vrg-dependabot-sync --write</code>.</p>
+or <code>differs from the canonical render</code>.
+<a href="#the-update-command"><code>update</code></a> fixes either by writing the render.</p>
 <p>No <code>vergil.toml</code>, or no declared language, means the actions-only
 render. A <code>vergil.toml</code> that fails to load is <strong>not</strong> treated as
 actions-only: the check reports one explicit failure,
@@ -18460,9 +18452,8 @@ packaged data-asset <strong>fragments</strong>:</p>
 <p>They are loaded at runtime via <code>importlib.resources</code> — the same idiom
 used for the <code>CLAUDE.md</code> and <code>.claude/settings.json</code> templates — and
 <code>lib/gitignore.py</code> <em>composes</em> <code>base + &lt;language&gt;</code> into an order-stable,
-de-duplicated pattern list. Scaffolding, the applicator
-(<code>vrg-gitignore-sync</code>), and the audit all render through that one module,
-so they cannot diverge.</p>
+de-duplicated pattern list. Scaffolding, the <code>update</code> fixer and the
+audit all render through that one module, so they cannot diverge.</p>
 <p><strong>Composed per language.</strong> A repo's block is the union of the
 language-agnostic <code>base</code> (editors, OS, secrets, logs, Vergil internals
 like <code>.venv/</code> / <code>.worktrees/</code> / <code>.vergil/</code> / <code>.superpowers/</code>, paad's
@@ -18479,8 +18470,8 @@ between a <code># &gt;&gt;&gt; vergil-managed: base + &lt;language&gt; …</code
 (<code>lib/gitignore.py::check</code>) is <strong>fenced-only</strong>: it requires a well-formed
 fence whose body equals the composed block for the repo's language
 <strong>exactly</strong>, with no managed pattern left loose outside the fence, in the
-exact layout <code>vrg-gitignore-sync --write</code> produces: the fence first and a
-trailing newline, so the audit drifts exactly when <code>--write</code> would change
+exact layout the <code>update</code> fixer writes: the fence first and a
+trailing newline, so the audit drifts exactly when the fixer would change
 the file (#3568). (The
 transitional legacy monolith-superset acceptance and the monolithic
 <code>gitignore.baseline</code> asset were removed in epic
@@ -18488,14 +18479,15 @@ transitional legacy monolith-superset acceptance and the monolithic
 once the whole fleet was fenced.)</p>
 <p><strong>Local additions are expected.</strong> Genuinely repo-local lines live
 <em>outside</em> the fence and are never asserted against; a repo freely adds
-its own entries below the managed block (<code>--write</code> moves any above it to
+its own entries below the managed block (the fixer moves any above it to
 below it, in order).</p>
 <p><strong>Editing a fragment in vergil-tooling itself.</strong> The installed
-<code>vrg-gitignore-sync</code> composes from the installed package's data, so after
-a fragment edit it reports "already in sync" and leaves this repo's own
-fence stale (<code>vrg-validate</code> fails on it). Resync from the worktree's
-source with
-<code>PYTHONPATH=src python3 -m vergil_tooling.bin.vrg_gitignore_sync --write</code>.</p>
+<code>vrg-github-repo-config update</code> composes from the installed package's
+data, so after a fragment edit this repo's own fence stays stale
+(<code>vrg-validate</code> fails on it) until the change is released. Resync from
+the worktree's source by running the fixer from <code>src/</code> at the worktree
+root:
+<code>PYTHONPATH=src python3 -c 'from pathlib import Path; from vergil_tooling.lib.repo_config_fixes import fix_gitignore; fix_gitignore(Path("."))'</code>.</p>
 <h3 id="propagation-the-rolling-vxy-pin">Propagation — the rolling <code>vX.Y</code> pin<a class="headerlink" href="#propagation-the-rolling-vxy-pin" title="Permanent link">&para;</a></h3>
 <p>Every managed repo pins <code>vergil-tooling</code> to the <strong>rolling major-minor
 tag</strong> <code>vX.Y</code>, never a specific patch. The nightly <code>ops.yml</code> job installs
@@ -18508,11 +18500,11 @@ managed block is re-rendered.</p>
 </blockquote>
 <p>Because the fence must match the composed block <em>exactly</em> (not merely be
 a superset), a fragment change is applied — not auto-satisfied — by
-re-running <code>vrg-gitignore-sync</code>, which rewrites the managed block in
-place and leaves the genuinely repo-local section untouched. The fleet driver runs
-that applicator across every repo as reviewed per-repo PRs; the rolling
-pin delivers the new fragments to the tool, and the applicator writes the
-fence.</p>
+the <a href="#the-update-command"><code>update</code></a> fixer, which rewrites the managed
+block in place and leaves the genuinely repo-local section untouched. The
+nightly ops run's <code>update</code> does this in every repo, one sync PR each; the
+rolling pin delivers the new fragments to the tool, and the fixer writes
+the fence.</p>
 <h2 id="new-repos-are-born-conforming">New repos are born conforming<a class="headerlink" href="#new-repos-are-born-conforming" title="Permanent link">&para;</a></h2>
 <p><code>repo_init</code> (<code>vrg-github-repo-init</code>) scaffolds these checked-in files
 through the same modules the audit uses, so a freshly created repo
