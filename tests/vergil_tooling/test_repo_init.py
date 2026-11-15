@@ -549,10 +549,10 @@ class TestRenderGitignore:
         fence — so the flagship never drifts from the source of truth it ships.
 
         This is the only gate on the self-hosting case: after a fragment edit the
-        installed ``vrg-gitignore-sync`` composes from the *installed* package's
-        data, reports "already in sync", and leaves this fence stale (#3774). So
-        the comparison must be against this worktree's ``src/`` data, and the
-        failure says how to resync from it.
+        installed ``vrg-github-repo-config update`` composes from the *installed*
+        package's data and leaves this fence stale (#3774). So the comparison
+        must be against this worktree's ``src/`` data, and the failure says how
+        to resync from it.
         """
         repo_root = Path(__file__).resolve().parents[2]
         module_path = Path(gitignore.__file__).resolve()
@@ -564,9 +564,11 @@ class TestRenderGitignore:
         assert fence == gitignore.render_block("python"), (
             "This repo's .gitignore managed fence does not match what "
             "src/vergil_tooling/data/gitignore/ composes. The installed "
-            "vrg-gitignore-sync uses the installed package's data and reports "
-            "'already in sync'; resync from this worktree's source instead:\n"
-            "    PYTHONPATH=src python3 -m vergil_tooling.bin.vrg_gitignore_sync --write"
+            "vrg-github-repo-config update uses the installed package's data; "
+            "resync from this worktree's source instead, at its root:\n"
+            "    PYTHONPATH=src python3 -c 'from pathlib import Path; "
+            "from vergil_tooling.lib.repo_config_fixes import fix_gitignore; "
+            'fix_gitignore(Path("."))\''
         )
 
     def test_render_gitignore_returns_render_block(self) -> None:

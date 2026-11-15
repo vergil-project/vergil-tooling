@@ -227,7 +227,7 @@ def _stage_sources(repo_root: Path, config: str) -> str | None:
             "docs staging would write paths that are not gitignored:\n"
             f"{listing}\n"
             "Stop tracking any of these that are committed "
-            "(vrg-git rm --cached <path>), then run vrg-gitignore-sync so the "
+            "(vrg-git rm --cached <path>), then run vrg-github-repo-config update so the "
             "managed .gitignore covers the staged docs paths."
         )
         return None

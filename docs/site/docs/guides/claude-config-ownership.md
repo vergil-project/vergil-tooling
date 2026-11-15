@@ -252,13 +252,13 @@ It checks the following, each a hard failure with no transition window:
 
 - the repo `CLAUDE.md` is at most 200 lines;
 - the template markers are present, and the region between them is the
-  template verbatim (after a template change,
-  `vrg-fleet-sync --target claude-md` brings every repo back in line, one
-  PR per drifted repo);
+  template verbatim (after a template change, the nightly
+  `vrg-github-repo-config update` brings every repo back in line, one
+  sync PR per drifted repo);
 - no `AGENTS.md` exists;
 - `.claude/settings.json` equals the template after JSON parsing (after
-  a template change, `vrg-fleet-sync --target claude-settings` brings
-  every repo back in line, one PR per drifted repo);
+  a template change, the nightly `vrg-github-repo-config update` brings
+  every repo back in line, one sync PR per drifted repo);
 - the `paad-policy.md` pointer is present (it is in the template region, so
   the template check covers it).
 

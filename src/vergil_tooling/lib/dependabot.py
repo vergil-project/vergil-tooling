@@ -6,9 +6,9 @@ stays disabled, and every ``updates`` entry in ``dependabot.yml`` carries
 ``open-pull-requests-limit: 0`` (Dependabot's default is 5).
 
 This module is the single source of truth for the file. Scaffolding
-(``vrg-repo-init``), the single-repo applicator (``vrg-dependabot-sync``), the
-fleet sweep (``vrg-fleet-sync --target dependabot``) and the ``vrg-validate``
-limit-0 guard all go through it, so they cannot drift apart.
+(``vrg-repo-init``), the config audit and its ``vrg-github-repo-config update``
+fixer, and the ``vrg-validate`` limit-0 guard all go through it, so they cannot
+drift apart.
 
 * :func:`render` — the exact canonical text for a primary language.
 * :func:`check` — exact-match compliance against that render (no local

@@ -44,13 +44,6 @@ the dev-tree override venv.
 | [vrg-github-repo-config](config-audit.md) | Audit/reconcile a repo against canonical config |
 | [vrg-dependabot-audit](dependabot-audit.md) | Fail on any open Dependabot alert |
 | [vrg-github-repo-init](cli-tools-overview.md#vrg-github-repo-init) | Bootstrap a new managed repository |
-| [vrg-gitignore-sync](cli-tools-overview.md#vrg-gitignore-sync) | Check or write a repo's vergil-managed `.gitignore` block |
-| [vrg-dependabot-sync](cli-tools-overview.md#vrg-dependabot-sync) | Check or write a repo's canonical report-only `dependabot.yml` |
-| [vrg-claude-settings-sync](cli-tools-overview.md#vrg-claude-settings-sync) | Check or write a repo's managed `.claude/settings.json` |
-| [vrg-claude-md-sync](cli-tools-overview.md#vrg-claude-md-sync) | Check or write the template region of a repo's `CLAUDE.md` |
-| [vrg-hook-guard-shim-sync](cli-tools-overview.md#vrg-hook-guard-shim-sync) | Check or write a repo's managed `.claude/hooks/guard.sh` |
-| [vrg-fleet-sync](cli-tools-overview.md#vrg-fleet-sync) | Propagate a managed file across the fleet, one PR per drifted repo |
-| [vrg-ci-sync](cli-tools-overview.md#vrg-ci-sync) | Fleet sweep that strips retired inputs from each repo's `ci.yml` |
 | [vrg-upstream-refresh](cli-tools-overview.md#vrg-upstream-refresh) | Run the repo's upstream-refresh hook and open, refresh or close its PR |
 | [vrg-branch-sweep](dev/branch-sweep.md) | Report, or with `--apply` delete, a repo's finished remote branches |
 | [vrg-repo-status](cli-tools-overview.md#vrg-repo-status) | Show every worktree in the current repo, grouped by kind, and what is pending release |

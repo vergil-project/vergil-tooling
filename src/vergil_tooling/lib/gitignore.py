@@ -143,7 +143,10 @@ def render_block(lang: str | None) -> str:
     (``None``, empty, unknown, or a known language whose fragment is empty).
     """
     descriptor = f"base + {lang}" if load_fragment(lang) else "base"
-    begin = f"{MANAGED_BEGIN_PREFIX} {descriptor} (managed by vrg-gitignore-sync; do not edit) >>>"
+    begin = (
+        f"{MANAGED_BEGIN_PREFIX} {descriptor} "
+        "(managed by vrg-github-repo-config update; do not edit) >>>"
+    )
     return "\n".join([begin, *compose(lang), MANAGED_END]) + "\n"
 
 
@@ -224,7 +227,9 @@ def check(text: str, lang: str | None) -> Compliance:
         reasons.append("managed patterns appear outside the fence: " + ", ".join(stray))
 
     if not reasons and sync(text, lang).changed:
-        reasons.append("the file differs from the canonical layout vrg-gitignore-sync writes")
+        reasons.append(
+            "the file differs from the canonical layout vrg-github-repo-config update writes"
+        )
 
     return Compliance(compliant=not reasons, reasons=reasons)
 
