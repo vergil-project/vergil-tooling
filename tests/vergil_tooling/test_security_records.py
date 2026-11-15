@@ -16,12 +16,15 @@ from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.security_records import (
     Advisory,
     Classification,
+    CloseError,
     PrivateHomeError,
     RetargetError,
     SecurityIssue,
     advisory_home,
     advisory_line,
     classify,
+    close_comment,
+    close_record,
     create_advisory,
     find_duplicate,
     list_advisories,
@@ -405,6 +408,9 @@ class Issues:
         self.labels: dict[IssueRef, set[str]] = {}
         self.bodies: dict[IssueRef, str] = {}
         self.comments: dict[IssueRef, list[str]] = {}
+        self.closed: set[IssueRef] = set()
+        # Advisory states set through the API, by GHSA ID.
+        self.states: dict[str, str] = {}
         # Transferred issues: old ref -> current ref. A read at the old number
         # follows the redirect; every other call there gets a 404, as on GitHub.
         self.moved: dict[IssueRef, IssueRef] = {}
@@ -456,6 +462,7 @@ class Issues:
         return {
             "number": ref.number,
             "repository_url": f"https://api.github.com/repos/{ref.owner}/{ref.repo}",
+            "state": "closed" if ref in self.closed else "open",
             "labels": sorted(self.labels[ref]),
             "body": self.bodies[ref],
         }
@@ -465,7 +472,9 @@ class Issues:
         self.writes.append((method, endpoint, body))
         if "security-advisories" in endpoint:
             ghsa_id = endpoint.rsplit("/", 1)[1]
-            if ghsa_id in self.descriptions:
+            if "state" in body:
+                self.states[ghsa_id] = str(body["state"])
+            elif ghsa_id in self.descriptions:
                 self.descriptions[ghsa_id] = str(body["description"])
             else:
                 self.description = str(body["description"])
@@ -489,7 +498,11 @@ class Issues:
             self._maybe_fail(f"GET {endpoint}")
             owner, repo = endpoint.split("/")[1:3]
             return [
-                {"number": ref.number, "state": "open", "body": self.bodies[ref]}
+                {
+                    "number": ref.number,
+                    "state": "closed" if ref in self.closed else "open",
+                    "body": self.bodies[ref],
+                }
                 for ref in sorted(self.labels, key=lambda r: r.number)
                 if (ref.owner, ref.repo) == (owner, repo) and "security" in self.labels[ref]
             ]
@@ -1167,3 +1180,196 @@ def test_retarget_issue_calls_in_order(issues: Issues) -> None:
         ("PATCH", "repos/org/.github/issues/10"),
     ]
     assert call("org/tool", ["security"]) in issues.ensure_labels.call_args_list
+
+
+# --- close (issue #4000) ------------------------------------------------------
+
+REASON = "the epic was closed as not planned"
+CLOSED_COMMENT = f"Security record {GHSA} closed: {REASON}"
+
+
+def _listing(monkeypatch: pytest.MonkeyPatch, *advisories: Advisory) -> MagicMock:
+    listed = MagicMock(return_value=list(advisories))
+    monkeypatch.setattr(security_records, "list_advisories", listed)
+    return listed
+
+
+def test_close_comment_is_the_ghsa_id_and_reason_only() -> None:
+    assert close_comment(GHSA, REASON) == CLOSED_COMMENT
+
+
+def test_close_comments_on_every_issue_then_closes(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch, _adv(tracking=(A, C)))
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
+    issues.closed |= {A, C}
+    result = close_record(HOME, GHSA, f"  {REASON}  ")
+    assert result == security_records.CloseResult(issues=(A, C), notes=(), closed=True)
+    assert issues.comments[A] == [CLOSED_COMMENT]
+    assert issues.comments[C] == [CLOSED_COMMENT]
+    assert issues.states == {GHSA: "closed"}
+    # The comments go first, the state last; no body or label is touched.
+    assert [(m, ep.rsplit("/", 1)[1]) for m, ep, _ in issues.writes] == [
+        ("POST", "comments"),
+        ("POST", "comments"),
+        ("PATCH", GHSA),
+    ]
+    assert SECRET not in "".join(str(w) for w in issues.writes)
+
+
+def test_close_also_comments_on_an_untracked_issue_naming_it(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch, _adv(tracking=()))
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
+    issues.closed.add(C)
+    assert close_record(HOME, GHSA, REASON).issues == (C,)
+    assert issues.comments[C] == [CLOSED_COMMENT]
+    assert issues.states == {GHSA: "closed"}
+
+
+@pytest.mark.parametrize("open_ref", [A, C])
+def test_close_refuses_while_any_issue_is_open(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch, open_ref: IssueRef
+) -> None:
+    _listing(monkeypatch, _adv(tracking=(A,)))
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
+    issues.closed |= {A, C} - {open_ref}
+    with pytest.raises(CloseError, match=f"open issue {open_ref.slug}; close or retarget"):
+        close_record(HOME, GHSA, REASON)
+    assert issues.writes == []
+
+
+def test_close_names_every_open_issue(issues: Issues, monkeypatch: pytest.MonkeyPatch) -> None:
+    _listing(monkeypatch, _adv(tracking=(A, C)))
+    issues.add(A)
+    issues.add(C)
+    with pytest.raises(CloseError, match="open issues org/.github#10, org/tool#12;"):
+        close_record(HOME, GHSA, REASON)
+    assert issues.writes == []
+
+
+@pytest.mark.parametrize(
+    ("advisory", "message"),
+    [
+        (_adv(OTHER), f"advisory {GHSA} does not exist in {HOME}"),
+        (_adv(state="published"), "is in state published; close only moves a draft"),
+        (_adv(state="withdrawn"), "is in state withdrawn"),
+        (_adv(state="triage"), "is in state triage"),
+        (_adv(external=True), "is an external report"),
+    ],
+)
+def test_close_refuses_an_advisory_it_must_not_close(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch, advisory: Advisory, message: str
+) -> None:
+    _listing(monkeypatch, advisory)
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.closed.add(A)
+    with pytest.raises(CloseError, match=message):
+        close_record(HOME, GHSA, REASON)
+    assert issues.writes == []
+
+
+def test_close_refuses_a_record_with_no_issue(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch, _adv(tracking=()))
+    with pytest.raises(CloseError, match="no issue can carry the close comment"):
+        close_record(HOME, GHSA, REASON)
+    assert issues.writes == []
+
+
+@pytest.mark.parametrize(
+    ("reason", "message"),
+    [
+        ("   ", "the close reason is empty"),
+        ("one\ntwo", "the close reason must be one line"),
+        ("x" * 501, "longer than 500 characters"),
+    ],
+)
+def test_close_refuses_a_bad_reason(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch, reason: str, message: str
+) -> None:
+    listed = _listing(monkeypatch, _adv())
+    with pytest.raises(CloseError, match=message):
+        close_record(HOME, GHSA, reason)
+    listed.assert_not_called()
+    assert issues.writes == []
+
+
+def test_close_follows_a_transferred_issue(issues: Issues, monkeypatch: pytest.MonkeyPatch) -> None:
+    _listing(monkeypatch, _adv(tracking=(A,)))
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
+    issues.closed.add(C)
+    issues.moved[A] = C
+    result = close_record(HOME, GHSA, REASON)
+    assert result.issues == (C,)
+    assert result.notes == ("org/.github#10 was transferred to org/tool#12: commented there",)
+    assert issues.comments[C] == [CLOSED_COMMENT]
+    assert not [w for w in issues.writes if "/issues/10" in w[1]]
+
+
+def test_close_rerun_after_a_failed_state_change_posts_once(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch, _adv(tracking=(A,)))
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.closed.add(A)
+    issues.fail_on = f"PATCH repos/org/.github/security-advisories/{GHSA}"
+    with pytest.raises(CloseError) as excinfo:
+        close_record(HOME, GHSA, REASON)
+    assert str(excinfo.value).startswith(f"advisory {GHSA}: setting the state to closed failed: ")
+    assert SECRET not in "".join(traceback.format_exception(excinfo.value))
+    assert issues.comments[A] == [CLOSED_COMMENT]
+    issues.fail_on = None
+    assert close_record(HOME, GHSA, REASON).closed is True
+    assert issues.comments[A] == [CLOSED_COMMENT]
+    assert issues.states == {GHSA: "closed"}
+
+
+def test_close_of_a_closed_advisory_only_completes_the_comments(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch, _adv(tracking=(A, C), state="closed"))
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
+    issues.closed |= {A, C}
+    issues.comments[A] = [CLOSED_COMMENT]
+    assert close_record(HOME, GHSA, REASON).closed is False
+    assert issues.comments[C] == [CLOSED_COMMENT]
+    assert [(m, ep) for m, ep, _ in issues.writes] == [
+        ("POST", "repos/org/tool/issues/12/comments")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("fail_on", "step"),
+    [
+        ("GET repos/org/.github/issues?state=all&labels=security", "listing the security issues"),
+        ("GET repos/org/.github/issues/10", "reading org/.github#10"),
+        ("POST repos/org/.github/issues/10/comments", "commenting on org/.github#10"),
+    ],
+)
+def test_close_names_the_failed_step(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch, fail_on: str, step: str
+) -> None:
+    _listing(monkeypatch, _adv(tracking=(A,)))
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.closed.add(A)
+    issues.fail_on = fail_on
+    with pytest.raises(CloseError) as excinfo:
+        close_record(HOME, GHSA, REASON)
+    assert str(excinfo.value).startswith(f"advisory {GHSA}: {step} failed: ")
+    assert SECRET not in "".join(traceback.format_exception(excinfo.value))
+    assert issues.states == {}
+
+
+def test_close_list_failure_is_scrubbed(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = github.GitHubAPIError(1, ("gh", "api", "x"), SECRET, "HTTP 500")
+    monkeypatch.setattr(github, "read_json_paginated", MagicMock(side_effect=error))
+    with pytest.raises(CloseError, match="reading the advisories failed") as excinfo:
+        close_record(HOME, GHSA, REASON)
+    assert SECRET not in "".join(traceback.format_exception(excinfo.value))

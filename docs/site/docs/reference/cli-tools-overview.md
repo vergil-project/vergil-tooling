@@ -834,15 +834,17 @@ paired with a neutral `security`-labelled intake issue (epic
 vergil-project/.github#517). `create` makes the pair (or attaches an
 advisory to an existing issue, or resumes an unfinished pair), `list` and
 `show` read records, `retarget` moves an advisory's tracking to new
-issues, and `sync` sets each paired advisory's state from its issues and
-reports broken pairs (`--dry-run` previews it). Advisory text is printed only by `show` and `list --details`. See
+issues, `sync` sets each paired advisory's state from its issues and
+reports broken pairs (`--dry-run` previews it), and `close` closes a draft
+advisory whose issues are all closed, posting the GHSA ID and a required
+`--reason` on each of them first. Advisory text is printed only by `show` and `list --details`. See
 [vrg-security-record](dev/security-record.md) and
 [Security Records](../guides/security-records.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_security_record` (library: `lib/security_records.py`) |
-| Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --to REF [--to REF …]`; `sync [--dry-run]` |
+| Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --to REF [--to REF …]`; `sync [--dry-run]`; `close GHSA-ID --reason TEXT` |
 | Preconditions | The org's `.github` is public; Repository security advisories: Read and write on the identity's App (or a human `gh` login with access) |
 | Failure mode | A partial pair exits 1 naming what exists and the exact `--resume` command that finishes it; a private `.github`, a duplicate draft, or `--details` under `VRG_EPIC_SWEEP` is refused; `sync` exits 1 on a broken pair after syncing the rest |
 | Exit codes | 0 success, 1 refused or error, 2 bad arguments |

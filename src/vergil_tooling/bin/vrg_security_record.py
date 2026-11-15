@@ -15,6 +15,10 @@ neutral ``security``-labelled intake issue carrying only a pointer to it.
   issues; ``--details`` adds each summary and is refused under the sweep.
 - ``show`` prints one pair with its details, to the terminal only.
 - ``retarget`` moves an advisory's tracking to new issues.
+- ``close`` closes a draft advisory whose issues are all closed, with a
+  required ``--reason``: it first posts ``Security record <GHSA> closed:
+  <reason>`` on every issue the record tracks, the audit trail
+  (vergil-tooling#4000).
 - ``sync`` runs the security-records pass over the org: it sets each paired
   advisory to ``closed`` or ``draft`` from its issues and reports broken
   pairs and unpaired external reports; ``--dry-run`` previews it. It needs
@@ -69,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
             return _show(args)
         if args.command == "sync":
             return _sync(args)
+        if args.command == "close":
+            return _close(args)
         return _retarget(args)
     except _RefusedError as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
@@ -428,6 +434,30 @@ def _retarget(args: argparse.Namespace) -> int:
     return 0
 
 
+def _close(args: argparse.Namespace) -> int:
+    ghsa_id = _ghsa(args.ghsa, "GHSA")
+    try:
+        reason = security_records.check_close_reason(args.reason)
+    except security_records.CloseError as exc:
+        raise _RefusedError(f"--reason: {exc}") from None
+    org = _detected_org()
+    with github.target_org(org):
+        home = security_records.advisory_home(org)
+        try:
+            result = security_records.close_record(home, ghsa_id, reason)
+        except security_records.CloseError as exc:
+            print(f"{_PROG}: {_reason(exc)}", file=sys.stderr)
+            return 1
+    for note in result.notes:
+        print(f"{ghsa_id}: {note}.")
+    refs = ", ".join(ref.slug for ref in result.issues)
+    if result.closed:
+        print(f"Closed {ghsa_id} in {home}; the reason is on {refs}.")
+    else:
+        print(f"{ghsa_id} was already closed in {home}; the reason is on {refs}.")
+    return 0
+
+
 def _sync(args: argparse.Namespace) -> int:
     org = _detected_org()
     with github.target_org(org):
@@ -482,6 +512,26 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     retarget.add_argument("ghsa", help="The advisory's GHSA ID")
     retarget.add_argument(
         "--to", action="append", required=True, help="Target issue owner/repo#N (repeatable)"
+    )
+
+    close = sub.add_parser(
+        "close",
+        help="Close a draft advisory with a reason posted on every issue it tracks",
+        description=(
+            "Close a draft advisory in this repo's org's .github. It refuses while any "
+            "issue the record tracks is open (sync would set it back to draft), and "
+            "for an external report or a published, withdrawn or triage advisory. It "
+            "first posts 'Security record <GHSA> closed: <reason>' on every issue the "
+            "record tracks, then sets the advisory to closed; a re-run with the same "
+            "reason finishes an interrupted close without posting twice. The reason is "
+            "public: never put advisory details in it."
+        ),
+    )
+    close.add_argument("ghsa", help="The advisory's GHSA ID")
+    close.add_argument(
+        "--reason",
+        required=True,
+        help="Why the record is closed: one neutral line, public, no advisory details",
     )
 
     sync = sub.add_parser(
