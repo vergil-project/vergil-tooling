@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.314] - 2026-11-15
+
+### Bug fixes
+
+- make an interrupted release always recoverable (#4420)
+- audit vergil-tooling's managed files against its in-tree templates when releasing it (#4421)
+- make back-merge-bump safe to re-run after a partial failure (#4422)
+
+### Documentation
+
+- describe Rust's toolchain enforcement in the validation, container and image docs (#4417)
+
+### Features
+
+- write junit.xml from the rust TEST gate with cargo llvm-cov nextest (#4418)
+
+### Refactoring
+
+- retire the vrg-*-sync tools in favour of vrg-github-repo-config update (#4419)
+
 ## [2.1.313] - 2026-11-15
 
 ### Bug fixes
