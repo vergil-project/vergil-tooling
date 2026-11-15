@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.313/">
       
       
         <link rel="next" href="../v2.1.311/">
@@ -1429,6 +1429,8 @@
       
         
       
+        
+      
     
     
     
@@ -1484,6 +1486,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.313/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.313
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17535,6 +17565,7 @@
 <li><strong>write coverage.xml and cargo-deny.json from the rust test and audit gates (#4396)</strong>
 The rust TEST coverage run now also exports Cobertura XML to coverage.xml, keeping its 100% line gate and printing uncovered lines. The rust AUDIT runs cargo deny once with JSON output and stats, writing its stderr to cargo-deny.json and exiting with its status. Declares RUST_REPORT_FILES and CARGO_DENY_REPORT, ignores cargo-deny.json in rust repos, and documents the rust evidence files. JUnit is not yet written: the rust image has no reporter. Ref #4394</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.312/v2.1.312-ci-evidence.tar.gz">Download →</a></p>
 
 
 

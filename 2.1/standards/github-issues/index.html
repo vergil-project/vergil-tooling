@@ -1424,6 +1424,8 @@
       
         
       
+        
+      
     
     
     
@@ -1476,6 +1478,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.313/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.313
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19094,7 +19124,15 @@ planning and deferred reviews' decisions. From intake:</p>
 <p>A move <strong>transfers</strong> the issue, keeping its history; if GitHub refuses the
 transfer, the item is recreated in the target repo with a link back and the
 original closed with a pointer. Either way the resulting issue is re-linked under
-its new parent. A route is refused when the item's container epic does not allow
+its new parent. The item is unlinked from its queue epic before the transfer,
+so the transfer has no old link to carry back. The route confirms the new link
+from the target epic's sub-issue list as well as the issue's parent field. If
+the target epic does not list a moved item, or a queue epic still does,
+re-running the same one-off on the moved issue, with its own repo as <code>--repo</code>,
+links it under the target epic first and only then removes the stale queue
+listing. The re-run looks only at the queue epics of the moved issue's queue
+home and of its org's <code>.github</code>; for a stale listing anywhere else, the
+failure names the epic to remove it from in the GitHub UI. A route is refused when the item's container epic does not allow
 it (see <a href="../../reference/cli-tools-overview/#vrg-intake-route"><code>vrg-intake-route</code></a>
 for the route table), for a cross-org target, and for a private item headed to a
 public repo or epic.</p>

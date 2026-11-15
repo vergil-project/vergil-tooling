@@ -1420,6 +1420,8 @@
       
         
       
+        
+      
     
     
     
@@ -1472,6 +1474,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.313/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.313
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17498,6 +17528,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#a-failed-release-job" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A failed release job
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stale-job-records" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17827,6 +17868,17 @@
     <span class="md-ellipsis">
       
         The vrg-release pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-failed-release-job" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A failed release job
       
     </span>
   </a>
@@ -18192,7 +18244,9 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
 <p><code>vrg-release</code> is a human-only command: it refuses to run under an
    agent identity. It needs a running container runtime (docker or
    nerdctl) and an authenticated <code>gh</code>; it generates the changelog with
-   <code>git-cliff</code> in the dev container, through <code>vrg-container-run</code>. It
+   <code>git-cliff</code>, and refreshes the lockfile after the version bump, in the
+   dev container, through <code>vrg-container-run</code>, so the host needs no
+   language toolchain. It
    drives the whole release through the stages listed in
    <a href="#the-vrg-release-pipeline">The <code>vrg-release</code> pipeline</a> below, in a
    managed worktree, so the root checkout is never switched off
@@ -18298,7 +18352,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>back-merge-bump</code></td>
 <td>fail-fast</td>
-<td>Creates <code>release/post-&lt;version&gt;</code> from <code>main</code>, bumps the version, and merges it to <code>develop</code>. Records the back-merge's merge commit</td>
+<td>Creates <code>release/post-&lt;version&gt;</code> from <code>main</code>, bumps the version, refreshes the lockfile in the dev container (<code>uv lock</code> for Python, <code>cargo update --workspace</code> for Rust), and merges it to <code>develop</code>. Records the back-merge's merge commit</td>
 </tr>
 <tr>
 <td><code>teardown-worktree</code></td>
@@ -18363,6 +18417,28 @@ right run, and <code>close-finalize</code> runs <code>vrg-finalize-pr</code> onl
 earlier stage passed. A second wait would add nothing. It would also
 fail the stage on a docs publish failure that <code>confirm-develop</code> has
 already deferred.</p>
+<h3 id="a-failed-release-job">A failed release job<a class="headerlink" href="#a-failed-release-job" title="Permanent link">&para;</a></h3>
+<p>When the CD release job on <code>main</code> does not succeed, <code>confirm-main</code>
+fails, and the release PR is already merged. <code>vrg-release --resume</code>
+alone cannot recover it: it watches the latest attempt of the same CD
+run and judges that same failed release job again. <code>vrg-release</code> does
+not re-run the job itself, since only you can tell that the cause is
+fixed. The <code>confirm-main</code> failure, on the terminal and on the tracking
+issue, lists the recovery steps with the run IDs filled in:</p>
+<ol>
+<li><code>gh run rerun &lt;ci-run&gt; --repo &lt;repo&gt;</code>: re-run the release PR's CI
+   run. The release job's evidence gate harvests that run's artifacts,
+   so a fix that changes what CI writes reaches the gate only through a
+   fresh CI attempt.</li>
+<li><code>gh run watch &lt;ci-run&gt; --repo &lt;repo&gt; --exit-status</code>.</li>
+<li><code>gh run rerun &lt;cd-run&gt; --repo &lt;repo&gt;</code>: re-run the failed CD run on
+   <code>main</code>.</li>
+<li><code>gh run watch &lt;cd-run&gt; --repo &lt;repo&gt; --exit-status</code>.</li>
+<li><code>vrg-release --resume &lt;version&gt;</code>.</li>
+</ol>
+<p>Run them once the fix for the cause is released. Stop at any watch that
+fails. The resume judges the CD run's new attempt through the same
+release-job gate.</p>
 <h3 id="stale-job-records">Stale job records<a class="headerlink" href="#stale-job-records" title="Permanent link">&para;</a></h3>
 <p>The confirm stages wait a bounded time for every CD job to reach
 <code>completed</code> in the GitHub jobs API, because a job's record can lag the

@@ -1422,6 +1422,8 @@
       
         
       
+        
+      
     
     
     
@@ -1474,6 +1476,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.313/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.313
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13924,6 +13954,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-pr-review-comments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-pr-review-comments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-await" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18543,6 +18584,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-pr-review-comments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-pr-review-comments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-await" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19752,8 +19804,12 @@ the one-commit-per-issue check run before any push; either failing records
 nothing. The state records the list as <code>issues</code> (its first entry is also
 <code>issue</code>), in the local file and the relay ref alike, and a re-run must name the
 same list in the same order. Once the state is recorded, the members' batch
-markers are removed. A single <code>--issue</code> records no <code>issues</code> key and behaves
-exactly as before.</p>
+markers are removed and <code>report-ready</code> prints
+<code>{"ok": true, "status": "ready", "issues": […]}</code>. The printed <code>issues</code> are this
+repo's <code>#N</code> refs, the form <code>batch-start</code> and <code>batch-show</code> print, whatever form
+<code>--issue</code> took; the recorded <code>issues</code> keep each value as given (<code>N</code>, or
+<code>owner/repo#N</code>), the form <code>vrg-submit-pr</code> reads. A single <code>--issue</code> records no
+<code>issues</code> key, prints none, and behaves exactly as before.</p>
 <p>The batch hard rules are: 2 to 8 issues, none listed twice, every one in
 this repo, a task (not an epic, archive or queue item), not operational, not
 directly Blocked-by an open deployment task and opened by a trusted author,
@@ -19772,8 +19828,8 @@ takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/rep
   <code>{"ok": true, "resumed": &lt;bool&gt;, "issues": […], "base_sha": "&lt;sha&gt;"}</code>. A
   refusal writes nothing. The same list over existing markers is a resume
   that changes nothing; any other existing marker is refused.</li>
-<li><code>batch-show --issue &lt;N&gt;</code> prints the issue's batch as one JSON object and
-  exits 0, exits 1 with nothing on stdout when the issue is in no batch, and
+<li><code>batch-show --issue &lt;N&gt;</code> prints the issue's batch as one JSON object,
+  <code>{"issues": ["#10", "#11"], "base_sha": "&lt;sha&gt;"}</code>, and exits 0, exits 1 with nothing on stdout when the issue is in no batch, and
   exits 2 on any other failure.</li>
 <li><code>batch-extract --issue &lt;N&gt;</code> rewrites every other member's marker without
   the issue (removing the last one's when fewer than two remain) and removes
@@ -19849,6 +19905,60 @@ indefinitely by design.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 settled, 1 error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-pr-review-comments">vrg-pr-review-comments<a class="headerlink" href="#vrg-pr-review-comments" title="Permanent link">&para;</a></h3>
+<p>List a pull request's inline (line-level) review comments. It reads
+<code>GET repos/{owner}/{repo}/pulls/{n}/comments</code>, every page, through
+<code>lib/github.py</code>'s paginated read helper, with the App token minted for the
+<code>--repo</code> owner. <code>vrg-gh pr view --json reviews,comments</code> returns only review
+bodies and conversation comments, and <code>vrg-gh</code> refuses <code>gh api</code> for the user
+identity, so this is the user agent's way to read them. It is strictly
+read-only and widens no <code>vrg-gh</code> allowlist. The plugin's
+<code>epic-retrospective</code> sweep consumes it.</p>
+<p>Without <code>--json</code> it prints one block per comment (<code>&lt;path&gt;:&lt;line&gt; by
+&lt;author&gt; at &lt;created_at&gt; (comment &lt;id&gt;, review &lt;id&gt;, reply to &lt;id&gt;)</code>, the
+comment URL, then the body indented; <code>:&lt;line&gt;</code> is left out when <code>line</code> is
+<code>null</code>), or one line saying the PR has none.
+<code>--json</code> prints a JSON array of objects with the keys <code>id</code>, <code>author</code>,
+<code>path</code>, <code>line</code>, <code>review_id</code>, <code>in_reply_to_id</code>, <code>created_at</code>, <code>body</code> and
+<code>url</code>, in API order. <code>line</code> is <code>null</code> for a comment not on a current line of
+the diff (a file-level comment, or an outdated one on a line the PR no longer
+has), <code>author</code> is <code>null</code> for a deleted account,
+<code>review_id</code> is <code>null</code> when GitHub gives none, and <code>in_reply_to_id</code> is
+<code>null</code> for a comment that starts a thread.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_pr_review_comments</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo &lt;owner&gt;/&lt;repo&gt;</code>, <code>--pr N</code>, <code>--json</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>GitHub App credentials for the <code>--repo</code> owner</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A GitHub API failure, or a response that is not a list of well-formed comments, prints <code>ERROR:</code> on stderr and exits 1; it never prints a partial or empty list in its place</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success, 1 GitHub API failure or malformed response, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -20071,7 +20181,10 @@ as done.</p>
 <p>Print or bump the repo's version. <code>show</code> prints the current version
 (<code>--major-minor</code> for <code>X.Y</code> only, <code>--ref</code> to read it from a git ref); <code>bump</code>
 increments <code>patch</code> (default), <code>minor</code> or <code>major</code> and prints the new version.
-Used by the CD workflows to read the release version.</p>
+For a Python or Rust repo, <code>bump</code> then refreshes the lockfile (<code>uv lock</code>,
+<code>cargo update --workspace</code>) in the dev container, through
+<code>vrg-container-run</code>, so no host toolchain is needed. Used by the CD
+workflows to read the release version.</p>
 <table>
 <thead>
 <tr>
@@ -20090,7 +20203,7 @@ Used by the CD workflows to read the release version.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run from the repo root</td>
+<td>Run from the repo root; <code>bump</code> in a Python or Rust repo needs a running container runtime</td>
 </tr>
 <tr>
 <td>Failure mode</td>

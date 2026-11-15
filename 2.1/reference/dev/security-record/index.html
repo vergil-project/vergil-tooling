@@ -1422,6 +1422,8 @@
       
         
       
+        
+      
     
     
     
@@ -1474,6 +1476,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.313/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.313
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17947,7 +17977,13 @@ succeeded:</p>
    a re-run). Then this advisory's line is removed, together with the
    <code>security</code> label when no other advisory line remains, in one edit. An
    issue that also names other advisories keeps their lines and the
-   label. An issue that names only other advisories is never touched.</li>
+   label. An issue that names only other advisories is never touched.
+   An issue that was <strong>transferred</strong> since it was tracked is never
+   written at its old number, which GitHub answers with a 404. If it now
+   lives at one of the targets, nothing is left to unmark: it keeps its
+   line and label. Otherwise the unmark follows the transfer and acts on
+   the issue at its current ref. Either way a line
+   <code>&lt;GHSA-id&gt;: &lt;old-ref&gt; was transferred to &lt;ref&gt;: …</code> says which it did.</li>
 </ol>
 <p>An issue naming several advisories needs one <code>retarget</code> per advisory.
 Run them one after another, never in parallel: each rewrites the issue's
