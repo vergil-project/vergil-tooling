@@ -911,18 +911,9 @@ def test_rust_test_stage_probes_at_stage_time(tmp_path: Path) -> None:
         patch(_MOD + ".progress.run", return_value=0) as m_progress,
     ):
         stages[1].fn(None)
-    assert [c.args[0] for c in m_progress.call_args_list] == [
-        [
-            "cargo",
-            "llvm-cov",
-            "--fail-under-lines",
-            "100",
-            "--show-missing-lines",
-            "--cobertura",
-            "--output-path",
-            "coverage.xml",
-        ]
-    ]
+    assert [c.args[0] for c in m_progress.call_args_list] == [_RUST_COVERAGE_CMD]
+    assert _RUST_COVERAGE_CMD[:2] == ["sh", "-c"]
+    assert "cargo llvm-cov nextest" in _RUST_COVERAGE_CMD[2]
 
 
 def test_build_stages_drops_audit_when_only_scan_and_no_token() -> None:

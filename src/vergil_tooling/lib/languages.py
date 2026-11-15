@@ -106,11 +106,12 @@ PYTHON_REPORT_FILES = (
 CARGO_DENY_REPORT = "cargo-deny.json"
 
 # The workspace-root report files the Rust gate commands emit: the TEST gate's
-# Cobertura coverage and the AUDIT gate's cargo-deny diagnostics. Rust has no
-# JUnit report yet: stable ``cargo test`` cannot write one, and the image has no
-# reporter that can (vergil-project/vergil-tooling#4394).
+# Cobertura coverage and cargo-nextest JUnit report
+# (vergil-project/vergil-tooling#4394, #4395) and the AUDIT gate's cargo-deny
+# diagnostics.
 RUST_REPORT_FILES = (
     COVERAGE_REPORT,
+    JUNIT_REPORT,
     CARGO_DENY_REPORT,
 )
 
@@ -195,6 +196,57 @@ _RUST_AUDIT_SCRIPT = (
     "rc=$?; "
     f"cat {CARGO_DENY_REPORT} >&2 || exit 1; "
     'exit "$rc"'
+)
+
+# The rust TEST coverage command (issue #4395). One cargo-nextest run under
+# cargo-llvm-cov, then one report from that run's profiles; it gates and writes
+# both reports:
+#
+# * ``cargo llvm-cov clean --workspace`` first, then ``nextest --no-report``
+#   and ``report``: cargo-llvm-cov's documented split. ``--no-report`` turns off
+#   the clean a combined run does, so the explicit clean replaces it
+#   (https://github.com/taiki-e/cargo-llvm-cov#basic-usage and
+#   #merge-coverages-generated-under-different-test-conditions). The split writes
+#   ``coverage.xml`` even when a test fails, as pytest-cov does; a combined
+#   run writes no report then.
+# * ``NEXTEST_PROFILE=vergil`` and ``--tool-config-file vergil:<file>`` select
+#   the packaged ``configs/rust/nextest.toml`` profile, which turns on JUnit.
+#   A tool config ranks below the repo's own ``.config/nextest.toml``
+#   (https://nexte.st/docs/configuration/#tool-specific-configuration).
+#   cargo-llvm-cov passes nextest's options through (``cargo llvm-cov nextest
+#   [OPTIONS] [NEXTEST_OPTIONS]``). The profile is named by nextest's own
+#   ``NEXTEST_PROFILE`` (https://nexte.st/docs/running/), not ``--profile``,
+#   which cargo-llvm-cov documents as cargo's build profile.
+# * ``report --fail-under-lines 100`` is the gate on llvm-cov's own line
+#   summary; ``--cobertura --output-path`` writes ``coverage.xml`` and
+#   ``--show-missing-lines`` names the uncovered lines.
+# * Nextest writes the JUnit report under its store directory,
+#   ``target/nextest/<profile>/`` (https://nexte.st/docs/machine-readable/junit/,
+#   ``store.dir`` in https://nexte.st/docs/configuration/reference/); the
+#   command copies it to ``junit.xml`` at the root. All three report paths are
+#   removed first, so a stale report from an earlier run is never staged. A
+#   run whose tests passed but left no JUnit report (a repo that moved
+#   ``store.dir``) fails the gate.
+#
+# The command exits with the test run's status if it failed, else the
+# report's. Plain POSIX ``sh`` (the image's ``sh`` is dash).
+_NEXTEST_PROFILE = "vergil"
+_NEXTEST_JUNIT = f"target/nextest/{_NEXTEST_PROFILE}/{JUNIT_REPORT}"
+_RUST_TEST_SCRIPT = (
+    f"rm -f {COVERAGE_REPORT} {JUNIT_REPORT} {_NEXTEST_JUNIT}; "
+    "cargo llvm-cov clean --workspace || exit 1; "
+    f"NEXTEST_PROFILE={_NEXTEST_PROFILE} cargo llvm-cov nextest --no-report "
+    '--tool-config-file "vergil:{configs}/rust/nextest.toml"; '
+    "test_rc=$?; "
+    "cargo llvm-cov report --fail-under-lines 100 --show-missing-lines "
+    f"--cobertura --output-path {COVERAGE_REPORT}; "
+    "cov_rc=$?; "
+    f"if [ -f {_NEXTEST_JUNIT} ]; then cp {_NEXTEST_JUNIT} {JUNIT_REPORT} || exit 1; "
+    'elif [ "$test_rc" -eq 0 ]; then '
+    f'echo "error: cargo-nextest wrote no JUnit report at {_NEXTEST_JUNIT}" >&2; exit 1; '
+    "fi; "
+    '[ "$test_rc" -ne 0 ] && exit "$test_rc"; '
+    'exit "$cov_rc"'
 )
 
 # C++ license allowlist (epic vergil-project/.github#207 §4). C++/Conan has no
@@ -479,35 +531,21 @@ _REGISTRY: dict[str, Language] = {
                 ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
             ],
             CheckKind.TYPECHECK: [["cargo", "check"]],
-            # ``cargo llvm-cov`` runs ``cargo test --tests``, which never builds
-            # or runs a rustdoc example, so ``cargo test --doc`` runs them as a
-            # second command. ``cargo llvm-cov --doctests`` is not used: it
-            # passes rustdoc ``-Z unstable-options --persist-doctests``, which
-            # stable rustc refuses, and the dev image ships stable only.
-            # Doctests therefore count toward no coverage; the 100% line gate
-            # is met by the unit and integration tests alone (issue #4378).
-            # ``cargo test --doc`` refuses a crate with no library target, so
+            # The coverage run is cargo-nextest under cargo-llvm-cov, gating
+            # on 100% lines and writing ``coverage.xml`` and ``junit.xml``
+            # (issues #4394, #4395); see ``_RUST_TEST_SCRIPT``. Nextest runs
+            # no doctests (https://nexte.st/docs/running/), so ``cargo test
+            # --doc`` runs them as a second command. ``cargo llvm-cov
+            # --doctests`` is not used: it passes rustdoc ``-Z
+            # unstable-options --persist-doctests``, which stable rustc
+            # refuses, and the dev image ships stable only. Doctests
+            # therefore count toward no coverage; the 100% line gate is met
+            # by the unit and integration tests alone (issue #4378). ``cargo
+            # test --doc`` refuses a crate with no library target, so
             # vrg-validate drops it when no default-member package has one
             # (``_skip_rust_doctests_without_lib``).
-            #
-            # The one coverage run also writes the gate's evidence (issue
-            # #4394): ``--cobertura --output-path`` exports Cobertura XML to
-            # ``coverage.xml`` instead of printing the summary table, and
-            # ``--fail-under-lines`` still gates on llvm-cov's own line summary,
-            # not on the converted XML. ``--show-missing-lines`` prints the
-            # uncovered lines, so a failing gate still says why once the table
-            # is gone.
             CheckKind.TEST: [
-                [
-                    "cargo",
-                    "llvm-cov",
-                    "--fail-under-lines",
-                    "100",
-                    "--show-missing-lines",
-                    "--cobertura",
-                    "--output-path",
-                    COVERAGE_REPORT,
-                ],
+                ["sh", "-c", _RUST_TEST_SCRIPT],
                 ["cargo", "test", "--doc"],
             ],
             # The packaged fleet policy (epic vergil-project/.github#1091). An
