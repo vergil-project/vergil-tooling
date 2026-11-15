@@ -17944,11 +17944,15 @@ checks.</p>
 <code>--check</code> selects. It fails when the repo's versions do not resolve
 against the published window (a pin outside the window, an app pin of
 more than one version, an unreadable window) or when a file selects the
-toolchain behind Vergil's back (for Python, <code>.python-version</code>). A
+toolchain behind Vergil's back (for Python, <code>.python-version</code>; for
+Rust, <code>rust-toolchain.toml</code> or the legacy <code>rust-toolchain</code>). A
 declared floor that falls below the window's oldest version, or an
-upper bound that excludes its newest (for Python, <code>requires-python</code>),
-is printed as a warning and does not fail. See
-<a href="../../standards/development/python/version-management/#toolchain-selection-in-the-repo">Python version management</a>.</p>
+upper bound that excludes its newest (for Python, <code>requires-python</code>;
+for Go, the <code>go.mod</code> <code>go</code> directive; for Rust, the root <code>Cargo.toml</code>'s
+<code>rust-version</code>), is printed as a warning and does not fail. See
+<a href="../../standards/development/python/version-management/#toolchain-selection-in-the-repo">Python version management</a>
+and the Rust standards'
+<a href="../../standards/development/rust/overview/#toolchain-selection">Toolchain Selection</a>.</p>
 <h2 id="agent-and-git-wrappers">Agent and Git Wrappers<a class="headerlink" href="#agent-and-git-wrappers" title="Permanent link">&para;</a></h2>
 <h3 id="claude-code-hook-guard">Claude Code hook guard<a class="headerlink" href="#claude-code-hook-guard" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> every <code>Bash</code> tool call in a Claude Code session, in a

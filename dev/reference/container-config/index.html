@@ -18092,6 +18092,12 @@ so a change of resolved version rebuilds the image
 as the CI docs jobs do. If that Python does not satisfy <code>requires-python</code>, uv
 fails the build; there is no fallback
 (<a href="https://github.com/vergil-project/vergil-tooling/issues/3414">#3414</a>).</p>
+<p>For a <strong>Rust</strong> repo, <code>vrg-container-run</code> sets no toolchain variable. The Rust
+image pins rustup to its own installed release itself (<code>RUSTUP_TOOLCHAIN</code>, with
+<code>RUSTUP_AUTO_INSTALL=0</code>), and the passthrough never forwards those two names
+(see <a href="#env-prefixes"><code>env-prefixes</code></a>), so neither a repo file nor the host can
+select another toolchain
+(<a href="https://github.com/vergil-project/.github/issues/1095">epic vergil-project/.github#1095</a>).</p>
 <p>For a <strong>cpp</strong> repo, <code>vrg-container-run</code> also forwards
 <code>CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER</code> when it can resolve one: from the
 environment if set and not blank, else from <code>~/.config/vergil/conan.env</code>, else
