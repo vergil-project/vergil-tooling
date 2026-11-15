@@ -1426,6 +1426,8 @@
       
         
       
+        
+      
     
     
     
@@ -1478,6 +1480,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.315/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.315
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18131,7 +18161,8 @@ the permission model — set the permissions exactly as documented.</p>
        findings, and <code>vrg-intake-route</code> and <code>vrg-queue planning</code> read
        and retarget them (see <a href="../security-records/">Security Records</a>).
        The user App, or a human, also runs <code>vrg-security-record sync</code>,
-       which closes and reopens advisories to follow their issues. Each
+       which closes and reopens advisories to follow their issues, and
+       <code>vrg-security-record close</code>, which closes one with a reason. Each
        org's automation App (<code>&lt;org&gt;-automation</code>, see
        <a href="../identity-architecture/#the-org-automation-apps">Identity Architecture</a>)
        does not need the grant: the scheduled sweep makes no
@@ -18362,7 +18393,10 @@ VM. The dual-identity model uses one stanza per role.</p>
 <li><strong>Query identity with <code>vrg-whoami</code>, never a single environment
   variable.</strong> <code>VRG_IDENTITY_MODE</code> is only the first of five fallback
   steps (env var → mode file → <code>app.pem</code> → <code>VRG_APP_ID</code> → human); an
-  unset value means "fall through," not "default to human." Ask the
+  unset value means "fall through," not "default to human." (The
+  <code>automation</code> mode is checked before all five, and only in a CI job
+  that sets <code>VRG_AUTOMATION_APP</code>; see
+  <a href="../identity-architecture/#identity-modes">Identity modes</a>.) Ask the
   authoritative resolver instead: <code>vrg-whoami</code> prints the resolved role,
   <code>vrg-whoami --mode</code> emits a single token for scripting
   (<code>export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"</code>), and

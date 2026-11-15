@@ -1426,6 +1426,8 @@
       
         
       
+        
+      
     
     
     
@@ -1478,6 +1480,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.315/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.315
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17947,7 +17977,7 @@ mechanism fleet-wide:</p>
 <li><strong>Consumer side</strong> (publish-time harvest in <code>vergil-tooling</code>). A single
   language-agnostic command, <code>vrg-ci-evidence</code>, downloads every
   <code>ci-evidence-*</code> artifact, validates completeness, assembles the bundle tree
-  plus a <code>manifest.json</code> index with per-file <code>sha256</code>, and produces
+  plus a <code>manifest.json</code> index with a <code>sha256</code> for each gate file, and produces
   <code>v{version}-ci-evidence.tar.gz</code>.</li>
 </ul>
 <p>The <strong>only</strong> cross-repo coupling is the <code>ci-evidence-*</code> artifact name and the
@@ -18023,15 +18053,26 @@ artifact. It is the gate's self-description:</p>
 </tbody>
 </table>
 <p><strong>Current limitations (shipped state).</strong> The <code>tools</code> and <code>metrics</code> values above
-show the <strong>intended shape</strong>, not what every bundle carries today. Verified
-against the v2.1.195 bundle:</p>
+show the <strong>intended shape</strong>, not what every bundle carries today:</p>
 <ul>
-<li>The <code>security</code> gate's <code>tools</code> array currently ships <strong>empty</strong> (<code>[]</code>) — the
-  scanners run and emit their SARIF, but the fragment does not yet enumerate
-  them. (The <code>test</code>, <code>audit</code>, and <code>quality</code> gates do populate <code>tools</code>.)</li>
 <li><code>metrics</code> currently ships <strong>empty</strong> (<code>{}</code>) for <strong>every</strong> gate; the
   <code>findings_by_severity</code> / <code>coverage_pct</code> / <code>tests</code> summaries are the target
   shape, not yet populated.</li>
+<li>The <code>quality</code> gate's <code>tools</code> always names Python's tools (ruff and mypy),
+  and on a non-Python repository it holds no lint or typecheck report. A
+  Rust repository's <code>quality</code> gate therefore carries only its common and
+  custom transcripts. The fix is part of the single source of truth for the
+  report files
+  (<a href="https://github.com/vergil-project/vergil-tooling/issues/4416">vergil-tooling#4416</a>).</li>
+<li>The <code>test</code> and <code>audit</code> gates name their tools and hold their reports only
+  for a language with an entry in vergil-actions' report table
+  (<a href="https://vergil-project.github.io/vergil-actions/actions/ci-evidence-reports/"><code>ci/evidence/reports</code></a>),
+  today Python and Rust. For any other language (today go, cpp and
+  typescript) those two gates ship an empty <code>tools</code> array and no report,
+  with a warning on each leg.</li>
+<li>Since vergil-actions v2.1.75 the <code>security</code> gate names its scanners
+  (<code>trivy</code> and <code>semgrep</code>, plus <code>codeql</code> when its job ran and passed), where
+  it used to ship an empty <code>tools</code> array.</li>
 </ul>
 <p>These are producer-side gaps, not schema changes: the fields exist and the
 consumer reads them; they populate as producers are updated.</p>
@@ -18209,10 +18250,15 @@ using the <code>vergil</code> nextest profile that vergil-tooling packages, whic
 on nextest's JUnit report. One coverage report from that run then gates on
 100% line coverage. Both files are written whether the gate passes or fails.
 Rustdoc examples run in a separate <code>cargo test --doc</code> step, which writes no
-report, because nextest does not run doctests. CI does not stage the Rust
-<code>junit.xml</code> yet: vergil-actions takes it up when its report table is derived
-from vergil-tooling
-(<a href="https://github.com/vergil-project/vergil-actions/issues/1216">vergil-actions#1216</a>).</p>
+report, because nextest does not run doctests.</p>
+<p><code>ci-test.yml</code> and <code>ci-audit.yml</code> stage each leg's reports with version-suffixed
+names, as for Python: <code>coverage-&lt;ver&gt;.xml</code>, <code>junit-&lt;ver&gt;.xml</code> and
+<code>cargo-deny-&lt;ver&gt;.json</code>. The names they stage come from a per-language table
+in vergil-actions
+(<a href="https://vergil-project.github.io/vergil-actions/actions/ci-evidence-reports/"><code>ci/evidence/reports</code></a>),
+which must match the names these gates write. The Rust test entry requires
+<code>junit.xml</code> from vergil-actions v2.1.76, so a Rust repository needs a
+vergil-tooling release whose test gate writes it (2.1.314 or later).</p>
 <p><code>quality-common.log</code> is the transcript of <code>vrg-validate --check common</code> and
 <code>quality-custom.log</code> the transcript of <code>vrg-validate --check custom</code>, each
 captured once per run by the <code>quality / common</code> and <code>quality / custom</code> jobs.
@@ -18241,17 +18287,20 @@ self-describing and verifiable:</p>
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>   │   ├─ test/              # coverage-&lt;ver&gt;.xml, junit-&lt;ver&gt;.xml (per Python version), evidence.json
 <a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>   │   ├─ audit/             # pip-audit-&lt;ver&gt;.json, licenses-&lt;ver&gt;.json (per Python version), evidence.json
 <a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>   │   ├─ quality/           # quality-common.log, quality-custom.log, quality-ruff-&lt;ver&gt;.json, quality-mypy-&lt;ver&gt;.xml (per Python version), evidence.json
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>   │   └─ sbom/              # sbom.cdx.json
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>   │   └─ sbom/              # sbom.cdx.json (only when the release built a package SBOM)
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>   └─ README.md              # human orientation for the archive
 </code></pre></div>
 <ul>
 <li><code>manifest.json</code> is the curated, per-gate machine index (schema below).</li>
 <li><code>checks.json</code> is the <strong>raw</strong> check-run snapshot — distinct from the manifest's
   curated view — capturing every check's name, conclusion, timing, and log URL.</li>
-<li><code>gates/sbom/</code> is populated by copying the SBOM already built during publish
-  (also a standalone Release asset) into the bundle at harvest time, so the
-  archive stays fully self-contained.</li>
-<li><code>README.md</code> is a fixed human orientation for the archive.</li>
+<li><code>gates/sbom/</code> is present only when the release built a package SBOM. The
+  assemble step copies the SBOM already built during publish (also a
+  standalone Release asset) into the bundle, so the archive stays fully
+  self-contained. A release that builds no package has no <code>gates/sbom/</code>.</li>
+<li><code>README.md</code> is a human orientation for the archive, generated from the
+  entries assembled: it names each gate directory present and says whether
+  the archive holds <code>gates/sbom/</code>.</li>
 </ul>
 <p>A standalone copy of <code>manifest.json</code> is also attached as a small, separate
 Release asset, so a tool can read the summary without downloading the full
@@ -18330,14 +18379,19 @@ the provenance anchor, and a per-gate summary with per-file <code>sha256</code>:
 </tbody>
 </table>
 <p><strong>Current limitations (shipped state).</strong> As with the <code>evidence.json</code> fragment,
-the <code>metrics</code> and (for <code>security</code>) <code>tools</code> values shown are the <strong>intended
-shape</strong>. In the v2.1.195 bundle the manifest ships <code>metrics: {}</code> for <strong>every</strong>
-gate and an empty <code>tools: []</code> for the <code>security</code> gate. The fields are present
-and read by auditors; they populate as producers are updated.</p>
+the <code>metrics</code> and <code>tools</code> values shown are the <strong>intended shape</strong>: the
+manifest carries each gate's fragment as it is, with the gaps listed there,
+so it ships <code>metrics: {}</code> for <strong>every</strong> gate. The fields are present and
+read by auditors; they populate as producers are updated.</p>
 <p>Two trust properties are load-bearing:</p>
 <ol>
-<li><strong>Every file carries a <code>sha256</code>.</strong> An auditor can prove the archive is intact
-   and unmodified.</li>
+<li><strong>Every gate file carries a <code>sha256</code>.</strong> Each file under a gate directory
+   has a <code>manifest.json</code> entry with its <code>sha256</code>, so an auditor can prove the
+   gate evidence is intact and unmodified. The manifest hashes nothing else:
+   <code>README.md</code>, <code>checks.json</code> and the SBOM under <code>gates/sbom/</code> have no
+   manifest entry. They are covered by the build-provenance attestation over
+   the whole bundle (and the SBOM also by its own Release asset), not by the
+   manifest.</li>
 <li><strong><code>missing_gates</code> is explicit.</strong> A required gate that produced no evidence is
    recorded as data, never silently dropped.</li>
 </ol>
@@ -18362,8 +18416,8 @@ repository's workflow and the released commit. Verify it with:</p>
 <p>A successful verification turns "here is a tarball" into "here is a tarball
 cryptographically proven to be the genuine output of this pipeline for this
 commit." This is the chain-of-custody core of the mechanism.</p>
-<p><strong>2. Verify every file's integrity.</strong> Unpack the archive and confirm each file's
-<code>sha256</code> matches its <code>manifest.json</code> entry:</p>
+<p><strong>2. Verify every gate file's integrity.</strong> Unpack the archive and confirm each
+gate file's <code>sha256</code> matches its <code>manifest.json</code> entry:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>tar<span class="w"> </span>-xzf<span class="w"> </span>v2.1.129-ci-evidence.tar.gz
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">cd</span><span class="w"> </span>evidence
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="c1"># For each gate file listed in manifest.json:</span>

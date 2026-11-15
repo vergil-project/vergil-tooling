@@ -1426,6 +1426,8 @@
       
         
       
+        
+      
     
     
     
@@ -1478,6 +1480,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.315/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.315
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17143,10 +17173,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#mechanical-the-nightly-config-audit" class="md-nav__link">
+  <a href="#mechanical-the-nightly-config-update" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Mechanical: the nightly config audit
+        Mechanical: the nightly config update
       
     </span>
   </a>
@@ -17763,10 +17793,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#mechanical-the-nightly-config-audit" class="md-nav__link">
+  <a href="#mechanical-the-nightly-config-update" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Mechanical: the nightly config audit
+        Mechanical: the nightly config update
       
     </span>
   </a>
@@ -17835,7 +17865,7 @@ that the config audit, the <code>steering-audit</code> skill and the per-repo st
 sweeps check against.</p>
 <p>Epic
 <a href="https://github.com/vergil-project/.github/issues/558">vergil-project/.github#558</a>
-brought every managed repo in line with it. The nightly config audit and the
+brought every managed repo in line with it. The nightly config update and the
 agent chokepoints now enforce its mechanical rules, and the
 <a href="#recurring-review">recurring review</a> keeps the rest current.</p>
 <p><strong>Platform facts verified:</strong> 2026-10-27, against these Claude Code pages:</p>
@@ -18087,7 +18117,7 @@ in-scope org (<code>vergil-project</code>, <code>logical-minds-foundry</code>,
 <p>These chokepoints don't depend on Claude Code hooks, because a local file
 that disables hooks would disable a hook-based check too. <code>vrg-validate</code> is
 not a chokepoint: it runs inside a dev container, where it sees neither the
-main checkout's working tree nor the identity. The nightly config audit does
+main checkout's working tree nor the identity. The nightly config update does
 not check this file either, because a CI checkout has no local file.</p>
 <p>The <code>CLAUDE.md</code> template region also states the rule, so agents know it
 before a tool refuses. Each tool's entry in the
@@ -18103,10 +18133,11 @@ not check that relocated copy.</p>
 <h2 id="recurring-review">Recurring review<a class="headerlink" href="#recurring-review" title="Permanent link">&para;</a></h2>
 <p>Two layers keep the files matching this model: what a machine can check,
 and what needs judgment.</p>
-<h3 id="mechanical-the-nightly-config-audit">Mechanical: the nightly config audit<a class="headerlink" href="#mechanical-the-nightly-config-audit" title="Permanent link">&para;</a></h3>
-<p><code>vrg-github-repo-config audit</code> runs in each managed repo's scheduled
+<h3 id="mechanical-the-nightly-config-update">Mechanical: the nightly config update<a class="headerlink" href="#mechanical-the-nightly-config-update" title="Permanent link">&para;</a></h3>
+<p><code>vrg-github-repo-config update</code> runs in each managed repo's scheduled
 <code>ops.yml</code> job (see <a href="../../reference/config-audit/">GitHub Config Audit</a>).
-It checks the following, each a hard failure with no transition window:</p>
+It checks the following, with no transition window. What it cannot fix
+through its sync PR is a hard failure:</p>
 <ul>
 <li>the repo <code>CLAUDE.md</code> is at most 200 lines;</li>
 <li>the template markers are present, and the region between them is the
@@ -18152,7 +18183,7 @@ prompt-audit</code> itself is tracked in intake item
 <ul>
 <li><a href="../permission-model/">Permission Model</a>: the permission layers these
   settings files configure</li>
-<li><a href="../../reference/config-audit/">GitHub Config Audit</a>: the nightly audit
+<li><a href="../../reference/config-audit/">GitHub Config Audit</a>: the audit and nightly update
   that enforces the mechanical rules</li>
 <li><a href="../consuming-repo-setup/">Consuming Repo Setup</a>: how a repo gets its
   settings and <code>CLAUDE.md</code> from the templates</li>

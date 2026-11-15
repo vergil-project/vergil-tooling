@@ -1424,6 +1424,8 @@
       
         
       
+        
+      
     
     
     
@@ -1476,6 +1478,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.315/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.315
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17580,6 +17610,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#a-failed-back-merge-bump" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A failed back-merge-bump
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stale-job-records" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17931,6 +17972,17 @@
     <span class="md-ellipsis">
       
         A failed release job
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-failed-back-merge-bump" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A failed back-merge-bump
       
     </span>
   </a>
@@ -18519,6 +18571,28 @@ issue, lists the recovery steps with the run IDs filled in:</p>
 <p>Run them once the fix for the cause is released. Stop at any watch that
 fails. The resume judges the CD run's new attempt through the same
 release-job gate.</p>
+<h3 id="a-failed-back-merge-bump">A failed back-merge-bump<a class="headerlink" href="#a-failed-back-merge-bump" title="Permanent link">&para;</a></h3>
+<p><code>back-merge-bump</code> can fail part-way, after it has created
+<code>release/post-&lt;version&gt;</code>: in its lockfile refresh, say, or before its PR
+merges. Fix the cause and run <code>vrg-release --resume</code>. The stage reuses the
+post-release branch, local or pushed, when it holds only its own work:</p>
+<ul>
+<li><strong>At <code>origin/main</code> with no commit of its own.</strong> The bump still has to
+  run. A partial bump left uncommitted in the worktree (changes to the
+  files the bump writes, with <code>VERSION</code> already at the next version) is
+  discarded first, so the bump is not applied twice.</li>
+<li><strong>One bump commit on <code>origin/main</code></strong>, with the expected subject and
+  <code>VERSION</code>, and a clean worktree. The bump is done, and the stage goes on
+  to its PR.</li>
+</ul>
+<p>Any other state stops the stage with an error naming the branch, and
+nothing is reset, discarded or pushed over: a branch that does not contain
+<code>origin/main</code>, other or extra commits, a bump to another version,
+uncommitted changes that are not a partial bump, or a local branch whose
+tip differs from <code>origin</code>'s. Remove or reconcile the branch, then resume.</p>
+<p>An open back-merge PR from the earlier run is adopted and merged, and a
+merged one is skipped. A PR closed without merging is not adopted: the
+resume opens a new PR from the reused branch.</p>
 <h3 id="stale-job-records">Stale job records<a class="headerlink" href="#stale-job-records" title="Permanent link">&para;</a></h3>
 <p>The confirm stages wait a bounded time for every CD job to reach
 <code>completed</code> in the GitHub jobs API, because a job's record can lag the

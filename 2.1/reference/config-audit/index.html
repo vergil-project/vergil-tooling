@@ -1426,6 +1426,8 @@
       
         
       
+        
+      
     
     
     
@@ -1478,6 +1480,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.315/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.315
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14015,10 +14045,9 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="The apply command (deprecated)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
+</li>
+      
+        <li class="md-nav__item">
   <a href="#where-it-runs-the-nightly-self-policing-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -14027,7 +14056,8 @@
     </span>
   </a>
   
-</li>
+    <nav class="md-nav" aria-label="Where it runs — the nightly self-policing loop">
+      <ul class="md-nav__list">
         
           <li class="md-nav__item">
   <a href="#settings-the-identity-cannot-read" class="md-nav__link">
@@ -17891,10 +17921,9 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="The apply command (deprecated)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
+</li>
+      
+        <li class="md-nav__item">
   <a href="#where-it-runs-the-nightly-self-policing-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17903,7 +17932,8 @@
     </span>
   </a>
   
-</li>
+    <nav class="md-nav" aria-label="Where it runs — the nightly self-policing loop">
+      <ul class="md-nav__list">
         
           <li class="md-nav__item">
   <a href="#settings-the-identity-cannot-read" class="md-nav__link">
@@ -18274,18 +18304,25 @@ converges only the GitHub side and reports managed-file drift without
 fixing it, and it has no identity gate. Since it shares its code path
 with <code>update</code>, it also converges the auto-merge setting and the
 <code>Automation branches</code> ruleset.</p>
-<h3 id="where-it-runs-the-nightly-self-policing-loop">Where it runs — the nightly self-policing loop<a class="headerlink" href="#where-it-runs-the-nightly-self-policing-loop" title="Permanent link">&para;</a></h3>
-<p>The audit is not part of <code>vrg-validate</code> (that would add per-commit
-overhead for a check that only needs to catch slow drift). Its home is
-the <strong>nightly <code>ops.yml</code> config-audit job</strong>: every managed repo ships
-<code>.github/workflows/ops.yml</code>, which calls the reusable
+<h2 id="where-it-runs-the-nightly-self-policing-loop">Where it runs — the nightly self-policing loop<a class="headerlink" href="#where-it-runs-the-nightly-self-policing-loop" title="Permanent link">&para;</a></h2>
+<p>The config check is not part of <code>vrg-validate</code> (that would add
+per-commit overhead for a check that only needs to catch slow drift).
+Its home is the <strong>nightly <code>ops.yml</code> <code>github-config</code> job</strong>: every managed
+repo ships <code>.github/workflows/ops.yml</code>, which calls the reusable
 <code>vergil-project/vergil-actions/.github/workflows/ops-github-config.yml</code>
 workflow on a daily schedule. That job runs
-<code>vrg-github-repo-config audit</code> against the repo's <code>develop</code>, so any
-<code>DiffItem</code> returns exit 1 and <strong>turns the scheduled run red</strong>. Drift is
-fatal where it fires: a non-conforming repo cannot silently persist.</p>
-<p><code>vrg-release</code> also gates on the GitHub half of this audit, so a repo
-whose required-check set has drifted cannot release until reconciled.</p>
+<code>vrg-github-repo-config update</code> on the repo as the org automation App
+(identity mode <code>automation</code>), with a token scoped to the calling repo.
+It runs only from <code>develop</code>, checks out <code>develop</code>, and is capped at 60
+minutes, the life of the App's installation token (see the vergil-actions
+<a href="https://vergil-project.github.io/vergil-actions/workflows/ops-github-config/">ops-github-config</a>
+reference).</p>
+<p>Drift that a fixer can correct arrives as one sync PR, which merges
+within the run. Anything <code>update</code> cannot converge, fix or audit gives a
+non-zero <a href="#update-exit-codes">exit code</a> and <strong>turns the scheduled run
+red</strong>, so a non-conforming repo cannot silently persist.</p>
+<p><code>vrg-release</code> also runs <code>audit</code> before it releases, so a repo whose
+configuration has drifted cannot release until it is reconciled.</p>
 <h3 id="settings-the-identity-cannot-read">Settings the identity cannot read<a class="headerlink" href="#settings-the-identity-cannot-read" title="Permanent link">&para;</a></h3>
 <p>Several GitHub reads need the <code>administration=read</code> repository
 permission: <code>vulnerability-alerts</code>, the three <code>actions/permissions</code>
@@ -18306,13 +18343,14 @@ audit does not guess the value. It reports the setting as not checked:</p>
   read, in which case it exits 1. It never exits 0 while any setting
   is not checked. <code>diff</code>, which otherwise always exits 0, exits 2 with
   the same error.</li>
-<li><strong><code>apply</code> refuses.</strong> It exits 2 and writes nothing, since it would
-  converge settings it could not read.</li>
-<li><strong>The check for an <code>apply</code> is the <code>apply</code> exiting 0.</strong> <code>apply</code> is
-  run by the human. Under the agent identity, <code>diff</code> exits 2 on every
-  repo, since the <code>administration=read</code> settings are not checked, so a
-  <code>diff</code> an agent runs after the human's <code>apply</code> is informational only
-  and its exit code is not the verdict on the apply.</li>
+<li><strong><code>update</code> and <code>apply</code> refuse.</strong> They exit 2 and write nothing, since
+  they would converge settings they could not read.</li>
+<li><strong>The check for an <code>update</code> is the <code>update</code> exiting 0.</strong> <code>update</code> is
+  run by the human or the org automation App, never by an agent. Under
+  the agent identity, <code>diff</code> exits 2 on every repo, since the
+  <code>administration=read</code> settings are not checked, so a <code>diff</code> an agent
+  runs after an <code>update</code> is informational only and its exit code is not
+  the verdict on the update.</li>
 <li>A repo setting that <code>GET /repos/{owner}/{repo}</code> leaves out of its
   response, or returns as <code>null</code>, is not checked either, as
   <code>repo_settings.&lt;field&gt;</code>, never read as <code>false</code> or <code>''</code> (#4322).
@@ -18341,8 +18379,8 @@ audit does not guess the value. It reports the setting as not checked:</p>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>    rulesets.Tag protection.bypass_actors: not checked (read back empty under the automation identity, so unreadable; needs administration=write)
 </code></pre></div>
-<p><code>apply</code> then refuses and converges nothing. For a human run the same
-  empty list is ordinary drift, and <code>apply</code> writes the desired list.</p>
+<p><code>update</code> then refuses and converges nothing. For a human run the same
+  empty list is ordinary drift, and <code>update</code> writes the desired list.</p>
 <h2 id="local-checks">Local checks<a class="headerlink" href="#local-checks" title="Permanent link">&para;</a></h2>
 <p><code>audit_local_config</code> runs the following, appending a <code>DiffItem</code> for each
 divergence:</p>
@@ -18510,7 +18548,7 @@ nothing else for the file (#3451).</p>
 <h3 id="_check_required_workflows-opsyml-wiring"><code>_check_required_workflows</code> — ops.yml wiring<a class="headerlink" href="#_check_required_workflows-opsyml-wiring" title="Permanent link">&para;</a></h3>
 <p>A <strong>wiring validator</strong> for a <em>present</em> <code>ops.yml</code>. It asserts the file
 (a) exists, (b) references <code>ops-github-config.yml</code> (so a repo cannot
-carry an <code>ops.yml</code> that omits the config audit), and (c) carries a
+carry an <code>ops.yml</code> that omits the nightly config job), and (c) carries a
 scheduled (<code>cron</code>) trigger — because a wired-but-unscheduled <code>ops.yml</code>
 (e.g. <code>workflow_dispatch</code> only) would pass a bare wiring check yet never
 run nightly, silently defeating the self-policing mechanism.</p>
@@ -18577,8 +18615,8 @@ tag</strong> <code>vX.Y</code>, never a specific patch. The nightly <code>ops.ym
 that line — including its fragment set. So:</p>
 <blockquote>
 <p>change a fragment → release a <code>vergil-tooling</code> patch under <code>vX.Y</code> →
-<strong>every repo's nightly audit flags the fence as drifted</strong> until its
-managed block is re-rendered.</p>
+<strong>every repo's nightly <code>update</code> finds the fence drifted</strong> and opens a
+sync PR that re-renders its managed block.</p>
 </blockquote>
 <p>Because the fence must match the composed block <em>exactly</em> (not merely be
 a superset), a fragment change is applied — not auto-satisfied — by
@@ -18656,11 +18694,11 @@ separately, by <code>open-pull-requests-limit: 0</code> in the canonical
 on, 404 means off). A 403 for a missing permission is reported as
 <a href="#settings-the-identity-cannot-read">not checked</a>; any other status is an
 error, never a silent "off".
-<code>apply</code> turns alerts on with <code>PUT</code> on that endpoint (or off with
-<code>DELETE</code>), and sets <code>dependabot_security_updates</code> through the repo's
-<code>security_and_analysis</code> settings. <code>apply</code> is a human action: it needs
-Administration write access, which the org automation Apps do not
-have.</p>
+<code>update</code> (like the deprecated <code>apply</code>) turns alerts on with <code>PUT</code> on that
+endpoint (or off with <code>DELETE</code>), and sets <code>dependabot_security_updates</code>
+through the repo's <code>security_and_analysis</code> settings. That needs
+Administration write access, which the human and the org automation
+Apps hold and the agent Apps do not.</p>
 <h2 id="github-checks-rulesets">GitHub checks — rulesets<a class="headerlink" href="#github-checks-rulesets" title="Permanent link">&para;</a></h2>
 <p>The GitHub half compares the repo's live rulesets against the desired set
 that <code>compute_desired_state()</code> in <code>lib/github_config.py</code> declares, in this
@@ -18740,14 +18778,16 @@ order:</p>
   the ID up with <code>GET /apps/{slug}</code>. A missing variable or a failed lookup
   fails the run (exit 2).</li>
 <li><strong>Bypass actors are not compared under an App token that is not the
-  automation identity.</strong> Today's nightly audit runs on such a token, which
-  cannot read a ruleset's bypass list, so in that mode it checks each
-  ruleset's includes, enforcement and rules but not its bypass actors, and
-  lists the skipped <code>rulesets.&lt;name&gt;.bypass_actors</code> fields instead. This
-  holds for every ruleset above. Under the automation identity they are
-  compared, and an empty read is
-  <a href="#settings-the-identity-cannot-read">not checked</a>. <code>apply</code> writes whole
-  rulesets, so it always manages the bypass lists. Bypass lists are
+  automation identity</strong>, such as an agent App's token or a CI
+  <code>GITHUB_TOKEN</code>. Such a token cannot read a ruleset's bypass list, so in
+  that mode the audit checks each ruleset's includes, enforcement and
+  rules but not its bypass actors, and lists the skipped
+  <code>rulesets.&lt;name&gt;.bypass_actors</code> fields instead. This holds for every
+  ruleset above, and <code>update</code> refuses to converge on such a token. Under
+  the human's login and the automation identity they are compared, and
+  under the automation identity an empty read is
+  <a href="#settings-the-identity-cannot-read">not checked</a>. <code>update</code> and <code>apply</code>
+  write whole rulesets, so they always manage the bypass lists. Bypass lists are
   compared as sets: their order is not drift.</li>
 <li><strong>A REST refs write refused by a ruleset gives no rule text.</strong> When a
   ruleset blocks a create, update or delete made through the REST refs API
@@ -18783,9 +18823,9 @@ version-agnostic CI model (epic
   workflow emits — for example a stale per-version check surviving a matrix
   reduction — is reported as drift rather than silently sitting "expected, never
   reported" and blocking every PR.</li>
-<li><strong>Apply-time producibility guard.</strong> Before <code>apply</code> writes anything, it
-  fetches the repo's committed <code>.github/workflows/ci.yml</code> from <code>develop</code> and
-  refuses (exit 1) if the desired <code>CI gates</code> ruleset requires a context no
+<li><strong>Apply-time producibility guard.</strong> Before <code>update</code> or <code>apply</code> writes
+  anything, it fetches the repo's committed <code>.github/workflows/ci.yml</code> from
+  <code>develop</code> and refuses (exit 2 for <code>update</code>, 1 for <code>apply</code>) if the desired <code>CI gates</code> ruleset requires a context no
   <code>pull_request</code> job in that file emits — the same guard repo-init runs
   against the ci.yml it generates. A missing <code>ci.yml</code> is also a refusal, never
   a skip: with no workflow, no required check could ever report.</li>
@@ -18810,10 +18850,10 @@ names the ruleset, the rule type, the key, and the live value:</p>
 <ul>
 <li><strong>It is non-compliant.</strong> The live ruleset enforces a setting the spec
   never chose, so <code>audit</code> exits 1, the same as any other drift.</li>
-<li><strong><code>apply</code> cannot fix it.</strong> The ruleset <code>PUT</code> leaves out the key, so
-  GitHub applies its default again. <code>apply</code> still fixes any value drift,
-  writes nothing when the only issues are undeclared parameters, and
-  exits 1 with a pointer to the decision.</li>
+<li><strong><code>update</code> and <code>apply</code> cannot fix it.</strong> The ruleset <code>PUT</code> leaves out
+  the key, so GitHub applies its default again. They still fix any value
+  drift, write nothing when the only issues are undeclared parameters,
+  and exit 1 with a pointer to the decision.</li>
 <li><strong>Resolve it in the spec.</strong> Either declare the key with an explicit
   value in the desired ruleset in <code>lib/github_config.py</code>, or add it to
   <code>_STRIP_RULE_PARAMS</code> if it should be ignored. Keys on that list

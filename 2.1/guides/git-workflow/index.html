@@ -1426,6 +1426,8 @@
       
         
       
+        
+      
     
     
     
@@ -1478,6 +1480,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.315/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.315
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18058,8 +18088,11 @@ see <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/
   <code>git commit</code> is blocked.</strong></li>
 <li><code>vrg-submit-pr</code> creates the PR with issue linkage. <strong>Raw
   <code>gh pr create</code> is blocked.</strong></li>
-<li>Merging is <strong>manual</strong>. Auto-merge is disabled org-wide as of
-  2026-04-22.</li>
+<li>Merging is <strong>manual</strong>. Every repo allows auto-merge
+  (<code>allow_auto_merge</code>) so that the mechanized sync PRs
+  <code>vrg-github-repo-config update</code> opens on <code>automation/</code> branches merge
+  on CI alone (epic vergil-project/.github#1064). Agents cannot turn
+  auto-merge on for a PR, and the human merges every development PR.</li>
 <li>After merge, <code>vrg-finalize-pr</code> pulls develop, deletes the merged
   branch and its worktree, and prunes remote refs.</li>
 </ul>

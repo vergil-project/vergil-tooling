@@ -1428,6 +1428,8 @@
       
         
       
+        
+      
     
     
     
@@ -1480,6 +1482,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.315/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.315
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17780,11 +17810,20 @@ status checks are configured.</p>
 version window (for Rust, the newest stable release and the one before it) is
 a hard CI leg. See the
 <a href="../../runtime-version-support-policy/">Runtime Version Support Policy</a>.</p>
-<p>Hard gates (all are required status checks):</p>
+<p>Hard gates for a Rust repository (all are required status checks; the
+<a href="../../../../guides/ci-architecture/#ci-gates">CI gates</a> table gives the full
+rules):</p>
 <ul>
-<li><code>test: unit (current)</code></li>
-<li><code>test: integration</code></li>
-<li><code>ci: dependency-audit</code></li>
+<li><code>quality / evidence</code>: the common checks, the custom validator, rustfmt,
+  clippy and <code>cargo check</code></li>
+<li><code>test / evidence</code>: the nextest run under cargo-llvm-cov at 100% line
+  coverage, and the doctests</li>
+<li><code>audit / evidence</code>: <code>cargo deny</code> against the fleet policy</li>
+<li><code>security / trivy</code> and <code>security / semgrep</code></li>
+<li><code>security / codeql</code>, and GitHub's own <code>CodeQL</code>, <code>Trivy</code> and <code>Semgrep OSS</code>
+  checks, when GitHub Advanced Security is available (CodeQL analyzes Rust)</li>
+<li><code>version / version-bump</code>, <code>docs / docs</code> and
+  <code>test / integration / &lt;version&gt;</code>, when <code>vergil.toml</code> turns them on</li>
 </ul>
 <p>Branch applicability:</p>
 <ul>

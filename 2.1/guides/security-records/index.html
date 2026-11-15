@@ -1426,6 +1426,8 @@
       
         
       
+        
+      
     
     
     
@@ -1478,6 +1480,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.315/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.315
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17414,6 +17444,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#closing-a-record-with-a-reason" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Closing a record with a reason
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#when-the-issue-moves" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17851,6 +17892,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#closing-a-record-with-a-reason" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Closing a record with a reason
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#when-the-issue-moves" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18124,7 +18176,8 @@ attach mode (<code>--issue</code>) and resume (<code>--resume</code>).</p>
 <h2 id="managing-a-record-through-its-issue">Managing a record through its issue<a class="headerlink" href="#managing-a-record-through-its-issue" title="Permanent link">&para;</a></h2>
 <p><strong>The issue drives the record.</strong> Work the issue like any other: route it,
 build the fix, close it with the PR. Never change an advisory's state by
-hand.</p>
+hand: use <code>sync</code>, or <code>close</code> with a reason (see
+<a href="#closing-a-record-with-a-reason">Closing a record with a reason</a>).</p>
 <p><code>vrg-security-record sync</code> keeps each advisory's state in step with the
 issues it tracks. The human runs it, or the user agent, under an identity
 that holds Repository security advisories: Read and write (see
@@ -18167,6 +18220,26 @@ broken, and never changes it. To work on one, attach it to an issue with
 <code>vrg-security-record create --issue</code>.</p>
 <p>The output of <code>sync</code> can end up in a shared log or a public comment, so
 it names only GHSA IDs, issue refs, labels and states, never advisory text.</p>
+<h3 id="closing-a-record-with-a-reason">Closing a record with a reason<a class="headerlink" href="#closing-a-record-with-a-reason" title="Permanent link">&para;</a></h3>
+<p>An agent, or a human, may close a record directly, as long as the close
+is visible and explained:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-security-record<span class="w"> </span>close<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"the work it tracked was dropped with its epic"</span>
+</code></pre></div>
+<p>It posts <code>Security record &lt;GHSA-id&gt; closed: &lt;reason&gt;</code> on every issue the
+record tracks, then sets the advisory to <code>closed</code>. Use it when the work a
+record tracks is dropped and <code>sync</code> would not close the record, for
+example when its pair is broken, or to put on record why a record was
+closed. The issue still drives the record: <code>close</code> refuses while any of
+its issues is open, since the next <code>sync</code> would set the advisory back to
+draft. Close the issue first (as not planned, for dropped work), or
+retarget the record to the work that replaces it.</p>
+<p>The reason is <strong>public</strong>. Write it like a neutral issue title: say why
+the record is closed (the work was dropped, a duplicate, fixed
+elsewhere), never what the finding is. <code>close</code> refuses a published,
+withdrawn or <code>triage</code> advisory and an external report, which stay a
+human's decision. See the
+<a href="../../reference/dev/security-record/#close">CLI reference</a>.</p>
 <h3 id="when-the-issue-moves">When the issue moves<a class="headerlink" href="#when-the-issue-moves" title="Permanent link">&para;</a></h3>
 <p>A record's link moves only through <code>vrg-security-record retarget</code>, and
 <code>vrg-intake-route</code> calls it for you:</p>
@@ -18188,7 +18261,7 @@ it names only GHSA IDs, issue refs, labels and states, never advisory text.</p>
 </ul>
 <p>An item naming <strong>several</strong> advisories is refused before anything
   changes, because which advisory goes to which task can't be inferred:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
 </code></pre></div>
 <p>Retarget each advisory to the task or tasks that fix it, one at a time.
   The last retarget leaves the item with no advisory line and no
@@ -18211,11 +18284,11 @@ of them until the plan exists.</p>
   back a line the other removed. Post <code>Tasks filed: yes</code> only after every
   retarget has succeeded:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#101'</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#102'</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-yyyy-yyyy-yyyy<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#103'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#101'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#102'</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-yyyy-yyyy-yyyy<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#103'</span>
 </code></pre></div>
 <p>From then on, the PRs that close those tasks are what close each
   advisory.
@@ -18231,8 +18304,8 @@ of them until the plan exists.</p>
   its body names that advisory. It
   shows it as <code>in-progress</code> with a note that counts the advisories still
   tracking it and names them by GHSA ID only:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget
 </code></pre></div>
 <p>After one of two retargets, the planning issue stays held by the other.
   Don't close the planning issue by hand before every retarget: that
@@ -18358,16 +18431,18 @@ each of these by hand:</p>
   label.</li>
 <li><strong>Agents may manage advisories.</strong> Records are notes: the user agent
   creates, edits and retargets them, and <code>vrg-security-record sync</code>,
-  which the user agent may run, closes and reopens them. There is no strong protection against an agent editing or closing
-  one.</li>
+  which the user agent may run, closes and reopens them. The user agent
+  may also close one with <code>vrg-security-record close</code>, which always
+  leaves its reason in a comment on the record's issues. There is no
+  strong protection against an agent editing or closing one.</li>
 </ul>
 <h2 id="permissions">Permissions<a class="headerlink" href="#permissions" title="Permanent link">&para;</a></h2>
 <p><code>vrg-security-record</code> calls the advisories API directly, with the
 identity's App token or, in human mode, the human's own <code>gh</code> login. It
 does not go through <code>vrg-gh api</code>, which stays denied to the user agent.</p>
 <p>Every user App (<code>&lt;username&gt;-vergil-user</code>) needs <strong>Repository security
-advisories: Read and write</strong>, for <code>vrg-security-record</code> (<code>sync</code>
-included) and the hooks in <code>vrg-intake-route</code> and <code>vrg-queue</code>. A human
+advisories: Read and write</strong>, for <code>vrg-security-record</code> (<code>sync</code> and
+<code>close</code> included) and the hooks in <code>vrg-intake-route</code> and <code>vrg-queue</code>. A human
 running <code>vrg-security-record</code> in human mode needs the same access through
 their own <code>gh</code> login. <code>sync --dry-run</code> needs only Read.</p>
 <p>The scheduled sweep (<code>vrg-epic-audit --close</code>, run by each org's

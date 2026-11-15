@@ -1426,6 +1426,8 @@
       
         
       
+        
+      
     
     
     
@@ -1478,6 +1480,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.315/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.315
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -20725,7 +20755,16 @@ deferral — so no review skill hand-rolls them. Routes:</p>
   named epic. A planning item's <code>in-progress</code> label is removed from the moved
   issue once the move has settled; a recreated issue never carries it.
 - <code>planning</code> — reparent the item onto the planning epic of the same queue
-  home.
+  home. It also takes a <strong>follow-on brainstorm</strong> out of a development epic: a
+  task titled <code>Follow-on brainstorm: …</code> whose native parent is a development
+  epic. A brainstorm never gates its epic's work, so moving it suspends
+  nothing. The parent is replaced in one step, then the hand-off is recorded
+  with a comment on the epic, for the retrospective's §5, and one on the item:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Follow-on brainstorm handed to planning: &lt;item-ref&gt; (now under &lt;planning-epic-ref&gt;)
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>Handed to planning from: &lt;epic-ref&gt;
+</code></pre></div>
+<p>If a record fails after the move, the command fails loudly and prints every
+  comment still to post by hand.
 - <code>split --into REF [--into REF …] --reason TEXT</code> — comment links to the
   replacement tasks (already created with <code>vrg-issue-create</code>) and close.</p>
 <p>Which routes an item allows depends on the container epic it is in:</p>
@@ -20758,7 +20797,11 @@ deferral — so no review skill hand-rolls them. Routes:</p>
 <td><code>planning</code> (the <code>epic-create</code> free-text path)</td>
 </tr>
 <tr>
-<td>a development epic, or anything else</td>
+<td>a development epic</td>
+<td><code>planning</code> for a follow-on brainstorm only; any other task is refused, naming the parent</td>
+</tr>
+<tr>
+<td>anything else</td>
 <td>none — refused, naming the parent</td>
 </tr>
 </tbody>
@@ -20781,11 +20824,11 @@ deferral — so no review skill hand-rolls them. Routes:</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>The item is a child of a container epic that allows the route (<code>planning</code> also accepts an unparented issue); GitHub App credentials for the item's org</td>
+<td>The item is a child of a container epic that allows the route (<code>planning</code> also accepts an unparented issue and a follow-on brainstorm under a development epic); GitHub App credentials for the item's org</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A refused route — not allowed from the item's container, a development-epic task, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it</td>
+<td>A refused route — not allowed from the item's container, a development-epic task other than a follow-on brainstorm sent to planning, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -20804,7 +20847,7 @@ advisory still not retargeted. A split retargets an item's one advisory
 before the original closes. A split of an item naming several advisories
 is refused before any change, because which advisory goes to which task
 can't be inferred:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
 </code></pre></div>
 <p>See <a href="../../guides/security-records/#when-the-issue-moves">Security Records</a>.</p>
 <h3 id="vrg-security-record">vrg-security-record<a class="headerlink" href="#vrg-security-record" title="Permanent link">&para;</a></h3>
@@ -20813,8 +20856,10 @@ paired with a neutral <code>security</code>-labelled intake issue (epic
 vergil-project/.github#517). <code>create</code> makes the pair (or attaches an
 advisory to an existing issue, or resumes an unfinished pair), <code>list</code> and
 <code>show</code> read records, <code>retarget</code> moves an advisory's tracking to new
-issues, and <code>sync</code> sets each paired advisory's state from its issues and
-reports broken pairs (<code>--dry-run</code> previews it). Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
+issues, <code>sync</code> sets each paired advisory's state from its issues and
+reports broken pairs (<code>--dry-run</code> previews it), and <code>close</code> closes a draft
+advisory whose issues are all closed, posting the GHSA ID and a required
+<code>--reason</code> on each of them first. Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
 <a href="../dev/security-record/">vrg-security-record</a> and
 <a href="../../guides/security-records/">Security Records</a>.</p>
 <table>
@@ -20831,7 +20876,7 @@ reports broken pairs (<code>--dry-run</code> previews it). Advisory text is prin
 </tr>
 <tr>
 <td>Args</td>
-<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code>; <code>sync [--dry-run]</code></td>
+<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code>; <code>sync [--dry-run]</code>; <code>close GHSA-ID --reason TEXT</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -21293,8 +21338,8 @@ any change to <code>vergil.toml</code>, and an empty change are <code>code</code
 is <code>README.md</code> and <code>CHANGELOG.md</code>, plus the repository's own paths from
 <code>vergil.toml</code> as committed at the merge base (never the working tree's
 copy):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">[merge-review]</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">docs-paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"docs/guides/"</span><span class="p">,</span><span class="w"> </span><span class="s2">"NOTICE.md"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">[merge-review]</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">docs-paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"docs/guides/"</span><span class="p">,</span><span class="w"> </span><span class="s2">"NOTICE.md"</span><span class="p">]</span>
 </code></pre></div>
 <p>An entry ending in <code>/</code> covers everything below it; any other entry is that
 one file. Markdown is not documentation by its extension: list only paths
@@ -21570,21 +21615,21 @@ cut from, whose age says nothing about the work on it (issue #3828).
 LAST MODIFIED is still shown. A detached worktree whose branch cannot be
 recovered also shows AHEAD 0, because there is no branch to count, and
 keeps its LAST COMMIT.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Main checkout (integration branch: develop)
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>Development
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>Other / unknown
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
-<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
-<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>
-<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
-<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Main checkout (integration branch: develop)
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>Development
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>Other / unknown
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
 </code></pre></div>
 <p><strong>Pending release.</strong> The section follows the worktree sections and comes
 before the summary lines. It is shown only when <code>vergil.toml</code> sets
@@ -21596,12 +21641,12 @@ read from the remote without fetching: the current refs and tags, the
 first-parent commits from the GitHub compare API, and each commit's
 merged PR into the integration branch, by commit SHA (so a batch PR
 rebase-merged as several commits is one row).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Pending release (develop → main): latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>PR     BRANCH                      TYPE     MERGED  TITLE
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 1 other PR.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Pending release (develop → main): latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>PR     BRANCH                      TYPE     MERGED  TITLE
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 1 other PR.
 </code></pre></div>
 <ul>
 <li><strong>Release line.</strong> It follows the section heading on the same line,
@@ -21835,9 +21880,10 @@ checks, run in a fresh shallow clone of the repo's <code>develop</code> (<code>v
 shim, workflow pins, <code>.gitignore</code> managed fence, canonical
 <code>dependabot.yml</code>, <code>ops.yml</code> wiring)
 with GitHub-API checks (repo settings, rulesets, required-check set).
-Runs nightly from each repo's <code>ops.yml</code> via the reusable
-<code>ops-github-config.yml</code> workflow, where drift is fatal. See the
-<a href="../config-audit/">GitHub Config Audit reference</a>.</p>
+<code>update</code> runs nightly, as the org automation App, from each repo's
+<code>ops.yml</code> via the reusable <code>ops-github-config.yml</code> workflow; drift it
+cannot fix turns the run red. <code>update</code> refuses the agent identity modes.
+See the <a href="../config-audit/">GitHub Config Audit reference</a>.</p>
 <table>
 <thead>
 <tr>
@@ -21852,11 +21898,11 @@ Runs nightly from each repo's <code>ops.yml</code> via the reusable
 </tr>
 <tr>
 <td>Args</td>
-<td><code>audit</code> | <code>diff</code> | <code>update</code> | <code>apply</code> (deprecated); <code>--repo OWNER/REPO</code>, <code>--config PATH</code></td>
+<td><code>audit</code> | <code>diff</code> | <code>update</code> | <code>apply</code> (deprecated); <code>--repo OWNER/REPO</code>, <code>--config PATH</code>; <code>--in-tree-templates</code> (<code>audit</code> only, vergil-tooling only)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Local checks clone the repo's <code>develop</code> over HTTPS (git's credential helper must reach it); GitHub checks require <code>gh</code> credentials</td>
+<td>Local checks clone the repo's <code>develop</code> over HTTPS (git's credential helper must reach it); GitHub checks require <code>gh</code> credentials; <code>update</code> needs the <code>human</code> or <code>automation</code> identity mode</td>
 </tr>
 <tr>
 <td>Failure mode</td>
@@ -21864,7 +21910,7 @@ Runs nightly from each repo's <code>ops.yml</code> via the reusable
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 compliant (for <code>update</code>: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for <code>update</code>, drift it could not fix), 2 could not complete (for <code>update</code>, also a sync PR that did not merge)</td>
+<td>0 compliant (for <code>diff</code>: whether or not it finds drift; for <code>update</code>: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for <code>update</code>, drift it could not fix), 2 could not complete, including a setting not checked (for <code>update</code>, also an agent identity or a sync PR that did not merge)</td>
 </tr>
 <tr>
 <td>Status</td>

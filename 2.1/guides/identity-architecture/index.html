@@ -1426,6 +1426,8 @@
       
         
       
+        
+      
     
     
     
@@ -1478,6 +1480,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.315/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.315
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16983,6 +17013,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The identities">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#identity-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identity modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -17726,6 +17773,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The identities">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#identity-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identity modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -17950,7 +18014,7 @@ user account:</p>
 </tr>
 <tr>
 <td><code>&lt;org&gt;-automation</code></td>
-<td>CI automation: nightly ops, epic roll-up, package-index dispatch</td>
+<td>CI automation: nightly ops (including the automatic fleet sync), epic roll-up, package-index dispatch</td>
 <td>GitHub App owned by the org, one per org</td>
 </tr>
 </tbody>
@@ -17964,6 +18028,55 @@ per-contributor identity (see
 <a href="#the-org-automation-apps">The org automation Apps</a>).</p>
 <p>A third agent role — <code>&lt;username&gt;-vergil-admin</code> — is a reserved slot
 and is <strong>not</strong> created. Do not provision it.</p>
+<h3 id="identity-modes">Identity modes<a class="headerlink" href="#identity-modes" title="Permanent link">&para;</a></h3>
+<p>The tooling resolves each process to one <strong>identity mode</strong>
+(<code>lib/identity_mode.py</code>; ask <a href="../../reference/cli-tools-overview/#vrg-whoami"><code>vrg-whoami</code></a>).
+The mode tells identity-aware tools how to behave. It is a convenience,
+not a control: the credential the process holds is the boundary.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Identity</th>
+<th>How it resolves</th>
+<th>Rights in the tooling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>human</code></td>
+<td>The human's own <code>gh</code> login</td>
+<td>The fall-through when no other signal is present</td>
+<td>Everything, including submitting and merging PRs</td>
+</tr>
+<tr>
+<td><code>user</code></td>
+<td><code>&lt;username&gt;-vergil-user</code></td>
+<td><code>VRG_IDENTITY_MODE</code>, the mode file, or the provisioned App key or ID in an agent VM</td>
+<td>The narrowest: stops at <code>vrg-pr-workflow report-ready</code>, never submits or merges</td>
+</tr>
+<tr>
+<td><code>audit</code></td>
+<td><code>&lt;username&gt;-vergil-audit</code></td>
+<td>As for <code>user</code></td>
+<td>Dormant (see the note below)</td>
+</tr>
+<tr>
+<td><code>automation</code></td>
+<td>The org automation App, <code>&lt;org&gt;-automation</code></td>
+<td>Only when <code>VRG_AUTOMATION_APP</code> is set and the token verifies as that App's installation token; no mode signal selects it</td>
+<td>A subset of the human's: <code>vrg-github-repo-config update</code>, which converges a repo and merges its own sync PR</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The automation invariant.</strong> The <code>automation</code> mode is used only for
+mechanized work, with no AI agent involved. Any work an AI agent does,
+automated or not, runs under the agent identities. In the fleet today
+only the nightly <code>github-config</code> ops job sets <code>VRG_AUTOMATION_APP</code>
+(epic vergil-project/.github#1064); every other job that mints an
+automation App token still resolves to <code>human</code>. A
+<code>VRG_AUTOMATION_APP</code> whose token does not verify, or an agent signal
+alongside a verified automation token, is an error, never a guess.</p>
 <h2 id="every-agent-is-a-github-app">Every agent is a GitHub App<a class="headerlink" href="#every-agent-is-a-github-app" title="Permanent link">&para;</a></h2>
 <p>There are no agent user accounts. There are no classic PATs. There
 are no collaborator grants. An AI agent's entire identity and
@@ -18161,29 +18274,35 @@ and mint a short-lived installation token with
 <code>actions/create-github-app-token</code>. The <code>vergil-actions</code> reusable
 workflows use it for:</p>
 <ul>
-<li><strong>Nightly ops</strong> (<code>ops-github-config.yml</code>): the
-  <code>vrg-github-repo-config audit</code>, the branch sweep, and the
+<li><strong>Nightly ops</strong> (<code>ops-github-config.yml</code>): the <code>github-config</code> job's
+  <code>vrg-github-repo-config update</code> (the automatic fleet sync, the one
+  job that runs in the <code>automation</code> mode), the branch sweep, and the
   <code>vrg-dependabot-audit</code> open-alert gate. Each of these jobs mints a
-  token scoped to the calling repo.</li>
+  token scoped to the calling repo and to the permissions it needs.</li>
 <li><strong>Epic roll-up and sweep</strong> (<code>ops-epic-rollup.yml</code>,
   <code>ops-epic-sweep.yml</code>): closing epics and tasks across the org.</li>
 <li><strong>Package-index dispatch</strong> (<code>cd-release.yml</code>): sending
   <code>package-released</code> to the org's <code>packages</code> repo after a packaged
   release.</li>
 </ul>
-<p>Three of the App's permissions matter to the tooling in this repo:</p>
+<p>The App's full permission set, and the scoped permissions each job's
+token requests, are in the vergil-actions
+<a href="https://vergil-project.github.io/vergil-actions/configuration/">configuration reference</a>.
+Four of the App's permissions matter to the tooling in this repo:</p>
 <ul>
 <li><strong>Dependabot alerts: Read.</strong> <code>vrg-dependabot-audit</code> needs it to list
   a repo's open alerts (epic
   <a href="https://github.com/vergil-project/.github/issues/420">vergil-project/.github#420</a>).
   Without it, or until an installation accepts it, the nightly
   <code>dependabot-audit</code> job exits 2 ("could not check").</li>
-<li><strong>Administration: Read-only.</strong> The Apps run only the read-only
-  <code>vrg-github-repo-config audit</code>. <code>vrg-github-repo-config apply</code> is a
-  human action that runs as the human's own <code>gh</code> login, because the
-  tooling uses App credentials only when it finds an App key
-  (<code>VRG_APP_ID</code> or <code>~/.config/vergil/app.pem</code>). Read-only is the
-  correct least privilege.</li>
+<li><strong>Administration: Read and write.</strong> The nightly <code>github-config</code> job
+  runs <code>vrg-github-repo-config update</code>, which converges the repo's
+  settings and rulesets, and GitHub returns a ruleset's bypass actors
+  only to a caller that can edit it. Only that job's token requests
+  Administration write, and the job runs only from <code>develop</code>.</li>
+<li><strong>Workflows: Read and write.</strong> A sync PR from <code>update</code> can change
+  files under <code>.github/workflows/</code> (the <code>vergil-*</code> workflow pins), and
+  GitHub refuses such a push without it.</li>
 <li><strong>Repository security advisories: not needed.</strong> The scheduled
   sweep (<code>vrg-epic-audit --close</code> in <code>ops-epic-sweep.yml</code>) makes no
   security-advisory call. Syncing advisory states to their issues is

@@ -1426,6 +1426,8 @@
       
         
       
+        
+      
     
     
     
@@ -1478,6 +1480,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.315/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.315
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18303,7 +18333,9 @@ named <code>security</code>, the checks report as:</p>
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="nt">container-suffix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python</span>
 </code></pre></div>
 <p>CodeQL is skipped when <code>run-codeql</code> is <code>false</code> (set for languages
-CodeQL does not support) or when <code>upload-sarif</code> is <code>false</code> (set for
+CodeQL does not support; <code>vrg-github-repo-init</code> reads the same language
+set as the <a href="#ci-gates">CI gates</a> ruleset, so a repo is never required to
+report a CodeQL check its CI skips) or when <code>upload-sarif</code> is <code>false</code> (set for
 private repositories without GitHub Advanced Security).
 <code>container-suffix</code> is a deprecated no-op here, and the old
 standards-compliance job is gone: PR issue linkage is now checked by
@@ -18489,8 +18521,10 @@ generates it, for a new repository or for an existing one with
   required check and fails if it does not.</li>
 </ul>
 <p>After that, <code>vrg-github-repo-config</code> keeps the repository in line:
-<code>audit</code> reports drift, <code>diff</code> shows it, and <code>apply</code> reconciles the
-GitHub side, including the ruleset. <code>vrg-container-run -- vrg-validate</code>
+<code>audit</code> reports drift, <code>diff</code> shows the GitHub side's, and <code>update</code>,
+run nightly by <code>ops.yml</code>, reconciles the GitHub side, including the
+ruleset, and fixes the managed files through one sync PR (<code>apply</code>, which
+reconciles only the GitHub side, is deprecated). <code>vrg-container-run -- vrg-validate</code>
 is the local command. Nothing else needs to be added to the repository.</p>
 <h2 id="ci-gates">CI gates<a class="headerlink" href="#ci-gates" title="Permanent link">&para;</a></h2>
 <p>The <code>CI gates</code> ruleset requires these checks. The list is computed from
@@ -18537,7 +18571,7 @@ is the local command. Nothing else needs to be added to the repository.</p>
 </tr>
 <tr>
 <td><code>security / codeql</code>, <code>CodeQL</code></td>
-<td>GHAS is available and CodeQL supports the language</td>
+<td>GHAS is available and CodeQL supports the language (<code>python</code>, <code>go</code>, <code>rust</code>, <code>cpp</code> or <code>typescript</code>)</td>
 </tr>
 <tr>
 <td><code>Trivy</code>, <code>Semgrep OSS</code></td>
