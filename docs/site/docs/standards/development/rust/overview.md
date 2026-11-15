@@ -26,9 +26,13 @@ maintainability, and long-term survivability across repositories.
   vergil-tooling packages, so a repo's own `deny.toml` is not used. The
   gating run writes its JSON diagnostics to `cargo-deny.json`, the audit
   gate's evidence.
-- Coverage: cargo-llvm-cov (LLVM instrumentation, cross-platform), held to
-  100% line coverage. The gating run writes Cobertura XML to `coverage.xml`,
-  the test gate's evidence.
+- Testing: cargo-nextest runs the unit and integration tests and writes a
+  JUnit report to `junit.xml`. Rustdoc examples run separately with
+  `cargo test --doc`, because nextest does not run doctests.
+- Coverage: cargo-llvm-cov (LLVM instrumentation, cross-platform) measures
+  that nextest run, held to 100% line coverage. Its report writes Cobertura
+  XML to `coverage.xml`. `coverage.xml` and `junit.xml` are the test gate's
+  evidence.
 - If a repository uses different tools, document the reason and equivalents.
 
 ## Toolchain Selection
