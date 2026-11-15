@@ -18166,6 +18166,13 @@ package. The export leaves out the project itself and local path packages,
 because neither is published to an index. Any other requirement without a
 hash, such as a VCS or URL dependency, fails the audit instead of being
 skipped.</p>
+<p><code>pip-audit</code> queries PyPI for every package, so a transient network error
+would otherwise fail the stage on its own. When a run fails with a network
+or timeout error, such as a PyPI read timeout, the stage retries it, up to
+three attempts with a short wait between them. A run that reports a
+vulnerability is never retried, and neither is any other failure. If all
+three attempts fail on a network error, the stage fails and names the error
+and the attempt count.</p>
 <p>Only the vulnerability audit covers the whole lock. The install step, the
 <code>uv sync --check</code> drift check and the <code>pip-licenses</code> license check still run
 against the installed <code>dev</code> environment.</p>
