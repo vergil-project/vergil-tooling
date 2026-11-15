@@ -70,11 +70,20 @@ version window (for Rust, the newest stable release and the one before it) is
 a hard CI leg. See the
 [Runtime Version Support Policy](../runtime-version-support-policy.md).
 
-Hard gates (all are required status checks):
+Hard gates for a Rust repository (all are required status checks; the
+[CI gates](../../../guides/ci-architecture.md#ci-gates) table gives the full
+rules):
 
-- `test: unit (current)`
-- `test: integration`
-- `ci: dependency-audit`
+- `quality / evidence`: the common checks, the custom validator, rustfmt,
+  clippy and `cargo check`
+- `test / evidence`: the nextest run under cargo-llvm-cov at 100% line
+  coverage, and the doctests
+- `audit / evidence`: `cargo deny` against the fleet policy
+- `security / trivy` and `security / semgrep`
+- `security / codeql` and GitHub's `CodeQL`, when GitHub Advanced Security
+  is available (CodeQL analyzes Rust)
+- `version / version-bump`, `docs / docs` and
+  `test / integration / <version>`, when `vergil.toml` turns them on
 
 Branch applicability:
 
