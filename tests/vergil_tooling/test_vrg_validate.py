@@ -32,6 +32,7 @@ from vergil_tooling.bin.vrg_validate import (
     _python_version_test_stage,
     _repo_files,
     _resolve_test_workers,
+    _run_audit_command,
     _run_common_checks,
     _skip_conan_audit_scan,
     _skip_rust_doctests_without_lib,
@@ -178,6 +179,66 @@ def test_command_stage_success_no_raise() -> None:
     with patch(_MOD + ".progress.run", return_value=0):
         stage = _command_stage("lint", [["cmd1"]], mode="fail_defer")
         stage.fn(None)  # does not raise
+
+
+def test_command_stage_uses_the_given_runner() -> None:
+    runner = MagicMock(side_effect=[0, 3])
+    with patch(_MOD + ".progress.run") as m_run:
+        stage = _command_stage("audit", [["a"], ["b"]], mode="fail_defer", run_cmd=runner)
+        with pytest.raises(ValidationError, match="1 of 2 audit command"):
+            stage.fn(None)
+    assert [c.args[0] for c in runner.call_args_list] == [["a"], ["b"]]
+    m_run.assert_not_called()
+
+
+# -- _run_audit_command (issue #4423) -------------------------------------------
+
+
+def test_run_audit_command_retries_pip_audit() -> None:
+    cmd = ["pip-audit", "--format=json"]
+    with (
+        patch(_MOD + ".audit_retry.run_pip_audit", return_value=0) as m_retry,
+        patch(_MOD + ".progress.run") as m_run,
+    ):
+        assert _run_audit_command(cmd) == 0
+    m_retry.assert_called_once_with(cmd)
+    m_run.assert_not_called()
+
+
+def test_run_audit_command_runs_other_commands_once() -> None:
+    cmd = ["pip-licenses", "--format=json"]
+    with (
+        patch(_MOD + ".audit_retry.run_pip_audit") as m_retry,
+        patch(_MOD + ".progress.run", return_value=1) as m_run,
+    ):
+        assert _run_audit_command(cmd) == 1
+    m_run.assert_called_once_with(cmd, check=False)
+    m_retry.assert_not_called()
+
+
+def test_python_audit_stage_retries_a_transient_pip_audit_timeout(tmp_path: Path) -> None:
+    """A single PyPI timeout no longer fails ``--check audit`` (issue #4423)."""
+    _write_config(tmp_path, "python")
+    pip_audit_runs: list[bool] = []
+
+    def mock_run(cmd: list[str], *, check: bool = True) -> int:
+        if cmd[0] == "pip-audit":
+            pip_audit_runs.append(check)
+            if len(pip_audit_runs) == 1:
+                raise subprocess.CalledProcessError(
+                    1, cmd, stderr="requests.exceptions.ReadTimeout: read timeout=15"
+                )
+        return 0
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run", side_effect=mock_run),
+        patch("vergil_tooling.lib.audit_retry.time.sleep") as m_sleep,
+    ):
+        result = main(["--check", "audit"])
+    assert result == 0
+    assert pip_audit_runs == [True, True]
+    m_sleep.assert_called_once()
 
 
 # -- main() wiring -------------------------------------------------------------
