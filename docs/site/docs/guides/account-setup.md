@@ -93,7 +93,8 @@ the permission model — set the permissions exactly as documented.
        findings, and `vrg-intake-route` and `vrg-queue planning` read
        and retarget them (see [Security Records](security-records.md)).
        The user App, or a human, also runs `vrg-security-record sync`,
-       which closes and reopens advisories to follow their issues. Each
+       which closes and reopens advisories to follow their issues, and
+       `vrg-security-record close`, which closes one with a reason. Each
        org's automation App (`<org>-automation`, see
        [Identity Architecture](identity-architecture.md#the-org-automation-apps))
        does not need the grant: the scheduled sweep makes no
@@ -314,7 +315,10 @@ Notes:
 - **Query identity with `vrg-whoami`, never a single environment
   variable.** `VRG_IDENTITY_MODE` is only the first of five fallback
   steps (env var → mode file → `app.pem` → `VRG_APP_ID` → human); an
-  unset value means "fall through," not "default to human." Ask the
+  unset value means "fall through," not "default to human." (The
+  `automation` mode is checked before all five, and only in a CI job
+  that sets `VRG_AUTOMATION_APP`; see
+  [Identity modes](identity-architecture.md#identity-modes).) Ask the
   authoritative resolver instead: `vrg-whoami` prints the resolved role,
   `vrg-whoami --mode` emits a single token for scripting
   (`export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"`), and

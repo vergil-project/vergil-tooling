@@ -174,7 +174,8 @@ attach mode (`--issue`) and resume (`--resume`).
 
 **The issue drives the record.** Work the issue like any other: route it,
 build the fix, close it with the PR. Never change an advisory's state by
-hand.
+hand: use `sync`, or `close` with a reason (see
+[Closing a record with a reason](#closing-a-record-with-a-reason)).
 
 `vrg-security-record sync` keeps each advisory's state in step with the
 issues it tracks. The human runs it, or the user agent, under an identity
@@ -222,6 +223,32 @@ broken, and never changes it. To work on one, attach it to an issue with
 
 The output of `sync` can end up in a shared log or a public comment, so
 it names only GHSA IDs, issue refs, labels and states, never advisory text.
+
+### Closing a record with a reason
+
+An agent, or a human, may close a record directly, as long as the close
+is visible and explained:
+
+```bash
+vrg-security-record close GHSA-xxxx-xxxx-xxxx \
+  --reason "the work it tracked was dropped with its epic"
+```
+
+It posts `Security record <GHSA-id> closed: <reason>` on every issue the
+record tracks, then sets the advisory to `closed`. Use it when the work a
+record tracks is dropped and `sync` would not close the record, for
+example when its pair is broken, or to put on record why a record was
+closed. The issue still drives the record: `close` refuses while any of
+its issues is open, since the next `sync` would set the advisory back to
+draft. Close the issue first (as not planned, for dropped work), or
+retarget the record to the work that replaces it.
+
+The reason is **public**. Write it like a neutral issue title: say why
+the record is closed (the work was dropped, a duplicate, fixed
+elsewhere), never what the finding is. `close` refuses a published,
+withdrawn or `triage` advisory and an external report, which stay a
+human's decision. See the
+[CLI reference](../reference/dev/security-record.md#close).
 
 ### When the issue moves
 
@@ -435,8 +462,10 @@ The repo's epics move separately; see
   label.
 - **Agents may manage advisories.** Records are notes: the user agent
   creates, edits and retargets them, and `vrg-security-record sync`,
-  which the user agent may run, closes and reopens them. There is no strong protection against an agent editing or closing
-  one.
+  which the user agent may run, closes and reopens them. The user agent
+  may also close one with `vrg-security-record close`, which always
+  leaves its reason in a comment on the record's issues. There is no
+  strong protection against an agent editing or closing one.
 
 ## Permissions
 
@@ -445,8 +474,8 @@ identity's App token or, in human mode, the human's own `gh` login. It
 does not go through `vrg-gh api`, which stays denied to the user agent.
 
 Every user App (`<username>-vergil-user`) needs **Repository security
-advisories: Read and write**, for `vrg-security-record` (`sync`
-included) and the hooks in `vrg-intake-route` and `vrg-queue`. A human
+advisories: Read and write**, for `vrg-security-record` (`sync` and
+`close` included) and the hooks in `vrg-intake-route` and `vrg-queue`. A human
 running `vrg-security-record` in human mode needs the same access through
 their own `gh` login. `sync --dry-run` needs only Read.
 

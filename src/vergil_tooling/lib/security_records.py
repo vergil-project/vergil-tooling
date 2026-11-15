@@ -13,7 +13,8 @@ vergil-project/.github#573); it keeps the ``security`` label while any line
 remains.
 
 This module owns the advisories REST API, the two reference lines, pair
-classification and :func:`retarget`, the one way a link moves.
+classification, :func:`retarget`, the one way a link moves, and
+:func:`close_record`, which closes an advisory with a public reason.
 
 **Output rule.** An advisory's ``summary`` and ``description`` reach a caller
 only through :func:`read_text`. :class:`Advisory` has no text field, the list
@@ -65,7 +66,7 @@ _LIST_JQ = (
 _DUPLICATE_JQ = (
     "[.[] | {ghsa_id, summary, names: [(.vulnerabilities // [])[] | .package.name // empty]}]"
 )
-_ISSUE_JQ = '{number, repository_url, labels: [.labels[].name], body: (.body // "")}'
+_ISSUE_JQ = '{number, repository_url, state, labels: [.labels[].name], body: (.body // "")}'
 _SECURITY_ISSUES_JQ = '[.[] | select(.pull_request == null) | {number, state, body: (.body // "")}]'
 
 
@@ -75,6 +76,10 @@ class PrivateHomeError(RuntimeError):
 
 class RetargetError(RuntimeError):
     """A :func:`retarget` step failed; the message names the GHSA ID and the step."""
+
+
+class CloseError(RuntimeError):
+    """A :func:`close_record` refusal or failed step; the message names IDs and refs only."""
 
 
 @dataclass(frozen=True)
@@ -303,10 +308,20 @@ def _issue_state(ref: IssueRef) -> tuple[IssueRef, set[str], str]:
     the read at its old number follows GitHub's redirect to the moved issue,
     while writes and sub-resource reads at the old number fail with a 404.
     """
-    raw: Any = github.read_json("api", _issue_endpoint(ref), "--jq", _ISSUE_JQ)
+    raw = _read_issue(ref)
+    labels_ = {str(name) for name in raw.get("labels") or []}
+    return _current_ref(raw), labels_, str(raw.get("body") or "")
+
+
+def _read_issue(ref: IssueRef) -> Any:
+    """*ref*'s REST issue read, projected by ``_ISSUE_JQ``; it follows a transfer."""
+    return github.read_json("api", _issue_endpoint(ref), "--jq", _ISSUE_JQ)
+
+
+def _current_ref(raw: Any) -> IssueRef:
+    """The ref an issue read (:func:`_read_issue`) actually returned."""
     owner, repo = str(raw["repository_url"]).rstrip("/").split("/")[-2:]
-    current = IssueRef(owner=owner, repo=repo, number=int(raw["number"]))
-    return current, {str(name) for name in raw.get("labels") or []}, str(raw.get("body") or "")
+    return IssueRef(owner=owner, repo=repo, number=int(raw["number"]))
 
 
 def _issue_labels_body(ref: IssueRef) -> tuple[set[str], str]:
@@ -405,8 +420,8 @@ def _with_tracking(description: str, targets: Sequence[IssueRef]) -> str:
 
 
 @contextlib.contextmanager
-def _step(ghsa_id: str, step: str) -> Generator[None]:
-    """Turn any failure inside one retarget step into a :class:`RetargetError`.
+def _step(ghsa_id: str, step: str, error: type[RuntimeError] = RetargetError) -> Generator[None]:
+    """Turn any failure inside one step into *error*, a :class:`RetargetError` by default.
 
     The message names the advisory and the step; a ``gh`` failure is scrubbed
     of its stdout first, both in the message and in the chained cause.
@@ -415,9 +430,9 @@ def _step(ghsa_id: str, step: str) -> Generator[None]:
         yield
     except github.GitHubAPIError as exc:
         clean = _scrubbed(exc)
-        raise RetargetError(f"advisory {ghsa_id}: {step} failed: {clean}") from clean
+        raise error(f"advisory {ghsa_id}: {step} failed: {clean}") from clean
     except Exception as exc:
-        raise RetargetError(f"advisory {ghsa_id}: {step} failed: {exc}") from exc
+        raise error(f"advisory {ghsa_id}: {step} failed: {exc}") from exc
 
 
 def retarget(
@@ -662,3 +677,120 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
     for advisory in result.external:
         print(f"- unpaired external report (left untouched): {advisory.ghsa_id}")
     return 1 if apply and result.broken else 0
+
+
+# --- close ------------------------------------------------------------------
+
+CLOSE_REASON_MAX = 500
+
+
+def close_comment(ghsa_id: str, reason: str) -> str:
+    """The public comment a close posts: the GHSA ID and the reason, nothing else."""
+    return f"Security record {ghsa_id} closed: {reason}"
+
+
+def check_close_reason(reason: str) -> str:
+    """*reason* stripped; :class:`CloseError` when it is empty, multi-line or too long."""
+    text = reason.strip()
+    if not text:
+        raise CloseError("the close reason is empty")
+    if "\n" in text or "\r" in text:
+        raise CloseError("the close reason must be one line")
+    if len(text) > CLOSE_REASON_MAX:
+        raise CloseError(f"the close reason is longer than {CLOSE_REASON_MAX} characters")
+    return text
+
+
+@dataclass(frozen=True)
+class CloseResult:
+    """What :func:`close_record` did, by refs only.
+
+    ``issues`` carry the close comment, at their current refs; ``notes`` say
+    which tracked issue was transferred where; ``closed`` is False when the
+    advisory was already closed, so this run only completed the comments.
+    """
+
+    issues: tuple[IssueRef, ...]
+    notes: tuple[str, ...]
+    closed: bool
+
+
+def close_record(home: str, ghsa_id: str, reason: str) -> CloseResult:
+    """Close advisory *ghsa_id* in *home*, leaving *reason* on every issue it tracks.
+
+    The issues are those its ``Tracking issue:`` lines name plus every
+    ``security``-labelled issue in the org whose advisory line names it (the
+    other half of a broken pair). Each is read at its current ref, following
+    a transfer. The steps run in order, each only once the one before it
+    succeeded:
+
+    1. **Check.** Refuse, changing nothing, when the advisory does not exist,
+       is an external report or is in a state other than ``draft`` or
+       ``closed`` (a human's decision, which ``sync`` leaves alone too), has
+       no issue to carry the comment, or has any issue still open: ``sync``
+       sets an advisory back to draft while any issue it tracks is open, so
+       the close would not hold.
+    2. **Comment.** Post :func:`close_comment` on each issue, skipping one
+       that already carries that exact comment.
+    3. **Close.** Set the advisory's state to ``closed``, unless it already is.
+
+    The comments go first, so a closed advisory always has its audit trail,
+    and a re-run with the same reason after a failure finishes the job
+    without posting twice. Any failure raises :class:`CloseError` naming the
+    advisory and the step, scrubbed of ``gh`` stdout. *reason* is public
+    text; keeping it neutral is the caller's duty. No advisory text is read.
+    """
+    text = check_close_reason(reason)
+    with _step(ghsa_id, "reading the advisories", CloseError):
+        advisory = {a.ghsa_id: a for a in list_advisories(home)}.get(ghsa_id)
+    if advisory is None:
+        raise CloseError(f"advisory {ghsa_id} does not exist in {home}")
+    if advisory.external or advisory.state not in _SYNCED_STATES:
+        kind = "an external report" if advisory.external else f"in state {advisory.state}"
+        raise CloseError(
+            f"advisory {ghsa_id} is {kind}; close only moves a draft security record "
+            "to closed, and any other state is a human's decision"
+        )
+    with _step(ghsa_id, "listing the security issues", CloseError):
+        naming = [
+            issue.ref
+            for issue in security_issues(home.split("/", 1)[0])
+            if ghsa_id in issue.ghsa_ids
+        ]
+    refs = tuple(dict.fromkeys((*advisory.tracking, *naming)))
+    if not refs:
+        raise CloseError(
+            f"advisory {ghsa_id} tracks no issue and no security issue names it, so no "
+            "issue can carry the close comment"
+        )
+    current: dict[IssueRef, None] = {}
+    notes: list[str] = []
+    still_open: list[IssueRef] = []
+    for ref in refs:
+        with _step(ghsa_id, f"reading {ref.slug}", CloseError):
+            raw = _read_issue(ref)
+            now = _current_ref(raw)
+        if now != ref:
+            notes.append(f"{ref.slug} was transferred to {now.slug}: commented there")
+        if now not in current and str(raw.get("state") or "").lower() != "closed":
+            still_open.append(now)
+        current[now] = None
+    if still_open:
+        names = ", ".join(ref.slug for ref in still_open)
+        noun = "issue" if len(still_open) == 1 else "issues"
+        raise CloseError(
+            f"advisory {ghsa_id}: open {noun} {names}; close or retarget first, since "
+            "sync sets an advisory back to draft while any issue it tracks is open"
+        )
+    comment = close_comment(ghsa_id, text)
+    for ref in current:
+        endpoint = _issue_endpoint(ref)
+        with _step(ghsa_id, f"commenting on {ref.slug}", CloseError):
+            existing = github.read_json_paginated(f"{endpoint}/comments", jq="[.[] | .body]")
+            if comment not in existing:
+                github.write_json("POST", f"{endpoint}/comments", {"body": comment})
+    closing = advisory.state != "closed"
+    if closing:
+        with _step(ghsa_id, "setting the state to closed", CloseError):
+            set_state(home, ghsa_id, "closed")
+    return CloseResult(issues=tuple(current), notes=tuple(notes), closed=closing)

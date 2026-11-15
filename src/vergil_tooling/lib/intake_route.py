@@ -43,7 +43,13 @@ routes each container allows:
   does not list or a queue epic of its own or its org's queue home still
   lists, links it under the target (if missing), only then removes the stale
   queue listing, and reads it back twice, instead of being refused (#4291).
-- **planning** — reparent onto the planning epic of the same queue home.
+- **planning** — reparent onto the planning epic of the same queue home. It
+  also takes a **follow-on brainstorm** out of a development epic (#4296): an
+  item whose title starts ``Follow-on brainstorm:`` and whose native parent is
+  a development epic. A brainstorm never gates its epic's work, so moving it
+  suspends nothing. The parent is replaced in one call, then the hand-off is
+  recorded on the epic (for the retrospective's §5) and on the item; a record
+  that fails after the move raises with every comment still to post.
 - **split** — the replacement tasks already exist (made with
   ``vrg-issue-create``); comment the links and the reason, then close.
 
@@ -59,8 +65,9 @@ advisory goes to which task cannot be inferred. The planning route leaves the
 advisories alone.
 
 A task in a development epic, an epic, and an unparented issue are refused
-(``planning`` alone accepts an unparented issue: the ``epic-create`` free-text
-path), the refusal naming the parent. A planning item refuses drop, defer and
+(``planning`` alone accepts an unparented issue, the ``epic-create`` free-text
+path, and a follow-on brainstorm under a development epic), the refusal naming
+the parent. A planning item refuses drop, defer and
 one-off while any of its development epics is open (one an ``Epic:`` marker names, or
 one whose body carries a ``Planning:`` line for it; #4001, #4170). An
 ad-hoc item refuses defer while an open PR would close it. A private repo's item
@@ -98,6 +105,12 @@ DEFERRED_FROM_LINE = "Deferred from: {epic}"
 SPLIT_COMMENT = "Split into: {refs}. {reason}"
 MOVED_TO_COMMENT = "Moved to {url}"
 MOVED_FROM_LINE = "Moved from {url}"
+# The title a follow-on brainstorm carries (epic-create's forward bookend, #4296).
+BRAINSTORM_TITLE_PREFIX = "Follow-on brainstorm:"
+BRAINSTORM_EPIC_COMMENT = "Follow-on brainstorm handed to planning: {item} (now under {planning})"
+BRAINSTORM_ITEM_COMMENT = "Handed to planning from: {epic}"
+# The kind _check_eligible returns for a follow-on brainstorm under a development epic.
+_DEVELOPMENT = "development"
 
 # A transfer carries the old parent over eventually, not atomically: a link
 # made right after it can be overwritten seconds later (#3556). Each settle
@@ -241,6 +254,9 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         planning = epics.ensure_planning_epic(_repo_of(ref))
         _guard_visibility(ref, _repo_of(planning))
         _link(planning, ref)
+        if kind == _DEVELOPMENT:
+            # _check_eligible only returns it for a parented item.
+            _record_brainstorm_handoff(ref, cast("IssueRef", parent), planning)
         return RouteResult(final=ref, moved_by="none")
     if isinstance(action, ToIntake):
         intake = epics.ensure_intake_epic(_repo_of(ref))
@@ -265,6 +281,8 @@ def _check_eligible(ref: IssueRef, action: RouteAction, parent: IssueRef | None)
             "unparented issue)"
         )
     kind = epics.container_kind(parent)
+    if kind is None and isinstance(action, ToPlanning) and _is_movable_brainstorm(ref, parent):
+        return _DEVELOPMENT
     if kind is None or kind not in ROUTES:
         raise RouteRefusedError(
             f"{ref.slug} is under {parent.slug}, not a container epic (intake, planning, "
@@ -279,6 +297,48 @@ def _check_eligible(ref: IssueRef, action: RouteAction, parent: IssueRef | None)
             f"allowed from {kind} (allowed: {names})"
         )
     return kind
+
+
+def _is_movable_brainstorm(ref: IssueRef, parent: IssueRef) -> bool:
+    """Whether *ref* is a follow-on brainstorm the planning route may take from *parent*.
+
+    It must be a task (not an epic or archive) titled ``Follow-on brainstorm:``,
+    and *parent* must be a development epic (an ``epic`` that is no standing
+    epic, which the caller has already ruled out) and *ref*'s native parent: a
+    body ``Parent:`` line alone would survive the reparent and still name the
+    epic. False leaves the development-epic refusal standing.
+    """
+    view = _view(ref, "title,labels")
+    if not str(view.get("title") or "").startswith(BRAINSTORM_TITLE_PREFIX):
+        return False
+    if epics.non_task_kind_of_labels(_label_names(view)) is not None:
+        return False
+    if not epics.is_epic(parent):
+        return False
+    return epics.native_parent_of(ref) == parent
+
+
+def _record_brainstorm_handoff(ref: IssueRef, epic: IssueRef, planning: IssueRef) -> None:
+    """Record a brainstorm's move to *planning* on its development *epic* and on *ref*.
+
+    The move has already happened, so a failed comment is not a refusal: it
+    raises naming every comment still to post by hand (re-running the route
+    would be refused, the item now being in planning).
+    """
+    pending = [
+        (epic, BRAINSTORM_EPIC_COMMENT.format(item=ref.slug, planning=planning.slug)),
+        (ref, BRAINSTORM_ITEM_COMMENT.format(epic=epic.slug)),
+    ]
+    for index, (target, body) in enumerate(pending):
+        try:
+            _comment(target, body)
+        except subprocess.CalledProcessError as exc:
+            by_hand = "; ".join(f"on {where.slug}: {text}" for where, text in pending[index:])
+            raise RuntimeError(
+                f"{ref.slug} moved from {epic.slug} to the planning epic {planning.slug}, but "
+                f"recording the hand-off failed ({' '.join(error_text(exc).split())}). Post "
+                f"by hand {by_hand}"
+            ) from exc
 
 
 def _view(ref: IssueRef, fields: str) -> dict[str, Any]:

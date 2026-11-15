@@ -61,6 +61,8 @@ class Env:
             ADHOC_DOTGITHUB: "ad-hoc",
             TOOL_ADHOC: "ad-hoc",
         }
+        # The issues carrying the 'epic' label (epics.is_epic).
+        self.epic_refs: set[IssueRef] = {INTAKE, PLANNING, DEFERRED, ADHOC_DOTGITHUB, DEV_EPIC}
         self.labels: list[str] = []
         self.comments: list[str] = []
         # Closing-PR URL -> state (OPEN, CLOSED, MERGED).
@@ -193,6 +195,7 @@ def env() -> Iterator[Env]:
         patch(f"{_MOD}.epics.parent_of", side_effect=lambda ref: state.parent),
         patch(f"{_MOD}.epics.queue_kind", side_effect=state.queue_kind),
         patch(f"{_MOD}.epics.container_kind", side_effect=lambda ref: state.kinds.get(ref)),
+        patch(f"{_MOD}.epics.is_epic", side_effect=lambda ref: ref in state.epic_refs),
         patch(
             f"{_MOD}.epics.native_parent_of",
             side_effect=lambda ref: state.native_parent.get(ref),
@@ -1061,6 +1064,144 @@ def test_route_planning_refuses_private_item_to_public_planning_epic(env: Env) -
     with pytest.raises(RouteRefusedError, match="private repo org/secret"):
         route(secret_item, ToPlanning(), today=TODAY)
     env.reparent_child.assert_not_called()
+
+
+# -- planning: a follow-on brainstorm out of a development epic (#4296) -------
+
+
+def _brainstorm(env: Env, title: str = "Follow-on brainstorm: what comes next") -> None:
+    """The item is a follow-on brainstorm natively under the development epic."""
+    env.parent = DEV_EPIC
+    env.native_parent[ITEM] = DEV_EPIC
+    env.issue_view = {**env.issue_view, "title": title, "labels": []}
+
+
+def test_route_planning_moves_brainstorm_from_development_epic(env: Env) -> None:
+    _brainstorm(env)
+    result = route(ITEM, ToPlanning(), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    # The development epic is replaced atomically, never unlinked first.
+    env.reparent_child.assert_called_once_with(PLANNING, ITEM)
+    env.remove_child.assert_not_called()
+    assert env.native_parent[ITEM] == PLANNING
+    assert [c.args for c in _comment_calls(env)] == [
+        (
+            "issue",
+            "comment",
+            "400",
+            "--repo",
+            "org/.github",
+            "--body",
+            "Follow-on brainstorm handed to planning: org/.github#352 (now under org/.github#8)",
+        ),
+        (
+            "issue",
+            "comment",
+            "352",
+            "--repo",
+            "org/.github",
+            "--body",
+            "Handed to planning from: org/.github#400",
+        ),
+    ]
+
+
+def test_route_planning_records_brainstorm_only_after_the_move(env: Env) -> None:
+    _brainstorm(env)
+    order: list[str] = []
+    env.reparent_child.side_effect = lambda epic, task: order.append("link")
+    env.run.side_effect = lambda *args: order.append("comment")
+    route(ITEM, ToPlanning(), today=TODAY)
+    assert order == ["link", "comment", "comment"]
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Make the thing faster",
+        "follow-on brainstorm: lower case",
+        "Brainstorm: Follow-on brainstorm: not a prefix",
+    ],
+)
+def test_route_planning_still_refuses_other_development_epic_tasks(env: Env, title: str) -> None:
+    _brainstorm(env, title)
+    with pytest.raises(RouteRefusedError, match=r"under org/\.github#400, not a container epic"):
+        route(ITEM, ToPlanning(), today=TODAY)
+    _assert_untouched(env)
+
+
+def test_route_brainstorm_only_takes_the_planning_route(env: Env) -> None:
+    _brainstorm(env)
+    with pytest.raises(RouteRefusedError, match="not a container epic"):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    _assert_untouched(env)
+
+
+def test_route_planning_refuses_brainstorm_that_is_an_epic(env: Env) -> None:
+    _brainstorm(env)
+    env.issue_view = {**env.issue_view, "labels": [{"name": "epic"}]}
+    with pytest.raises(RouteRefusedError, match="not a container epic"):
+        route(ITEM, ToPlanning(), today=TODAY)
+    _assert_untouched(env)
+
+
+def test_route_planning_refuses_brainstorm_under_a_non_epic(env: Env) -> None:
+    _brainstorm(env)
+    env.epic_refs.discard(DEV_EPIC)
+    with pytest.raises(RouteRefusedError, match="not a container epic"):
+        route(ITEM, ToPlanning(), today=TODAY)
+    _assert_untouched(env)
+
+
+def test_route_planning_refuses_brainstorm_linked_only_by_body_line(env: Env) -> None:
+    # parent_of falls back to a body 'Parent:' line; a reparent would leave it stale.
+    _brainstorm(env)
+    env.native_parent[ITEM] = None
+    with pytest.raises(RouteRefusedError, match="not a container epic"):
+        route(ITEM, ToPlanning(), today=TODAY)
+    _assert_untouched(env)
+
+
+def test_route_planning_refuses_private_brainstorm_to_public_planning_epic(env: Env) -> None:
+    secret_item = IssueRef("org", "secret", 5)
+    secret_epic = IssueRef("org", "secret", 40)
+    env.parent = secret_epic
+    env.native_parent[secret_item] = secret_epic
+    env.epic_refs.add(secret_epic)
+    env.issue_view = {**env.issue_view, "title": "Follow-on brainstorm: x", "labels": []}
+    env.public = {"org/secret": False}
+    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
+        route(secret_item, ToPlanning(), today=TODAY)
+    env.reparent_child.assert_not_called()
+    env.run.assert_not_called()
+
+
+def test_route_planning_brainstorm_epic_record_failure_names_both_comments(env: Env) -> None:
+    _brainstorm(env)
+    env.run.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    with pytest.raises(RuntimeError) as excinfo:
+        route(ITEM, ToPlanning(), today=TODAY)
+    message = str(excinfo.value)
+    assert env.native_parent[ITEM] == PLANNING
+    assert (
+        "org/.github#352 moved from org/.github#400 to the planning epic org/.github#8" in message
+    )
+    assert "HTTP 502" in message
+    assert (
+        "on org/.github#400: Follow-on brainstorm handed to planning: org/.github#352 "
+        "(now under org/.github#8)"
+    ) in message
+    assert "on org/.github#352: Handed to planning from: org/.github#400" in message
+
+
+def test_route_planning_brainstorm_item_record_failure_names_only_that_comment(env: Env) -> None:
+    _brainstorm(env)
+    env.run.side_effect = [None, github.GitHubAPIError(1, ["gh"], "", "HTTP 502")]
+    with pytest.raises(RuntimeError) as excinfo:
+        route(ITEM, ToPlanning(), today=TODAY)
+    message = str(excinfo.value)
+    assert "on org/.github#400" not in message
+    assert "on org/.github#352: Handed to planning from: org/.github#400" in message
 
 
 # -- one-off -----------------------------------------------------------------

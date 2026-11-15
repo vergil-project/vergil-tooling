@@ -245,6 +245,31 @@ Run them once the fix for the cause is released. Stop at any watch that
 fails. The resume judges the CD run's new attempt through the same
 release-job gate.
 
+### A failed back-merge-bump
+
+`back-merge-bump` can fail part-way, after it has created
+`release/post-<version>`: in its lockfile refresh, say, or before its PR
+merges. Fix the cause and run `vrg-release --resume`. The stage reuses the
+post-release branch, local or pushed, when it holds only its own work:
+
+- **At `origin/main` with no commit of its own.** The bump still has to
+  run. A partial bump left uncommitted in the worktree (changes to the
+  files the bump writes, with `VERSION` already at the next version) is
+  discarded first, so the bump is not applied twice.
+- **One bump commit on `origin/main`**, with the expected subject and
+  `VERSION`, and a clean worktree. The bump is done, and the stage goes on
+  to its PR.
+
+Any other state stops the stage with an error naming the branch, and
+nothing is reset, discarded or pushed over: a branch that does not contain
+`origin/main`, other or extra commits, a bump to another version,
+uncommitted changes that are not a partial bump, or a local branch whose
+tip differs from `origin`'s. Remove or reconcile the branch, then resume.
+
+An open back-merge PR from the earlier run is adopted and merged, and a
+merged one is skipped. A PR closed without merging is not adopted: the
+resume opens a new PR from the reused branch.
+
 ### Stale job records
 
 The confirm stages wait a bounded time for every CD job to reach

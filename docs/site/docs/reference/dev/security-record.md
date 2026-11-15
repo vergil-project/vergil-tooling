@@ -21,6 +21,7 @@ vrg-security-record list [--repo OWNER/NAME] [--state {draft,closed,all}] [--det
 vrg-security-record show (GHSA-ID | OWNER/REPO#N)
 vrg-security-record retarget GHSA-ID --to 'OWNER/REPO#N' [--to 'OWNER/REPO#N' ...]
 vrg-security-record sync [--dry-run]
+vrg-security-record close GHSA-ID --reason TEXT
 ```
 
 ## Output rule
@@ -34,7 +35,9 @@ may hold the advisory text.
 
 `list --details` is refused when `VRG_EPIC_SWEEP` is set, so advisory
 text can never reach the scheduled sweep's public Actions logs. `sync`
-prints no advisory text at all.
+and `close` print no advisory text at all. `close` does not print its
+`--reason` either: the reason goes only into the public comments it
+posts.
 
 ## Where things are created
 
@@ -260,6 +263,58 @@ needs no advisories access (vergil-project/vergil-tooling#4313). Nothing
 runs `sync` on a schedule: run it after closing or reopening a `security`
 issue, and regularly in any case.
 
+## close
+
+```bash
+vrg-security-record close GHSA-xxxx-xxxx-xxxx \
+  --reason "the work it tracked was dropped with its epic"
+```
+
+Closes a draft advisory and leaves an audit trail: a public comment with
+the GHSA ID and the reason on every issue the record tracks. It is how an
+agent closes a record that `sync` would not close, such as one in a
+broken pair, or records why a record it closes was dropped. It takes the
+org from the current repo's `origin` remote, as `show` and `sync` do.
+
+| Flag | Meaning |
+|---|---|
+| `--reason TEXT` | Required. Why the record is closed: one line, at most 500 characters. It is **public**, so it must be neutral, like an issue title: never the finding, its severity or any other advisory detail. |
+
+The issues are the ones the advisory's `Tracking issue:` lines name, plus
+any `security`-labelled issue in the org whose `Security advisory:` line
+names it (found by REST listing, never by search). An issue that was
+transferred is followed to where it is now. The steps run in order, and
+each starts only once the one before it succeeded:
+
+1. **Check.** Refuse, changing nothing, when:
+   - the advisory does not exist in `<org>/.github`;
+   - it is an external report, or in any state other than `draft` or
+     `closed` (`published`, `withdrawn`, `triage`): those are a human's
+     decision, and `sync` leaves them alone too;
+   - no issue tracks it and none names it, so no issue could carry the
+     comment;
+   - any of its issues is still open. `sync` sets an advisory back to
+     draft while any issue it tracks is open, so the close would not
+     hold: close the issue first (as not planned, for dropped work), or
+     retarget the record.
+2. **Comment.** Post `Security record <GHSA-id> closed: <reason>` on each
+   issue, skipping one that already carries that exact comment.
+3. **Close.** Set the advisory's state to `closed`, unless it already is.
+
+The comments go first, so a closed record always has its audit trail.
+After a failure at any step, re-run the same command: it posts no
+comment twice and finishes the job. A failure exits 1 with a message
+naming the advisory and the step.
+
+On success it prints `Closed <GHSA-id> in <org>/.github; the reason is on
+<refs>.`, or, for an advisory that was already closed,
+`<GHSA-id> was already closed in <org>/.github; the reason is on <refs>.`
+Before it, each transferred issue gets a line
+`<GHSA-id>: <old ref> was transferred to <new ref>: commented there.`
+
+`close` needs the same **Repository security advisories: Read and write**
+as `sync`, and runs as the human's own `gh` login or the user App.
+
 ## Related commands
 
 These commands read or move records as part of their own work:
@@ -299,5 +354,5 @@ These commands read or move records as part of their own work:
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Refused (a private `.github`, a duplicate, bad refs, an unreadable file, `--details` under the sweep), a partial pair, a failed retarget, a broken pair found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
+| 1 | Refused (a private `.github`, a duplicate, bad refs, an unreadable file, `--details` under the sweep, a `close` the checks refuse), a partial pair, a failed retarget or close, a broken pair found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
 | 2 | Invalid arguments |

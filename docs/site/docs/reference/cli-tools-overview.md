@@ -789,7 +789,19 @@ deferral — so no review skill hand-rolls them. Routes:
   named epic. A planning item's `in-progress` label is removed from the moved
   issue once the move has settled; a recreated issue never carries it.
 - `planning` — reparent the item onto the planning epic of the same queue
-  home.
+  home. It also takes a **follow-on brainstorm** out of a development epic: a
+  task titled `Follow-on brainstorm: …` whose native parent is a development
+  epic. A brainstorm never gates its epic's work, so moving it suspends
+  nothing. The parent is replaced in one step, then the hand-off is recorded
+  with a comment on the epic, for the retrospective's §5, and one on the item:
+
+  ```text
+  Follow-on brainstorm handed to planning: <item-ref> (now under <planning-epic-ref>)
+  Handed to planning from: <epic-ref>
+  ```
+
+  If a record fails after the move, the command fails loudly and prints every
+  comment still to post by hand.
 - `split --into REF [--into REF …] --reason TEXT` — comment links to the
   replacement tasks (already created with `vrg-issue-create`) and close.
 
@@ -802,14 +814,15 @@ Which routes an item allows depends on the container epic it is in:
 | ad hoc | `defer` — refused while an open PR would close the item |
 | deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split` |
 | no parent | `planning` (the `epic-create` free-text path) |
-| a development epic, or anything else | none — refused, naming the parent |
+| a development epic | `planning` for a follow-on brainstorm only; any other task is refused, naming the parent |
+| anything else | none — refused, naming the parent |
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_intake_route` (mechanics and route table: `lib/intake_route.py`) |
 | Args | `<issue-ref>` (`owner/repo#N`, or `#N` in the current repo), then a route: `drop`, `defer`, `intake`, `one-off`, `planning`, `split` |
-| Preconditions | The item is a child of a container epic that allows the route (`planning` also accepts an unparented issue); GitHub App credentials for the item's org |
-| Failure mode | A refused route — not allowed from the item's container, a development-epic task, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it |
+| Preconditions | The item is a child of a container epic that allows the route (`planning` also accepts an unparented issue and a follow-on brainstorm under a development epic); GitHub App credentials for the item's org |
+| Failure mode | A refused route — not allowed from the item's container, a development-epic task other than a follow-on brainstorm sent to planning, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it |
 | Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when` or a malformed `--date`) |
 | Status | Active |
 
@@ -834,15 +847,17 @@ paired with a neutral `security`-labelled intake issue (epic
 vergil-project/.github#517). `create` makes the pair (or attaches an
 advisory to an existing issue, or resumes an unfinished pair), `list` and
 `show` read records, `retarget` moves an advisory's tracking to new
-issues, and `sync` sets each paired advisory's state from its issues and
-reports broken pairs (`--dry-run` previews it). Advisory text is printed only by `show` and `list --details`. See
+issues, `sync` sets each paired advisory's state from its issues and
+reports broken pairs (`--dry-run` previews it), and `close` closes a draft
+advisory whose issues are all closed, posting the GHSA ID and a required
+`--reason` on each of them first. Advisory text is printed only by `show` and `list --details`. See
 [vrg-security-record](dev/security-record.md) and
 [Security Records](../guides/security-records.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_security_record` (library: `lib/security_records.py`) |
-| Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --to REF [--to REF …]`; `sync [--dry-run]` |
+| Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --to REF [--to REF …]`; `sync [--dry-run]`; `close GHSA-ID --reason TEXT` |
 | Preconditions | The org's `.github` is public; Repository security advisories: Read and write on the identity's App (or a human `gh` login with access) |
 | Failure mode | A partial pair exits 1 naming what exists and the exact `--resume` command that finishes it; a private `.github`, a duplicate draft, or `--details` under `VRG_EPIC_SWEEP` is refused; `sync` exits 1 on a broken pair after syncing the rest |
 | Exit codes | 0 success, 1 refused or error, 2 bad arguments |
@@ -1512,17 +1527,18 @@ checks, run in a fresh shallow clone of the repo's `develop` (`vergil.toml`,
 shim, workflow pins, `.gitignore` managed fence, canonical
 `dependabot.yml`, `ops.yml` wiring)
 with GitHub-API checks (repo settings, rulesets, required-check set).
-Runs nightly from each repo's `ops.yml` via the reusable
-`ops-github-config.yml` workflow, where drift is fatal. See the
-[GitHub Config Audit reference](config-audit.md).
+`update` runs nightly, as the org automation App, from each repo's
+`ops.yml` via the reusable `ops-github-config.yml` workflow; drift it
+cannot fix turns the run red. `update` refuses the agent identity modes.
+See the [GitHub Config Audit reference](config-audit.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_github_repo_config` |
-| Args | `audit` \| `diff` \| `update` \| `apply` (deprecated); `--repo OWNER/REPO`, `--config PATH` |
-| Preconditions | Local checks clone the repo's `develop` over HTTPS (git's credential helper must reach it); GitHub checks require `gh` credentials |
+| Args | `audit` \| `diff` \| `update` \| `apply` (deprecated); `--repo OWNER/REPO`, `--config PATH`; `--in-tree-templates` (`audit` only, vergil-tooling only) |
+| Preconditions | Local checks clone the repo's `develop` over HTTPS (git's credential helper must reach it); GitHub checks require `gh` credentials; `update` needs the `human` or `automation` identity mode |
 | Failure mode | `DiffItem` list on drift; clean diagnostic on unreachable GitHub state |
-| Exit codes | 0 compliant (for `update`: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for `update`, drift it could not fix), 2 could not complete (for `update`, also a sync PR that did not merge) |
+| Exit codes | 0 compliant (for `diff`: whether or not it finds drift; for `update`: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for `update`, drift it could not fix), 2 could not complete, including a setting not checked (for `update`, also an agent identity or a sync PR that did not merge) |
 | Status | Active |
 
 ### vrg-dependabot-audit

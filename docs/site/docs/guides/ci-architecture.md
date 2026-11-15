@@ -231,7 +231,9 @@ security:
 ```
 
 CodeQL is skipped when `run-codeql` is `false` (set for languages
-CodeQL does not support) or when `upload-sarif` is `false` (set for
+CodeQL does not support; `vrg-github-repo-init` reads the same language
+set as the [CI gates](#ci-gates) ruleset, so a repo is never required to
+report a CodeQL check its CI skips) or when `upload-sarif` is `false` (set for
 private repositories without GitHub Advanced Security).
 `container-suffix` is a deprecated no-op here, and the old
 standards-compliance job is gone: PR issue linkage is now checked by
@@ -429,8 +431,10 @@ generates it, for a new repository or for an existing one with
   required check and fails if it does not.
 
 After that, `vrg-github-repo-config` keeps the repository in line:
-`audit` reports drift, `diff` shows it, and `apply` reconciles the
-GitHub side, including the ruleset. `vrg-container-run -- vrg-validate`
+`audit` reports drift, `diff` shows the GitHub side's, and `update`,
+run nightly by `ops.yml`, reconciles the GitHub side, including the
+ruleset, and fixes the managed files through one sync PR (`apply`, which
+reconciles only the GitHub side, is deprecated). `vrg-container-run -- vrg-validate`
 is the local command. Nothing else needs to be added to the repository.
 
 ## CI gates
@@ -448,7 +452,7 @@ The `CI gates` ruleset requires these checks. The list is computed from
 | `version / version-bump` | `[project].release-model` is not `none` |
 | `package / evidence` | `vergil.toml` has `[package]` |
 | `images / evidence` | `[ci].images` is on |
-| `security / codeql`, `CodeQL` | GHAS is available and CodeQL supports the language |
+| `security / codeql`, `CodeQL` | GHAS is available and CodeQL supports the language (`python`, `go`, `rust`, `cpp` or `typescript`) |
 | `Trivy`, `Semgrep OSS` | GHAS is available |
 | `test / integration / <version>` | `[ci].integration-tests` is on (one per resolved version) |
 

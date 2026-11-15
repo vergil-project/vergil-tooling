@@ -394,7 +394,9 @@ the tasks, pausing and resuming as blockers allow) → `epic-retrospective`
   brainstorming the follow-on epic(s) is a **forward-looking** concern that **no
   longer defines the end of an epic**: seed it at creation only when a known
   enabling chain already exists, otherwise accrue it during implementation or
-  skip it. Its outcomes are recorded in the retrospective.
+  skip it. Its outcomes are recorded in the retrospective. A brainstorm that
+  is ready before its epic finishes moves to the planning queue with
+  `vrg-intake-route <ref> planning`, which records the hand-off on the epic.
 
 The bookends need no new closing mechanism — they ride the existing rollup. A
 finite epic rolls up only when every child is closed, and the retrospective is
@@ -940,13 +942,53 @@ deploy steps (install/sync/restart). Where deploying needs a **release**
 (bump/tag/publish), that release is a **human-gated precondition** — attested,
 never performed by the agent — the same policy that keeps PR submission and merge
 in human hands. A deploy step that needs a **human identity** (for example
-`vrg-github-repo-config apply`, which needs `administration=read`) goes under the
-scaffold's **Human-run steps** section, not the agent-safe deploy steps: the agent
-checks its preconditions, gives the human the paste-ready command, then records
-the step's check. For repo config, the check is the human's
-`vrg-github-repo-config apply` exiting 0: `apply` refuses, exiting 2 and writing
-nothing, when it cannot read every setting first. A `vrg-github-repo-config diff`
-the agent runs afterwards is informational only. Under the agent identity `diff`
-exits 2, because the admin-scoped settings are not checked; that is expected and
-is not a failure of the apply. Never treat `diff`'s exit code as the verdict on
-an apply.
+`vrg-github-repo-config update`, which refuses the agent identity modes) goes
+under the scaffold's **Human-run steps** section, not the agent-safe deploy steps:
+the agent checks its preconditions, gives the human the paste-ready command, then
+records the step's check. For repo config, the check is the human's
+`vrg-github-repo-config update` exiting 0 (in sync, or its sync PR merged):
+`update` refuses, exiting 2 and writing nothing, when it cannot read every
+setting first. A `vrg-github-repo-config diff` the agent runs afterwards is
+informational only. Under the agent identity `diff` exits 2, because the
+admin-scoped settings are not checked; that is expected and is not a failure of
+the update. Never treat `diff`'s exit code as the verdict on an update.
+
+### Fixture runs
+
+Vergil keeps four **fixture repos**, small managed repos with no users whose
+only job is to be driven through Vergil's full cycle after a change:
+`vergil-fixture-python-lib`, `vergil-fixture-python-app`,
+`vergil-fixture-rust-lib` and `vergil-fixture-rust-app`. A **fixture run** is
+one pass through that cycle on one fixture, as three linked tasks in the
+fixture repo:
+
+1. a **change task**, an ordinary task implemented with `issue-implement`;
+2. a **release task** (`--kind deployment`, blocked by the change task), whose
+   precondition is the human's `vrg-release` of the fixture;
+3. a **validation task** (`--kind validation`, blocked by the release task),
+   run with `issue-validate`, which checks the CI gates, the ops run, the
+   release and its evidence bundle, the dependency update, the docs site and
+   that nothing reached a package registry.
+
+The `fixture-run` skill (`vergil-claude-plugin`) files a run's three tasks
+and holds the list of fixtures. It files tasks only and never runs them.
+
+**When an epic seeds a fixture run.** When an epic changes language support,
+container images, shared CI workflows or release tooling, its plan seeds a
+fixture run for each fixture whose language or shape the change affects. A
+change that affects every language seeds all four.
+
+- **Blocked by the release, never only by the code task.** The run's change
+  task is blocked by the deployment or release task that ships the change to
+  the fixtures (a vergil-tooling release, a vergil-actions tag, a container
+  image publish), passed to `fixture-run` as `--after`. A fixture consumes
+  only released Vergil, so a run after the merge alone would test the
+  previous release.
+- **Approval.** The plan's seeding is the approval `fixture-run` files under.
+  Name each run in the plan, with its fixtures, what it validates and its
+  `--after` tasks, and file it once those tasks exist.
+
+The rule says *which fixtures* and *when*. It does not replace the epic's
+other validation. Design: epic
+[vergil-project/.github#1091](https://github.com/vergil-project/.github/issues/1091),
+[spec §6.5](https://github.com/vergil-project/.github/blob/develop/epics/1091-language-fixture-repos/spec.md#65-epic-workflow-guidance).
