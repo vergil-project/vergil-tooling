@@ -284,17 +284,20 @@ v{version}-ci-evidence.tar.gz
    │   ├─ test/              # coverage-<ver>.xml, junit-<ver>.xml (per Python version), evidence.json
    │   ├─ audit/             # pip-audit-<ver>.json, licenses-<ver>.json (per Python version), evidence.json
    │   ├─ quality/           # quality-common.log, quality-custom.log, quality-ruff-<ver>.json, quality-mypy-<ver>.xml (per Python version), evidence.json
-   │   └─ sbom/              # sbom.cdx.json
+   │   └─ sbom/              # sbom.cdx.json (only when the release built a package SBOM)
    └─ README.md              # human orientation for the archive
 ```
 
 - `manifest.json` is the curated, per-gate machine index (schema below).
 - `checks.json` is the **raw** check-run snapshot — distinct from the manifest's
   curated view — capturing every check's name, conclusion, timing, and log URL.
-- `gates/sbom/` is populated by copying the SBOM already built during publish
-  (also a standalone Release asset) into the bundle at harvest time, so the
-  archive stays fully self-contained.
-- `README.md` is a fixed human orientation for the archive.
+- `gates/sbom/` is present only when the release built a package SBOM. The
+  assemble step copies the SBOM already built during publish (also a
+  standalone Release asset) into the bundle, so the archive stays fully
+  self-contained. A release that builds no package has no `gates/sbom/`.
+- `README.md` is a human orientation for the archive, generated from the
+  entries assembled: it names each gate directory present and says whether
+  the archive holds `gates/sbom/`.
 
 A standalone copy of `manifest.json` is also attached as a small, separate
 Release asset, so a tool can read the summary without downloading the full

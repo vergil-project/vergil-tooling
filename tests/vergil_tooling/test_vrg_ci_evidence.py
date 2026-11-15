@@ -429,6 +429,40 @@ def test_assemble_includes_sbom_when_given(monkeypatch: pytest.MonkeyPatch, tmp_
     with tarfile.open(out_dir / "v2.1.129-ci-evidence.tar.gz") as tar:
         names = tar.getnames()
     assert "evidence/gates/sbom/sbom.cdx.json" in names
+    readme = _tarred_readme(out_dir)
+    assert "This archive holds `gates/test/`." in readme
+    assert "- `gates/sbom/` — the release's package SBOM (`sbom.cdx.json`)" in readme
+
+
+def _tarred_readme(out_dir: Path) -> str:
+    with tarfile.open(out_dir / "v2.1.129-ci-evidence.tar.gz") as tar:
+        member = tar.extractfile("evidence/README.md")
+        assert member is not None
+        return member.read().decode("utf-8")
+
+
+def test_assemble_without_sbom_readme_says_so(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _wire_github_stages(
+        monkeypatch,
+        required=(EvidenceGate(name="test", checks=("test / unit",)),),
+        conclusions={"test / unit": "success"},
+        download=_full_download(("test",)),
+    )
+    staging = tmp_path / "staging"
+    assert main(_harvest_argv(staging)) == 0
+    out_dir = tmp_path / "out"
+
+    rc = main(_assemble_argv(staging, out_dir))
+
+    assert rc == 0
+    with tarfile.open(out_dir / "v2.1.129-ci-evidence.tar.gz") as tar:
+        names = tar.getnames()
+    assert not any(name.startswith("evidence/gates/sbom") for name in names)
+    readme = _tarred_readme(out_dir)
+    assert "This archive holds `gates/test/`." in readme
+    assert "This release built no package SBOM, so the archive has no `gates/sbom/`." in readme
 
 
 def test_harvest_then_assemble_matches_bundle(
