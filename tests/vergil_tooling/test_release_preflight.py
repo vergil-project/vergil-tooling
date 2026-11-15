@@ -406,8 +406,33 @@ def testaudit_repo_config_success() -> None:
     with patch(
         _MOD + ".subprocess.run",
         return_value=CompletedProcess(args=(), returncode=0, stdout="", stderr=""),
-    ):
+    ) as m_run:
         audit_repo_config("owner/repo")
+    assert m_run.call_args.args[0] == ("vrg-github-repo-config", "audit", "--repo", "owner/repo")
+
+
+def test_audit_repo_config_in_tree_templates_passes_the_flag() -> None:
+    from subprocess import CompletedProcess
+
+    from vergil_tooling.lib.release.preflight import audit_repo_config
+
+    with (
+        patch(
+            _MOD + ".subprocess.run",
+            return_value=CompletedProcess(args=(), returncode=1, stdout="", stderr=""),
+        ) as m_run,
+        pytest.raises(ReleaseError, match="non-compliant") as exc_info,
+    ):
+        audit_repo_config("o/vergil-tooling", in_tree_templates=True)
+    command = (
+        "vrg-github-repo-config",
+        "audit",
+        "--repo",
+        "o/vergil-tooling",
+        "--in-tree-templates",
+    )
+    assert m_run.call_args.args[0] == command
+    assert exc_info.value.command == " ".join(command)
 
 
 def test_preflight_never_audits() -> None:
@@ -629,14 +654,28 @@ def test_acquire_release_worktree_wraps_worktree_error() -> None:
         _acquire_release_worktree(Path("/tmp/repo"), "release/2.1.0", resume=False)  # noqa: S108
 
 
-def test_run_audit_resolves_repo_and_audits() -> None:
+def test_run_audit_resolves_repo_and_audits(tmp_path: Path) -> None:
+    # Any repo but vergil-tooling: the installed templates, as before (#4414).
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "my-app"\n')
     with (
         patch(_MOD + ".check_gh_auth", return_value="owner/repo") as m_auth,
         patch(_MOD + ".audit_repo_config") as m_audit,
     ):
-        preflight_module.run_audit()
+        preflight_module.run_audit(tmp_path)
     m_auth.assert_called_once_with()
-    m_audit.assert_called_once_with("owner/repo")
+    m_audit.assert_called_once_with("owner/repo", in_tree_templates=False)
+
+
+def test_run_audit_self_repo_uses_in_tree_templates(tmp_path: Path) -> None:
+    # Releasing vergil-tooling itself audits against the templates being
+    # released, not the installed release's (#4414).
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "vergil-tooling"\n')
+    with (
+        patch(_MOD + ".check_gh_auth", return_value="vergil-project/vergil-tooling"),
+        patch(_MOD + ".audit_repo_config") as m_audit,
+    ):
+        preflight_module.run_audit(tmp_path)
+    m_audit.assert_called_once_with("vergil-project/vergil-tooling", in_tree_templates=True)
 
 
 def test_preflight_wraps_version_sync_error() -> None:

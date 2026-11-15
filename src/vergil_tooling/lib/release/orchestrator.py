@@ -62,8 +62,8 @@ class ReleaseState:
     allow_pending_deps: bool = False
 
 
-def _audit_stage(_state: ReleaseState) -> None:
-    run_audit()
+def _audit_stage(state: ReleaseState) -> None:
+    run_audit(state.repo_root)
 
 
 def _preflight_stage(state: ReleaseState) -> None:

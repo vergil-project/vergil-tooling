@@ -156,7 +156,7 @@ def test_audit_stage_runs_audit() -> None:
     state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
     with patch(_MOD + ".run_audit") as m_audit:
         _audit_stage(state)
-    m_audit.assert_called_once_with()
+    m_audit.assert_called_once_with(Path("/tmp/repo"))  # noqa: S108
 
 
 def test_tracked_stage_comments_on_success() -> None:
