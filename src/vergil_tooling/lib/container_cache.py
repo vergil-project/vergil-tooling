@@ -25,12 +25,11 @@ from vergil_tooling.lib.container import (
 )
 from vergil_tooling.lib.languages import CheckKind, language_commands
 from vergil_tooling.lib.package import orgs, repo_setup
+from vergil_tooling.lib.self_repo import is_self_repo
 from vergil_tooling.lib.versions.extensions import container_env
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
-
-_SELF_PROJECT_NAME = "vergil-tooling"
 
 _VRG_GIT_URL = "https://github.com/vergil-project/vergil-tooling"
 
@@ -412,22 +411,6 @@ def resolve_base_digest(
             file=sys.stderr,
         )
     return digest, pull_ok
-
-
-def _is_self_repo(repo_root: Path) -> bool:
-    """Return True when *repo_root* is the vergil-tooling project itself."""
-    pyproject = repo_root / "pyproject.toml"
-    if not pyproject.is_file():
-        return False
-    try:
-        import tomllib
-
-        with pyproject.open("rb") as f:
-            data = tomllib.load(f)
-        name: object = data.get("project", {}).get("name")
-        return name == _SELF_PROJECT_NAME
-    except (OSError, tomllib.TOMLDecodeError, KeyError):
-        return False
 
 
 def cache_sensitive_files(repo_root: Path, lang: str) -> list[Path]:
@@ -866,7 +849,7 @@ def _compose_setup(repo_root: Path, lang: str, *, build_env: Mapping[str, str]) 
     # exactly, so an absent build-command yields a byte-identical setup string.
     tail = " && ".join(part for part in (build, warmup) if part)
 
-    if _is_self_repo(repo_root):
+    if is_self_repo(repo_root):
         setup = tail or "true"
     else:
         install = vergil_tooling_setup_command(vrg_install_tag(repo_root))
@@ -904,7 +887,7 @@ def _build_cached_image(
     False so a cold rebuild still streams live and never looks hung.
     """
     rt = runtime or detect_runtime()
-    self_repo = _is_self_repo(repo_root)
+    self_repo = is_self_repo(repo_root)
     warmup = _warmup_command(lang, repo_root)
     warmup_missing = missing_warmup_files(lang, repo_root)
 

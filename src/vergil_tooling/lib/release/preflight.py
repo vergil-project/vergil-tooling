@@ -21,6 +21,7 @@ from vergil_tooling.lib.package.index import published
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import find_existing_tracking_issue
+from vergil_tooling.lib.self_repo import is_self_repo
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
 from vergil_tooling.lib.update_deps.pr import FIX_TASK_PREFIX
 
@@ -577,9 +578,17 @@ def _check_host_prerequisites() -> None:
         ) from exc
 
 
-def run_audit() -> None:
-    """Standalone audit stage: resolve the repo and audit its GitHub config."""
-    audit_repo_config(check_gh_auth())
+def run_audit(repo_root: Path) -> None:
+    """Standalone audit stage: resolve the repo and audit its configuration.
+
+    Releasing vergil-tooling itself (*repo_root* is the self repo) audits its
+    managed files against the templates in the source tree being released,
+    not the installed release's: a template change on develop also updates
+    vergil-tooling's own managed files, so the installed templates would
+    report drift that is not there (issue #4414). The GitHub-side audit, and
+    every other repo's audit, are unchanged.
+    """
+    audit_repo_config(check_gh_auth(), in_tree_templates=is_self_repo(repo_root))
 
 
 def check_gh_auth() -> str:
@@ -635,9 +644,12 @@ def _check_branch_and_tree() -> None:
         )
 
 
-def audit_repo_config(repo: str) -> None:
+def audit_repo_config(repo: str, *, in_tree_templates: bool = False) -> None:
+    command: tuple[str, ...] = ("vrg-github-repo-config", "audit", "--repo", repo)
+    if in_tree_templates:
+        command = (*command, "--in-tree-templates")
     result = subprocess.run(  # noqa: S603
-        ("vrg-github-repo-config", "audit", "--repo", repo),  # noqa: S607
+        command,
         check=False,
         capture_output=True,
         text=True,
@@ -654,7 +666,7 @@ def audit_repo_config(repo: str) -> None:
         message = "Repository configuration audit could not complete."
     raise ReleaseError(
         phase="preflight",
-        command=f"vrg-github-repo-config audit --repo {repo}",
+        command=" ".join(command),
         message=message,
         detail=result.stdout + result.stderr,
     )

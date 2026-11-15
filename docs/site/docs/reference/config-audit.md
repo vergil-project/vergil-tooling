@@ -16,14 +16,14 @@ reconciles it. It combines two independent halves:
 ## The `audit` command
 
 ```bash
-vrg-github-repo-config audit [--repo OWNER/REPO] [--config PATH]
+vrg-github-repo-config audit [--repo OWNER/REPO] [--config PATH] [--in-tree-templates]
 ```
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_github_repo_config` |
 | Subcommands | `audit` (report), `diff` (report GitHub half only), [`update`](#the-update-command) (reconcile both halves), [`apply`](#the-apply-command-deprecated) (reconcile GitHub half; deprecated) |
-| Args | `--repo OWNER/REPO` (defaults to the current git remote), `--config PATH` (local `vergil.toml`) |
+| Args | `--repo OWNER/REPO` (defaults to the current git remote), `--config PATH` (local `vergil.toml`), `--in-tree-templates` (`audit` only, vergil-tooling only: see [Auditing vergil-tooling against its own templates](#auditing-vergil-tooling-against-its-own-templates)) |
 | Preconditions | Local checks clone the repo's `develop` over HTTPS, so git's credential helper must reach it (`gh auth setup-git`); GitHub checks require `gh` credentials |
 | Exit codes | `audit`: 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings [not checked](#settings-the-identity-cannot-read)). `diff`: 0 whether or not it finds drift, 2 could not complete (including settings not checked). `update`: see [its exit codes](#update-exit-codes). `apply`: 0 converged, 1 left non-compliant (a write failed, an undeclared ruleset parameter, or managed-file drift), 2 could not complete or refused |
 | Status | Active |
@@ -37,6 +37,27 @@ A dirty or unrelated working tree cannot change the result, and
 clone is plain `git` over HTTPS and authenticates through git's
 credential helper (`gh auth setup-git`), so no token appears in argv or
 the logs. A clone that fails exits 2, naming the repo.
+
+### Auditing vergil-tooling against its own templates
+
+vergil-tooling holds the master copies of the managed-file templates, and
+a change to one updates vergil-tooling's own managed files in the same
+PR. After any template change, its `develop` is ahead of the installed
+release, so the installed templates would report drift that is not
+there. `audit --in-tree-templates` checks the managed files of
+vergil-tooling's `develop` with the templates and checks of the source
+tree in that same clone, the ones the next release will ship. It runs
+them in a child Python process whose `vergil_tooling` package is the
+clone's `src/` tree, and the child refuses to run if the package was
+loaded from anywhere else. The GitHub-side checks still run with the
+installed release.
+
+The flag refuses, with exit 2, a repo whose `develop` is not the
+vergil-tooling project (its `pyproject.toml` must name
+`vergil-tooling`). An in-tree audit that cannot complete, for example
+because the source tree needs a dependency the installed release lacks,
+also exits 2. `vrg-release` passes the flag when it releases
+vergil-tooling; no other repo uses it.
 
 ## The `update` command
 
