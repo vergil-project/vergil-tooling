@@ -18349,7 +18349,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>audit</code></td>
 <td>fail-fast</td>
-<td>Runs <code>vrg-github-repo-config audit</code> on the repo. <code>--skip-audit</code> skips it</td>
+<td>Runs <code>vrg-github-repo-config audit</code> on the repo. Releasing vergil-tooling itself adds <code>--in-tree-templates</code>, so its managed files are checked against the templates being released, not the installed release's (see the <a href="../../reference/config-audit/#auditing-vergil-tooling-against-its-own-templates">config audit reference</a>). <code>--skip-audit</code> skips it</td>
 </tr>
 <tr>
 <td><code>preflight</code></td>

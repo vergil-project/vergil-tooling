@@ -13929,6 +13929,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The audit command">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#auditing-vergil-tooling-against-its-own-templates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auditing vergil-tooling against its own templates
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -17788,6 +17805,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The audit command">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#auditing-vergil-tooling-against-its-own-templates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auditing vergil-tooling against its own templates
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -18066,7 +18100,7 @@ reconciles it. It combines two independent halves:</p>
   required-status-check set, fetched from the GitHub API.</li>
 </ul>
 <h2 id="the-audit-command">The <code>audit</code> command<a class="headerlink" href="#the-audit-command" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-github-repo-config<span class="w"> </span>audit<span class="w"> </span><span class="o">[</span>--repo<span class="w"> </span>OWNER/REPO<span class="o">]</span><span class="w"> </span><span class="o">[</span>--config<span class="w"> </span>PATH<span class="o">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-github-repo-config<span class="w"> </span>audit<span class="w"> </span><span class="o">[</span>--repo<span class="w"> </span>OWNER/REPO<span class="o">]</span><span class="w"> </span><span class="o">[</span>--config<span class="w"> </span>PATH<span class="o">]</span><span class="w"> </span><span class="o">[</span>--in-tree-templates<span class="o">]</span>
 </code></pre></div>
 <table>
 <thead>
@@ -18086,7 +18120,7 @@ reconciles it. It combines two independent halves:</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--repo OWNER/REPO</code> (defaults to the current git remote), <code>--config PATH</code> (local <code>vergil.toml</code>)</td>
+<td><code>--repo OWNER/REPO</code> (defaults to the current git remote), <code>--config PATH</code> (local <code>vergil.toml</code>), <code>--in-tree-templates</code> (<code>audit</code> only, vergil-tooling only: see <a href="#auditing-vergil-tooling-against-its-own-templates">Auditing vergil-tooling against its own templates</a>)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -18111,6 +18145,24 @@ A dirty or unrelated working tree cannot change the result, and
 clone is plain <code>git</code> over HTTPS and authenticates through git's
 credential helper (<code>gh auth setup-git</code>), so no token appears in argv or
 the logs. A clone that fails exits 2, naming the repo.</p>
+<h3 id="auditing-vergil-tooling-against-its-own-templates">Auditing vergil-tooling against its own templates<a class="headerlink" href="#auditing-vergil-tooling-against-its-own-templates" title="Permanent link">&para;</a></h3>
+<p>vergil-tooling holds the master copies of the managed-file templates, and
+a change to one updates vergil-tooling's own managed files in the same
+PR. After any template change, its <code>develop</code> is ahead of the installed
+release, so the installed templates would report drift that is not
+there. <code>audit --in-tree-templates</code> checks the managed files of
+vergil-tooling's <code>develop</code> with the templates and checks of the source
+tree in that same clone, the ones the next release will ship. It runs
+them in a child Python process whose <code>vergil_tooling</code> package is the
+clone's <code>src/</code> tree, and the child refuses to run if the package was
+loaded from anywhere else. The GitHub-side checks still run with the
+installed release.</p>
+<p>The flag refuses, with exit 2, a repo whose <code>develop</code> is not the
+vergil-tooling project (its <code>pyproject.toml</code> must name
+<code>vergil-tooling</code>). An in-tree audit that cannot complete, for example
+because the source tree needs a dependency the installed release lacks,
+also exits 2. <code>vrg-release</code> passes the flag when it releases
+vergil-tooling; no other repo uses it.</p>
 <h2 id="the-update-command">The <code>update</code> command<a class="headerlink" href="#the-update-command" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-github-repo-config<span class="w"> </span>update<span class="w"> </span><span class="o">[</span>--repo<span class="w"> </span>OWNER/REPO<span class="o">]</span><span class="w"> </span><span class="o">[</span>--config<span class="w"> </span>PATH<span class="o">]</span>
 </code></pre></div>
