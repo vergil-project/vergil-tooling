@@ -18131,7 +18131,8 @@ the permission model — set the permissions exactly as documented.</p>
        findings, and <code>vrg-intake-route</code> and <code>vrg-queue planning</code> read
        and retarget them (see <a href="../security-records/">Security Records</a>).
        The user App, or a human, also runs <code>vrg-security-record sync</code>,
-       which closes and reopens advisories to follow their issues. Each
+       which closes and reopens advisories to follow their issues, and
+       <code>vrg-security-record close</code>, which closes one with a reason. Each
        org's automation App (<code>&lt;org&gt;-automation</code>, see
        <a href="../identity-architecture/#the-org-automation-apps">Identity Architecture</a>)
        does not need the grant: the scheduled sweep makes no

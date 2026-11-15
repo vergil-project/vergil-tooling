@@ -20813,8 +20813,10 @@ paired with a neutral <code>security</code>-labelled intake issue (epic
 vergil-project/.github#517). <code>create</code> makes the pair (or attaches an
 advisory to an existing issue, or resumes an unfinished pair), <code>list</code> and
 <code>show</code> read records, <code>retarget</code> moves an advisory's tracking to new
-issues, and <code>sync</code> sets each paired advisory's state from its issues and
-reports broken pairs (<code>--dry-run</code> previews it). Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
+issues, <code>sync</code> sets each paired advisory's state from its issues and
+reports broken pairs (<code>--dry-run</code> previews it), and <code>close</code> closes a draft
+advisory whose issues are all closed, posting the GHSA ID and a required
+<code>--reason</code> on each of them first. Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
 <a href="../dev/security-record/">vrg-security-record</a> and
 <a href="../../guides/security-records/">Security Records</a>.</p>
 <table>
@@ -20831,7 +20833,7 @@ reports broken pairs (<code>--dry-run</code> previews it). Advisory text is prin
 </tr>
 <tr>
 <td>Args</td>
-<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code>; <code>sync [--dry-run]</code></td>
+<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code>; <code>sync [--dry-run]</code>; <code>close GHSA-ID --reason TEXT</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>

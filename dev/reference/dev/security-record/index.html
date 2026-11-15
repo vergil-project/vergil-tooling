@@ -14760,6 +14760,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#close" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        close
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17755,6 +17766,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#close" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        close
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17810,6 +17832,7 @@ it. For the policy, neutral wording and the severity mapping, see
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>vrg-security-record show (GHSA-ID | OWNER/REPO#N)
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>vrg-security-record retarget GHSA-ID --to 'OWNER/REPO#N' [--to 'OWNER/REPO#N' ...]
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>vrg-security-record sync [--dry-run]
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>vrg-security-record close GHSA-ID --reason TEXT
 </code></pre></div>
 <h2 id="output-rule">Output rule<a class="headerlink" href="#output-rule" title="Permanent link">&para;</a></h2>
 <p>An advisory's summary and description reach stdout only through <code>show</code>
@@ -17820,7 +17843,9 @@ and stderr; its response body is dropped, because for an advisory call it
 may hold the advisory text.</p>
 <p><code>list --details</code> is refused when <code>VRG_EPIC_SWEEP</code> is set, so advisory
 text can never reach the scheduled sweep's public Actions logs. <code>sync</code>
-prints no advisory text at all.</p>
+and <code>close</code> print no advisory text at all. <code>close</code> does not print its
+<code>--reason</code> either: the reason goes only into the public comments it
+posts.</p>
 <h2 id="where-things-are-created">Where things are created<a class="headerlink" href="#where-things-are-created" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>--repo</code> always names the <strong>affected</strong> repo, never where anything is
@@ -18071,6 +18096,61 @@ human's own <code>gh</code> login or the user App, never in the scheduled sweep.
 needs no advisories access (vergil-project/vergil-tooling#4313). Nothing
 runs <code>sync</code> on a schedule: run it after closing or reopening a <code>security</code>
 issue, and regularly in any case.</p>
+<h2 id="close">close<a class="headerlink" href="#close" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-security-record<span class="w"> </span>close<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"the work it tracked was dropped with its epic"</span>
+</code></pre></div>
+<p>Closes a draft advisory and leaves an audit trail: a public comment with
+the GHSA ID and the reason on every issue the record tracks. It is how an
+agent closes a record that <code>sync</code> would not close, such as one in a
+broken pair, or records why a record it closes was dropped. It takes the
+org from the current repo's <code>origin</code> remote, as <code>show</code> and <code>sync</code> do.</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--reason TEXT</code></td>
+<td>Required. Why the record is closed: one line, at most 500 characters. It is <strong>public</strong>, so it must be neutral, like an issue title: never the finding, its severity or any other advisory detail.</td>
+</tr>
+</tbody>
+</table>
+<p>The issues are the ones the advisory's <code>Tracking issue:</code> lines name, plus
+any <code>security</code>-labelled issue in the org whose <code>Security advisory:</code> line
+names it (found by REST listing, never by search). An issue that was
+transferred is followed to where it is now. The steps run in order, and
+each starts only once the one before it succeeded:</p>
+<ol>
+<li><strong>Check.</strong> Refuse, changing nothing, when:</li>
+<li>the advisory does not exist in <code>&lt;org&gt;/.github</code>;</li>
+<li>it is an external report, or in any state other than <code>draft</code> or
+     <code>closed</code> (<code>published</code>, <code>withdrawn</code>, <code>triage</code>): those are a human's
+     decision, and <code>sync</code> leaves them alone too;</li>
+<li>no issue tracks it and none names it, so no issue could carry the
+     comment;</li>
+<li>any of its issues is still open. <code>sync</code> sets an advisory back to
+     draft while any issue it tracks is open, so the close would not
+     hold: close the issue first (as not planned, for dropped work), or
+     retarget the record.</li>
+<li><strong>Comment.</strong> Post <code>Security record &lt;GHSA-id&gt; closed: &lt;reason&gt;</code> on each
+   issue, skipping one that already carries that exact comment.</li>
+<li><strong>Close.</strong> Set the advisory's state to <code>closed</code>, unless it already is.</li>
+</ol>
+<p>The comments go first, so a closed record always has its audit trail.
+After a failure at any step, re-run the same command: it posts no
+comment twice and finishes the job. A failure exits 1 with a message
+naming the advisory and the step.</p>
+<p>On success it prints <code>Closed &lt;GHSA-id&gt; in &lt;org&gt;/.github; the reason is on
+&lt;refs&gt;.</code>, or, for an advisory that was already closed,
+<code>&lt;GHSA-id&gt; was already closed in &lt;org&gt;/.github; the reason is on &lt;refs&gt;.</code>
+Before it, each transferred issue gets a line
+<code>&lt;GHSA-id&gt;: &lt;old ref&gt; was transferred to &lt;new ref&gt;: commented there.</code></p>
+<p><code>close</code> needs the same <strong>Repository security advisories: Read and write</strong>
+as <code>sync</code>, and runs as the human's own <code>gh</code> login or the user App.</p>
 <h2 id="related-commands">Related commands<a class="headerlink" href="#related-commands" title="Permanent link">&para;</a></h2>
 <p>These commands read or move records as part of their own work:</p>
 <ul>
@@ -18095,7 +18175,7 @@ issue, and regularly in any case.</p>
   them and names them by GHSA ID only (<code>advisory still tracks</code> for one,
   <code>advisories still track</code> for more):</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
 </code></pre></div>
 <p>It lists each org's advisories once per view, and skips an org whose
   <code>.github</code> is absent or not public unless one of its items has an
@@ -18116,7 +18196,7 @@ issue, and regularly in any case.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Refused (a private <code>.github</code>, a duplicate, bad refs, an unreadable file, <code>--details</code> under the sweep), a partial pair, a failed retarget, a broken pair found by <code>sync</code> (not <code>--dry-run</code>), a GitHub API failure, or an authentication failure</td>
+<td>Refused (a private <code>.github</code>, a duplicate, bad refs, an unreadable file, <code>--details</code> under the sweep, a <code>close</code> the checks refuse), a partial pair, a failed retarget or close, a broken pair found by <code>sync</code> (not <code>--dry-run</code>), a GitHub API failure, or an authentication failure</td>
 </tr>
 <tr>
 <td>2</td>
