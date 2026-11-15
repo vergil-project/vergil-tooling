@@ -116,10 +116,15 @@ show the **intended shape**, not what every bundle carries today:
   custom transcripts. The fix is part of the single source of truth for the
   report files
   ([vergil-tooling#4416](https://github.com/vergil-project/vergil-tooling/issues/4416)).
-  The `security`, `test` and `audit` gates name the tools that ran: since
-  vergil-actions v2.1.75 the `security` gate names its scanners (`trivy`
-  and `semgrep`, plus `codeql` when its job ran and passed), where it used
-  to ship an empty `tools` array.
+- The `test` and `audit` gates name their tools and hold their reports only
+  for a language with an entry in vergil-actions' report table
+  ([`ci/evidence/reports`](https://vergil-project.github.io/vergil-actions/actions/ci-evidence-reports/)),
+  today Python and Rust. For any other language (today go, cpp and
+  typescript) those two gates ship an empty `tools` array and no report,
+  with a warning on each leg.
+- Since vergil-actions v2.1.75 the `security` gate names its scanners
+  (`trivy` and `semgrep`, plus `codeql` when its job ran and passed), where
+  it used to ship an empty `tools` array.
 
 These are producer-side gaps, not schema changes: the fields exist and the
 consumer reads them; they populate as producers are updated.
@@ -345,10 +350,10 @@ the provenance anchor, and a per-gate summary with per-file `sha256`:
 | `missing_gates`  | Names of required gates that produced no evidence — recorded as data, never silently dropped. |
 
 **Current limitations (shipped state).** As with the `evidence.json` fragment,
-the `metrics` values shown are the **intended shape**: the manifest ships
-`metrics: {}` for **every** gate, and a non-Python repository's `quality`
-gate names Python's tools. The fields are present and read by auditors; they
-populate as producers are updated.
+the `metrics` and `tools` values shown are the **intended shape**: the
+manifest carries each gate's fragment as it is, with the gaps listed there,
+so it ships `metrics: {}` for **every** gate. The fields are present and
+read by auditors; they populate as producers are updated.
 
 Two trust properties are load-bearing:
 
