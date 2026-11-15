@@ -544,8 +544,8 @@ def _bypass_mode(repo: str, *, automation: bool) -> tuple[bool, int | None]:
     *automation* is :func:`identity_mode.is_automation`, resolved by the caller.
 
     ``bypass_actors`` are skipped only for an App token that is not the
-    automation identity (today's ops ``audit``): GitHub never shows that
-    field to it. Every other run, the human's and the automation App's,
+    automation identity (an agent App's token or a CI ``GITHUB_TOKEN``):
+    GitHub never shows that field to it. Every other run, the human's and the automation App's,
     manages them, so it needs the org automation App's numeric ID for the
     automation-branch ruleset (epic vergil-project/.github#1064, spec §6.1).
     A failed lookup raises :class:`AutomationIdentityError`.
