@@ -218,9 +218,7 @@ def test_resume_after_push_failed_before_pr(repo: Path, gh: dict[str, MagicMock]
     assert gh["create_pr"].call_count == 2
 
 
-def test_resume_after_push_with_local_branch_removed(
-    repo: Path, gh: dict[str, MagicMock]
-) -> None:
+def test_resume_after_push_with_local_branch_removed(repo: Path, gh: dict[str, MagicMock]) -> None:
     """The pushed branch is checked out from origin when the local one is gone."""
     gh["create_pr"].side_effect = [subprocess.CalledProcessError(1, ["gh"]), _PR]
     with pytest.raises(subprocess.CalledProcessError):
@@ -270,6 +268,14 @@ def test_refuses_bump_commit_to_another_version(repo: Path, gh: dict[str, MagicM
     (repo / "VERSION").write_text("0.2.0\n")
     _git(repo, "commit", "-qam", "chore(release): bump version to 0.2.0")
     _assert_refused(repo, gh, "not back-merge-bump's own")
+
+
+def test_refuses_bump_subject_with_other_version_file(repo: Path, gh: dict[str, MagicMock]) -> None:
+    """The stage's own subject is not enough: VERSION must hold that version too."""
+    _git(repo, "checkout", "-q", "-b", _BRANCH, "origin/main")
+    (repo / "VERSION").write_text("0.2.0\n")
+    _git(repo, "commit", "-qam", _SUBJECT)
+    _assert_refused(repo, gh, "VERSION reads 0.2.0")
 
 
 def test_refuses_branch_without_origin_main(repo: Path, gh: dict[str, MagicMock]) -> None:
