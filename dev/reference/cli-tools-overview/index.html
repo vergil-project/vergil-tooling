@@ -20151,7 +20151,10 @@ as done.</p>
 <p>Print or bump the repo's version. <code>show</code> prints the current version
 (<code>--major-minor</code> for <code>X.Y</code> only, <code>--ref</code> to read it from a git ref); <code>bump</code>
 increments <code>patch</code> (default), <code>minor</code> or <code>major</code> and prints the new version.
-Used by the CD workflows to read the release version.</p>
+For a Python or Rust repo, <code>bump</code> then refreshes the lockfile (<code>uv lock</code>,
+<code>cargo update --workspace</code>) in the dev container, through
+<code>vrg-container-run</code>, so no host toolchain is needed. Used by the CD
+workflows to read the release version.</p>
 <table>
 <thead>
 <tr>
@@ -20170,7 +20173,7 @@ Used by the CD workflows to read the release version.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run from the repo root</td>
+<td>Run from the repo root; <code>bump</code> in a Python or Rust repo needs a running container runtime</td>
 </tr>
 <tr>
 <td>Failure mode</td>
