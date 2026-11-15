@@ -17498,6 +17498,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#a-failed-release-job" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A failed release job
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stale-job-records" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17827,6 +17838,17 @@
     <span class="md-ellipsis">
       
         The vrg-release pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-failed-release-job" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A failed release job
       
     </span>
   </a>
@@ -18363,6 +18385,28 @@ right run, and <code>close-finalize</code> runs <code>vrg-finalize-pr</code> onl
 earlier stage passed. A second wait would add nothing. It would also
 fail the stage on a docs publish failure that <code>confirm-develop</code> has
 already deferred.</p>
+<h3 id="a-failed-release-job">A failed release job<a class="headerlink" href="#a-failed-release-job" title="Permanent link">&para;</a></h3>
+<p>When the CD release job on <code>main</code> does not succeed, <code>confirm-main</code>
+fails, and the release PR is already merged. <code>vrg-release --resume</code>
+alone cannot recover it: it watches the latest attempt of the same CD
+run and judges that same failed release job again. <code>vrg-release</code> does
+not re-run the job itself, since only you can tell that the cause is
+fixed. The <code>confirm-main</code> failure, on the terminal and on the tracking
+issue, lists the recovery steps with the run IDs filled in:</p>
+<ol>
+<li><code>gh run rerun &lt;ci-run&gt; --repo &lt;repo&gt;</code>: re-run the release PR's CI
+   run. The release job's evidence gate harvests that run's artifacts,
+   so a fix that changes what CI writes reaches the gate only through a
+   fresh CI attempt.</li>
+<li><code>gh run watch &lt;ci-run&gt; --repo &lt;repo&gt; --exit-status</code>.</li>
+<li><code>gh run rerun &lt;cd-run&gt; --repo &lt;repo&gt;</code>: re-run the failed CD run on
+   <code>main</code>.</li>
+<li><code>gh run watch &lt;cd-run&gt; --repo &lt;repo&gt; --exit-status</code>.</li>
+<li><code>vrg-release --resume &lt;version&gt;</code>.</li>
+</ol>
+<p>Run them once the fix for the cause is released. Stop at any watch that
+fails. The resume judges the CD run's new attempt through the same
+release-job gate.</p>
 <h3 id="stale-job-records">Stale job records<a class="headerlink" href="#stale-job-records" title="Permanent link">&para;</a></h3>
 <p>The confirm stages wait a bounded time for every CD job to reach
 <code>completed</code> in the GitHub jobs API, because a job's record can lag the
