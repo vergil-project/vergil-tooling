@@ -13,9 +13,10 @@ a pointer, record a deferral) so no queue review hand-rolls them::
 
 A bare ``#N`` item ref reads against the current repo; a bare ``--into`` ref
 reads against the item's repo. Which routes an item allows depends on the
-container epic it is in (:data:`intake_route.ROUTES`). A refused route (a
-route its container does not allow, a development-epic task, cross-org, or a
-private item headed somewhere public) exits 1 with the reason on stderr. So
+container epic it is in (:data:`intake_route.ROUTES`); ``planning`` also
+takes a follow-on brainstorm out of a development epic. A refused route (a
+route its container does not allow, any other development-epic task,
+cross-org, or a private item headed somewhere public) exits 1 with the reason on stderr. So
 does a one-off whose item does not end up under its target epic: the message
 names where the item is and how to recover (the ``vrg-epic-move`` fix for a
 wrong parent, the GitHub UI when GitHub keeps refusing the link as a duplicate
@@ -138,7 +139,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     routes.add_parser(
-        "planning", help="Reparent the item onto the planning epic (intake or deferred item)"
+        "planning",
+        help="Reparent the item onto the planning epic (intake, deferred or unparented item, "
+        "or a follow-on brainstorm under a development epic)",
     )
 
     split = routes.add_parser("split", help="Close the item, linking the tasks it was split into")
