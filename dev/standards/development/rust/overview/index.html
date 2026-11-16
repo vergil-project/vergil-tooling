@@ -17885,9 +17885,22 @@ maintainability, and long-term survivability across repositories.</p>
   JUnit report to <code>junit.xml</code>. Rustdoc examples run separately with
   <code>cargo test --doc</code>, because nextest does not run doctests.</li>
 <li>Coverage: cargo-llvm-cov (LLVM instrumentation, cross-platform) measures
-  that nextest run, held to 100% line coverage. Its report writes Cobertura
-  XML to <code>coverage.xml</code>. <code>coverage.xml</code> and <code>junit.xml</code> are the test gate's
-  evidence.</li>
+  that nextest run, held to 100% line coverage and 100% region coverage. Its
+  report writes Cobertura XML to <code>coverage.xml</code>. <code>coverage.xml</code> and
+  <code>junit.xml</code> are the test gate's evidence.</li>
+<li>A region is a span of code with its own execution count. Each arm of an
+    <code>if</code> or a <code>match</code>, and each <code>?</code> early return, is its own region, so a
+    line can run while one of its regions never does. Regions are the stable
+    toolchain's stand-in for branch coverage. Branch coverage itself needs a
+    nightly toolchain and is deferred to
+    <a href="https://github.com/vergil-project/.github/issues/1171">vergil-project/.github#1171</a>.</li>
+<li>The report names the lines that never ran. When the gate fails,
+    <code>vrg-validate</code> also lists every uncovered region as
+    <code>&lt;file&gt;:&lt;line&gt;:&lt;col&gt;: uncovered region</code>, from the same report's JSON
+    export. The list counts regions as cargo-llvm-cov's region total does: for
+    a generic function, only its best-covered instantiation counts.</li>
+<li>Nothing can be excluded from coverage. An unreachable region is a design
+    signal: remove it or make it testable.</li>
 <li>If a repository uses different tools, document the reason and equivalents.</li>
 </ul>
 <h2 id="toolchain-selection">Toolchain Selection<a class="headerlink" href="#toolchain-selection" title="Permanent link">&para;</a></h2>
@@ -17927,8 +17940,8 @@ rules):</p>
 <ul>
 <li><code>quality / evidence</code>: the common checks, the custom validator, rustfmt,
   clippy and <code>cargo check</code></li>
-<li><code>test / evidence</code>: the nextest run under cargo-llvm-cov at 100% line
-  coverage, and the doctests</li>
+<li><code>test / evidence</code>: the nextest run under cargo-llvm-cov at 100% line and
+  region coverage, and the doctests</li>
 <li><code>audit / evidence</code>: <code>cargo deny</code> against the fleet policy</li>
 <li><code>security / trivy</code> and <code>security / semgrep</code></li>
 <li><code>security / codeql</code>, and GitHub's own <code>CodeQL</code>, <code>Trivy</code> and <code>Semgrep OSS</code>
