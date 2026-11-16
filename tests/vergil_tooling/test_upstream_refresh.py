@@ -1,4 +1,4 @@
-"""Tests for vergil_tooling.lib.upstream_refresh (epic vergil-project/.github#1168, Task 3a).
+"""Tests for vergil_tooling.lib.upstream_refresh (epic vergil-project/.github#1168, Tasks 3a, 3b).
 
 Git runs for real: ``prepare`` clones a temp bare ``origin`` standing in for
 GitHub, and the fence tests build their diffs in a real repo, so the changed
@@ -9,31 +9,36 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
-from vergil_tooling.lib import develop_clone, github
+from vergil_tooling.lib import develop_clone, github, pr_merge, upstream_refresh
 from vergil_tooling.lib.config import ConfigError, PathRule, UpstreamRefreshConfig
+from vergil_tooling.lib.mechanized_pr import SyncResult
 from vergil_tooling.lib.upstream_refresh import (
+    COMMIT_SUBJECT,
+    JOB,
     KEY_ENV,
     META_FILE,
     PATCH_FILE,
     REPORT_ENV,
+    FenceRefusedError,
     Prepared,
     UpstreamRefreshError,
+    bot_identity,
     diff_changed_lines,
     fence_violations,
     glob_match,
     hook_env,
     prepare,
+    publish,
     read_prepared,
+    read_rules_file,
     render_body,
     run_hook,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _REPO = "o/r"
 
@@ -1174,3 +1179,512 @@ def test_fence_line_rule_refuses_mode_change(tmp_path: Path) -> None:
         "f: refused by the line rule of paths entry 'f': a mode change is not allowed under a "
         "line rule"
     ]
+
+
+# -- publish (Task 3b) -------------------------------------------------------------
+
+_RUN = "4242"
+_BRANCH = f"automation/{JOB}/{_RUN}"
+_BOT = ("acme-automation[bot]", "99+acme-automation[bot]@users.noreply.github.com")
+
+
+@dataclass
+class _Hub:
+    """The GitHub calls publish and ``open_sync_pr`` make, backed by the bare *origin*."""
+
+    origin: Path
+    compare_status: str = "ahead"
+    compare_missing: bool = False
+    open_prs: dict[str, int] = field(default_factory=dict)
+    calls: list[tuple[str, ...]] = field(default_factory=list)
+    created: list[str] = field(default_factory=list)
+    waits: list[int] = field(default_factory=list)
+
+    def branches(self) -> list[str]:
+        out = _git(self.origin, "for-each-ref", "--format=%(refname:short)", "refs/heads/")
+        return sorted(line for line in out.splitlines() if line)
+
+    def read_json(self, *args: str) -> object:
+        self.calls.append(args)
+        if args[0] == "api" and "/compare/" in args[1]:
+            if self.compare_missing:
+                raise github.GitHubAPIError(1, ("gh", "api"), "", "HTTP 404: Not Found")
+            return {"status": self.compare_status}
+        if args[:2] == ("pr", "list"):
+            head = args[args.index("--head") + 1]
+            number = self.open_prs.get(head)
+            if number is None:
+                return []
+            return [
+                {
+                    "number": number,
+                    "url": f"https://github.com/{_REPO}/pull/{number}",
+                    "isCrossRepository": False,
+                    "headRepository": {"name": "r"},
+                    "headRepositoryOwner": {"login": "o"},
+                }
+            ]
+        if args[:2] == ("pr", "view"):
+            if args[args.index("--json") + 1] == "id":
+                return {"id": "PR_1"}
+            return {"autoMergeRequest": {"mergeMethod": "SQUASH"}}
+        raise AssertionError(args)
+
+    def read_json_paginated(self, endpoint: str) -> list[object]:
+        prefix = endpoint.rsplit("/heads/", 1)[1]
+        return [{"ref": f"refs/heads/{b}"} for b in self.branches() if b.startswith(prefix)]
+
+    def run(self, *args: str) -> None:
+        self.calls.append(args)
+        assert args[:2] == ("pr", "close"), args
+        self.open_prs = {h: n for h, n in self.open_prs.items() if n != int(args[2])}
+
+    def delete_if_exists(self, endpoint: str) -> bool:
+        self.calls.append(("delete", endpoint))
+        _git(self.origin, "update-ref", "-d", "refs/" + endpoint.split("/git/refs/", 1)[1])
+        return True
+
+    def create_pr(self, **kwargs: str) -> str:
+        self.calls.append(("pr", "create", kwargs["head"]))
+        self.created.append(Path(kwargs["body_file"]).read_text())
+        return f"https://github.com/{_REPO}/pull/500"
+
+    def graphql(self, query: str, **_variables: object) -> dict[str, object]:
+        assert "enablePullRequestAutoMerge" in query
+        return {}
+
+    def wait_until_merged(self, _pr: str, *, strategy: str, deadline_secs: int) -> None:
+        assert strategy == "squash"
+        self.waits.append(deadline_secs)
+
+
+@pytest.fixture
+def hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Hub:
+    monkeypatch.setenv("GITHUB_RUN_ID", _RUN)
+    monkeypatch.delenv("VRG_MECHANIZED_PR_DEADLINE", raising=False)
+    api = _Hub(tmp_path / "origin.git")
+    for name in ("read_json", "read_json_paginated", "run", "delete_if_exists", "create_pr"):
+        monkeypatch.setattr(github, name, getattr(api, name))
+    monkeypatch.setattr(github, "graphql", api.graphql)
+    monkeypatch.setattr(pr_merge, "wait_until_merged", api.wait_until_merged)
+    return api
+
+
+_PATHS_TOML = '\npaths = ["data.txt"]\n'
+
+
+def _publish_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hook: str, paths: str = _PATHS_TOML
+) -> tuple[Path, Path]:
+    """An origin whose ``[upstream-refresh]`` has *hook* and the *paths* line."""
+    origin, seed = _origin(tmp_path, monkeypatch, hook)
+    (seed / "vergil.toml").write_text((seed / "vergil.toml").read_text() + paths)
+    _git(seed, "commit", "-qam", "paths", "--allow-empty")
+    _git(seed, "push", "-q", "origin", "develop")
+    return origin, seed
+
+
+def _advance_develop(seed: Path, name: str = "other.txt", content: str = "x\n") -> None:
+    _write(seed, name, content)
+    _git(seed, "add", name)
+    _git(seed, "commit", "-qm", f"advance {name}")
+    _git(seed, "push", "-q", "origin", "develop")
+
+
+def _edit_meta(out: Path, **changes: object) -> None:
+    meta = json.loads((out / META_FILE).read_text())
+    meta.update(changes)
+    (out / META_FILE).write_text(json.dumps(meta))
+
+
+def test_publish_applies_on_recorded_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    origin, seed = _publish_origin(tmp_path, monkeypatch, "echo new > data.txt")
+    out = tmp_path / "out"
+    prepared = prepare(_REPO, out)
+    _advance_develop(seed)
+
+    result = publish(_REPO, out, deadline_secs=None, bot=None)
+
+    assert result == SyncResult(
+        status="merged", pr_url=f"https://github.com/{_REPO}/pull/500", closed=[]
+    )
+    assert _git(origin, "rev-parse", f"{_BRANCH}^") == prepared.base_sha
+    assert _git(origin, "show", f"{_BRANCH}:data.txt") == "new"
+    assert _git(origin, "log", "-1", "--format=%s", _BRANCH) == COMMIT_SUBJECT
+    assert hub.created == [render_body([], ["data.txt"])]
+    compare = [c for c in hub.calls if c[0] == "api"]
+    assert compare and compare[0][1].startswith(f"repos/{_REPO}/compare/{prepared.base_sha}...")
+
+
+@pytest.mark.parametrize("missing", [False, True], ids=["diverged", "unknown"])
+def test_publish_refuses_base_not_on_develop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hub: _Hub,
+    missing: bool,  # noqa: FBT001
+) -> None:
+    _, seed = _publish_origin(tmp_path, monkeypatch, "echo new > data.txt")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    _advance_develop(seed)
+    hub.compare_status = "diverged"
+    hub.compare_missing = missing
+
+    match = "is not a commit of o/r" if missing else "is no longer on o/r's develop"
+    with pytest.raises(UpstreamRefreshError, match=match):
+        publish(_REPO, out, deadline_secs=None, bot=None)
+    assert hub.branches() == ["develop"]
+    assert not [c for c in hub.calls if c[0] == "pr"]
+
+
+def test_publish_refuses_patch_that_does_not_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    _publish_origin(tmp_path, monkeypatch, "echo new > data.txt")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    patch = (out / PATCH_FILE).read_bytes()
+    (out / PATCH_FILE).write_bytes(patch.replace(b"\n-old\n", b"\n-something else\n"))
+
+    with pytest.raises(UpstreamRefreshError, match="does not apply cleanly"):
+        publish(_REPO, out, deadline_secs=None, bot=None)
+    assert hub.branches() == ["develop"]
+
+
+def test_publish_refuses_extra_untracked_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    hook = "echo new > data.txt; echo x > extra.txt; git add extra.txt"
+    _publish_origin(tmp_path, monkeypatch, hook, '\npaths = ["data.txt", "extra.txt"]\n')
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    _edit_meta(out, paths=["data.txt"])
+
+    with pytest.raises(FenceRefusedError) as excinfo:
+        publish(_REPO, out, deadline_secs=None, bot=None)
+    assert excinfo.value.problems == [
+        "the applied patch touches paths prepare did not list (refused, the touched set must "
+        "equal the listed paths): extra.txt"
+    ]
+    assert hub.branches() == ["develop"]
+
+
+def test_publish_fence_sees_tracked_change_missing_from_meta(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    hook = "echo new > data.txt; echo 'on: push' > .github/workflows/ci.yml"
+    _, seed = _publish_origin(tmp_path, monkeypatch, hook, '\npaths = ["**"]\n')
+    _advance_develop(seed, ".github/workflows/ci.yml", "on: pull_request\n")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    _edit_meta(out, paths=["data.txt"])
+
+    with pytest.raises(FenceRefusedError) as excinfo:
+        publish(_REPO, out, deadline_secs=None, bot=None)
+    problems = excinfo.value.problems
+    assert "prepare did not list" in problems[0]
+    assert problems[0].endswith(": .github/workflows/ci.yml")
+    assert problems[1].startswith(".github/workflows/ci.yml: refused, .github/** is never changed")
+    assert "nothing was pushed" in str(excinfo.value)
+    assert hub.branches() == ["develop"]
+
+
+def test_publish_touched_set_must_equal_meta_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    _publish_origin(tmp_path, monkeypatch, "echo new > data.txt")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    _edit_meta(out, paths=["data.txt", "ghost.txt"])
+
+    with pytest.raises(FenceRefusedError) as excinfo:
+        publish(_REPO, out, deadline_secs=None, bot=None)
+    assert excinfo.value.problems == [
+        "prepare listed paths the applied patch does not touch (refused, the touched set must "
+        "equal the listed paths): ghost.txt"
+    ]
+
+
+def test_publish_fence_reads_rules_from_develop_tip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    # The recorded base allows other.txt; the develop tip no longer does.
+    hook = "echo new > data.txt; echo new > other.txt"
+    _, seed = _publish_origin(tmp_path, monkeypatch, hook, '\npaths = ["data.txt", "other.txt"]\n')
+    _advance_develop(seed, "other.txt", "old\n")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    toml = (seed / "vergil.toml").read_text().replace('"data.txt", "other.txt"', '"data.txt"')
+    (seed / "vergil.toml").write_text(toml)
+    _git(seed, "commit", "-qam", "tighten paths")
+    _git(seed, "push", "-q", "origin", "develop")
+
+    with pytest.raises(FenceRefusedError) as excinfo:
+        publish(_REPO, out, deadline_secs=None, bot=None)
+    assert excinfo.value.problems == [
+        "other.txt: refused, not covered by any [upstream-refresh].paths entry"
+    ]
+    # A meta cannot carry rules of its own: any key beyond the four is refused.
+    _edit_meta(out, rules={"paths": ["**"]})
+    with pytest.raises(UpstreamRefreshError, match=r"wrong keys .*unexpected: \['rules'\]"):
+        publish(_REPO, out, deadline_secs=None, bot=None)
+
+
+def test_publish_fence_refusal_pushes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    _publish_origin(tmp_path, monkeypatch, "echo new > data.txt", '\npaths = ["vergil.toml"]\n')
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+
+    with pytest.raises(FenceRefusedError, match="data.txt: refused, not covered"):
+        publish(_REPO, out, deadline_secs=None, bot=None)
+    assert hub.branches() == ["develop"]
+    assert hub.calls == []
+    assert hub.waits == []
+
+
+def test_publish_no_paths_refuses_every_patch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    _publish_origin(tmp_path, monkeypatch, "echo new > data.txt", "")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    with pytest.raises(FenceRefusedError, match="paths is empty or absent"):
+        publish(_REPO, out, deadline_secs=None, bot=None)
+    assert hub.branches() == ["develop"]
+
+
+def test_publish_empty_paths_closes_earlier_pr_in_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    origin, _ = _publish_origin(tmp_path, monkeypatch, "true")
+    earlier = f"automation/{JOB}/1"
+    _git(origin, "update-ref", f"refs/heads/{earlier}", _git(origin, "rev-parse", "develop"))
+    hub.open_prs[earlier] = 7
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+
+    result = publish(_REPO, out, deadline_secs=7200, bot=_BOT)
+
+    url = f"https://github.com/{_REPO}/pull/7"
+    assert result == SyncResult(status="in_sync", pr_url=None, closed=[url])
+    assert hub.branches() == ["develop"]
+    assert f"closed the earlier run's PR {url}" in capsys.readouterr().out
+    assert hub.waits == []
+
+
+def test_publish_sets_bot_author_and_committer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    origin, _ = _publish_origin(tmp_path, monkeypatch, "echo new > data.txt")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+
+    publish(_REPO, out, deadline_secs=7200, bot=_BOT)
+
+    fmt = "%an|%ae|%cn|%ce"
+    name, email = _BOT
+    assert _git(origin, "log", "-1", f"--format={fmt}", _BRANCH) == f"{name}|{email}|{name}|{email}"
+
+
+def test_publish_human_run_commits_as_the_caller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    origin, _ = _publish_origin(tmp_path, monkeypatch, "echo new > data.txt")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    publish(_REPO, out, deadline_secs=None, bot=None)
+    assert _git(origin, "log", "-1", "--format=%an|%ce", _BRANCH) == "Test|test@example.com"
+
+
+def test_human_run_keeps_env_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    _publish_origin(tmp_path, monkeypatch, "echo new > data.txt")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    monkeypatch.setenv("VRG_MECHANIZED_PR_DEADLINE", "900")
+    publish(_REPO, out, deadline_secs=None, bot=None)
+    assert hub.waits == [900]
+
+
+def test_publish_deadline_counts_from_tool_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    _publish_origin(tmp_path, monkeypatch, "echo new > data.txt")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    # The tool started at 1000; clone and apply took 600 seconds on this clock.
+    monkeypatch.setattr(upstream_refresh, "_monotonic", lambda: 1600.0)
+    publish(_REPO, out, deadline_secs=7200, bot=_BOT, started=1000.0)
+    assert hub.waits == [6600]
+
+
+def test_publish_deadline_spent_before_the_pr_pushes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    _publish_origin(tmp_path, monkeypatch, "echo new > data.txt")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    monkeypatch.setattr(upstream_refresh, "_monotonic", lambda: 9000.0)
+    with pytest.raises(UpstreamRefreshError, match="7200s publish deadline passed"):
+        publish(_REPO, out, deadline_secs=7200, bot=_BOT, started=1000.0)
+    assert hub.branches() == ["develop"]
+
+
+def test_publish_refuses_output_for_another_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    _publish_origin(tmp_path, monkeypatch, "echo new > data.txt")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    with pytest.raises(UpstreamRefreshError, match="is for o/r, not o/other"):
+        publish("o/other", out, deadline_secs=None, bot=None)
+    assert hub.calls == []
+
+
+def test_publish_vergil_toml_before_from_base_after_from_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    # The hook changes [dependencies] in vergil.toml: refused, naming the table.
+    hook = "sed -i.bak 's/^vergil = .*/vergil = \"v9.9\"/' vergil.toml && rm vergil.toml.bak"
+    _publish_origin(tmp_path, monkeypatch, hook, '\npaths = ["vergil.toml"]\n')
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    with pytest.raises(FenceRefusedError) as excinfo:
+        publish(_REPO, out, deadline_secs=None, bot=None)
+    assert excinfo.value.problems == [
+        "vergil.toml: refused, [dependencies] changed; outside [[package]] nothing may change"
+    ]
+
+
+def test_read_rules_file(tmp_path: Path) -> None:
+    rules = tmp_path / "vergil.toml"
+    rules.write_text('[upstream-refresh]\nhook = "h"\npaths = ["a", { path = "b", lines = "x" }]\n')
+    assert read_rules_file(rules) == UpstreamRefreshConfig(
+        hook="h", paths=(PathRule(glob="a"), PathRule(glob="b", lines="x"))
+    )
+    rules.write_text("[ci]\n")
+    with pytest.raises(UpstreamRefreshError, match="has no \\[upstream-refresh\\] section"):
+        read_rules_file(rules)
+    rules.write_text("not = = toml")
+    with pytest.raises(ConfigError, match="is not valid TOML"):
+        read_rules_file(rules)
+    with pytest.raises(UpstreamRefreshError, match="cannot read the rules file"):
+        read_rules_file(tmp_path / "missing.toml")
+
+
+def test_bot_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[str, ...]] = []
+
+    def read_json(*args: str) -> object:
+        seen.append(args)
+        return {"id": 42, "login": "acme-automation[bot]"}
+
+    monkeypatch.setattr(github, "read_json", read_json)
+    assert bot_identity("acme-automation") == (
+        "acme-automation[bot]",
+        "42+acme-automation[bot]@users.noreply.github.com",
+    )
+    assert seen == [("api", "users/acme-automation%5Bbot%5D")]
+
+
+@pytest.mark.parametrize(
+    ("tip_toml", "match"),
+    [(None, "o/r's develop has no vergil.toml"), ("", "has no \\[upstream-refresh\\]")],
+    ids=["no-file", "no-section"],
+)
+def test_publish_refuses_tip_without_rules(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hub: _Hub,
+    tip_toml: str | None,
+    match: str,
+) -> None:
+    _, seed = _publish_origin(tmp_path, monkeypatch, "echo new > data.txt")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    if tip_toml is None:
+        _git(seed, "rm", "-q", "vergil.toml")
+    else:
+        (seed / "vergil.toml").write_text(_BASE_TOML + tip_toml)
+    _git(seed, "commit", "-qam", "tip rules")
+    _git(seed, "push", "-q", "origin", "develop")
+    with pytest.raises(UpstreamRefreshError, match=match):
+        publish(_REPO, out, deadline_secs=None, bot=None)
+    assert hub.calls == []
+
+
+def test_publish_compare_failure_names_the_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    _, seed = _publish_origin(tmp_path, monkeypatch, "echo new > data.txt")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    _advance_develop(seed)
+
+    def broken(*_a: str) -> object:
+        raise github.GitHubAPIError(1, ("gh", "api"), "", "HTTP 502: Bad Gateway")
+
+    monkeypatch.setattr(github, "read_json", broken)
+    with pytest.raises(UpstreamRefreshError, match="could not check that the recorded base"):
+        publish(_REPO, out, deadline_secs=None, bot=None)
+
+
+def test_publish_base_fetch_failure_names_the_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    _publish_origin(tmp_path, monkeypatch, "echo new > data.txt")
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    _edit_meta(out, base_sha="f" * 40)  # GitHub's compare (the fake) says "ahead"
+    with pytest.raises(
+        UpstreamRefreshError, match=f"could not fetch the recorded base commit {'f' * 40}"
+    ):
+        publish(_REPO, out, deadline_secs=None, bot=None)
+    assert hub.branches() == ["develop"]
+
+
+def test_publish_refuses_deleted_vergil_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hub: _Hub
+) -> None:
+    _publish_origin(tmp_path, monkeypatch, "git rm -q vergil.toml", '\npaths = ["vergil.toml"]\n')
+    out = tmp_path / "out"
+    prepare(_REPO, out)
+    with pytest.raises(FenceRefusedError) as excinfo:
+        publish(_REPO, out, deadline_secs=None, bot=None)
+    assert excinfo.value.problems == [
+        "vergil.toml: refused, a refresh may edit it but never add or delete it"
+    ]
+
+
+def test_staged_clone_refuses_paths_without_patch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, seed = _publish_origin(tmp_path, monkeypatch, "true")
+    prepared = Prepared(
+        repo=_REPO, base_sha=_git(seed, "rev-parse", "HEAD"), paths=["data.txt"], notes=[]
+    )
+    with (
+        pytest.raises(UpstreamRefreshError, match="gave no patch"),
+        upstream_refresh.staged_clone(_REPO, prepared, None),
+    ):
+        pytest.fail("must not yield")
+
+
+def test_bot_identity_lookup_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(*_a: str) -> object:
+        raise github.GitHubAPIError(1, ("gh", "api"), "", "HTTP 404: Not Found")
+
+    monkeypatch.setattr(github, "read_json", broken)
+    with pytest.raises(UpstreamRefreshError, match="could not look up the bot user"):
+        bot_identity("acme-automation")
+
+
+def test_bot_identity_without_id_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(github, "read_json", lambda *_a: {"login": "x"})
+    with pytest.raises(UpstreamRefreshError, match="returned no numeric id"):
+        bot_identity("acme-automation")
