@@ -902,6 +902,22 @@ def parse_merge_review_toml(text: str, source: str) -> MergeReviewConfig:
     return _parse_merge_review(raw, source)
 
 
+def parse_upstream_refresh_toml(text: str, source: str) -> UpstreamRefreshConfig | None:
+    """Parse the ``[upstream-refresh]`` table of ``vergil.toml`` text; ``None`` when absent.
+
+    ``vrg-upstream-refresh --dry-run --rules-from`` reads its path-fence rules
+    from a branch's ``vergil.toml`` this way, needing only this table (epic
+    vergil-project/.github#1168). *source* labels errors. Raises
+    :class:`ConfigError` for invalid TOML or an invalid table.
+    """
+    try:
+        raw = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        msg = f"{source} is not valid TOML: {exc}"
+        raise ConfigError(msg) from exc
+    return _parse_upstream_refresh(raw, source)
+
+
 def parse_test_workers(value: Any, where: str) -> int | str:
     """Validate a worker count: ``"auto"`` or a positive int.
 

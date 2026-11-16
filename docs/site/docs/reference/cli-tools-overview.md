@@ -515,23 +515,29 @@ the [dependency-update reference](dependency-update-config.md).
 
 ### vrg-upstream-refresh
 
-Run the repo's `[upstream-refresh].hook` in a temporary worktree of
-the base branch, then open, refresh or close the single
-`upstream-refresh` PR. The checkout it runs from must be clean and on
-the base, and it is left exactly as found. A no-change run closes any
-stale refresh PR, or exits quietly when there is none. It never merges, and never runs dependency updaters,
-validation or a release. It runs from the scheduled
-`ops-upstream-refresh` workflow under the App token, or by hand as a
-human; it refuses agent identities. See the
+Run the repo's `[upstream-refresh].hook` in a fresh clone of
+`develop`, check the patch against the repo's path fence
+(`[upstream-refresh].paths`), and open an
+`automation/upstream-refresh/<run-id>` PR that merges itself once CI
+passes. It runs in two halves split by the key boundary: `prepare`
+runs the hook with no credentials and writes a patch; `publish` holds
+the automation App's key, applies the patch on the recorded `develop`
+commit in its own clone, checks the fence, commits as the App's bot,
+and waits until the PR merges, renewing and revoking its token as it
+goes. A no-change run still closes an earlier run's open PR. With no
+mode, both halves run in one process for a human's local run.
+`--dry-run` runs prepare and the fence and pushes nothing. It never
+touches the caller's checkout, and never runs dependency updaters,
+validation or a release. See the
 [upstream-refresh reference](upstream-refresh-config.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_upstream_refresh` |
-| Args | `--repo OWNER/NAME` (default: `$GITHUB_REPOSITORY`, then origin), `--base BRANCH` (default: the repo's default branch), `--dry-run` |
-| Preconditions | Not an agent identity; `[upstream-refresh]` in `vergil.toml`; clean working tree with `HEAD` at `origin/<base>`; `gh` authenticated with contents and pull-requests write |
-| Failure mode | A hook failure or untracked files left by the hook stop the run before any push; errors on stderr |
-| Exit codes | 0 any outcome (`nothing`, `closed`, `opened`, `refreshed`, `unchanged`), 1 error or refusal |
+| Args | `prepare --out DIR`, `publish --from DIR`, or no mode (prepare and publish in one process); `--repo OWNER/NAME` (default: `$GITHUB_REPOSITORY`, then origin); `--dry-run`, with `--rules-from PATH` to read the fence rules from a branch's `vergil.toml` |
+| Preconditions | `[upstream-refresh]` in `vergil.toml` on `develop`. Agent identities may run `--dry-run` only. Under GitHub Actions: publish needs `VRG_AUTOMATION_APP`, `VRG_AUTOMATION_CLIENT_ID` and `VRG_AUTOMATION_PRIVATE_KEY`; prepare refuses them; the combined mode is refused |
+| Failure mode | A hook failure, untracked files, a patch that does not apply, a recorded commit no longer on `develop`, or a fence violation stops the run before any push, naming the cause on stderr |
+| Exit codes | 0 merged or nothing to change, 1 failure or refusal (usage errors included), 2 PR opened but not merged (PR and reason named), 130/143 interrupted |
 | Status | Active |
 
 ### vrg-finalize-pr

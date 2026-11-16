@@ -44,7 +44,7 @@ the dev-tree override venv.
 | [vrg-github-repo-config](config-audit.md) | Audit/reconcile a repo against canonical config |
 | [vrg-dependabot-audit](dependabot-audit.md) | Fail on any open Dependabot alert |
 | [vrg-github-repo-init](cli-tools-overview.md#vrg-github-repo-init) | Bootstrap a new managed repository |
-| [vrg-upstream-refresh](cli-tools-overview.md#vrg-upstream-refresh) | Run the repo's upstream-refresh hook and open, refresh or close its PR |
+| [vrg-upstream-refresh](cli-tools-overview.md#vrg-upstream-refresh) | Run the repo's upstream-refresh hook, check its path fence, and open a PR that merges itself |
 | [vrg-branch-sweep](dev/branch-sweep.md) | Report, or with `--apply` delete, a repo's finished remote branches |
 | [vrg-repo-status](cli-tools-overview.md#vrg-repo-status) | Show every worktree in the current repo, grouped by kind, and what is pending release |
 | [vrg-container-run](cli-tools-overview.md#vrg-container-run) | Run commands inside a dev container |

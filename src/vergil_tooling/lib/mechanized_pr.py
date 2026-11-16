@@ -14,8 +14,11 @@ the way a person would, with plain git in that checkout:
 2. **In sync.** A clean ``git status`` in the clone means nothing to propose:
    the result is ``in_sync``.
 3. **Otherwise** the changes are committed on a new branch for this run,
-   ``automation/<job>/<run-id>``, whose parent is the clone's ``develop``
-   commit, and pushed. Git records content and file mode, so an executable bit
+   ``automation/<job>/<run-id>``, whose parent is the clone's ``HEAD``, and
+   pushed. ``HEAD`` is normally the ``develop`` tip; a caller may check out an
+   older ``develop`` commit first (``vrg-upstream-refresh`` publishes on the
+   commit its hook ran against), and the wait's branch update then brings the
+   PR up to date. Git records content and file mode, so an executable bit
    the job set survives.
 4. The PR is opened against ``develop`` and GitHub auto-merge is turned on with
    the squash method and the pushed commit as the expected head, then read back
@@ -29,15 +32,25 @@ the way a person would, with plain git in that checkout:
    whether or not auto-merge is on. A failed check, a conflict, a closed PR,
    the update cap or the deadline stops the wait with
    :class:`PRNotMergedError`, naming the PR and the reason. The deadline is
-   ``$VRG_MECHANIZED_PR_DEADLINE`` seconds, 2400 (40 minutes) by default: an
-   automation job's App installation token lasts one hour and cannot be
-   renewed inside the job, so the whole watch must end well inside it.
+   the caller's ``deadline_secs`` when it gives one. A job that holds an App
+   token source (:mod:`vergil_tooling.lib.app_token`, registered with
+   :func:`vergil_tooling.lib.github.token_source`) passes its own: every
+   ``gh`` and ``git`` call then takes a current token, renewed inside the
+   job, so the wait is not bound to one token's hour. Without one, the
+   deadline is ``$VRG_MECHANIZED_PR_DEADLINE`` seconds, 2400 (40 minutes) by
+   default, inside the one hour an ambient App installation token lasts.
+
+Each step that changes GitHub prints one line as it happens: each earlier
+run's PR it closes, the PR it opens, and how the wait ended, with the time it
+waited. A run that waits for an hour or more can then be read from its log
+alone.
 
 Every GitHub call names the repo (``--repo`` or a ``repos/<repo>/…`` endpoint),
 so nothing depends on the cwd. The push authenticates the way
-:mod:`vergil_tooling.lib.git` does for any ``-C <checkout>`` push: git's
-credential helper, or the App installation token of the checkout's own org. No
-token appears in argv or the logs.
+:mod:`vergil_tooling.lib.git` does for any ``-C <checkout>`` push: the
+registered token source's current token, git's credential helper, or the App
+installation token of the checkout's own org. No token appears in argv or the
+logs.
 
 Every failure raises :class:`MechanizedPRError`, naming the step that failed and
 the repo. A failure after the push leaves the branch behind; the next run's
@@ -51,6 +64,7 @@ import re
 import secrets
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -168,6 +182,11 @@ def deadline_secs() -> int:
     return secs
 
 
+# ``open_sync_pr``'s ``deadline_secs`` keyword shadows :func:`deadline_secs`
+# inside it, so it reaches the function by this name.
+_env_deadline_secs = deadline_secs
+
+
 def job_prefix(job: str) -> str:
     """The branch prefix every run of *job* uses: ``automation/<job>/``."""
     _check_job(job)
@@ -258,6 +277,7 @@ def _clear_earlier_runs(repo: str, prefix: str) -> list[str]:
                 github.run(
                     "pr", "close", str(pr.number), "--repo", repo, "--comment", _CLOSE_COMMENT
                 )
+                print(f"{repo}: closed the earlier run's PR {pr.url}")
                 closed.append(pr.url)
             github.delete_if_exists(f"repos/{repo}/git/refs/heads/{quote(branch, safe='/')}")
     except (subprocess.CalledProcessError, ValueError) as exc:
@@ -337,32 +357,67 @@ def _enable_auto_merge(repo: str, pr_url: str, head: str) -> None:
 
 
 def _wait_until_merged(repo: str, pr_url: str, deadline: int) -> None:
-    """Watch *pr_url* until it merges; raise :class:`PRNotMergedError` when it does not."""
+    """Watch *pr_url* until it merges; raise :class:`PRNotMergedError` when it does not.
+
+    Prints how the wait ended and how long it took, merged or not.
+    """
+    started = time.monotonic()
+
+    def ended(outcome: str) -> None:
+        waited = int(time.monotonic() - started)
+        print(f"{repo}: the wait for {pr_url} ended after {waited}s: {outcome}")
+
     try:
         pr_merge.wait_until_merged(pr_url, strategy=_MERGE_STRATEGY, deadline_secs=deadline)
     except pr_merge.MergeAbortError as exc:
+        ended(f"not merged ({exc})")
         raise PRNotMergedError(repo, pr_url, str(exc)) from exc
     except (subprocess.CalledProcessError, RuntimeError, ValueError) as exc:
         reason = f"the wait until merged failed: {error_text(exc)}"
+        ended(f"not merged ({reason})")
         raise PRNotMergedError(repo, pr_url, reason) from exc
+    ended("merged")
 
 
-def open_sync_pr(repo: str, clone: Path, *, job: str, title: str, body: str) -> SyncResult:
+def _check_deadline(secs: int) -> int:
+    """*secs*, refused unless it is a positive whole number of seconds."""
+    if isinstance(secs, bool) or not isinstance(secs, int) or secs <= 0:
+        msg = (
+            "the wait-until-merged deadline must be a positive whole number of seconds, "
+            f"got {secs!r}"
+        )
+        raise MechanizedPRError(msg)
+    return secs
+
+
+def open_sync_pr(  # noqa: PLR0913 - the PR's parts and its deadline, all keyword-only
+    repo: str,
+    clone: Path,
+    *,
+    job: str,
+    title: str,
+    body: str,
+    deadline_secs: int | None = None,
+) -> SyncResult:
     """Propose the changes written in *clone* to *repo*'s ``develop`` as one PR.
 
     *clone* is a :func:`~vergil_tooling.lib.develop_clone.clone_develop`
-    checkout of *repo* in which *job* has already written its changes. See the
-    module docstring for the steps; every failure raises
-    :class:`MechanizedPRError`, and a PR that was opened but did not merge
-    raises its subclass :class:`PRNotMergedError`.
+    checkout of *repo* in which *job* has already written its changes; the
+    commit's parent is the clone's ``HEAD``. *deadline_secs* is the
+    wait-until-merged deadline: ``None`` keeps the environment's rule
+    (:func:`deadline_secs`), and a value that is not a positive whole number
+    raises before any PR is touched. See the module docstring for the steps;
+    every failure raises :class:`MechanizedPRError`, and a PR that was opened
+    but did not merge raises its subclass :class:`PRNotMergedError`.
     """
-    deadline = deadline_secs()
+    deadline = _env_deadline_secs() if deadline_secs is None else _check_deadline(deadline_secs)
     branch = branch_name(job, run_id())
     closed = _clear_earlier_runs(repo, job_prefix(job))
     if not _git(repo, clone, "status", "status", "--porcelain"):
         return SyncResult(status="in_sync", pr_url=None, closed=closed)
     head = _commit_and_push(repo, clone, branch, title)
     pr_url = _open_pr(repo, branch, title, body)
+    print(f"{repo}: opened {pr_url}; waiting up to {deadline}s for it to merge")
     _enable_auto_merge(repo, pr_url, head)
     _wait_until_merged(repo, pr_url, deadline)
     return SyncResult(status="merged", pr_url=pr_url, closed=closed)

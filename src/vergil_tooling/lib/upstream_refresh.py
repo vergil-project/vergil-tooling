@@ -11,35 +11,46 @@ supplies the mechanics, in two halves split by the key boundary (spec §6):
   commit's SHA, the changed paths and the hook's notes (:data:`META_FILE`).
   It holds no App credentials, and refuses to run when the App's key is in
   its environment.
-- **publish** (Task 3b) reads that output as untrusted data
-  (:func:`read_prepared`), applies the patch in its own clone, and checks it
-  against the repo's **path fence** (:func:`fence_violations`) before it
-  pushes anything.
+- **publish** (:func:`publish`) reads that output as untrusted data
+  (:func:`read_prepared`). It never runs the hook and never runs git in the
+  tree prepare worked in. It takes its own fresh clone of ``develop``, reads
+  the fence rules from that tip, checks that the recorded commit is still on
+  ``develop``, checks that commit out and applies the patch there
+  (:func:`staged_clone`), so the PR's commit has the hook's own base as its
+  parent. It then checks the applied tree against the repo's **path fence**
+  (:func:`fence_violations`), and only then hands the clone to the
+  mechanized-PR building block (:func:`vergil_tooling.lib.mechanized_pr.open_sync_pr`),
+  which opens the PR and waits until it merges.
 
 The fence is computed only from what publish sees in its own clone: the
 touched paths and changed lines of the applied tree, the rules from the
-``develop`` tip, and ``vergil.toml`` before and after. ``.github/**`` is
-always refused. Nothing here pushes, opens a PR or merges.
+``develop`` tip, and ``vergil.toml`` before and after. The touched set must
+equal the paths prepare listed, which are otherwise used only for the PR body.
+``.github/**`` is always refused. A refused patch pushes nothing.
 """
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import json
 import os
 import re
 import subprocess
 import tempfile
+import time
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
-from vergil_tooling.lib import develop_clone
-from vergil_tooling.lib.config import CONFIG_FILE, read_config
+from vergil_tooling.lib import develop_clone, git, github, mechanized_pr, retry
+from vergil_tooling.lib.config import CONFIG_FILE, parse_upstream_refresh_toml, read_config
+from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Generator, Mapping, Sequence
 
     from vergil_tooling.lib.config import PathRule, UpstreamRefreshConfig
 
@@ -97,9 +108,40 @@ _HUNK_HEADER_RE = re.compile(r"@@ -(?P<old>\d+)(?:,\d+)? \+(?P<new>\d+)(?:,\d+)?
 #: The line-rule group that names the block a versioned line belongs to.
 _ANCHOR_GROUP = "anchor"
 
+#: The mechanized-PR job: its branches are ``automation/upstream-refresh/<run-id>``.
+JOB = "upstream-refresh"
+#: Publish's wait-until-merged deadline under a token source, counted from the
+#: tool's own start, so the clone, the patch and the push are inside it
+#: (spec §6.1, "The wait"). The publish job's ``timeout-minutes`` is 140.
+PUBLISH_DEADLINE_SECS = 7200
+#: The compare statuses that put the recorded base commit on ``develop``.
+_ON_DEVELOP = frozenset({"ahead", "identical"})
+#: Variables that would override the bot identity publish sets in its clone.
+_GIT_IDENTITY_ENV = (
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+)
+
+#: The clock publish measures its deadline with; tests replace it.
+_monotonic = time.monotonic
+
 
 class UpstreamRefreshError(Exception):
     """A refusal or failure of the upstream refresh; the message says why."""
+
+
+class FenceRefusedError(UpstreamRefreshError):
+    """The applied patch is refused; :attr:`problems` names each path or table and its rule."""
+
+    def __init__(self, repo: str, problems: Sequence[str]) -> None:
+        self.problems = list(problems)
+        listed = "\n".join(f"  - {problem}" for problem in self.problems)
+        super().__init__(
+            f"the refresh patch for {repo} is refused by the path fence; nothing was pushed:\n"
+            f"{listed}"
+        )
 
 
 @dataclass(frozen=True)
@@ -338,6 +380,273 @@ def render_body(notes: list[str], paths: list[str]) -> str:
         lines.extend(["", "## Notes", ""])
         lines.extend(f"- {note}" for note in notes)
     return "\n".join(lines) + "\n"
+
+
+# -- publish ---------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Staged:
+    """Publish's clone with the patch applied, and what the fence found.
+
+    *clone* is detached at the recorded base commit, the patch applied to its
+    index and working tree. *touched* is the touched set computed from the
+    clone itself. *problems* is every refusal, empty when the patch may be
+    published: a mismatch with prepare's listed paths, then each
+    :func:`fence_violations` message.
+    """
+
+    clone: Path
+    touched: list[str]
+    problems: list[str]
+
+
+def read_rules_file(path: Path) -> UpstreamRefreshConfig:
+    """The ``[upstream-refresh]`` rules in the ``vergil.toml`` at *path* (``--rules-from``)."""
+    try:
+        text = path.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        msg = f"cannot read the rules file {path}: {exc}"
+        raise UpstreamRefreshError(msg) from exc
+    rules = parse_upstream_refresh_toml(text, str(path))
+    if rules is None:
+        msg = f"the rules file {path} has no [upstream-refresh] section"
+        raise UpstreamRefreshError(msg)
+    return rules
+
+
+def _tip_rules(repo: str, clone: Path) -> UpstreamRefreshConfig:
+    """The fence rules from the ``develop`` tip in *clone*, never from prepare's output."""
+    try:
+        cfg = read_config(clone)
+    except FileNotFoundError as exc:
+        msg = f"{repo}'s develop has no {CONFIG_FILE}, so it has no path-fence rules"
+        raise UpstreamRefreshError(msg) from exc
+    if cfg.upstream_refresh is None:
+        msg = f"{CONFIG_FILE} on {repo}'s develop has no [upstream-refresh] section"
+        raise UpstreamRefreshError(msg)
+    return cfg.upstream_refresh
+
+
+def check_base_on_develop(repo: str, base_sha: str, tip_sha: str) -> None:
+    """Refuse a recorded base commit that is not ``develop``'s tip or one of its ancestors.
+
+    Asks GitHub's compare API (``base...tip``): ``identical`` or ``ahead``
+    means the tip descends from the base. Any other status (``diverged``,
+    ``behind``) or an unknown commit is refused, naming the commit.
+    """
+    if base_sha == tip_sha:
+        return
+    endpoint = f"repos/{repo}/compare/{base_sha}...{tip_sha}?per_page=1"
+    try:
+        data = github.read_json("api", endpoint)
+    except subprocess.CalledProcessError as exc:
+        if retry.is_not_found(exc):
+            msg = f"the recorded base commit {base_sha} is not a commit of {repo}; nothing pushed"
+        else:
+            msg = (
+                f"could not check that the recorded base commit {base_sha} is on {repo}'s "
+                f"develop: {error_text(exc)}"
+            )
+        raise UpstreamRefreshError(msg) from exc
+    status = data.get("status") if isinstance(data, dict) else None
+    if status not in _ON_DEVELOP:
+        msg = (
+            f"the recorded base commit {base_sha} is no longer on {repo}'s develop "
+            f"(GitHub's compare with the tip {tip_sha} says {status!r}); nothing pushed"
+        )
+        raise UpstreamRefreshError(msg)
+
+
+def touched_paths(tree: Path) -> list[str]:
+    """Every path *tree*'s index or working tree changes against ``HEAD``, sorted.
+
+    From ``git status --porcelain=v1 -z --untracked-files=all --no-renames``:
+    added, modified, deleted, mode-changed and untracked files, each side of
+    a rename as its own path.
+    """
+    raw = _git_bytes(
+        tree, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"
+    )
+    return sorted({entry[3:] for entry in _nul_paths(raw, "the applied tree")})
+
+
+def _blob_text(tree: Path, spec: str, path: str) -> str | None:
+    """The text of *path* at *spec* (a commit, or ``""`` for the index); None when absent."""
+    if spec:
+        # ls-tree matches its paths literally; it takes no pathspec magic.
+        listed = _git_bytes(tree, "ls-tree", "-z", spec, "--", path)
+    else:
+        listed = _git_bytes(tree, "ls-files", "-z", "--", f":(literal){path}")
+    if not listed:
+        return None
+    return _git_bytes(tree, "show", f"{spec}:{path}").decode(errors="surrogateescape")
+
+
+def _apply(clone: Path, patch: bytes, base_sha: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="vrg-upstream-refresh-patch-") as tmp:
+        patch_file = Path(tmp) / PATCH_FILE
+        patch_file.write_bytes(patch)
+        try:
+            # --index, so a new file is in the index and has a diff for the fence.
+            _git_bytes(clone, "apply", "--index", str(patch_file))
+        except UpstreamRefreshError as exc:
+            msg = f"the refresh patch does not apply cleanly on {base_sha}: {exc}"
+            raise UpstreamRefreshError(msg) from exc
+
+
+@contextlib.contextmanager
+def staged_clone(
+    repo: str,
+    prepared: Prepared,
+    patch: bytes | None,
+    *,
+    rules: UpstreamRefreshConfig | None = None,
+) -> Generator[Staged]:
+    """Yield publish's own clone of ``develop`` with *patch* applied on the recorded base.
+
+    The steps, in order: clone ``develop``; read the fence rules from that
+    tip before anything else (or use *rules*, ``--dry-run --rules-from``);
+    check that ``prepared.base_sha`` is still on ``develop``; fetch it and
+    check it out detached; ``git apply --index`` the patch; compute the
+    touched set from the clone; and run the fence on that set. With no
+    listed paths, the clean ``develop`` clone is yielded as it is.
+    """
+    with develop_clone.clone_develop(repo) as clone:
+        fence_rules = rules if rules is not None else _tip_rules(repo, clone)
+        if not prepared.paths:
+            yield Staged(clone=clone, touched=[], problems=[])
+            return
+        if patch is None:
+            msg = "prepare listed changed paths but gave no patch"
+            raise UpstreamRefreshError(msg)
+        base_sha = prepared.base_sha
+        tip_sha = _git_bytes(clone, "rev-parse", "HEAD").decode().strip()
+        check_base_on_develop(repo, base_sha, tip_sha)
+        if base_sha != tip_sha:
+            try:
+                git.read_output(
+                    "-C", str(clone), "fetch", "--quiet", "--depth", "1", "origin", base_sha
+                )
+            except (subprocess.CalledProcessError, OSError) as exc:
+                msg = f"could not fetch the recorded base commit {base_sha}: {error_text(exc)}"
+                raise UpstreamRefreshError(msg) from exc
+        _git_bytes(clone, "checkout", "--quiet", "--detach", base_sha)
+        _apply(clone, patch, base_sha)
+        touched = touched_paths(clone)
+        problems = _listing_mismatch(touched, prepared.paths)
+        problems.extend(
+            fence_violations(
+                fence_rules,
+                touched,
+                diff_changed_lines(clone, base_sha, touched),
+                _blob_text(clone, base_sha, CONFIG_FILE) if CONFIG_FILE in touched else None,
+                _blob_text(clone, "", CONFIG_FILE) if CONFIG_FILE in touched else None,
+            )
+        )
+        yield Staged(clone=clone, touched=touched, problems=problems)
+
+
+def _listing_mismatch(touched: Sequence[str], listed: Sequence[str]) -> list[str]:
+    """Refusals for a touched set that is not exactly prepare's listed paths."""
+    extra = sorted(set(touched) - set(listed))
+    missing = sorted(set(listed) - set(touched))
+    problems: list[str] = []
+    if extra:
+        problems.append(
+            "the applied patch touches paths prepare did not list (refused, the touched set "
+            f"must equal the listed paths): {', '.join(extra)}"
+        )
+    if missing:
+        problems.append(
+            "prepare listed paths the applied patch does not touch (refused, the touched set "
+            f"must equal the listed paths): {', '.join(missing)}"
+        )
+    return problems
+
+
+def bot_identity(slug: str) -> tuple[str, str]:
+    """The commit name and email of the App *slug*'s bot user.
+
+    ``<slug>[bot]`` and ``<id>+<slug>[bot]@users.noreply.github.com``, with
+    ``<id>`` from ``GET /users/<slug>[bot]``.
+    """
+    login = f"{slug}[bot]"
+    try:
+        payload = github.read_json("api", f"users/{quote(login, safe='')}")
+    except subprocess.CalledProcessError as exc:
+        msg = f"could not look up the bot user {login!r}: {error_text(exc)}"
+        raise UpstreamRefreshError(msg) from exc
+    user_id = payload.get("id") if isinstance(payload, dict) else None
+    if not isinstance(user_id, int) or isinstance(user_id, bool):
+        msg = f"the bot user lookup for {login!r} returned no numeric id"
+        raise UpstreamRefreshError(msg)
+    return login, f"{user_id}+{login}@users.noreply.github.com"
+
+
+def _set_identity(clone: Path, bot: tuple[str, str]) -> None:
+    """Make *bot* the author and committer of every commit made in *clone*.
+
+    The ``GIT_AUTHOR_*`` and ``GIT_COMMITTER_*`` variables would override the
+    clone's config, so they are removed from this process's environment.
+    """
+    name, email = bot
+    for var in _GIT_IDENTITY_ENV:
+        os.environ.pop(var, None)
+    _git_bytes(clone, "config", "user.name", name)
+    _git_bytes(clone, "config", "user.email", email)
+
+
+def publish(
+    repo: str,
+    in_dir: Path,
+    *,
+    deadline_secs: int | None,
+    bot: tuple[str, str] | None,
+    started: float | None = None,
+) -> mechanized_pr.SyncResult:
+    """Publish prepare's output in *in_dir* as one PR on *repo*'s ``develop``, and wait.
+
+    The output is read as untrusted data (:func:`read_prepared`); its repo must
+    be *repo*. The patch is applied in publish's own clone on the recorded
+    base and checked against the fence (:func:`staged_clone`); any refusal
+    raises :class:`FenceRefusedError` before anything is pushed. With *bot*
+    (``(name, email)``), the clone commits as that user; with ``None`` (a
+    human run) it commits as the caller's git identity.
+
+    *deadline_secs* is counted from *started* (the tool's start on
+    :data:`_monotonic`; default now): what is left of it once the clone and
+    the patch are done is the wait's deadline. ``None`` (a run with no token
+    source) keeps the building block's own rule, ``$VRG_MECHANIZED_PR_DEADLINE``.
+    A run with nothing to change still closes an earlier run's open PR.
+    """
+    start = _monotonic() if started is None else started
+    prepared, patch = read_prepared(in_dir)
+    if prepared.repo.lower() != repo.lower():
+        msg = f"the prepared output is for {prepared.repo}, not {repo}; nothing pushed"
+        raise UpstreamRefreshError(msg)
+    with staged_clone(repo, prepared, patch) as staged:
+        if staged.problems:
+            raise FenceRefusedError(repo, staged.problems)
+        if bot is not None:
+            _set_identity(staged.clone, bot)
+        remaining: int | None = None
+        if deadline_secs is not None:
+            remaining = deadline_secs - int(_monotonic() - start)
+            if remaining <= 0:
+                msg = (
+                    f"the {deadline_secs}s publish deadline passed before the PR could be "
+                    "opened; nothing pushed"
+                )
+                raise UpstreamRefreshError(msg)
+        return mechanized_pr.open_sync_pr(
+            repo,
+            staged.clone,
+            job=JOB,
+            title=COMMIT_SUBJECT,
+            body=render_body(prepared.notes, prepared.paths),
+            deadline_secs=remaining,
+        )
 
 
 # -- the path fence: inputs ------------------------------------------------------

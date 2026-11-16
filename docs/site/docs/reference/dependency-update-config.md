@@ -42,10 +42,12 @@ stage of its `vrg-release`:
   version within its major.
 
 A dependency update merges its own PR once it is green, but only from a
-`vrg-release` or `vrg-update-deps` that a human runs; a human merges
-every upstream refresh PR. How the merge policy is expected to change
-for these automation PRs is tracked in
-[vergil-project/.github#470](https://github.com/vergil-project/.github/issues/470).
+`vrg-release` or `vrg-update-deps` that a human runs. An upstream
+refresh PR merges unattended, as the org automation App, from its
+scheduled job once CI passes and the path fence has allowed the change
+([vergil-project/.github#1168](https://github.com/vergil-project/.github/issues/1168),
+carrying out the policy decided in
+[vergil-project/.github#470](https://github.com/vergil-project/.github/issues/470)).
 
 ## Updaters
 
