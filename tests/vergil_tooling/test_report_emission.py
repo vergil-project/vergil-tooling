@@ -208,7 +208,7 @@ def test_rust_audit_writes_report_and_keeps_cargo_deny_status(tmp_path: Path, rc
     # The report is echoed to stderr, so the gate's log still shows it.
     assert result.stderr == report
     args = (tmp_path / "args.txt").read_text().splitlines()
-    assert args[:3] == ["deny", "--format", "json"]
+    assert args[:4] == ["deny", "--locked", "--format", "json"]
     assert args[-2:] == ["check", "--show-stats"]
 
 

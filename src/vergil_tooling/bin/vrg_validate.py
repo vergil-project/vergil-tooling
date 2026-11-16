@@ -67,6 +67,7 @@ from vergil_tooling.lib.docs import (
 from vergil_tooling.lib.languages import (
     COVERAGE_REPORT,
     JUNIT_REPORT,
+    RUST_DOCTEST_CMD,
     CheckKind,
     build_python_test_argv,
     language_commands,
@@ -485,7 +486,6 @@ def _skip_conan_audit_scan(cmds: list[list[str]]) -> list[list[str]]:
     return kept
 
 
-_RUST_DOCTEST_CMD = ["cargo", "test", "--doc"]
 # Cargo's library target kinds: any of them makes ``cargo test --doc`` select a
 # library target instead of refusing with "no library targets found".
 _RUST_LIB_KINDS = frozenset({"lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro"})
@@ -500,7 +500,7 @@ def _rust_lib_packages(repo_root: Path) -> tuple[list[str], list[str]]:
     probe that cannot run, exits non-zero or prints unexpected output raises
     :class:`ValidationError` (issue #4378).
     """
-    cmd = ["cargo", "metadata", "--no-deps", "--format-version", "1"]
+    cmd = ["cargo", "metadata", "--no-deps", "--format-version", "1", "--locked"]
     try:
         result = subprocess.run(  # noqa: S603
             cmd,
@@ -544,7 +544,7 @@ def _skip_rust_doctests_without_lib(cmds: list[list[str]], repo_root: Path) -> l
     with no doctest to run. The probe runs at stage time, after the install
     stage has fetched the dependencies, and only when the command is present.
     """
-    if _RUST_DOCTEST_CMD not in cmds:
+    if RUST_DOCTEST_CMD not in cmds:
         return cmds
     with_lib, without_lib = _rust_lib_packages(repo_root)
     if with_lib:
@@ -555,7 +555,24 @@ def _skip_rust_doctests_without_lib(cmds: list[list[str]], repo_root: Path) -> l
         "rustdoc examples run only for a library target.",
         file=sys.stderr,
     )
-    return [cmd for cmd in cmds if cmd != _RUST_DOCTEST_CMD]
+    return [cmd for cmd in cmds if cmd != RUST_DOCTEST_CMD]
+
+
+_RUST_LOCKFILE_MISSING = (
+    "Cargo.lock is missing: run 'cargo generate-lockfile' in the container and commit it"
+)
+
+
+def check_rust_lockfile(repo_root: Path) -> None:
+    """Fail a Rust repo that has ``Cargo.toml`` but no committed ``Cargo.lock``.
+
+    Every Rust gate command runs with ``--locked``, which on a missing lockfile
+    gives cargo's generic "needs to be updated" error. This check runs before
+    the install stage instead, naming the file and how to create it. Libraries
+    commit the lockfile too (epic vergil-project/.github#1165, spec §6.1).
+    """
+    if (repo_root / "Cargo.toml").is_file() and not (repo_root / "Cargo.lock").is_file():
+        raise ValidationError(_RUST_LOCKFILE_MISSING)
 
 
 def _command_stage(
@@ -678,11 +695,14 @@ def _install_stage(
     install_cmds: list[list[str]],
     missing: list[str],
     sources: list[str],
+    *,
+    repo_root: Path,
 ) -> Stage | None:
     """The install stage for *language*, or ``None`` when it has no install.
 
     With every manifest missing it is skipped, loudly, when the repo has no
-    sources, and failed when it has some.
+    sources, and failed when it has some. A Rust install first runs
+    :func:`check_rust_lockfile`, so a missing ``Cargo.lock`` fails it.
     """
     if missing and sources:
         return _sources_without_manifest_stage(language, missing, sources)
@@ -690,6 +710,13 @@ def _install_stage(
         return None
     if missing:
         return _not_bootstrapped_stage("install", language, missing)
+    if language == "rust":
+
+        def rust_install_cmds() -> list[list[str]]:
+            check_rust_lockfile(repo_root)
+            return install_cmds
+
+        return _command_stage("install", rust_install_cmds, mode="fail_fast")
     return _command_stage("install", install_cmds, mode="fail_fast")
 
 
@@ -1102,7 +1129,7 @@ def _build_stages(
             install_cmds = language_commands(
                 language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
             )
-            install = _install_stage(language, install_cmds, missing, sources)
+            install = _install_stage(language, install_cmds, missing, sources, repo_root=repo_root)
             if install is not None:
                 stages.append(install)
             for kind, cmds in kind_cmds:
@@ -1165,7 +1192,9 @@ def _build_stages(
                     language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
                 )
                 missing, sources = _bootstrap_state(language, repo_root)
-                install = _install_stage(language, install_cmds, missing, sources)
+                install = _install_stage(
+                    language, install_cmds, missing, sources, repo_root=repo_root
+                )
                 if install is not None:
                     stages.append(install)
 
