@@ -20859,7 +20859,8 @@ advisory to an existing issue, or resumes an unfinished pair), <code>list</code>
 issues, <code>sync</code> sets each paired advisory's state from its issues and
 reports broken pairs (<code>--dry-run</code> previews it), and <code>close</code> closes a draft
 advisory whose issues are all closed, posting the GHSA ID and a required
-<code>--reason</code> on each of them first. Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
+<code>--reason</code> on each of them first, and <code>note</code> appends a dated private note
+from a file to an advisory's description (append-only). Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
 <a href="../dev/security-record/">vrg-security-record</a> and
 <a href="../../guides/security-records/">Security Records</a>.</p>
 <table>
@@ -20876,7 +20877,7 @@ advisory whose issues are all closed, posting the GHSA ID and a required
 </tr>
 <tr>
 <td>Args</td>
-<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code>; <code>sync [--dry-run]</code>; <code>close GHSA-ID --reason TEXT</code></td>
+<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code>; <code>sync [--dry-run]</code>; <code>close GHSA-ID --reason TEXT</code>; <code>note GHSA-ID --file FILE</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>

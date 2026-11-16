@@ -17455,6 +17455,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#adding-a-note-to-a-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding a note to a record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#when-the-issue-moves" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17903,6 +17914,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#adding-a-note-to-a-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding a note to a record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#when-the-issue-moves" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18240,6 +18262,21 @@ elsewhere), never what the finding is. <code>close</code> refuses a published,
 withdrawn or <code>triage</code> advisory and an external report, which stay a
 human's decision. See the
 <a href="../../reference/dev/security-record/#close">CLI reference</a>.</p>
+<h3 id="adding-a-note-to-a-record">Adding a note to a record<a class="headerlink" href="#adding-a-note-to-a-record" title="Permanent link">&para;</a></h3>
+<p>An advisory's text goes stale as designs change: a resolution is
+superseded, the work is retargeted, a fix lands elsewhere. Keep it
+accurate with <code>note</code>, which appends a dated note and never rewrites what
+is there:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-security-record<span class="w"> </span>note<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span>--file<span class="w"> </span>note.md
+</code></pre></div>
+<p>The note goes under a <code>Note (&lt;YYYY-MM-DD&gt;):</code> header at the end of the
+description, before the <code>Tracking issue:</code> lines, which stay last. The
+note is private, like the rest of the advisory: write it to a scratch
+file outside the repo, never in a commit, an issue or a PR, and delete
+the file once <code>note</code> reports <code>Noted &lt;GHSA-id&gt; in &lt;org&gt;/.github.</code> To move
+a record's tracking, use <code>retarget</code>, not a note: <code>note</code> refuses a note
+with a <code>Tracking issue:</code> line. See the
+<a href="../../reference/dev/security-record/#note">CLI reference</a>.</p>
 <h3 id="when-the-issue-moves">When the issue moves<a class="headerlink" href="#when-the-issue-moves" title="Permanent link">&para;</a></h3>
 <p>A record's link moves only through <code>vrg-security-record retarget</code>, and
 <code>vrg-intake-route</code> calls it for you:</p>
@@ -18261,7 +18298,7 @@ human's decision. See the
 </ul>
 <p>An item naming <strong>several</strong> advisories is refused before anything
   changes, because which advisory goes to which task can't be inferred:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
 </code></pre></div>
 <p>Retarget each advisory to the task or tasks that fix it, one at a time.
   The last retarget leaves the item with no advisory line and no
@@ -18284,11 +18321,11 @@ of them until the plan exists.</p>
   back a line the other removed. Post <code>Tasks filed: yes</code> only after every
   retarget has succeeded:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#101'</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#102'</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-yyyy-yyyy-yyyy<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#103'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#101'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#102'</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-yyyy-yyyy-yyyy<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#103'</span>
 </code></pre></div>
 <p>From then on, the PRs that close those tasks are what close each
   advisory.
@@ -18304,8 +18341,8 @@ of them until the plan exists.</p>
   its body names that advisory. It
   shows it as <code>in-progress</code> with a note that counts the advisories still
   tracking it and names them by GHSA ID only:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget
 </code></pre></div>
 <p>After one of two retargets, the planning issue stays held by the other.
   Don't close the planning issue by hand before every retarget: that
@@ -18441,8 +18478,8 @@ each of these by hand:</p>
 identity's App token or, in human mode, the human's own <code>gh</code> login. It
 does not go through <code>vrg-gh api</code>, which stays denied to the user agent.</p>
 <p>Every user App (<code>&lt;username&gt;-vergil-user</code>) needs <strong>Repository security
-advisories: Read and write</strong>, for <code>vrg-security-record</code> (<code>sync</code> and
-<code>close</code> included) and the hooks in <code>vrg-intake-route</code> and <code>vrg-queue</code>. A human
+advisories: Read and write</strong>, for <code>vrg-security-record</code> (<code>sync</code>, <code>close</code> and
+<code>note</code> included) and the hooks in <code>vrg-intake-route</code> and <code>vrg-queue</code>. A human
 running <code>vrg-security-record</code> in human mode needs the same access through
 their own <code>gh</code> login. <code>sync --dry-run</code> needs only Read.</p>
 <p>The scheduled sweep (<code>vrg-epic-audit --close</code>, run by each org's

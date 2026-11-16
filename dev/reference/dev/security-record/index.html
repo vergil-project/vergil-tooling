@@ -14801,6 +14801,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#note" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        note
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17807,6 +17818,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#note" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        note
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17863,6 +17885,7 @@ it. For the policy, neutral wording and the severity mapping, see
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>vrg-security-record retarget GHSA-ID --to 'OWNER/REPO#N' [--to 'OWNER/REPO#N' ...]
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>vrg-security-record sync [--dry-run]
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>vrg-security-record close GHSA-ID --reason TEXT
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>vrg-security-record note GHSA-ID --file FILE
 </code></pre></div>
 <h2 id="output-rule">Output rule<a class="headerlink" href="#output-rule" title="Permanent link">&para;</a></h2>
 <p>An advisory's summary and description reach stdout only through <code>show</code>
@@ -17872,10 +17895,11 @@ and states. A failed GitHub call is reported with its exit status, command
 and stderr; its response body is dropped, because for an advisory call it
 may hold the advisory text.</p>
 <p><code>list --details</code> is refused when <code>VRG_EPIC_SWEEP</code> is set, so advisory
-text can never reach the scheduled sweep's public Actions logs. <code>sync</code>
-and <code>close</code> print no advisory text at all. <code>close</code> does not print its
+text can never reach the scheduled sweep's public Actions logs. <code>sync</code>,
+<code>close</code> and <code>note</code> print no advisory text at all. <code>close</code> does not print its
 <code>--reason</code> either: the reason goes only into the public comments it
-posts.</p>
+posts. <code>note</code> never prints its note, which goes only into the private
+advisory.</p>
 <h2 id="where-things-are-created">Where things are created<a class="headerlink" href="#where-things-are-created" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>--repo</code> always names the <strong>affected</strong> repo, never where anything is
@@ -18181,6 +18205,57 @@ Before it, each transferred issue gets a line
 <code>&lt;GHSA-id&gt;: &lt;old ref&gt; was transferred to &lt;new ref&gt;: commented there.</code></p>
 <p><code>close</code> needs the same <strong>Repository security advisories: Read and write</strong>
 as <code>sync</code>, and runs as the human's own <code>gh</code> login or the user App.</p>
+<h2 id="note">note<a class="headerlink" href="#note" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-security-record<span class="w"> </span>note<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span>--file<span class="w"> </span>note.md
+</code></pre></div>
+<p>Appends a dated note to an advisory's description, so a record can be
+kept accurate as designs change: a resolution later superseded, a
+retarget, a fix that landed elsewhere. It is <strong>append-only</strong>: the text
+already there is never changed or removed, so the record keeps its
+history. There is no command that rewrites an advisory's text. It takes
+the org from the current repo's <code>origin</code> remote, as <code>show</code>, <code>sync</code> and
+<code>close</code> do.</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--file FILE</code></td>
+<td>Required. The note text, read as UTF-8. It is <strong>private</strong>: it goes only into the advisory, never to stdout, stderr or any issue.</td>
+</tr>
+</tbody>
+</table>
+<p>The note is added at the end of the description under a header line
+<code>Note (&lt;YYYY-MM-DD&gt;):</code>, the UTC date of the run, followed by the file's
+text with its leading and trailing blank lines and each line's trailing
+spaces dropped. The advisory's <code>Tracking issue:</code> lines are moved after
+it, in their order, so they stay the last lines and <code>retarget</code>, <code>list</code>
+and <code>sync</code> read them as before.</p>
+<p>It refuses, changing nothing, when:</p>
+<ul>
+<li>the file cannot be read, or holds no text;</li>
+<li>any line of the note is a <code>Tracking issue:</code> line, which would change
+  what the record tracks: use <code>retarget</code> for that;</li>
+<li>the advisory does not exist in <code>&lt;org&gt;/.github</code>;</li>
+<li>it is an external report, or in any state other than <code>draft</code> or
+  <code>closed</code> (<code>published</code>, <code>withdrawn</code>, <code>triage</code>), which stay a human's
+  decision.</li>
+</ul>
+<p>A re-run with the same file on the same day adds nothing when the
+advisory's last note is already that exact note, so a run whose response
+was lost can be repeated safely; it prints the same line. Any other note,
+even one repeating an older note, is added. On
+success it prints only <code>Noted &lt;GHSA-id&gt; in &lt;org&gt;/.github.</code> A failure
+exits 1 with a message naming the advisory and the step, scrubbed of
+<code>gh</code>'s response body, as the other subcommands do.</p>
+<p>Keep the note file out of the repo, in a scratch directory, and delete
+it once the note is recorded. <code>note</code> needs <strong>Repository security
+advisories: Read and write</strong> on <code>&lt;org&gt;/.github</code>, as <code>sync</code> and <code>close</code>
+do.</p>
 <h2 id="related-commands">Related commands<a class="headerlink" href="#related-commands" title="Permanent link">&para;</a></h2>
 <p>These commands read or move records as part of their own work:</p>
 <ul>
@@ -18205,7 +18280,7 @@ as <code>sync</code>, and runs as the human's own <code>gh</code> login or the u
   them and names them by GHSA ID only (<code>advisory still tracks</code> for one,
   <code>advisories still track</code> for more):</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
 </code></pre></div>
 <p>It lists each org's advisories once per view, and skips an org whose
   <code>.github</code> is absent or not public unless one of its items has an
@@ -18226,7 +18301,7 @@ as <code>sync</code>, and runs as the human's own <code>gh</code> login or the u
 </tr>
 <tr>
 <td>1</td>
-<td>Refused (a private <code>.github</code>, a duplicate, bad refs, an unreadable file, <code>--details</code> under the sweep, a <code>close</code> the checks refuse), a partial pair, a failed retarget or close, a broken pair found by <code>sync</code> (not <code>--dry-run</code>), a GitHub API failure, or an authentication failure</td>
+<td>Refused (a private <code>.github</code>, a duplicate, bad refs, an unreadable file, <code>--details</code> under the sweep, a <code>close</code> or <code>note</code> the checks refuse), a partial pair, a failed retarget, close or note, a broken pair found by <code>sync</code> (not <code>--dry-run</code>), a GitHub API failure, or an authentication failure</td>
 </tr>
 <tr>
 <td>2</td>
