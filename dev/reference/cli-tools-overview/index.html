@@ -22740,7 +22740,7 @@ markdownlint, yamllint) are available on PATH.</p>
 <p>The unified validation driver. It reads <code>[project].primary-language</code>
 from <code>vergil.toml</code> and runs the stages in order: common checks, the
 language's install, lint, typecheck, build, test and audit commands
-(build only for a language that turns it on, none yet), the
+(build only for a language that turns it on, Rust only), the
 semgrep scan of PR CI's <code>security / semgrep</code> gate, the Trivy
 vulnerability scan of its <code>security / trivy</code> gate, the strict mkdocs
 build of its <code>docs / docs</code> gate (a notice and a pass when there is no

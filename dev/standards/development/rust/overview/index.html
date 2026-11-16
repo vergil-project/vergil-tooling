@@ -17917,7 +17917,8 @@ maintainability, and long-term survivability across repositories.</p>
   container.</li>
 <li>Workspaces: every workspace member is validated, not only the root
   package. Clippy, check, the coverage run (the tests and the coverage
-  report), the doctests and the audit all run with <code>--workspace</code>, and
+  report), the doctests, the audit and the release build all run with
+  <code>--workspace</code>, and
   <code>cargo fmt --all</code> formats every member. The doctests are skipped, with a
   notice, only when no workspace member has a library target. A
   single-crate repository is validated exactly as before.</li>
@@ -17958,6 +17959,16 @@ maintainability, and long-term survivability across repositories.</p>
     a generic function, only its best-covered instantiation counts.</li>
 <li>Nothing can be excluded from coverage. An unreachable region is a design
     signal: remove it or make it testable.</li>
+<li>Release build: <code>vrg-validate</code> builds the release profile in its build
+  stage, after the typecheck and before the tests, with
+  <code>cargo build --release --locked --workspace</code>. The release job's build runs
+  the same command, so validation builds what the release ships. The tests
+  compile the debug profile with coverage instrumentation, so without this
+  stage the <code>--release</code> profile (its optimisation, and any code under
+  <code>cfg(debug_assertions)</code> or <code>cfg(not(debug_assertions))</code>) would be built for
+  the first time after the release PR merges. A failing release build fails
+  <code>vrg-validate</code>, as every other stage does. Run it alone with
+  <code>vrg-validate --check build</code>.</li>
 <li>If a repository uses different tools, document the reason and equivalents.</li>
 </ul>
 <h2 id="tool-ownership">Tool Ownership<a class="headerlink" href="#tool-ownership" title="Permanent link">&para;</a></h2>

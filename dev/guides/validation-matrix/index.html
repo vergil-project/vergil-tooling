@@ -18172,7 +18172,7 @@ where it runs. No git hooks are installed: every check runs inside a
 <tr>
 <td>Release build</td>
 <td><code>vrg-validate</code> (build stage)</td>
-<td>Yes (primary version), for a language that turns it on: none yet</td>
+<td>Yes (primary version), for a language that turns it on: Rust only</td>
 <td>-- (no CI job yet)</td>
 </tr>
 <tr>
@@ -18458,9 +18458,10 @@ commands for <code>[project].primary-language</code>. Pass <code>--check lint</c
 <p>The build stage runs the language's release build command, the same
 command the release job runs, so a build that would fail at release
 fails on the PR instead. It runs once, on the primary version, and only
-for a language that turns it on. No language does yet: TypeScript's is
-turned on by epic vergil-project/.github#1174, and Rust's by epic
-vergil-project/.github#1165. For a language with no build check,
+for a language that turns it on. Rust does, with
+<code>cargo build --release --locked --workspace</code> (epic
+vergil-project/.github#1165); TypeScript's is turned on by epic
+vergil-project/.github#1174. For a language with no build check,
 <code>--check build</code> prints <code>build: no build check for &lt;language&gt; — nothing
 to run</code> and exits 0. <code>vrg-ci-resolve</code> reports the same answer as its
 <code>build-enabled</code> field, the one CI reads.</p>

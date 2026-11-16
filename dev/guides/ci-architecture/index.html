@@ -18327,7 +18327,7 @@ typecheck, build, test and audit commands, the semgrep scan of the
 <code>docs / docs</code> gate when the repository has <code>docs/site/mkdocs.yml</code>,
 and last the repository's custom validator when it has one. The build
 stage runs the language's release build command, for a language that
-turns it on (none yet); <code>vrg-ci-resolve</code>'s <code>build-enabled</code> field says
+turns it on (Rust only); <code>vrg-ci-resolve</code>'s <code>build-enabled</code> field says
 whether it does. To run one stage, pass <code>--check common</code>, <code>lint</code>,
 <code>typecheck</code>, <code>build</code>, <code>test</code>, <code>audit</code>, <code>semgrep</code>, <code>trivy</code>, <code>docs</code> or
 <code>custom</code>. The
