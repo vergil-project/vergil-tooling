@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from vergil_tooling.lib.update_deps.orchestrator import (
 )
 from vergil_tooling.lib.update_deps.report import HeldBack
 from vergil_tooling.lib.update_deps.updater import Updater, UpdateResult
+from vergil_tooling.lib.update_deps.updaters.cargo import CargoUpdater
 
 
 class _Changed:
@@ -65,7 +67,7 @@ def _state() -> tuple[UpdateDepsState, UpdateDepsContext]:
 
 
 def test_default_registry_names() -> None:
-    assert [u.name for u in DEFAULT_REGISTRY] == ["python", "vergil", "images", "hook"]
+    assert [u.name for u in DEFAULT_REGISTRY] == ["python", "cargo", "vergil", "images", "hook"]
 
 
 def test_require_ctx_raises_when_missing() -> None:
@@ -519,3 +521,102 @@ def test_run_update_preflight_error_propagates_without_cleanup(monkeypatch) -> N
     with pytest.raises(UpdateDepsError, match="dirty"):
         run_update(repo_root=Path("/tmp/r"))  # noqa: S108
     assert cleaned == []
+
+
+def test_cargo_in_default_registry() -> None:
+    names = [u.name for u in DEFAULT_REGISTRY]
+    assert isinstance(DEFAULT_REGISTRY[names.index("cargo")], CargoUpdater)
+    # After python, and before the repo hook, which always runs last.
+    assert names.index("python") < names.index("cargo") < names.index("hook") == len(names) - 1
+
+
+class _HeldPython:
+    name = "python"
+
+    def applies(self, ctx: UpdateDepsContext) -> bool:  # noqa: ARG002
+        return True
+
+    def apply(self, ctx: UpdateDepsContext) -> UpdateResult:  # noqa: ARG002
+        return UpdateResult(
+            updater="python",
+            changed=False,
+            summary="",
+            commit_message="",
+            held_back=[HeldBack(source="python", name="p", current="1", latest="2")],
+        )
+
+
+_CARGO_LOCK = (
+    'version = 4\n\n[[package]]\nname = "serde"\nversion = "1.0.0"\n'
+    'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
+)
+_CARGO_METADATA = {
+    "workspace_members": ["app"],
+    "packages": [
+        {
+            "id": "app",
+            "name": "app",
+            "rust_version": None,
+            "dependencies": [
+                {
+                    "name": "serde",
+                    "req": "^1",
+                    "source": "registry+https://github.com/rust-lang/crates.io-index",
+                }
+            ],
+        }
+    ],
+}
+
+
+def _index_down(url: str) -> bytes:
+    raise OSError("index unreachable")
+
+
+@pytest.mark.parametrize(
+    ("case", "message"),
+    [
+        ("index", "Sparse index read failed for serde: index unreachable"),
+        ("lock", "Cannot read Cargo.lock"),
+        ("manifest", "Cannot read Cargo.toml"),
+    ],
+)
+def test_orchestrator_records_cargo_failures(
+    tmp_path: Path, monkeypatch, capsys, case: str, message: str
+) -> None:
+    cargo_mod = "vergil_tooling.lib.update_deps.updaters.cargo"
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "app"\nversion = "0.1.0"\n')
+    (tmp_path / "Cargo.lock").write_text(_CARGO_LOCK)
+    if case == "manifest":
+        (tmp_path / "Cargo.toml").write_text("[package\n")
+
+    def update(cmd: list[str], **kw: object) -> int:
+        if case == "lock":
+            (tmp_path / "Cargo.lock").write_text("[[package]\n")
+        return 0
+
+    monkeypatch.setattr(cargo_mod + ".progress.run", update)
+    monkeypatch.setattr(cargo_mod + ".git.read_output", lambda *a: " M Cargo.lock")
+    monkeypatch.setattr(
+        cargo_mod + ".run_captured",
+        lambda cmd: subprocess.CompletedProcess(cmd, 0, json.dumps(_CARGO_METADATA), ""),
+    )
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: None)
+    monkeypatch.setattr(_MOD + ".pr.cleanup_worktree", lambda ctx: None)  # noqa: ARG005
+    state = UpdateDepsState(repo_root=tmp_path)
+    state.ctx = UpdateDepsContext(repo="o/r", repo_root=tmp_path)
+    state.registry = [_HeldPython(), CargoUpdater(fetch=_index_down)]
+
+    run_updaters_stage(state)
+    ctx = state.ctx
+    assert ctx.failure is not None
+    assert ctx.failure.kind == "update"
+    assert ctx.failure.updater == "cargo"
+    assert message in ctx.failure.message
+    assert [r.updater for r in ctx.results] == ["python"]
+
+    finalize_stage(state)
+    out = capsys.readouterr().out
+    assert "Held back by declared bounds:" in out
+    assert "| python | p | 1 | 2 |" in out
+    assert "did not land (update)" in out

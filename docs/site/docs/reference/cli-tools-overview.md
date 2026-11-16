@@ -484,7 +484,7 @@ commit-to-pulls lookup; `--pr` skips the lookup. Used by the
 
 Update the repo's dependencies to the newest versions their declared
 bounds allow, in a `deps/update-<version>` managed worktree: run the
-applicable updaters (`python`, `vergil`, `images`, then the repo
+applicable updaters (`python`, `cargo`, `vergil`, `images`, then the repo
 `hook`), validate once, open a `dependency-update`-labelled PR, and
 merge it. A no-op run opens no PR. A validation or merge failure leaves
 the PR open and files a fix task; an updater or hook failure opens no PR
