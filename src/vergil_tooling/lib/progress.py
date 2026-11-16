@@ -419,11 +419,13 @@ def run(
     env: dict[str, str] | None = None,
     check: bool = True,
     stdin: int | None = None,
+    cwd: Path | None = None,
 ) -> int:
     """Run *cmd*, streaming each output line through the active pipeline.
 
     ``stdin`` is forwarded to Popen — pass ``subprocess.DEVNULL`` for
-    children that must never block on a terminal read.
+    children that must never block on a terminal read. ``cwd`` is the
+    child's working directory (default: this process's).
 
     Raises CalledProcessError (carrying captured stdout/stderr) on nonzero
     exit when ``check`` is true; otherwise returns the exit code.
@@ -435,6 +437,7 @@ def run(
         stderr=subprocess.PIPE,
         text=True,
         env=env,
+        cwd=cwd,
     )
     captured: dict[str, list[str]] = {"stdout": [], "stderr": []}
 
