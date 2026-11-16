@@ -191,20 +191,23 @@ _RUST_LICENSES_ALLOWLIST = [
 # ``2>`` is plain POSIX ``sh``: ``tee`` would need ``pipefail`` to keep that
 # status, which the image's ``sh`` (dash) lacks. ``cat`` failing fails the gate.
 # ``--locked`` is a root option too: the audit reads the committed ``Cargo.lock``
-# as it is (epic vergil-project/.github#1165, spec §6.1).
+# as it is (epic vergil-project/.github#1165, spec §6.1). So is ``--workspace``,
+# which makes every workspace member a root of the crate graph, so the audit
+# covers each member's dependencies, not only the root package's (spec §6.4).
 _RUST_AUDIT_SCRIPT = (
-    'cargo deny --locked --format json --config "{configs}/rust/deny.toml" check --show-stats '
+    'cargo deny --format json --config "{configs}/rust/deny.toml" --locked --workspace '
+    "check --show-stats "
     f"2>{CARGO_DENY_REPORT}; "
     "rc=$?; "
     f"cat {CARGO_DENY_REPORT} >&2 || exit 1; "
     'exit "$rc"'
 )
 
-# The rust doctest command. vrg-validate drops exactly this command from the
-# TEST stage when no default-member package has a library target
-# (``_skip_rust_doctests_without_lib``). Both sides use this one list, so a flag
-# added here can never make the skip stop matching.
-RUST_DOCTEST_CMD = ["cargo", "test", "--doc", "--locked"]
+# The rust doctest command, over every workspace member (spec §6.4).
+# vrg-validate drops exactly this command from the TEST stage when no workspace
+# member has a library target (``_skip_rust_doctests_without_lib``). Both sides
+# use this one list, so a flag added here can never make the skip stop matching.
+RUST_DOCTEST_CMD = ["cargo", "test", "--doc", "--locked", "--workspace"]
 
 # The rust TEST coverage command (issue #4395). One cargo-nextest run under
 # cargo-llvm-cov, then one report from that run's profiles; it gates and writes
@@ -228,6 +231,13 @@ RUST_DOCTEST_CMD = ["cargo", "test", "--doc", "--locked"]
 # * ``--locked`` on the test run and on the report, which both read
 #   ``Cargo.lock``, so a stale lockfile fails the gate instead of being
 #   re-resolved.
+# * ``--workspace`` on the test run and on the report, so every workspace
+#   member's tests run and every member's sources are gated (spec §6.4). A
+#   report without it covers only the root package's sources, even when the
+#   test run had ``--workspace``: a live run of cargo-llvm-cov 0.9.1 on a
+#   workspace with a binary root and a library member reported only
+#   ``src/main.rs``. ``report --help`` does not list the flag, but the report
+#   accepts it.
 # * ``report --fail-under-lines 100`` is the gate on llvm-cov's own line
 #   summary; ``--cobertura --output-path`` writes ``coverage.xml`` and
 #   ``--show-missing-lines`` names the uncovered lines.
@@ -246,10 +256,10 @@ _NEXTEST_JUNIT = f"target/nextest/{_NEXTEST_PROFILE}/{JUNIT_REPORT}"
 _RUST_TEST_SCRIPT = (
     f"rm -f {COVERAGE_REPORT} {JUNIT_REPORT} {_NEXTEST_JUNIT}; "
     "cargo llvm-cov clean --workspace || exit 1; "
-    f"NEXTEST_PROFILE={_NEXTEST_PROFILE} cargo llvm-cov nextest --locked --no-report "
-    '--tool-config-file "vergil:{configs}/rust/nextest.toml"; '
+    f"NEXTEST_PROFILE={_NEXTEST_PROFILE} cargo llvm-cov nextest --locked --workspace "
+    '--no-report --tool-config-file "vergil:{configs}/rust/nextest.toml"; '
     "test_rc=$?; "
-    "cargo llvm-cov report --locked --fail-under-lines 100 --show-missing-lines "
+    "cargo llvm-cov report --locked --workspace --fail-under-lines 100 --show-missing-lines "
     f"--cobertura --output-path {COVERAGE_REPORT}; "
     "cov_rc=$?; "
     f"if [ -f {_NEXTEST_JUNIT} ]; then cp {_NEXTEST_JUNIT} {JUNIT_REPORT} || exit 1; "
@@ -535,7 +545,11 @@ _REGISTRY: dict[str, Language] = {
         # committed lockfile is used as it is and a stale one fails rather
         # than being re-resolved (epic vergil-project/.github#1165, spec §6.1).
         # ``cargo fmt`` reads no lockfile and takes none. vrg-validate fails a
-        # missing ``Cargo.lock`` before the install stage runs.
+        # missing ``Cargo.lock`` before the install stage runs. ``--workspace``
+        # on clippy, check, the coverage run, the doctests and the audit, so a
+        # workspace whose root is a package validates its member crates too,
+        # not only the root (spec §6.4). ``cargo fmt --all`` already formats
+        # every member, and ``cargo fetch`` resolves the whole lockfile.
         checks={
             CheckKind.INSTALL: [["cargo", "fetch", "--locked"]],
             CheckKind.LINT: [
@@ -544,9 +558,18 @@ _REGISTRY: dict[str, Language] = {
                 # --examples``; with no target flag clippy checks only the lib
                 # and bins, so ``tests/`` and ``#[cfg(test)]`` code went unlinted
                 # (vergil-project/vergil-tooling#4379).
-                ["cargo", "clippy", "--all-targets", "--locked", "--", "-D", "warnings"],
+                [
+                    "cargo",
+                    "clippy",
+                    "--all-targets",
+                    "--locked",
+                    "--workspace",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
             ],
-            CheckKind.TYPECHECK: [["cargo", "check", "--locked"]],
+            CheckKind.TYPECHECK: [["cargo", "check", "--locked", "--workspace"]],
             # The coverage run is cargo-nextest under cargo-llvm-cov, gating
             # on 100% lines and writing ``coverage.xml`` and ``junit.xml``
             # (issues #4394, #4395); see ``_RUST_TEST_SCRIPT``. Nextest runs
@@ -558,7 +581,7 @@ _REGISTRY: dict[str, Language] = {
             # therefore count toward no coverage; the 100% line gate is met
             # by the unit and integration tests alone (issue #4378). ``cargo
             # test --doc`` refuses a crate with no library target, so
-            # vrg-validate drops it when no default-member package has one
+            # vrg-validate drops it when no workspace member has one
             # (``_skip_rust_doctests_without_lib``).
             CheckKind.TEST: [
                 ["sh", "-c", _RUST_TEST_SCRIPT],

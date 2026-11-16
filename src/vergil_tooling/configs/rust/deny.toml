@@ -1,8 +1,9 @@
 # Fleet cargo-deny policy for Rust repos (epic vergil-project/.github#1091).
 #
 # The rust AUDIT command runs `cargo deny --format json --config <this file>
-# check --show-stats`, so this file replaces any deny.toml a repo carries. Written for cargo-deny's version 2
-# configuration schema (cargo-deny 0.20).
+# --locked --workspace check --show-stats`, so this file replaces any deny.toml
+# a repo carries. Written for cargo-deny's version 2 configuration schema
+# (cargo-deny 0.20).
 
 [licenses]
 # Must equal _RUST_LICENSES_ALLOWLIST in vergil_tooling/lib/languages.py; a

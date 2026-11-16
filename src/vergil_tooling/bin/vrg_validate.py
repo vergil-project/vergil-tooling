@@ -492,12 +492,14 @@ _RUST_LIB_KINDS = frozenset({"lib", "rlib", "dylib", "cdylib", "staticlib", "pro
 
 
 def _rust_lib_packages(repo_root: Path) -> tuple[list[str], list[str]]:
-    """Return the default-member package names with and without a library target.
+    """Return the workspace-member package names with and without a library target.
 
-    ``cargo test --doc`` runs on the workspace's default members and refuses
-    with "no library targets found" when none of them has a library target,
-    so this reads exactly those packages from ``cargo metadata --no-deps``. A
-    probe that cannot run, exits non-zero or prints unexpected output raises
+    ``cargo test --doc --workspace`` runs on every workspace member and
+    refuses with "no library targets found" when none of them has a library
+    target, so this reads exactly those packages, ``workspace_members`` (not
+    ``workspace_default_members``), from ``cargo metadata --no-deps``
+    (epic vergil-project/.github#1165, spec §6.4). A probe that cannot run,
+    exits non-zero or prints unexpected output raises
     :class:`ValidationError` (issue #4378).
     """
     cmd = ["cargo", "metadata", "--no-deps", "--format-version", "1", "--locked"]
@@ -521,11 +523,11 @@ def _rust_lib_packages(repo_root: Path) -> tuple[list[str], list[str]]:
         raise ValidationError(msg)
     try:
         metadata = json.loads(result.stdout)
-        defaults = set(metadata["workspace_default_members"])
+        members = set(metadata["workspace_members"])
         with_lib: list[str] = []
         without_lib: list[str] = []
         for package in metadata["packages"]:
-            if package["id"] not in defaults:
+            if package["id"] not in members:
                 continue
             kinds = {kind for target in package["targets"] for kind in target["kind"]}
             (with_lib if kinds & _RUST_LIB_KINDS else without_lib).append(package["name"])
@@ -536,7 +538,7 @@ def _rust_lib_packages(repo_root: Path) -> tuple[list[str], list[str]]:
 
 
 def _skip_rust_doctests_without_lib(cmds: list[list[str]], repo_root: Path) -> list[list[str]]:
-    """Drop ``cargo test --doc`` when no default-member package has a library target.
+    """Drop ``cargo test --doc`` when no workspace member has a library target.
 
     Rustdoc examples run only for a library target, and on a crate with none
     (a plain ``cargo new`` binary) ``cargo test --doc`` exits non-zero with
@@ -551,7 +553,7 @@ def _skip_rust_doctests_without_lib(cmds: list[list[str]], repo_root: Path) -> l
         return cmds
     print(
         "NOTICE: skipping `cargo test --doc` — no library target in "
-        f"{', '.join(without_lib) or 'the workspace default members'}; "
+        f"{', '.join(without_lib) or 'the workspace members'}; "
         "rustdoc examples run only for a library target.",
         file=sys.stderr,
     )
