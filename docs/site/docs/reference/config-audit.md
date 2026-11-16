@@ -9,7 +9,8 @@ reconciles it. It combines two independent halves:
   every managed repo checks in:
   `vergil.toml`, `CLAUDE.md`, `.claude/settings.json`,
   `.claude/hooks/guard.sh`, reusable-workflow pins, `.gitignore`,
-  `.github/dependabot.yml`, and `.github/workflows/ops.yml`.
+  `.github/dependabot.yml`, the per-language managed files (such as
+  TypeScript's `tsconfig.vergil.json`), and `.github/workflows/ops.yml`.
 - **GitHub API checks** — repo settings, branch rulesets, and the
   required-status-check set, fetched from the GitHub API.
 
@@ -84,8 +85,8 @@ order:
 3. **The managed files.** A fresh shallow clone of `develop`, in which
    every fixer runs: the hook-guard shim (mode 0755 included), the
    CLAUDE.md template region, `.claude/settings.json`, the `.gitignore`
-   managed fence, `.github/dependabot.yml` and the `vergil-*` workflow
-   pins. Each fixer shares its definition of "correct" with its check.
+   managed fence, `.github/dependabot.yml`, the per-language managed
+   files and the `vergil-*` workflow pins. Each fixer shares its definition of "correct" with its check.
    A fixer that cannot compute a fix (a CLAUDE.md with no template
    markers, for example) is reported and does not stop the others.
 4. **One sync PR.** Whatever the fixers changed is committed on a new
@@ -236,6 +237,7 @@ divergence:
 | `_check_workflow_refs` | every `vergil-*` reusable-workflow pin matches the `vergil.toml` version |
 | `_check_gitignore` | `.gitignore` carries the correct `base + <language>` vergil-managed fence **(#311, #325)** |
 | `_check_dependabot_yml` | `.github/dependabot.yml` is the canonical report-only render for the repo's language **(.github#420)** |
+| `_check_language_files` | each managed file of the repo's language is its packaged master, byte for byte **(.github#1174)** |
 | `_check_required_workflows` | `ops.yml` is present, wires the audit, and is scheduled **(new, #311)** |
 
 ### `_check_claude_settings` — the whole file
@@ -369,6 +371,39 @@ actions-only: the check reports one explicit failure,
 actual="cannot resolve the dependabot language: <config error>")`, and
 nothing else for the file (#3451).
 
+### `_check_language_files` — per-language managed files
+
+Some files are managed whole for the repos of one
+`[project].primary-language`, each a byte-for-byte copy of a master in
+vergil-tooling's package data (epic
+[vergil-project/.github#1174](https://github.com/vergil-project/.github/issues/1174)).
+`LANGUAGE_MANAGED_FILES` in `lib/repo_config.py` lists them; another
+language adds managed files with an entry there. The masters stay where
+the gates read them, so there is one copy of each.
+
+| Language | File in the repo | Master |
+|---|---|---|
+| `typescript` | `tsconfig.vergil.json` | `configs/typescript/tsconfig.base.json` |
+| `typescript` | `eslint.vergil.config.mjs` | `configs/typescript/eslint.config.mjs` |
+| `typescript` | `.prettierrc.json` | `configs/typescript/prettier.config.json` |
+
+The repo never edits these files. It owns its entry points
+(`tsconfig.json`, `eslint.config.mjs`), which build on them.
+
+A missing file, or one whose bytes differ from the master (a stale or
+locally edited copy, or one with other line ends), is one
+`DiffItem(field="local.language_files", expected="<file>: matches the master (configs/<master>)",
+actual="<file>: missing" | "<file>: differs from the master (stale or locally edited)")`.
+[`update`](#the-update-command) writes the master whole, keeping the
+file's mode, or 0644 for a new file.
+
+A repo of any other language, or with no `vergil.toml`, has no such
+files, and a file of the same name in it is left alone. A `vergil.toml`
+that fails to load is reported as one
+`DiffItem(field="local.language_files", expected="resolvable [project].primary-language",
+actual="cannot resolve the managed-file language: <config error>")`,
+which `update` cannot fix (#3451).
+
 ### `_check_required_workflows` — ops.yml wiring
 
 A **wiring validator** for a *present* `ops.yml`. It asserts the file
@@ -481,6 +516,10 @@ passes their checks from day one:
   `lib/dependabot.py::render(<language>)`, the same render
   `_check_dependabot_yml` compares against, so a new repo passes that
   check from day one.
+- **The per-language managed files** — the config-files step writes the
+  language's entries in `LANGUAGE_MANAGED_FILES` from their masters, so
+  a new TypeScript repo passes `_check_language_files` from its first
+  commit, with no wait for the nightly sync.
 
 ## GitHub checks — security settings
 

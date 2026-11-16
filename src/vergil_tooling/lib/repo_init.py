@@ -1484,6 +1484,14 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     dependabot_path.parent.mkdir(parents=True, exist_ok=True)
     dependabot_path.write_text(dependabot.render(ctx.primary_language or None))
 
+    # The language's whole managed files (tsconfig.vergil.json and the rest for
+    # TypeScript), each its packaged master byte for byte, from the same table
+    # the audit uses, so the repo is born without drift (.github#1174).
+    for entry in repo_config.language_managed_files(ctx.primary_language or None):
+        managed_path = wd / entry.repo_path
+        managed_path.parent.mkdir(parents=True, exist_ok=True)
+        managed_path.write_bytes(repo_config.read_language_master(entry))
+
     # LICENSE
     if ctx.license_type != "none":
         year = datetime.datetime.now(tz=datetime.UTC).year
