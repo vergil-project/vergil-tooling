@@ -30,10 +30,10 @@ isolation system.
 | Plan | Scope | Status |
 |---|---|---|
 | 1. Repository + Working VM | vergil-vm repo, Lima template | Complete |
-| 2. Session Management | vrg-session, identities.toml | Planned |
-| 3. Credential Provisioning | GitHub App credentials, GHCR auth | Planned |
+| 2. Session Management | vrg-session, identities.toml | Complete |
+| 3. Credential Provisioning | GitHub App credentials, GHCR auth | Complete |
 | **4. Egress Filtering** (this plan) | HAProxy, pf, iptables | Deferred to v2.2 (#901) |
-| 5. vergil-tooling Adaptations | nerdctl runtime detection | Planned |
+| 5. vergil-tooling Adaptations | nerdctl runtime detection | Complete |
 | 6. Distribution + Updates | Pre-built images, vrg-vm-update | Planned |
 
 **Repository:** vergil-vm (config, scripts, VM template changes)

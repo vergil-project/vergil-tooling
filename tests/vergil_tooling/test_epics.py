@@ -1377,14 +1377,41 @@ def test_normalize_archive_in_place_edits_title_and_labels() -> None:
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         epics._normalize_archive_in_place(ref, "Archive (ad hoc): tooling — 2026-Q3")
-    args = list(mock_run.call_args.args)
-    assert args[:2] == ["issue", "edit"] and "88" in args
-    assert "--title" in args and "Archive (ad hoc): tooling — 2026-Q3" in args
-    assert args[args.index("--add-label") + 1] == "archive"
-    assert args[args.index("--remove-label") + 1] == "epic"
+    # Two edits, 'archive' added on its own first (#3817): a failure after it
+    # leaves the issue labelled archive (top-level) and still legacy-matched.
+    assert [list(c.args) for c in mock_run.call_args_list] == [
+        ["issue", "edit", "88", "--repo", "org/.github", "--add-label", "archive"],
+        [
+            "issue",
+            "edit",
+            "88",
+            "--repo",
+            "org/.github",
+            "--title",
+            "Archive (ad hoc): tooling — 2026-Q3",
+            "--remove-label",
+            "epic",
+        ],
+    ]
     # The 'archive' label is self-healed in the target repo before it is applied,
     # so a not-yet-migrated org's .github does not fail with 'archive' not found.
     mock_ensure.assert_called_once_with("org/.github", ("archive",))
+
+
+def test_normalize_archive_in_place_stops_before_retitle_when_label_add_fails() -> None:
+    ref = IssueRef("org", ".github", 88)
+    with (
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch(
+            "vergil_tooling.lib.github.run",
+            side_effect=github.GitHubAPIError(1, "gh issue edit", "", "boom"),
+        ) as mock_run,
+        pytest.raises(github.GitHubAPIError),
+    ):
+        epics._normalize_archive_in_place(ref, "Archive (ad hoc): tooling — 2026-Q3")
+    # The issue keeps its legacy title and 'epic' label, so it is never orphaned.
+    mock_run.assert_called_once()
+    assert "--title" not in mock_run.call_args.args
 
 
 def test_ensure_adhoc_archive_create_self_heals_labels() -> None:
@@ -2636,6 +2663,24 @@ def test_is_legitimate_top_level() -> None:
     assert epics.is_legitimate_top_level(set(), "anything", "<!-- vrg-release:progress -->")
     assert not epics.is_legitimate_top_level({"bug"}, "fix: thing", "")
     assert not epics.is_legitimate_top_level(set(), "fix: thing", "plain body")
+    # An archive that lost its label is still an archive, never an orphan (#3817).
+    assert epics.is_legitimate_top_level({"ad-hoc"}, archive_title, "")
+
+
+@pytest.mark.parametrize(
+    ("labels", "title", "expected"),
+    [
+        ({"archive", "intake"}, "anything", True),  # by label
+        ({"ad-hoc"}, "Archive (ad hoc): t — 2026-Q3", True),  # by title, label lost
+        (set(), "Archive (intake): org — 2026-Q4 (2)", True),
+        (set(), "Archive (planning): org — 2026-Q4", True),
+        (set(), "Archive (deferred): org — 2026-Q4", True),
+        ({"epic", "ad-hoc"}, "Epic (ad hoc): t", False),  # the live epic
+        (set(), "Archive mq-protocol-gateway (read-only)", False),  # a task about archiving
+    ],
+)
+def test_is_archive(labels: set[str], title: str, expected: bool) -> None:
+    assert epics.is_archive(labels, title) is expected
 
 
 @pytest.mark.parametrize(

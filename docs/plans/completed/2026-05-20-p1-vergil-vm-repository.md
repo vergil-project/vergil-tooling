@@ -29,14 +29,14 @@ containerd + nerdctl, uv, zsh, Bash
 isolation system. Each plan produces independently testable
 software:
 
-| Plan | Scope | Deliverable |
-|---|---|---|
-| **1. Repository + Working VM** (this plan) | vergil-vm repo, Lima template, provisioning, build, test | `limactl start` produces a working identity VM |
-| 2. Session Management | vrg-session command, identities.toml, API key forwarding | `vrg-session <project>` launches Claude Code in VM |
-| 3. Credential Provisioning | GitHub App credentials (App ID, private key, installation token exchange), GHCR auth | VM boots with agent identity credentials |
-| ~~4. Egress Filtering~~ | ~~HAProxy, pf, iptables, allowlists~~ | Deferred to v2.2 (#901) |
-| 5. vergil-tooling Adaptations | nerdctl runtime detection in vrg-container-run | vergil-tooling works natively inside VM |
-| 6. Distribution + Updates | Pre-built images on GHCR, vrg-vm-update, CD pipeline | Users pull pre-built VM images |
+| Plan | Scope | Deliverable | Status |
+|---|---|---|---|
+| **1. Repository + Working VM** (this plan) | vergil-vm repo, Lima template, provisioning, build, test | `limactl start` produces a working identity VM | **Complete** |
+| 2. Session Management | vrg-session command, identities.toml, API key forwarding | `vrg-session <project>` launches Claude Code in VM | Complete |
+| 3. Credential Provisioning | GitHub App credentials (App ID, private key, installation token exchange), GHCR auth | VM boots with agent identity credentials | Complete |
+| ~~4. Egress Filtering~~ | ~~HAProxy, pf, iptables, allowlists~~ | Deferred to v2.2 (#901) | Deferred |
+| 5. vergil-tooling Adaptations | nerdctl runtime detection in vrg-container-run | vergil-tooling works natively inside VM | Complete |
+| 6. Distribution + Updates | Pre-built images on GHCR, vrg-vm-update, CD pipeline | Users pull pre-built VM images | Planned |
 
 ---
 
@@ -173,7 +173,7 @@ remaining directory structure.
 **Files:**
 - Extend: `.gitignore` (add Lima-specific entries)
 
-- [ ] **Step 1: Extend .gitignore with Lima-specific entries**
+- [x] **Step 1: Extend .gitignore with Lima-specific entries**
 
 The init tool created a baseline `.gitignore` (editors, OS,
 Vergil entries). Append Lima build artifact patterns:
@@ -189,7 +189,7 @@ Vergil entries). Append Lima build artifact patterns:
 /build/
 ```
 
-- [ ] **Step 2: Create directory structure**
+- [x] **Step 2: Create directory structure**
 
 ```bash
 mkdir -p templates tests
@@ -197,7 +197,7 @@ mkdir -p templates tests
 
 (`.github/workflows/` already exists from the init scaffold.)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 vrg-commit --type chore --scope vm --message "directory structure and Lima-specific gitignore" \
@@ -219,7 +219,7 @@ bash script that runs inside the VM via `limactl shell`.
 - Create: `tests/test_containerd.sh`
 - Create: `tests/test_vergil.sh`
 
-- [ ] **Step 1: Write the test runner**
+- [x] **Step 1: Write the test runner**
 
 ```bash
 #!/bin/bash
@@ -251,7 +251,7 @@ echo "${total} tests, ${failures} failures"
 exit "${failures}"
 ```
 
-- [ ] **Step 2: Write test_base.sh**
+- [x] **Step 2: Write test_base.sh**
 
 ```bash
 #!/bin/bash
@@ -271,7 +271,7 @@ sudo -n true
 echo "test_base: all checks passed"
 ```
 
-- [ ] **Step 3: Write test_tools.sh**
+- [x] **Step 3: Write test_tools.sh**
 
 ```bash
 #!/bin/bash
@@ -301,7 +301,7 @@ check_command nano
 echo "test_tools: all checks passed"
 ```
 
-- [ ] **Step 4: Write test_containerd.sh**
+- [x] **Step 4: Write test_containerd.sh**
 
 ```bash
 #!/bin/bash
@@ -325,7 +325,7 @@ nerdctl run --rm ghcr.io/containerd/alpine:3.14.0 echo "container works"
 echo "test_containerd: all checks passed"
 ```
 
-- [ ] **Step 5: Write test_vergil.sh**
+- [x] **Step 5: Write test_vergil.sh**
 
 ```bash
 #!/bin/bash
@@ -351,7 +351,7 @@ uv tool uninstall vergil-tooling
 echo "test_vergil: all checks passed"
 ```
 
-- [ ] **Step 6: Make test runner executable and commit**
+- [x] **Step 6: Make test runner executable and commit**
 
 ```bash
 chmod +x tests/run-tests.sh
@@ -372,7 +372,7 @@ scripts add the tools Lima does not install.
 **Files:**
 - Create: `templates/agent.yaml`
 
-- [ ] **Step 1: Write the Lima template header and base
+- [x] **Step 1: Write the Lima template header and base
 configuration**
 
 Create `templates/agent.yaml`:
@@ -417,7 +417,7 @@ ssh:
 > not SSH keys. There is no SSH agent to forward. See
 > `docs/specs/2026-05-20-single-account-identity-design.md` (#933).
 
-- [ ] **Step 2: Add system-level provisioning (core tools)**
+- [x] **Step 2: Add system-level provisioning (core tools)**
 
 Append to `templates/agent.yaml`:
 
@@ -458,7 +458,7 @@ provision:
     rm -rf /var/lib/apt/lists/*
 ```
 
-- [ ] **Step 3: Add user-level provisioning (uv, zsh config)**
+- [x] **Step 3: Add user-level provisioning (uv, zsh config)**
 
 Append to `templates/agent.yaml`:
 
@@ -489,7 +489,7 @@ Append to `templates/agent.yaml`:
     ZSHRC
 ```
 
-- [ ] **Step 4: Add readiness probe**
+- [x] **Step 4: Add readiness probe**
 
 Append to `templates/agent.yaml`:
 
@@ -528,7 +528,7 @@ message: |
     limactl shell {{.Name}} -- bash -c 'uv tool install "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.0"'
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 vrg-commit --type feat --scope vm --message "Lima VM template for vergil-agent" \
@@ -547,7 +547,7 @@ the VM image.
 **Files:**
 - Create: `build.sh`
 
-- [ ] **Step 1: Write build.sh**
+- [x] **Step 1: Write build.sh**
 
 ```bash
 #!/bin/bash
@@ -616,7 +616,7 @@ echo ""
 echo "=== Build complete ==="
 ```
 
-- [ ] **Step 2: Make build.sh executable and commit**
+- [x] **Step 2: Make build.sh executable and commit**
 
 ```bash
 chmod +x build.sh
@@ -632,7 +632,7 @@ This task is not automated — it requires a human or agent
 with Lima installed on macOS to run the build and verify the
 VM works end-to-end.
 
-- [ ] **Step 1: Run the build script**
+- [x] **Step 1: Run the build script**
 
 ```bash
 cd ~/dev/projects/vergil-project/vergil-vm
@@ -642,7 +642,7 @@ cd ~/dev/projects/vergil-project/vergil-vm
 Expected: All tests pass. The VM remains running for manual
 inspection.
 
-- [ ] **Step 2: Shell into the VM and verify interactively**
+- [x] **Step 2: Shell into the VM and verify interactively**
 
 ```bash
 limactl shell vergil-agent-test
@@ -654,14 +654,14 @@ nerdctl info
 echo $SHELL     # Should be /bin/zsh
 ```
 
-- [ ] **Step 3: Verify workspace mount**
+- [x] **Step 3: Verify workspace mount**
 
 ```bash
 # Inside the VM:
 ls ~/dev/    # Should show host's ~/dev contents
 ```
 
-- [ ] **Step 4: Verify vergil-tooling dynamic install**
+- [x] **Step 4: Verify vergil-tooling dynamic install**
 
 ```bash
 # Inside the VM:
@@ -671,14 +671,14 @@ vrg-commit --help
 uv tool uninstall vergil-tooling
 ```
 
-- [ ] **Step 5: Clean up test VM**
+- [x] **Step 5: Clean up test VM**
 
 ```bash
 limactl stop vergil-agent-test
 limactl delete vergil-agent-test
 ```
 
-- [ ] **Step 6: Commit any fixes discovered during validation**
+- [x] **Step 6: Commit any fixes discovered during validation**
 
 If any provisioning or test issues were found and fixed during
 manual validation, commit them now.

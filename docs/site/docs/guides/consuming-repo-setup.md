@@ -217,7 +217,9 @@ refuses a repo whose `release` is not `true`) and
 `[ci].integration-tests` (default `false`) are optional, as is
 `[ci].images` (a boolean, default `false`), which only a repo whose `ci.yml`
 calls a repo-local `ci-images.yml` as job `images` sets; it makes
-`images / evidence` a required check. Optional
+`images / evidence` a required check. The `[ci]` table itself is
+required, even when none of its keys apply: the loader refuses a
+`vergil.toml` without it. Optional
 tables have their own references:
 [`[container]`](../reference/container-config.md),
 [`[test]`](../reference/test-config.md),
@@ -226,6 +228,63 @@ tables have their own references:
 [`[vm]`](../reference/vm-spec.md) and
 [`[merge-review]`](merge-review.md#change-classes-and-the-docs-allow-list)
 (the paths a merge review treats as documentation).
+
+### The documentation profile: an org `.github` repo
+
+An org's `.github` profile repo holds the org profile README and the
+community health files. It has no code, no primary language, and
+nothing to version or release. Its canonical `vergil.toml` is the file
+`vrg-github-repo-init` writes for those answers (no `--language`,
+`--repository-type documentation`, `--versioning-scheme none`,
+`--branching-model docs-single-branch`, `--release-model none`,
+`--no-publish-docs`):
+
+```toml
+[project]
+repository-type = "documentation"
+versioning-scheme = "none"
+branching-model = "docs-single-branch"
+release-model = "none"
+
+[ci]
+integration-tests = false
+
+[publish]
+release = false
+docs = false
+
+[dependencies]
+vergil = "v2.1"
+```
+
+What each key drives in such a repo:
+
+| Key | What it drives |
+|---|---|
+| `[project].repository-type` | Required. It only decides how versions resolve, and a repo with no primary language resolves none, so here it describes the repo and drives nothing else. |
+| `[project].versioning-scheme` | Required. vergil-tooling does not read it. The vergil-actions docs deploy reads it (`none` publishes one site with no versions), and a profile repo deploys no docs. |
+| `[project].branching-model` | The branch prefixes `vrg-commit` accepts (`feature/*`, `bugfix/*`, `chore/*`), the eternal branches `vrg-finalize-pr` keeps (`develop`, `gh-pages`) and the integration branch `vrg-repo-status` reports (`develop`). |
+| `[project].release-model` | `none` keeps `version / version-bump` out of the required checks, `vrg-github-repo-init` writes no version job, and `ci-version-bump.yml` skips. |
+| `[ci].integration-tests` | `false`, the default, which `vrg-github-repo-init` always writes. `true` would require a `test / integration / <version>` check per resolved version, and this repo resolves none. |
+| `[publish].release` | `false`: `vrg-release` refuses the repo, and `vrg-repo-status` shows no pending-release section. With `docs` also `false`, `vrg-github-repo-init` writes no `cd.yml`. |
+| `[publish].docs` | `false` keeps `docs / docs` out of the required checks, and `vrg-github-repo-init` then writes no docs job and no docs site. Leaving the key out means `true`, which requires a `docs / docs` check that the repo's `ci.yml` must report on every pull request. |
+| `[dependencies].vergil` | The Vergil release line: the ref the version window is read at, the pin on every vergil-actions workflow, and the vergil-tooling that CI installs. |
+
+Leave two keys out:
+
+- `[project].primary-language`. Its absence is how a repo says it has
+  no language. `"none"` is not a value: the loader warns on every read
+  and treats it as unset.
+- `[ci].versions`. A repo with no primary language never reads it, and
+  a pin such as `["latest"]` names no window version, so it would fail
+  version resolution once a language was declared.
+
+The config audit checks only that `vergil.toml` loads; it does not
+rewrite the file. A profile repo whose `vergil.toml` has drifted from
+this shape is corrected by a change of its own. `vrg-github-repo-init
+--adopt` does not restore the shape by itself: it re-renders the file
+starting from its current values, so it keeps any drift whose answer
+is not overridden.
 
 `vrg-validate` validates `vergil.toml` (required keys and enum
 values) and the `README.md` structure with its repo-profile check,

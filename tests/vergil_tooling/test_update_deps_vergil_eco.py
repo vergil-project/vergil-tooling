@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from vergil_tooling.lib.update_deps.changes import PackageChange
 from vergil_tooling.lib.update_deps.context import UpdateDepsContext, UpdateDepsError
 from vergil_tooling.lib.update_deps.report import HeldBack
 from vergil_tooling.lib.update_deps.updaters.vergil_eco import (
@@ -110,6 +111,7 @@ def test_apply_normalize_rewrites_drift(tmp_path: Path) -> None:
     result = VergilUpdater().apply(_ctx(tmp_path))
     assert result.changed is True
     assert result.commit_message == "chore(deps): normalize vergil refs to v2.1"
+    assert result.packages == []
     assert "@v2.1" in (tmp_path / ".github" / "workflows" / "ci.yml").read_text()
 
 
@@ -127,6 +129,7 @@ def test_apply_bump_rewrites_source_and_refs(tmp_path: Path) -> None:
     assert result.changed is True
     assert result.commit_message == "chore(deps): bump vergil to v2.2"
     assert 'vergil = "v2.2"' in (tmp_path / "vergil.toml").read_text()
+    assert result.packages == [PackageChange("vergil", "v2.1", "v2.2")]
     assert "@v2.2" in (tmp_path / ".github" / "workflows" / "ci.yml").read_text()
 
 
@@ -349,6 +352,7 @@ def test_apply_normalize_combines_runtime_bump(tmp_path: Path) -> None:
     assert result.summary == "vergil-python runtime 3.14.9"
     assert result.commit_message == "chore(deps): vergil-python runtime 3.14.9"
     assert 'runtime = "3.14.9"' in (tmp_path / "vergil.toml").read_text()
+    assert result.packages == [PackageChange("vergil-python3.14", "3.14.8", "3.14.9")]
 
 
 def test_apply_normalize_refs_and_runtime_with_held_back(tmp_path: Path) -> None:
@@ -374,6 +378,7 @@ def test_apply_normalize_reports_held_back_without_change(tmp_path: Path) -> Non
     assert result.changed is False
     assert result.summary == "vergil refs already at v2.1"
     assert [h.latest for h in result.held_back] == ["3.15"]
+    assert result.packages == []
 
 
 def test_apply_bump_combines_runtime_bump(tmp_path: Path) -> None:
@@ -385,6 +390,10 @@ def test_apply_bump_combines_runtime_bump(tmp_path: Path) -> None:
     result = VergilUpdater(served_runtime=lambda _b: _served("3.14.9")).apply(ctx)
     assert result.changed is True
     assert result.commit_message == "chore(deps): bump vergil to v2.2; vergil-python runtime 3.14.9"
+    assert result.packages == [
+        PackageChange("vergil", "v2.1", "v2.2"),
+        PackageChange("vergil-python3.14", "3.14.8", "3.14.9"),
+    ]
 
 
 def test_apply_bump_runtime_only_change(tmp_path: Path) -> None:
@@ -394,6 +403,7 @@ def test_apply_bump_runtime_only_change(tmp_path: Path) -> None:
     ctx.vergil_bump = "2.1"
     result = VergilUpdater(served_runtime=lambda _b: _served("3.14.9", "3.15")).apply(ctx)
     assert result.changed is True
+    assert result.packages == [PackageChange("vergil-python3.14", "3.14.8", "3.14.9")]
     assert [h.latest for h in result.held_back] == ["3.15"]
 
 

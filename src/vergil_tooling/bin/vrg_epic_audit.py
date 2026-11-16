@@ -150,6 +150,7 @@ def _audit(args: argparse.Namespace, org: str) -> int:
                 home=home,
                 reopened=reopened,
                 private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
+                misplaced=epic_audit.misplaced_archives(org, issues=issues),
             )
         )
         # No security-records pass here: it lists and writes security advisories,
@@ -198,6 +199,7 @@ def _audit(args: argparse.Namespace, org: str) -> int:
             body_only=epic_audit.body_only_parents(org, issues=issues),
             public_queues=epic_audit.public_self_homed_queues(org, issues=issues),
             private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
+            misplaced=epic_audit.misplaced_archives(org, issues=issues),
             epic_docs_findings=epic_audit.epic_documents(org, home=home, listing=home_epics),
             coverage_gap=gap,
         )

@@ -34,6 +34,9 @@ from vergil_tooling.bin.vrg_validate import (
     _resolve_test_workers,
     _run_audit_command,
     _run_common_checks,
+    _run_semgrep,
+    _semgrep_rulesets,
+    _semgrep_stage,
     _skip_conan_audit_scan,
     _skip_rust_doctests_without_lib,
     _sources_without_manifest_stage,
@@ -63,6 +66,9 @@ def _container_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         # The tests' repo roots hold no manifests; the bootstrap skip has its
         # own tests, which restore the real check.
         patch(_MOD + ".unbootstrapped_manifests", return_value=[]),
+        # No full run may scan for real (semgrep needs its registry); the
+        # semgrep stage has its own tests, which call the real function.
+        patch(_MOD + "._run_semgrep"),
     ):
         yield
 
@@ -102,6 +108,7 @@ def test_build_stages_full_run_order() -> None:
         "typecheck",
         "test",
         "audit",
+        "semgrep",
     ]
     assert stages[1].mode == "fail_fast"
     assert all(s.mode == "fail_defer" for s in stages if s.name != "install")
@@ -147,7 +154,7 @@ def test_build_stages_check_lint_no_install_commands() -> None:
 def test_build_stages_no_language_skips_language_checks() -> None:
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(None, None, Path("/tmp/r"))  # noqa: S108
-    assert [s.name for s in stages] == ["common"]
+    assert [s.name for s in stages] == ["common", "semgrep"]
 
 
 def test_build_stages_no_commands_for_check() -> None:
@@ -1297,6 +1304,7 @@ def test_build_stages_version_stages_follow_test_before_audit() -> None:
         "test (python 3.14)",
         "test (python 3.13)",
         "audit",
+        "semgrep",
     ]
 
 
@@ -1638,7 +1646,16 @@ def test_unbootstrapped_rust_skips_language_stages_loudly(
     record = read_record(tmp_path)
     assert record.full
     assert record.not_passed == ()
-    assert record.passed == ("common", "install", "lint", "typecheck", "test", "audit", "custom")
+    assert record.passed == (
+        "common",
+        "install",
+        "lint",
+        "typecheck",
+        "test",
+        "audit",
+        "semgrep",
+        "custom",
+    )
     out = capsys.readouterr().out
     for stage in ("install", "lint", "typecheck", "test", "audit"):
         assert f"NOTICE: {stage}: {_NOT_BOOTSTRAPPED}; add it to run the {stage} stage" in out
@@ -1652,7 +1669,7 @@ def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
     _write_config(tmp_path, "rust")
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(None, "rust", tmp_path)
-    language_stages = [s for s in stages if s.name != "common"]
+    language_stages = [s for s in stages if s.name not in ("common", "semgrep")]
     assert [s.name for s in language_stages] == ["install", "lint", "typecheck", "test", "audit"]
     assert all(s.mode == "warn" for s in language_stages)
     _run_validate(tmp_path, [])
@@ -1665,6 +1682,7 @@ def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
         "typecheck": "warn",
         "test": "warn",
         "audit": "warn",
+        "semgrep": "ok",
     }
 
 
@@ -1766,7 +1784,7 @@ def test_rust_sources_without_cargo_toml_stage_shape(tmp_path: Path) -> None:
     (tmp_path / "src" / "lib.rs").write_text("")
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(None, "rust", tmp_path)
-    language_stages = [s for s in stages if s.name != "common"]
+    language_stages = [s for s in stages if s.name not in ("common", "semgrep")]
     assert [s.name for s in language_stages] == ["install", "lint", "typecheck", "test", "audit"]
     assert language_stages[0].mode == "fail_fast"
     with pytest.raises(ValidationError, match="add the manifest or remove the sources"):
@@ -1859,3 +1877,262 @@ def test_sources_without_manifest_stage_names_at_most_three_sources() -> None:
     with pytest.raises(ValidationError) as exc:
         stage.fn(None)
     assert str(exc.value) == msg
+
+
+# -- semgrep stage (issue #4003) -------------------------------------------------
+
+_CLEAN_SARIF: dict[str, object] = {
+    "version": "2.1.0",
+    "runs": [{"tool": {"driver": {"name": "semgrep"}}}],
+}
+
+
+def _sarif_result(rule: str, *, suppressed: bool = False) -> dict[str, object]:
+    result: dict[str, object] = {
+        "ruleId": rule,
+        "level": "error",
+        "message": {"text": f"{rule} matched"},
+        "locations": [
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": "src/app.py"},
+                    "region": {"startLine": 7},
+                }
+            }
+        ],
+    }
+    if suppressed:
+        result["suppressions"] = [{"kind": "inSource"}]
+    return result
+
+
+def _sarif(*results: dict[str, object]) -> dict[str, object]:
+    return {
+        "version": "2.1.0",
+        "runs": [{"tool": {"driver": {"name": "semgrep"}}, "results": list(results)}],
+    }
+
+
+def _git_repo(root: Path, *files: str) -> Path:
+    subprocess.run(["git", "init", "-q", str(root)], check=True)  # noqa: S607
+    for rel in files:
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x\n")
+    return root
+
+
+def _fake_semgrep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sarif: dict[str, object] | None,
+    rc: int = 0,
+    stderr: str = "",
+) -> Path:
+    """Put a ``semgrep`` first on PATH that logs its argv and writes *sarif*.
+
+    The SARIF goes to the path after ``--output``; ``None`` writes nothing.
+    Returns the argv log.
+    """
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    log = tmp_path / "semgrep-argv.json"
+    payload = tmp_path / "fake-sarif.json"
+    if sarif is not None:
+        payload.write_text(json.dumps(sarif))
+    script = fake_bin / "semgrep"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, pathlib, shutil, sys\n"
+        f"pathlib.Path({str(log)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        f"payload = pathlib.Path({str(payload)!r})\n"
+        "out = sys.argv[sys.argv.index('--output') + 1]\n"
+        "if payload.exists():\n"
+        "    shutil.copy(payload, out)\n"
+        f"sys.stderr.write({stderr!r})\n"
+        f"sys.exit({rc})\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    return log
+
+
+def test_build_stages_check_semgrep_runs_only_semgrep() -> None:
+    with patch(_MOD + ".language_commands") as m_cmds:
+        stages = _build_stages("semgrep", "python", Path("/tmp/r"))  # noqa: S108
+    assert [s.name for s in stages] == ["semgrep"]
+    assert stages[0].mode == "fail_defer"
+    m_cmds.assert_not_called()
+
+
+def test_build_stages_semgrep_comes_before_custom() -> None:
+    with (
+        patch(_MOD + ".language_commands", return_value=[["echo"]]),
+        patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"),
+    ):
+        stages = _build_stages(None, "python", Path("/tmp/r"))  # noqa: S108
+    assert [s.name for s in stages][-3:] == ["audit", "semgrep", "custom"]
+
+
+def test_semgrep_stage_runs_the_scan_for_its_language() -> None:
+    stage = _semgrep_stage("go", Path("/r"))
+    with patch(_MOD + "._run_semgrep") as m_run:
+        stage.fn(None)
+    m_run.assert_called_once_with("go", Path("/r"))
+
+
+def test_check_semgrep_runs_only_the_semgrep_stage(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._run_common_checks") as m_common,
+        patch(_MOD + ".progress.run") as m_run,
+        patch(_MOD + "._run_semgrep") as m_semgrep,
+    ):
+        assert main(["--check", "semgrep"]) == 0
+    m_semgrep.assert_called_once_with("python", tmp_path)
+    m_common.assert_not_called()
+    m_run.assert_not_called()
+
+
+def test_check_semgrep_failure_fails_the_run(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._run_semgrep", side_effect=ValidationError("1 semgrep finding(s)")),
+    ):
+        assert main(["--check", "semgrep"]) == 1
+
+
+def test_semgrep_rulesets_language_only(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path, "src/app.py")
+    assert _semgrep_rulesets("python", repo) == ["p/python"]
+
+
+def test_semgrep_rulesets_add_dockerfile_rules_for_a_dockerfile_anywhere(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path, "docker/base/Dockerfile.template")
+    assert _semgrep_rulesets("python", repo) == ["p/python", "p/dockerfile"]
+
+
+@pytest.mark.parametrize("name", ["ci.yml", "ci.yaml", "nested/ci.yml"])
+def test_semgrep_rulesets_add_workflow_rules(tmp_path: Path, name: str) -> None:
+    repo = _git_repo(tmp_path, f".github/workflows/{name}")
+    assert _semgrep_rulesets("rust", repo) == ["p/rust", "p/github-actions"]
+
+
+def test_semgrep_rulesets_ignore_non_yaml_in_workflows_and_yaml_elsewhere(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path, ".github/workflows/README.md", ".github/dependabot.yml")
+    assert _semgrep_rulesets("go", repo) == ["p/golang"]
+
+
+def test_semgrep_rulesets_skip_gitignored_files(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path, "build/Dockerfile")
+    (repo / ".gitignore").write_text("build/\n")
+    assert _semgrep_rulesets("python", repo) == ["p/python"]
+
+
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    [("cpp", ["p/c"]), ("typescript", ["p/typescript"])],
+)
+def test_semgrep_rulesets_add_ci_extra_config(
+    tmp_path: Path, language: str, expected: list[str]
+) -> None:
+    repo = _git_repo(tmp_path, "README.md")
+    assert _semgrep_rulesets(language, repo) == expected
+
+
+def test_semgrep_rulesets_none_for_a_language_less_repo(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path, "README.md")
+    assert _semgrep_rulesets(None, repo) == []
+
+
+def test_run_semgrep_clean_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _git_repo(tmp_path / "repo", "src/app.py", ".github/workflows/ci.yml")
+    log = _fake_semgrep(tmp_path, monkeypatch, sarif=_CLEAN_SARIF)
+
+    _run_semgrep("python", repo)
+
+    argv = json.loads(log.read_text())
+    assert argv[:2] == ["scan", "--sarif"]
+    assert argv[argv.index("--metrics") + 1] == "off"
+    configs = [argv[i + 1] for i, arg in enumerate(argv) if arg == "--config"]
+    assert configs == ["p/python", "p/github-actions"]
+    assert "--exclude-rule" in argv
+    assert argv[-1] == str(repo)
+    # The SARIF is written outside the working tree.
+    output = Path(argv[argv.index("--output") + 1])
+    assert not output.is_relative_to(repo)
+    assert not output.exists()
+    out = capsys.readouterr().out
+    assert "Running (semgrep): semgrep scan --config p/python --config p/github-actions" in out
+    assert "semgrep: no findings (0 suppressed in source)" in out
+
+
+def test_run_semgrep_finding_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _git_repo(tmp_path / "repo", "src/app.py")
+    _fake_semgrep(tmp_path, monkeypatch, sarif=_sarif(_sarif_result("py.rule")), rc=1)
+
+    with pytest.raises(ValidationError, match=r"^1 semgrep finding\(s\)$"):
+        _run_semgrep("python", repo)
+
+    captured = capsys.readouterr()
+    assert "ERROR: src/app.py:7: [py.rule] py.rule matched" in captured.err
+    assert "**1 finding(s)**" in captured.out
+
+
+def test_run_semgrep_suppressed_finding_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _git_repo(tmp_path / "repo", "src/app.py")
+    sarif = _sarif(_sarif_result("py.rule", suppressed=True))
+    _fake_semgrep(tmp_path, monkeypatch, sarif=sarif, rc=0)
+
+    _run_semgrep("python", repo)
+
+    out = capsys.readouterr().out
+    assert "**1 suppressed finding(s)**" in out
+    assert "semgrep: no findings (1 suppressed in source)" in out
+
+
+def test_run_semgrep_scan_error_fails_with_its_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _git_repo(tmp_path / "repo", "src/app.py")
+    _fake_semgrep(tmp_path, monkeypatch, sarif=None, rc=2, stderr="cannot reach semgrep.dev\n")
+
+    with pytest.raises(
+        ValidationError,
+        match=r"^semgrep scan failed with exit code 2: cannot reach semgrep\.dev$",
+    ):
+        _run_semgrep("python", repo)
+
+    assert "--- semgrep stderr ---" in capsys.readouterr().err
+
+
+def test_run_semgrep_without_sarif_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _git_repo(tmp_path / "repo", "src/app.py")
+    _fake_semgrep(tmp_path, monkeypatch, sarif=None, rc=0)
+
+    with pytest.raises(ValidationError, match=r"^semgrep exited 0 but wrote no SARIF output$"):
+        _run_semgrep("python", repo)
+
+
+def test_run_semgrep_without_rulesets_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _git_repo(tmp_path, "README.md")
+    with (
+        patch(_MOD + ".run_scan") as m_scan,
+        patch(_MOD + ".progress.mark_warn") as m_warn,
+    ):
+        _run_semgrep(None, repo)
+    m_scan.assert_not_called()
+    reason = "no semgrep rulesets for language <not set>, and no Dockerfile or workflow to scan"
+    m_warn.assert_called_once_with(reason)
+    assert f"NOTICE: semgrep: {reason}" in capsys.readouterr().out

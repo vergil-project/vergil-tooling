@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.316] - 2026-11-16
+
+### Bug fixes
+
+- keep archives out of the orphan pass and flag misplaced ones (#4449)
+- promote vX.Y only after the package index has the release (#4454)
+- stop waiting for a required check whose producing job already failed (#4455)
+
+### Documentation
+
+- pin down the documentation-profile vergil.toml shape (#4453)
+- mark the shipped VM plans complete and refresh their status tables (#4457)
+
+### Features
+
+- add note, which appends a dated private note to an advisory (#4450)
+- run the semgrep gate's scan in vrg-validate and record every skipped PR gate (#4452)
+- list the packages each dependency update changed in the PR body (#4456)
+
 ## [2.1.315] - 2026-11-15
 
 ### Bug fixes

@@ -14,6 +14,7 @@ from vergil_tooling.lib.update_deps.context import UpdateDepsError
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from vergil_tooling.lib.update_deps.changes import PackageChange
     from vergil_tooling.lib.update_deps.context import UpdateDepsContext
     from vergil_tooling.lib.update_deps.report import HeldBack
 
@@ -30,6 +31,9 @@ class UpdateResult:
     # Dependencies newer than the declared bounds allow (spec §7, epic
     # vergil-project/.github#381). Reported, never bumped.
     held_back: list[HeldBack] = field(default_factory=list)
+    # The packages this run moved (vergil-tooling#4295): None when the updater
+    # cannot itemize its changes (a repo hook), [] when it moved none.
+    packages: list[PackageChange] | None = None
 
 
 @runtime_checkable

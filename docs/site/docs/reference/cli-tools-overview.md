@@ -850,14 +850,15 @@ advisory to an existing issue, or resumes an unfinished pair), `list` and
 issues, `sync` sets each paired advisory's state from its issues and
 reports broken pairs (`--dry-run` previews it), and `close` closes a draft
 advisory whose issues are all closed, posting the GHSA ID and a required
-`--reason` on each of them first. Advisory text is printed only by `show` and `list --details`. See
+`--reason` on each of them first, and `note` appends a dated private note
+from a file to an advisory's description (append-only). Advisory text is printed only by `show` and `list --details`. See
 [vrg-security-record](dev/security-record.md) and
 [Security Records](../guides/security-records.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_security_record` (library: `lib/security_records.py`) |
-| Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --to REF [--to REF …]`; `sync [--dry-run]`; `close GHSA-ID --reason TEXT` |
+| Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --to REF [--to REF …]`; `sync [--dry-run]`; `close GHSA-ID --reason TEXT`; `note GHSA-ID --file FILE` |
 | Preconditions | The org's `.github` is public; Repository security advisories: Read and write on the identity's App (or a human `gh` login with access) |
 | Failure mode | A partial pair exits 1 naming what exists and the exact `--resume` command that finishes it; a private `.github`, a duplicate draft, or `--details` under `VRG_EPIC_SWEEP` is refused; `sync` exits 1 on a broken pair after syncing the rest |
 | Exit codes | 0 success, 1 refused or error, 2 bad arguments |
@@ -1221,7 +1222,9 @@ an open finite epic whose children are all closed. The **invariant** checks
 are the [compliance invariants](../standards/github-issues.md#compliance-invariants):
 epics outside `.github`, stray `.github` issues, a closed epic with an open
 child, orphans, retired kind labels, body-only `Parent:` links, self-homed
-queues in a now-public repo, and private work under a public epic. It also
+queues in a now-public repo, private work under a public epic, and a
+misplaced archive (one with a parent, one without its `archive` label, or one
+labelled `archive` whose title is not a stamped archive title). It also
 lists open epics with operational tasks still pending, and closed
 operational tasks with no `Outcome: SUCCESS`.
 
@@ -1902,7 +1905,8 @@ markdownlint, yamllint) are available on PATH.
 
 The unified validation driver. It reads `[project].primary-language`
 from `vergil.toml` and runs the stages in order: common checks, the
-language's install, lint, typecheck, test and audit commands, and last
+language's install, lint, typecheck, test and audit commands, the
+semgrep scan of PR CI's `security / semgrep` gate, and last
 the repository's custom validator (`scripts/bin/validate-custom` or
 `vrg-validate-custom` on `PATH`) when it has one. `--check` runs one
 stage. `--check custom` runs the install stage (when the language has
@@ -1919,7 +1923,7 @@ start, and each stage's status. `vrg-merge-review-request` reads it.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_validate` |
-| Args | `--check {common,lint,typecheck,test,audit,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
+| Args | `--check {common,lint,typecheck,test,audit,semgrep,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
 | Preconditions | Inside a dev container (run it as `vrg-container-run -- vrg-validate`) |
 | Failure mode | Runs every stage after install and reports all failures in one run; install fails fast |
 | Exit codes | 0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example `--check custom --all-versions`) |
