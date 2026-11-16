@@ -2986,7 +2986,12 @@ def test_typescript_pre_gate_stage_passes_with_no_problems(tmp_path: Path) -> No
 
 
 def _run_typescript_validate(tmp_path: Path, argv: list[str]) -> tuple[int, list[str]]:
-    """Run main() for real on a TypeScript repo at *tmp_path*; return rc and commands run."""
+    """Run main() for real on a TypeScript repo at *tmp_path*; return rc and commands run.
+
+    *tmp_path* is a real git repository: the Prettier check lists files with
+    ``git ls-files``.
+    """
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
     _write_config(tmp_path, "typescript")
     ran: list[str] = []
 

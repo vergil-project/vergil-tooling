@@ -955,18 +955,10 @@ def test_cpp_cmake_configures_use_conan_toolchain() -> None:
 def _ts_config_path(name: str) -> Path:
     """Resolve a packaged ``configs/typescript/<name>`` path.
 
-    Derives the packaged ``typescript/`` config directory from a LINT argument
-    that carries the expanded ``{configs}`` placeholder, then joins *name* — so
-    it resolves files (like ``tsconfig.base.json``) that no command references
-    directly, without hard-coding the package layout.
+    No command references the packaged configs any more: LINT reads the
+    managed copies in the repo (epic vergil-project/.github#1174, spec §6.4).
     """
-    for cmd in language_commands("typescript", CheckKind.LINT):
-        for arg in cmd:
-            token = arg.split("=", 1)[-1]
-            if "/typescript/" in token:
-                return Path(token).parent / name
-    msg = "no LINT arg references the typescript configs dir"
-    raise AssertionError(msg)
+    return Path(str(files("vergil_tooling.configs"))) / "typescript" / name
 
 
 def test_typescript_is_supported() -> None:
@@ -988,51 +980,32 @@ def test_typescript_gates_run_repo_binaries_by_path() -> None:
         for cmd in language_commands("typescript", kind):
             assert cmd[0].startswith("node_modules/.bin/"), cmd
     lint = language_commands("typescript", CheckKind.LINT)
-    eslint = [cmd for cmd in lint if "eslint" in " ".join(cmd)]
-    assert len(eslint) == 1
-    script = eslint[0][2]
-    assert 'node_modules/.bin/eslint . --config "$cfg"' in script
     assert "npx" not in " ".join(arg for cmd in lint for arg in cmd)
-    # Prettier stays an image tool.
-    assert [cmd[0] for cmd in lint if cmd is not eslint[0]] == ["prettier"]
+    # ESLint runs by path; Prettier stays an image tool.
+    assert [cmd[0] for cmd in lint] == ["prettier", "node_modules/.bin/eslint"]
 
 
 def test_typescript_lint_commands() -> None:
-    cmds = language_commands("typescript", CheckKind.LINT)
-    joined = _joined(cmds)
-    # Prettier format check + ESLint, each against a packaged config.
-    assert any(c.startswith("prettier --check .") for c in joined)
-    # ESLint runs inside an ``sh -c`` staging wrapper (see below); the
-    # invocation itself is still ``eslint . --config <staged .mjs>``.
-    assert any("eslint . --config" in c for c in joined)
-    # Both reference a packaged {configs}/typescript/* config.
-    assert any("/typescript/prettier.config.json" in c for c in joined)
-    assert any("/typescript/eslint.config.mjs" in c for c in joined)
+    """Prettier reads the managed ``.prettierrc.json``; ESLint finds the repo's own config."""
+    assert language_commands("typescript", CheckKind.LINT) == [
+        ["prettier", "--check", ".", "--config", ".prettierrc.json"],
+        ["node_modules/.bin/eslint", "."],
+    ]
 
 
-def test_typescript_eslint_staged_into_repo_for_esm_resolution() -> None:
-    """ESLint's ESM flat config is staged into the repo so its bare imports
-    (@eslint/js, typescript-eslint) resolve against the consumer's repo-local
-    node_modules rather than the packaged path with no adjacent node_modules
-    (#2771)."""
-    cmds = language_commands("typescript", CheckKind.LINT)
-    eslint = [c for c in cmds if "eslint" in " ".join(c)]
-    assert len(eslint) == 1
-    wrapper = eslint[0]
-    # A shell wrapper is required to copy-in / copy-out the config.
-    assert wrapper[:2] == ["sh", "-c"]
-    script = wrapper[2]
-    staged = "./.vergil-eslint.config.mjs"
-    # The packaged config is copied into the repo tree, eslint points at the
-    # staged copy (not the packaged path), and the staged file is cleaned up
-    # on exit via a trap so nothing is left in the consumer tree.
-    assert "cp " in script and "/typescript/eslint.config.mjs" in script
-    assert 'eslint . --config "$cfg"' in script
-    assert f"cfg={staged}" in script
-    assert "trap 'rm -f" in script
-    # The staged name is dot-prefixed and .mjs so it is loaded as ESM and is
-    # matched by no config entry (never linted as a source file).
-    assert staged.endswith(".mjs")
+def test_lint_has_no_staging() -> None:
+    """LINT reads the repo's configs in place: no staged copy, no shell, no packaged path.
+
+    The managed ``eslint.vergil.config.mjs`` sits in the repo root, so its bare
+    imports resolve from the repo's ``node_modules`` and the copy-in,
+    delete-after staging of #2771 is gone (spec §6.4).
+    """
+    flat = [arg for cmd in language_commands("typescript", CheckKind.LINT) for arg in cmd]
+    assert not any(".vergil-eslint.config.mjs" in arg for arg in flat)
+    assert "sh" not in flat
+    assert not any("/typescript/" in arg for arg in flat)
+    # ESLint takes no --config: it reads the repo's eslint.config.mjs itself.
+    assert flat.count("--config") == 1
 
 
 def test_typescript_lint_ban_ts_comment_rule_present() -> None:
@@ -1046,21 +1019,6 @@ def test_typescript_lint_ban_ts_comment_rule_present() -> None:
     # Type-aware linting is enabled.
     assert "recommendedTypeChecked" in text
     assert "projectService" in text
-
-
-def test_typescript_lint_uses_packaged_configs() -> None:
-    """Every LINT tool points at a packaged {configs}/typescript/* file that exists."""
-    cmds = language_commands("typescript", CheckKind.LINT)
-    flat = [arg for cmd in cmds for arg in cmd]
-    # No unresolved placeholder survives expansion.
-    assert all("{configs}" not in arg for arg in flat)
-    # Both packaged configs the LINT stage relies on must exist on disk.
-    for name in ("prettier.config.json", "eslint.config.mjs"):
-        assert _ts_config_path(name).exists(), f"packaged config missing: {name}"
-    # Each config is referenced by exactly one LINT tool — prettier by its
-    # ``--config`` arg directly, eslint by path inside the staging wrapper.
-    assert any("/typescript/prettier.config.json" in arg for arg in flat)
-    assert any("/typescript/eslint.config.mjs" in arg for arg in flat)
 
 
 def test_typescript_typecheck_commands() -> None:
