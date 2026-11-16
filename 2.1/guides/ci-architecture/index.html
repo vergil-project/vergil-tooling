@@ -1430,6 +1430,8 @@
       
         
       
+        
+      
     
     
     
@@ -1482,6 +1484,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.317/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.317
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18232,10 +18262,11 @@ one of the two fails the build. The build log names the path it took.</p>
 shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the
 repository has Ansible content. It then runs the language's lint,
 typecheck, test and audit commands, the semgrep scan of the
-<code>security / semgrep</code> gate, and last the repository's custom
-validator when it has one. To run one stage, pass
-<code>--check common</code>, <code>lint</code>, <code>typecheck</code>, <code>test</code>, <code>audit</code>, <code>semgrep</code> or
-<code>custom</code>. The
+<code>security / semgrep</code> gate, the strict mkdocs build of the
+<code>docs / docs</code> gate when the repository has <code>docs/site/mkdocs.yml</code>,
+and last the repository's custom validator when it has one. To run
+one stage, pass <code>--check common</code>, <code>lint</code>, <code>typecheck</code>, <code>test</code>,
+<code>audit</code>, <code>semgrep</code>, <code>docs</code> or <code>custom</code>. The
 <a href="../validation-matrix/">Validation Matrix</a> lists every check and where
 it runs.</p>
 <p>A repository can change the in-container command with
@@ -18550,7 +18581,13 @@ generates it, for a new repository or for an existing one with
 <li><strong>The <code>CI gates</code> ruleset</strong> is applied to <code>main</code> and <code>develop</code> with
   the required checks listed in <a href="#ci-gates">CI gates</a>. Before it is
   applied, the tool checks that the generated <code>ci.yml</code> produces every
-  required check and fails if it does not.</li>
+  required check and fails if it does not. <code>vrg-github-repo-config</code>
+  runs the same check against the committed <code>ci.yml</code> before it writes
+  the ruleset. <code>[ci].integration-tests = true</code> always fails it, since no
+  reusable workflow runs an integration job yet
+  (<a href="https://github.com/vergil-project/vergil-tooling/issues/2721">#2721</a>):
+  the error names the setting as the cause, and <code>vrg-github-repo-init</code>
+  refuses the setting earlier, before it pushes anything.</li>
 </ul>
 <p>After that, <code>vrg-github-repo-config</code> keeps the repository in line:
 <code>audit</code> reports drift, <code>diff</code> shows the GitHub side's, and <code>update</code>,
@@ -18611,7 +18648,7 @@ is the local command. Nothing else needs to be added to the repository.</p>
 </tr>
 <tr>
 <td><code>test / integration / &lt;version&gt;</code></td>
-<td><code>[ci].integration-tests</code> is on (one per resolved version)</td>
+<td><code>[ci].integration-tests</code> is on (one per resolved version). No CI job produces it yet, so the setting is refused (#2721)</td>
 </tr>
 </tbody>
 </table>
