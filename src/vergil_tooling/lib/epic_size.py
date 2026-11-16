@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast, get_args
+from typing import TYPE_CHECKING, Literal, get_args
 
 from vergil_tooling.lib.trusted_authors import load_trusted_authors
 
@@ -210,7 +210,7 @@ def _parse_sizing(body: str) -> Sizing | str:
             f"{EPIC_SIZE_KEY} {stated} does not match"
             f" {ESTIMATED_TASKS_KEY} {tasks} (size {derived})"
         )
-    return Sizing(tasks=tasks, confidence=cast("Confidence", confidence), reason=values[REASON_KEY])
+    return Sizing(tasks=tasks, confidence=confidence, reason=values[REASON_KEY])
 
 
 def _bare(login: str) -> str:
