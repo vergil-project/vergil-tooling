@@ -49,7 +49,17 @@ routes each container allows:
   a development epic. A brainstorm never gates its epic's work, so moving it
   suspends nothing. The parent is replaced in one call, then the hand-off is
   recorded on the epic (for the retrospective's §5) and on the item; a record
-  that fails after the move raises with every comment still to post.
+  that fails after the move raises with every comment still to post. With a
+  sizing (epic vergil-project/.github#1191) it then sizes the item as ``size``
+  does; the sizing is validated before the move, and one that fails after it
+  raises naming the item, now in planning, and the ``size`` command that
+  finishes it. Without one the item keeps any size it already carries.
+- **size** — record the item's estimated epic size, from planning or deferred
+  only: post the dated sizing comment (the record), then, in one edit, add the
+  derived ``epic-size:*`` label and remove every other one, after ensuring the
+  label exists. It neither moves nor closes the item. A label step that fails
+  after the comment raises :class:`RouteHalfAppliedError` with the command
+  that finishes it (re-running the same ``size`` is safe).
 - **split** — the replacement tasks already exist (made with
   ``vrg-issue-create``); comment the links and the reason, then close.
 
@@ -79,6 +89,7 @@ from __future__ import annotations
 
 import contextlib
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -87,8 +98,14 @@ from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from vergil_tooling.lib import epics, github, security_records
+from vergil_tooling.lib.epic_size import LABEL_PREFIX, Sizing, label_for, render_sizing_comment
 from vergil_tooling.lib.epics import IssueRef
-from vergil_tooling.lib.labels import RETIRED_LABELS, ensure_labels, load_labels
+from vergil_tooling.lib.labels import (
+    RETIRED_LABELS,
+    UnknownLabelError,
+    ensure_labels,
+    load_labels,
+)
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.queue_view import (
     PLANNING_MARKER,
@@ -126,7 +143,11 @@ class RouteRefusedError(ValueError):
 
 
 class RouteHalfAppliedError(RuntimeError):
-    """A one-off that moved or linked the item but could not settle it under its epic."""
+    """A route that changed the item but could not finish.
+
+    A one-off that moved or linked the item but could not settle it under its
+    epic, or a sizing whose comment posted but whose label did not.
+    """
 
 
 @dataclass(frozen=True)
@@ -149,7 +170,14 @@ class OneOff:
 
 @dataclass(frozen=True)
 class ToPlanning:
-    pass
+    sizing: Sizing | None = None  # sized once in planning; None leaves any size as it is
+
+
+@dataclass(frozen=True)
+class SizeItem:
+    """Record an estimated epic size (named so as not to clash with ``epic_size.Size``)."""
+
+    sizing: Sizing
 
 
 @dataclass(frozen=True)
@@ -163,16 +191,16 @@ class Split:
     reason: str
 
 
-RouteAction = Drop | Defer | OneOff | ToPlanning | ToIntake | Split
+RouteAction = Drop | Defer | OneOff | ToPlanning | ToIntake | Split | SizeItem
 
 # The routes each container allows, keyed by :func:`epics.container_kind` of the
 # item's parent; ``None`` is an unparented item. A parent of any other kind (a
 # development epic, an archive) allows nothing.
 ROUTES: dict[str | None, frozenset[type]] = {
     "intake": frozenset({Drop, Defer, OneOff, ToPlanning, Split}),
-    "planning": frozenset({Defer, Drop, OneOff}),
+    "planning": frozenset({Defer, Drop, OneOff, SizeItem}),
     "ad-hoc": frozenset({Defer}),
-    "deferred": frozenset({Defer, ToIntake, ToPlanning, OneOff, Drop, Split}),
+    "deferred": frozenset({Defer, ToIntake, ToPlanning, OneOff, Drop, Split, SizeItem}),
     None: frozenset({ToPlanning}),
 }
 
@@ -184,6 +212,7 @@ _ROUTE_NAMES: dict[type, str] = {
     ToPlanning: "planning",
     ToIntake: "intake",
     Split: "split",
+    SizeItem: "size",
 }
 
 
@@ -250,13 +279,25 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
                 ) from exc
         _close(ref, SPLIT_COMMENT.format(refs=refs, reason=action.reason), reason="completed")
         return RouteResult(final=ref, moved_by="none")
+    if isinstance(action, SizeItem):
+        _apply_sizing(ref, action.sizing, today)
+        return RouteResult(final=ref, moved_by="none")
     if isinstance(action, ToPlanning):
         planning = epics.ensure_planning_epic(_repo_of(ref))
         _guard_visibility(ref, _repo_of(planning))
         _link(planning, ref)
         if kind == _DEVELOPMENT:
             # _check_eligible only returns it for a parented item.
-            _record_brainstorm_handoff(ref, cast("IssueRef", parent), planning)
+            try:
+                _record_brainstorm_handoff(ref, cast("IssueRef", parent), planning)
+            except RuntimeError as exc:
+                if action.sizing is None:
+                    raise
+                raise RuntimeError(
+                    f"{exc}; then size it with: {_size_command(ref, action.sizing)}"
+                ) from exc
+        if action.sizing is not None:
+            _size_in_planning(ref, action.sizing, planning, today)
         return RouteResult(final=ref, moved_by="none")
     if isinstance(action, ToIntake):
         intake = epics.ensure_intake_epic(_repo_of(ref))
@@ -339,6 +380,67 @@ def _record_brainstorm_handoff(ref: IssueRef, epic: IssueRef, planning: IssueRef
                 f"recording the hand-off failed ({' '.join(error_text(exc).split())}). Post "
                 f"by hand {by_hand}"
             ) from exc
+
+
+def _size_command(ref: IssueRef, sizing: Sizing) -> str:
+    """The paste-ready ``vrg-intake-route … size`` command that records *sizing* on *ref*."""
+    return (
+        f"vrg-intake-route {quoted_slug(ref)} size --tasks {sizing.tasks} "
+        f"--confidence {sizing.confidence} --reason {shlex.quote(sizing.reason)}"
+    )
+
+
+def _apply_sizing(ref: IssueRef, sizing: Sizing, day: date) -> None:
+    """Post *sizing*'s comment on *ref*, then set its derived ``epic-size:*`` label.
+
+    The comment is the record, so it goes first, through the same path as the
+    other routes' comments (under the item owner's token). The label is then
+    set in one edit that adds it and removes every other ``epic-size:*`` label
+    present, after ensuring it exists. A failed comment changes nothing and
+    propagates as it came; a label step that fails after it raises
+    :class:`RouteHalfAppliedError` with the command that finishes it (a second
+    comment with the same values only adds history).
+    """
+    _comment(ref, render_sizing_comment(sizing, day))
+    label = label_for(sizing.size)
+    try:
+        stale = sorted(
+            name
+            for name in _label_names(_view(ref, "labels"))
+            if name.startswith(LABEL_PREFIX) and name != label
+        )
+        ensure_labels(_repo_of(ref), [label])
+        edit = ["issue", "edit", str(ref.number), "--repo", _repo_of(ref), "--add-label", label]
+        for name in stale:
+            edit += ["--remove-label", name]
+        github.run(*edit)
+    except github.MissingGitHubTokenError:
+        raise
+    except (subprocess.CalledProcessError, RuntimeError, UnknownLabelError) as exc:
+        raise RouteHalfAppliedError(
+            f"{ref.slug}: sizing comment posted, label not set: setting '{label}' failed "
+            f"({' '.join(error_text(exc).split())}). Finish it with: {_size_command(ref, sizing)}"
+        ) from exc
+
+
+def _size_in_planning(ref: IssueRef, sizing: Sizing, planning: IssueRef, day: date) -> None:
+    """Size *ref*, just routed into *planning*; a failure says it is in planning now.
+
+    Re-running the planning route would be refused (the item is in planning),
+    so the failure names the ``size`` command that finishes it.
+    """
+    moved = f"{ref.slug} is now in the planning epic {planning.slug}"
+    try:
+        _apply_sizing(ref, sizing, day)
+    except RouteHalfAppliedError as exc:
+        raise RouteHalfAppliedError(f"{moved}, but {exc}") from exc
+    except github.MissingGitHubTokenError:
+        raise
+    except subprocess.CalledProcessError as exc:
+        raise RouteHalfAppliedError(
+            f"{moved}, unsized: posting its sizing comment failed "
+            f"({' '.join(error_text(exc).split())}). Size it with: {_size_command(ref, sizing)}"
+        ) from exc
 
 
 def _view(ref: IssueRef, fields: str) -> dict[str, Any]:

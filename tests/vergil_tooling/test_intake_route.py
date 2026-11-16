@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from vergil_tooling.lib import epics, github, intake_route, security_records
+from vergil_tooling.lib.epic_size import Sizing
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.intake_route import (
     Defer,
@@ -17,6 +18,7 @@ from vergil_tooling.lib.intake_route import (
     OneOff,
     RouteRefusedError,
     RouteResult,
+    SizeItem,
     Split,
     ToIntake,
     ToPlanning,
@@ -902,9 +904,9 @@ def test_route_drop_names_source_queue(env: Env, parent: IssueRef, queue: str) -
 def test_routes_table_matches_spec() -> None:
     expected: dict[str | None, frozenset[type]] = {
         "intake": frozenset({Drop, Defer, OneOff, ToPlanning, Split}),
-        "planning": frozenset({Defer, Drop, OneOff}),
+        "planning": frozenset({Defer, Drop, OneOff, SizeItem}),
         "ad-hoc": frozenset({Defer}),
-        "deferred": frozenset({Defer, ToIntake, ToPlanning, OneOff, Drop, Split}),
+        "deferred": frozenset({Defer, ToIntake, ToPlanning, OneOff, Drop, Split, SizeItem}),
         None: frozenset({ToPlanning}),
     }
     assert expected == intake_route.ROUTES
@@ -2394,3 +2396,294 @@ def test_route_one_off_still_listed_lookup_missing_token_is_left_as_it_came(env:
         pytest.raises(github.MissingGitHubTokenError),
     ):
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+
+
+# -- size (epic vergil-project/.github#1191) ---------------------------------
+
+SIZING = Sizing(14, "med", "One sentence.")
+SIZING_BODY = (
+    "Sized 2026-10-23: epic-size M, about 14 tasks.\n"
+    "Epic-size: M\n"
+    "Estimated-tasks: 14\n"
+    "Confidence: med\n"
+    "Reason: One sentence."
+)
+SIZE_COMMAND = (
+    "vrg-intake-route 'org/.github#352' size --tasks 14 --confidence med --reason 'One sentence.'"
+)
+
+
+def _sized_labels(env: Env, *names: str) -> None:
+    env.issue_view = {**env.issue_view, "labels": [{"name": name} for name in names]}
+
+
+def _sizing_calls(env: Env) -> list[tuple[Any, ...]]:
+    return [c.args for c in env.run.call_args_list]
+
+
+def _comment_args(body: str) -> tuple[str, ...]:
+    return ("issue", "comment", "352", "--repo", "org/.github", "--body", body)
+
+
+def test_size_planning_item(env: Env) -> None:
+    env.parent = PLANNING
+    _sized_labels(env, "bug", "epic-size:S")
+    result = route(ITEM, SizeItem(SIZING), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    # The comment (the record) lands before the one label edit.
+    assert _sizing_calls(env) == [
+        _comment_args(SIZING_BODY),
+        (
+            "issue",
+            "edit",
+            "352",
+            "--repo",
+            "org/.github",
+            "--add-label",
+            "epic-size:M",
+            "--remove-label",
+            "epic-size:S",
+        ),
+    ]
+    env.ensure_labels.assert_called_once_with("org/.github", ["epic-size:M"])
+    env.reparent_child.assert_not_called()
+    env.add_child.assert_not_called()
+
+
+def test_size_removes_every_other_size_label(env: Env) -> None:
+    env.parent = PLANNING
+    _sized_labels(env, "epic-size:XL", "epic-size:M", "epic-size:S")
+    route(ITEM, SizeItem(SIZING), today=TODAY)
+    assert _sizing_calls(env)[1] == (
+        "issue",
+        "edit",
+        "352",
+        "--repo",
+        "org/.github",
+        "--add-label",
+        "epic-size:M",
+        "--remove-label",
+        "epic-size:S",
+        "--remove-label",
+        "epic-size:XL",
+    )
+
+
+def test_size_unsized_item_only_adds(env: Env) -> None:
+    env.parent = PLANNING
+    _sized_labels(env, "bug")
+    route(ITEM, SizeItem(Sizing(45, "low", "Huge.")), today=TODAY)
+    assert _sizing_calls(env)[1] == (
+        "issue",
+        "edit",
+        "352",
+        "--repo",
+        "org/.github",
+        "--add-label",
+        "epic-size:XL",
+    )
+
+
+def test_size_deferred_item(env: Env) -> None:
+    env.parent = DEFERRED
+    env.native_parent[ITEM] = DEFERRED
+    _sized_labels(env)
+    route(ITEM, SizeItem(SIZING), today=TODAY)
+    assert _sizing_calls(env)[0] == _comment_args(SIZING_BODY)
+    # Sizing a deferred item moves nothing.
+    env.reparent_child.assert_not_called()
+    assert env.native_parent[ITEM] == DEFERRED
+
+
+@pytest.mark.parametrize(
+    ("parent", "match"),
+    [
+        (INTAKE, "the size route is not allowed from intake"),
+        (ADHOC_DOTGITHUB, "the size route is not allowed from ad-hoc"),
+        (DEV_EPIC, r"under org/\.github#400, not a container epic"),
+        (None, "has no parent"),
+    ],
+)
+def test_size_refused_outside_planning_and_deferred(
+    env: Env, parent: IssueRef | None, match: str
+) -> None:
+    env.parent = parent
+    with pytest.raises(RouteRefusedError, match=match):
+        route(ITEM, SizeItem(SIZING), today=TODAY)
+    env.run.assert_not_called()
+    env.ensure_labels.assert_not_called()
+
+
+def test_size_label_failure_is_half_applied(env: Env) -> None:
+    env.parent = PLANNING
+    _sized_labels(env)
+    env.run.side_effect = [None, github.GitHubAPIError(1, ["gh"], "", "HTTP 502")]
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, SizeItem(SIZING), today=TODAY)
+    message = str(excinfo.value)
+    assert "org/.github#352: sizing comment posted, label not set" in message
+    assert "HTTP 502" in message
+    assert "size --tasks 14 --confidence med --reason" in message
+    assert message.endswith(f"Finish it with: {SIZE_COMMAND}")
+
+
+def test_size_ensure_labels_failure_is_half_applied(env: Env) -> None:
+    env.parent = PLANNING
+    env.ensure_labels.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 403")
+    with pytest.raises(intake_route.RouteHalfAppliedError, match="label not set"):
+        route(ITEM, SizeItem(SIZING), today=TODAY)
+    # The comment posted; no edit was tried.
+    assert _sizing_calls(env) == [_comment_args(SIZING_BODY)]
+
+
+def test_size_label_read_failure_is_half_applied(env: Env) -> None:
+    env.parent = PLANNING
+    env.read_json.side_effect = lambda *a: ["not", "a", "dict"]
+    with pytest.raises(intake_route.RouteHalfAppliedError, match="label not set"):
+        route(ITEM, SizeItem(SIZING), today=TODAY)
+    assert _sizing_calls(env) == [_comment_args(SIZING_BODY)]
+
+
+def test_size_label_missing_token_is_left_as_it_came(env: Env) -> None:
+    env.parent = PLANNING
+    env.run.side_effect = [None, github.MissingGitHubTokenError(1, ["gh"], "", "GH_TOKEN")]
+    with pytest.raises(github.MissingGitHubTokenError):
+        route(ITEM, SizeItem(SIZING), today=TODAY)
+
+
+def test_size_comment_failure_changes_nothing(env: Env) -> None:
+    env.parent = PLANNING
+    env.run.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    with pytest.raises(github.GitHubAPIError):
+        route(ITEM, SizeItem(SIZING), today=TODAY)
+    assert _sizing_calls(env) == [_comment_args(SIZING_BODY)]
+    env.ensure_labels.assert_not_called()
+
+
+def test_size_half_applied_command_quotes_the_reason(env: Env) -> None:
+    env.parent = PLANNING
+    env.run.side_effect = [None, github.GitHubAPIError(1, ["gh"], "", "HTTP 502")]
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, SizeItem(Sizing(3, "high", "it's $small")), today=TODAY)
+    assert str(excinfo.value).endswith(
+        "vrg-intake-route 'org/.github#352' size --tasks 3 --confidence high "
+        "--reason 'it'\"'\"'s $small'"
+    )
+
+
+def test_size_comment_uses_route_comment_path(env: Env) -> None:
+    # Review Focus 1: the sizing comment goes through _comment, the path the
+    # drop, defer and brainstorm records use, under the item owner's token.
+    env.parent = PLANNING
+    seen: list[str | None] = []
+    with patch(
+        f"{_MOD}._comment", side_effect=lambda *a: seen.append(github._target_org.get())
+    ) as mock_comment:
+        route(ITEM, SizeItem(SIZING), today=TODAY)
+    mock_comment.assert_called_once_with(ITEM, SIZING_BODY)
+    assert seen == ["org"]
+
+
+def test_planning_with_sizing(env: Env) -> None:
+    env.native_parent[ITEM] = INTAKE
+    _sized_labels(env, "bug")
+    order: list[str] = []
+    env.reparent_child.side_effect = lambda *a: order.append("link") or env.attach(*a)
+    env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
+    result = route(ITEM, ToPlanning(sizing=SIZING), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    assert order == ["link", "issue:comment", "issue:edit"]
+    assert env.native_parent[ITEM] == PLANNING
+    assert env.run.call_args_list[0].args == _comment_args(SIZING_BODY)
+    env.ensure_labels.assert_called_once_with("org/.github", ["epic-size:M"])
+
+
+def test_planning_with_invalid_sizing_is_refused_before_any_change(env: Env) -> None:
+    # Sizing validates on construction, so a bad size never reaches the route.
+    with pytest.raises(ValueError, match="positive integer"):
+        route(ITEM, ToPlanning(sizing=Sizing(0, "med", "x")), today=TODAY)
+    env.reparent_child.assert_not_called()
+    env.ensure_planning_epic.assert_not_called()
+    env.run.assert_not_called()
+
+
+def test_planning_sizing_failure_after_link(env: Env) -> None:
+    env.native_parent[ITEM] = INTAKE
+    env.run.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, ToPlanning(sizing=SIZING), today=TODAY)
+    message = str(excinfo.value)
+    assert env.native_parent[ITEM] == PLANNING
+    assert "org/.github#352 is now in the planning epic org/.github#8, unsized" in message
+    assert "HTTP 502" in message
+    assert message.endswith(f"Size it with: {SIZE_COMMAND}")
+
+
+def test_planning_label_failure_after_link(env: Env) -> None:
+    env.native_parent[ITEM] = INTAKE
+    env.run.side_effect = [None, github.GitHubAPIError(1, ["gh"], "", "HTTP 502")]
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, ToPlanning(sizing=SIZING), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith("org/.github#352 is now in the planning epic org/.github#8, but")
+    assert "sizing comment posted, label not set" in message
+    assert message.endswith(SIZE_COMMAND)
+
+
+def test_planning_sizing_missing_token_is_left_as_it_came(env: Env) -> None:
+    env.native_parent[ITEM] = INTAKE
+    env.run.side_effect = github.MissingGitHubTokenError(1, ["gh"], "", "GH_TOKEN")
+    with pytest.raises(github.MissingGitHubTokenError):
+        route(ITEM, ToPlanning(sizing=SIZING), today=TODAY)
+
+
+def test_planning_without_sizing_leaves_size(env: Env) -> None:
+    # Review Focus 3: a sized deferred item revived to planning keeps its size.
+    env.parent = DEFERRED
+    env.native_parent[ITEM] = DEFERRED
+    _sized_labels(env, "epic-size:M")
+    route(ITEM, ToPlanning(), today=TODAY)
+    env.reparent_child.assert_called_once_with(PLANNING, ITEM)
+    env.run.assert_not_called()
+    env.ensure_labels.assert_not_called()
+
+
+def test_planning_from_deferred_with_sizing_resizes(env: Env) -> None:
+    env.parent = DEFERRED
+    env.native_parent[ITEM] = DEFERRED
+    _sized_labels(env, "epic-size:M")
+    route(ITEM, ToPlanning(sizing=Sizing(25, "high", "Grew.")), today=TODAY)
+    assert _sizing_calls(env)[1] == (
+        "issue",
+        "edit",
+        "352",
+        "--repo",
+        "org/.github",
+        "--add-label",
+        "epic-size:L",
+        "--remove-label",
+        "epic-size:M",
+    )
+
+
+def test_planning_brainstorm_with_sizing_records_then_sizes(env: Env) -> None:
+    _brainstorm(env)
+    route(ITEM, ToPlanning(sizing=SIZING), today=TODAY)
+    calls = _sizing_calls(env)
+    assert [c[:3] for c in calls] == [
+        ("issue", "comment", "400"),
+        ("issue", "comment", "352"),
+        ("issue", "comment", "352"),
+        ("issue", "edit", "352"),
+    ]
+    assert calls[2] == _comment_args(SIZING_BODY)
+
+
+def test_planning_brainstorm_record_failure_with_sizing_names_the_size_command(env: Env) -> None:
+    _brainstorm(env)
+    env.run.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    with pytest.raises(RuntimeError) as excinfo:
+        route(ITEM, ToPlanning(sizing=SIZING), today=TODAY)
+    message = str(excinfo.value)
+    assert "on org/.github#352: Handed to planning from: org/.github#400" in message
+    assert message.endswith(f"then size it with: {SIZE_COMMAND}")
