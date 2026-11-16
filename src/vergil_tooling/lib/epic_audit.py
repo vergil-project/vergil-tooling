@@ -996,6 +996,45 @@ def private_under_public_epic(org: str, *, issues: list[OpenIssue] | None = None
     return flagged
 
 
+@dataclass(frozen=True)
+class MisplacedArchive:
+    """An open archive in the wrong shape: parented, or missing its ``archive`` label."""
+
+    ref: epics.IssueRef
+    problem: str
+
+
+def misplaced_archives(
+    org: str, *, issues: list[OpenIssue] | None = None
+) -> list[MisplacedArchive]:
+    """Open archives with a native parent or without the ``archive`` label (report only).
+
+    An archive (:func:`epics.is_archive`, by label or stamped title) is a
+    top-level container: nothing ever parents one, and one under a live queue
+    epic is counted there as a queue item (vergil-tooling#3817). A stamped
+    archive title without the label is the shape a partial legacy normalize
+    left, which the drain can no longer find or close. Tooling never repairs
+    either: a human unlinks the archive and adds its label.
+    """
+    if issues is None:
+        issues = open_issues(org)
+    found: list[MisplacedArchive] = []
+    for issue in issues:
+        if not epics.is_archive(issue.labels, issue.title):
+            continue
+        problems: list[str] = []
+        parent = issue.native_parent
+        if parent is not None:
+            kind = epics.queue_kind(parent)
+            where = f"the {kind} queue epic {parent.slug}" if kind else parent.slug
+            problems.append(f"parented under {where}")
+        if "archive" not in issue.labels:
+            problems.append("missing the `archive` label")
+        if problems:
+            found.append(MisplacedArchive(ref=issue.ref, problem="; ".join(problems)))
+    return found
+
+
 def render_epic_children(epic: epics.IssueRef, children: list[epics.ChildState]) -> str:
     """Machine-readable JSON enumeration of *epic*'s children with their state.
 
@@ -1044,6 +1083,7 @@ def render(
     body_only: list[tuple[epics.IssueRef, epics.IssueRef]] | None = None,
     public_queues: list[epics.IssueRef] | None = None,
     private_under_public: list[str] | None = None,
+    misplaced: list[MisplacedArchive] | None = None,
     epic_docs_findings: list[EpicDocsFinding] | None = None,
     coverage_gap: str | None = None,
 ) -> str:
@@ -1055,7 +1095,8 @@ def render(
 
     The orphan pass (epic .github#176) adds ``orphans``, ``retired_labels``,
     ``body_only`` and ``public_queues`` (what ``--close`` would apply) and the
-    report-only ``private_under_public`` invariant.
+    report-only ``private_under_public`` invariant. ``misplaced`` is the
+    report-only :func:`misplaced_archives` invariant (vergil-tooling#3817).
 
     The report opens with a banner naming the audited org and window and
     stating the run is read-only, so the output is never mistaken for a list of
@@ -1078,6 +1119,7 @@ def render(
     body_only = body_only or []
     public_queues = public_queues or []
     private_under_public = private_under_public or []
+    misplaced = misplaced or []
     epic_docs_findings = epic_docs_findings or []
     scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
     banner = (
@@ -1100,6 +1142,7 @@ def render(
             body_only,
             public_queues,
             private_under_public,
+            misplaced,
             epic_docs_findings,
         ]
     ):
@@ -1150,6 +1193,7 @@ def render(
         or closed_operational_no_success
         or closed_epic_open_children
         or private_under_public
+        or misplaced
     ):
         lines += ["", "## Invariant violations (issues in the wrong place)", ""]
         if epics_outside:
@@ -1176,6 +1220,7 @@ def render(
                 )
                 lines.append(f"- {closed_epic.slug} — open children: {open_kids}")
         lines += _render_private_under_public(private_under_public)
+        lines += _render_misplaced_archives(misplaced)
     lines += _render_epic_documents(epic_docs_findings, home or f"{org}/.github")
     lines.append("")
     return "\n".join(lines)
@@ -1220,6 +1265,19 @@ def _render_private_under_public(slugs: list[str]) -> list[str]:
     if not slugs:
         return []
     return [_PRIVATE_UNDER_PUBLIC_HEADING, *[f"- {slug}" for slug in sorted(slugs)]]
+
+
+_MISPLACED_ARCHIVES_HEADING = (
+    "**Misplaced archives** — an archive stands top-level with the `archive` "
+    "label; unlink it from its parent and add the label by hand:"
+)
+
+
+def _render_misplaced_archives(misplaced: list[MisplacedArchive]) -> list[str]:
+    if not misplaced:
+        return []
+    ordered = sorted(misplaced, key=lambda m: (m.ref.owner, m.ref.repo, m.ref.number))
+    return [_MISPLACED_ARCHIVES_HEADING, *[f"- {m.ref.slug} — {m.problem}" for m in ordered]]
 
 
 def _render_orphan_pass(
@@ -1340,20 +1398,22 @@ def render_closed(
     home: str | None = None,
     reopened: list[str] | None = None,
     private_under_public: list[str] | None = None,
+    misplaced: list[MisplacedArchive] | None = None,
 ) -> str:
     """Summarize a ``--close`` run: what was closed and what was reopened.
 
     ``reopened`` is the closed-epic-with-open-child remediation (issue #2259):
     epics that were wrongly closed while a child was still open, now reopened.
-    ``private_under_public`` is report-only (never acted on), surfaced here too so
-    the scheduled sweep's log carries it.
+    ``private_under_public`` and ``misplaced`` are report-only (never acted on),
+    surfaced here too so the scheduled sweep's log carries them.
     """
     reopened = reopened or []
     private_under_public = private_under_public or []
+    misplaced = misplaced or []
     scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
     banner = f"_Closed drift on {scope} (merged PRs from the last {window_days} days)._"
     header = ["# Epic/task drift audit — closed", "", banner, ""]
-    if not closed and not reopened and not private_under_public:
+    if not closed and not reopened and not private_under_public and not misplaced:
         return "\n".join([*header, "_No drift — nothing to close._", ""])
     lines = [*header]
     if closed:
@@ -1365,7 +1425,9 @@ def render_closed(
             *[f"- {slug}" for slug in reopened],
             "",
         ]
-    if private_under_public:
+    if private_under_public or misplaced:
         lines += ["## Needs a human (report only)", ""]
-        lines += [*_render_private_under_public(private_under_public), ""]
+        lines += _render_private_under_public(private_under_public)
+        lines += _render_misplaced_archives(misplaced)
+        lines.append("")
     return "\n".join(lines)

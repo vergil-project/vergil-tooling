@@ -1089,12 +1089,27 @@ def is_legitimate_top_level(labels: set[str], title: str, body: str) -> bool:
     """True iff an issue may stand without an epic parent.
 
     The legitimate top-level kinds are epics (``epic``, including the standing
-    epics), per-quarter archives (``archive``), and release tracking issues
+    epics), per-quarter archives (:func:`is_archive`), and release tracking issues
     (:func:`release.is_release_tracking_issue`). Everything else needs a parent.
     """
-    if "epic" in labels or "archive" in labels:
+    if "epic" in labels or is_archive(labels, title):
         return True
     return release.is_release_tracking_issue(title, body)
+
+
+def is_stamped_archive_title(title: str) -> bool:
+    """True iff *title* is a stamped per-quarter archive title of any standing kind."""
+    return any(archive_re(kind).match(title) for kind in STANDING_KINDS)
+
+
+def is_archive(labels: Collection[str], title: str) -> bool:
+    """True iff an issue is a per-quarter archive, by its ``archive`` label or its title.
+
+    The title counts on its own, so an archive that lost its label (a partial
+    legacy normalize, vergil-tooling#3817) is never taken for an orphan task;
+    the audit's misplaced-archive check reports the missing label instead.
+    """
+    return "archive" in labels or is_stamped_archive_title(title)
 
 
 def is_managed_repo(repo: str) -> bool:
@@ -1136,17 +1151,24 @@ def _normalize_archive_in_place(ref: IssueRef, new_title: str) -> None:
     exists first, so a not-yet-migrated org's ``.github`` self-heals instead of
     failing with ``'archive' not found``.
     """
-    ensure_labels(f"{ref.owner}/{ref.repo}", ("archive",))
+    repo = f"{ref.owner}/{ref.repo}"
+    ensure_labels(repo, ("archive",))
+    # Two edits, ``archive`` first (vergil-tooling#3817). A single ``gh issue
+    # edit`` does not apply its title, add and remove atomically: a failed add
+    # of ``archive`` still retitled the issue and dropped ``epic``, leaving it
+    # with neither label, and the orphan pass then attached it to an intake
+    # epic. With ``archive`` added first, a failure at either step leaves an
+    # issue that is still top-level and still matched by
+    # :func:`plan_normalize_adhoc`, so a re-run finishes the conversion.
+    github.run("issue", "edit", str(ref.number), "--repo", repo, "--add-label", "archive")
     github.run(
         "issue",
         "edit",
         str(ref.number),
         "--repo",
-        f"{ref.owner}/{ref.repo}",
+        repo,
         "--title",
         new_title,
-        "--add-label",
-        "archive",
         "--remove-label",
         "epic",
     )

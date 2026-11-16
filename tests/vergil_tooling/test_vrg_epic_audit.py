@@ -12,7 +12,13 @@ import pytest
 
 from vergil_tooling.bin.vrg_epic_audit import main
 from vergil_tooling.lib import github
-from vergil_tooling.lib.epic_audit import EpicDocsFinding, Orphan, RetiredLabels, StandingEpicFull
+from vergil_tooling.lib.epic_audit import (
+    EpicDocsFinding,
+    MisplacedArchive,
+    Orphan,
+    RetiredLabels,
+    StandingEpicFull,
+)
 from vergil_tooling.lib.epics import ChildState, IssueRef
 from vergil_tooling.lib.security_records import Advisory, PrivateHomeError, SecurityIssue
 
@@ -712,6 +718,7 @@ _ORPHAN = Orphan(IssueRef("org", "tool", 5), home="org/.github", name="org")
 _RETIRED = RetiredLabels(IssueRef("org", "tool", 6), ("idea",))
 _BODY_ONLY = (IssueRef("org", "tool", 7), IssueRef("org", ".github", 40))
 _PUBLIC_QUEUE = IssueRef("org", "lab", 2)
+_MISPLACED = MisplacedArchive(IssueRef("org", ".github", 180), "missing the `archive` label")
 
 
 def _derivations() -> dict[str, MagicMock]:
@@ -721,6 +728,7 @@ def _derivations() -> dict[str, MagicMock]:
         "body_only_parents": MagicMock(return_value=[_BODY_ONLY]),
         "public_self_homed_queues": MagicMock(return_value=[_PUBLIC_QUEUE]),
         "private_under_public_epic": MagicMock(return_value=["org/secret#3"]),
+        "misplaced_archives": MagicMock(return_value=[_MISPLACED]),
     }
 
 
@@ -786,6 +794,7 @@ def test_vrg_epic_audit_preview_lists_orphans_without_mutating(
     assert "org/tool#7 → org/.github#40" in out
     assert "org/lab#2" in out
     assert "org/secret#3" in out
+    assert "org/.github#180 — missing the `archive` label" in out
 
 
 def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str]) -> None:
@@ -825,6 +834,7 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
     assert "Public-repo queue items moved to org/.github: 3." in out
     assert "Orphans attached to intake: 4." in out
     assert "org/secret#3" in out  # the report-only check still surfaces
+    assert "org/.github#180 — missing the `archive` label" in out
 
 
 def test_vrg_epic_audit_close_reports_full_queue_and_exits_1(

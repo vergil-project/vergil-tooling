@@ -515,6 +515,13 @@ relocating epics when a repo's visibility changes.
   public → private flip, for a human to resolve (see
   [Epic home visibility flips](../guides/epic-home-visibility-flip.md)). Tooling
   never migrates or retracts it.
+- **An archive stands top-level, labelled `archive`.** An open archive (an
+  `archive` label, or a stamped `Archive (<kind>): <name> — <YYYY>-Qn` title)
+  with a native parent, or one whose stamped title lacks the `archive` label,
+  is reported for a human to unlink and relabel. An archive under a queue epic
+  is counted there as a queue item, and one without the label is out of the
+  drain's reach. The orphan pass recognises an archive by its title too, so it
+  never attaches one that has lost its label.
 - **Every epic links its documents.** Every epic in the home, open or closed,
   except the standing and `[archived]` epics, has a well-formed
   [Documents section](#the-documents-section): both markers, the heading, and
