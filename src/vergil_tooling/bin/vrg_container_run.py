@@ -27,9 +27,9 @@ from vergil_tooling.lib.config import (
     validation_container_command,
 )
 from vergil_tooling.lib.container import (
+    PackageJsonError,
     assert_runtime_available,
     build_container_args,
-    PackageJsonError,
     default_image,
     detect_runtime,
     repo_resolution,
