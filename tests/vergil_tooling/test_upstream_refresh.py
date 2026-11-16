@@ -975,6 +975,16 @@ def test_fence_vergil_toml_upstream_version_downgrade_refused(tmp_path: Path, va
     ]
 
 
+def test_fence_vergil_toml_upstream_version_removed_refused(tmp_path: Path) -> None:
+    violations = _toml_fence(
+        tmp_path, _PY_TOML.replace('upstream-version = "3.14.10+20261026"\n', "")
+    )
+    assert violations == [
+        "vergil.toml: refused, [[package]] 'vergil-python3.14': upstream-version is removed; "
+        "a refresh never removes a pinned version"
+    ]
+
+
 def test_fence_vergil_toml_smoke_change_refused(tmp_path: Path) -> None:
     violations = _toml_fence(tmp_path, _PY_TOML.replace("import sys'", "import sys'; curl x"))
     assert violations == [

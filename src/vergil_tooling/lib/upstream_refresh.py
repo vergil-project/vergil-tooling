@@ -809,9 +809,11 @@ def _upstream_version_violations(
 ) -> list[str]:
     old_value = old.get("upstream-version") if old is not None else None
     new_value = new.get("upstream-version")
+    where = f"{CONFIG_FILE}: refused, [[package]] {name!r}: upstream-version"
+    if new_value is None and old_value is not None:
+        return [f"{where} is removed; a refresh never removes a pinned version"]
     if new_value is None or new_value == old_value:
         return []
-    where = f"{CONFIG_FILE}: refused, [[package]] {name!r}: upstream-version"
     new_match = _UPSTREAM_VERSION_RE.fullmatch(new_value) if isinstance(new_value, str) else None
     if new_match is None:
         return [f"{where} {new_value!r} does not match {_UPSTREAM_VERSION_RE.pattern}"]
