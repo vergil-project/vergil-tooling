@@ -131,7 +131,9 @@ def test_typescript_5_range_rejected(tmp_path: Path) -> None:
     ]
 
 
-@pytest.mark.parametrize("declared", ["latest", "*", ">=5", "^60.0.0", "7.x", ">=6 <7", "^6.0.0-beta", 6])
+@pytest.mark.parametrize(
+    "declared", ["latest", "*", ">=5", "^60.0.0", "7.x", ">=6 <7", "^6.0.0-beta", 6]
+)
 def test_latest_star_and_open_ranges_rejected(tmp_path: Path, declared: object) -> None:
     problems = check_dev_dependencies(_repo(tmp_path, _declared(typescript=declared)))
     assert problems == [
@@ -158,8 +160,7 @@ def test_declared_and_locked_but_not_installed_rejected(tmp_path: Path) -> None:
     (repo / "package-lock.json").write_text(json.dumps(lock), encoding="utf-8")
     problems = check_dev_dependencies(repo)
     assert problems == [
-        "@eslint/js: declared but not installed "
-        "(node_modules/@eslint/js/package.json is absent)",
+        "@eslint/js: declared but not installed (node_modules/@eslint/js/package.json is absent)",
         "Fix: npm install --save-dev @eslint/js@^10",
     ]
 

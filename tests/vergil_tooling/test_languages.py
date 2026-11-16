@@ -975,9 +975,7 @@ def test_typescript_is_supported() -> None:
 
 def test_typescript_install_ignores_scripts() -> None:
     """INSTALL never runs install scripts (epic vergil-project/.github#1174, §6.3)."""
-    assert language_commands("typescript", CheckKind.INSTALL) == [
-        ["npm", "ci", "--ignore-scripts"]
-    ]
+    assert language_commands("typescript", CheckKind.INSTALL) == [["npm", "ci", "--ignore-scripts"]]
 
 
 def test_typescript_gates_run_repo_binaries_by_path() -> None:

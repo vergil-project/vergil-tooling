@@ -2973,8 +2973,7 @@ def test_typescript_pre_gate_stage_fails_with_every_problem(tmp_path: Path) -> N
         stage.fn(None)
     m_checks.assert_called_once_with(tmp_path)
     assert str(excinfo.value) == (
-        "the repo's TypeScript tools are not within Vergil's accepted ranges:"
-        "\n  a: bad\n  Fix: x"
+        "the repo's TypeScript tools are not within Vergil's accepted ranges:\n  a: bad\n  Fix: x"
     )
 
 

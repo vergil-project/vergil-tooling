@@ -17,13 +17,13 @@ from __future__ import annotations
 import json
 import re
 from importlib.resources import files
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.container import PackageJsonError, read_package_json
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
 _REQUIRED_FILE = "dev-dependencies.json"
 
