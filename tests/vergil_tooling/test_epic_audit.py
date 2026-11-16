@@ -1738,7 +1738,10 @@ def test_misplaced_archives_flags_parented_and_unlabelled_archives() -> None:
         ),
         _issue("org/lab", 9, labels=("ad-hoc",), title=_LOST_LABEL_TITLE),  # top-level, no label
         _issue(  # a well-formed archive: fine
-            "org/.github", 182, labels=("archive", "intake"), title="Archive (intake): org — 2026-Q4"
+            "org/.github",
+            182,
+            labels=("archive", "intake"),
+            title="Archive (intake): org — 2026-Q4",
         ),
         _issue("org/tool", 5, native_parent=_INTAKE_EPIC),  # a queued task: not an archive
     ]
@@ -1751,18 +1754,23 @@ def test_misplaced_archives_flags_parented_and_unlabelled_archives() -> None:
     assert found == [
         epic_audit.MisplacedArchive(
             epics.IssueRef("org", ".github", 180),
-            "parented under the intake queue epic org/.github#381; "
-            "missing the `archive` label",
+            "parented under the intake queue epic org/.github#381; missing the `archive` label",
         ),
         epic_audit.MisplacedArchive(
             epics.IssueRef("org", ".github", 181), "parented under org/.github#7"
         ),
-        epic_audit.MisplacedArchive(
-            epics.IssueRef("org", "lab", 9), "missing the `archive` label"
-        ),
+        epic_audit.MisplacedArchive(epics.IssueRef("org", "lab", 9), "missing the `archive` label"),
     ]
     assert qk.call_count == 2  # only parented archives read their parent's labels
     run.assert_not_called()  # report only
+
+
+def test_misplaced_archives_enumerates_when_not_handed_issues() -> None:
+    issues = [_issue("org/lab", 9, labels=("ad-hoc",), title=_LOST_LABEL_TITLE)]
+    with patch("vergil_tooling.lib.epic_audit.open_issues", return_value=issues) as enum:
+        found = epic_audit.misplaced_archives("org")
+    enum.assert_called_once_with("org")
+    assert [m.ref for m in found] == [epics.IssueRef("org", "lab", 9)]
 
 
 def test_render_lists_misplaced_archives_as_invariant_violations() -> None:
