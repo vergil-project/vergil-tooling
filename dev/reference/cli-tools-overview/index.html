@@ -22110,7 +22110,10 @@ project language to select the Docker image; falls back to
 <code>dev-base:latest</code>. Uses <code>execvp</code> to replace the process.
 Local-settings guard: on the host, before any container starts, it refuses an
 agent (warns a human) while a loadable <code>.claude/settings.local.json</code> is not
-absent or <code>{}</code> (epic vergil-project/.github#558).</p>
+absent or <code>{}</code> (epic vergil-project/.github#558).
+Every launch mounts the <code>vergil-trivy-cache</code> volume, where <code>vrg-validate</code>'s
+trivy stage caches the vulnerability database (see
+<a href="../container-config/#variables-vrg-container-run-always-sets">Container Config</a>).</p>
 <table>
 <thead>
 <tr>
@@ -22619,7 +22622,8 @@ markdownlint, yamllint) are available on PATH.</p>
 <p>The unified validation driver. It reads <code>[project].primary-language</code>
 from <code>vergil.toml</code> and runs the stages in order: common checks, the
 language's install, lint, typecheck, test and audit commands, the
-semgrep scan of PR CI's <code>security / semgrep</code> gate, the strict mkdocs
+semgrep scan of PR CI's <code>security / semgrep</code> gate, the Trivy
+vulnerability scan of its <code>security / trivy</code> gate, the strict mkdocs
 build of its <code>docs / docs</code> gate (a notice and a pass when there is no
 <code>docs/site/mkdocs.yml</code>), and last the repository's custom validator (<code>scripts/bin/validate-custom</code> or
 <code>vrg-validate-custom</code> on <code>PATH</code>) when it has one. <code>--check</code> runs one
@@ -22647,7 +22651,7 @@ start, and each stage's status. <code>vrg-merge-review-request</code> reads it.<
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--check {common,lint,typecheck,test,audit,semgrep,docs,custom}</code>, <code>--all-versions</code> (Python only; alone or with <code>--check test</code>)</td>
+<td><code>--check {common,lint,typecheck,test,audit,semgrep,trivy,docs,custom}</code>, <code>--all-versions</code> (Python only; alone or with <code>--check test</code>)</td>
 </tr>
 <tr>
 <td>Preconditions</td>

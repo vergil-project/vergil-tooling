@@ -18262,11 +18262,12 @@ one of the two fails the build. The build log names the path it took.</p>
 shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the
 repository has Ansible content. It then runs the language's lint,
 typecheck, test and audit commands, the semgrep scan of the
-<code>security / semgrep</code> gate, the strict mkdocs build of the
+<code>security / semgrep</code> gate, the Trivy vulnerability scan of the
+<code>security / trivy</code> gate, the strict mkdocs build of the
 <code>docs / docs</code> gate when the repository has <code>docs/site/mkdocs.yml</code>,
 and last the repository's custom validator when it has one. To run
 one stage, pass <code>--check common</code>, <code>lint</code>, <code>typecheck</code>, <code>test</code>,
-<code>audit</code>, <code>semgrep</code>, <code>docs</code> or <code>custom</code>. The
+<code>audit</code>, <code>semgrep</code>, <code>trivy</code>, <code>docs</code> or <code>custom</code>. The
 <a href="../validation-matrix/">Validation Matrix</a> lists every check and where
 it runs.</p>
 <p>A repository can change the in-container command with
