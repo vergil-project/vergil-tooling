@@ -813,7 +813,8 @@ closes the item; the planning route takes the same options to size an item on
 its way in. Only sizing comments by
 [trusted authors](../guides/account-setup.md#trusted-authors) count. When the
 label and the latest sizing comment disagree, one is missing, the item has
-several size labels, or the comment is malformed, the item's sizing is in
+several size labels, its label names an unknown size (such as
+`epic-size:XXL`), or the comment is malformed, the item's sizing is in
 error: `vrg-queue` shows it as `!` and names the problem, and re-running `size`
 with the right estimate repairs it. A one-off ends the estimate: the route
 removes the size labels and posts a `Size cleared <YYYY-MM-DD>: …` marker,
