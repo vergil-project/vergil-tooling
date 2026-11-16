@@ -40,8 +40,13 @@ maintainability, and long-term survivability across repositories.
 - Linting: clippy (official Rust linter, 800+ lint rules), run on all targets
   (`cargo clippy --all-targets --locked --workspace -- -D warnings`), so the
   library, binaries, tests, examples and benches are linted and any warning
-  fails the gate.
-- Type checking: `cargo check` (inherent in the Rust compiler).
+  fails the gate. The run writes cargo's JSON messages to
+  `quality-clippy.json`, the lint gate's evidence, and prints the readable
+  diagnostics to the log.
+- Type checking: `cargo check --locked --workspace` (inherent in the Rust
+  compiler). The run writes cargo's JSON messages to
+  `quality-cargo-check.json`, the typecheck gate's evidence, and prints the
+  readable diagnostics to the log.
 - Dependency audit and license compliance: cargo-deny (advisories, licenses,
   bans, and sources in a single tool), run against the fleet policy that
   vergil-tooling packages, so a repo's own `deny.toml` is not used. The
