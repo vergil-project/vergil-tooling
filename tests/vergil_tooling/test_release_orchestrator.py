@@ -54,8 +54,8 @@ def test_build_stages_order_and_modes() -> None:
         "back-merge-bump",
         "teardown-worktree",
         "confirm-develop",
-        "promote",
         "package-index",
+        "promote",
         "close-finalize",
         "consumer-refresh",
         "update-deps",
@@ -399,6 +399,65 @@ def test_phase_details_promote_skipped() -> None:
     assert "skipped" in details.lower()
 
 
+def test_phase_details_promote_held_back_by_index_deferral() -> None:
+    """A deferred package-index skips promote; the comment names the pending step (#4293)."""
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["package-index"]
+    details = _phase_details(ctx, "promote")
+    assert "Promoted" not in details
+    assert "**Promote skipped**: package-index deferred" in details
+    assert "`v2.1` stays on the previous release" in details
+    assert "`vrg-promote v2.1.0`" in details
+
+
+def test_phase_details_promote_cd_deferral_still_promotes() -> None:
+    """Only a package-index deferral holds promote back; a CD publish miss does not."""
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["publish-pypi"]
+    assert _phase_details(ctx, "promote") == "Promoted v2.1 -> v2.1.0"
+
+
+def test_phase_details_promote_no_promote_wins_over_index_deferral() -> None:
+    ctx = _ctx(promote=False)
+    ctx.deferred_publish_failures = ["package-index"]
+    assert _phase_details(ctx, "promote") == "Promote skipped (--no-promote)."
+
+
+def _run_promote_stage(ctx: ReleaseContext) -> MagicMock:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state.ctx = ctx
+    with (
+        patch(_MOD + ".promote") as m_promote,
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+    ):
+        stages = build_stages()
+        stages[[s.name for s in stages].index("promote")].fn(state)
+    return m_promote
+
+
+def test_promote_stage_moves_the_tag() -> None:
+    ctx = _ctx()
+    _run_promote_stage(ctx).assert_called_once_with("2.1.0")
+
+
+def test_promote_stage_skips_on_index_deferral(capsys: pytest.CaptureFixture[str]) -> None:
+    """vX.Y stays on the previous release while the index lacks the release (#4293)."""
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["package-index"]
+    _run_promote_stage(ctx).assert_not_called()
+    out = capsys.readouterr().out
+    assert "Skipping promote" in out
+    assert "vrg-promote v2.1.0" in out
+    assert ctx.deferred_failures == []  # a skip, not a halted stage
+
+
+def test_promote_stage_skips_with_no_promote() -> None:
+    ctx = _ctx(promote=False)
+    _run_promote_stage(ctx).assert_not_called()
+
+
 def test_phase_details_close_finalize() -> None:
     from vergil_tooling.lib.release.orchestrator import _phase_details
 
@@ -429,6 +488,26 @@ def test_phase_details_close_finalize_package_index_deferral_leaves_issue_open()
     assert "package index (package-index)" in details
     assert "CD publish" not in details
     assert "Repository finalized." in details
+    # promote was held back, so the outcome names the pending promote (#4293).
+    assert "Promote pending: `v2.1` was not moved" in details
+    assert "`vrg-promote v2.1.0`" in details
+    assert "then close this issue" in details
+
+
+def test_phase_details_close_finalize_index_deferral_with_no_promote() -> None:
+    """With --no-promote nothing was held back, so no promote is pending."""
+    ctx = _ctx(promote=False)
+    ctx.deferred_publish_failures = ["package-index"]
+    details = _phase_details(ctx, "close-finalize")
+    assert "left open" in details
+    assert "Promote pending" not in details
+    assert "vrg-promote" not in details
+
+
+def test_phase_details_close_finalize_cd_deferral_names_no_pending_promote() -> None:
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["publish-pypi"]
+    assert "Promote pending" not in _phase_details(ctx, "close-finalize")
 
 
 def test_phase_details_close_finalize_both_deferral_kinds() -> None:
@@ -460,17 +539,21 @@ def test_phase_details_consumer_refresh() -> None:
     assert "Consumer refresh" in details
 
 
-def test_package_index_stage_directly_before_close_finalize() -> None:
-    """package-index is a fail_defer stage immediately before close-finalize, so
-    an index miss leaves the tracking issue open with the deferral comment
-    (#3557), and the later consumer refresh holds on it (epic .github#356, §8.3)."""
+def test_package_index_then_promote_then_close_finalize() -> None:
+    """package-index is a fail_defer stage before close-finalize, so an index
+    miss leaves the tracking issue open with the deferral comment (#3557), and
+    the later consumer refresh holds on it (epic .github#356, §8.3). promote
+    sits between them, so vX.Y moves only once the index has the release
+    (#4293)."""
     from vergil_tooling.lib.release.orchestrator import _stage_names
 
     names = _stage_names()
-    assert names[names.index("package-index") + 1] == "close-finalize"
+    assert names[names.index("package-index") + 1] == "promote"
+    assert names[names.index("promote") + 1] == "close-finalize"
     assert names.index("package-index") < names.index("consumer-refresh")
-    stage = build_stages()[names.index("package-index")]
-    assert stage.mode == "fail_defer"
+    stages = build_stages()
+    assert stages[names.index("package-index")].mode == "fail_defer"
+    assert stages[names.index("promote")].mode == "fail_defer"
 
 
 def test_package_index_stage_runs_wait_for_index_tracked() -> None:
@@ -775,6 +858,7 @@ def test_publish_status_gives_per_kind_advice_for_an_index_deferral() -> None:
     msg = str(info.value)
     assert "artifact publish was deferred (package-index)" in msg
     assert "publish-index workflow in o/packages" in msg
+    assert "then run vrg-promote v2.1.2 to move the rolling tag" in msg
     assert "CD publish" not in msg
     assert "do NOT use vrg-release --resume" in msg
 
@@ -931,16 +1015,20 @@ def test_preflight_stage_copies_without_deps() -> None:
 
 # --- deferred publishes through the real stage tail (#3557) -----------------
 
-_TAIL = ("package-index", "close-finalize", "consumer-refresh", "publish-status")
+_TAIL = ("package-index", "promote", "close-finalize", "consumer-refresh", "publish-status")
 
 
 def _run_tail(
-    tmp_path: Path, *, cd_deferred: list[str], index_times_out: bool
+    tmp_path: Path,
+    *,
+    cd_deferred: list[str],
+    index_times_out: bool,
+    promote_mock: MagicMock | None = None,
 ) -> tuple[int, ReleaseContext, MagicMock, MagicMock, MagicMock]:
     """Run the real tail stages, from package-index on, through the pipeline.
 
     Returns the exit code, the context, and the deferral-comment, issue-close
-    and vrg-finalize-pr mocks.
+    and vrg-finalize-pr mocks. ``promote_mock`` stands in for the tag move.
     """
     state = _state()
     ctx = state.ctx
@@ -963,6 +1051,7 @@ def _run_tail(
         patch(_FINALIZE + ".comment_publish_deferred") as m_comment,
         patch(_FINALIZE + ".close_tracking_issue") as m_close,
         patch(_FINALIZE + ".progress") as m_progress,
+        patch(_MOD + ".promote", promote_mock or MagicMock()),
     ):
         stages = [s for s in build_stages() if s.name in _TAIL]
         rc = progress.run_pipeline(
@@ -984,6 +1073,33 @@ def test_index_only_timeout_leaves_issue_open_with_deferral_comment(tmp_path: Pa
     assert "held" in message
     assert "publish-index workflow in o/packages" in message
     assert "CD publish" not in message
+
+
+def test_index_timeout_skips_promote_and_names_it(tmp_path: Path) -> None:
+    """A deferred index leaves vX.Y on the previous release (#4293): promote never
+    moves the tag, the run stays a completed-with-deferral one, and the consumer
+    refresh message tells the human to run vrg-promote."""
+    m_promote = MagicMock()
+    rc, ctx, m_comment, m_close, _ = _run_tail(
+        tmp_path, cd_deferred=[], index_times_out=True, promote_mock=m_promote
+    )
+    assert rc == 1
+    m_promote.assert_not_called()
+    m_comment.assert_called_once_with(ctx, ["package-index"])
+    m_close.assert_not_called()
+    assert ctx.deferred_failures == []
+    assert "then run vrg-promote v2.1.2" in (ctx.consumer_refresh_message or "")
+
+
+def test_index_found_promotes_after_it(tmp_path: Path) -> None:
+    m_promote = MagicMock()
+    rc, _, m_comment, m_close, _ = _run_tail(
+        tmp_path, cd_deferred=[], index_times_out=False, promote_mock=m_promote
+    )
+    assert rc == 0
+    m_promote.assert_called_once_with("2.1.2")
+    m_comment.assert_not_called()
+    m_close.assert_called_once()
 
 
 def test_cd_only_deferral_leaves_issue_open_with_cd_advice(tmp_path: Path) -> None:

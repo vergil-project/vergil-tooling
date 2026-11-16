@@ -130,7 +130,9 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      deferral comment, the consumer-refresh stage holds (it
      prints a warning not to advertise the version instead of the refresh
      commands), the stage error tells you to re-run the `publish-index`
-     workflow in `<org>/packages`, and `vrg-release` exits 1. See the
+     workflow in `<org>/packages`, `promote` leaves `vX.Y` where it is
+     (see [A promote held back by the index](#a-promote-held-back-by-the-index)),
+     and `vrg-release` exits 1. See the
      [package config reference](../reference/package-config.md#cd).
 4. Act on the consumer-refresh commands `vrg-release` prints at the end
    (or pass `--install` to have it run them after a clean release).
@@ -160,8 +162,8 @@ issue and ticks its box in the issue's stage checklist.
 | `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, refreshes the lockfile in the dev container (`uv lock` for Python, `cargo update --workspace` for Rust), and merges it to `develop`. Records the back-merge's merge commit |
 | `teardown-worktree` | deferred | Removes the release worktree and returns to the root checkout |
 | `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed docs publish is deferred |
-| `promote` | deferred | Moves the rolling `vX.Y` tag to the new release (skipped with `--no-promote`) |
 | `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index. A miss is a deferred publish failure, not a halted stage |
+| `promote` | deferred | Moves the rolling `vX.Y` tag to the new release (skipped with `--no-promote`). It runs after `package-index`, so `vX.Y` moves only once the index has the release, and skips when `package-index` deferred (see [A promote held back by the index](#a-promote-held-back-by-the-index)) |
 | `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only --no-wait-cd` |
 | `consumer-refresh` | deferred | Prints the `[publish].consumer-refresh` commands |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
@@ -190,6 +192,30 @@ right run, and `close-finalize` runs `vrg-finalize-pr` only when every
 earlier stage passed. A second wait would add nothing. It would also
 fail the stage on a docs publish failure that `confirm-develop` has
 already deferred.
+
+#### A promote held back by the index
+
+`promote` runs after `package-index`, so git-based installs of `vX.Y`
+(which follow the tag) and packaged installs (which take the newest
+`X.Y.*` in the index) get the same release from the moment the tag moves.
+When `package-index` defers, `promote` skips and `vX.Y` stays on the
+previous release, so the two still agree. The deferral comment, the
+`close-finalize` outcome line and the `publish-status` error name the
+pending promote. Once the release's packages appear in the index, finish
+it by hand:
+
+1. Move the tag with the [`vrg-promote` steps](#move-the-tag-back),
+   passing the version: `vrg-promote <X.Y.Z>`.
+2. Close the release tracking issue, which stays open until then.
+
+Do not use `vrg-release --resume` for it: the release is complete, with
+a deferral, not halted. A release cut with `--no-promote` has no pending
+promote, deferral or not.
+
+A release started on tooling that ran `promote` before `package-index`
+cannot be resumed by tooling with the new order: `--resume` refuses a
+tracking issue whose stage checklist differs from the running tooling's.
+Finish such a release with the tooling version that started it.
 
 ### An interrupted release
 
