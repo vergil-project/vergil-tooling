@@ -142,7 +142,7 @@ held to their accepted majors (see
 and their exact versions float through the lockfile. Only the image's own
 tools, Prettier and license-checker, come with the image.
 
-## `tsc --noEmit` and the `build` Script
+## Typecheck and the Release Build
 
 TYPECHECK runs `tsc --noEmit`: it reads the consumer's `tsconfig.json` and
 reports type errors without writing any output.
@@ -218,7 +218,7 @@ TypeScript hard gates:
   with type-aware typescript-eslint rules, carrying the no-standing-suppression
   rule (`@typescript-eslint/ban-ts-comment`).
 - **BUILD** (once) — `npm ci --ignore-scripts && npm run build`, the release
-  build (see [`tsc --noEmit` and the `build` Script](#tsc-noemit-and-the-build-script)).
+  build (see [Typecheck and the Release Build](#typecheck-and-the-release-build)).
 - **TEST** (per Node version) — Vitest with the V8 coverage provider, held to
   100% line coverage per Node major (see
   [Testing and Coverage](testing-and-coverage.md)).
