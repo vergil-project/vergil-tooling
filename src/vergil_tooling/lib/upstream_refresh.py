@@ -449,7 +449,9 @@ def fence_violations(
     - a symlink or submodule is always refused;
     - under a rule with ``lines``, every removed and added line must match the
       regex in full, an added, deleted, binary or mode-changed file is
-      refused, and a ``(?P<version>…)`` group may not go down;
+      refused, and a ``(?P<version>…)`` group may not go down, nor may a
+      versioned line be moved or left unpaired beside other edits
+      (:func:`_downgrades`);
     - ``vergil.toml`` follows its own rules (:func:`_vergil_toml_violations`).
     """
     violations: list[str] = []
@@ -517,9 +519,12 @@ def _line_rule_violations(path: str, glob: str, regex: str, diff: _FileDiff) -> 
                 for line in side
                 if not pattern.fullmatch(line)
             )
-        # With no version group, nothing pairs, so the no-downgrade check finds nothing.
-        violations.extend(_downgrades(path, pattern, groups, removed, added))
-    return violations
+    if violations:
+        # The file is refused already; a line outside the rule is not versioned,
+        # so pairing would only repeat that refusal as an unpaired line.
+        return violations
+    # With no version group, nothing is versioned, so the no-downgrade check finds nothing.
+    return _downgrades(path, pattern, groups, diff.hunks)
 
 
 def _quote(line: str) -> str:
@@ -570,32 +575,63 @@ def _downgrades(
     path: str,
     pattern: re.Pattern[str],
     groups: Sequence[str],
-    removed: Sequence[str],
-    added: Sequence[str],
+    hunks: Sequence[tuple[list[str], list[str]]],
 ) -> list[str]:
-    """One violation per paired version in a hunk that went down, or is not numeric.
+    """The no-downgrade rule over one file's hunks; one violation per breach.
 
-    Removed and added lines are paired by the text before the version group,
-    in order. An unpaired line (a new or a dropped series) is left to the line
-    rule and the other fence rules.
+    Within a hunk, removed and added versioned lines are paired by the text
+    before the version group (the key), in order, and a paired version may
+    not go down or be non-numeric. A versioned line left unpaired is a new or
+    a dropped series only when its hunk holds nothing but added lines, or
+    nothing but removed lines, and no hunk of the file leaves a line of the
+    same key unpaired on the other side. Anything else is refused: a pinned
+    line moved within the file would otherwise escape the comparison, since
+    ``git diff -U0`` can split its removal and its addition into two hunks.
     """
-    old_by_key = _versioned(pattern, groups, removed)
-    new_by_key = _versioned(pattern, groups, added)
     violations: list[str] = []
-    for key, olds in old_by_key.items():
-        for old, new in zip(olds, new_by_key.get(key, []), strict=False):
-            old_t, new_t = _version_tuple(old), _version_tuple(new)
-            if old_t is None or new_t is None:
+    removed_keys: set[str] = set()  # keys with an unpaired removed line in a removal-only hunk
+    added_keys: set[str] = set()  # keys with an unpaired added line in an addition-only hunk
+    for removed, added in hunks:
+        old_by_key = _versioned(pattern, groups, removed)
+        new_by_key = _versioned(pattern, groups, added)
+        for key in sorted(old_by_key.keys() | new_by_key.keys()):
+            olds, news = old_by_key.get(key, []), new_by_key.get(key, [])
+            for old, new in zip(olds, news, strict=False):
+                violations.extend(_compare_versions(path, key, old, new))
+            if len(olds) == len(news):
+                continue
+            if removed and added:
                 violations.append(
-                    f"{path}: refused, {key.strip()!r} has a version that is not numeric "
-                    f"({old!r} to {new!r}), so the no-downgrade rule cannot compare it"
+                    f"{path}: refused, {key.strip()!r} has a versioned line with no "
+                    "counterpart in a hunk that both removes and adds lines, so the "
+                    "no-downgrade rule cannot pair it"
                 )
-            elif new_t < old_t:
-                violations.append(
-                    f"{path}: refused, {key.strip()!r} lowers its version from {old} to {new} "
-                    "(a refresh never lowers a pinned version)"
-                )
+            elif removed:
+                removed_keys.add(key)
+            else:
+                added_keys.add(key)
+    violations.extend(
+        f"{path}: refused, {key.strip()!r} has a versioned line removed in one place and "
+        "added in another, so the no-downgrade rule cannot pair it"
+        for key in sorted(removed_keys & added_keys)
+    )
     return violations
+
+
+def _compare_versions(path: str, key: str, old: str, new: str) -> list[str]:
+    """A violation if the paired version *new* is below *old*, or either is not numeric."""
+    old_t, new_t = _version_tuple(old), _version_tuple(new)
+    if old_t is None or new_t is None:
+        return [
+            f"{path}: refused, {key.strip()!r} has a version that is not numeric "
+            f"({old!r} to {new!r}), so the no-downgrade rule cannot compare it"
+        ]
+    if new_t < old_t:
+        return [
+            f"{path}: refused, {key.strip()!r} lowers its version from {old} to {new} "
+            "(a refresh never lowers a pinned version)"
+        ]
+    return []
 
 
 # -- the path fence: vergil.toml ----------------------------------------------------
