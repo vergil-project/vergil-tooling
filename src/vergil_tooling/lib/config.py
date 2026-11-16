@@ -156,7 +156,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "typescript": frozenset({"module", "target"}),
     "test": frozenset({"parallel", "workers", *TEST_CONTEXTS}),
     "dependency-update": frozenset({"hook"}),
-    "upstream-refresh": frozenset({"hook"}),
+    "upstream-refresh": frozenset({"hook", "paths"}),
     "merge-review": frozenset({"docs-paths"}),
     "package": frozenset(
         {
@@ -292,12 +292,38 @@ class DependencyUpdateConfig:
     hook: str | None = None
 
 
+@dataclass(frozen=True)
+class PathRule:
+    """One ``[upstream-refresh].paths`` entry (epic vergil-project/.github#1168, spec §6.2).
+
+    ``glob`` names the files the hook may change (``*`` within one path
+    segment, ``**`` across any number of them). ``lines``, when set, is a
+    regex every removed and added line of such a file must match in full; a
+    ``(?P<version>…)`` group in it marks a version the refresh may not lower
+    (a second marked version in the same regex is ``(?P<version_<suffix>>…)``,
+    since Python's ``re`` refuses a repeated group name). Versions are
+    compared per key across the whole file, so a file that repeats a key in
+    several blocks (one ``cpython`` per ``[[series]]``) marks the line that
+    names each block with a ``(?P<anchor>…)`` group, such as its ``series``
+    value; without one, a change to a repeated key is refused. A refresh
+    never removes an existing anchored block: dropping a series is a human
+    change.
+    """
+
+    glob: str
+    lines: str | None = None
+
+
 @dataclass
 class UpstreamRefreshConfig:
     # [upstream-refresh] (epic vergil-project/.github#472, spec §5.6): a
     # repo-owned command vrg-upstream-refresh runs to refresh upstream inputs.
     # Separate from [dependency-update]: neither command runs the other's hook.
     hook: str
+    # The path fence's allowlist (epic vergil-project/.github#1168, spec §6.2):
+    # the files the hook may change, in order (a path's first matching rule
+    # decides its line rule). Empty refuses every patch.
+    paths: tuple[PathRule, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -786,7 +812,56 @@ def _parse_upstream_refresh(
     if not isinstance(hook, str) or not hook.strip():
         msg = f"{source}: [upstream-refresh].hook is required and must be a non-empty string"
         raise ConfigError(msg)
-    return UpstreamRefreshConfig(hook=hook)
+    raw_paths = table.get("paths", [])
+    if not isinstance(raw_paths, list):
+        msg = f"{source}: [upstream-refresh].paths must be an array (got {raw_paths!r})"
+        raise ConfigError(msg)
+    paths = tuple(_parse_path_rule(entry, index, source) for index, entry in enumerate(raw_paths))
+    return UpstreamRefreshConfig(hook=hook, paths=paths)
+
+
+_PATH_RULE_KEYS = frozenset({"path", "lines"})
+
+
+def _parse_path_rule(entry: object, index: int, source: str) -> PathRule:
+    """Parse one ``[upstream-refresh].paths`` entry: a glob, or ``{ path, lines }``."""
+    where = f"{source}: [upstream-refresh].paths[{index}]"
+    if isinstance(entry, str):
+        return PathRule(glob=_check_path_glob(entry, where))
+    if not isinstance(entry, dict):
+        msg = f"{where} must be a glob string or a {{ path, lines }} table (got {entry!r})"
+        raise ConfigError(msg)
+    unknown = sorted(set(entry) - _PATH_RULE_KEYS)
+    if unknown:
+        msg = f"{where}: unknown key(s): {', '.join(unknown)}"
+        raise ConfigError(msg)
+    glob = entry.get("path")
+    if not isinstance(glob, str):
+        msg = f"{where}.path is required and must be a glob string"
+        raise ConfigError(msg)
+    lines = entry.get("lines")
+    if lines is not None:
+        if not isinstance(lines, str) or not lines:
+            msg = f"{where}.lines must be a non-empty regex string (got {lines!r})"
+            raise ConfigError(msg)
+        try:
+            re.compile(lines)
+        except re.error as exc:
+            msg = f"{where}.lines is not a valid regex ({exc}): {lines!r}"
+            raise ConfigError(msg) from exc
+    return PathRule(glob=_check_path_glob(glob, where), lines=lines)
+
+
+def _check_path_glob(glob: str, where: str) -> str:
+    """Return *glob*, refusing one that could never name a repo-relative path."""
+    segments = glob.split("/")
+    if glob.startswith("/") or any(seg in ("", ".", "..") for seg in segments):
+        msg = (
+            f"{where}: {glob!r} must be a repo-relative glob "
+            "(no leading /, and no empty, . or .. segment)"
+        )
+        raise ConfigError(msg)
+    return glob
 
 
 def _parse_merge_review(raw: dict[str, Any], source: str = CONFIG_FILE) -> MergeReviewConfig:

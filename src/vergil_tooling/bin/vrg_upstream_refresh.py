@@ -1,11 +1,13 @@
-"""Run the repo's ``[upstream-refresh].hook`` and open, refresh or close one PR.
+"""Run the repo's ``[upstream-refresh].hook`` on a fresh clone of ``develop``.
 
 Language-neutral (epic vergil-project/.github#472, spec §5.6): the repo's hook
-refreshes its upstream inputs by editing tracked files, and this command turns
-the result into exactly one ``upstream-refresh`` PR, or none. It never merges,
-and never runs dependency updaters, validation or a release. It runs from the
-scheduled ``ops-upstream-refresh`` workflow, or by hand as a human; agent
-identity modes are refused because it opens PRs.
+refreshes its upstream inputs by editing tracked files. The command is being
+rebuilt on the mechanized-PR building block (epic vergil-project/.github#1168):
+its prepare half is in place, and ``--dry-run`` runs it and prints the PR body
+the refresh would open. The publish half, which applies the patch, checks the
+path fence and opens the PR, arrives with that epic's Task 3b; until then a
+run without ``--dry-run`` is refused. It never touches the caller's checkout.
+Agent identity modes are refused.
 """
 
 from __future__ import annotations
@@ -17,21 +19,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-from vergil_tooling.lib import git, github, identity_mode
-from vergil_tooling.lib.branch_sweep import default_branch
+from vergil_tooling.lib import github, identity_mode
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.config import ConfigError, read_config
+from vergil_tooling.lib.config import ConfigError
+from vergil_tooling.lib.develop_clone import DevelopCloneError
 from vergil_tooling.lib.process_errors import error_text
-from vergil_tooling.lib.upstream_refresh import (
-    REPORT_ENV,
-    UpstreamRefreshError,
-    changed_paths,
-    ensure_clean_on_base,
-    render_body,
-    run_hook,
-    scratch_worktree,
-    sync,
-)
+from vergil_tooling.lib.upstream_refresh import UpstreamRefreshError, prepare, render_body
 
 _PROG = "vrg-upstream-refresh"
 
@@ -42,9 +35,16 @@ def main(argv: list[str] | None = None) -> int:
     if identity_mode.is_agent():
         print(f"{_PROG} opens PRs and is not run by agents", file=sys.stderr)
         return 1
+    if not args.dry_run:
+        print(
+            f"{_PROG}: publishing is not available in this build (it arrives with epic "
+            "vergil-project/.github#1168, Task 3b); run with --dry-run",
+            file=sys.stderr,
+        )
+        return 1
     try:
-        return _refresh(args)
-    except (UpstreamRefreshError, ConfigError) as exc:
+        return _dry_run(args)
+    except (UpstreamRefreshError, ConfigError, DevelopCloneError) as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
         return 1
     except subprocess.CalledProcessError as exc:
@@ -56,20 +56,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog=_PROG,
         description=(
-            "Run the repo's [upstream-refresh].hook in a scratch worktree of the base "
-            "branch, then open, refresh or close the single upstream-refresh PR. "
-            "Never merges, and leaves the checkout exactly as it found it."
+            "Run the repo's [upstream-refresh].hook in a fresh clone of develop and "
+            "print the refresh PR it would open. Never touches the checkout."
         ),
     )
     parser.add_argument(
         "--repo",
         metavar="OWNER/NAME",
         help="Target repository (default: $GITHUB_REPOSITORY, then the origin remote).",
-    )
-    parser.add_argument(
-        "--base",
-        metavar="BRANCH",
-        help="Base branch for the refresh PR (default: the repository's default branch).",
     )
     parser.add_argument(
         "--dry-run",
@@ -83,34 +77,15 @@ def _resolve_repo(arg: str | None) -> str:
     return arg or os.environ.get("GITHUB_REPOSITORY") or github.current_repo()
 
 
-def _refresh(args: argparse.Namespace) -> int:
-    repo_root = git.repo_root()
-    cfg = read_config(repo_root)
-    if cfg.upstream_refresh is None:
-        print(f"{_PROG}: vergil.toml has no [upstream-refresh] section", file=sys.stderr)
-        return 1
+def _dry_run(args: argparse.Namespace) -> int:
     repo = _resolve_repo(args.repo)
-    base = args.base or default_branch(repo)
-    base_sha = ensure_clean_on_base(repo_root, base)
-    # The hook runs in a scratch worktree outside the checkout (#3812), removed
-    # before the temporary directory is, so the checkout is never touched.
-    with (
-        tempfile.TemporaryDirectory(prefix="vrg-upstream-refresh-") as tmp,
-        scratch_worktree(repo_root, base_sha, Path(tmp) / "tree") as tree,
-    ):
-        report = Path(tmp) / "report.txt"
-        print(f"Running [upstream-refresh].hook in {tree} ({REPORT_ENV}={report}).")
-        notes = run_hook(tree, cfg.upstream_refresh.hook, report)
-        paths = changed_paths(tree)
-        if args.dry_run:
-            if paths:
-                print(f"Dry run: would open or refresh the refresh PR on {repo} ({base}):\n")
-                print(render_body(notes, paths))
-            else:
-                print(f"Dry run: nothing to refresh on {base}; would close any open refresh PR.")
-            return 0
-        outcome = sync(repo, base, repo_root, tree, notes, paths)
-    print(f"{_PROG}: {outcome}")
+    with tempfile.TemporaryDirectory(prefix="vrg-upstream-refresh-out-") as out:
+        prepared = prepare(repo, Path(out))
+    if prepared.paths:
+        print(f"Dry run: would open the refresh PR on {repo} (develop):\n")
+        print(render_body(prepared.notes, prepared.paths))
+    else:
+        print("Dry run: nothing to refresh on develop.")
     return 0
 
 
