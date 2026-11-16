@@ -739,7 +739,9 @@ def test_sort_size_and_tasks(capsys: pytest.CaptureFixture[str]) -> None:
         ["--sort", "tasks"],
     ],
 )
-def test_sort_and_size_only_with_planning(capsys: pytest.CaptureFixture[str], argv: list[str]) -> None:
+def test_sort_and_size_only_with_planning(
+    capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
     with patch(f"{_MOD}.github.current_repo") as cur:
         rc = main(argv)
     captured = capsys.readouterr()
@@ -782,7 +784,9 @@ def test_filtered_header(capsys: pytest.CaptureFixture[str]) -> None:
     assert "plan 4" in lines[1]
     assert "plan 1" in lines[2]
     assert err == f"vrg-queue: org/.github#4: {_ERROR}\n"
-    rc, out, _err = _run(capsys, ["planning", "--size", "S,unsized", "--json"], _planning_view(*items))
+    rc, out, _err = _run(
+        capsys, ["planning", "--size", "S,unsized", "--json"], _planning_view(*items)
+    )
     assert [row["ref"]["number"] for row in json.loads(out)] == [4, 3, 1]
 
 
@@ -801,7 +805,9 @@ def test_trusted_authors_missing_fails(capsys: pytest.CaptureFixture[str], argv:
     assert err == f"vrg-queue: {argv[0]} queue for org in org/.github could not be read: {msg}\n"
 
 
-def test_trusted_authors_missing_fails_through_the_real_view(capsys: pytest.CaptureFixture[str]) -> None:
+def test_trusted_authors_missing_fails_through_the_real_view(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     exc = trusted_authors.TrustedAuthorsNotConfiguredError("trusted authors are not configured")
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),

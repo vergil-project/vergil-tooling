@@ -10,9 +10,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib import epics, github, in_flight, queue_view, security_records
+from vergil_tooling.lib.epic_size import SizeRecord
 from vergil_tooling.lib.epics import ChildState, IssueRef
 from vergil_tooling.lib.queue_view import Deferral, PlanningMarkers, QueueItem
-from vergil_tooling.lib.epic_size import SizeRecord
 from vergil_tooling.lib.security_records import Advisory
 
 if TYPE_CHECKING:
@@ -874,8 +874,20 @@ def test_sort_tasks() -> None:
 
 
 def test_sort_rejects_unknown_key() -> None:
+    bogus: Any = "bogus"
     with pytest.raises(ValueError, match="bogus"):
-        queue_view.sort_planning(_SORT_INPUT, "bogus")  # type: ignore[arg-type]
+        queue_view.sort_planning(_SORT_INPUT, bogus)
+
+
+def test_no_size_record_sorts_and_filters_as_unsized() -> None:
+    bare = _sized(8, "2026-12-01T00:00:00Z", None)
+    assert queue_view.sort_planning([bare, _ERROR_ITEM, _S3_OLD], "size") == [
+        _S3_OLD,
+        bare,
+        _ERROR_ITEM,
+    ]
+    assert queue_view.filter_planning([bare, _S3_OLD], frozenset({"S"})) == [_S3_OLD]
+    assert queue_view.filter_planning([bare, _S3_OLD], frozenset({"unsized"})) == [bare]
 
 
 def test_filter_keeps_errors() -> None:
@@ -945,7 +957,9 @@ def test_to_json_size_fields() -> None:
     ]
     assert error["size_error"] == "bad"
     assert error["epic_size"] is None
-    intake = QueueItem(IssueRef("org", ".github", 9), "i", "2026-10-01T00:00:00Z", "waiting", "", None)
+    intake = QueueItem(
+        IssueRef("org", ".github", 9), "i", "2026-10-01T00:00:00Z", "waiting", "", None
+    )
     assert set(queue_view.to_json([intake])[0]) == {
         "ref",
         "title",

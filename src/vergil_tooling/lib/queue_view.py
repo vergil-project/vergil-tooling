@@ -114,7 +114,7 @@ PlanningSort = Literal["age", "size", "tasks"]
 PLANNING_SORTS: tuple[PlanningSort, ...] = ("age", "size", "tasks")
 
 # The ``--size`` filter token that selects unsized items, beside the sizes.
-UNSIZED_TOKEN = "unsized"
+UNSIZED_FILTER = "unsized"
 
 # The labels that give an ad-hoc task an operational kind; any other is a "task".
 _OPERATIONAL_KINDS = ("validation", "deployment")
@@ -633,10 +633,9 @@ def sort_planning(items: Sequence[QueueItem], key: PlanningSort) -> list[QueueIt
         group = _size_group(item)
         rank = 0
         if group == _SIZED and item.size is not None and item.size.size is not None:
-            if key == "size":
-                rank = epic_size.SIZES.index(item.size.size)
-            elif item.size.tasks is not None:
-                rank = item.size.tasks
+            # A sized record always has its task count.
+            tasks = item.size.tasks or 0
+            rank = epic_size.SIZES.index(item.size.size) if key == "size" else tasks
         return (group, rank, item.created_at, item.ref.slug)
 
     return sorted(items, key=order)
@@ -648,7 +647,7 @@ def parse_size_filter(text: str) -> frozenset[str]:
     Tokens are the sizes of :data:`epic_size.SIZES` and ``unsized``, comma
     separated; an empty or unknown token raises ValueError.
     """
-    allowed = (*epic_size.SIZES, UNSIZED_TOKEN)
+    allowed = (*epic_size.SIZES, UNSIZED_FILTER)
     tokens = [token.strip() for token in text.split(",")]
     unknown = [token for token in tokens if token not in allowed]
     if unknown:
@@ -671,7 +670,7 @@ def filter_planning(items: Sequence[QueueItem], sizes: frozenset[str]) -> list[Q
         if group == _IN_ERROR:
             kept.append(item)
         elif group == _UNSIZED:
-            if UNSIZED_TOKEN in sizes:
+            if UNSIZED_FILTER in sizes:
                 kept.append(item)
         elif item.size is not None and item.size.size in sizes:
             kept.append(item)
