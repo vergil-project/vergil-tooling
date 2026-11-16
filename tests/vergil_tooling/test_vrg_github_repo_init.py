@@ -69,7 +69,7 @@ class TestParseArgs:
                 "tagged-release",
                 "--versions",
                 "3.12,3.13",
-                "--integration-tests",
+                "--no-integration-tests",
                 "--no-publish-release",
                 "--publish-docs",
                 "--vergil-version",
@@ -87,12 +87,34 @@ class TestParseArgs:
         assert args.versioning_scheme == "semver"
         assert args.release_model == "tagged-release"
         assert args.versions == "3.12,3.13"
-        assert args.integration_tests is True
+        assert args.integration_tests is False
         assert args.publish_release is False
         assert args.publish_docs is True
         assert args.vergil_version == "v2.1"
         assert args.license == "Apache-2.0"
         assert args.initial_version == "1.0.0"
+
+    @pytest.mark.parametrize(
+        ("argv", "subject"),
+        [
+            (["org/repo", "--integration-tests"], "Refusing to initialize org/repo: "),
+            (["--adopt", "--integration-tests"], "Refusing to adopt this repo: "),
+        ],
+    )
+    def test_integration_tests_flag_is_refused(
+        self, argv: list[str], subject: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # No CI job produces test / integration / <version>, so the flag is
+        # refused at parsing, before step 1 can create the repository (#4448).
+        with pytest.raises(SystemExit) as exc:
+            parse_args(argv)
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert subject + "--integration-tests sets integration tests on." in err
+        assert "[ci].integration-tests = true" in err
+        assert "test / integration / <version>" in err
+        assert "vergil-project/vergil-tooling#2721" in err
+        assert "Nothing was changed." in err
 
     def test_boolean_flags_default_none(self) -> None:
         # Unset boolean flags stay None so the wizard can tell "not supplied"
@@ -234,6 +256,24 @@ class TestMain:
         assert result == 1
         mock_wizard.assert_not_called()
         assert "container runtime" in capsys.readouterr().err.lower()
+
+    def test_integration_tests_flag_refused_before_any_side_effect(self) -> None:
+        # The refusal comes from parsing: nothing is prompted, no repo is read
+        # or created, and the wizard (whose step 1 creates the remote) never
+        # starts (#4448).
+        with (
+            patch("builtins.input", side_effect=AssertionError("prompted")),
+            patch("vergil_tooling.lib.github.current_repo") as mock_current_repo,
+            patch("vergil_tooling.lib.github.run") as mock_gh_run,
+            patch("vergil_tooling.bin.vrg_github_repo_init.run_wizard") as mock_wizard,
+            pytest.raises(SystemExit) as exc,
+        ):
+            main(["org/repo", "--visibility", "public", "--integration-tests"])
+
+        assert exc.value.code == 2
+        mock_wizard.assert_not_called()
+        mock_current_repo.assert_not_called()
+        mock_gh_run.assert_not_called()
 
     def test_allows_cpp_new_repo_with_container(self) -> None:
         with (

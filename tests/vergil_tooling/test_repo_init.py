@@ -1007,8 +1007,10 @@ class TestAssertCiGatesProducible:
         self._ctx_with_ci(tmp_path, ctx)
         with pytest.raises(RuntimeError) as exc:
             _assert_ci_gates_producible(ctx, self._desired(ctx, ghas=True), ghas=True)
-        assert "test / integration / 3.14" in str(exc.value)
-        assert "2721" in str(exc.value)
+        message = str(exc.value)
+        assert "test / integration / 3.14" in message
+        assert "2721" in message
+        assert "Cause of test / integration / 3.14: [ci].integration-tests = true" in message
 
 
 def _resolved(language: str, versions: list[str] | None = None) -> Resolution | None:
@@ -1503,6 +1505,28 @@ class TestStepClone:
         assert ctx.work_dir == target
 
 
+# An adopted repo's vergil.toml, every required field set.
+_ADOPTED_TOML = (
+    "[project]\n"
+    'repository-type = "library"\n'
+    'versioning-scheme = "semver"\n'
+    'branching-model = "library-release"\n'
+    'release-model = "tagged-release"\n'
+    'primary-language = "python"\n'
+    "\n"
+    "[ci]\n"
+    'versions = ["3.14"]\n'
+    "integration-tests = false\n"
+    "\n"
+    "[publish]\n"
+    "release = true\n"
+    "docs = false\n"
+    "\n"
+    "[dependencies]\n"
+    'vergil = "v2.1"\n'
+)
+
+
 class TestStepGenerateConfig:
     def test_prompts_and_writes_vergil_toml(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
@@ -1744,6 +1768,112 @@ class TestStepGenerateConfig:
         assert ctx.vergil_version == "v2.1"
         assert ctx.license_type == "MIT"
         assert ctx.initial_version == "0.1.0"
+
+    def test_interactive_yes_to_integration_tests_is_refused(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Refused as soon as the answer is resolved: no vergil.toml is written,
+        # nothing is committed and nothing pushed (#4448).
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = tmp_path
+        inputs = iter(
+            [
+                "5",  # repository-type: tooling
+                "3",  # primary-language: python
+                "3",  # branching-model: library-release
+                "4",  # versioning-scheme: semver
+                "4",  # release-model: tagged-release
+                "",  # ci versions
+                "y",  # integration tests
+            ]
+        )
+
+        with (
+            patch("builtins.input", side_effect=lambda _="": next(inputs)),
+            patch("vergil_tooling.lib.repo_init.git.run") as mock_git,
+            pytest.raises(SystemExit) as exc,
+        ):
+            step_generate_config(ctx)
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert err.startswith(
+            "ERROR: Refusing to initialize vergil-project/vergil-vm: the answer to "
+            "'Integration tests?' sets integration tests on. "
+            "[ci].integration-tests = true makes the CI-gates ruleset require"
+        )
+        assert "vergil-project/vergil-tooling#2721" in err
+        assert "Nothing has been pushed and no GitHub settings were applied." in err
+        assert not (tmp_path / "vergil.toml").exists()
+        mock_git.assert_not_called()
+
+    def test_adopted_toml_with_integration_tests_is_refused(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        ctx = RepoInitContext(org="vergil-project", name="dormant", adopt=True)
+        ctx.work_dir = tmp_path
+        ctx.non_interactive = True
+        existing = _ADOPTED_TOML.replace("integration-tests = false", "integration-tests = true")
+        (tmp_path / "vergil.toml").write_text(existing)
+
+        with (
+            patch("builtins.input", side_effect=AssertionError("prompted")),
+            patch("vergil_tooling.lib.repo_init.git.run") as mock_git,
+            pytest.raises(SystemExit) as exc,
+        ):
+            step_generate_config(ctx)
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "the adopted vergil.toml sets integration tests on." in err
+        assert "test / integration / <version>" in err
+        # The adopted file is left as it was.
+        assert (tmp_path / "vergil.toml").read_text() == existing
+        mock_git.assert_not_called()
+
+    def test_integration_tests_flag_in_the_context_is_refused(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # parse_args refuses the flag first; a context built some other way
+        # still never reaches the write (#4448).
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        ctx = RepoInitContext(org="vergil-project", name="dormant", adopt=True)
+        ctx.work_dir = tmp_path
+        ctx.non_interactive = True
+        ctx.opt_integration_tests = True
+        (tmp_path / "vergil.toml").write_text(_ADOPTED_TOML)
+
+        with (
+            patch("builtins.input", side_effect=AssertionError("prompted")),
+            patch("vergil_tooling.lib.repo_init.git.run") as mock_git,
+            pytest.raises(SystemExit) as exc,
+        ):
+            step_generate_config(ctx)
+
+        assert exc.value.code == 1
+        assert "--integration-tests sets integration tests on." in capsys.readouterr().err
+        assert (tmp_path / "vergil.toml").read_text() == _ADOPTED_TOML
+        mock_git.assert_not_called()
+
+    def test_no_integration_tests_flag_turns_off_an_adopted_setting(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="dormant", adopt=True)
+        ctx.work_dir = tmp_path
+        ctx.non_interactive = True
+        ctx.opt_integration_tests = False
+        (tmp_path / "vergil.toml").write_text(
+            _ADOPTED_TOML.replace("integration-tests = false", "integration-tests = true")
+        )
+
+        with (
+            patch("builtins.input", side_effect=AssertionError("prompted")),
+            patch("vergil_tooling.lib.repo_init.git.run"),
+        ):
+            step_generate_config(ctx)
+
+        assert ctx.integration_tests is False
+        assert "integration-tests = false\n" in (tmp_path / "vergil.toml").read_text()
 
     def test_non_interactive_adopt_missing_required_enum_fails_loud(self, tmp_path: Path) -> None:
         # Adopt with no existing vergil.toml and no flags: the required enums
@@ -2924,7 +3054,7 @@ def _committed_answers() -> RepoInitContext:
         branching_model="library-release",
         versioning_scheme="semver",
         release_model="tagged-release",
-        integration_tests=True,
+        integration_tests=False,
         publish_release=True,
         publish_docs=False,
         vergil_version="v2.1",
@@ -2961,7 +3091,7 @@ class TestRestoreGeneratedConfig:
         assert ctx.versioning_scheme == "semver"
         assert ctx.release_model == "tagged-release"
         assert ctx.ci_versions == ["3.14"]
-        assert ctx.integration_tests is True
+        assert ctx.integration_tests is False
         assert ctx.publish_release is True
         assert ctx.publish_docs is False
         assert ctx.vergil_version == "v2.1"
@@ -3077,6 +3207,41 @@ class TestRestoreGeneratedConfig:
         assert "--versions ['3.13'] (vergil.toml has [])" in err
         assert ctx.primary_language == ""
 
+    @pytest.mark.parametrize(
+        ("completed", "state"),
+        [
+            ({1, 3, 4}, "Nothing has been pushed and no GitHub settings were applied."),
+            (
+                {1, 3, 4, 8},
+                "Step 8 had already pushed; this run stops before step 9 applies any "
+                "GitHub settings.",
+            ),
+        ],
+    )
+    def test_committed_integration_tests_refuses(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+        completed: set[int],
+        state: str,
+    ) -> None:
+        # A step-3 commit from before #4448 can still carry the setting: the
+        # resumed run refuses it before the later steps, not at step 9.
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        ctx = _committed_ctx(tmp_path, integration_tests=True)
+        ctx.completed_steps = completed
+
+        with pytest.raises(SystemExit) as exc:
+            restore_generated_config(ctx)
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert f"the committed {tmp_path / 'vergil.toml'} sets integration tests on." in err
+        assert "vergil-project/vergil-tooling#2721" in err
+        assert state in err
+        assert ctx.integration_tests is False
+
     def test_agreeing_flags_are_accepted(self, tmp_path: Path) -> None:
         ctx = _committed_ctx(tmp_path, ci_versions=["3.14"])
         ctx.opt_repository_type = "library"
@@ -3085,7 +3250,7 @@ class TestRestoreGeneratedConfig:
         ctx.opt_versioning_scheme = "semver"
         ctx.opt_release_model = "tagged-release"
         ctx.opt_ci_versions = " 3.14 ,"
-        ctx.opt_integration_tests = True
+        ctx.opt_integration_tests = False
         ctx.opt_publish_release = True
         ctx.opt_publish_docs = False
         ctx.opt_vergil_version = "v2.1"

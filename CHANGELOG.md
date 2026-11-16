@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.317] - 2026-11-16
+
+### Bug fixes
+
+- refuse [ci].integration-tests = true before anything is pushed (#4463)
+
+### Features
+
+- run the strict mkdocs build of the docs / docs gate in vrg-validate (#4461)
+
 ## [2.1.316] - 2026-11-16
 
 ### Bug fixes

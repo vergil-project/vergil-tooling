@@ -2,12 +2,15 @@
 
 Reads primary_language from vergil.toml, then either runs a
 specific check type (--check) or all checks in sequence:
-  common -> install -> lint -> typecheck -> test -> audit -> semgrep -> custom
+  common -> install -> lint -> typecheck -> test -> audit -> semgrep -> docs
+  -> custom
 
-The single checks are common, lint, typecheck, test, audit, semgrep and
-custom. The semgrep stage runs the scan PR CI's ``security / semgrep`` gate
-runs, with the same rulesets and fleet exclusions, so a finding fails here
-before the PR is opened (issue #4003).
+The single checks are common, lint, typecheck, test, audit, semgrep, docs
+and custom. The semgrep stage runs the scan PR CI's ``security / semgrep``
+gate runs, with the same rulesets and fleet exclusions, so a finding fails
+here before the PR is opened (issue #4003). The docs stage runs the strict
+mkdocs build of PR CI's ``docs / docs`` gate when the repo has
+``docs/site/mkdocs.yml`` (issue #4446).
 ``--check custom`` runs only the repo's custom validator
 (``scripts/bin/validate-custom`` or ``vrg-validate-custom``), after the
 install stage when the language has one so the validator sees the dev
@@ -52,6 +55,12 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import audit_retry, config, git, progress
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.container_cache import language_sources, unbootstrapped_manifests
+from vergil_tooling.lib.docs import (
+    patch_nav,
+    stage_docs,
+    staging_outputs,
+    unignored_staging_error,
+)
 from vergil_tooling.lib.languages import (
     COVERAGE_REPORT,
     JUNIT_REPORT,
@@ -78,6 +87,7 @@ _CHECK_KINDS = {
     "test": CheckKind.TEST,
     "audit": CheckKind.AUDIT,
     "semgrep": None,
+    "docs": None,
     "custom": None,
 }
 
@@ -881,6 +891,88 @@ def _semgrep_stage(language: str | None, repo_root: Path) -> Stage:
     return Stage("semgrep", fn, mode="fail_defer")
 
 
+# The mkdocs config CI's ``docs / docs`` job builds (vergil-actions
+# .github/workflows/ci-docs.yml, its ``mkdocs-config`` input's default; no fleet
+# caller overrides it), and the nav-patched sibling copy that staging writes,
+# as vrg-container-docs does. Both are gitignored by the managed base
+# gitignore, with the other staging outputs.
+_MKDOCS_CONFIG = "docs/site/mkdocs.yml"
+_STAGED_MKDOCS_CONFIG = "mkdocs.staged.yml"
+
+# mkdocs-material 9.7+ prints a MkDocs 2.0 banner on every build unless this
+# is set; CI's docs job sets it too.
+_DOCS_ENV = {"NO_MKDOCS_2_WARNING": "1"}
+
+
+def _stage_docs_sources(repo_root: Path, config: Path) -> Path:
+    """Stage the docs sources as CI's docs job does; return the staged config.
+
+    CI's ``actions/shared/docs/stage`` copies the changelog and release notes
+    into ``<config dir>/docs`` and patches the release versions into the nav.
+    Here the nav patch goes to a sibling copy of the config, never the
+    tracked one, and staging is offline: CI also appends a CI-evidence
+    download line to each release page, an external link that a strict build
+    does not check, so it is left out rather than asking GitHub for it. Every
+    path staging writes must be gitignored, so the working tree stays clean.
+    """
+    staged = config.with_name(_STAGED_MKDOCS_CONFIG)
+    docs_dir = config.parent / "docs"
+    releases_dir = repo_root / "releases"
+    changelog = repo_root / "CHANGELOG.md"
+    outputs = staging_outputs(
+        staged_config=staged, docs_dir=docs_dir, releases_dir=releases_dir, changelog=changelog
+    )
+    error = unignored_staging_error(repo_root, outputs)
+    if error is not None:
+        raise ValidationError(error)
+    stage_docs(docs_dir=docs_dir, releases_dir=releases_dir, changelog=changelog)
+    shutil.copyfile(config, staged)
+    patch_nav(staged, docs_dir / "releases")
+    return staged
+
+
+def _run_docs_build(language: str | None, repo_root: Path) -> None:
+    """Run the strict mkdocs build of PR CI's ``docs / docs`` gate (issue #4446).
+
+    A repo with no ``docs/site/mkdocs.yml`` has no docs build, and CI's job
+    passes as a no-op, so the stage passes with a notice. Otherwise the
+    sources are staged as CI stages them and ``mkdocs build --strict`` runs,
+    through ``uv run`` for a Python repo as in CI, so a broken internal link
+    or nav entry fails here before the PR is opened. ``uv run`` takes
+    ``--frozen`` so it never rewrites ``uv.lock`` in the working tree. A
+    Python repo with no mkdocs in its environment, like any other repo, uses
+    the dev image's mkdocs-material. The site goes to a temporary directory,
+    never the working tree.
+    """
+    config = repo_root / _MKDOCS_CONFIG
+    if not config.is_file():
+        print(f"NOTICE: docs: no {_MKDOCS_CONFIG}; no docs build to run, as in CI")
+        return
+    staged = _stage_docs_sources(repo_root, config)
+    if language == "python":
+        mkdocs = ["uv", "run", "--frozen", "--project", str(repo_root), "mkdocs"]
+    else:
+        mkdocs = ["mkdocs"]
+    with tempfile.TemporaryDirectory(prefix="vrg-validate-docs-") as tmp:
+        cmd = [*mkdocs, "build", "--strict", "-f", str(staged), "-d", tmp]
+        print(f"Running (docs): {' '.join(cmd)}")
+        try:
+            rc = progress.run(cmd, check=False, env={**os.environ, **_DOCS_ENV})
+        except FileNotFoundError as exc:
+            msg = f"{mkdocs[0]} not found: {exc}"
+            raise ValidationError(msg) from exc
+    if rc != 0:
+        msg = f"strict mkdocs build of {_MKDOCS_CONFIG} exited {rc}"
+        raise ValidationError(msg)
+
+
+def _docs_stage(language: str | None, repo_root: Path) -> Stage:
+    def fn(_ctx: object) -> None:
+        _run_docs_build(language, repo_root)
+
+    return Stage("docs", fn, mode="fail_defer")
+
+
 def _build_stages(
     check: str | None,
     language: str | None,
@@ -907,7 +999,7 @@ def _build_stages(
 
         stages.append(Stage("common", common_fn, mode="fail_defer"))
 
-    if language is not None and check not in ("common", "semgrep"):
+    if language is not None and check not in ("common", "semgrep", "docs"):
         kinds = [kind for kind in _LANGUAGE_CHECK_ORDER if check is None or check == kind.value]
         kind_cmds = [
             (
@@ -985,6 +1077,9 @@ def _build_stages(
 
     if check in (None, "semgrep"):
         stages.append(_semgrep_stage(language, repo_root))
+
+    if check in (None, "docs"):
+        stages.append(_docs_stage(language, repo_root))
 
     if check in (None, "custom"):
         custom = _find_custom_validator(repo_root)

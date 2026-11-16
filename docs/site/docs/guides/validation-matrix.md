@@ -26,7 +26,7 @@ where it runs. No git hooks are installed: every check runs inside a
 | Trivy scan | `ci-security.yml` | -- (follow-up #4445) | `security / trivy` |
 | CodeQL scan | `ci-security.yml` | -- (CI-only) | `security / codeql` |
 | GitHub code scanning results | GitHub, from the uploaded SARIF | -- (CI-only) | `Trivy`, `Semgrep OSS`, `CodeQL` |
-| Strict docs build | `ci-docs.yml` | -- (follow-up #4446) | `docs / docs` |
+| Strict docs build | `vrg-validate` (docs stage) | Yes | `docs / docs` |
 | Version bump | `ci-version-bump.yml` | -- (CI-only) | `version / version-bump` |
 | Package build and install tests | `ci-package.yml` | -- (CI-only) | `package / evidence` |
 | Image build and scan (vergil-containers) | vergil-containers CI | -- (CI-only) | `images / evidence` |
@@ -63,7 +63,8 @@ reason given. A gap that stays CI-only is a failure an agent cannot see
 before the PR is opened.
 
 Already run locally: `quality / common`, `quality / custom`,
-`security / semgrep` (the [Semgrep scan](#semgrep-scan) stage), and
+`security / semgrep` (the [Semgrep scan](#semgrep-scan) stage),
+`docs / docs` (the [Docs build](#docs-build) stage, #4446), and
 lint, typecheck, tests and audit on the primary version. The
 repo-specific gates run locally too: vergil-containers'
 `quality / hadolint` (vergil-containers#761) and vergil-actions' action
@@ -72,7 +73,6 @@ shell suites (vergil-actions#1108).
 | PR CI check | Decision | Reason |
 | ----------- | -------- | ------ |
 | `security / trivy` | Run locally, planned in #4445 | A `trivy` stage would run `trivy fs --scanners vuln --severity CRITICAL,HIGH --exit-code 1` with the repo's `.trivyignore`, as CI does, caching the vulnerability database between runs. |
-| `docs / docs` | Run locally, planned in #4446 | A docs stage would run the strict mkdocs build when `docs/site/mkdocs.yml` exists. Until then, vergil-tooling runs it in its own custom validator. |
 | `security / codeql` | CI-only | It needs GitHub code scanning, its CLI is not in the dev images, and building its database is heavy. |
 | `Trivy`, `Semgrep OSS`, `CodeQL` | CI-only | GitHub computes them from the uploaded SARIF for the changed lines, so they cannot run locally. The local semgrep stage, and the trivy stage once it lands, cover the findings behind them. |
 | `version / version-bump` | CI-only | It compares the branch's version with `main`'s, so its result depends on where the release cycle stands, not on the change. |
@@ -86,8 +86,10 @@ rulesets that `ci-security.yml` adds; #4447 makes `vrg-semgrep-scan`
 the one source of that mapping. The CI gates require
 `test / integration / <version>` when `[ci].integration-tests` is on,
 but no reusable workflow runs an integration job yet, so such a repo
-could not merge; #4448 either adds the job or refuses the setting. No
-fleet repo turns it on today.
+could not merge. The job stays deferred (#2721); since #4448
+`vrg-github-repo-init` refuses the setting before it pushes anything,
+and the CI-gates guard names it as the cause. No fleet repo turns it on
+today.
 
 ## Agent and Git Wrappers
 
@@ -152,8 +154,8 @@ container. The outer layer, `vrg-container-run`, launches the dev
 container once and runs `vrg-validate` inside it. The inner layer,
 `vrg-validate`, reads `[project].primary-language` from `vergil.toml` and
 runs the common checks, then the language's checks from the built-in
-command registry, then the semgrep scan, then the repository's custom
-validator, as below. The
+command registry, then the semgrep scan, then the strict docs build,
+then the repository's custom validator, as below. The
 dev images come from
 [vergil-containers](https://github.com/vergil-project/vergil-containers)
 (see [Dev container images](ci-architecture.md#dev-container-images)).
@@ -243,6 +245,35 @@ the working tree. A scan that errors or writes no SARIF fails the
 stage. A repository with no ruleset to run (no language ruleset, no
 Dockerfile and no workflow) records the stage as a warning (⚠). For
 this repository the scan takes about 15 seconds.
+
+### Docs build
+
+After the semgrep scan, `vrg-validate` runs the strict mkdocs build of
+PR CI's `docs / docs` gate (`ci-docs.yml`), so a broken internal link
+or a nav entry for a missing page fails locally before the PR is
+opened. `--check docs` runs only this stage. A repository with no
+`docs/site/mkdocs.yml` has no docs build: the stage prints a notice and
+passes, as the CI job does.
+
+The stage first stages the sources as CI's docs job does: it copies
+`CHANGELOG.md` and the release notes under `releases/` into
+`docs/site/docs/`, and patches the release versions into the nav. The
+nav patch goes to `docs/site/mkdocs.staged.yml`, a copy of the config,
+never the tracked `mkdocs.yml`, as `vrg-container-docs` does. Every
+path it writes must be gitignored (the managed `.gitignore` covers
+them); if one is not, the stage fails before writing anything.
+Staging is offline: CI also adds a CI-evidence download link to each
+release page, an external link a strict build does not check, so the
+stage leaves it out and needs no `gh` authentication.
+
+It then runs `mkdocs build --strict` on the staged config, with
+`NO_MKDOCS_2_WARNING=1` as in CI. A Python repository runs it as
+`uv run --frozen mkdocs`, as CI runs `uv run mkdocs`, so a `mkdocs`
+in the project's environment is used when there is one; `--frozen`
+keeps `uv.lock` unchanged. Any other repository, and a Python one
+with no `mkdocs` in its environment, uses the dev image's
+mkdocs-material. The site is built in a temporary directory, never the
+working tree.
 
 ### Custom validator
 
