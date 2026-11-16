@@ -480,8 +480,9 @@ _TYPESCRIPT_TSC_SCRIPT = (
 # table. Istanbul's Cobertura reporter names its file
 # ``cobertura-coverage.xml`` under the reports directory, which the command
 # fixes as ``coverage/`` (Vitest empties the reports directory before each
-# run, so it must never be the repo root), then copies it to ``coverage.xml``. Vitest writes no coverage
-# when a test fails unless ``--coverage.reportOnFailure`` is set. The two root
+# run, so it must never be the repo root), then copies it to ``coverage.xml``.
+# Vitest writes no coverage when a test fails unless
+# ``--coverage.reportOnFailure`` is set. The two root
 # reports and the Cobertura file are removed first, so a stale one is never
 # staged; a run that passes but leaves either report missing fails the gate.
 _VITEST_COBERTURA = "coverage/cobertura-coverage.xml"
