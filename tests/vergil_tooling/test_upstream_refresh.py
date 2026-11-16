@@ -792,7 +792,7 @@ def test_fence_relabelled_series_block_refused(tmp_path: Path) -> None:
     assert _two_series_fence(tmp_path, after) == [
         _DROPPED_313,
         "runtime.toml: refused, 'cpython = \"' (anchor '3.14') lowers its version from 3.14.10 "
-        "to 3.14.9 (a refresh never lowers a pinned version)"
+        "to 3.14.9 (a refresh never lowers a pinned version)",
     ]
 
 
