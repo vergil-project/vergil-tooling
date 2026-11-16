@@ -12,6 +12,7 @@ import yaml
 
 from vergil_tooling.bin.validate_common import (
     _ansible_lint_overrides,
+    _check_docs_links,
     _check_runner_labels,
     _drop_gitignored,
     _find_ansible_lint_config,
@@ -1583,3 +1584,106 @@ def test_main_ansible_lint_malformed_local_config_fails(tmp_path: Path) -> None:
     # We fail before invoking ansible-lint rather than silently dropping skips.
     tool_names = [call[0][0][0] for call in mock_run.call_args_list]
     assert "ansible-lint" not in tool_names
+
+
+# -- _check_docs_links (issue #3831) -----------------------------------------
+
+_DEEP = "https://vergil-project.github.io/vergil-actions/configuration/"
+_LATEST = "https://vergil-project.github.io/vergil-actions/latest/configuration/"
+
+
+def _md(repo_root: Path, rel: str, text: str) -> None:
+    path = repo_root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def test_docs_links_no_markdown_passes(tmp_path: Path) -> None:
+    assert _check_docs_links(tmp_path) == 0
+
+
+def test_docs_links_clean_passes(tmp_path: Path) -> None:
+    _md(tmp_path, "README.md", f"# R\n\nSee <{_LATEST}>.\n")
+    assert _check_docs_links(tmp_path) == 0
+
+
+@pytest.mark.parametrize(
+    "rel",
+    ["README.md", "docs/site/docs/guides/a.md", "epics/12-x/spec.md"],
+)
+def test_docs_links_each_scope_refused(
+    tmp_path: Path, rel: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _md(tmp_path, rel, f"# T\n\n[cfg]({_DEEP})\n")
+    assert _check_docs_links(tmp_path) == 1
+    err = capsys.readouterr().err
+    assert f"{rel}:3: {_DEEP} has no version segment and returns 404; use {_LATEST}" in err
+
+
+def test_docs_links_reports_every_hit(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _md(tmp_path, "README.md", f"# R\n\n<{_DEEP}>\n")
+    _md(tmp_path, "docs/site/docs/b.md", f"# B\n<{_DEEP}>\n<{_DEEP}>\n")
+    assert _check_docs_links(tmp_path) == 1
+    err = capsys.readouterr().err
+    assert "README.md:3:" in err
+    assert "docs/site/docs/b.md:2:" in err
+    assert "docs/site/docs/b.md:3:" in err
+
+
+def test_docs_links_epics_archive_skipped(tmp_path: Path) -> None:
+    _md(tmp_path, "epics/archive/9-old/spec.md", f"# Old\n<{_DEEP}>\n")
+    _md(tmp_path, "epics/12-x/spec.md", "# Live\n")
+    assert _check_docs_links(tmp_path) == 0
+
+
+def test_docs_links_outside_scope_skipped(tmp_path: Path) -> None:
+    _md(tmp_path, "CLAUDE.md", f"Wrong: {_DEEP}\n")
+    _md(tmp_path, "docs/plans/p.md", f"<{_DEEP}>\n")
+    assert _check_docs_links(tmp_path) == 0
+
+
+def test_docs_links_ignores_markdownlint_ignore(tmp_path: Path) -> None:
+    """``[markdownlint].ignore`` only narrows the lint: the ignored file still
+    publishes its links, so the link check still reads it."""
+    toml = _MINIMAL_TOML + '\n[markdownlint]\nignore = ["docs/site/docs/research"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    _md(tmp_path, "docs/site/docs/research/r.md", f"<{_DEEP}>\n")
+    assert _check_docs_links(tmp_path) == 1
+
+
+def test_docs_links_skips_gitignored(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path / "repo", "docs/site/docs/changelog.md\n")
+    _md(repo, "docs/site/docs/changelog.md", f"<{_DEEP}>\n")
+    _md(repo, "docs/site/docs/index.md", "# Hello\n")
+    with patch(
+        "vergil_tooling.bin.validate_common._drop_gitignored",
+        side_effect=_drop_gitignored,
+    ):
+        assert _check_docs_links(repo) == 0
+        (repo / ".gitignore").write_text("")
+        assert _check_docs_links(repo) == 1
+
+
+def test_main_docs_links_failure_stops_run(tmp_path: Path) -> None:
+    """A bad link fails the stage after markdownlint and before shellcheck."""
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    _md(tmp_path, "README.md", f"# R\n\n<{_DEEP}>\n")
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "a.sh").write_text("#!/bin/sh\n")
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.repo_profile.main",
+            return_value=0,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as mock_run,
+    ):
+        assert main() == 1
+    tool_names = [call[0][0][0] for call in mock_run.call_args_list]
+    assert tool_names == ["markdownlint"]
