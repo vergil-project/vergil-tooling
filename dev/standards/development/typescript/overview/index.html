@@ -16766,10 +16766,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#tsc-noemit-compile-correctness-without-a-bundler" class="md-nav__link">
+  <a href="#typecheck-and-the-release-build" class="md-nav__link">
     <span class="md-ellipsis">
       
-        tsc --noEmit: Compile-Correctness Without a Bundler
+        Typecheck and the Release Build
       
     </span>
   </a>
@@ -17972,10 +17972,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#tsc-noemit-compile-correctness-without-a-bundler" class="md-nav__link">
+  <a href="#typecheck-and-the-release-build" class="md-nav__link">
     <span class="md-ellipsis">
       
-        tsc --noEmit: Compile-Correctness Without a Bundler
+        Typecheck and the Release Build
       
     </span>
   </a>
@@ -18191,12 +18191,20 @@ held to their accepted majors (see
 <a href="#required-devdependencies-and-their-accepted-majors">Required devDependencies</a>),
 and their exact versions float through the lockfile. Only the image's own
 tools, Prettier and license-checker, come with the image.</p>
-<h2 id="tsc-noemit-compile-correctness-without-a-bundler"><code>tsc --noEmit</code>: Compile-Correctness Without a Bundler<a class="headerlink" href="#tsc-noemit-compile-correctness-without-a-bundler" title="Permanent link">&para;</a></h2>
-<p>v1 mandates <strong>no bundler and no emit step</strong>. <code>tsc --noEmit</code> covers
-compile-correctness — it reads the consumer's <code>tsconfig.json</code> and reports type
-errors without writing any output — and there is no publish target. Bundling,
-emit, and published-artifact validation (tsup / esbuild / rollup) are
-deliberately deferred (spec §8, deferral ledger #6).</p>
+<h2 id="typecheck-and-the-release-build">Typecheck and the Release Build<a class="headerlink" href="#typecheck-and-the-release-build" title="Permanent link">&para;</a></h2>
+<p>TYPECHECK runs <code>tsc --noEmit</code>: it reads the consumer's <code>tsconfig.json</code> and
+reports type errors without writing any output.</p>
+<p>The artifact a release ships comes from the repository's own <strong><code>build</code>
+script</strong>, which every TypeScript repository must define in <code>package.json</code>
+(for example <code>"build": "tsc -p tsconfig.json"</code>). The build command is
+<code>npm ci --ignore-scripts &amp;&amp; npm run build</code>: it installs from the lockfile
+first, since the release job builds on a fresh checkout with no
+<code>node_modules</code>, and runs no install script. <code>vrg-validate</code>'s build stage runs
+the same command, so the build's own emit options (output directory,
+declaration files, a build-only tsconfig) are proven on the PR, not first at
+release. The <code>typescript-tools</code> stage fails, naming the fix, when
+<code>package.json</code> has no <code>build</code> script.</p>
+<p>There is no publish target: a TypeScript release publishes nothing to npm.</p>
 <h2 id="extending-the-shareable-base-tsconfig">Extending the Shareable Base tsconfig<a class="headerlink" href="#extending-the-shareable-base-tsconfig" title="Permanent link">&para;</a></h2>
 <p>The curated strict set is delivered as a <strong>shareable strict base tsconfig
 shipped by Vergil</strong> that consumers <code>extends</code> — the direct analog to C++
@@ -18241,6 +18249,8 @@ version a repo resolves from the version window is a hard CI leg (see the
 <li><strong>LINT</strong> (once) — Prettier <code>--check</code> for format, then ESLint's flat config
   with type-aware typescript-eslint rules, carrying the no-standing-suppression
   rule (<code>@typescript-eslint/ban-ts-comment</code>).</li>
+<li><strong>BUILD</strong> (once) — <code>npm ci --ignore-scripts &amp;&amp; npm run build</code>, the release
+  build (see <a href="#typecheck-and-the-release-build">Typecheck and the Release Build</a>).</li>
 <li><strong>TEST</strong> (per Node version) — Vitest with the V8 coverage provider, held to
   100% line coverage per Node major (see
   <a href="../testing-and-coverage/">Testing and Coverage</a>).</li>
