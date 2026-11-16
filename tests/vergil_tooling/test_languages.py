@@ -374,9 +374,7 @@ def test_rust_install_commands() -> None:
     assert cmds == [["cargo", "fetch", "--locked"]]
 
 
-_RUST_RENDER = (
-    "jq -j 'select(.reason == \"compiler-message\") | .message.rendered // empty' "
-)
+_RUST_RENDER = "jq -j 'select(.reason == \"compiler-message\") | .message.rendered // empty' "
 
 
 def test_rust_lint_commands() -> None:
