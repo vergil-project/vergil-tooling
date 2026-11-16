@@ -33,9 +33,43 @@ vrg-update-deps [--only NAME[,NAME] | --skip NAME[,NAME] | --vergil X.Y]
 | `--output-format` | No | Force the renderer: `rich`, `gha` or `plain` |
 
 `--only`, `--skip` and `--vergil` are mutually exclusive. The updater
-names are `python`, `vergil`, `images` and `hook`; an unknown name is an
-error. The updaters are described in the
+names are `python`, `cargo`, `vergil`, `images` and `hook`; an unknown
+name is an error. The updaters are described in the
 [dependency-update reference](../dependency-update-config.md).
+
+## The Cargo updater
+
+In a repo with `Cargo.toml` and `Cargo.lock`, the `cargo` updater runs
+`cargo update` in the dev container. It moves every locked crate to the
+newest version its `Cargo.toml` requirement allows and never edits a
+`Cargo.toml`. Its commit and the PR body name each crate it moved, from
+and to. When `cargo update` rewrites `Cargo.lock` without moving any
+version, the commit is `chore(deps): refresh Cargo.lock`.
+
+It then reports, in the held-back report, every direct dependency of
+every workspace member (normal, dev and build) whose locked version is
+below the newest version on crates.io that is neither yanked nor a
+pre-release. Each entry's note gives the reason:
+
+| Note | Meaning |
+| ---- | ------- |
+| `outside the Cargo.toml requirement` | The newest version does not satisfy the dependency's requirement |
+| `needs a newer Rust than rust-version` | The newest version's `rust_version` is above the package's `rust-version` |
+| Both notes, joined by a semicolon | Both of the above |
+| `held by the resolver: another requirement in the dependency graph` | Neither: another crate's requirement on the same dependency holds it |
+
+The newest versions come from Cargo's sparse index
+(`https://index.crates.io`), the data `cargo update` itself reads, not
+from the crates.io web API. A workspace-inherited dependency
+(`foo.workspace = true`) is checked against the workspace's
+requirement. Path and git dependencies are not reported, since they have
+no index entry. A dependency from a registry other than crates.io fails
+the updater rather than go unchecked.
+
+A failed `cargo update` or `cargo metadata`, an unreadable `Cargo.toml`
+or `Cargo.lock`, and a failed sparse-index read each fail the update as
+an `update` failure. None of them reads as "no change" or as an empty
+held-back report.
 
 ## Prerequisites
 
@@ -76,7 +110,7 @@ merged.
 | Stage | What it does |
 | ----- | ------------ |
 | `preflight` | Checks the prerequisites and creates the `deps/update-<version>` managed worktree |
-| `update` | Runs each applicable updater in order (`python`, `vergil`, `images`, then `hook`), committing each one's changes separately |
+| `update` | Runs each applicable updater in order (`python`, `cargo`, `vergil`, `images`, then `hook`), committing each one's changes separately |
 | `validate` | Runs `vrg-container-run -- vrg-validate` once, if anything changed |
 | `prepare-pr` | Pushes the branch and opens a PR to `develop` labelled `dependency-update`, creating the label if the repo lacks it |
 | `merge` | Waits for the PR's checks and merges it, if validation passed, then deletes its branch on origin |
