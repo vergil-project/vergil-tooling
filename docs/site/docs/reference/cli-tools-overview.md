@@ -773,7 +773,7 @@ by the `intake-capture` skill. See
 Route one item between the container epics — intake, planning, ad hoc and
 deferred — applying one queue-review decision. Owns the routing mechanics —
 transfer-or-recreate, reparent, re-link, close with a pointer, record a
-deferral — so no review skill hand-rolls them. Routes:
+deferral or an estimated epic size — so no review skill hand-rolls them. Routes:
 
 - `drop --reason TEXT` — comment the reason, naming the queue it was dropped
   from (`Dropped in <queue> review: …`), and close (not planned).

@@ -632,7 +632,7 @@ It defaults to the current org's `.github` queues; `--repo <owner>/<repo>`
 selects that repo's queue home (a self-homed private repo's own queues), and
 `--json` emits machine-readable output. It is read-only.
 
-Planning and deferred items show their epic size (`M/14`, `?` unsized, `!` in
+Planning and deferred items show their [epic size](#epic-size) (`M/14`, `?` unsized, `!` in
 error). `vrg-queue planning --sort size` (or `tasks`) puts the small end of the
 planning queue first, and `--size S,unsized` filters it; an item in error is
 always listed. The run exits 2 when every queue was read but an item's sizing
@@ -666,7 +666,7 @@ planning and deferred reviews' decisions. From intake:
 | Defer | `vrg-intake-route <ref> defer --reason TEXT --revisit-when TEXT [--date YYYY-MM-DD]` | Move the item into the deferred queue with a dated record of why it waits, when to look again, and where it came from. |
 | One-off | `vrg-intake-route <ref> one-off --repo OWNER/REPO [--epic REF]` | Move the item into its target repo and link it under that repo's ad-hoc epic (default) or a named epic. |
 | Split | `vrg-intake-route <ref> split --into REF [--into REF …] --reason TEXT` | Comment links to the replacement tasks (already created with `vrg-issue-create`), then close. |
-| To planning | `vrg-intake-route <ref> planning` | Reparent from the intake epic to the planning epic of the same queue home. |
+| To planning | `vrg-intake-route <ref> planning [--tasks N [--confidence high\|med\|low] --reason TEXT]` | Reparent from the intake epic to the planning epic of the same queue home, and with `--tasks` and `--reason` record its [epic size](#epic-size) in the same step. |
 
 A move **transfers** the issue, keeping its history; if GitHub refuses the
 transfer, the item is recreated in the target repo with a link back and the
@@ -743,7 +743,7 @@ conditions against their real sources, and recommends one outcome:
 | Keep | none — the conditions are not met yet |
 | Refresh | `vrg-intake-route <ref> defer --reason TEXT --revisit-when TEXT` |
 | Revive to intake | `vrg-intake-route <ref> intake` |
-| Revive to planning | `vrg-intake-route <ref> planning` (or `epic-create <ref>`, which does this first) |
+| Revive to planning | `vrg-intake-route <ref> planning [--tasks N [--confidence high\|med\|low] --reason TEXT]` (or `epic-create <ref>`, which does this first); a sized item keeps its [epic size](#epic-size), and `--tasks` re-sizes it |
 | Revive as a one-off | `vrg-intake-route <ref> one-off --repo OWNER/REPO [--epic REF]` |
 | Drop | `vrg-intake-route <ref> drop --reason TEXT` |
 
@@ -783,6 +783,44 @@ it is small enough for a repo's ad-hoc epic. Items that `epic-create` is
 expanding or has finished are only shown, never resumed. Which item to expand
 next is the human's choice, made by running `epic-create` on it; pick only what
 will be implemented soon, since a plan left sitting goes stale.
+
+#### Epic size
+
+Every planning and deferred item can carry an **estimated epic size**: how big
+its epic would be once `epic-create` expands it, counted in tasks (bookends and
+operational tasks included). It is a reading aid for choosing what to plan
+next, so the small end of the queue can be found and planned in a sitting. The
+task count is the estimate, and the size is derived from it:
+
+| Label | Estimated tasks |
+|---|---|
+| `epic-size:S` | 1–9 |
+| `epic-size:M` | 10–19 |
+| `epic-size:L` | 20–39 |
+| `epic-size:XL` | 40+ |
+
+The size is recorded twice, by one command: the `epic-size:<X>` label, which
+issue lists and filters read, and a dated sizing comment with the task count,
+a confidence and a one-line reason. The latest sizing comment is the current
+estimate and the earlier ones are its history.
+
+```bash
+vrg-intake-route <ref> size --tasks N [--confidence high|med|low] --reason TEXT
+```
+
+`size` is allowed from planning and deferred only, and neither moves nor
+closes the item; the planning route takes the same options to size an item on
+its way in. Only sizing comments by
+[trusted authors](../guides/account-setup.md#trusted-authors) count. When the
+label and the latest sizing comment disagree, one is missing, the item has
+several size labels, or the comment is malformed, the item's sizing is in
+error: `vrg-queue` shows it as `!` and names the problem, and re-running `size`
+with the right estimate repairs it. A one-off ends the estimate: the route
+removes the size labels and posts a `Size cleared <YYYY-MM-DD>: …` marker,
+after which earlier sizing comments no longer count. `epic-review` sizes the
+items it routes to planning and the unsized ones it reviews there; see
+[`vrg-intake-route`](../reference/cli-tools-overview.md#vrg-intake-route) for
+the comment format and the failure handling.
 
 ### Queue items are not buildable
 
@@ -833,6 +871,7 @@ up to date (see
 | `planning` | Marks the standing planning epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `deferred` | Marks the standing deferred epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `in-progress` | Planning item whose `epic-create` session is underway |
+| `epic-size:S`, `epic-size:M`, `epic-size:L`, `epic-size:XL` | Planning or deferred item's estimated epic size: 1–9, 10–19, 20–39 or 40+ tasks (see [Epic size](#epic-size)) |
 | `archive` | Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred); historical record |
 | `hotfix` | Emergency fix that skipped formal planning; flagged for retroactive review |
 | `validation` | Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed |
@@ -844,8 +883,9 @@ up to date (see
 The parent epic carries an issue's state, so no label restates it. `intake`,
 `planning` and `deferred` label only the standing epics (and their archives),
 the way `ad-hoc`
-does, and `in-progress` is the single per-item label, used only on planning
-items. The former intake kind labels `triage`, `idea`, and `research` are
+does. The per-item queue labels are `in-progress`, used only on planning
+items, and the `epic-size:*` family, used only on planning and deferred items
+and written only through `vrg-intake-route`. The former intake kind labels `triage`, `idea`, and `research` are
 **retired**: no tool or skill applies them, and the daily orphan pass strips
 them from every open issue. They are no longer in the registry, and a label
 sync (`vrg-ensure-label --sync`) deletes them from any repo that still has

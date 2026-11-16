@@ -358,7 +358,10 @@ agents = ["<user-app-bot-login>", "<audit-app-bot-login>"]
 
 The stanza is used first by `issue-implement`, which starts work on an issue
 only when a trusted author opened it, and by `epic-create`'s design-review
-rounds.
+rounds. `vrg-queue planning` and `vrg-queue deferred` need it too: only
+trusted authors' sizing comments set an item's
+[epic size](../standards/github-issues.md#epic-size), and with no stanza
+those views fail rather than guess.
 It seeds the system-wide rule for every tool and skill that reads issues,
 planned in
 [vergil-project/.github#579](https://github.com/vergil-project/.github/issues/579).
