@@ -367,7 +367,7 @@ def test_go_audit_go_licenses_allowlist_intact() -> None:
 
 def test_rust_install_commands() -> None:
     cmds = language_commands("rust", CheckKind.INSTALL)
-    assert cmds == [["cargo", "fetch"]]
+    assert cmds == [["cargo", "fetch", "--locked"]]
 
 
 def test_rust_lint_commands() -> None:
@@ -375,13 +375,13 @@ def test_rust_lint_commands() -> None:
     # only the lib and bins it checks with no target flag (#4379).
     assert language_commands("rust", CheckKind.LINT) == [
         ["cargo", "fmt", "--all", "--", "--check"],
-        ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
+        ["cargo", "clippy", "--all-targets", "--locked", "--", "-D", "warnings"],
     ]
 
 
 def test_rust_typecheck_commands() -> None:
     joined = _joined(language_commands("rust", CheckKind.TYPECHECK))
-    assert "cargo check" in joined
+    assert joined == ["cargo check --locked"]
 
 
 def _rust_nextest_toml() -> Path:
@@ -399,10 +399,10 @@ def test_rust_test_commands() -> None:
             "-c",
             "rm -f coverage.xml junit.xml target/nextest/vergil/junit.xml; "
             "cargo llvm-cov clean --workspace || exit 1; "
-            "NEXTEST_PROFILE=vergil cargo llvm-cov nextest --no-report "
+            "NEXTEST_PROFILE=vergil cargo llvm-cov nextest --locked --no-report "
             f'--tool-config-file "vergil:{_rust_nextest_toml()}"; '
             "test_rc=$?; "
-            "cargo llvm-cov report --fail-under-lines 100 --show-missing-lines "
+            "cargo llvm-cov report --locked --fail-under-lines 100 --show-missing-lines "
             "--cobertura --output-path coverage.xml; "
             "cov_rc=$?; "
             "if [ -f target/nextest/vergil/junit.xml ]; then "
@@ -414,7 +414,7 @@ def test_rust_test_commands() -> None:
             '[ "$test_rc" -ne 0 ] && exit "$test_rc"; '
             'exit "$cov_rc"',
         ],
-        ["cargo", "test", "--doc"],
+        ["cargo", "test", "--doc", "--locked"],
     ]
 
 
@@ -439,11 +439,49 @@ def test_rust_audit_commands() -> None:
         [
             "sh",
             "-c",
-            f'cargo deny --format json --config "{_rust_deny_toml()}" check --show-stats '
+            f'cargo deny --locked --format json --config "{_rust_deny_toml()}" check --show-stats '
             f"2>{CARGO_DENY_REPORT}; rc=$?; cat {CARGO_DENY_REPORT} >&2 || exit 1; "
             'exit "$rc"',
         ]
     ]
+
+
+def test_rust_lockfile_commands_are_locked() -> None:
+    """Every Rust command that reads Cargo.lock uses it as-is (spec §6.1, #1165)."""
+    cmds = {
+        kind: _joined(language_commands("rust", kind))
+        for kind in (
+            CheckKind.INSTALL,
+            CheckKind.LINT,
+            CheckKind.TYPECHECK,
+            CheckKind.TEST,
+            CheckKind.AUDIT,
+        )
+    }
+    assert cmds[CheckKind.INSTALL] == ["cargo fetch --locked"]
+    fmt, clippy = cmds[CheckKind.LINT]
+    assert fmt.startswith("cargo fmt ")
+    assert "--locked" not in fmt
+    assert clippy.startswith("cargo clippy --all-targets --locked -- ")
+    assert cmds[CheckKind.TYPECHECK] == ["cargo check --locked"]
+    coverage, doctest = cmds[CheckKind.TEST]
+    assert "cargo llvm-cov nextest --locked " in coverage
+    assert "cargo llvm-cov report --locked " in coverage
+    assert doctest == "cargo test --doc --locked"
+    assert "cargo deny --locked " in cmds[CheckKind.AUDIT][0]
+
+
+def test_rust_doctest_cmd_is_the_test_list_entry() -> None:
+    # vrg-validate's doctest skip matches this exact list, so the TEST list
+    # must carry it unchanged.
+    assert languages.RUST_DOCTEST_CMD == ["cargo", "test", "--doc", "--locked"]
+    assert languages.RUST_DOCTEST_CMD in language_commands("rust", CheckKind.TEST)
+
+
+def test_rust_build_and_publish_locked() -> None:
+    info = ecosystem_metadata("rust")
+    assert info.build_cmd == ["cargo", "build", "--release", "--locked"]
+    assert info.publish_cmd == ["cargo", "publish", "--locked"]
 
 
 def test_rust_report_files_contract() -> None:
@@ -1005,7 +1043,7 @@ def test_ecosystem_metadata_python() -> None:
 def test_ecosystem_metadata_rust_names_cargo_registry_token() -> None:
     # cargo publish reads CARGO_REGISTRY_TOKEN, not CRATES_IO_TOKEN (#3394).
     info = ecosystem_metadata("rust")
-    assert info.publish_cmd == ["cargo", "publish"]
+    assert info.publish_cmd == ["cargo", "publish", "--locked"]
     assert info.publish_env_var == "CARGO_REGISTRY_TOKEN"
 
 

@@ -46,6 +46,7 @@ from vergil_tooling.bin.vrg_validate import (
     _stage_trivy_target,
     _test_context,
     _trivy_stage,
+    check_rust_lockfile,
     main,
 )
 from vergil_tooling.lib.config import ConfigError, TestConfig
@@ -893,7 +894,14 @@ def test_rust_doctests_kept_for_a_lib_crate(tmp_path: Path) -> None:
     stdout = _metadata([_package("app", ["lib"], ["bin"])], ["app"])
     with _cargo_metadata(stdout) as m_run:
         assert _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path) == _RUST_TEST_CMDS
-    assert m_run.call_args.args[0] == ["cargo", "metadata", "--no-deps", "--format-version", "1"]
+    assert m_run.call_args.args[0] == [
+        "cargo",
+        "metadata",
+        "--no-deps",
+        "--format-version",
+        "1",
+        "--locked",
+    ]
     assert m_run.call_args.kwargs["cwd"] == tmp_path
 
 
@@ -1610,7 +1618,7 @@ def test_check_custom_rejects_all_versions() -> None:
 
 # -- A repo not bootstrapped yet (issue #4384) ---------------------------------
 
-_NOT_BOOTSTRAPPED = "skipped: no Cargo.toml (rust repo not bootstrapped yet)"
+_NOT_BOOTSTRAPPED = "skipped: no Cargo.toml, Cargo.lock (rust repo not bootstrapped yet)"
 
 
 @pytest.fixture
@@ -1674,7 +1682,7 @@ def test_unbootstrapped_rust_skips_language_stages_loudly(
     )
     out = capsys.readouterr().out
     for stage in ("install", "lint", "typecheck", "test", "audit"):
-        assert f"NOTICE: {stage}: {_NOT_BOOTSTRAPPED}; add it to run the {stage} stage" in out
+        assert f"NOTICE: {stage}: {_NOT_BOOTSTRAPPED}; add them to run the {stage} stage" in out
     # Each skip is a warning row and a summary line, never a silent ✓.
     assert "warnings (non-fatal):" in out
     assert f"install — {_NOT_BOOTSTRAPPED}" in out
@@ -1708,11 +1716,57 @@ def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
 def test_bootstrapped_rust_with_failing_fetch_still_fails(tmp_path: Path) -> None:
     _write_config(tmp_path, "rust")
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "x"\n')
+    (tmp_path / "Cargo.lock").write_text("version = 4\n")
     rc, ran = _run_validate(tmp_path, [])
     assert rc == 1
     # The install stage is fail_fast: its first cargo command failed and stopped it.
-    assert ran[0].startswith("cargo ")
+    assert ran[0] == "cargo fetch --locked"
     assert read_record(tmp_path).not_passed[0] == "install"
+
+
+# -- Cargo.lock is enforced (epic vergil-project/.github#1165, spec §6.1) -------
+
+_LOCKFILE_MISSING = (
+    "Cargo.lock is missing: run 'cargo generate-lockfile' in the container and commit it"
+)
+
+
+def test_missing_cargo_lock_fails_with_guidance(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "x"\n')
+    with pytest.raises(ValidationError) as exc:
+        check_rust_lockfile(tmp_path)
+    assert str(exc.value) == _LOCKFILE_MISSING
+
+
+def test_present_cargo_lock_passes_the_check(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "x"\n')
+    (tmp_path / "Cargo.lock").write_text("version = 4\n")
+    check_rust_lockfile(tmp_path)
+
+
+def test_lockfile_check_needs_a_cargo_toml(tmp_path: Path) -> None:
+    check_rust_lockfile(tmp_path)
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_missing_cargo_lock_fails_install_before_cargo_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_config(tmp_path, "rust")
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "x"\n')
+    rc, ran = _run_validate(tmp_path, [])
+    assert rc == 1
+    assert not any(cmd.startswith("cargo ") for cmd in ran)
+    record = read_record(tmp_path)
+    assert record.not_passed[0] == "install"
+    assert "lint" not in record.passed
+    assert _LOCKFILE_MISSING in capsys.readouterr().out
+
+
+def test_cargo_metadata_locked(tmp_path: Path) -> None:
+    with _cargo_metadata(_metadata([_package("core", ["lib"])], ["core"])) as m_run:
+        _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
+    assert "--locked" in m_run.call_args.args[0]
 
 
 @pytest.mark.usefixtures("real_bootstrap_check")
@@ -1773,8 +1827,9 @@ def test_not_bootstrapped_stage_names_every_missing_manifest(
 # -- Sources with no manifest are not unbootstrapped (issue #4384, R1) ---------
 
 _SOURCES_NO_MANIFEST = (
-    "no Cargo.toml, but the repo has rust sources (src/lib.rs); only a repo with no "
-    "sources is skipped as not bootstrapped yet, so add the manifest or remove the sources"
+    "no Cargo.toml, Cargo.lock, but the repo has rust sources (src/lib.rs); only a repo "
+    "with no sources is skipped as not bootstrapped yet, so add the manifests or remove "
+    "the sources"
 )
 
 
@@ -1805,7 +1860,7 @@ def test_rust_sources_without_cargo_toml_stage_shape(tmp_path: Path) -> None:
     language_stages = [s for s in stages if s.name not in ("common", "semgrep", "trivy", "docs")]
     assert [s.name for s in language_stages] == ["install", "lint", "typecheck", "test", "audit"]
     assert language_stages[0].mode == "fail_fast"
-    with pytest.raises(ValidationError, match="add the manifest or remove the sources"):
+    with pytest.raises(ValidationError, match="add the manifests or remove the sources"):
         language_stages[0].fn(None)
 
 
@@ -1870,15 +1925,15 @@ def test_ignored_and_deleted_sources_do_not_block_the_skip(tmp_path: Path) -> No
     assert [s.mode for s in stages] == ["warn", "warn"]
 
 
-def test_install_stage_choices() -> None:
-    cmds = [["cargo", "fetch"]]
-    assert _install_stage("rust", [], [], []) is None
-    assert _install_stage("rust", [], ["Cargo.toml"], []) is None
+def test_install_stage_choices(tmp_path: Path) -> None:
+    cmds = [["cargo", "fetch", "--locked"]]
+    assert _install_stage("rust", [], [], [], repo_root=tmp_path) is None
+    assert _install_stage("rust", [], ["Cargo.toml"], [], repo_root=tmp_path) is None
     for missing, mode in (([], "fail_fast"), (["Cargo.toml"], "warn")):
-        stage = _install_stage("rust", cmds, missing, [])
+        stage = _install_stage("rust", cmds, missing, [], repo_root=tmp_path)
         assert stage is not None
         assert stage.mode == mode
-    failed = _install_stage("rust", [], ["Cargo.toml"], ["src/lib.rs"])
+    failed = _install_stage("rust", [], ["Cargo.toml"], ["src/lib.rs"], repo_root=tmp_path)
     assert failed is not None
     assert failed.mode == "fail_fast"
 

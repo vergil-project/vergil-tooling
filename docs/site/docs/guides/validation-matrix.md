@@ -202,20 +202,21 @@ no `Cargo.toml`. The manifests are the ones the dev image's warmup needs:
 | Language | Manifests |
 |---|---|
 | Python | `pyproject.toml`, `uv.lock` |
-| Rust | `Cargo.toml` |
+| Rust | `Cargo.toml`, `Cargo.lock` |
 | Go | `go.mod` |
 | C++ | `conanfile.txt` or `conanfile.py`, `CMakeLists.txt`, `conan.lock` |
 | TypeScript | `package.json`, `package-lock.json` |
 
 For such a repository the install, lint, typecheck, test and audit
 stages do not run. Each is recorded as a warning (⚠) whose reason names
-the missing manifests, for example `skipped: no Cargo.toml (rust repo
+the missing manifests, for example `skipped: no Cargo.toml, Cargo.lock (rust repo
 not bootstrapped yet)`, on its row and in the run summary. The common
 checks and the custom validator still run. A warning counts as passed,
 so the run can reach merge review. The skip applies only when every
 manifest is missing: a repository with some of them, such as a
 `pyproject.toml` with no `uv.lock`, runs the stages and fails on the
-gap, as does a `Cargo.toml` that `cargo fetch` cannot resolve.
+gap, as does a `Cargo.toml` with no `Cargo.lock`, or one that
+`cargo fetch --locked` cannot resolve.
 
 The skip also needs the repository to hold no source files of its
 language (`.rs` for Rust, `.py` for Python, and so on), tracked or

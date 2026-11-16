@@ -190,13 +190,21 @@ _RUST_LICENSES_ALLOWLIST = [
 # report back to stderr for the log, and exits with cargo-deny's own status.
 # ``2>`` is plain POSIX ``sh``: ``tee`` would need ``pipefail`` to keep that
 # status, which the image's ``sh`` (dash) lacks. ``cat`` failing fails the gate.
+# ``--locked`` is a root option too: the audit reads the committed ``Cargo.lock``
+# as it is (epic vergil-project/.github#1165, spec §6.1).
 _RUST_AUDIT_SCRIPT = (
-    'cargo deny --format json --config "{configs}/rust/deny.toml" check --show-stats '
+    'cargo deny --locked --format json --config "{configs}/rust/deny.toml" check --show-stats '
     f"2>{CARGO_DENY_REPORT}; "
     "rc=$?; "
     f"cat {CARGO_DENY_REPORT} >&2 || exit 1; "
     'exit "$rc"'
 )
+
+# The rust doctest command. vrg-validate drops exactly this command from the
+# TEST stage when no default-member package has a library target
+# (``_skip_rust_doctests_without_lib``). Both sides use this one list, so a flag
+# added here can never make the skip stop matching.
+RUST_DOCTEST_CMD = ["cargo", "test", "--doc", "--locked"]
 
 # The rust TEST coverage command (issue #4395). One cargo-nextest run under
 # cargo-llvm-cov, then one report from that run's profiles; it gates and writes
@@ -217,6 +225,9 @@ _RUST_AUDIT_SCRIPT = (
 #   [OPTIONS] [NEXTEST_OPTIONS]``). The profile is named by nextest's own
 #   ``NEXTEST_PROFILE`` (https://nexte.st/docs/running/), not ``--profile``,
 #   which cargo-llvm-cov documents as cargo's build profile.
+# * ``--locked`` on the test run and on the report, which both read
+#   ``Cargo.lock``, so a stale lockfile fails the gate instead of being
+#   re-resolved.
 # * ``report --fail-under-lines 100`` is the gate on llvm-cov's own line
 #   summary; ``--cobertura --output-path`` writes ``coverage.xml`` and
 #   ``--show-missing-lines`` names the uncovered lines.
@@ -235,10 +246,10 @@ _NEXTEST_JUNIT = f"target/nextest/{_NEXTEST_PROFILE}/{JUNIT_REPORT}"
 _RUST_TEST_SCRIPT = (
     f"rm -f {COVERAGE_REPORT} {JUNIT_REPORT} {_NEXTEST_JUNIT}; "
     "cargo llvm-cov clean --workspace || exit 1; "
-    f"NEXTEST_PROFILE={_NEXTEST_PROFILE} cargo llvm-cov nextest --no-report "
+    f"NEXTEST_PROFILE={_NEXTEST_PROFILE} cargo llvm-cov nextest --locked --no-report "
     '--tool-config-file "vergil:{configs}/rust/nextest.toml"; '
     "test_rc=$?; "
-    "cargo llvm-cov report --fail-under-lines 100 --show-missing-lines "
+    "cargo llvm-cov report --locked --fail-under-lines 100 --show-missing-lines "
     f"--cobertura --output-path {COVERAGE_REPORT}; "
     "cov_rc=$?; "
     f"if [ -f {_NEXTEST_JUNIT} ]; then cp {_NEXTEST_JUNIT} {JUNIT_REPORT} || exit 1; "
@@ -520,17 +531,22 @@ _REGISTRY: dict[str, Language] = {
     ),
     "rust": Language(
         name="rust",
+        # ``--locked`` on every command that reads ``Cargo.lock``, so the
+        # committed lockfile is used as it is and a stale one fails rather
+        # than being re-resolved (epic vergil-project/.github#1165, spec §6.1).
+        # ``cargo fmt`` reads no lockfile and takes none. vrg-validate fails a
+        # missing ``Cargo.lock`` before the install stage runs.
         checks={
-            CheckKind.INSTALL: [["cargo", "fetch"]],
+            CheckKind.INSTALL: [["cargo", "fetch", "--locked"]],
             CheckKind.LINT: [
                 ["cargo", "fmt", "--all", "--", "--check"],
                 # ``--all-targets`` is ``--lib --bins --tests --benches
                 # --examples``; with no target flag clippy checks only the lib
                 # and bins, so ``tests/`` and ``#[cfg(test)]`` code went unlinted
                 # (vergil-project/vergil-tooling#4379).
-                ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
+                ["cargo", "clippy", "--all-targets", "--locked", "--", "-D", "warnings"],
             ],
-            CheckKind.TYPECHECK: [["cargo", "check"]],
+            CheckKind.TYPECHECK: [["cargo", "check", "--locked"]],
             # The coverage run is cargo-nextest under cargo-llvm-cov, gating
             # on 100% lines and writing ``coverage.xml`` and ``junit.xml``
             # (issues #4394, #4395); see ``_RUST_TEST_SCRIPT``. Nextest runs
@@ -546,7 +562,7 @@ _REGISTRY: dict[str, Language] = {
             # (``_skip_rust_doctests_without_lib``).
             CheckKind.TEST: [
                 ["sh", "-c", _RUST_TEST_SCRIPT],
-                ["cargo", "test", "--doc"],
+                list(RUST_DOCTEST_CMD),
             ],
             # The packaged fleet policy (epic vergil-project/.github#1091). An
             # explicit ``--config`` replaces cargo-deny's search for a repo's
@@ -556,8 +572,8 @@ _REGISTRY: dict[str, Language] = {
             CheckKind.AUDIT: [["sh", "-c", _RUST_AUDIT_SCRIPT]],
         },
         ecosystem=EcosystemInfo(
-            build_cmd=["cargo", "build", "--release"],
-            publish_cmd=["cargo", "publish"],
+            build_cmd=["cargo", "build", "--release", "--locked"],
+            publish_cmd=["cargo", "publish", "--locked"],
             publish_env_var="CARGO_REGISTRY_TOKEN",
         ),
     ),

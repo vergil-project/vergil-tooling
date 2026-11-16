@@ -170,9 +170,14 @@ _DEFAULT_CACHE_FILES = ["vergil.toml"]
 # conan.lock group makes warmup skip during that transient no-lock window, so the
 # scaffold's `conan lock create` runs in an unwarmed-but-usable container; the
 # later vrg-validate runs with the lock present and warms normally.
+#
+# rust's warmup requires Cargo.lock as its own group, because it runs
+# `cargo fetch --locked` (epic vergil-project/.github#1165, spec §6.1). A repo
+# with no lockfile skips the warmup, so `cargo generate-lockfile` can still run
+# in the container. In the Cargo.toml group it would not be required at all.
 _WARMUP_REQUIRES: dict[str, list[list[str]]] = {
     "python": [["pyproject.toml"], ["uv.lock"]],
-    "rust": [["Cargo.toml"]],
+    "rust": [["Cargo.toml"], ["Cargo.lock"]],
     "go": [["go.mod"]],
     "cpp": [["conanfile.txt", "conanfile.py"], ["CMakeLists.txt"], ["conan.lock"]],
     "typescript": [["package.json"], ["package-lock.json"]],
@@ -233,17 +238,75 @@ def language_sources(lang: str, paths: Iterable[str]) -> list[str]:
     return sorted(path for path in paths if path.endswith(suffixes))
 
 
+# The line the warmup shell prints when it skips itself at run time, as the
+# rust warmup does on a stale Cargo.lock. It is a fixed prefix so the host can
+# find it in captured output (``quiet_warmup``) and print the notice itself:
+# a skip is never silent.
+WARMUP_SKIPPED_MARKER = "VRG-WARMUP-SKIPPED:"
+# cargo's own error when ``--locked`` refuses a lockfile that needs updating.
+_CARGO_STALE_LOCK_ERROR = "needs to be updated but --locked was passed"
+_RUST_STALE_LOCK_NOTICE = (
+    "warmup skipped: Cargo.lock does not match Cargo.toml; update it in the "
+    "container (a cargo command without --locked, such as 'cargo fetch') and commit it"
+)
+
+
+def _warmup_line(lang: str, repo_root: Path) -> str:
+    """Return *lang*'s install commands as one shell line, or ``""`` when it cannot run."""
+    cmds = language_commands(lang, CheckKind.INSTALL)
+    if not cmds or missing_warmup_files(lang, repo_root):
+        return ""
+    return " && ".join(" ".join(cmd) for cmd in cmds)
+
+
+def _rust_warmup(line: str) -> str:
+    """Wrap rust's locked fetch so a stale ``Cargo.lock`` skips the warmup, loudly.
+
+    The fetch runs with ``--locked``, so it never writes ``Cargo.lock``. Its
+    output is streamed and kept; when it fails with cargo's stale-lockfile
+    error, the warmup prints the :data:`WARMUP_SKIPPED_MARKER` line and the
+    image build goes on, unwarmed. Any other failure (a registry outage, a git
+    dependency that cannot be fetched) exits with cargo's status, failing the
+    build with cargo's output above it. One brace group, so it composes into
+    the setup's ``&&`` chain. ``pipefail`` keeps cargo's status through
+    ``tee``; the setup runs under ``bash -c``.
+    """
+    notice = shlex.quote(f"{WARMUP_SKIPPED_MARKER} {_RUST_STALE_LOCK_NOTICE}")
+    stale = shlex.quote(_CARGO_STALE_LOCK_ERROR)
+    return (
+        "{ vrg_log=$(mktemp) || exit 1; "
+        f'( set -o pipefail; {line} 2>&1 | tee "$vrg_log" ); vrg_rc=$?; '
+        'if [ "$vrg_rc" -ne 0 ]; then '
+        f'if grep -qF {stale} "$vrg_log"; then echo {notice}; '
+        'else exit "$vrg_rc"; fi; '
+        'fi; rm -f "$vrg_log"; }'
+    )
+
+
 def _warmup_command(lang: str, repo_root: Path) -> str:
     """Return the warmup shell command, or ``""`` when it cannot run.
 
     Skipping yields an image that is unwarmed but usable, rather than aborting
     the image build and taking ``vrg-container-run`` down with it. The caller
-    reports the skip; see :func:`missing_warmup_files`.
+    reports the skip; see :func:`missing_warmup_files`. Rust's warmup also
+    skips itself at run time on a stale ``Cargo.lock`` (:func:`_rust_warmup`).
     """
-    cmds = language_commands(lang, CheckKind.INSTALL)
-    if not cmds or missing_warmup_files(lang, repo_root):
-        return ""
-    return " && ".join(" ".join(cmd) for cmd in cmds)
+    line = _warmup_line(lang, repo_root)
+    if line and lang == "rust":
+        return _rust_warmup(line)
+    return line
+
+
+def _report_warmup_skip(captured: str) -> None:
+    """Print the notice of each warmup skip found in *captured* output.
+
+    A quiet build captures the warmup's output, so the shell's own skip line
+    is never seen; this prints it on the host instead.
+    """
+    for raw in captured.splitlines():
+        line = raw.strip()
+        if line.startswith(WARMUP_SKIPPED_MARKER):
+            print(f"NOTICE: {line.removeprefix(WARMUP_SKIPPED_MARKER).strip()}")
 
 
 def apt_install_command(packages: list[str], platform_label: str) -> str:
@@ -888,7 +951,8 @@ def _build_cached_image(
     """
     rt = runtime or detect_runtime()
     self_repo = is_self_repo(repo_root)
-    warmup = _warmup_command(lang, repo_root)
+    # The banner shows the plain install line, not rust's stale-lock wrapper.
+    warmup = _warmup_line(lang, repo_root)
     warmup_missing = missing_warmup_files(lang, repo_root)
 
     from vergil_tooling.lib.config import (
@@ -977,6 +1041,8 @@ def _build_cached_image(
                 if captured:
                     msg = f"{msg}\n{captured}"
             raise RuntimeError(msg)
+        if quiet_warmup:
+            _report_warmup_skip(run_result.stdout or "")
 
         subprocess.run(  # noqa: S603
             [rt, "commit", container_id, target_tag],  # noqa: S607
