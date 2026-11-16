@@ -35,7 +35,7 @@ from vergil_tooling.lib.process_errors import error_text, failure_detail, failur
 from vergil_tooling.lib.ref_refusal import ruleset_hint
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Generator, Iterator, Sequence
+    from collections.abc import Callable, Collection, Generator, Iterable, Iterator, Sequence
 
 log = logging.getLogger(__name__)
 
@@ -1637,24 +1637,67 @@ def _checks_terminal(checks: list[dict[str, str]], required: Collection[str]) ->
     )
 
 
+# The fleet's required checks that a workflow job's output creates under another
+# name, mapped to the job that produces each (#4294). All three come from
+# vergil-actions' ci-security.yml: its ``semgrep``, ``trivy`` and ``codeql`` jobs
+# upload SARIF, and the GitHub Advanced Security app then registers ``Semgrep OSS``,
+# ``Trivy`` and ``CodeQL`` with no ``<job> /`` prefix (see
+# ``github_config.desired_ci_gates_ruleset``). A producing job that fails before
+# its upload leaves its check unregistered for good.
+UPLOADED_CHECK_JOBS: dict[str, str] = {
+    "CodeQL": "codeql",
+    "Semgrep OSS": "semgrep",
+    "Trivy": "trivy",
+}
+
+
+def producer_job_names(check: str, names: Iterable[str]) -> list[str]:
+    """The *names* that are the producing job of required *check*, in order.
+
+    A producing job is reported as ``<caller job> / <job>`` (``security /
+    semgrep``), or as the bare job name in a workflow that runs it directly. A
+    check with no known producer has none.
+    """
+    job = UPLOADED_CHECK_JOBS.get(check)
+    if job is None:
+        return []
+    return [n for n in names if n == job or n.endswith(f" / {job}")]
+
+
+def describe_check_results(checks: list[dict[str, str]], names: Iterable[str]) -> str:
+    """Render each of *names* with its result in *checks*: ``security / semgrep (failed)``."""
+    buckets = {str(c.get("name")): str(c.get("bucket")) for c in checks}
+    return ", ".join(
+        f"{name} ({_BUCKET_WORDS.get(buckets.get(name, ''), 'no result')})" for name in names
+    )
+
+
 def _failure_decided_names(checks: list[dict[str, str]], required: Collection[str]) -> list[str]:
     """The failed checks that already decide *checks* while required ones are unregistered.
 
-    Non-empty only when no registered check is pending, at least one
-    *required* check is not registered, and some registered check is in a
-    failed bucket (#4294). A required check that a job's upload creates
-    (``Semgrep OSS``, made by the GitHub Advanced Security app once
-    ``security / semgrep`` uploads its SARIF) never registers when that job
-    fails first, so waiting for it only runs out the deadline, and the failure
-    refuses the merge whatever registers later. The names come from the
-    bucket alone: the caller confirms them with :func:`failed_check_names`,
-    which leaves out check-runs of superseded runs (#2897).
+    Empty unless some *required* check is not registered (#4294). Then, when
+    a failed check is the producing job of an unregistered required check
+    (:data:`UPLOADED_CHECK_JOBS`), those producers are returned at once,
+    whether or not other checks are still pending: ``Semgrep OSS`` never
+    registers once ``security / semgrep`` has failed before its upload, and
+    the failure refuses the merge whatever registers later. For an
+    unregistered check with no known producer the fallback is generic: once
+    no registered check is pending, every failed check is returned. The
+    names come from the bucket alone: the caller confirms them with
+    :func:`failed_check_names`, which leaves out check-runs of superseded runs
+    (#2897).
     """
-    if not checks or any(c.get("bucket") == _PENDING_BUCKET for c in checks):
+    outstanding = outstanding_required_checks(checks, required)
+    unregistered = [name for name, why in outstanding.items() if why == "not registered"]
+    if not unregistered:
         return []
-    if not outstanding_required_checks(checks, required):
+    failed = [str(c.get("name")) for c in checks if c.get("bucket") in _FAILED_BUCKETS]
+    producers = dict.fromkeys(p for u in unregistered for p in producer_job_names(u, failed))
+    if producers:
+        return list(producers)
+    if any(c.get("bucket") == _PENDING_BUCKET for c in checks):
         return []
-    return [str(c.get("name")) for c in checks if c.get("bucket") in _FAILED_BUCKETS]
+    return failed
 
 
 def all_checks_terminal(pr: str, required: Collection[str] = ()) -> bool:
@@ -1973,11 +2016,13 @@ def wait_for_checks(
     terminal **and** every required status check of the base branch is
     registered and non-pending (#3061), then returns — leaving ``pr_merge``'s
     ``failed_check_names`` gate to catch any failure. It also returns at once
-    when every registered check has finished, a live one (per
-    :func:`failed_check_names`) has failed, and the only required checks still
-    outstanding are unregistered: a check the failed job would have uploaded
-    (``Semgrep OSS``) can then never arrive, and the failure already refuses
-    the merge (#4294). Zero registered checks is
+    when a required check is unregistered and its producing job
+    (:data:`UPLOADED_CHECK_JOBS`) has failed, live per
+    :func:`failed_check_names`, while other checks may still be pending: the
+    check (``Semgrep OSS``) can then never arrive, and the failure already
+    refuses the merge (#4294). A required check with no known producer gets
+    the generic rule: the wait returns once every registered check has
+    finished and a live one has failed. Zero registered checks is
     not terminal (#2623), and the head is re-read on every poll, so a moved head
     is followed rather than pinned. *required* is the caller's
     :func:`required_check_names` result, passed through unchanged — a
@@ -2043,12 +2088,14 @@ def wait_for_checks(
         outstanding = outstanding_required_checks(checks, gate)
         decided = tuple(_failure_decided_names(checks, gate))
         if decided and decided != dismissed:
-            failed = failed_check_names(pr)
-            if failed:
+            live = set(failed_check_names(pr))
+            decisive = [name for name in decided if name in live]
+            if decisive:
+                unregistered = [n for n, why in outstanding.items() if why == "not registered"]
                 print(
-                    f"Required checks not registered: {', '.join(outstanding)}; every "
-                    f"registered check has finished and {', '.join(failed)} failed, so the "
-                    "merge is already refused. Not waiting for them."
+                    f"Required checks not registered: {', '.join(unregistered)}; "
+                    f"{describe_check_results(checks, decisive)} already refuses the "
+                    "merge. Not waiting for them."
                 )
                 return  # pr_merge's failed-checks gate reports the failure
             dismissed = decided

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, github_config
 
 
 @pytest.fixture(autouse=True)
@@ -130,45 +130,85 @@ def test_wait_for_checks_waits_for_unregistered_required_checks(
 _SEMGREP = frozenset({"security / semgrep", "Semgrep OSS"})
 
 
-def test_wait_for_checks_returns_at_once_when_a_failure_leaves_a_required_check_unregistered(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("required", "job"),
+    [("Semgrep OSS", "semgrep"), ("Trivy", "trivy"), ("CodeQL", "codeql")],
+)
+def test_wait_for_checks_returns_at_once_when_the_producing_job_failed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], required: str, job: str
 ) -> None:
-    # #4294: security / semgrep failed before uploading, so Semgrep OSS never
-    # registers; the wait must end now, not at the deadline.
+    # #4294: the producing job failed before uploading, so its required check
+    # never registers; the wait ends on the first poll, other checks still running.
     monkeypatch.setattr(
         github,
         "pr_checks",
-        lambda pr: [_check("security / semgrep", "fail"), _check("quality / evidence", "pass")],
+        lambda pr: [_check(f"security / {job}", "fail"), _check("test / unit / 3.14", "pending")],
     )
-    monkeypatch.setattr(github, "failed_check_names", lambda pr: ["security / semgrep"])
+    monkeypatch.setattr(github, "failed_check_names", lambda pr: [f"security / {job}"])
     monkeypatch.setattr(github.time, "sleep", lambda s: pytest.fail("must not wait"))
-    github.wait_for_checks("1", poll_interval=3, poll_timeout=1000, required=_SEMGREP)
+    github.wait_for_checks(
+        "1", poll_interval=3, poll_timeout=1000, required=frozenset({required})
+    )
     out = capsys.readouterr().out
     assert (
-        "Required checks not registered: Semgrep OSS; every registered check has finished "
-        "and security / semgrep failed, so the merge is already refused. Not waiting for them."
+        f"Required checks not registered: {required}; security / {job} (failed) already "
+        "refuses the merge. Not waiting for them."
     ) in out
 
 
-def test_wait_for_checks_keeps_waiting_while_a_registered_check_is_pending(
-    monkeypatch: pytest.MonkeyPatch,
+def test_wait_for_checks_names_a_cancelled_producing_job(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    monkeypatch.setattr(github, "pr_checks", lambda pr: [_check("security / semgrep", "cancel")])
+    monkeypatch.setattr(github, "failed_check_names", lambda pr: ["security / semgrep"])
+    monkeypatch.setattr(github.time, "sleep", lambda s: pytest.fail("must not wait"))
+    github.wait_for_checks("1", poll_interval=3, poll_timeout=1000, required=_SEMGREP)
+    assert "security / semgrep (cancelled) already refuses" in capsys.readouterr().out
+
+
+def test_wait_for_checks_unknown_producer_waits_for_pending_checks_first(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # No known producer for test / evidence: the generic rule waits until no
+    # registered check is pending, then stops on the live failure.
     batches = iter(
         [
-            [_check("security / semgrep", "fail"), _check("unit", "pending")],
-            [_check("security / semgrep", "fail"), _check("unit", "pass")],
+            [_check("test / unit / 3.14", "fail"), _check("test / unit / 3.13", "pending")],
+            [_check("test / unit / 3.14", "fail"), _check("test / unit / 3.13", "pass")],
         ]
     )
     monkeypatch.setattr(github, "pr_checks", lambda pr: next(batches))
     calls: list[str] = []
     monkeypatch.setattr(
-        github, "failed_check_names", lambda pr: calls.append(pr) or ["security / semgrep"]
+        github, "failed_check_names", lambda pr: calls.append(pr) or ["test / unit / 3.14"]
     )
     sleeps: list[int] = []
     monkeypatch.setattr(github.time, "sleep", sleeps.append)
-    github.wait_for_checks("1", poll_interval=3, poll_timeout=1000, required=_SEMGREP)
-    assert sleeps == [3]  # the pending check was waited on before deciding
+    github.wait_for_checks(
+        "1", poll_interval=3, poll_timeout=1000, required=frozenset({"test / evidence"})
+    )
+    assert sleeps == [3]
     assert calls == ["1"]
+    assert "test / unit / 3.14 (failed) already refuses" in capsys.readouterr().out
+
+
+def test_wait_for_checks_waits_when_the_producing_job_failure_is_superseded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The producer's failed check-run lives only on a superseded run: not live,
+    # so the wait goes on for the fresh run's checks.
+    batches = iter(
+        [
+            [_check("security / semgrep", "fail"), _check("security / semgrep", "pending")],
+            [_check("security / semgrep", "pass"), _check("Semgrep OSS", "pass")],
+        ]
+    )
+    monkeypatch.setattr(github, "pr_checks", lambda pr: next(batches))
+    monkeypatch.setattr(github, "failed_check_names", lambda pr: [])
+    sleeps: list[int] = []
+    monkeypatch.setattr(github.time, "sleep", sleeps.append)
+    github.wait_for_checks("1", poll_interval=3, poll_timeout=1000, required=_SEMGREP)
+    assert sleeps == [3]
 
 
 def test_wait_for_checks_waits_when_the_failures_are_superseded_runs_only(
@@ -209,6 +249,49 @@ def test_failure_decided_names_needs_an_unregistered_required_check() -> None:
     assert github._failure_decided_names(checks, _SEMGREP) == []
     assert github._failure_decided_names([], _SEMGREP) == []
     assert github._failure_decided_names(checks[:1], _SEMGREP) == ["security / semgrep"]
+
+
+def test_failure_decided_names_prefers_the_producer_over_other_failures() -> None:
+    checks = [
+        _check("security / semgrep", "fail"),
+        _check("security / trivy", "fail"),
+        _check("unit", "fail"),
+        _check("lint", "pending"),
+    ]
+    required = frozenset({"Semgrep OSS", "Trivy", "test / evidence"})
+    assert github._failure_decided_names(checks, required) == [
+        "security / semgrep",
+        "security / trivy",
+    ]
+
+
+def test_failure_decided_names_ignores_a_pending_required_check() -> None:
+    checks = [_check("security / semgrep", "fail"), _check("Semgrep OSS", "pending")]
+    assert github._failure_decided_names(checks, _SEMGREP) == []
+
+
+def test_producer_job_names_matches_the_job_suffix_or_bare_name() -> None:
+    names = ["security / semgrep", "semgrep", "security / semgrep-extra", "x / trivy"]
+    assert github.producer_job_names("Semgrep OSS", names) == ["security / semgrep", "semgrep"]
+    assert github.producer_job_names("test / evidence", names) == []
+
+
+def test_describe_check_results_names_each_result() -> None:
+    checks = [_check("a", "fail"), _check("b", "cancel")]
+    assert github.describe_check_results(checks, ["a", "b", "c"]) == (
+        "a (failed), b (cancelled), c (no result)"
+    )
+
+
+def test_uploaded_check_jobs_match_the_security_gates() -> None:
+    """Every GHAS check finalize maps to a producer is one the CI-gates ruleset
+    requires, with its producing ``security / <job>`` gate (drift guard)."""
+    literals = {k for k, v in github_config._EVIDENCE_GATE_LITERALS.items() if v == "security"}
+    assert set(github.UPLOADED_CHECK_JOBS) == literals
+    catalog = github_config._PRODUCIBLE_GATE_CATALOG
+    for check, job in github.UPLOADED_CHECK_JOBS.items():
+        assert check in catalog
+        assert f"security / {job}" in catalog
 
 
 def test_wait_for_checks_timeout_names_outstanding_required_checks(

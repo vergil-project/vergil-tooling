@@ -43,9 +43,9 @@ whose own Actions job is in progress is reported as likely slow, not stuck, with
 run's URL and the advice to wait for it and then resume; any other pending check
 keeps the re-run / close-and-reopen advice (issue #4200). A required check that a
 job's upload creates (``Semgrep OSS``) never registers when that job fails first, so
-once every registered check has finished with a failure the wait ends at once and
-the abort names the unregistered check and the failed job behind it, instead of
-waiting out the deadline (issue #4294).
+the wait ends as soon as that producing job has failed, even with other checks still
+running, and the abort names the unregistered check and the failed job with its
+result, instead of waiting out the deadline (issue #4294).
 """
 
 from __future__ import annotations
@@ -64,7 +64,9 @@ from vergil_tooling.lib.github import (
     GitHubAPIError,
     OrphanedCheckError,
     checks_timeout_secs,
+    describe_check_results,
     describe_outstanding,
+    producer_job_names,
 )
 
 if TYPE_CHECKING:
@@ -204,31 +206,32 @@ def _is_behind(pr: str) -> bool:
     return github.merge_state_status(pr) == "BEHIND"
 
 
-# Required checks that a workflow job's SARIF upload creates (through the GitHub
-# Advanced Security app, so with no ``<job> /`` prefix), mapped to the job name
-# that uploads each one (``security / semgrep`` uploads ``Semgrep OSS``). When
-# that job fails before its upload, the check is never registered (#4294).
-_UPLOADED_CHECK_JOBS = {"Semgrep OSS": "semgrep", "Trivy": "trivy", "CodeQL": "codeql"}
+def _unregistered_detail(pr: str, unregistered: list[str], failed: list[str]) -> str:
+    """Name each unregistered required check and, where known, the failed job behind it.
 
-
-def _unregistered_detail(unregistered: list[str], failed: list[str]) -> str:
-    """Name each unregistered required check and, where known, the failed job behind it."""
+    A check with a known producing job (``github.UPLOADED_CHECK_JOBS``) names
+    that job and its result, read from the PR's checks; any other is named
+    with the failed checks as the likely cause (#4294).
+    """
     parts: list[str] = []
     unknown: list[str] = []
+    checks: list[dict[str, str]] | None = None
     for check in unregistered:
-        job = _UPLOADED_CHECK_JOBS.get(check)
-        producers = [f for f in failed if job is not None and f.endswith(f" / {job}")]
-        if producers:
-            parts.append(
-                f"Required check {check} was never registered: it is uploaded by "
-                f"{', '.join(producers)}, which failed first, so it will not arrive."
-            )
-        else:
+        producers = producer_job_names(check, failed)
+        if not producers:
             unknown.append(check)
+            continue
+        if checks is None:
+            checks = github.pr_checks(pr)
+        parts.append(
+            f"Required check {check} was never registered and will not arrive: its "
+            f"producing job {describe_check_results(checks, producers)} ended before "
+            "uploading it."
+        )
     if unknown:
         parts.append(
-            f"Required checks never registered: {', '.join(unknown)}; with every "
-            "registered check finished, a failed job above most likely produces them."
+            f"Required checks never registered: {', '.join(unknown)}; a failed job "
+            "above most likely produces them."
         )
     return " ".join(parts)
 
@@ -256,7 +259,7 @@ def _failed_checks_are_stale(pr: str, required: frozenset[str]) -> bool:
     outstanding = github.required_checks_outstanding(pr, required)
     unregistered = [name for name, why in outstanding.items() if why == "not registered"]
     if unregistered:
-        msg = f"{msg}. {_unregistered_detail(unregistered, failed)}"
+        msg = f"{msg}. {_unregistered_detail(pr, unregistered, failed)}"
     raise MergeAbortError(msg)
 
 

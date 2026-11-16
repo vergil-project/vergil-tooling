@@ -120,6 +120,10 @@ def test_failure_naming_an_unregistered_uploaded_check_names_its_job() -> None:
         required=frozenset({"security / semgrep", "Semgrep OSS"}),
         outstanding=[{"Semgrep OSS": "not registered"}],
     )
+    gh.pr_checks.return_value = [
+        {"name": "security / semgrep", "bucket": "fail"},
+        {"name": "test / unit / 3.14", "bucket": "pending"},
+    ]
     with (
         patch(_MOD + ".github", gh),
         pytest.raises(MergeAbortError) as err,
@@ -127,10 +131,11 @@ def test_failure_naming_an_unregistered_uploaded_check_names_its_job() -> None:
         wait_and_merge("99", strategy="squash")
     assert str(err.value) == (
         "Checks failed on PR 99: security / semgrep. Required check Semgrep OSS was "
-        "never registered: it is uploaded by security / semgrep, which failed first, "
-        "so it will not arrive."
+        "never registered and will not arrive: its producing job security / semgrep "
+        "(failed) ended before uploading it."
     )
     gh.wait_for_checks.assert_called_once()
+    gh.pr_checks.assert_called_once_with("99")
     gh.merge.assert_not_called()
 
 
@@ -144,10 +149,27 @@ def test_failure_naming_an_unregistered_check_with_no_known_job() -> None:
         wait_and_merge("99", strategy="squash")
     assert str(err.value) == (
         "Checks failed on PR 99: test / unit / 3.14. Required checks never registered: "
-        "Semgrep OSS, test / evidence; with every registered check finished, a failed "
-        "job above most likely produces them."
+        "Semgrep OSS, test / evidence; a failed job above most likely produces them."
     )
+    gh.pr_checks.assert_not_called()
     gh.merge.assert_not_called()
+
+
+def test_failure_naming_known_and_unknown_unregistered_checks() -> None:
+    gh = _gh(
+        failed=["security / trivy", "test / unit / 3.14"],
+        required=frozenset({"Trivy", "test / evidence"}),
+        outstanding=[{"Trivy": "not registered", "test / evidence": "not registered"}],
+    )
+    gh.pr_checks.return_value = [{"name": "security / trivy", "bucket": "cancel"}]
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError) as err:
+        wait_and_merge("99", strategy="squash")
+    assert str(err.value) == (
+        "Checks failed on PR 99: security / trivy, test / unit / 3.14. Required check "
+        "Trivy was never registered and will not arrive: its producing job security / "
+        "trivy (cancelled) ended before uploading it. Required checks never registered: "
+        "test / evidence; a failed job above most likely produces them."
+    )
 
 
 def test_failure_with_pending_required_check_names_failures_only() -> None:
@@ -167,9 +189,10 @@ def test_watch_failure_naming_an_unregistered_uploaded_check_names_its_job() -> 
         required=frozenset({"Semgrep OSS"}),
         outstanding=[{"Semgrep OSS": "not registered"}],
     )
+    gh.pr_checks.return_value = [{"name": "security / semgrep", "bucket": "fail"}]
     with (
         patch(_MOD + ".github", gh),
-        pytest.raises(MergeAbortError, match="uploaded by security / semgrep, which failed"),
+        pytest.raises(MergeAbortError, match=r"producing job security / semgrep \(failed\)"),
     ):
         wait_until_merged("99", strategy="squash", deadline_secs=600)
     gh.merge.assert_not_called()

@@ -152,13 +152,16 @@ A required check can also be one a job's upload creates: `Semgrep OSS`,
 `Trivy` and `CodeQL` are registered by GitHub Advanced Security only once
 the `security / semgrep`, `security / trivy` or `security / codeql` job
 uploads its SARIF results. When that job fails before its upload, the check
-never registers. So once every registered check has finished, one of them
-has failed, and the only required checks still outstanding are
-unregistered, finalize stops waiting at once. It fails naming the failed
-checks and each unregistered required check, with the failed job behind it
-when that job is known (for example `Required check Semgrep OSS was never
-registered: it is uploaded by security / semgrep, which failed first, so it
-will not arrive.`), rather than waiting out the deadline (issue #4294).
+never registers. So when a required check is unregistered and its producing
+job has already failed (or been cancelled), finalize stops waiting at once,
+even with other checks still running. It fails naming the unregistered
+check and the producing job with its result (for example `Required check
+Semgrep OSS was never registered and will not arrive: its producing job
+security / semgrep (failed) ended before uploading it.`), rather than
+waiting out the deadline. A required check with no known producing job
+still gets a fail-fast, only later: once every registered check has
+finished and one has failed, finalize stops waiting for it and names the
+failed checks as its likely cause (issue #4294).
 
 After the merge, the PR's own branch and worktree are cleaned up
 explicitly (a squash merge hides them from `git branch --merged`),
