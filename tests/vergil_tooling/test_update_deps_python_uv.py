@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from vergil_tooling.lib.update_deps import pypi
+from vergil_tooling.lib.update_deps.changes import PackageChange
 from vergil_tooling.lib.update_deps.context import UpdateDepsContext, UpdateDepsError
 from vergil_tooling.lib.update_deps.report import HeldBack
 from vergil_tooling.lib.update_deps.updaters import python_uv
@@ -56,12 +57,41 @@ def test_apply_reports_changed_when_lock_dirty(tmp_path: Path, monkeypatch) -> N
     assert result.held_back == []
 
 
+def test_apply_lists_the_packages_the_lock_moved(tmp_path: Path, monkeypatch) -> None:
+    """The change list is the diff of the parsed uv.lock before and after the upgrade."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\ndependencies = ["a"]\n')
+    lock = tmp_path / "uv.lock"
+    lock.write_text(
+        '[[package]]\nname = "a"\nversion = "1.0"\n'
+        '[[package]]\nname = "Gone"\nversion = "0.1"\n'
+        '[[package]]\nname = "same"\nversion = "3.0"\n'
+    )
+
+    def upgrade(cmd: list[str], **kw: object) -> int:
+        lock.write_text(
+            '[[package]]\nname = "a"\nversion = "1.2"\n'
+            '[[package]]\nname = "same"\nversion = "3.0"\n'
+            '[[package]]\nname = "fresh"\nversion = "0.5"\n'
+        )
+        return 0
+
+    monkeypatch.setattr(_MOD + ".progress.run", upgrade)
+    monkeypatch.setattr(_MOD + ".git.read_output", lambda *a: " M uv.lock")
+    result = PythonUvUpdater(latest=lambda n: "1.2").apply(_ctx(tmp_path))
+    assert result.packages == [
+        PackageChange("a", "1.0", "1.2"),
+        PackageChange("fresh", None, "0.5"),
+        PackageChange("gone", "0.1", None),
+    ]
+
+
 def test_apply_reports_unchanged_when_lock_clean(tmp_path: Path, monkeypatch) -> None:
     _write_project(tmp_path)
     monkeypatch.setattr(_MOD + ".progress.run", lambda cmd, **kw: 0)
     monkeypatch.setattr(_MOD + ".git.read_output", lambda *a: "")
     result = PythonUvUpdater(latest=lambda n: "1.5").apply(_ctx(tmp_path))
     assert result.changed is False
+    assert result.packages == []
 
 
 def test_apply_attaches_held_back(tmp_path: Path, monkeypatch) -> None:
@@ -179,6 +209,17 @@ def test_locked_versions_skips_versionless_packages() -> None:
         ]
     }
     assert python_uv.locked_versions(lock) == {"a": "1"}
+
+
+def test_locked_package_versions_keeps_every_forked_version() -> None:
+    lock = {
+        "package": [
+            {"name": "Foo_Bar", "version": "1.0"},
+            {"name": "foo-bar", "version": "2.0"},
+            {"name": "local"},
+        ]
+    }
+    assert python_uv.locked_package_versions(lock) == {"foo-bar": ["1.0", "2.0"]}
 
 
 def test_locked_versions_empty_lock() -> None:

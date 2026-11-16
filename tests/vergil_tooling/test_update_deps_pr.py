@@ -7,6 +7,7 @@ import pytest
 
 from vergil_tooling.lib import pr_merge
 from vergil_tooling.lib.update_deps import pr
+from vergil_tooling.lib.update_deps.changes import PackageChange
 from vergil_tooling.lib.update_deps.context import (
     DepsFailure,
     FailureKind,
@@ -61,6 +62,17 @@ def test_pr_body_has_updates_and_report_and_no_stale_ref() -> None:
     assert "#1379" not in body
     assert "## Failure" not in body
     assert pr.FIX_TASK_PREFIX not in body
+
+
+def test_pr_body_lists_package_changes_after_the_unchanged_updated_lines() -> None:
+    ctx = _ctx()
+    ctx.results[0].packages = [PackageChange("requests", "2.31.0", "2.32.0")]
+    body = pr.build_pr_body(ctx)
+    # The "## Updated" lines stay as they were; the detail follows in its own section.
+    assert "## Updated\n\n- **python** — uv lock --upgrade\n\n## Package changes\n" in body
+    assert "- **python** — 1 package\n" in body
+    assert "| python | requests | 2.31.0 | 2.32.0 |" in body
+    assert body.index("## Package changes") < body.index("## Held back by declared bounds")
 
 
 def test_pr_body_includes_warnings_and_skips_unchanged() -> None:

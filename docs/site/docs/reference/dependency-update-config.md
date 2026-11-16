@@ -194,6 +194,36 @@ them in a script and point `hook` at the script.
 A hook failure is an `update` failure: nothing is pushed and no PR is
 opened, but a fix task naming the hook is filed.
 
+## Package changes
+
+The dependency-update PR body lists what each updater changed, after
+its **Updated** section. Each updater that changed something gets a
+count, and every package it moved is a row in one table:
+
+```markdown
+- **python** — 2 packages
+- **hook** — not itemized
+
+| Updater | Package | From | To |
+|---|---|---|---|
+| python | requests | 2.31.0 | 2.32.0 |
+| python | idna | (new) | 3.10 |
+```
+
+Each updater takes its list from a machine-readable source:
+
+- `python` diffs the package versions in the parsed `uv.lock` before and
+  after `uv lock --upgrade`, transitive packages included. A package
+  added or dropped shows `(new)` or `(removed)`.
+- `vergil` lists the `vergil` version it bumped and the
+  `vergil-python<x.y>` runtime pin it moved. Normalizing workflow refs to
+  the declared version moves no package.
+- `images` lists each image ref whose tag it bumped.
+- `hook` is not itemized: its edits are the repo's own.
+
+An updater that changed files but moved no package version says "no
+package versions changed".
+
 ## The held-back report
 
 The held-back report lists the dependencies whose newest release is

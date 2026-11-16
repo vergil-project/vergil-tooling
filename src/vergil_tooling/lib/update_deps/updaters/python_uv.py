@@ -19,6 +19,7 @@ from packaging.version import InvalidVersion, Version
 
 from vergil_tooling.lib import git, progress
 from vergil_tooling.lib.update_deps import pypi
+from vergil_tooling.lib.update_deps.changes import diff_versions
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.update_deps.report import HeldBack
 from vergil_tooling.lib.update_deps.updater import UpdateResult
@@ -82,6 +83,19 @@ def locked_versions(lock: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def locked_package_versions(lock: dict[str, Any]) -> dict[str, list[str]]:
+    """Canonical package name to every version ``uv.lock`` locks for it.
+
+    A forked resolution can lock one package at several versions, so unlike
+    ``locked_versions`` this keeps them all, for the before/after diff.
+    """
+    found: dict[str, list[str]] = {}
+    for p in lock.get("package", []):
+        if "version" in p:
+            found.setdefault(canonicalize_name(p["name"]), []).append(p["version"])
+    return found
+
+
 def held_back(
     pyproject: dict[str, Any], lock: dict[str, Any], *, latest: Callable[[str], str]
 ) -> list[HeldBack]:
@@ -136,9 +150,10 @@ class PythonUvUpdater:
         return (root / "pyproject.toml").is_file() and (root / "uv.lock").is_file()
 
     def apply(self, ctx: UpdateDepsContext) -> UpdateResult:
+        base = _base(ctx)
+        before = locked_package_versions(tomllib.loads((base / "uv.lock").read_text()))
         progress.run(["vrg-container-run", "--", "uv", "lock", "--upgrade"])
         dirty = bool(git.read_output("status", "--porcelain", "uv.lock").strip())
-        base = _base(ctx)
         pyproject = tomllib.loads((base / "pyproject.toml").read_text())
         lock = tomllib.loads((base / "uv.lock").read_text())
         return UpdateResult(
@@ -147,4 +162,5 @@ class PythonUvUpdater:
             summary="uv lock --upgrade" if dirty else "uv lock --upgrade (no changes)",
             commit_message=_COMMIT_MESSAGE,
             held_back=held_back(pyproject, lock, latest=self._latest),
+            packages=diff_versions(before, locked_package_versions(lock)),
         )

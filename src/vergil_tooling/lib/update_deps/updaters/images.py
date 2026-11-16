@@ -25,6 +25,7 @@ import yaml
 
 from vergil_tooling.lib import git
 from vergil_tooling.lib.update_deps import registry
+from vergil_tooling.lib.update_deps.changes import PackageChange
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.update_deps.registry import ImageRef, parse_image_ref
 from vergil_tooling.lib.update_deps.report import HeldBack
@@ -217,6 +218,7 @@ class ImagesUpdater:
             if new_tag is not None:
                 edits.setdefault(path, {})[ref.text] = f"{_display(ref)}:{new_tag}"
         bumped: list[str] = []
+        packages: list[PackageChange] = []
         for path, replacements in edits.items():
             text = path.read_text()
             for old, new in replacements.items():
@@ -227,6 +229,8 @@ class ImagesUpdater:
                 change = f"{old} → {new}"
                 if change not in bumped:
                     bumped.append(change)
+                    name, old_tag = old.rsplit(":", 1)
+                    packages.append(PackageChange(name, old_tag, new.rsplit(":", 1)[1]))
             path.write_text(text)
         return UpdateResult(
             updater=self.name,
@@ -234,4 +238,5 @@ class ImagesUpdater:
             summary="; ".join(bumped) if bumped else "image tags already newest within their major",
             commit_message="chore(deps): bump image tags",
             held_back=held,
+            packages=packages,
         )

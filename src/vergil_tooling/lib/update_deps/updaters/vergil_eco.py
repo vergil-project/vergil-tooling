@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib.package.runtime import SEVERAL_PINS
 from vergil_tooling.lib.update_deps import vergil_index
+from vergil_tooling.lib.update_deps.changes import PackageChange
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.update_deps.report import HeldBack
 from vergil_tooling.lib.update_deps.updater import UpdateResult
@@ -49,6 +50,15 @@ __all__ = [
     "read_source_version",
     "set_source_version",
 ]
+
+
+_SOURCE_VALUE_RE = re.compile(r'(?m)^vergil\s*=\s*"([^"]*)"')
+
+
+def _source_value(base: Path) -> str | None:
+    """The ``vergil = "..."`` value ``set_source_version`` would rewrite, if present."""
+    match = _SOURCE_VALUE_RE.search((base / "vergil.toml").read_text())
+    return match.group(1) if match is not None else None
 
 
 def set_source_version(base: Path, target: str) -> bool:
@@ -208,19 +218,29 @@ class VergilUpdater:
     def applies(self, ctx: UpdateDepsContext) -> bool:
         return (_base(ctx) / "vergil.toml").is_file()
 
-    def _runtime(self, base: Path) -> tuple[str | None, list[HeldBack]]:
-        """Bump the runtime pin from the live index; never query it without a pin."""
-        if _declared_runtime((base / "vergil.toml").read_text()) is None:
-            return None, []
-        return bump_runtime(base, self._served_runtime(base))
+    def _runtime(self, base: Path) -> tuple[list[PackageChange], str | None, list[HeldBack]]:
+        """Bump the runtime pin from the live index; never query it without a pin.
+
+        Returns the package change (empty when the pin did not move), the new
+        runtime (``None`` if unchanged) and the held-back entries.
+        """
+        current = _declared_runtime((base / "vergil.toml").read_text())
+        if current is None:
+            return [], None, []
+        served = self._served_runtime(base)
+        runtime, held = bump_runtime(base, served)
+        moved = [PackageChange(served.package, current, runtime)] if runtime is not None else []
+        return moved, runtime, held
 
     def apply(self, ctx: UpdateDepsContext) -> UpdateResult:
         base = _base(ctx)
         if ctx.vergil_bump is not None:
             target = format_version(ctx.vergil_bump)
+            previous = _source_value(base)
             bumped = set_source_version(base, target)
             normalized = normalize_refs(base, target)
-            runtime, held = self._runtime(base)
+            packages = [PackageChange("vergil", previous, target)] if bumped else []
+            runtime_change, runtime, held = self._runtime(base)
             parts = [f"bump vergil to {target}"]
             if runtime is not None:
                 parts.append(f"vergil-python runtime {runtime}")
@@ -230,11 +250,12 @@ class VergilUpdater:
                 summary="; ".join(parts),
                 commit_message="chore(deps): " + "; ".join(parts),
                 held_back=held,
+                packages=packages + runtime_change,
             )
         target = read_source_version(base)
         normalized = normalize_refs(base, target)
         refs_changed = bool(normalized)
-        runtime, held = self._runtime(base)
+        runtime_change, runtime, held = self._runtime(base)
         parts = [f"normalize vergil refs to {target}"] if refs_changed else []
         if runtime is not None:
             parts.append(f"vergil-python runtime {runtime}")
@@ -244,4 +265,5 @@ class VergilUpdater:
             summary="; ".join(parts) if parts else f"vergil refs already at {target}",
             commit_message="chore(deps): " + ("; ".join(parts) if parts else "vergil refs"),
             held_back=held,
+            packages=runtime_change,
         )
