@@ -19599,7 +19599,8 @@ closes the item; the planning route takes the same options to size an item on
 its way in. Only sizing comments by
 <a href="../../guides/account-setup/#trusted-authors">trusted authors</a> count. When the
 label and the latest sizing comment disagree, one is missing, the item has
-several size labels, or the comment is malformed, the item's sizing is in
+several size labels, its label names an unknown size (such as
+<code>epic-size:XXL</code>), or the comment is malformed, the item's sizing is in
 error: <code>vrg-queue</code> shows it as <code>!</code> and names the problem, and re-running <code>size</code>
 with the right estimate repairs it. A one-off ends the estimate: the route
 removes the size labels and posts a <code>Size cleared &lt;YYYY-MM-DD&gt;: …</code> marker,
