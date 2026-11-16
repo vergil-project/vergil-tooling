@@ -200,6 +200,7 @@ def validate_env(tmp_path: Path) -> Iterator[Path]:
         patch(_MOD + "._run_common_checks", return_value=0),
         patch(_MOD + "._find_custom_validator", return_value=None),
         patch(_MOD + "._run_semgrep"),
+        patch(_MOD + "._run_docs_build"),
     ):
         yield tmp_path
 
@@ -207,7 +208,7 @@ def validate_env(tmp_path: Path) -> Iterator[Path]:
 def test_validate_records_a_full_run(validate_env: Path) -> None:
     assert vrg_validate.main([]) == 0
     record = read_record(validate_env)
-    assert record == ValidateRecord(HEAD, 0, True, True, ("common", "semgrep"), ())
+    assert record == ValidateRecord(HEAD, 0, True, True, ("common", "semgrep", "docs"), ())
 
 
 def test_validate_records_a_partial_failing_run(validate_env: Path) -> None:

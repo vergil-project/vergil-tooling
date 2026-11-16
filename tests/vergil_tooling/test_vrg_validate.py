@@ -22,6 +22,7 @@ from vergil_tooling.bin.vrg_validate import (
     _check_custom_validator,
     _command_stage,
     _default_test_version,
+    _docs_stage,
     _find_custom_validator,
     _in_dev_container,
     _install_stage,
@@ -34,6 +35,7 @@ from vergil_tooling.bin.vrg_validate import (
     _resolve_test_workers,
     _run_audit_command,
     _run_common_checks,
+    _run_docs_build,
     _run_semgrep,
     _semgrep_rulesets,
     _semgrep_stage,
@@ -69,6 +71,8 @@ def _container_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         # No full run may scan for real (semgrep needs its registry); the
         # semgrep stage has its own tests, which call the real function.
         patch(_MOD + "._run_semgrep"),
+        # Nor build docs for real; the docs stage has its own tests.
+        patch(_MOD + "._run_docs_build"),
     ):
         yield
 
@@ -109,6 +113,7 @@ def test_build_stages_full_run_order() -> None:
         "test",
         "audit",
         "semgrep",
+        "docs",
     ]
     assert stages[1].mode == "fail_fast"
     assert all(s.mode == "fail_defer" for s in stages if s.name != "install")
@@ -154,7 +159,7 @@ def test_build_stages_check_lint_no_install_commands() -> None:
 def test_build_stages_no_language_skips_language_checks() -> None:
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(None, None, Path("/tmp/r"))  # noqa: S108
-    assert [s.name for s in stages] == ["common", "semgrep"]
+    assert [s.name for s in stages] == ["common", "semgrep", "docs"]
 
 
 def test_build_stages_no_commands_for_check() -> None:
@@ -1305,6 +1310,7 @@ def test_build_stages_version_stages_follow_test_before_audit() -> None:
         "test (python 3.13)",
         "audit",
         "semgrep",
+        "docs",
     ]
 
 
@@ -1654,6 +1660,7 @@ def test_unbootstrapped_rust_skips_language_stages_loudly(
         "test",
         "audit",
         "semgrep",
+        "docs",
         "custom",
     )
     out = capsys.readouterr().out
@@ -1669,7 +1676,7 @@ def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
     _write_config(tmp_path, "rust")
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(None, "rust", tmp_path)
-    language_stages = [s for s in stages if s.name not in ("common", "semgrep")]
+    language_stages = [s for s in stages if s.name not in ("common", "semgrep", "docs")]
     assert [s.name for s in language_stages] == ["install", "lint", "typecheck", "test", "audit"]
     assert all(s.mode == "warn" for s in language_stages)
     _run_validate(tmp_path, [])
@@ -1683,6 +1690,7 @@ def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
         "test": "warn",
         "audit": "warn",
         "semgrep": "ok",
+        "docs": "ok",
     }
 
 
@@ -1784,7 +1792,7 @@ def test_rust_sources_without_cargo_toml_stage_shape(tmp_path: Path) -> None:
     (tmp_path / "src" / "lib.rs").write_text("")
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(None, "rust", tmp_path)
-    language_stages = [s for s in stages if s.name not in ("common", "semgrep")]
+    language_stages = [s for s in stages if s.name not in ("common", "semgrep", "docs")]
     assert [s.name for s in language_stages] == ["install", "lint", "typecheck", "test", "audit"]
     assert language_stages[0].mode == "fail_fast"
     with pytest.raises(ValidationError, match="add the manifest or remove the sources"):
@@ -1972,7 +1980,7 @@ def test_build_stages_semgrep_comes_before_custom() -> None:
         patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"),
     ):
         stages = _build_stages(None, "python", Path("/tmp/r"))  # noqa: S108
-    assert [s.name for s in stages][-3:] == ["audit", "semgrep", "custom"]
+    assert [s.name for s in stages][-4:] == ["audit", "semgrep", "docs", "custom"]
 
 
 def test_semgrep_stage_runs_the_scan_for_its_language() -> None:
@@ -2136,3 +2144,206 @@ def test_run_semgrep_without_rulesets_warns(
     reason = "no semgrep rulesets for language <not set>, and no Dockerfile or workflow to scan"
     m_warn.assert_called_once_with(reason)
     assert f"NOTICE: semgrep: {reason}" in capsys.readouterr().out
+
+
+# -- docs stage (issue #4446) ----------------------------------------------------
+
+_DOCS_GITIGNORE = "docs/site/docs/changelog.md\ndocs/site/docs/releases/\nmkdocs.staged.yml\n"
+_DOCS_MKDOCS_YML = (
+    "site_name: Test\n"
+    "docs_dir: docs\n"
+    "nav:\n"
+    "  - Home: index.md\n"
+    "  - Release Notes:\n"
+    "      - releases/index.md\n"
+)
+
+
+def _docs_repo(root: Path, *, gitignore: str = _DOCS_GITIGNORE) -> Path:
+    """A git repo with a docs site, a changelog and one release note."""
+    subprocess.run(["git", "init", "-q", str(root)], check=True)  # noqa: S607
+    (root / ".gitignore").write_text(gitignore)
+    docs = root / "docs" / "site" / "docs"
+    docs.mkdir(parents=True)
+    (docs / "index.md").write_text("# Home\n")
+    (root / "docs" / "site" / "mkdocs.yml").write_text(_DOCS_MKDOCS_YML)
+    (root / "CHANGELOG.md").write_text("# Changelog\n")
+    (root / "releases").mkdir()
+    (root / "releases" / "v1.2.3.md").write_text("# Release 1.2.3 (2026-01-02)\n")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)  # noqa: S607
+    return root
+
+
+def _fake_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, rc: int = 0) -> Path:
+    """Put a *name* first on PATH that logs its argv and banner env, then exits *rc*.
+
+    It also copies the config after ``-f`` beside the log, so a test can read
+    what the build was given. Returns the log.
+    """
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir(exist_ok=True)
+    log = tmp_path / f"{name}-argv.json"
+    script = fake_bin / name
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, pathlib, shutil, sys\n"
+        "argv = sys.argv[1:]\n"
+        "config = argv[argv.index('-f') + 1]\n"
+        f"shutil.copy(config, {str(tmp_path / 'built-config.yml')!r})\n"
+        f"pathlib.Path({str(log)!r}).write_text(json.dumps("
+        "{'argv': argv, 'banner': os.environ.get('NO_MKDOCS_2_WARNING')}))\n"
+        f"sys.exit({rc})\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    return log
+
+
+def test_build_stages_check_docs_runs_only_docs() -> None:
+    with patch(_MOD + ".language_commands") as m_cmds:
+        stages = _build_stages("docs", "python", Path("/tmp/r"))  # noqa: S108
+    assert [s.name for s in stages] == ["docs"]
+    assert stages[0].mode == "fail_defer"
+    m_cmds.assert_not_called()
+
+
+def test_docs_stage_runs_the_build_for_its_language() -> None:
+    stage = _docs_stage("go", Path("/r"))
+    with patch(_MOD + "._run_docs_build") as m_run:
+        stage.fn(None)
+    m_run.assert_called_once_with("go", Path("/r"))
+
+
+def test_check_docs_runs_only_the_docs_stage(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._run_common_checks") as m_common,
+        patch(_MOD + ".progress.run") as m_run,
+        patch(_MOD + "._run_docs_build") as m_docs,
+    ):
+        assert main(["--check", "docs"]) == 0
+    m_docs.assert_called_once_with("python", tmp_path)
+    m_common.assert_not_called()
+    m_run.assert_not_called()
+
+
+def test_check_docs_failure_fails_the_run(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._run_docs_build", side_effect=ValidationError("docs build failed")),
+    ):
+        assert main(["--check", "docs"]) == 1
+
+
+def test_run_docs_build_without_a_config_passes_with_a_notice(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with patch(_MOD + ".progress.run") as m_run:
+        _run_docs_build("python", tmp_path)
+    m_run.assert_not_called()
+    assert "NOTICE: docs: no docs/site/mkdocs.yml; no docs build to run, as in CI" in (
+        capsys.readouterr().out
+    )
+
+
+def test_run_docs_build_stages_and_builds_strictly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _docs_repo(tmp_path / "repo")
+    monkeypatch.chdir(repo)
+    log = _fake_tool(tmp_path, monkeypatch, "mkdocs")
+
+    _run_docs_build("go", repo)
+
+    data = json.loads(log.read_text())
+    argv = data["argv"]
+    staged = repo / "docs" / "site" / "mkdocs.staged.yml"
+    assert argv[:5] == ["build", "--strict", "-f", str(staged), "-d"]
+    # The site is built outside the working tree.
+    assert not Path(argv[5]).is_relative_to(repo)
+    assert data["banner"] == "1"
+    # The build gets the nav-patched copy; the tracked config is untouched.
+    assert "      - 1.2.3: releases/v1.2.3.md" in (tmp_path / "built-config.yml").read_text()
+    assert (repo / "docs" / "site" / "mkdocs.yml").read_text() == _DOCS_MKDOCS_YML
+    docs = repo / "docs" / "site" / "docs"
+    assert (docs / "changelog.md").read_text() == "# Changelog\n"
+    assert (docs / "releases" / "v1.2.3.md").is_file()
+    assert (docs / "releases" / "index.md").is_file()
+    # Every staged path is gitignored: the tree is as clean as before.
+    status = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain"],  # noqa: S607
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert status.splitlines() == [
+        "A  .gitignore",
+        "A  CHANGELOG.md",
+        "A  docs/site/docs/index.md",
+        "A  docs/site/mkdocs.yml",
+        "A  releases/v1.2.3.md",
+    ]
+    assert f"Running (docs): mkdocs build --strict -f {staged}" in capsys.readouterr().out
+
+
+def test_run_docs_build_uses_uv_run_for_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _docs_repo(tmp_path / "repo")
+    monkeypatch.chdir(repo)
+    log = _fake_tool(tmp_path, monkeypatch, "uv")
+
+    _run_docs_build("python", repo)
+
+    argv = json.loads(log.read_text())["argv"]
+    assert argv[:8] == [
+        "run",
+        "--frozen",
+        "--project",
+        str(repo),
+        "mkdocs",
+        "build",
+        "--strict",
+        "-f",
+    ]
+
+
+def test_run_docs_build_failure_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _docs_repo(tmp_path / "repo")
+    monkeypatch.chdir(repo)
+    _fake_tool(tmp_path, monkeypatch, "mkdocs", rc=1)
+
+    with pytest.raises(
+        ValidationError, match=r"^strict mkdocs build of docs/site/mkdocs\.yml exited 1$"
+    ):
+        _run_docs_build("rust", repo)
+
+
+def test_run_docs_build_without_mkdocs_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _docs_repo(tmp_path / "repo")
+    monkeypatch.chdir(repo)
+    with (
+        patch(_MOD + ".progress.run", side_effect=FileNotFoundError("No such file: 'mkdocs'")),
+        pytest.raises(ValidationError, match=r"^mkdocs not found: No such file: 'mkdocs'$"),
+    ):
+        _run_docs_build("rust", repo)
+
+
+def test_run_docs_build_refuses_unignored_staging_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _docs_repo(tmp_path / "repo", gitignore="mkdocs.staged.yml\n")
+    monkeypatch.chdir(repo)
+    with (
+        patch(_MOD + ".progress.run") as m_run,
+        pytest.raises(ValidationError, match="docs staging would write paths that are not"),
+    ):
+        _run_docs_build("rust", repo)
+    m_run.assert_not_called()
+    # Nothing was staged.
+    assert not (repo / "docs" / "site" / "docs" / "changelog.md").exists()
+    assert not (repo / "docs" / "site" / "mkdocs.staged.yml").exists()

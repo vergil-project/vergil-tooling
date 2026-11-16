@@ -7,6 +7,7 @@ import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib import git
 from vergil_tooling.lib.ci_evidence import evidence_asset_name
 
 if TYPE_CHECKING:
@@ -81,6 +82,45 @@ def evidence_link_line(repo: str, tag: str, *, has_asset: bool) -> str | None:
     asset = evidence_asset_name(tag)
     url = f"https://github.com/{repo}/releases/download/{tag}/{asset}"
     return f"**CI Evidence:** All gates passed — full audit bundle available. [Download →]({url})"
+
+
+def staging_outputs(
+    *, staged_config: Path, docs_dir: Path, releases_dir: Path, changelog: Path
+) -> list[Path]:
+    """The paths that staging the docs sources in place writes.
+
+    :func:`stage_docs` writes the release index, the changelog when there is
+    one and one page per release note into *docs_dir*; the nav patch goes to
+    *staged_config*, a sibling copy of the tracked mkdocs config. A caller
+    that stages in the working tree checks that each is gitignored before
+    writing any, so staging never dirties it.
+    """
+    paths = [staged_config, docs_dir / "releases" / "index.md"]
+    if changelog.is_file():
+        paths.append(docs_dir / "changelog.md")
+    paths += [docs_dir / "releases" / e.filename for e in collect_releases(releases_dir)]
+    return paths
+
+
+def unignored_staging_error(repo_root: Path, paths: list[Path]) -> str | None:
+    """The error for staging outputs that are not gitignored, or ``None``.
+
+    Staging in place must never dirty the working tree, so a caller refuses
+    before writing anything when this returns a message: a tracked staged
+    copy, or a repo whose gitignore predates the staging patterns.
+    """
+    unignored = [p for p in paths if not git.is_ignored(p)]
+    if not unignored:
+        return None
+    listing = "\n".join(f"  {p.relative_to(repo_root)}" for p in unignored)
+    return (
+        "docs staging would write paths that are not gitignored:\n"
+        f"{listing}\n"
+        "Stop tracking any of these that are committed (vrg-git rm --cached <path>).\n"
+        "The managed .gitignore fence on develop is fixed by vrg-github-repo-config "
+        "update, run by the human or the nightly ops job, through a sync PR; once it "
+        "has merged, bring this branch up to date with develop."
+    )
 
 
 def stage_docs(

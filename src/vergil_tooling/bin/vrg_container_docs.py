@@ -28,7 +28,7 @@ from vergil_tooling.lib import git
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import container_env_prefixes
 from vergil_tooling.lib.container import build_container_args, detect_runtime
-from vergil_tooling.lib.docs import collect_releases
+from vergil_tooling.lib.docs import staging_outputs, unignored_staging_error
 from vergil_tooling.lib.output import emit_error
 from vergil_tooling.lib.process import exec_replace
 from vergil_tooling.lib.versions.extensions.python import source_env
@@ -216,21 +216,15 @@ def _stage_sources(repo_root: Path, config: str) -> str | None:
     releases_dir = repo_root / "releases"
     changelog = repo_root / "CHANGELOG.md"
 
-    generated = [staged_config, docs_dir / "releases" / "index.md"]
-    if changelog.is_file():
-        generated.append(docs_dir / "changelog.md")
-    generated += [docs_dir / "releases" / e.filename for e in collect_releases(releases_dir)]
-    unignored = [p for p in generated if not git.is_ignored(p)]
-    if unignored:
-        listing = "\n".join(f"  {p.relative_to(repo_root)}" for p in unignored)
-        emit_error(
-            "docs staging would write paths that are not gitignored:\n"
-            f"{listing}\n"
-            "Stop tracking any of these that are committed (vrg-git rm --cached <path>).\n"
-            "The managed .gitignore fence on develop is fixed by vrg-github-repo-config "
-            "update, run by the human or the nightly ops job, through a sync PR; once it "
-            "has merged, bring this branch up to date with develop."
-        )
+    generated = staging_outputs(
+        staged_config=staged_config,
+        docs_dir=docs_dir,
+        releases_dir=releases_dir,
+        changelog=changelog,
+    )
+    error = unignored_staging_error(repo_root, generated)
+    if error is not None:
+        emit_error(error)
         return None
 
     stage_rc = vrg_docs_stage.main(
