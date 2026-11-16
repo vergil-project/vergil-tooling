@@ -250,6 +250,26 @@ withdrawn or `triage` advisory and an external report, which stay a
 human's decision. See the
 [CLI reference](../reference/dev/security-record.md#close).
 
+### Adding a note to a record
+
+An advisory's text goes stale as designs change: a resolution is
+superseded, the work is retargeted, a fix lands elsewhere. Keep it
+accurate with `note`, which appends a dated note and never rewrites what
+is there:
+
+```bash
+vrg-security-record note GHSA-xxxx-xxxx-xxxx --file note.md
+```
+
+The note goes under a `Note (<YYYY-MM-DD>):` header at the end of the
+description, before the `Tracking issue:` lines, which stay last. The
+note is private, like the rest of the advisory: write it to a scratch
+file outside the repo, never in a commit, an issue or a PR, and delete
+the file once `note` reports `Noted <GHSA-id> in <org>/.github.` To move
+a record's tracking, use `retarget`, not a note: `note` refuses a note
+with a `Tracking issue:` line. See the
+[CLI reference](../reference/dev/security-record.md#note).
+
 ### When the issue moves
 
 A record's link moves only through `vrg-security-record retarget`, and
@@ -474,8 +494,8 @@ identity's App token or, in human mode, the human's own `gh` login. It
 does not go through `vrg-gh api`, which stays denied to the user agent.
 
 Every user App (`<username>-vergil-user`) needs **Repository security
-advisories: Read and write**, for `vrg-security-record` (`sync` and
-`close` included) and the hooks in `vrg-intake-route` and `vrg-queue`. A human
+advisories: Read and write**, for `vrg-security-record` (`sync`, `close` and
+`note` included) and the hooks in `vrg-intake-route` and `vrg-queue`. A human
 running `vrg-security-record` in human mode needs the same access through
 their own `gh` login. `sync --dry-run` needs only Read.
 
