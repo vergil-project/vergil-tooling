@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.319] - 2026-11-16
+
+### Bug fixes
+
+- require a CI version pin only for a multi-family window (#4513)
+- fail on a package.json that cannot be parsed (#4514)
+
+### Documentation
+
+- add the cross-language tool-ownership guideline (#4515)
+- document planning-queue sizing in the issue standards and guides (#4523)
+
+### Features
+
+- enforce Cargo.lock and keep the warmup from rewriting it (#4483)
+- read and bump Rust workspace versions (#4485)
+- validate every workspace member in the Rust gate (#4491)
+- add the epic-size scale, sizing comment and size record (#4492)
+- add the Cargo updater and its held-back report (#4493)
+- require 100% region coverage and locate uncovered regions (#4499)
+- add the size route and sizing on the way into planning (#4510)
+- show, sort and filter the planning queue by epic size (#4511)
+- check that links to other Vergil docs sites use a versioned path (#4512)
+- add a language-neutral BUILD check kind (#4516)
+- manage the TypeScript base configs as per-language files (#4517)
+- write Rust lint and typecheck reports (#4518)
+- clear an item's epic size when it leaves as a one-off (#4519)
+- add an in-process App token source that mints, renews and revokes repo-scoped tokens (#4520)
+- build the Rust release profile in vrg-validate (#4521)
+- run TypeScript gates on the repo's own tools within accepted ranges (#4522)
+- bump the version of a TypeScript repo's package.json and lockfile (#4524)
+- build TypeScript in validate and at release (#4525)
+- check that TypeScript entry points build on the managed configs (#4526)
+- add prepare, the paths config key and the path fence (#4527)
+- write TypeScript quality, test and audit evidence (#4528)
+- route a registered token source through every gh and git call (#4530)
+- add publish, the CLI modes and the path-fenced self-merging PR (#4497) (#4531)
+
 ## [2.1.318] - 2026-11-16
 
 ### Bug fixes
