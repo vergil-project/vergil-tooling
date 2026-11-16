@@ -2849,11 +2849,23 @@ def test_one_off_size_label_read_failure_is_half_applied(env: Env) -> None:
     env.run.assert_not_called()
 
 
-def test_one_off_clear_missing_token_is_left_as_it_came(env: Env) -> None:
+@pytest.mark.parametrize("step", ["read", "edit", "comment"])
+def test_one_off_clear_missing_token_is_left_as_it_came(env: Env, step: str) -> None:
     _sized_item(env)
-    env.run.side_effect = github.MissingGitHubTokenError(
-        1, ["gh"], "", "GH_TOKEN environment variable"
-    )
+    missing = github.MissingGitHubTokenError(1, ["gh"], "", "GH_TOKEN environment variable")
+    plain_read = env.read_json.side_effect
+
+    def read_json(*args: str) -> object:
+        if step == "read" and args[-1] == "labels" and args[2] == "900":
+            raise missing
+        return plain_read(*args)
+
+    def run(*args: str) -> None:
+        if args[1] == step:
+            raise missing
+
+    env.read_json.side_effect = read_json
+    env.run.side_effect = run
     with pytest.raises(github.MissingGitHubTokenError):
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
 
