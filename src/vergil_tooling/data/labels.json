@@ -24,7 +24,11 @@
     {"name": "deployment", "color": "0052cc", "description": "Deployment task: install/sync merged changes so they are usable; never auto-closed"},
     {"name": "retrospective", "color": "c2e0c6", "description": "Epic retrospective bookend; PR-workable, its docs PR publishes retrospective.md"},
     {"name": "security", "color": "ee0701", "description": "Has a private security record in the org's .github advisories"},
-    {"name": "security-disclosed", "color": "d93f0b", "description": "Past issue that disclosed a security problem publicly; fixed, no private record"}
+    {"name": "security-disclosed", "color": "d93f0b", "description": "Past issue that disclosed a security problem publicly; fixed, no private record"},
+    {"name": "epic-size:S", "color": "c2e0c6", "description": "Planning estimate: epic of 1–9 tasks"},
+    {"name": "epic-size:M", "color": "7fc99a", "description": "Planning estimate: epic of 10–19 tasks"},
+    {"name": "epic-size:L", "color": "3ba86b", "description": "Planning estimate: epic of 20–39 tasks"},
+    {"name": "epic-size:XL", "color": "1a7f37", "description": "Planning estimate: epic of 40+ tasks"}
   ],
   "delete": ["enhancement", "standing"]
 }
