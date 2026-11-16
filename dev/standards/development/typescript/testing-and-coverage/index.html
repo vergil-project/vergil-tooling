@@ -17890,8 +17890,11 @@ deliberate, reviewable decision instead of silent forgotten code.</p>
 </blockquote>
 <h2 id="test-runner-and-coverage-provider">Test Runner and Coverage Provider<a class="headerlink" href="#test-runner-and-coverage-provider" title="Permanent link">&para;</a></h2>
 <p>Tests run through <strong>Vitest</strong>, the mandated runner, with the <strong>V8 coverage
-provider</strong>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vitest<span class="w"> </span>run<span class="w"> </span>--coverage<span class="w"> </span>--coverage.provider<span class="o">=</span>v8<span class="w"> </span>--coverage.thresholds.lines<span class="o">=</span><span class="m">100</span>
+provider</strong>. Both are the repository's own devDependencies, <code>vitest</code> and
+<code>@vitest/coverage-v8</code>, held to accepted major 5 (see
+<a href="../overview/#required-devdependencies-and-their-accepted-majors">Required devDependencies</a>),
+and TEST runs the repository's copy by path:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>node_modules/.bin/vitest<span class="w"> </span>run<span class="w"> </span>--coverage<span class="w"> </span>--coverage.provider<span class="o">=</span>v8<span class="w"> </span>--coverage.thresholds.lines<span class="o">=</span><span class="m">100</span>
 </code></pre></div>
 <p>The <code>--coverage.thresholds.lines=100</code> flag is the gate: Vitest exits non-zero
 when line coverage drops below 100%, so anything under the bar fails the stage.</p>

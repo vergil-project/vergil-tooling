@@ -17874,7 +17874,8 @@ does not choose it. The set is decided and tested in the shareable base tsconfig
 registry (<code>src/vergil_tooling/lib/languages.py</code>), and this page mirrors that
 single source of truth.</p>
 <h2 id="typecheck-is-the-compiler">TYPECHECK Is "The Compiler"<a class="headerlink" href="#typecheck-is-the-compiler" title="Permanent link">&para;</a></h2>
-<p>For TypeScript, the TYPECHECK stage is <code>tsc --noEmit</code>: a full typecheck under the
+<p>For TypeScript, the TYPECHECK stage is <code>tsc --noEmit</code>, run as the
+repository's own <code>node_modules/.bin/tsc</code>: a full typecheck under the
 one canonical type engine with the curated strict set turned on. There is no
 Clang-vs-GCC analog — there is exactly one <code>tsc</code> — so the two-diagnostics win
 comes instead from pairing <code>tsc</code> (structural typing) with typescript-eslint
@@ -17956,8 +17957,11 @@ The complete set enforced today:</p>
 </tr>
 </tbody>
 </table>
-<p>The base pins these against a <strong>stable TypeScript 5.x release</strong> (pinned in the
-dev images), so the set means the same thing on every run.</p>
+<p>The set targets <strong>TypeScript 6.x</strong>: the repository declares <code>typescript</code> as a
+devDependency, and <code>vrg-validate</code> holds both its declared range and its
+installed version to major 6 (see
+<a href="../overview/#required-devdependencies-and-their-accepted-majors">Required devDependencies</a>),
+so the set means the same thing on every run.</p>
 <h2 id="ownership-lives-in-the-base-tsconfig">Ownership Lives in the Base tsconfig<a class="headerlink" href="#ownership-lives-in-the-base-tsconfig" title="Permanent link">&para;</a></h2>
 <p>This page describes the set; it does not choose it. The set is authored and
 tested in the packaged <code>tsconfig.base.json</code> — that is the single source of truth,
