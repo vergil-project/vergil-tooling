@@ -2056,7 +2056,7 @@ A repo with no language resolves to `latest`. See
 | Source | `vergil_tooling.bin.vrg_ci_resolve` |
 | Args | `--format {json,github-output}`, `--repo-root PATH` |
 | Preconditions | `vergil.toml` in the repo root; network access to the published window, or `VRG_VERSION_WINDOW` |
-| Failure mode | `vrg-ci-resolve: error:` on stderr for a missing or invalid `vergil.toml`, an unreadable or malformed window, or a resolution error (a pin outside the window, an app pin of more than one version, a C++ or TypeScript repo with no pin) |
+| Failure mode | `vrg-ci-resolve: error:` on stderr for a missing or invalid `vergil.toml`, an unreadable or malformed window, or a resolution error (a pin outside the window, an app pin of more than one version, a C++ repo, whose window has more than one family, with no pin) |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 
