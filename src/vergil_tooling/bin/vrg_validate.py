@@ -25,6 +25,12 @@ validator that is present but unusable still fails (issue #3650).
 Checks run as progress-framework stages: install is fail_fast,
 everything else is fail_defer so all failures are reported in one run.
 
+A TypeScript repo gets one more stage right after install, whenever any of
+its language checks runs: ``typescript-tools``, fail_fast, which checks that
+the repo declares and installs each required devDependency within Vergil's
+accepted major (:mod:`~vergil_tooling.lib.typescript_tools`), since the
+gates run the repo's own tools from ``node_modules/.bin``.
+
 A repo with none of its language's manifests (a Rust repo with no
 ``Cargo.toml`` yet) is not bootstrapped: the image warmup skips it, and so
 do the install and language stages here, each recorded as a warning that
@@ -58,7 +64,15 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import audit_retry, config, git, progress, rust_coverage, trivy_scan
+from vergil_tooling.lib import (
+    audit_retry,
+    config,
+    git,
+    progress,
+    rust_coverage,
+    trivy_scan,
+    typescript_tools,
+)
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.container_cache import language_sources, unbootstrapped_manifests
 from vergil_tooling.lib.docs import (
@@ -782,6 +796,30 @@ def _install_stage(
     return _command_stage("install", install_cmds, mode="fail_fast")
 
 
+_TYPESCRIPT_TOOLS_STAGE = "typescript-tools"
+
+
+def _typescript_tools_stage(repo_root: Path) -> Stage:
+    """The TypeScript pre-gate stage: the repo's tools, within accepted ranges.
+
+    It runs right after install, whenever any TypeScript language check kind
+    runs, so every TypeScript CI job (one ``--check`` each) enforces it
+    (epic vergil-project/.github#1174, spec §6.3). It runs every check in
+    :data:`~vergil_tooling.lib.typescript_tools.PRE_GATE_CHECKS` and fails
+    with all their problems at once; ``fail_fast``, so no gate runs on a tool
+    outside its accepted range.
+    """
+
+    def fn(_ctx: object) -> None:
+        problems = typescript_tools.run_pre_gate_checks(repo_root)
+        if problems:
+            lines = "".join(f"\n  {problem}" for problem in problems)
+            msg = f"the repo's TypeScript tools are not within Vergil's accepted ranges:{lines}"
+            raise ValidationError(msg)
+
+    return Stage(_TYPESCRIPT_TOOLS_STAGE, fn, mode="fail_fast")
+
+
 def _python_test_stage(
     *,
     parallel: bool,
@@ -1185,7 +1223,11 @@ def _build_stages(
             install_cmds = language_commands(
                 language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
             )
-            names = (["install"] if install_cmds else []) + [kind.value for kind, _ in kind_cmds]
+            names = (
+                (["install"] if install_cmds else [])
+                + ([_TYPESCRIPT_TOOLS_STAGE] if language == "typescript" else [])
+                + [kind.value for kind, _ in kind_cmds]
+            )
             stages.extend(_not_bootstrapped_stage(name, language, missing) for name in names)
         elif kind_cmds:
             install_cmds = language_commands(
@@ -1194,6 +1236,8 @@ def _build_stages(
             install = _install_stage(language, install_cmds, missing, sources, repo_root=repo_root)
             if install is not None:
                 stages.append(install)
+            if language == "typescript" and not missing:
+                stages.append(_typescript_tools_stage(repo_root))
             for kind, cmds in kind_cmds:
                 if language == "rust" and kind is CheckKind.TEST:
                     stages.append(
