@@ -18054,8 +18054,9 @@ and builds one version.</p>
 <ul>
 <li>every pinned version must be in the window, so a pin on a dropped version
   fails the repo's own build;</li>
-<li>C++ and TypeScript versions carry a compiler or runtime family (<code>clang-20</code>,
-  <code>gcc-14</code>, <code>node-24</code>), so those repos must pin;</li>
+<li>a pin is required only for a language whose window has more than one
+  family, since there is no single default: today that is C++ (<code>clang-20</code>,
+  <code>gcc-14</code>). A family prefix alone (<code>node-24</code>) needs no pin;</li>
 <li><code>[ci].primary-version</code> chooses the primary among the resolved versions;
   without it the primary is the newest.</li>
 </ul>

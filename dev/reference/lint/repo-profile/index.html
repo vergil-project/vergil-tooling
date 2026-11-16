@@ -17888,8 +17888,10 @@ on every supported version.</p>
 <ul>
 <li>every pinned version must be in the window;</li>
 <li>an app pin must name exactly one version;</li>
-<li>C++ and TypeScript versions carry a compiler or runtime family
-  (<code>clang-20</code>, <code>gcc-14</code>, <code>node-24</code>), so those repos must pin.</li>
+<li>a language whose window has more than one family must pin, since
+  there is no single default: today that is C++ (<code>clang-20</code>, <code>gcc-14</code>).
+  A family prefix alone (<code>node-24</code>) needs no pin, so an unpinned
+  TypeScript repo follows the window.</li>
 </ul>
 <p>Each violation is an error. <code>[ci].primary-version</code>, when set, must
 name a resolved version; without it the primary is the newest resolved

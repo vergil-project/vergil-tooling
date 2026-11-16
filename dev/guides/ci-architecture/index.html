@@ -18589,8 +18589,11 @@ the required-check computation and the CI setup step (through
   version, the newest in the window.</li>
 <li><code>[ci].versions</code> is an optional pin. Every pinned version must be in the
   window, and an app pin must name exactly one version; either violation is an
-  error. C++ and TypeScript versions carry a family (<code>clang-20</code>, <code>node-24</code>), so
-  those repos must pin.</li>
+  error. A pin is an exception: only a language whose window has more than one
+  family must pin, since there is no single default. Today that is C++, whose
+  versions carry a compiler family (<code>clang-20</code>, <code>gcc-14</code>). A family prefix alone
+  does not need a pin, so an unpinned TypeScript repo follows the window
+  (<code>node-24</code>, <code>node-22</code>) as Python and Rust do.</li>
 <li>The <strong>primary version</strong> is <code>[ci].primary-version</code> when it is set (it must name
   a resolved version), otherwise the newest resolved version.</li>
 </ul>
@@ -18777,8 +18780,9 @@ chosen, and why.</p>
 <p>C++ is the one language with a compiler-family axis: it ships <strong>two</strong>
 image families (<code>dev-cpp-clang</code> / <code>dev-cpp-gcc</code>, and matching <code>prod-</code>
 images) so TYPECHECK and TEST run per compiler and per version. The
-family rides the <code>[ci].versions</code> tag prefix (<code>clang-20</code>, <code>gcc-14</code>), so a
-C++ repo must pin <code>[ci].versions</code>. Only a <code>library</code> can pin more than one
+family rides the <code>[ci].versions</code> tag prefix (<code>clang-20</code>, <code>gcc-14</code>), and
+with two families there is no single default, so a C++ repo must pin
+<code>[ci].versions</code>. Only a <code>library</code> can pin more than one
 entry; an app builds exactly one.</p>
 <h3 id="building-locally">Building locally<a class="headerlink" href="#building-locally" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
