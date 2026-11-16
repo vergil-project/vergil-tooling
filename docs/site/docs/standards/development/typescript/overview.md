@@ -172,9 +172,9 @@ Vergil-shipped base and adds only repo-local paths:
 ```
 
 The strict set lives in the base and is inherited through `extends`, so
-TYPECHECK is a bare `tsc --noEmit` that reads the consumer's own
-`tsconfig.json`. A repository never re-declares the strict flags — it inherits
-them, exactly as a C++ repository inherits the warning set threaded onto every
+TYPECHECK is a bare `tsc --noEmit`, run as the repository's own
+`node_modules/.bin/tsc`, that reads the consumer's own `tsconfig.json`. A
+repository never re-declares the strict flags — it inherits them, exactly as a C++ repository inherits the warning set threaded onto every
 compile line. The concrete set the base carries is documented in
 [Toolchain and Strictness](toolchain-and-strictness.md).
 
@@ -184,7 +184,7 @@ compile line. The concrete set the base carries is documented in
 held to a **100% line threshold per Node version**:
 
 ```bash
-vitest run --coverage --coverage.provider=v8 --coverage.thresholds.lines=100
+node_modules/.bin/vitest run --coverage --coverage.provider=v8 --coverage.thresholds.lines=100
 ```
 
 The gate is a forcing function for explicitness, not a claim that every line was
@@ -200,8 +200,8 @@ version a repo resolves from the version window is a hard CI leg (see the
 
 TypeScript hard gates:
 
-- **TYPECHECK** (once) — `tsc --noEmit` with the curated strict set inherited
-  from the base tsconfig (see
+- **TYPECHECK** (once) — `node_modules/.bin/tsc --noEmit` with the curated
+  strict set inherited from the base tsconfig (see
   [Toolchain and Strictness](toolchain-and-strictness.md)).
 - **LINT** (once) — Prettier `--check` for format, then ESLint's flat config
   with type-aware typescript-eslint rules, carrying the no-standing-suppression
