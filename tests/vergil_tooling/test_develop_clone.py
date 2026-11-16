@@ -179,6 +179,19 @@ def test_clone_with_token_failure_names_repo_not_token(tmp_path: Path) -> None:
     assert "s3cret-token" not in str(info.value)
 
 
+def test_clone_with_token_failure_without_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    def _fail(argv: tuple[str, ...], **_kwargs: object) -> object:
+        raise subprocess.CalledProcessError(128, argv, stderr="")
+
+    with (
+        patch.object(develop_clone.subprocess, "run", side_effect=_fail),
+        pytest.raises(DevelopCloneError, match="exit status 128"),
+        clone_develop("o/r", token="t"),
+    ):
+        pytest.fail("the body must not run when the clone fails")
+    assert capsys.readouterr().err == ""
+
+
 def test_clone_argv_carries_no_token() -> None:
     with (
         patch.object(develop_clone.git, "read_output") as mock_read,

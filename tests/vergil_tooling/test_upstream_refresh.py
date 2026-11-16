@@ -489,7 +489,8 @@ def test_fence_refuses_path_outside_allowlist(tmp_path: Path) -> None:
         {"docker/pins/upstream-refresh.sh": "curl evil\n"},
     )
     assert violations == [
-        "docker/pins/upstream-refresh.sh: refused, not covered by any [upstream-refresh].paths entry"
+        "docker/pins/upstream-refresh.sh: refused, not covered by any "
+        "[upstream-refresh].paths entry"
     ]
 
 
@@ -507,7 +508,9 @@ def test_fence_refuses_github_dir_even_with_star_star(tmp_path: Path) -> None:
 
 def test_fence_refuses_github_dir_case_insensitively() -> None:
     lines = ["diff --git a/x b/x", "@@ -1 +1 @@", "-a", "+b"]
-    violations = fence_violations(_rules("**"), [".GitHub/x.yml"], {".GitHub/x.yml": lines}, None, None)
+    violations = fence_violations(
+        _rules("**"), [".GitHub/x.yml"], {".GitHub/x.yml": lines}, None, None
+    )
     assert len(violations) == 1
     assert ".github/** is never changed" in violations[0]
 
@@ -564,7 +567,9 @@ _DOCKERFILE = (
 _FRAG = "docker/common/x.dockerfile"
 
 
-def _frag_fence(tmp_path: Path, after: str, rules: UpstreamRefreshConfig | None = None) -> list[str]:
+def _frag_fence(
+    tmp_path: Path, after: str, rules: UpstreamRefreshConfig | None = None
+) -> list[str]:
     return _fence(tmp_path, rules or _rules(_FRAGMENT), {_FRAG: _DOCKERFILE}, {_FRAG: after})
 
 
@@ -619,7 +624,10 @@ def test_fence_line_rule_refuses_run_line_change(tmp_path: Path) -> None:
 
 def test_fence_line_rule_refuses_added_file(tmp_path: Path) -> None:
     violations = _fence(
-        tmp_path, _rules(_FRAGMENT), {_FRAG: _DOCKERFILE}, {"docker/common/new": "ARG X_VERSION=1\n"}
+        tmp_path,
+        _rules(_FRAGMENT),
+        {_FRAG: _DOCKERFILE},
+        {"docker/common/new": "ARG X_VERSION=1\n"},
     )
     assert violations == [
         "docker/common/new: refused by the line rule of paths entry 'docker/common/*': "
@@ -654,7 +662,9 @@ def test_fence_version_downgrade_refused(tmp_path: Path) -> None:
     ]
 
 
-@pytest.mark.parametrize(("old", "new"), [("0.60.0", "0.60.0"), ("0.60.0", "0.61.0"), ("1.9", "1.10")])
+@pytest.mark.parametrize(
+    ("old", "new"), [("0.60.0", "0.60.0"), ("0.60.0", "0.61.0"), ("1.9", "1.10")]
+)
 def test_fence_version_equal_or_higher_allowed(tmp_path: Path, old: str, new: str) -> None:
     before = _DOCKERFILE.replace("TRIVY_VERSION=0.60.0", f"TRIVY_VERSION={old}")
     after = before.replace(f"TRIVY_VERSION={old}", f"TRIVY_VERSION={new}") + "ARG Z_VERSION=1\n"
@@ -674,7 +684,9 @@ aarch64 = "{_H1}"
 
 
 def _runtime_fence(tmp_path: Path, after: str) -> list[str]:
-    return _fence(tmp_path, _rules(_RUNTIME), {"runtime.toml": _RUNTIME_TOML}, {"runtime.toml": after})
+    return _fence(
+        tmp_path, _rules(_RUNTIME), {"runtime.toml": _RUNTIME_TOML}, {"runtime.toml": after}
+    )
 
 
 def test_fence_runtime_toml_line_rule_refuses_traversal_pbs_tag(tmp_path: Path) -> None:
@@ -734,6 +746,7 @@ paths = ["vergil.toml", "runtime.toml"]
 
 [[package]]
 builder = "staged"
+noarch = false
 name = "vergil-python3.14"
 upstream-version = "3.14.10+20261026"
 summary = "CPython 3.14 runtime"
@@ -747,6 +760,7 @@ paths = ["opt/python3.14"]
 _PY_315 = """
 [[package]]
 builder = "staged"
+noarch = false
 name = "vergil-python3.15"
 upstream-version = "3.15.0+20261102"
 summary = "CPython 3.15 runtime, new"
@@ -769,7 +783,9 @@ def test_fence_vergil_toml_version_and_summary_allowed(tmp_path: Path) -> None:
     assert _toml_fence(tmp_path, after) == []
 
 
-@pytest.mark.parametrize("value", ["3.14.10+../x", "3.14.10", "3.14.11+2026110", "v3.14.11+20261102"])
+@pytest.mark.parametrize(
+    "value", ["3.14.10+../x", "3.14.10", "3.14.11+2026110", "v3.14.11+20261102"]
+)
 def test_fence_vergil_toml_bad_upstream_version_refused(tmp_path: Path, value: str) -> None:
     violations = _toml_fence(tmp_path, _PY_TOML.replace("3.14.10+20261026", value))
     assert violations == [
@@ -825,17 +841,57 @@ def test_fence_vergil_toml_new_entry_changed_build_command_refused(tmp_path: Pat
 
 
 def test_fence_vergil_toml_new_entry_extra_key_refused(tmp_path: Path) -> None:
-    after = _PY_TOML + _PY_315.replace('builder = "staged"\n', 'builder = "staged"\nnative = true\n')
+    after = _PY_TOML + _PY_315.replace(
+        'builder = "staged"\n', 'builder = "staged"\nnative = true\n'
+    )
     violations = _toml_fence(tmp_path, after)
     assert len(violations) == 1
     assert "'vergil-python3.15': native is not" in violations[0]
 
 
-def test_fence_vergil_toml_new_entry_unrelated_name_refused(tmp_path: Path) -> None:
-    after = _PY_TOML + _PY_315.replace('name = "vergil-python3.15"', 'name = "evil-tool3.15"')
+@pytest.mark.parametrize(
+    "name", ["evil-tool3.15", "other-vergil-python3.15", "vergil-python", "vergil-python3"]
+)
+def test_fence_vergil_toml_new_entry_unrelated_name_refused(tmp_path: Path, name: str) -> None:
+    after = _PY_TOML + _PY_315.replace('name = "vergil-python3.15"', f'name = "{name}"')
     assert _toml_fence(tmp_path, after) == [
-        "vergil.toml: refused, new [[package]] 'evil-tool3.15' is not a series copy: its name "
+        f"vergil.toml: refused, new [[package]] {name!r} is not a series copy: its name "
         r"differs from every existing entry's by more than one \d+\.\d+ series token"
+    ]
+
+
+def test_fence_vergil_toml_series_copy_reports_closest_candidate(tmp_path: Path) -> None:
+    py313 = _PY_315.replace("3.15", "3.13").replace("+20261102", "+20261026")
+    before = _PY_TOML + py313
+    after = before + _PY_315.replace("import sys'", "import os'")
+    violations = _toml_fence(tmp_path, after, before=before)
+    assert violations == [
+        "vergil.toml: refused, new [[package]] 'vergil-python3.15': smoke is not "
+        "'vergil-python3.14''s with 3.14 replaced by 3.15 (a new entry must be a series copy)"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("before_extra", "after_extra"),
+    [("", '\npackage = "x"\n'), ('\npackage = ["x"]\n', "")],
+)
+def test_fence_vergil_toml_malformed_package_refused(
+    tmp_path: Path, before_extra: str, after_extra: str
+) -> None:
+    head = _PY_TOML.split("[[package]]")[0]
+    violations = _toml_fence(tmp_path, after_extra + head, before=before_extra + head)
+    assert violations == ["vergil.toml: refused, [[package]] must be a table or an array of tables"]
+
+
+def test_fence_vergil_toml_single_package_table(tmp_path: Path) -> None:
+    single = _PY_TOML.replace("[[package]]", "[package]")
+    after = single.replace("3.14.10+20261026", "3.14.11+20261102")
+    assert _toml_fence(tmp_path, after, before=single) == []
+    assert _toml_fence(
+        tmp_path / "s", after.replace("noarch = false", "noarch = true"), before=single
+    ) == [
+        "vergil.toml: refused, [[package]] 'vergil-python3.14': noarch changed; only "
+        "upstream-version and summary may change"
     ]
 
 
@@ -884,8 +940,52 @@ def test_fence_vergil_toml_unnamed_entries_refused(tmp_path: Path) -> None:
 
 
 def test_fence_vergil_toml_added_or_deleted_refused() -> None:
-    lines = ["diff --git a/vergil.toml b/vergil.toml", "deleted file mode 100644", "@@ -1 +0,0 @@", "-x"]
-    violations = fence_violations(_rules("vergil.toml"), ["vergil.toml"], {"vergil.toml": lines}, "x", None)
+    lines = [
+        "diff --git a/vergil.toml b/vergil.toml",
+        "deleted file mode 100644",
+        "@@ -1 +0,0 @@",
+        "-x",
+    ]
+    violations = fence_violations(
+        _rules("vergil.toml"), ["vergil.toml"], {"vergil.toml": lines}, "x", None
+    )
+    assert violations == ["vergil.toml: refused, a refresh may edit it but never add or delete it"]
+
+
+# -- failure paths -------------------------------------------------------------
+
+
+def test_git_failure_names_the_command(tmp_path: Path) -> None:
+    with pytest.raises(UpstreamRefreshError, match=r"git diff failed in .* \(exit \d+\)"):
+        diff_changed_lines(tmp_path, _SHA, ["a.txt"])
+
+
+def test_prepare_refuses_non_utf8_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _origin(tmp_path, monkeypatch, "touch \"$(printf '\\377')\"")
+    with pytest.raises(UpstreamRefreshError, match="has a path that is not UTF-8"):
+        prepare(_REPO, tmp_path / "out")
+
+
+def test_fence_refuses_path_with_line_break() -> None:
+    violations = fence_violations(_rules("**"), ["a\nb"], {"a\nb": ["@@"]}, None, None)
+    assert violations == ["'a\\nb': refused, the path contains a NUL or line break"]
+
+
+def test_fence_line_rule_refuses_mode_change(tmp_path: Path) -> None:
+    tree = tmp_path / "t"
+    tree.mkdir()
+    _git(tree, "init", "-q")
+    (tree / "f").write_text("ARG X_VERSION=1\n")
+    _git(tree, "add", "-A")
+    _git(tree, "commit", "-qm", "base")
+    base = _git(tree, "rev-parse", "HEAD")
+    (tree / "f").chmod(0o755)
+    _git(tree, "add", "-A")
+    rule = PathRule(glob="f", lines=_FRAGMENT_RULE)
+    violations = fence_violations(
+        _rules(rule), ["f"], diff_changed_lines(tree, base, ["f"]), None, None
+    )
     assert violations == [
-        "vergil.toml: refused, a refresh may edit it but never add or delete it"
+        "f: refused by the line rule of paths entry 'f': a mode change is not allowed under a "
+        "line rule"
     ]

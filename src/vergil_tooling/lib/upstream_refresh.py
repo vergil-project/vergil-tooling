@@ -337,7 +337,7 @@ def render_body(notes: list[str], paths: list[str]) -> str:
 
 
 def diff_changed_lines(tree: Path, base_sha: str, paths: Sequence[str]) -> dict[str, list[str]]:
-    """Each path's ``git diff -U0 <base_sha>`` in *tree*, as the lines :func:`fence_violations` reads.
+    """Each path's ``git diff -U0 <base_sha>`` in *tree*, as :func:`fence_violations` reads it.
 
     Each value is the path's whole diff section (its header, then its hunks),
     split on ``\\n`` only, so a ``\\r`` stays inside its line. A new file must
@@ -508,6 +508,7 @@ def _line_rule_violations(path: str, glob: str, regex: str, diff: _FileDiff) -> 
     if kinds:
         return [f"{where}: {' and '.join(kinds)} is not allowed under a line rule"]
     pattern = re.compile(regex)
+    groups = _version_groups(pattern)
     violations: list[str] = []
     for removed, added in diff.hunks:
         for sign, side in (("-", removed), ("+", added)):
@@ -516,9 +517,8 @@ def _line_rule_violations(path: str, glob: str, regex: str, diff: _FileDiff) -> 
                 for line in side
                 if not pattern.fullmatch(line)
             )
-        groups = _version_groups(pattern)
-        if groups:
-            violations.extend(_downgrades(path, pattern, groups, removed, added))
+        # With no version group, nothing pairs, so the no-downgrade check finds nothing.
+        violations.extend(_downgrades(path, pattern, groups, removed, added))
     return violations
 
 
@@ -533,7 +533,9 @@ def _version_groups(pattern: re.Pattern[str]) -> list[str]:
     keys' versions (``cpython`` and ``pbs_tag``) names the second
     ``version_<suffix>``.
     """
-    names = [name for name in pattern.groupindex if name == "version" or name.startswith("version_")]
+    names = [
+        name for name in pattern.groupindex if name == "version" or name.startswith("version_")
+    ]
     return sorted(names, key=lambda name: pattern.groupindex[name])
 
 
@@ -638,7 +640,9 @@ def _package_entries(value: object) -> dict[str, dict[str, Any]] | str:
     for entry in entries:
         name = entry.get("name")
         if not isinstance(name, str) or name in by_name:
-            return "every [[package]] entry must have a unique string name for the fence to match it"
+            return (
+                "every [[package]] entry must have a unique string name for the fence to match it"
+            )
         by_name[name] = entry
     return by_name
 
@@ -717,15 +721,15 @@ def _swap(value: object, old: str, new: str) -> object:
     return value
 
 
-def _copy_differences(source: dict[str, Any], entry: dict[str, Any], swap: tuple[str, str]) -> list[str]:
+def _copy_differences(
+    source: dict[str, Any], entry: dict[str, Any], swap: tuple[str, str]
+) -> list[str]:
     """The keys where *entry* is not *source* with the series token swapped."""
     skip = _FREE_PACKAGE_KEYS | {"name"}
     return [
         key
         for key in sorted((set(source) | set(entry)) - skip)
-        if key not in source
-        or key not in entry
-        or _swap(source[key], *swap) != entry[key]
+        if key not in source or key not in entry or _swap(source[key], *swap) != entry[key]
     ]
 
 
