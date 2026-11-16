@@ -18551,7 +18551,13 @@ generates it, for a new repository or for an existing one with
 <li><strong>The <code>CI gates</code> ruleset</strong> is applied to <code>main</code> and <code>develop</code> with
   the required checks listed in <a href="#ci-gates">CI gates</a>. Before it is
   applied, the tool checks that the generated <code>ci.yml</code> produces every
-  required check and fails if it does not.</li>
+  required check and fails if it does not. <code>vrg-github-repo-config</code>
+  runs the same check against the committed <code>ci.yml</code> before it writes
+  the ruleset. <code>[ci].integration-tests = true</code> always fails it, since no
+  reusable workflow runs an integration job yet
+  (<a href="https://github.com/vergil-project/vergil-tooling/issues/2721">#2721</a>):
+  the error names the setting as the cause, and <code>vrg-github-repo-init</code>
+  refuses the setting earlier, before it pushes anything.</li>
 </ul>
 <p>After that, <code>vrg-github-repo-config</code> keeps the repository in line:
 <code>audit</code> reports drift, <code>diff</code> shows the GitHub side's, and <code>update</code>,
@@ -18612,7 +18618,7 @@ is the local command. Nothing else needs to be added to the repository.</p>
 </tr>
 <tr>
 <td><code>test / integration / &lt;version&gt;</code></td>
-<td><code>[ci].integration-tests</code> is on (one per resolved version)</td>
+<td><code>[ci].integration-tests</code> is on (one per resolved version). No CI job produces it yet, so the setting is refused (#2721)</td>
 </tr>
 </tbody>
 </table>

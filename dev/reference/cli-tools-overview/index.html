@@ -22027,6 +22027,19 @@ the warmup deliberately <strong>skips</strong> until the scaffold's
 unwarmed-but-usable container, and the warmup runs normally on every
 later build once the lock is committed
 (<a href="https://github.com/vergil-project/.github/issues/342">epic vergil-project/.github#342</a>).</p>
+<p><strong>Integration tests are refused.</strong> <code>[ci].integration-tests = true</code> would
+make the <code>CI gates</code> ruleset require <code>test / integration / &lt;version&gt;</code>,
+which no vergil-actions CI job produces yet
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/2721">#2721</a>),
+so the repo could never merge a PR. The wizard refuses the setting as
+early as it can name it: <code>--integration-tests</code> fails at argument
+parsing, before step 1 creates the repository, and a "yes" to the
+prompt (or an adopted <code>vergil.toml</code> that sets it) stops the run in
+step 3, before <code>vergil.toml</code> is written and before step 8 makes the
+first push. A resumed run whose committed <code>vergil.toml</code> sets it stops
+before the remaining steps. The config loader still accepts the key,
+so other tools keep working in a repo that sets it.
+<code>--no-integration-tests</code> turns off an adopted repo's setting.</p>
 <table>
 <thead>
 <tr>
@@ -22049,11 +22062,11 @@ later build once the lock is committed
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Loud refusal on a foreign-repo CWD, an occupied clone path, or missing required non-interactive values</td>
+<td>Loud refusal on a foreign-repo CWD, an occupied clone path, missing required non-interactive values, or <code>[ci].integration-tests = true</code></td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success, 1 error</td>
+<td>0 success, 1 error, 2 a refused argument (including <code>--integration-tests</code>)</td>
 </tr>
 <tr>
 <td>Status</td>

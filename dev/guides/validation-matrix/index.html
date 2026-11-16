@@ -18211,8 +18211,10 @@ rulesets that <code>ci-security.yml</code> adds; #4447 makes <code>vrg-semgrep-s
 the one source of that mapping. The CI gates require
 <code>test / integration / &lt;version&gt;</code> when <code>[ci].integration-tests</code> is on,
 but no reusable workflow runs an integration job yet, so such a repo
-could not merge; #4448 either adds the job or refuses the setting. No
-fleet repo turns it on today.</p>
+could not merge. The job stays deferred (#2721); since #4448
+<code>vrg-github-repo-init</code> refuses the setting before it pushes anything,
+and the CI-gates guard names it as the cause. No fleet repo turns it on
+today.</p>
 <h2 id="agent-and-git-wrappers">Agent and Git Wrappers<a class="headerlink" href="#agent-and-git-wrappers" title="Permanent link">&para;</a></h2>
 <h3 id="claude-code-hook-guard">Claude Code hook guard<a class="headerlink" href="#claude-code-hook-guard" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> every <code>Bash</code> tool call in a Claude Code session, in a
