@@ -19,6 +19,7 @@ where it runs. No git hooks are installed: every check runs inside a
 | Versions resolve against the window; toolchain selection; language floor | `vrg-validate` (config check, before any stage) | Yes | Every `vrg-validate` job |
 | Markdown, shell, YAML, Dockerfile, workflow and Ansible lint | `vrg-validate` (common checks) | Yes | `quality / common` |
 | Lint and typecheck | `vrg-validate` | Yes (primary version) | `quality / lint / <version>`, `quality / typecheck / <version>` |
+| Release build | `vrg-validate` (build stage) | Yes (primary version), for a language that turns it on: none yet | -- (no CI job yet) |
 | Tests | `vrg-validate` | Yes (primary version; every version with `--all-versions`, Python only) | `test / unit / <version>` |
 | Dependency audit | `vrg-validate` | Yes (primary version) | `audit / dependencies / <version>` |
 | Custom validator | `vrg-validate` (custom stage) | Yes (primary version) | `quality / custom` (once, primary version) |
@@ -199,9 +200,19 @@ as `quality / common`.
 
 ### Language checks
 
-`vrg-validate` then runs the lint, typecheck, test and audit commands
-for `[project].primary-language`. Pass `--check lint`, `typecheck`,
-`test` or `audit` to run one stage.
+`vrg-validate` then runs the lint, typecheck, build, test and audit
+commands for `[project].primary-language`. Pass `--check lint`,
+`typecheck`, `build`, `test` or `audit` to run one stage.
+
+The build stage runs the language's release build command, the same
+command the release job runs, so a build that would fail at release
+fails on the PR instead. It runs once, on the primary version, and only
+for a language that turns it on. No language does yet: TypeScript's is
+turned on by epic vergil-project/.github#1174, and Rust's by epic
+vergil-project/.github#1165. For a language with no build check,
+`--check build` prints `build: no build check for <language> — nothing
+to run` and exits 0. `vrg-ci-resolve` reports the same answer as its
+`build-enabled` field, the one CI reads.
 
 A repository with none of its language's manifests is not bootstrapped
 yet, such as a Rust repository that `vrg-github-repo-init` created with
@@ -215,8 +226,8 @@ no `Cargo.toml`. The manifests are the ones the dev image's warmup needs:
 | C++ | `conanfile.txt` or `conanfile.py`, `CMakeLists.txt`, `conan.lock` |
 | TypeScript | `package.json`, `package-lock.json` |
 
-For such a repository the install, lint, typecheck, test and audit
-stages do not run. Each is recorded as a warning (⚠) whose reason names
+For such a repository the install, lint, typecheck, build, test and
+audit stages do not run. Each is recorded as a warning (⚠) whose reason names
 the missing manifests, for example `skipped: no Cargo.toml, Cargo.lock (rust repo
 not bootstrapped yet)`, on its row and in the run summary. The common
 checks and the custom validator still run. A warning counts as passed,

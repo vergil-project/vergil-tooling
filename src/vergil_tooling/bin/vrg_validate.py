@@ -2,13 +2,16 @@
 
 Reads primary_language from vergil.toml, then either runs a
 specific check type (--check) or all checks in sequence:
-  common -> install -> lint -> typecheck -> test -> audit -> semgrep -> trivy
-  -> docs -> custom
+  common -> install -> lint -> typecheck -> build -> test -> audit -> semgrep
+  -> trivy -> docs -> custom
 
-The single checks are common, lint, typecheck, test, audit, semgrep, trivy,
-docs and custom. The semgrep stage runs the scan PR CI's ``security / semgrep``
-gate runs, with the same rulesets and fleet exclusions, so a finding fails
-here before the PR is opened (issue #4003). The trivy stage runs the
+The single checks are common, lint, typecheck, build, test, audit, semgrep,
+trivy, docs and custom. The build stage runs the language's release build
+command, for a language that turns it on (epic vergil-project/.github#1174);
+with none, ``--check build`` reports that and exits 0. The semgrep stage
+runs the scan PR CI's ``security / semgrep`` gate runs, with the same
+rulesets and fleet exclusions, so a finding fails here before the PR is
+opened (issue #4003). The trivy stage runs the
 vulnerability scan of PR CI's ``security / trivy`` gate (issue #4445). The
 docs stage runs the strict
 mkdocs build of PR CI's ``docs / docs`` gate when the repo has
@@ -89,6 +92,7 @@ _CHECK_KINDS = {
     "common": None,
     "lint": CheckKind.LINT,
     "typecheck": CheckKind.TYPECHECK,
+    "build": CheckKind.BUILD,
     "test": CheckKind.TEST,
     "audit": CheckKind.AUDIT,
     "semgrep": None,
@@ -105,6 +109,7 @@ _NO_CUSTOM_VALIDATOR = (
 _LANGUAGE_CHECK_ORDER = [
     CheckKind.LINT,
     CheckKind.TYPECHECK,
+    CheckKind.BUILD,
     CheckKind.TEST,
     CheckKind.AUDIT,
 ]
@@ -205,6 +210,9 @@ def main(argv: list[str] | None = None) -> int:
     if not stages:
         if args.check == "custom":
             print(_NO_CUSTOM_VALIDATOR)
+            return 0
+        if args.check == "build":
+            print(f"build: no build check for {language or '<not set>'} — nothing to run")
             return 0
         print(f"No {args.check} commands for language '{language or '<not set>'}'")
         return 0
