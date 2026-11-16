@@ -337,8 +337,14 @@ def _revoke(token: str, step: str) -> None:
     raise AssertionError("unreachable")  # pragma: no cover
 
 
-def _now_text() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+def _log_event(event: str) -> None:
+    """Log one token-lifecycle *event* with the wall-clock time (spec §6.2, Logging).
+
+    Every renewal and revocation goes through here, and *event* is built only
+    from the repo name and the token's age, never from a token, the JWT or
+    the key: one place to check that nothing secret reaches the log.
+    """
+    log.info("%s: %s", datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), event)
 
 
 class AppTokenSource:
@@ -408,21 +414,18 @@ class AppTokenSource:
         if self._token is None:
             self._token = self._mint()
             self._minted_at = self._clock()
-            log.info("%s: minted the automation token for %s", _now_text(), self.repo)
+            _log_event(f"minted the automation token for {self.repo}")
             return self._token
         age = self._clock() - self._minted_at
         if age > self._renew_after:
             old = self._token
             self._token = self._mint()
             self._minted_at = self._clock()
-            log.info(
-                "%s: renewed the automation token for %s (the old one was %ds old)",
-                _now_text(),
-                self.repo,
-                int(age),
+            _log_event(
+                f"renewed the automation token for {self.repo} (the old one was {int(age)}s old)"
             )
             _revoke(old, f"revoking the replaced automation token for {self.repo}")
-            log.info("%s: revoked the replaced automation token for %s", _now_text(), self.repo)
+            _log_event(f"revoked the replaced automation token for {self.repo}")
         return self._token
 
     def close(self) -> None:
@@ -434,7 +437,7 @@ class AppTokenSource:
         if token is None:
             return
         _revoke(token, f"revoking the automation token for {self.repo} on exit")
-        log.info("%s: revoked the automation token for %s on exit", _now_text(), self.repo)
+        _log_event(f"revoked the automation token for {self.repo} on exit")
 
     def _mint(self) -> str:
         """A new token for the repo, its App and identity checked."""

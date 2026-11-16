@@ -360,6 +360,8 @@ def test_renews_after_interval_and_revokes_old(
         assert source.token() == second
     assert gh.revoked == [first, second]
     text = caplog.text
+    assert f"renewed the automation token for {REPO} (the old one was 1801s old)" in text
+    assert "minted the automation token" in text
     assert "renewed the automation token" in text
     assert "revoked the replaced automation token" in text
     assert "on exit" in text
