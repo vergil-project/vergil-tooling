@@ -18397,6 +18397,56 @@ in vergil-actions
 which must match the names these gates write. The Rust test entry requires
 <code>junit.xml</code> from vergil-actions v2.1.76, so a Rust repository needs a
 vergil-tooling release whose test gate writes it (2.1.314 or later).</p>
+<p>A TypeScript repository's gates write their reports at the workspace root
+under these names. Each report comes from the gate's own run, which exits with
+the tool's status, so every report is written whether the gate passes or
+fails:</p>
+<table>
+<thead>
+<tr>
+<th>Gate</th>
+<th>Report file at the workspace root</th>
+<th>Written by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>quality</code> (lint)</td>
+<td><code>quality-eslint.json</code> (ESLint's JSON formatter)</td>
+<td>the gating <code>node_modules/.bin/eslint . --format json --output-file quality-eslint.json</code> run</td>
+</tr>
+<tr>
+<td><code>quality</code> (typecheck)</td>
+<td><code>quality-tsc.txt</code> (text)</td>
+<td>the gating <code>node_modules/.bin/tsc --noEmit --pretty false --diagnostics</code> run, its stdout</td>
+</tr>
+<tr>
+<td><code>test</code></td>
+<td><code>coverage.xml</code> (Cobertura)</td>
+<td>the gating <code>node_modules/.bin/vitest run --coverage …</code> run, copied from <code>coverage/cobertura-coverage.xml</code></td>
+</tr>
+<tr>
+<td><code>test</code></td>
+<td><code>junit.xml</code> (JUnit)</td>
+<td>the same Vitest run, its JUnit reporter</td>
+</tr>
+<tr>
+<td><code>audit</code></td>
+<td><code>npm-audit.json</code> (JSON)</td>
+<td>the gating <code>npm audit --audit-level=high --json</code> run, its stdout</td>
+</tr>
+</tbody>
+</table>
+<p>The lint gate prints each ESLint finding from the report to the log, as
+<code>path:line:column: severity message [rule]</code>. The typecheck report holds
+<code>tsc</code>'s diagnostics, one per line, then the compiler's closing statistics,
+so a clean typecheck still writes real data. The test gate keeps Vitest's
+console output and coverage table; <code>--coverage.reportOnFailure</code> makes Vitest
+write the coverage report when a test fails. <code>TYPESCRIPT_REPORT_FILES</code> in
+vergil-tooling's <code>languages.py</code> names all five, and a TypeScript repository's
+managed <code>.gitignore</code> block ignores them, with Vitest's <code>coverage/</code> directory, so a
+second local <code>vrg-validate</code> never lints the first run's reports. vergil-actions
+stages them once its report table has a TypeScript entry.</p>
 <p><code>quality-common.log</code> is the transcript of <code>vrg-validate --check common</code> and
 <code>quality-custom.log</code> the transcript of <code>vrg-validate --check custom</code>, each
 captured once per run by the <code>quality / common</code> and <code>quality / custom</code> jobs.

@@ -18409,7 +18409,11 @@ exception: the checks above fail it.</p>
 <h2 id="testing-vitest-runner-v8-coverage-default">Testing: Vitest Runner, V8 Coverage Default<a class="headerlink" href="#testing-vitest-runner-v8-coverage-default" title="Permanent link">&para;</a></h2>
 <p><strong>Vitest is the mandated test runner</strong>, run with the V8 coverage provider and
 held to a <strong>100% line threshold per Node version</strong>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>node_modules/.bin/vitest<span class="w"> </span>run<span class="w"> </span>--coverage<span class="w"> </span>--coverage.provider<span class="o">=</span>v8<span class="w"> </span>--coverage.thresholds.lines<span class="o">=</span><span class="m">100</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>node_modules/.bin/vitest<span class="w"> </span>run<span class="w"> </span>--coverage<span class="w"> </span>--coverage.provider<span class="o">=</span>v8<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--coverage.thresholds.lines<span class="o">=</span><span class="m">100</span><span class="w"> </span>--coverage.reportOnFailure<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--coverage.reportsDirectory<span class="o">=</span>coverage<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--coverage.reporter<span class="o">=</span>text<span class="w"> </span>--coverage.reporter<span class="o">=</span>cobertura<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--reporter<span class="o">=</span>default<span class="w"> </span>--reporter<span class="o">=</span>junit<span class="w"> </span>--outputFile.junit<span class="o">=</span>junit.xml
 </code></pre></div>
 <p>The gate is a forcing function for explicitness, not a claim that every line was
 exercised — see <a href="../testing-and-coverage/">Testing and Coverage</a> for the 100%
@@ -18423,17 +18427,23 @@ version a repo resolves from the version window is a hard CI leg (see the
 <ul>
 <li><strong>TYPECHECK</strong> (once) — <code>node_modules/.bin/tsc --noEmit</code> with the curated
   strict set inherited from the base tsconfig (see
-  <a href="../toolchain-and-strictness/">Toolchain and Strictness</a>).</li>
+  <a href="../toolchain-and-strictness/">Toolchain and Strictness</a>). The run writes
+  its diagnostics and closing statistics (<code>--pretty false --diagnostics</code>) to
+  <code>quality-tsc.txt</code>, the typecheck gate's evidence, and prints them to the log.</li>
 <li><strong>LINT</strong> (once) — Prettier <code>--check</code> for format, then ESLint's flat config
   with type-aware typescript-eslint rules, carrying the no-standing-suppression
-  rule (<code>@typescript-eslint/ban-ts-comment</code>).</li>
+  rule (<code>@typescript-eslint/ban-ts-comment</code>). The ESLint run writes its JSON
+  report to <code>quality-eslint.json</code>, the lint gate's evidence, and prints each
+  finding to the log.</li>
 <li><strong>BUILD</strong> (once) — <code>npm ci --ignore-scripts &amp;&amp; npm run build</code>, the release
   build (see <a href="#typecheck-and-the-release-build">Typecheck and the Release Build</a>).</li>
 <li><strong>TEST</strong> (per Node version) — Vitest with the V8 coverage provider, held to
   100% line coverage per Node major (see
-  <a href="../testing-and-coverage/">Testing and Coverage</a>).</li>
-<li><strong>AUDIT</strong> (once) — <code>npm audit --audit-level=high</code>, plus a best-effort
-  license summary. The vulnerability audit covers every package in
+  <a href="../testing-and-coverage/">Testing and Coverage</a>). The run writes
+  <code>junit.xml</code> and Cobertura <code>coverage.xml</code>, even when a test fails.</li>
+<li><strong>AUDIT</strong> (once) — <code>npm audit --audit-level=high --json</code>, plus a best-effort
+  license summary. The audit run writes its JSON to <code>npm-audit.json</code>, the
+  audit gate's evidence, and exits with its own status. The vulnerability audit covers every package in
   <code>package-lock.json</code>, devDependencies included, so a vulnerable docs or test
   tool fails the audit just as a runtime dependency does. The license summary
   still covers production dependencies only.</li>
