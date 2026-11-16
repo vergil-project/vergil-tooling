@@ -22,6 +22,7 @@ vrg-security-record show (GHSA-ID | OWNER/REPO#N)
 vrg-security-record retarget GHSA-ID --to 'OWNER/REPO#N' [--to 'OWNER/REPO#N' ...]
 vrg-security-record sync [--dry-run]
 vrg-security-record close GHSA-ID --reason TEXT
+vrg-security-record note GHSA-ID --file FILE
 ```
 
 ## Output rule
@@ -34,10 +35,11 @@ and stderr; its response body is dropped, because for an advisory call it
 may hold the advisory text.
 
 `list --details` is refused when `VRG_EPIC_SWEEP` is set, so advisory
-text can never reach the scheduled sweep's public Actions logs. `sync`
-and `close` print no advisory text at all. `close` does not print its
+text can never reach the scheduled sweep's public Actions logs. `sync`,
+`close` and `note` print no advisory text at all. `close` does not print its
 `--reason` either: the reason goes only into the public comments it
-posts.
+posts. `note` never prints its note, which goes only into the private
+advisory.
 
 ## Where things are created
 
@@ -315,6 +317,52 @@ Before it, each transferred issue gets a line
 `close` needs the same **Repository security advisories: Read and write**
 as `sync`, and runs as the human's own `gh` login or the user App.
 
+## note
+
+```bash
+vrg-security-record note GHSA-xxxx-xxxx-xxxx --file note.md
+```
+
+Appends a dated note to an advisory's description, so a record can be
+kept accurate as designs change: a resolution later superseded, a
+retarget, a fix that landed elsewhere. It is **append-only**: the text
+already there is never changed or removed, so the record keeps its
+history. There is no command that rewrites an advisory's text. It takes
+the org from the current repo's `origin` remote, as `show`, `sync` and
+`close` do.
+
+| Flag | Meaning |
+|---|---|
+| `--file FILE` | Required. The note text, read as UTF-8. It is **private**: it goes only into the advisory, never to stdout, stderr or any issue. |
+
+The note is added at the end of the description under a header line
+`Note (<YYYY-MM-DD>):`, the UTC date of the run, followed by the file's
+text with its leading and trailing blank lines and each line's trailing
+spaces dropped. The advisory's `Tracking issue:` lines are moved after
+it, in their order, so they stay the last lines and `retarget`, `list`
+and `sync` read them as before.
+
+It refuses, changing nothing, when:
+
+- the file cannot be read, or holds no text;
+- any line of the note is a `Tracking issue:` line, which would change
+  what the record tracks: use `retarget` for that;
+- the advisory does not exist in `<org>/.github`;
+- it is an external report, or in any state other than `draft` or
+  `closed` (`published`, `withdrawn`, `triage`), which stay a human's
+  decision.
+
+A re-run with the same file on the same day adds nothing, so a run whose
+response was lost can be repeated safely; it prints the same line. On
+success it prints only `Noted <GHSA-id> in <org>/.github.` A failure
+exits 1 with a message naming the advisory and the step, scrubbed of
+`gh`'s response body, as the other subcommands do.
+
+Keep the note file out of the repo, in a scratch directory, and delete
+it once the note is recorded. `note` needs **Repository security
+advisories: Read and write** on `<org>/.github`, as `sync` and `close`
+do.
+
 ## Related commands
 
 These commands read or move records as part of their own work:
@@ -354,5 +402,5 @@ These commands read or move records as part of their own work:
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Refused (a private `.github`, a duplicate, bad refs, an unreadable file, `--details` under the sweep, a `close` the checks refuse), a partial pair, a failed retarget or close, a broken pair found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
+| 1 | Refused (a private `.github`, a duplicate, bad refs, an unreadable file, `--details` under the sweep, a `close` or `note` the checks refuse), a partial pair, a failed retarget, close or note, a broken pair found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
 | 2 | Invalid arguments |

@@ -14,7 +14,8 @@ remains.
 
 This module owns the advisories REST API, the two reference lines, pair
 classification, :func:`retarget`, the one way a link moves, and
-:func:`close_record`, which closes an advisory with a public reason.
+:func:`close_record`, which closes an advisory with a public reason, and
+:func:`note_record`, which appends a dated note to an advisory's description.
 
 **Output rule.** An advisory's ``summary`` and ``description`` reach a caller
 only through :func:`read_text`. :class:`Advisory` has no text field, the list
@@ -40,6 +41,7 @@ from vergil_tooling.lib.epics import IssueRef
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
+    from datetime import date
 
 SECURITY_LABEL = "security"
 DISCLOSED_LABEL = "security-disclosed"
@@ -275,8 +277,9 @@ def list_advisories(home: str) -> list[Advisory]:
 def read_text(home: str, ghsa_id: str) -> tuple[str, str]:
     """Return an advisory's ``(summary, description)``.
 
-    The only path to an advisory's text; for ``show``, ``list --details`` and
-    :func:`retarget`'s rewrite, never for anything that prints to a log.
+    The only path to an advisory's text; for ``show``, ``list --details``,
+    :func:`retarget`'s rewrite and :func:`note_record`'s append, never for
+    anything that prints to a log.
     """
     with _no_text():
         raw: Any = github.read_json(
@@ -794,3 +797,84 @@ def close_record(home: str, ghsa_id: str, reason: str) -> CloseResult:
         with _step(ghsa_id, "setting the state to closed", CloseError):
             set_state(home, ghsa_id, "closed")
     return CloseResult(issues=tuple(current), notes=tuple(notes), closed=closing)
+
+
+# --- note -------------------------------------------------------------------
+
+
+class NoteError(RuntimeError):
+    """A :func:`note_record` refusal or failed step; the message names IDs only."""
+
+
+def note_header(day: date) -> str:
+    """The line a note starts with: ``Note (<YYYY-MM-DD>):``."""
+    return f"Note ({day.isoformat()}):"
+
+
+def check_note(note: str) -> str:
+    """*note* with its outer blank lines and every line's trailing spaces dropped.
+
+    :class:`NoteError` when it is empty, or when any of its lines is an exact
+    ``Tracking issue:`` line: the note would then change what the record
+    tracks, which only :func:`retarget` may do. The message never quotes the
+    note.
+    """
+    text = "\n".join(line.rstrip() for line in note.splitlines()).strip("\n")
+    if not text.strip():
+        raise NoteError("the note is empty")
+    if _TRACKING_RE.search(text):
+        raise NoteError(
+            "the note has a 'Tracking issue:' line, which would change what the record "
+            "tracks; use retarget to move a record's tracking"
+        )
+    return text
+
+
+def with_note(description: str, note: str, day: date) -> str:
+    """*description* with *note* appended under :func:`note_header`.
+
+    The ``Tracking issue:`` lines are kept, in their order, as the last lines,
+    so :func:`retarget`, :func:`list_advisories` and the sync read them as
+    before.
+    """
+    tracking = parse_tracking(description)
+    kept = re.sub(r"\n{3,}", "\n\n", _TRACKING_RE.sub("", description)).rstrip()
+    block = f"{note_header(day)}\n{note}"
+    text = f"{kept}\n\n{block}" if kept else block
+    if tracking:
+        text += "\n\n" + "\n".join(tracking_line(ref) for ref in tracking)
+    return text
+
+
+def note_record(home: str, ghsa_id: str, note: str, day: date) -> bool:
+    """Append *note* to advisory *ghsa_id*'s description in *home*, dated *day*.
+
+    Refuses, changing nothing, when the note is empty or holds a
+    ``Tracking issue:`` line (:func:`check_note`), or when the advisory does
+    not exist, is an external report or is in a state other than ``draft`` or
+    ``closed``. Returns ``False``, writing nothing, when the description
+    already holds this exact dated note, so a re-run after a lost response
+    never adds it twice; ``True`` once it is written.
+
+    Any failure raises :class:`NoteError` naming the advisory and the step,
+    scrubbed of ``gh`` stdout. Neither the note nor the description ever
+    reaches a message.
+    """
+    text = check_note(note)
+    with _step(ghsa_id, "reading the advisories", NoteError):
+        advisory = {a.ghsa_id: a for a in list_advisories(home)}.get(ghsa_id)
+    if advisory is None:
+        raise NoteError(f"advisory {ghsa_id} does not exist in {home}")
+    if advisory.external or advisory.state not in _SYNCED_STATES:
+        kind = "an external report" if advisory.external else f"in state {advisory.state}"
+        raise NoteError(
+            f"advisory {ghsa_id} is {kind}; note only annotates a draft or closed "
+            "security record"
+        )
+    with _step(ghsa_id, "reading the description", NoteError):
+        _summary, description = read_text(home, ghsa_id)
+    if f"{note_header(day)}\n{text}" in description:
+        return False
+    with _step(ghsa_id, "writing the note", NoteError):
+        _write_description(home, ghsa_id, with_note(description, text, day))
+    return True

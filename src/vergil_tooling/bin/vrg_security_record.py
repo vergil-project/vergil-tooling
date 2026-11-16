@@ -19,6 +19,9 @@ neutral ``security``-labelled intake issue carrying only a pointer to it.
   required ``--reason``: it first posts ``Security record <GHSA> closed:
   <reason>`` on every issue the record tracks, the audit trail
   (vergil-tooling#4000).
+- ``note`` appends a dated note, read from a file, to an advisory's
+  description, keeping the ``Tracking issue:`` lines last; it is append-only
+  and prints only ``Noted <GHSA> in <org>/.github.`` (vergil-tooling#3998).
 - ``sync`` runs the security-records pass over the org: it sets each paired
   advisory to ``closed`` or ``draft`` from its issues and reports broken
   pairs and unpaired external reports; ``--dry-run`` previews it. It needs
@@ -38,6 +41,7 @@ import re
 import shlex
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -75,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
             return _sync(args)
         if args.command == "close":
             return _close(args)
+        if args.command == "note":
+            return _note(args)
         return _retarget(args)
     except _RefusedError as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
@@ -458,6 +464,25 @@ def _close(args: argparse.Namespace) -> int:
     return 0
 
 
+def _note(args: argparse.Namespace) -> int:
+    ghsa_id = _ghsa(args.ghsa, "GHSA")
+    note = _read_file(args.file, "--file")
+    try:
+        note = security_records.check_note(note)
+    except security_records.NoteError as exc:
+        raise _RefusedError(f"--file: {exc}") from None
+    org = _detected_org()
+    with github.target_org(org):
+        home = security_records.advisory_home(org)
+        try:
+            security_records.note_record(home, ghsa_id, note, datetime.now(UTC).date())
+        except security_records.NoteError as exc:
+            print(f"{_PROG}: {_reason(exc)}", file=sys.stderr)
+            return 1
+    print(f"Noted {ghsa_id} in {home}.")
+    return 0
+
+
 def _sync(args: argparse.Namespace) -> int:
     org = _detected_org()
     with github.target_org(org):
@@ -533,6 +558,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         help="Why the record is closed: one neutral line, public, no advisory details",
     )
+
+    note = sub.add_parser(
+        "note",
+        help="Append a dated note from a file to an advisory's description",
+        description=(
+            "Append the text of --file to a draft or closed advisory's description in "
+            "this repo's org's .github, under a 'Note (<YYYY-MM-DD>):' header (UTC), "
+            "keeping the 'Tracking issue:' lines last. It is append-only: the existing "
+            "text is never changed. It refuses an empty note, a note with a "
+            "'Tracking issue:' line, a missing advisory, an external report and any "
+            "other state. A re-run with the same file on the same day adds nothing. "
+            "It prints only the GHSA ID and the advisory home, never the note."
+        ),
+    )
+    note.add_argument("ghsa", help="The advisory's GHSA ID")
+    note.add_argument("--file", required=True, help="File holding the private note text")
 
     sync = sub.add_parser(
         "sync",

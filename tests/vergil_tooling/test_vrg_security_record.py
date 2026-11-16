@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, call, patch
 
@@ -967,3 +968,96 @@ def test_main_unknown_failure_propagates(env: MagicMock) -> None:
     with pytest.raises(RuntimeError, match="unexpected"):
         main(["list"])
     assert env.list_advisories.mock_calls == [call(HOME)]
+
+
+# --- note (issue #3998) -------------------------------------------------------
+
+# Stands in for the private note text: it must never reach stdout or stderr.
+_NOTE = "FIXTURE-PRIVATE-NOTE-TEXT"
+
+
+@pytest.fixture
+def note_file(tmp_path: Path) -> str:
+    path = tmp_path / "note.md"
+    path.write_text(f"{_NOTE}\n")
+    return str(path)
+
+
+@pytest.mark.parametrize("written", [True, False])
+def test_note_cli_appends_and_prints_ids_only(
+    env: MagicMock, capsys: pytest.CaptureFixture[str], note_file: str, written: bool
+) -> None:
+    before = datetime.now(UTC).date()
+    with patch(f"{_SR}.note_record", return_value=written) as note:
+        assert main(["note", GHSA, "--file", note_file]) == 0
+    home, ghsa, text, day = note.call_args.args
+    assert (home, ghsa, text) == (HOME, GHSA, _NOTE)
+    assert before <= day <= datetime.now(UTC).date()
+    captured = capsys.readouterr()
+    assert captured.out == f"Noted {GHSA} in {HOME}.\n"
+    assert captured.err == ""
+
+
+def test_note_cli_failure_exits_nonzero_without_the_note(
+    env: MagicMock, capsys: pytest.CaptureFixture[str], note_file: str
+) -> None:
+    error = security_records.NoteError(f"advisory {GHSA} does not exist in {HOME}")
+    with patch(f"{_SR}.note_record", side_effect=error):
+        assert main(["note", GHSA, "--file", note_file]) == 1
+    captured = capsys.readouterr()
+    assert captured.err == f"vrg-security-record: advisory {GHSA} does not exist in {HOME}\n"
+    assert captured.out == ""
+    assert _NOTE not in captured.err
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        ("\n  \n", "--file: the note is empty"),
+        (f"{_NOTE}\nTracking issue: org/tool#12\n", "--file: the note has a 'Tracking issue:' line"),
+    ],
+)
+def test_note_cli_refuses_a_bad_note(
+    env: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    content: str,
+    message: str,
+) -> None:
+    path = tmp_path / "note.md"
+    path.write_text(content)
+    with patch(f"{_SR}.note_record") as note:
+        assert main(["note", GHSA, "--file", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert message in err
+    assert _NOTE not in err
+    note.assert_not_called()
+    env.advisory_home.assert_not_called()
+
+
+def test_note_cli_refuses_a_bad_ghsa_or_unreadable_file(
+    env: MagicMock, capsys: pytest.CaptureFixture[str], tmp_path: Path, note_file: str
+) -> None:
+    with patch(f"{_SR}.note_record") as note:
+        assert main(["note", "nope", "--file", note_file]) == 1
+        assert "GHSA must be a GHSA ID" in capsys.readouterr().err
+        assert main(["note", GHSA, "--file", str(tmp_path / "missing.md")]) == 1
+        assert "cannot read --file" in capsys.readouterr().err
+    note.assert_not_called()
+
+
+def test_note_cli_requires_a_file(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["note", GHSA])
+    assert exc.value.code == 2
+    assert "--file" in capsys.readouterr().err
+
+
+def test_note_cli_undetectable_org_is_refused(
+    env: MagicMock, capsys: pytest.CaptureFixture[str], note_file: str
+) -> None:
+    env.detect_org.return_value = None
+    with patch(f"{_SR}.note_record") as note:
+        assert main(["note", GHSA, "--file", note_file]) == 1
+    assert "could not determine the GitHub org" in capsys.readouterr().err
+    note.assert_not_called()

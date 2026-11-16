@@ -6,6 +6,7 @@ import json
 import subprocess
 import traceback
 from dataclasses import fields
+from datetime import date
 from typing import Any, cast
 from unittest.mock import MagicMock, call, patch
 
@@ -17,11 +18,13 @@ from vergil_tooling.lib.security_records import (
     Advisory,
     Classification,
     CloseError,
+    NoteError,
     PrivateHomeError,
     RetargetError,
     SecurityIssue,
     advisory_home,
     advisory_line,
+    check_note,
     classify,
     close_comment,
     close_record,
@@ -29,6 +32,8 @@ from vergil_tooling.lib.security_records import (
     find_duplicate,
     list_advisories,
     mark_issue,
+    note_header,
+    note_record,
     parse_advisory_lines,
     parse_advisory_refs,
     parse_tracking,
@@ -40,6 +45,7 @@ from vergil_tooling.lib.security_records import (
     sync_states,
     tracking_line,
     unmark_issue,
+    with_note,
 )
 
 HOME = "org/.github"
@@ -1372,4 +1378,153 @@ def test_close_list_failure_is_scrubbed(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(github, "read_json_paginated", MagicMock(side_effect=error))
     with pytest.raises(CloseError, match="reading the advisories failed") as excinfo:
         close_record(HOME, GHSA, REASON)
+    assert SECRET not in "".join(traceback.format_exception(excinfo.value))
+
+
+# --- note (issue #3998) -------------------------------------------------------
+
+# Stands in for the private note text: like SECRET, it must never reach a message.
+NOTE = "FIXTURE-PRIVATE-NOTE-TEXT"
+DAY = date(2026, 11, 16)
+LATER = date(2026, 12, 1)
+
+
+def test_note_header_is_dated() -> None:
+    assert note_header(DAY) == "Note (2026-11-16):"
+
+
+def test_note_appends_before_the_tracking_lines(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch, _adv(tracking=(A,)))
+    assert note_record(HOME, GHSA, f"\n{NOTE}  \nsecond line\n\n", DAY) is True
+    assert issues.description == (
+        f"{SECRET}\n\nNote (2026-11-16):\n{NOTE}\nsecond line\n\nTracking issue: org/.github#10"
+    )
+    assert parse_tracking(issues.description) == (A,)
+    # One write, the description only: no state, issue or label change.
+    assert [(m, ep, sorted(body)) for m, ep, body in issues.writes] == [
+        ("PATCH", f"repos/org/.github/security-advisories/{GHSA}", ["description"])
+    ]
+
+
+def test_note_keeps_every_tracking_line_last_in_order() -> None:
+    description = (
+        f"{SECRET}\n\nTracking issue: org/tool#12\n\nmore text\n\nTracking issue: org/.github#10"
+    )
+    result = with_note(description, NOTE, DAY)
+    assert result == (
+        f"{SECRET}\n\nmore text\n\nNote (2026-11-16):\n{NOTE}\n\n"
+        "Tracking issue: org/tool#12\nTracking issue: org/.github#10"
+    )
+    assert parse_tracking(result) == (C, A)
+
+
+@pytest.mark.parametrize(
+    ("description", "expected"),
+    [
+        (SECRET, f"{SECRET}\n\nNote (2026-11-16):\n{NOTE}"),
+        ("", f"Note (2026-11-16):\n{NOTE}"),
+        ("Tracking issue: org/.github#10", f"Note (2026-11-16):\n{NOTE}\n\nTracking issue: org/.github#10"),
+    ],
+)
+def test_with_note_without_text_or_tracking(description: str, expected: str) -> None:
+    assert with_note(description, NOTE, DAY) == expected
+
+
+def test_a_second_note_follows_the_first(issues: Issues, monkeypatch: pytest.MonkeyPatch) -> None:
+    _listing(monkeypatch, _adv(tracking=(A,)))
+    note_record(HOME, GHSA, NOTE, DAY)
+    assert note_record(HOME, GHSA, "a later note", LATER) is True
+    assert issues.description == (
+        f"{SECRET}\n\nNote (2026-11-16):\n{NOTE}\n\nNote (2026-12-01):\na later note"
+        "\n\nTracking issue: org/.github#10"
+    )
+
+
+def test_note_rerun_adds_nothing(issues: Issues, monkeypatch: pytest.MonkeyPatch) -> None:
+    _listing(monkeypatch, _adv(tracking=(A,)))
+    assert note_record(HOME, GHSA, NOTE, DAY) is True
+    written = issues.description
+    assert note_record(HOME, GHSA, f"{NOTE}\n", DAY) is False
+    assert issues.description == written
+    assert len(issues.writes) == 1
+
+
+def test_note_on_a_closed_record(issues: Issues, monkeypatch: pytest.MonkeyPatch) -> None:
+    _listing(monkeypatch, _adv(state="closed"))
+    assert note_record(HOME, GHSA, NOTE, DAY) is True
+    assert NOTE in issues.description
+    assert issues.states == {}
+
+
+@pytest.mark.parametrize(
+    ("advisory", "message"),
+    [
+        (_adv(OTHER), f"advisory {GHSA} does not exist in {HOME}"),
+        (_adv(state="published"), "is in state published; note only annotates a draft or closed"),
+        (_adv(state="withdrawn"), "is in state withdrawn"),
+        (_adv(state="triage"), "is in state triage"),
+        (_adv(external=True), "is an external report"),
+    ],
+)
+def test_note_refuses_an_advisory_it_must_not_annotate(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch, advisory: Advisory, message: str
+) -> None:
+    _listing(monkeypatch, advisory)
+    with pytest.raises(NoteError, match=message) as excinfo:
+        note_record(HOME, GHSA, NOTE, DAY)
+    assert NOTE not in str(excinfo.value)
+    assert issues.writes == []
+
+
+@pytest.mark.parametrize(
+    ("note", "message"),
+    [
+        ("", "the note is empty"),
+        (" \n\t\n", "the note is empty"),
+        (f"{NOTE}\nTracking issue: org/tool#12\n", "has a 'Tracking issue:' line"),
+    ],
+)
+def test_note_refuses_a_bad_note(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch, note: str, message: str
+) -> None:
+    listed = _listing(monkeypatch, _adv())
+    with pytest.raises(NoteError, match=message) as excinfo:
+        note_record(HOME, GHSA, note, DAY)
+    assert NOTE not in str(excinfo.value)
+    listed.assert_not_called()
+    assert issues.writes == []
+
+
+def test_check_note_keeps_a_mention_of_tracking_mid_line() -> None:
+    text = "see the line Tracking issue: org/tool#12 above"
+    assert check_note(f"{text}\r\n") == text
+
+
+@pytest.mark.parametrize(
+    ("fail_on", "step"),
+    [
+        (f"GET repos/org/.github/security-advisories/{GHSA}", "reading the description"),
+        (f"PATCH repos/org/.github/security-advisories/{GHSA}", "writing the note"),
+    ],
+)
+def test_note_names_the_failed_step(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch, fail_on: str, step: str
+) -> None:
+    _listing(monkeypatch, _adv())
+    issues.fail_on = fail_on
+    with pytest.raises(NoteError) as excinfo:
+        note_record(HOME, GHSA, NOTE, DAY)
+    assert str(excinfo.value).startswith(f"advisory {GHSA}: {step} failed: ")
+    rendered = "".join(traceback.format_exception(excinfo.value))
+    assert SECRET not in rendered
+    assert NOTE not in rendered
+
+
+def test_note_list_failure_is_scrubbed(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = github.GitHubAPIError(1, ("gh", "api", "x"), SECRET, "HTTP 500")
+    monkeypatch.setattr(github, "read_json_paginated", MagicMock(side_effect=error))
+    with pytest.raises(NoteError, match="reading the advisories failed") as excinfo:
+        note_record(HOME, GHSA, NOTE, DAY)
     assert SECRET not in "".join(traceback.format_exception(excinfo.value))
