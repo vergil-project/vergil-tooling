@@ -43,10 +43,16 @@ import logging
 import random
 import subprocess
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, overload
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    # Builds a subprocess environment for one attempt: a dict, or ``None`` to
+    # inherit the caller's environment. A caller whose credentials can change
+    # between attempts (a registered token source that renews, #4496) passes
+    # one, so every attempt, a retry after HTTP 401 included, gets a fresh one.
+    type EnvFactory = Callable[[], dict[str, str] | None]
 
 log = logging.getLogger(__name__)
 
@@ -145,20 +151,56 @@ def compute_delay(attempt: int) -> float:
     return delay * jitter
 
 
-def run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+def run_with_retry(
+    *args: Any, env_factory: EnvFactory | None = None, **kwargs: Any
+) -> subprocess.CompletedProcess[str]:
     """Run ``subprocess.run`` with retry on transient GitHub API errors.
 
     Requires ``check=True`` and ``capture_output=True`` (or equivalent)
     so that ``CalledProcessError`` carries stderr/stdout for detection.
+
+    With *env_factory*, the environment is rebuilt for every attempt and
+    passed as ``env`` (none when the factory returns ``None``, so the child
+    inherits this process's environment). It cannot be combined with an
+    ``env`` keyword.
     """
-    return call_with_retry(lambda: subprocess.run(*args, **kwargs))  # noqa: S603
+    if env_factory is None:
+        return call_with_retry(lambda: subprocess.run(*args, **kwargs))  # noqa: S603
+    if "env" in kwargs:
+        msg = "run_with_retry takes env or env_factory, not both"
+        raise TypeError(msg)
+
+    def _attempt(env: dict[str, str] | None) -> subprocess.CompletedProcess[str]:
+        attempt_kwargs = kwargs if env is None else {**kwargs, "env": env}
+        return subprocess.run(*args, **attempt_kwargs)  # noqa: S603
+
+    return call_with_retry(_attempt, env_factory=env_factory)
 
 
+@overload
 def call_with_retry[T](
     fn: Callable[[], T],
     *,
+    retryable: Callable[[subprocess.CalledProcessError], bool] = ...,
+    env_factory: None = None,
+) -> T: ...
+
+
+@overload
+def call_with_retry[T](
+    fn: Callable[[dict[str, str] | None], T],
+    *,
+    retryable: Callable[[subprocess.CalledProcessError], bool] = ...,
+    env_factory: EnvFactory,
+) -> T: ...
+
+
+def call_with_retry(
+    fn: Callable[..., Any],
+    *,
     retryable: Callable[[subprocess.CalledProcessError], bool] = is_retryable,
-) -> T:
+    env_factory: EnvFactory | None = None,
+) -> Any:
     """Call *fn*, retrying a transient ``CalledProcessError`` with bounded backoff.
 
     The callable form of :func:`run_with_retry`, for code that runs ``gh``
@@ -168,10 +210,14 @@ def call_with_retry[T](
     once; a transient one is retried up to :data:`MAX_RETRIES` times and then
     the original error is raised. A caller whose calls are all reads may pass
     :func:`is_retryable_read`.
+
+    With *env_factory*, *fn* takes the environment as its one argument, and
+    the factory is called afresh before every attempt (#4496), so a retry
+    after HTTP 401 never repeats an expired token.
     """
     for attempt in range(MAX_RETRIES + 1):
         try:
-            return fn()
+            return fn() if env_factory is None else fn(env_factory())
         except subprocess.CalledProcessError as exc:
             if attempt == MAX_RETRIES or not retryable(exc):
                 raise

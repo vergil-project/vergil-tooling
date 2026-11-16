@@ -545,3 +545,52 @@ class TestRetryKnownResource:
             assert retry.retry_known_resource(fn, resource="run 1") == "ok"
         assert len(calls) == 2
         mock_sleep.assert_called_once()
+
+
+# --------------------------------------------------------------------------- env_factory
+# A caller whose credentials can change between attempts rebuilds the
+# environment for every attempt (#4496).
+
+
+def test_run_with_retry_env_factory_rebuilds_env_per_attempt() -> None:
+    envs = iter([{"GH_TOKEN": "t1"}, {"GH_TOKEN": "t2"}])
+    err = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 401: Bad credentials")
+    ok = subprocess.CompletedProcess(["gh"], 0, "", "")
+    with (
+        patch("vergil_tooling.lib.retry.subprocess.run", side_effect=[err, ok]) as mock_run,
+        patch("vergil_tooling.lib.retry.time.sleep"),
+    ):
+        result = retry.run_with_retry(["gh"], check=True, env_factory=lambda: next(envs))
+    assert result is ok
+    assert [c.kwargs["env"] for c in mock_run.call_args_list] == [
+        {"GH_TOKEN": "t1"},
+        {"GH_TOKEN": "t2"},
+    ]
+
+
+def test_run_with_retry_env_factory_none_inherits_the_environment() -> None:
+    ok = subprocess.CompletedProcess(["gh"], 0, "", "")
+    with patch("vergil_tooling.lib.retry.subprocess.run", return_value=ok) as mock_run:
+        retry.run_with_retry(["gh"], check=True, env_factory=lambda: None)
+    mock_run.assert_called_once_with(["gh"], check=True)
+
+
+def test_run_with_retry_refuses_env_and_env_factory() -> None:
+    with pytest.raises(TypeError, match="env or env_factory"):
+        retry.run_with_retry(["gh"], env={}, env_factory=lambda: None)
+
+
+def test_call_with_retry_env_factory_passes_a_fresh_env_per_attempt() -> None:
+    envs = iter([{"GH_TOKEN": "t1"}, {"GH_TOKEN": "t2"}])
+    seen: list[dict[str, str] | None] = []
+    err = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502")
+
+    def fn(env: dict[str, str] | None) -> str:
+        seen.append(env)
+        if len(seen) == 1:
+            raise err
+        return "ok"
+
+    with patch("vergil_tooling.lib.retry.time.sleep"):
+        assert retry.call_with_retry(fn, env_factory=lambda: next(envs)) == "ok"
+    assert seen == [{"GH_TOKEN": "t1"}, {"GH_TOKEN": "t2"}]

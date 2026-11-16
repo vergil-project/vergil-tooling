@@ -28,7 +28,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from vergil_tooling.lib import retry
 from vergil_tooling.lib.process_errors import error_text, failure_detail, failure_message
@@ -51,6 +51,92 @@ _installation_cache: dict[str, str] | None = None
 _target_org: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "vrg_target_org", default=None
 )
+
+
+class TokenProvider(Protocol):  # pragma: no cover
+    """A source of the GitHub token every ``gh`` and ``git`` call starts with.
+
+    :meth:`token` returns the token that is current at the moment of the call,
+    renewing it first when it is due (``app_token.AppTokenSource``, epic
+    vergil-project/.github#1168).
+    """
+
+    def token(self) -> str: ...
+
+
+# The registered token source (#4496). When set, _gh_env() and git._git_env()
+# take every call's token from it, and the retrying callers rebuild their
+# environment for every attempt, so a renewal reaches the next call even in
+# the middle of a long wait_for_checks poll. Unset (None) keeps every call
+# exactly as it was before token sources existed.
+_token_source: contextvars.ContextVar[TokenProvider | None] = contextvars.ContextVar(
+    "vrg_token_source", default=None
+)
+
+# The agent App mode's settings (_load_app_config). A token source refuses to
+# run alongside them, so its repo-scoped tokens and the App mode's cached
+# installation-wide tokens can never mix (spec §6.1).
+_APP_MODE_ENV_VARS = ("VRG_APP_ID", "VRG_PRIVATE_KEY_PATH")
+
+
+class TokenSourceConflictError(RuntimeError):
+    """A token source is registered while the agent App mode is configured."""
+
+
+def _refuse_app_mode() -> None:
+    """Raise :class:`TokenSourceConflictError` if an App-mode variable is set."""
+    for name in _APP_MODE_ENV_VARS:
+        if name in os.environ:
+            msg = (
+                f"a token source is registered but {name} is set: the token source "
+                "and the agent App mode cannot both be configured. Unset "
+                f"{name} for this run."
+            )
+            raise TokenSourceConflictError(msg)
+
+
+def set_token_source(source: TokenProvider | None) -> None:
+    """Register *source* for every later ``gh`` and ``git`` call; ``None`` clears it.
+
+    Raises :class:`TokenSourceConflictError`, registering nothing, when the
+    agent App mode is configured (``VRG_APP_ID`` or ``VRG_PRIVATE_KEY_PATH``).
+    """
+    if source is not None:
+        _refuse_app_mode()
+    _token_source.set(source)
+
+
+@contextlib.contextmanager
+def token_source(source: TokenProvider | None) -> Generator[None]:
+    """Register *source* for the block and restore the previous source on exit.
+
+    Refuses as :func:`set_token_source` does.
+    """
+    if source is not None:
+        _refuse_app_mode()
+    handle = _token_source.set(source)
+    try:
+        yield
+    finally:
+        _token_source.reset(handle)
+
+
+def has_token_source() -> bool:
+    """True when a token source is registered."""
+    return _token_source.get() is not None
+
+
+def registered_token() -> str | None:
+    """The registered source's current token, or ``None`` when none is registered.
+
+    Checked on every call, not only at registration: an App-mode variable
+    set later still raises :class:`TokenSourceConflictError`.
+    """
+    source = _token_source.get()
+    if source is None:
+        return None
+    _refuse_app_mode()
+    return source.token()
 
 
 class NoInstallationError(Exception):
@@ -713,7 +799,14 @@ def _gh_env() -> dict[str, str] | None:
     otherwise the org is resolved from the cwd git remote (the default). In
     App mode with no resolvable org, :class:`NoTargetOrgError` propagates
     rather than returning ``None`` (ambient auth) (#3217).
+
+    A registered token source (:func:`set_token_source`) comes first: its
+    current token is the call's ``GH_TOKEN``, and the App mode is not
+    consulted (#4496).
     """
+    source_token = registered_token()
+    if source_token is not None:
+        return {**os.environ, "GH_TOKEN": source_token}
     org = _target_org.get()
     token = get_installation_token(org=org, require_installation=org is not None)
     if token is None:
@@ -852,11 +945,23 @@ def orphan_grace_secs() -> int:
     return _positive_secs_env(ORPHAN_GRACE_ENV, _ORPHAN_GRACE_SECS)
 
 
+def _gh_env_factory() -> Callable[[], dict[str, str] | None]:
+    """The per-attempt environment builder for a retrying ``gh`` caller.
+
+    With a token source registered, every attempt calls :func:`_gh_env` afresh,
+    so a retry (after HTTP 401 or any other transient error) and every later
+    call get the source's current token (#4496). With none, the environment is
+    built once, here, and reused for every attempt, exactly as before.
+    """
+    if has_token_source():
+        return lambda: _gh_env()
+    env = _gh_env()
+    return lambda: env
+
+
 def _run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
     if "env" not in kwargs:
-        env = _gh_env()
-        if env is not None:
-            kwargs["env"] = env
+        kwargs["env_factory"] = _gh_env_factory()
     try:
         return retry.run_with_retry(*args, **kwargs)
     except subprocess.CalledProcessError as exc:
@@ -890,13 +995,17 @@ def run_tolerating(
       :data:`retry.MAX_RETRIES`, raises :class:`GitHubAPIError`
       (:class:`MissingGitHubTokenError` for a missing token) carrying the
       original exit code and output.
+
+    Each attempt's environment comes from :func:`_gh_env_factory`, so with a
+    token source registered a retry gets the current token (#4496).
     """
-    kwargs: dict[str, Any] = {}
-    env = _gh_env()
-    if env is not None:
-        kwargs["env"] = env
+    env_factory = _gh_env_factory()
     attempt = 0
     while True:
+        kwargs: dict[str, Any] = {}
+        env = env_factory()
+        if env is not None:
+            kwargs["env"] = env
         result = subprocess.run(  # noqa: S603
             cmd, check=False, text=True, capture_output=True, **kwargs
         )
@@ -2765,22 +2874,20 @@ def download_api_binary(endpoint: str, dest: Path) -> None:
     :func:`retry.call_with_retry` never leaves a partial earlier body behind.
     A failure raises :class:`GitHubAPIError` (:class:`MissingGitHubTokenError`
     for a missing token) carrying ``gh``'s stderr, exactly like the other
-    wrappers (issue #3171).
+    wrappers (issue #3171). With a token source registered, every attempt
+    gets the source's current token (#4496).
     """
     cmd = ("gh", "api", endpoint)
-    kwargs: dict[str, Any] = {}
-    env = _gh_env()
-    if env is not None:
-        kwargs["env"] = env
 
-    def _attempt() -> subprocess.CompletedProcess[str]:
+    def _attempt(env: dict[str, str] | None) -> subprocess.CompletedProcess[str]:
+        kwargs: dict[str, Any] = {} if env is None else {"env": env}
         with dest.open("wb") as fh:
             return subprocess.run(  # noqa: S603
                 cmd, check=True, stdout=fh, stderr=subprocess.PIPE, text=True, **kwargs
             )
 
     try:
-        retry.call_with_retry(_attempt)
+        retry.call_with_retry(_attempt, env_factory=_gh_env_factory())
     except subprocess.CalledProcessError as exc:
         error_type = (
             MissingGitHubTokenError if _is_missing_token_error(exc.stderr) else GitHubAPIError
