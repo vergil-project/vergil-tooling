@@ -18254,9 +18254,11 @@ shell suites (vergil-actions#1108).</p>
 </tbody>
 </table>
 <p>Two follow-ups came out of the same review and change no gate's
-decision. The semgrep stage repeats the <code>p/c</code> and <code>p/typescript</code>
-rulesets that <code>ci-security.yml</code> adds; #4447 makes <code>vrg-semgrep-scan</code>
-the one source of that mapping. The CI gates require
+decision. The <code>p/c</code> and <code>p/typescript</code> rulesets were defined both in
+the semgrep stage and in <code>ci-security.yml</code>; since #4447
+<code>vrg-semgrep-scan</code> is the one source of that mapping, and
+<code>ci-security.yml</code>'s copy is redundant until vergil-actions drops it.
+The CI gates require
 <code>test / integration / &lt;version&gt;</code> when <code>[ci].integration-tests</code> is on,
 but no reusable workflow runs an integration job yet, so such a repo
 could not merge. The job stays deferred (#2721); since #4448
@@ -18434,10 +18436,8 @@ manifests and the first sources found, and no language stage runs.</p>
 is opened. <code>--check semgrep</code> runs only this stage. It resolves the
 rulesets the CI job does: the language's registry ruleset (see
 <a href="../ci-architecture/#shared-security-workflow">Shared security workflow</a>), <code>p/dockerfile</code>
-when the repository has a <code>Dockerfile*</code> anywhere, <code>p/github-actions</code>
-when <code>.github/workflows/</code> holds a <code>*.yml</code> or <code>*.yaml</code>, and the
-<code>p/c</code> (C++) or <code>p/typescript</code> (TypeScript) ruleset that
-<code>ci-security.yml</code> adds. The files it looks at are the tracked and
+when the repository has a <code>Dockerfile*</code> anywhere, and <code>p/github-actions</code>
+when <code>.github/workflows/</code> holds a <code>*.yml</code> or <code>*.yaml</code>. The files it looks at are the tracked and
 untracked ones that <code>.gitignore</code> does not exclude. The
 fleet-excluded rules stay excluded, and a finding with an in-source
 <code>nosemgrep</code> suppression is listed but does not fail the stage, as in
