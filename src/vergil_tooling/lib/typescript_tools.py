@@ -20,17 +20,16 @@ all of them at once.
 from __future__ import annotations
 
 import json
-import os
 import re
 from importlib.resources import files
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import version
+from vergil_tooling.lib import git, version
 from vergil_tooling.lib.container import PackageJsonError, read_package_json
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
 _REQUIRED_FILE = "dev-dependencies.json"
 
@@ -431,11 +430,45 @@ def check_entry_points(repo_root: Path) -> list[str]:
 
 # -- one Prettier config ------------------------------------------------------------
 
-_PRUNED_DIRS = frozenset({".git", "node_modules"})
-
 
 def _is_prettier_config(name: str) -> bool:
     return name == ".prettierrc" or name.startswith((".prettierrc.", "prettier.config."))
+
+
+def _repo_prettier_configs(repo_root: Path) -> list[str]:
+    """Every Prettier config file in the repo, tracked or untracked, but the root one.
+
+    ``git ls-files`` lists them without walking what ``.gitignore`` excludes,
+    such as ``.worktrees/`` (each a checkout with its own managed
+    ``.prettierrc.json``), ``build/`` or ``node_modules/``, none of which
+    Prettier reads either (as ``_find_repo_sh_files`` does, issue #3830).
+    A file under ``node_modules`` is left out even when not ignored. A
+    tracked file deleted from the working tree is dropped. A git failure
+    raises rather than checking less.
+    """
+    output = git.read_output(
+        "-C",
+        str(repo_root),
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+        "*prettier*",
+    )
+    found: set[str] = set()
+    for rel in output.split("\0"):
+        parts = rel.split("/")
+        if (
+            rel
+            and rel != _PRETTIER_CONFIG
+            and _is_prettier_config(parts[-1])
+            and "node_modules" not in parts
+            and (repo_root / rel).is_file()
+        ):
+            found.add(rel)
+    return sorted(found)
 
 
 def check_prettier_single_source(repo_root: Path) -> list[str]:
@@ -446,7 +479,8 @@ def check_prettier_single_source(repo_root: Path) -> list[str]:
     source would let an editor format by a config the gate never reads: a
     ``"prettier"`` key in ``package.json``, or any ``.prettierrc``,
     ``.prettierrc.*`` or ``prettier.config.*`` in the tree other than the
-    root ``.prettierrc.json`` (``node_modules`` and ``.git`` are not searched).
+    root ``.prettierrc.json``. What ``.gitignore`` excludes is not searched,
+    and neither is ``node_modules``.
     """
     fix = f"Fix: delete it; the repo's one Prettier config is {_PRETTIER_CONFIG}"
     problems: list[str] = []
@@ -457,14 +491,9 @@ def check_prettier_single_source(repo_root: Path) -> list[str]:
     else:
         if "prettier" in manifest:
             problems.append(f'package.json: has a "prettier" key, a second Prettier config. {fix}')
-    found: list[str] = []
-    for directory, dirnames, filenames in os.walk(repo_root):
-        dirnames[:] = [name for name in dirnames if name not in _PRUNED_DIRS]
-        for name in filenames:
-            path = Path(directory, name).relative_to(repo_root).as_posix()
-            if _is_prettier_config(name) and path != _PRETTIER_CONFIG:
-                found.append(path)
-    problems.extend(f"{path}: a second Prettier config. {fix}" for path in sorted(found))
+    problems.extend(
+        f"{path}: a second Prettier config. {fix}" for path in _repo_prettier_configs(repo_root)
+    )
     return problems
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -593,6 +594,9 @@ def test_entry_points_report_both_problems(tmp_path: Path) -> None:
 
 
 def _prettier_repo(tmp_path: Path, manifest: dict[str, object] | None = None) -> Path:
+    """A real git repository with a package.json and the managed .prettierrc.json."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    (tmp_path / ".gitignore").write_text(".worktrees/\nbuild/\n", encoding="utf-8")
     (tmp_path / "package.json").write_text(
         json.dumps(manifest if manifest is not None else {"name": "x"}), encoding="utf-8"
     )
@@ -608,6 +612,33 @@ def test_one_prettier_config_passes(tmp_path: Path) -> None:
     pkg.mkdir(parents=True)
     (pkg / ".prettierrc").write_text("{}", encoding="utf-8")
     assert check_prettier_single_source(repo) == []
+
+
+def test_gitignored_prettier_configs_are_not_searched(tmp_path: Path) -> None:
+    """A worktree's managed copy, or build scratch, is no second config.
+
+    Prettier skips gitignored files too, so they never change what the gate checks.
+    """
+    repo = _prettier_repo(tmp_path)
+    for path in (".worktrees/issue-1-x/.prettierrc.json", "build/tmp/.prettierrc"):
+        (repo / path).parent.mkdir(parents=True)
+        (repo / path).write_text("{}", encoding="utf-8")
+    assert check_prettier_single_source(repo) == []
+
+
+def test_tracked_prettier_config_deleted_from_disk_is_dropped(tmp_path: Path) -> None:
+    repo = _prettier_repo(tmp_path)
+    (repo / ".prettierrc").write_text("{}", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".prettierrc"], check=True, capture_output=True)
+    (repo / ".prettierrc").unlink()
+    assert check_prettier_single_source(repo) == []
+
+
+def test_prettier_check_outside_a_repo_raises(tmp_path: Path) -> None:
+    """Outside a repository ls-files fails: an error, never 'check less'."""
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(subprocess.CalledProcessError):
+        check_prettier_single_source(tmp_path)
 
 
 def test_prettier_key_in_package_json_fails(tmp_path: Path) -> None:
