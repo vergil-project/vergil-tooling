@@ -262,6 +262,30 @@ which must match the names these gates write. The Rust test entry requires
 `junit.xml` from vergil-actions v2.1.76, so a Rust repository needs a
 vergil-tooling release whose test gate writes it (2.1.314 or later).
 
+A TypeScript repository's gates write their reports at the workspace root
+under these names. Each report comes from the gate's own run, which exits with
+the tool's status, so every report is written whether the gate passes or
+fails:
+
+| Gate    | Report file at the workspace root | Written by                                                         |
+| ------- | --------------------------------- | ------------------------------------------------------------------ |
+| `quality` (lint) | `quality-eslint.json` (ESLint's JSON formatter) | the gating `node_modules/.bin/eslint . --format json --output-file quality-eslint.json` run |
+| `quality` (typecheck) | `quality-tsc.txt` (text) | the gating `node_modules/.bin/tsc --noEmit --pretty false --diagnostics` run, its stdout |
+| `test`  | `coverage.xml` (Cobertura)        | the gating `node_modules/.bin/vitest run --coverage …` run, copied from `coverage/cobertura-coverage.xml` |
+| `test`  | `junit.xml` (JUnit)               | the same Vitest run, its JUnit reporter |
+| `audit` | `npm-audit.json` (JSON)           | the gating `npm audit --audit-level=high --json` run, its stdout |
+
+The lint gate prints each ESLint finding from the report to the log, as
+`path:line:column: severity message [rule]`. The typecheck report holds
+`tsc`'s diagnostics, one per line, then the compiler's closing statistics,
+so a clean typecheck still writes real data. The test gate keeps Vitest's
+console output and coverage table; `--coverage.reportOnFailure` makes Vitest
+write the coverage report when a test fails. `TYPESCRIPT_REPORT_FILES` in
+vergil-tooling's `languages.py` names all five, and a TypeScript repository's
+managed `.gitignore` block ignores them, with Vitest's `coverage/` directory, so a
+second local `vrg-validate` never lints the first run's reports. vergil-actions
+stages them once its report table has a TypeScript entry.
+
 `quality-common.log` is the transcript of `vrg-validate --check common` and
 `quality-custom.log` the transcript of `vrg-validate --check custom`, each
 captured once per run by the `quality / common` and `quality / custom` jobs.
