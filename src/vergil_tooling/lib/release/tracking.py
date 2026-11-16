@@ -174,20 +174,34 @@ def _packages_repo(ctx: ReleaseContext) -> str:
     return f"{orgs.for_vendor(vendor).github_org}/packages"
 
 
+def promote_pending(ctx: ReleaseContext) -> bool:
+    """Whether the promote stage holds vX.Y back for a deferred ``package-index``.
+
+    With promote on and the index missing the release, vX.Y stays on the
+    previous release, so git and packaged installs of vX.Y keep agreeing; the
+    human promotes with ``vrg-promote`` once the index has it (#4293).
+    """
+    return ctx.promote and package_index.PHASE in ctx.deferred_publish_failures
+
+
 def publish_deferred_remedy(ctx: ReleaseContext, jobs: list[str]) -> str:
     """One-line remediation for deferred publishes, per kind of deferred item.
 
     CD publish jobs are re-run through CD; a deferred ``package-index`` is
-    finished in the org's packages repo instead (#3543).
+    finished in the org's packages repo instead (#3543), then promoted with
+    ``vrg-promote`` when the promote stage held vX.Y back (#4293).
     """
     remedies = []
     if any(job != package_index.PHASE for job in jobs):
         remedies.append("re-run the CD publish to deliver the artifacts")
     if package_index.PHASE in jobs:
-        remedies.append(
+        remedy = (
             f"re-run (or wait for) the publish-index workflow in {_packages_repo(ctx)} "
             "and confirm the release's packages appear in the index"
         )
+        if promote_pending(ctx):
+            remedy += f", then run vrg-promote v{ctx.version} to move the rolling tag"
+        remedies.append(remedy)
     return "; ".join(remedies)
 
 
@@ -229,6 +243,15 @@ def comment_publish_deferred(ctx: ReleaseContext, jobs: list[str]) -> None:
             f"`{ctx.version}` packages appear in the index.",
             "",
         ]
+        if promote_pending(ctx):
+            major_minor = ".".join(ctx.version.split(".")[:2])
+            lines += [
+                f"**Then promote**: the rolling tag `v{major_minor}` was not moved and "
+                "stays on the previous release, so git and packaged installs of "
+                f"`v{major_minor}` keep agreeing. Once the packages appear, run "
+                f"`vrg-promote v{ctx.version}`, then close this issue.",
+                "",
+            ]
     lines.append(
         "**Do not** run `vrg-release --resume`: the version is already tagged; "
         "`--resume` is for a *halted* release, not a *completed-with-deferral* one."

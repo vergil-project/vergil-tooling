@@ -29,6 +29,7 @@ from vergil_tooling.lib.release.tracking import (
     comment_phase_complete,
     comment_phase_failed,
     ensure_checklist,
+    promote_pending,
     publish_deferred_remedy,
     tick_stage,
 )
@@ -166,11 +167,14 @@ def build_stages() -> list[Stage]:
             _tracked("confirm-develop", confirm_develop),
             mode="fail_defer",
         ),
-        Stage("promote", _tracked("promote", _promote_phase), mode="fail_defer"),
         # Waits for the published package index before close-finalize, so a
         # miss (a deferred publish) leaves the tracking issue open with the
         # deferral comment (#3557); the consumer refresh then holds on it.
         Stage("package-index", _tracked("package-index", wait_for_index), mode="fail_defer"),
+        # After package-index, so vX.Y moves only once the index has the
+        # release and git and packaged installs of vX.Y agree; a deferred
+        # index skips it, leaving vX.Y on the previous release (#4293).
+        Stage("promote", _tracked("promote", _promote_phase), mode="fail_defer"),
         Stage(
             "close-finalize",
             _tracked("close-finalize", close_and_finalize),
@@ -273,11 +277,29 @@ def _sync_release_branch(ctx: ReleaseContext, pr_url: str) -> None:
 
 
 def _promote_phase(ctx: ReleaseContext) -> None:
-    """Phase 6: update the vX.Y rolling tag (unless --no-promote)."""
+    """Update the vX.Y rolling tag, unless --no-promote or the package index deferred.
+
+    A deferred ``package-index`` means the index does not have the release
+    yet, so moving vX.Y would point git-based installs at a release that
+    packaged installs cannot get. The tag stays on the previous release, and
+    the deferral comment tells the human to run ``vrg-promote`` once the
+    index has it (#4293).
+    """
     if not ctx.promote:
         print("Skipping promote (--no-promote).")
         return
+    if promote_pending(ctx):
+        print(
+            f"Skipping promote: the package index does not have {ctx.version} yet "
+            f"({package_index.PHASE} deferred), so v{_major_minor(ctx)} stays on the "
+            f"previous release. Run vrg-promote v{ctx.version} once the index has it."
+        )
+        return
     promote(ctx.version)
+
+
+def _major_minor(ctx: ReleaseContext) -> str:
+    return ".".join(ctx.version.split(".")[:2])
 
 
 def _publish_status_stage(state: ReleaseState) -> None:
@@ -340,10 +362,17 @@ def _close_finalize_outcome(ctx: ReleaseContext) -> str:
         kinds.append(f"CD publish ({', '.join(cd_jobs)})")
     if package_index.PHASE in jobs:
         kinds.append(f"package index ({package_index.PHASE})")
-    return (
+    outcome = (
         "Tracking issue left open until the deferred publish completes: "
         f"{'; '.join(kinds)}. Repository finalized."
     )
+    if promote_pending(ctx):
+        outcome += (
+            f" Promote pending: `v{_major_minor(ctx)}` was not moved; run "
+            f"`vrg-promote v{ctx.version}` once the index has the release, then close "
+            "this issue."
+        )
+    return outcome
 
 
 def _phase_details(ctx: ReleaseContext, phase: str) -> str:
@@ -392,11 +421,16 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
         if ctx.develop_cd_run_url:
             lines.append(f"Develop CD: {ctx.develop_cd_run_url}")
     elif phase == "promote":
-        if ctx.promote:
-            major_minor = ".".join(ctx.version.split(".")[:2])
-            lines.append(f"Promoted v{major_minor} -> v{ctx.version}")
-        else:
+        if not ctx.promote:
             lines.append("Promote skipped (--no-promote).")
+        elif promote_pending(ctx):
+            lines.append(
+                f"**Promote skipped**: {package_index.PHASE} deferred, so "
+                f"`v{_major_minor(ctx)}` stays on the previous release. Run "
+                f"`vrg-promote v{ctx.version}` once the index has the release."
+            )
+        else:
+            lines.append(f"Promoted v{_major_minor(ctx)} -> v{ctx.version}")
     elif phase == "close-finalize":
         lines.append(_close_finalize_outcome(ctx))
     elif phase == "package-index":
