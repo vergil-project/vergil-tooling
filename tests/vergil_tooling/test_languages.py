@@ -378,7 +378,7 @@ def test_rust_install_commands() -> None:
 # output dedupes the copies ``--all-targets`` gives the lib and its tests).
 _RUST_RENDER = (
     "jq -j -n "
-    "'[inputs | select(.reason == \"compiler-message\") | .message.rendered // empty] "
+    '\'[inputs | select(.reason == "compiler-message") | .message.rendered // empty] '
     "| reduce .[] as $r ([]; if any(.[]; . == $r) then . else . + [$r] end) "
     "| .[]' "
 )
