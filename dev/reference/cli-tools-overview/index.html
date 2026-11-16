@@ -22730,7 +22730,8 @@ markdownlint, yamllint) are available on PATH.</p>
 <h3 id="vrg-validate">vrg-validate<a class="headerlink" href="#vrg-validate" title="Permanent link">&para;</a></h3>
 <p>The unified validation driver. It reads <code>[project].primary-language</code>
 from <code>vergil.toml</code> and runs the stages in order: common checks, the
-language's install, lint, typecheck, test and audit commands, the
+language's install, lint, typecheck, build, test and audit commands
+(build only for a language that turns it on, none yet), the
 semgrep scan of PR CI's <code>security / semgrep</code> gate, the Trivy
 vulnerability scan of its <code>security / trivy</code> gate, the strict mkdocs
 build of its <code>docs / docs</code> gate (a notice and a pass when there is no
@@ -22739,7 +22740,9 @@ build of its <code>docs / docs</code> gate (a notice and a pass when there is no
 stage. <code>--check custom</code> runs the install stage (when the language has
 one) and then the custom stage; with no custom validator it prints one
 "no custom validator" line and exits 0, and a validator that is present
-but not an executable regular file fails. PR CI runs each stage through
+but not an executable regular file fails. <code>--check build</code> for a
+language with no build check prints one "nothing to run" line and exits
+0. PR CI runs each stage through
 the <code>vergil-actions</code> reusable workflows, the custom stage as
 <code>quality / custom</code>. See the <a href="../../guides/validation-matrix/">Validation Matrix</a>
 for every check and where it runs. Every pipeline run, pass or fail,
@@ -22760,7 +22763,7 @@ start, and each stage's status. <code>vrg-merge-review-request</code> reads it.<
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--check {common,lint,typecheck,test,audit,semgrep,trivy,docs,custom}</code>, <code>--all-versions</code> (Python only; alone or with <code>--check test</code>)</td>
+<td><code>--check {common,lint,typecheck,build,test,audit,semgrep,trivy,docs,custom}</code>, <code>--all-versions</code> (Python only; alone or with <code>--check test</code>)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -22843,10 +22846,14 @@ A repo with no language resolves to <code>latest</code>. See
 <a href="../../guides/ci-architecture/#version-resolution">Version resolution</a>.</p>
 <ul>
 <li><code>--format json</code> (default) — one JSON object with <code>versions</code>,
-  <code>primary-version</code>, <code>primary-container-tag</code>, <code>container-tags</code> and
-  <code>container-suffixes</code>.</li>
-<li><code>--format github-output</code> — <code>versions</code>, <code>primary-version</code> and
-  <code>primary-container-tag</code> as <code>key=value</code> lines for <code>$GITHUB_OUTPUT</code>.</li>
+  <code>primary-version</code>, <code>primary-container-tag</code>, <code>container-tags</code>,
+  <code>container-suffixes</code> and <code>build-enabled</code>.</li>
+<li><code>--format github-output</code> — <code>versions</code>, <code>primary-version</code>,
+  <code>primary-container-tag</code> and <code>build-enabled</code> as <code>key=value</code> lines for
+  <code>$GITHUB_OUTPUT</code>.</li>
+<li><code>build-enabled</code> is <code>"true"</code> when the repo's language has a build
+  check (<code>vrg-validate --check build</code> has a command to run), else
+  <code>"false"</code>. CI reads it to decide whether to run its build job.</li>
 <li><code>--repo-root PATH</code> — the directory holding <code>vergil.toml</code> (default:
   the current directory).</li>
 </ul>

@@ -18170,6 +18170,12 @@ where it runs. No git hooks are installed: every check runs inside a
 <td><code>quality / lint / &lt;version&gt;</code>, <code>quality / typecheck / &lt;version&gt;</code></td>
 </tr>
 <tr>
+<td>Release build</td>
+<td><code>vrg-validate</code> (build stage)</td>
+<td>Yes (primary version), for a language that turns it on: none yet</td>
+<td>-- (no CI job yet)</td>
+</tr>
+<tr>
 <td>Tests</td>
 <td><code>vrg-validate</code></td>
 <td>Yes (primary version; every version with <code>--all-versions</code>, Python only)</td>
@@ -18446,9 +18452,18 @@ dev images come from
 <p>The first failing check stops the run. In CI the common checks run once,
 as <code>quality / common</code>.</p>
 <h3 id="language-checks">Language checks<a class="headerlink" href="#language-checks" title="Permanent link">&para;</a></h3>
-<p><code>vrg-validate</code> then runs the lint, typecheck, test and audit commands
-for <code>[project].primary-language</code>. Pass <code>--check lint</code>, <code>typecheck</code>,
-<code>test</code> or <code>audit</code> to run one stage.</p>
+<p><code>vrg-validate</code> then runs the lint, typecheck, build, test and audit
+commands for <code>[project].primary-language</code>. Pass <code>--check lint</code>,
+<code>typecheck</code>, <code>build</code>, <code>test</code> or <code>audit</code> to run one stage.</p>
+<p>The build stage runs the language's release build command, the same
+command the release job runs, so a build that would fail at release
+fails on the PR instead. It runs once, on the primary version, and only
+for a language that turns it on. No language does yet: TypeScript's is
+turned on by epic vergil-project/.github#1174, and Rust's by epic
+vergil-project/.github#1165. For a language with no build check,
+<code>--check build</code> prints <code>build: no build check for &lt;language&gt; — nothing
+to run</code> and exits 0. <code>vrg-ci-resolve</code> reports the same answer as its
+<code>build-enabled</code> field, the one CI reads.</p>
 <p>A repository with none of its language's manifests is not bootstrapped
 yet, such as a Rust repository that <code>vrg-github-repo-init</code> created with
 no <code>Cargo.toml</code>. The manifests are the ones the dev image's warmup needs:</p>
@@ -18482,8 +18497,8 @@ no <code>Cargo.toml</code>. The manifests are the ones the dev image's warmup ne
 </tr>
 </tbody>
 </table>
-<p>For such a repository the install, lint, typecheck, test and audit
-stages do not run. Each is recorded as a warning (⚠) whose reason names
+<p>For such a repository the install, lint, typecheck, build, test and
+audit stages do not run. Each is recorded as a warning (⚠) whose reason names
 the missing manifests, for example <code>skipped: no Cargo.toml, Cargo.lock (rust repo
 not bootstrapped yet)</code>, on its row and in the run summary. The common
 checks and the custom validator still run. A warning counts as passed,

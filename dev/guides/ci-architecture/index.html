@@ -18321,13 +18321,16 @@ one of the two fails the build. The build log names the path it took.</p>
 <a href="../../reference/lint/repo-profile/">repo-profile</a> check, markdownlint,
 shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the
 repository has Ansible content. It then runs the language's lint,
-typecheck, test and audit commands, the semgrep scan of the
+typecheck, build, test and audit commands, the semgrep scan of the
 <code>security / semgrep</code> gate, the Trivy vulnerability scan of the
 <code>security / trivy</code> gate, the strict mkdocs build of the
 <code>docs / docs</code> gate when the repository has <code>docs/site/mkdocs.yml</code>,
-and last the repository's custom validator when it has one. To run
-one stage, pass <code>--check common</code>, <code>lint</code>, <code>typecheck</code>, <code>test</code>,
-<code>audit</code>, <code>semgrep</code>, <code>trivy</code>, <code>docs</code> or <code>custom</code>. The
+and last the repository's custom validator when it has one. The build
+stage runs the language's release build command, for a language that
+turns it on (none yet); <code>vrg-ci-resolve</code>'s <code>build-enabled</code> field says
+whether it does. To run one stage, pass <code>--check common</code>, <code>lint</code>,
+<code>typecheck</code>, <code>build</code>, <code>test</code>, <code>audit</code>, <code>semgrep</code>, <code>trivy</code>, <code>docs</code> or
+<code>custom</code>. The
 <a href="../validation-matrix/">Validation Matrix</a> lists every check and where
 it runs.</p>
 <p>A repository can change the in-container command with
