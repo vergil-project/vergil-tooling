@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.318] - 2026-11-16
+
+### Bug fixes
+
+- refuse integration tests before step 1 creates the repository (#4468)
+- bind-mount a per-user trivy cache directory instead of the named volume (#4479)
+
+### Features
+
+- run the trivy scan of the security / trivy gate in vrg-validate (#4467)
+
+### Refactoring
+
+- make vrg-semgrep-scan the one source of the cpp and typescript rulesets (#4478)
+
 ## [2.1.317] - 2026-11-16
 
 ### Bug fixes

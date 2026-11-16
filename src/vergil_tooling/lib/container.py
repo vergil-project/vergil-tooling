@@ -282,8 +282,12 @@ def build_container_args(
     env_names: Sequence[str] = (),
     extra_env: Mapping[str, str] | None = None,
     version_window: Path | None = None,
+    volumes: Sequence[str] = (),
 ) -> list[str]:
     """Build the container ``run`` argument list.
+
+    *volumes* are extra ``-v`` specs (such as a bind mount
+    ``/host/path:/container/path``), mounted after ``DOCKER_EXTRA_VOLUMES``.
 
     *env_names* are forwarded as bare ``-e NAME``: the runtime copies each value
     from its own environment, so a secret the caller placed there never appears
@@ -331,6 +335,9 @@ def build_container_args(
             vol = vol.strip()
             if vol:
                 container_args.extend(["-v", vol])
+
+    for vol in volumes:
+        container_args.extend(["-v", vol])
 
     if env_prefixes:
         prefixes = tuple(env_prefixes)

@@ -36,6 +36,26 @@ class TestResolveRulesets:
     def test_rust(self) -> None:
         assert resolve_rulesets("rust") == ["p/rust"]
 
+    def test_cpp_maps_to_c(self) -> None:
+        assert resolve_rulesets("cpp") == ["p/c"]
+
+    def test_typescript(self) -> None:
+        assert resolve_rulesets("typescript") == ["p/typescript"]
+
+    def test_extra_config_repeating_the_language_ruleset_is_not_duplicated(self) -> None:
+        # ci-security.yml still passes `--extra-config p/c` for cpp (and
+        # `p/typescript` for typescript) until vergil-actions drops its copy.
+        assert resolve_rulesets("cpp", extra_config=["p/c"]) == ["p/c"]
+        assert resolve_rulesets(
+            "typescript", has_workflows=True, extra_config=["p/typescript", "p/custom"]
+        ) == ["p/typescript", "p/github-actions", "p/custom"]
+
+    def test_extra_config_repeated_entries_kept_once(self) -> None:
+        assert resolve_rulesets("python", extra_config=["p/custom", "p/custom"]) == [
+            "p/python",
+            "p/custom",
+        ]
+
     def test_unknown_language(self) -> None:
         assert resolve_rulesets("cobol") == []
 

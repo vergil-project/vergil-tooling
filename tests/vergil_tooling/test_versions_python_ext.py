@@ -405,6 +405,7 @@ def test_container_run_passes_uv_python(tmp_path: Path) -> None:
         patch(f"{mod}.assert_runtime_available"),
         patch(f"{mod}.ensure_cached_image", return_value="img"),
         patch(f"{mod}.detect_runtime", return_value="docker"),
+        patch(f"{mod}._trivy_cache_mount", return_value="/host/trivy:/var/cache/vergil/trivy"),
         patch(f"{mod}.os.execvp") as mock_exec,
         patch.dict("os.environ", {WINDOW_ENV: _fixture_window_path()}, clear=True),
     ):
@@ -419,6 +420,7 @@ def test_container_run_image_override_sets_no_uv_python(tmp_path: Path) -> None:
         patch(f"{mod}.git.repo_root", return_value=tmp_path),
         patch(f"{mod}.assert_runtime_available"),
         patch(f"{mod}.detect_runtime", return_value="docker"),
+        patch(f"{mod}._trivy_cache_mount", return_value="/host/trivy:/var/cache/vergil/trivy"),
         patch(f"{mod}.os.execvp") as mock_exec,
         patch.dict("os.environ", {"DOCKER_DEV_IMAGE": "custom:img"}, clear=True),
     ):

@@ -630,6 +630,14 @@ def test_build_docker_args_extra_volumes(tmp_path: Path) -> None:
     assert "/c:/d" in args
 
 
+def test_build_container_args_mounts_volumes_after_extra_volumes(tmp_path: Path) -> None:
+    with patch.dict("os.environ", {"DOCKER_EXTRA_VOLUMES": "/a:/b"}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], volumes=("vol:/c", "vol2:/d"))
+    assert args.index("/a:/b") < args.index("vol:/c") < args.index("vol2:/d") < args.index("img:1")
+    assert args[args.index("vol:/c") - 1] == "-v"
+    assert args[args.index("vol2:/d") - 1] == "-v"
+
+
 def test_build_docker_args_empty_extra_volumes(tmp_path: Path) -> None:
     fake_home = tmp_path / "home"
     fake_home.mkdir()

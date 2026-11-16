@@ -1773,10 +1773,13 @@ class TestStepGenerateConfig:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Refused as soon as the answer is resolved: no vergil.toml is written,
-        # nothing is committed and nothing pushed (#4448).
+        # nothing is committed and nothing pushed (#4448). run_wizard asks
+        # before step 1 instead (#4462); should step 3 ever ask a new-repo run,
+        # the refusal names the repository step 1 left behind.
         monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         ctx.work_dir = tmp_path
+        ctx.completed_steps = {1, 2}
         inputs = iter(
             [
                 "5",  # repository-type: tooling
@@ -1804,9 +1807,50 @@ class TestStepGenerateConfig:
             "[ci].integration-tests = true makes the CI-gates ruleset require"
         )
         assert "vergil-project/vergil-tooling#2721" in err
-        assert "Nothing has been pushed and no GitHub settings were applied." in err
+        assert err.rstrip().endswith(
+            "Nothing has been pushed and no GitHub settings were applied, but step 1 "
+            "has created vergil-project/vergil-vm on GitHub (or found it there) and it "
+            "is left in place: delete it, or re-run vrg-github-repo-init "
+            "vergil-project/vergil-vm without integration tests to finish initializing it."
+        )
         assert not (tmp_path / "vergil.toml").exists()
         mock_git.assert_not_called()
+
+    def test_early_answer_is_used_without_asking_again(self, tmp_path: Path) -> None:
+        # run_wizard's answer before step 1 stands in for step 3's prompt (#4462).
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = tmp_path
+        ctx.answered_integration_tests = False
+        prompts: list[str] = []
+        inputs = iter(
+            [
+                "5",  # repository-type: tooling
+                "3",  # primary-language: python
+                "3",  # branching-model: library-release
+                "4",  # versioning-scheme: semver
+                "4",  # release-model: tagged-release
+                "",  # ci versions
+                "y",  # publish releases
+                "y",  # publish docs
+                "",  # vergil version
+                "1",  # license: MIT (option 1)
+                "",  # initial version
+            ]
+        )
+
+        def answer(label: str = "") -> str:
+            prompts.append(label)
+            return next(inputs)
+
+        with (
+            patch("builtins.input", side_effect=answer),
+            patch("vergil_tooling.lib.repo_init.git.run"),
+        ):
+            step_generate_config(ctx)
+
+        assert not any("Integration tests?" in p for p in prompts)
+        assert ctx.integration_tests is False
+        assert "integration-tests = false\n" in (tmp_path / "vergil.toml").read_text()
 
     def test_adopted_toml_with_integration_tests_is_refused(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
@@ -1827,7 +1871,12 @@ class TestStepGenerateConfig:
 
         assert exc.value.code == 1
         err = capsys.readouterr().err
-        assert "the adopted vergil.toml sets integration tests on." in err
+        # An adopt run is refused as adopting, as parse_args says it (#4462).
+        assert err.startswith(
+            "ERROR: Refusing to adopt vergil-project/dormant: "
+            "the adopted vergil.toml sets integration tests on."
+        )
+        assert err.rstrip().endswith("Nothing has been pushed and no GitHub settings were applied.")
         assert "test / integration / <version>" in err
         # The adopted file is left as it was.
         assert (tmp_path / "vergil.toml").read_text() == existing
@@ -1989,6 +2038,7 @@ class TestStepScaffoldLanguage:
         # so its host-written skeleton + resolved lock ride into the next step's
         # ``git add -A`` commit (epic vergil-project/.github#342).
         ctx = RepoInitContext(org="acme", name="demo")
+        ctx.opt_integration_tests = False  # no early integration-tests prompt (#4462)
         steps_run: list[str] = []
 
         def mock_step(label: str) -> Any:
@@ -2745,6 +2795,125 @@ class TestStepGithubConfigExtended:
 
 
 class TestRunWizard:
+    _STEPS = (
+        "step_create_repo",
+        "step_clone",
+        "step_generate_config",
+        "step_scaffold_config_files",
+        "step_scaffold_language",
+        "step_ci_cd_workflows",
+        "step_docs_site",
+        "step_branch_structure",
+        "step_github_config",
+        "step_github_pages",
+    )
+
+    def _run_with_fakes(
+        self, ctx: RepoInitContext, answers: list[str], remote_completed: set[int]
+    ) -> tuple[list[str], list[str]]:
+        """Run the wizard with every step faked; return (steps run, prompts)."""
+        order: list[str] = []
+        prompts: list[str] = []
+        inputs = iter(answers)
+
+        def answer(label: str = "") -> str:
+            prompts.append(label)
+            return next(inputs)
+
+        with contextlib.ExitStack() as stack:
+            for name in self._STEPS:
+                stack.enter_context(
+                    patch(
+                        f"vergil_tooling.lib.repo_init.{name}",
+                        side_effect=lambda *a, _n=name, **kw: order.append(_n),
+                    )
+                )
+            stack.enter_context(
+                patch(
+                    "vergil_tooling.lib.repo_init._check_remote_steps",
+                    return_value=remote_completed,
+                )
+            )
+            stack.enter_context(patch("vergil_tooling.lib.repo_init.check_workflows_registered"))
+            stack.enter_context(
+                patch("vergil_tooling.lib.repo_init.cwd_repo_slug", return_value=None)
+            )
+            stack.enter_context(patch("vergil_tooling.lib.repo_init.restore_generated_config"))
+            stack.enter_context(patch("builtins.input", side_effect=answer))
+            run_wizard(ctx)
+        return order, prompts
+
+    def test_interactive_yes_is_refused_before_step_1(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The answer is asked before step 1 creates the repository, so a yes
+        # leaves nothing behind (#4462).
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        ctx = RepoInitContext(org="vergil-project", name="new-repo")
+
+        with pytest.raises(SystemExit) as exc:
+            self._run_with_fakes(ctx, ["y"], set())
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert err.startswith(
+            "ERROR: Refusing to initialize vergil-project/new-repo: the answer to "
+            "'Integration tests?' sets integration tests on."
+        )
+        assert err.rstrip().endswith("Nothing was changed.")
+        assert ctx.answered_integration_tests is None
+
+    def test_interactive_no_is_asked_once_before_step_1(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="new-repo")
+
+        order, prompts = self._run_with_fakes(ctx, ["n"], set())
+
+        assert len(prompts) == 1
+        assert prompts[0].startswith("Integration tests?")
+        assert order[0] == "step_create_repo"
+        assert ctx.answered_integration_tests is False
+
+    def test_resumed_yes_names_the_repository_step_1_left(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An earlier run's step 1 created the repository: the refusal says so.
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        ctx = RepoInitContext(org="vergil-project", name="new-repo")
+
+        with pytest.raises(SystemExit):
+            self._run_with_fakes(ctx, ["y"], {1})
+
+        err = capsys.readouterr().err
+        assert "step 1 has created vergil-project/new-repo on GitHub" in err
+        assert "delete it, or re-run vrg-github-repo-init vergil-project/new-repo" in err
+
+    @pytest.mark.parametrize(
+        ("adopt", "non_interactive", "flag", "remote_completed"),
+        [
+            (True, False, None, set()),
+            (False, True, None, set()),
+            (False, False, False, set()),
+            (False, False, None, {1, 2, 3}),
+        ],
+        ids=["adopt", "non-interactive", "flag", "step-3-done"],
+    )
+    def test_not_asked_before_step_1(
+        self,
+        adopt: bool,
+        non_interactive: bool,
+        flag: bool | None,
+        remote_completed: set[int],
+    ) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="new-repo", adopt=adopt)
+        ctx.non_interactive = non_interactive
+        ctx.opt_integration_tests = flag
+
+        order, prompts = self._run_with_fakes(ctx, [], remote_completed)
+
+        assert prompts == []
+        assert ctx.answered_integration_tests is None
+        assert order
+
     @pytest.mark.parametrize("remote_completed", [set(), {1, 8}])
     def test_checks_workflow_registration_after_step_8_run_or_skipped(
         self, remote_completed: set[int]
@@ -2752,6 +2921,7 @@ class TestRunWizard:
         # A run stopped by the check skips step 8 when re-run, so the check
         # runs after step 8 either way, before step 9 (#4376).
         ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.opt_integration_tests = False  # no early integration-tests prompt (#4462)
         order: list[str] = []
 
         def record(name: str) -> Any:
@@ -2911,6 +3081,7 @@ class TestRunWizard:
         # #2717 regression: when CWD is a DIFFERENT repo, its own bootstrap
         # commits must not be read as this repo's progress — every step runs.
         ctx = RepoInitContext(org="mnemosys-project", name="docs")
+        ctx.opt_integration_tests = False  # no early integration-tests prompt (#4462)
 
         steps_run: list[int] = []
 
@@ -2961,6 +3132,7 @@ class TestRunWizard:
 
     def test_handles_git_log_failure(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.opt_integration_tests = False  # no early integration-tests prompt (#4462)
 
         steps_run: list[int] = []
 
@@ -3006,6 +3178,7 @@ class TestRunWizard:
 
     def test_no_docs_skips_url(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.opt_integration_tests = False  # no early integration-tests prompt (#4462)
         ctx.publish_docs = False
 
         def mock_step(_step_num: int) -> Any:
@@ -3210,7 +3383,12 @@ class TestRestoreGeneratedConfig:
     @pytest.mark.parametrize(
         ("completed", "state"),
         [
-            ({1, 3, 4}, "Nothing has been pushed and no GitHub settings were applied."),
+            (
+                {1, 3, 4},
+                "Nothing has been pushed and no GitHub settings were applied, but step 1 "
+                "has created vergil-project/demo on GitHub (or found it there) and it is "
+                "left in place",
+            ),
             (
                 {1, 3, 4, 8},
                 "Step 8 had already pushed; this run stops before step 9 applies any "
@@ -3354,7 +3532,8 @@ class TestRestoreGeneratedConfig:
             run_wizard(ctx)
 
         mock_step3.assert_not_called()
-        assert ctx.completed_steps == {1, 3}
+        # Resumed with {1, 3} done; the run then records each step it ran (#4462).
+        assert ctx.completed_steps == set(range(1, 11))
         ci = (tmp_path / ".github" / "workflows" / "ci.yml").read_text()
         assert "      language: python\n" in ci
         assert "container-suffix: base" not in ci

@@ -2,13 +2,15 @@
 
 Reads primary_language from vergil.toml, then either runs a
 specific check type (--check) or all checks in sequence:
-  common -> install -> lint -> typecheck -> test -> audit -> semgrep -> docs
-  -> custom
+  common -> install -> lint -> typecheck -> test -> audit -> semgrep -> trivy
+  -> docs -> custom
 
-The single checks are common, lint, typecheck, test, audit, semgrep, docs
-and custom. The semgrep stage runs the scan PR CI's ``security / semgrep``
+The single checks are common, lint, typecheck, test, audit, semgrep, trivy,
+docs and custom. The semgrep stage runs the scan PR CI's ``security / semgrep``
 gate runs, with the same rulesets and fleet exclusions, so a finding fails
-here before the PR is opened (issue #4003). The docs stage runs the strict
+here before the PR is opened (issue #4003). The trivy stage runs the
+vulnerability scan of PR CI's ``security / trivy`` gate (issue #4445). The
+docs stage runs the strict
 mkdocs build of PR CI's ``docs / docs`` gate when the repo has
 ``docs/site/mkdocs.yml`` (issue #4446).
 ``--check custom`` runs only the repo's custom validator
@@ -48,11 +50,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import audit_retry, config, git, progress
+from vergil_tooling.lib import audit_retry, config, git, progress, trivy_scan
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.container_cache import language_sources, unbootstrapped_manifests
 from vergil_tooling.lib.docs import (
@@ -78,7 +81,7 @@ from vergil_tooling.lib.versions.resolve import resolve_language
 from vergil_tooling.lib.versions.window import load_window
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
 _CHECK_KINDS = {
     "common": None,
@@ -87,6 +90,7 @@ _CHECK_KINDS = {
     "test": CheckKind.TEST,
     "audit": CheckKind.AUDIT,
     "semgrep": None,
+    "trivy": None,
     "docs": None,
     "custom": None,
 }
@@ -806,15 +810,6 @@ def _python_version_test_stage(
     return Stage(f"test (python {version})", fn, mode="fail_defer")
 
 
-# The rulesets ci-security.yml's semgrep job adds through ``extra-config`` for
-# the languages whose ruleset vrg-semgrep-scan does not resolve from the
-# language name alone (vergil-actions .github/workflows/ci-security.yml). Kept
-# in step with that job so the local scan runs the rules the gate runs.
-_SEMGREP_CI_EXTRA_CONFIG: dict[str, list[str]] = {
-    "cpp": ["p/c"],
-    "typescript": ["p/typescript"],
-}
-
 _DOCKERFILE_PREFIX = "Dockerfile"
 _WORKFLOWS_DIR = ".github/workflows/"
 
@@ -836,7 +831,6 @@ def _semgrep_rulesets(language: str | None, repo_root: Path) -> list[str]:
         language or "",
         has_dockerfiles=has_dockerfiles,
         has_workflows=has_workflows,
-        extra_config=_SEMGREP_CI_EXTRA_CONFIG.get(language or ""),
     )
 
 
@@ -889,6 +883,83 @@ def _semgrep_stage(language: str | None, repo_root: Path) -> Stage:
         _run_semgrep(language, repo_root)
 
     return Stage("semgrep", fn, mode="fail_defer")
+
+
+def _stage_trivy_target(repo_root: Path, target: Path) -> None:
+    """Copy the files a CI checkout would hold into *target*.
+
+    The gate scans a fresh checkout, so the scan here sees the repo's
+    tracked and untracked, not ignored, files and nothing else: no
+    ``.venv``, ``node_modules``, ``target`` or ``build`` directory, which CI
+    never has, can add a finding CI would not report.
+    """
+    for rel in _repo_files(repo_root):
+        dest = target / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(repo_root / rel, dest)
+
+
+def _trivy_command(cmd: Sequence[str], cwd: Path) -> int:
+    print(f"Running (trivy): {' '.join(cmd)}")
+    try:
+        return progress.run(cmd, check=False, cwd=cwd)
+    except FileNotFoundError as exc:
+        msg = f"trivy not found: {exc}"
+        raise ValidationError(msg) from exc
+
+
+def _run_trivy(repo_root: Path, sleep: Callable[[float], None] = time.sleep) -> None:
+    """Run the vulnerability scan of PR CI's ``security / trivy`` gate (issue #4445).
+
+    The scan is vergil-actions' ``scan.sh`` (see
+    :mod:`~vergil_tooling.lib.trivy_scan`): ``trivy fs --scanners vuln
+    --severity CRITICAL,HIGH`` with the repo's ``.trivyignore``, run on a
+    copy of the files a checkout holds, so a finding fails here before the
+    PR is opened. The vulnerability database is cached between runs outside
+    the working tree, and the reports go to a temporary directory. A scan
+    that writes no report (a failed database download) is retried as in CI,
+    then fails the stage as a scan error, never as a pass.
+    """
+    try:
+        cache = trivy_scan.cache_dir(repo_root, os.environ)
+    except trivy_scan.TrivyError as exc:
+        raise ValidationError(str(exc)) from exc
+    print(f"trivy: vulnerability database cache {cache}")
+    with tempfile.TemporaryDirectory(prefix="vrg-validate-trivy-") as tmp:
+        target = Path(tmp) / "checkout"
+        workdir = Path(tmp) / "reports"
+        target.mkdir()
+        workdir.mkdir()
+        _stage_trivy_target(repo_root, target)
+        try:
+            with trivy_scan.cache_lock(cache, print):
+                outcome = trivy_scan.run_scan(
+                    target, workdir, cache, run=_trivy_command, log=print, sleep=sleep
+                )
+        except OSError as exc:
+            msg = f"trivy: cannot use the vulnerability database cache {cache}: {exc}"
+            raise ValidationError(msg) from exc
+    if outcome.result == "findings":
+        msg = (
+            f"Trivy found {trivy_scan.SEVERITY} vulnerabilities "
+            f"(exit {outcome.returncode}; see the table above)"
+        )
+        raise ValidationError(msg)
+    if outcome.result == "error":
+        msg = (
+            f"Trivy scan errored (no report produced) after {trivy_scan.SCAN_ATTEMPTS} "
+            "attempts. This is a scan failure, not a vulnerability finding (a failed "
+            "vulnerability database download is the usual cause); see the Trivy errors above"
+        )
+        raise ValidationError(msg)
+    print(f"trivy: no {trivy_scan.SEVERITY} vulnerabilities")
+
+
+def _trivy_stage(repo_root: Path) -> Stage:
+    def fn(_ctx: object) -> None:
+        _run_trivy(repo_root)
+
+    return Stage("trivy", fn, mode="fail_defer")
 
 
 # The mkdocs config CI's ``docs / docs`` job builds (vergil-actions
@@ -999,7 +1070,7 @@ def _build_stages(
 
         stages.append(Stage("common", common_fn, mode="fail_defer"))
 
-    if language is not None and check not in ("common", "semgrep", "docs"):
+    if language is not None and check not in ("common", "semgrep", "trivy", "docs"):
         kinds = [kind for kind in _LANGUAGE_CHECK_ORDER if check is None or check == kind.value]
         kind_cmds = [
             (
@@ -1077,6 +1148,9 @@ def _build_stages(
 
     if check in (None, "semgrep"):
         stages.append(_semgrep_stage(language, repo_root))
+
+    if check in (None, "trivy"):
+        stages.append(_trivy_stage(repo_root))
 
     if check in (None, "docs"):
         stages.append(_docs_stage(language, repo_root))

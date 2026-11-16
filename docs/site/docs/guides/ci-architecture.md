@@ -88,11 +88,12 @@ one of the two fails the build. The build log names the path it took.
 shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the
 repository has Ansible content. It then runs the language's lint,
 typecheck, test and audit commands, the semgrep scan of the
-`security / semgrep` gate, the strict mkdocs build of the
+`security / semgrep` gate, the Trivy vulnerability scan of the
+`security / trivy` gate, the strict mkdocs build of the
 `docs / docs` gate when the repository has `docs/site/mkdocs.yml`,
 and last the repository's custom validator when it has one. To run
 one stage, pass `--check common`, `lint`, `typecheck`, `test`,
-`audit`, `semgrep`, `docs` or `custom`. The
+`audit`, `semgrep`, `trivy`, `docs` or `custom`. The
 [Validation Matrix](validation-matrix.md) lists every check and where
 it runs.
 
@@ -244,11 +245,14 @@ standards-compliance job is gone: PR issue linkage is now checked by
 
 !!! tip "Semgrep rulesets"
     `vrg-semgrep-scan` maps the language to a registry ruleset:
-    `python` and `rust` map to `p/<language>`, and `go`
-    maps to `p/golang`. It adds `p/dockerfile` when the repository has
-    Dockerfiles and `p/github-actions` when it has workflows.
-    `ci-security.yml` adds `p/c` for `cpp` and `p/typescript` for
-    `typescript`.
+    `python`, `rust` and `typescript` map to `p/<language>`, `go`
+    maps to `p/golang`, and `cpp` maps to `p/c`. It adds `p/dockerfile`
+    when the repository has Dockerfiles and `p/github-actions` when it
+    has workflows. This mapping in `vrg-semgrep-scan` is the only one:
+    CI's semgrep job and the local `vrg-validate` semgrep stage both use
+    it. A ruleset passed again through `--extra-config` is scanned once.
+    `p/c` covers `.c` files only: the community registry has no C++
+    rules, so C++ static analysis comes from the quality stage.
 
 #### Fleet-excluded semgrep rules
 
