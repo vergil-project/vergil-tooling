@@ -797,7 +797,16 @@ deferral — so no review skill hand-rolls them. Routes:
   repo (transfer, or recreate with a link back when GitHub refuses the
   transfer) and link it under that repo's ad-hoc epic (default `adhoc`) or the
   named epic. A planning item's `in-progress` label is removed from the moved
-  issue once the move has settled; a recreated issue never carries it.
+  issue once the move has settled; a recreated issue never carries it. A
+  one-off also ends the item's estimated size, from intake, planning or
+  deferred alike: a recreated issue never carries an `epic-size:*` label, and
+  a transferred or same-repo issue has every one removed once the move has
+  settled. When the item carried a size (an `epic-size:*` label, or any
+  `Sized …` comment), the transferred or same-repo issue then gets the
+  marker `Size cleared <YYYY-MM-DD>: moved out of planning as a one-off.`,
+  so the sizing comments it carries no longer count. This needs no trusted
+  authors configured. If a step fails after the move, the command fails
+  loudly, naming the moved item and the by-hand fix for each step not done.
 - `planning` — reparent the item onto the planning epic of the same queue
   home. It also takes a **follow-on brainstorm** out of a development epic: a
   task titled `Follow-on brainstorm: …` whose native parent is a development
