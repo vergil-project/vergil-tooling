@@ -352,8 +352,10 @@ It refuses, changing nothing, when:
   `closed` (`published`, `withdrawn`, `triage`), which stay a human's
   decision.
 
-A re-run with the same file on the same day adds nothing, so a run whose
-response was lost can be repeated safely; it prints the same line. On
+A re-run with the same file on the same day adds nothing when the
+advisory's last note is already that exact note, so a run whose response
+was lost can be repeated safely; it prints the same line. Any other note,
+even one repeating an older note, is added. On
 success it prints only `Noted <GHSA-id> in <org>/.github.` A failure
 exits 1 with a message naming the advisory and the step, scrubbed of
 `gh`'s response body, as the other subcommands do.

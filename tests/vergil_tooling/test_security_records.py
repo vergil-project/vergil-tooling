@@ -1454,6 +1454,38 @@ def test_note_rerun_adds_nothing(issues: Issues, monkeypatch: pytest.MonkeyPatch
     assert len(issues.writes) == 1
 
 
+def test_note_that_is_a_prefix_of_an_earlier_note_is_added(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch, _adv(tracking=(A,)))
+    assert note_record(HOME, GHSA, f"{NOTE} and more", DAY) is True
+    assert note_record(HOME, GHSA, NOTE, DAY) is True
+    assert issues.description == (
+        f"{SECRET}\n\nNote (2026-11-16):\n{NOTE} and more\n\nNote (2026-11-16):\n{NOTE}"
+        "\n\nTracking issue: org/.github#10"
+    )
+
+
+def test_note_repeating_an_older_note_is_added(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch, _adv(tracking=(A,)))
+    note_record(HOME, GHSA, NOTE, DAY)
+    note_record(HOME, GHSA, "another note", DAY)
+    assert note_record(HOME, GHSA, NOTE, DAY) is True
+    assert issues.description.count(f"Note (2026-11-16):\n{NOTE}\n") == 2
+
+
+def test_note_rerun_on_a_description_of_only_the_note(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch, _adv(tracking=()))
+    issues.description = ""
+    assert note_record(HOME, GHSA, NOTE, DAY) is True
+    assert note_record(HOME, GHSA, NOTE, DAY) is False
+    assert issues.description == f"Note (2026-11-16):\n{NOTE}"
+
+
 def test_note_on_a_closed_record(issues: Issues, monkeypatch: pytest.MonkeyPatch) -> None:
     _listing(monkeypatch, _adv(state="closed"))
     assert note_record(HOME, GHSA, NOTE, DAY) is True

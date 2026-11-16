@@ -846,15 +846,27 @@ def with_note(description: str, note: str, day: date) -> str:
     return text
 
 
+def _ends_with_note(description: str, note: str, day: date) -> bool:
+    """Whether *description*'s last note, before its tracking lines, is *note* dated *day*.
+
+    Only the last note counts, and only as a whole block, so a new note that
+    is merely a prefix of an earlier one, or repeats an older one, is added.
+    """
+    kept = re.sub(r"\n{3,}", "\n\n", _TRACKING_RE.sub("", description)).rstrip()
+    block = f"{note_header(day)}\n{note}"
+    return kept == block or kept.endswith(f"\n\n{block}")
+
+
 def note_record(home: str, ghsa_id: str, note: str, day: date) -> bool:
     """Append *note* to advisory *ghsa_id*'s description in *home*, dated *day*.
 
     Refuses, changing nothing, when the note is empty or holds a
     ``Tracking issue:`` line (:func:`check_note`), or when the advisory does
     not exist, is an external report or is in a state other than ``draft`` or
-    ``closed``. Returns ``False``, writing nothing, when the description
-    already holds this exact dated note, so a re-run after a lost response
-    never adds it twice; ``True`` once it is written.
+    ``closed``. Returns ``False``, writing nothing, when the description's
+    last note is already this exact dated note (:func:`_ends_with_note`), so
+    a re-run after a lost response never adds it twice; ``True`` once it is
+    written.
 
     Any failure raises :class:`NoteError` naming the advisory and the step,
     scrubbed of ``gh`` stdout. Neither the note nor the description ever
@@ -872,7 +884,7 @@ def note_record(home: str, ghsa_id: str, note: str, day: date) -> bool:
         )
     with _step(ghsa_id, "reading the description", NoteError):
         _summary, description = read_text(home, ghsa_id)
-    if f"{note_header(day)}\n{text}" in description:
+    if _ends_with_note(description, text, day):
         return False
     with _step(ghsa_id, "writing the note", NoteError):
         _write_description(home, ghsa_id, with_note(description, text, day))

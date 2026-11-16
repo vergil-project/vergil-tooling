@@ -568,7 +568,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "keeping the 'Tracking issue:' lines last. It is append-only: the existing "
             "text is never changed. It refuses an empty note, a note with a "
             "'Tracking issue:' line, a missing advisory, an external report and any "
-            "other state. A re-run with the same file on the same day adds nothing. "
+            "other state. A re-run with the same file on the same day adds nothing "
+            "while that note is still the advisory's last. "
             "It prints only the GHSA ID and the advisory home, never the note."
         ),
     )
