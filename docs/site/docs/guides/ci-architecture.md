@@ -407,8 +407,11 @@ the required-check computation and the CI setup step (through
   version, the newest in the window.
 - `[ci].versions` is an optional pin. Every pinned version must be in the
   window, and an app pin must name exactly one version; either violation is an
-  error. C++ and TypeScript versions carry a family (`clang-20`, `node-24`), so
-  those repos must pin.
+  error. A pin is an exception: only a language whose window has more than one
+  family must pin, since there is no single default. Today that is C++, whose
+  versions carry a compiler family (`clang-20`, `gcc-14`). A family prefix alone
+  does not need a pin, so an unpinned TypeScript repo follows the window
+  (`node-24`, `node-22`) as Python and Rust do.
 - The **primary version** is `[ci].primary-version` when it is set (it must name
   a resolved version), otherwise the newest resolved version.
 
@@ -576,8 +579,9 @@ chosen, and why.
 C++ is the one language with a compiler-family axis: it ships **two**
 image families (`dev-cpp-clang` / `dev-cpp-gcc`, and matching `prod-`
 images) so TYPECHECK and TEST run per compiler and per version. The
-family rides the `[ci].versions` tag prefix (`clang-20`, `gcc-14`), so a
-C++ repo must pin `[ci].versions`. Only a `library` can pin more than one
+family rides the `[ci].versions` tag prefix (`clang-20`, `gcc-14`), and
+with two families there is no single default, so a C++ repo must pin
+`[ci].versions`. Only a `library` can pin more than one
 entry; an app builds exactly one.
 
 ### Building locally

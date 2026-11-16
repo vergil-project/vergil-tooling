@@ -131,15 +131,30 @@ def test_cpp_unpinned_is_fatal() -> None:
     with pytest.raises(ResolutionError) as exc:
         _resolve(_cfg("cpp", repo_type="library"))
     message = str(exc.value)
-    assert "cpp must pin [ci].versions until its lifecycle turn" in message
+    assert "cpp must pin [ci].versions: its window has more than one family" in message
+    assert "more than one family (cpp-clang, cpp-gcc), so there is no single default" in message
     assert 'add [ci].versions = ["clang-20"]' in message
     assert "clang-20, clang-19, gcc-14" in message
 
 
-def test_prefixed_single_family_unpinned_is_fatal() -> None:
-    # typescript has one family, but its tokens carry a prefix (node-24).
-    with pytest.raises(ResolutionError, match="typescript must pin"):
-        _resolve(_cfg("typescript"))
+def test_prefixed_single_family_unpinned_library_resolves_every_version() -> None:
+    # typescript has one family whose tokens carry a prefix (node-24); the
+    # prefix alone does not force a pin.
+    result = _resolve(_cfg("typescript", repo_type="library"))
+    assert result.kind == "library"
+    assert result.versions == ("node-24", "node-22")
+    assert result.primary == "node-24"
+    assert result.container_tags == {"node-24": "24", "node-22": "22"}
+    assert result.container_suffixes == {"node-24": "ts-node", "node-22": "ts-node"}
+
+
+def test_prefixed_single_family_unpinned_app_resolves_newest() -> None:
+    result = _resolve(_cfg("typescript"))
+    assert result.kind == "app"
+    assert result.versions == ("node-24",)
+    assert result.primary == "node-24"
+    assert result.primary_container_tag == "24"
+    assert result.primary_container_suffix == "ts-node"
 
 
 # -- pins --------------------------------------------------------------------

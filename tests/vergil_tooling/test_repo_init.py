@@ -1093,7 +1093,7 @@ class TestResolveVersions:
         assert exc.value.code == 1
         err = capsys.readouterr().err
         assert err.startswith("ERROR: ")
-        assert "cpp must pin" in err
+        assert "cpp must pin [ci].versions: its window has more than one family" in err
 
     _APP_MULTI_PIN = (
         "[project]\n"

@@ -11,8 +11,9 @@ The rules (spec §6.3):
 * ``repository-type = "library"`` resolves as a library; every other type
   resolves as an app.
 * No ``[ci].versions``: a library builds the whole window, an app the newest
-  version. A language whose tokens carry a family (a ``token_prefix``, or more
-  than one family) must pin until its lifecycle turn.
+  version. A token prefix alone (``node-24``) does not change this. Only a
+  language whose window has more than one family (C++: Clang and GCC) must
+  pin, since there is no single default.
 * A ``[ci].versions`` pin must lie inside the window. An app pin must name
   one version: more is an error.
 * ``[ci].primary-version`` must name a resolved version; without it the
@@ -96,7 +97,7 @@ def _newest_first(tokens: list[str] | tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _is_family_keyed(families: tuple[WindowFamily, ...]) -> bool:
-    return len(families) > 1 or any(family.token_prefix for family in families)
+    return len(families) > 1
 
 
 def resolve(
@@ -139,9 +140,10 @@ def resolve_language(
     if pins is None:
         if _is_family_keyed(families):
             msg = (
-                f"{language} must pin [ci].versions until its lifecycle turn: its "
-                f"versions carry a family, so there is no single default. Fix: add "
-                f'[ci].versions = ["{window_tokens[0]}"] (window: {window_list})'
+                f"{language} must pin [ci].versions: its window has more than one "
+                f"family ({', '.join(family.key for family in families)}), so there is "
+                f'no single default. Fix: add [ci].versions = ["{window_tokens[0]}"] '
+                f"(window: {window_list})"
             )
             raise ResolutionError(msg)
         candidates = window_tokens
