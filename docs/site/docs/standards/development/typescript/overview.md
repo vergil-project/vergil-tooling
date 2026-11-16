@@ -174,8 +174,8 @@ Vergil-shipped base and adds only repo-local paths:
 The strict set lives in the base and is inherited through `extends`, so
 TYPECHECK is a bare `tsc --noEmit`, run as the repository's own
 `node_modules/.bin/tsc`, that reads the consumer's own `tsconfig.json`. A
-repository never re-declares the strict flags — it inherits them, exactly as a C++ repository inherits the warning set threaded onto every
-compile line. The concrete set the base carries is documented in
+repository never re-declares the strict flags — it inherits them, exactly as
+a C++ repository inherits the warning set threaded onto every compile line. The concrete set the base carries is documented in
 [Toolchain and Strictness](toolchain-and-strictness.md).
 
 ## Testing: Vitest Runner, V8 Coverage Default
