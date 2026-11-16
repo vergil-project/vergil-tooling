@@ -16777,13 +16777,63 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#extending-the-shareable-base-tsconfig" class="md-nav__link">
+  <a href="#extending-the-shareable-base" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Extending the Shareable Base tsconfig
+        Extending the Shareable Base
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Extending the Shareable Base">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tsconfigjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tsconfig.json
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#eslintconfigmjs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        eslint.config.mjs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-prettier-config" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One Prettier config
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-vrg-validate-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What vrg-validate checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -17983,13 +18033,63 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#extending-the-shareable-base-tsconfig" class="md-nav__link">
+  <a href="#extending-the-shareable-base" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Extending the Shareable Base tsconfig
+        Extending the Shareable Base
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Extending the Shareable Base">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tsconfigjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tsconfig.json
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#eslintconfigmjs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        eslint.config.mjs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-prettier-config" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One Prettier config
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-vrg-validate-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What vrg-validate checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -18205,15 +18305,44 @@ declaration files, a build-only tsconfig) are proven on the PR, not first at
 release. The <code>typescript-tools</code> stage fails, naming the fix, when
 <code>package.json</code> has no <code>build</code> script.</p>
 <p>There is no publish target: a TypeScript release publishes nothing to npm.</p>
-<h2 id="extending-the-shareable-base-tsconfig">Extending the Shareable Base tsconfig<a class="headerlink" href="#extending-the-shareable-base-tsconfig" title="Permanent link">&para;</a></h2>
-<p>The curated strict set is delivered as a <strong>shareable strict base tsconfig
-shipped by Vergil</strong> that consumers <code>extends</code> — the direct analog to C++
-enforcing a concrete <code>-Wall -Wextra -Werror -Wpedantic</code>-plus-extras warning set
-through a shared flag list.</p>
-<p>A consuming repository authors a minimal <code>tsconfig.json</code> that extends the
-Vergil-shipped base and adds only repo-local paths:</p>
+<h2 id="extending-the-shareable-base">Extending the Shareable Base<a class="headerlink" href="#extending-the-shareable-base" title="Permanent link">&para;</a></h2>
+<p>The curated strict set, Vergil's ESLint rules and its Prettier settings are
+delivered as <strong>three managed files</strong> that the fleet sync writes whole into
+every TypeScript repository's root, each a byte-for-byte copy of a master in
+vergil-tooling (see the
+<a href="../../../../reference/config-audit/#_check_language_files-per-language-managed-files">managed-file list</a>):</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>What it carries</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tsconfig.vergil.json</code></td>
+<td>The strict base tsconfig</td>
+</tr>
+<tr>
+<td><code>eslint.vergil.config.mjs</code></td>
+<td>Vergil's ESLint flat config</td>
+</tr>
+<tr>
+<td><code>.prettierrc.json</code></td>
+<td>Vergil's Prettier config</td>
+</tr>
+</tbody>
+</table>
+<p>A repository never edits these files: the sync rewrites them. It owns its
+<strong>entry points</strong>, <code>tsconfig.json</code> and <code>eslint.config.mjs</code>, and each one builds
+on Vergil's base. This is the direct analog to C++ enforcing a concrete
+<code>-Wall -Wextra -Werror -Wpedantic</code>-plus-extras warning set through a shared
+flag list.</p>
+<h3 id="tsconfigjson"><code>tsconfig.json</code><a class="headerlink" href="#tsconfigjson" title="Permanent link">&para;</a></h3>
+<p>A consuming repository's <code>tsconfig.json</code> extends the managed base and adds only
+repo-local paths:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"extends"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;vergil&gt;/typescript/tsconfig.base.json"</span><span class="p">,</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"extends"</span><span class="p">:</span><span class="w"> </span><span class="s2">"./tsconfig.vergil.json"</span><span class="p">,</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">"compilerOptions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">"rootDir"</span><span class="p">:</span><span class="w"> </span><span class="s2">"src"</span><span class="p">,</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">"outDir"</span><span class="p">:</span><span class="w"> </span><span class="s2">"dist"</span>
@@ -18221,6 +18350,10 @@ Vergil-shipped base and adds only repo-local paths:</p>
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="nt">"include"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"src"</span><span class="p">]</span>
 <a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="p">}</span>
 </code></pre></div>
+<p>The <code>./</code> matters: without it, <code>tsc</code> looks the name up as a package in
+<code>node_modules</code>. The base may also be one entry of an <code>extends</code> array, beside a
+preset such as <code>@tsconfig/node24/tsconfig.json</code>; comments and trailing commas
+are allowed, as <code>tsc</code> allows them.</p>
 <p>The strict set lives in the base and is inherited through <code>extends</code>, so
 TYPECHECK is a bare <code>tsc --noEmit</code>, run as the repository's own
 <code>node_modules/.bin/tsc</code>, that reads the consumer's own <code>tsconfig.json</code>. A
@@ -18228,10 +18361,55 @@ repository never re-declares the strict flags — it inherits them, exactly as
 a C++ repository inherits the warning set threaded onto every compile line.
 The concrete set the base carries is documented in
 <a href="../toolchain-and-strictness/">Toolchain and Strictness</a>.</p>
+<h3 id="eslintconfigmjs"><code>eslint.config.mjs</code><a class="headerlink" href="#eslintconfigmjs" title="Permanent link">&para;</a></h3>
+<p>The repository's <code>eslint.config.mjs</code> imports Vergil's config and spreads it. It
+may add ignores (generated code, for example) and rules of its own:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">import</span><span class="w"> </span><span class="nx">vergil</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s2">"./eslint.vergil.config.mjs"</span><span class="p">;</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">export</span><span class="w"> </span><span class="k">default</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">ignores</span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"src/generated/"</span><span class="p">]</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="p">...</span><span class="nx">vergil</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">];</span>
+</code></pre></div>
+<p>Passing the imported config to <code>defineConfig(…)</code> (from <code>eslint/config</code>) or to
+<code>tseslint.config(…)</code> works too. LINT runs <code>node_modules/.bin/eslint .</code>, which
+reads <code>eslint.config.mjs</code> itself. The managed config sits in the repository
+root, so its imports (<code>@eslint/js</code>, <code>typescript-eslint</code>) resolve from the
+repository's <code>node_modules</code>. No other <code>eslint.config.*</code> may sit beside
+<code>eslint.config.mjs</code>, since ESLint would read <code>eslint.config.js</code> first.</p>
+<h3 id="one-prettier-config">One Prettier config<a class="headerlink" href="#one-prettier-config" title="Permanent link">&para;</a></h3>
+<p>LINT runs <code>prettier --check . --config .prettierrc.json</code>, and an editor finds
+the same <code>.prettierrc.json</code> on its own, so both format by the same config. A
+second config source fails <code>vrg-validate</code>: a <code>"prettier"</code> key in
+<code>package.json</code>, or any <code>.prettierrc</code>, <code>.prettierrc.*</code> or <code>prettier.config.*</code>
+other than the root <code>.prettierrc.json</code>.</p>
+<p>The same config does not mean the same Prettier <strong>version</strong>. Prettier is an
+image tool, so the version the gate runs is guaranteed only inside the
+container: format with <code>vrg-container-run -- prettier --write .</code>. An editor's
+own Prettier may be a different version and format some code differently.</p>
+<h3 id="what-vrg-validate-checks">What <code>vrg-validate</code> checks<a class="headerlink" href="#what-vrg-validate-checks" title="Permanent link">&para;</a></h3>
+<p>The <code>typescript-tools</code> stage (see
+<a href="#required-devdependencies-and-their-accepted-majors">Required devDependencies</a>)
+also checks the entry points and the Prettier config, and fails with the fix:</p>
+<ul>
+<li><code>tsconfig.json</code> exists and its <code>extends</code> is <code>"./tsconfig.vergil.json"</code>, or
+  an array containing it;</li>
+<li><code>eslint.config.mjs</code> exists, imports a binding from
+  <code>"./eslint.vergil.config.mjs"</code>, and includes it in its default export:
+  spread into an array, or passed to <code>defineConfig(…)</code> or <code>tseslint.config(…)</code>;</li>
+<li>Prettier has no config source but <code>.prettierrc.json</code>.</li>
+</ul>
+<p><strong>Weakening a rule is an exception, not a failure.</strong> A repository that turns
+off or weakens a rule from Vergil's ESLint config, or a strict flag from the
+base tsconfig, has made a repository-level exception under exception management
+(<a href="https://github.com/vergil-project/.github/issues/375">vergil-project/.github#375</a>),
+as a Python repository that disables a ruff rule in its <code>pyproject.toml</code> has.
+These checks do not block it. Leaving out Vergil's base altogether is not an
+exception: the checks above fail it.</p>
 <h2 id="testing-vitest-runner-v8-coverage-default">Testing: Vitest Runner, V8 Coverage Default<a class="headerlink" href="#testing-vitest-runner-v8-coverage-default" title="Permanent link">&para;</a></h2>
 <p><strong>Vitest is the mandated test runner</strong>, run with the V8 coverage provider and
 held to a <strong>100% line threshold per Node version</strong>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>node_modules/.bin/vitest<span class="w"> </span>run<span class="w"> </span>--coverage<span class="w"> </span>--coverage.provider<span class="o">=</span>v8<span class="w"> </span>--coverage.thresholds.lines<span class="o">=</span><span class="m">100</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>node_modules/.bin/vitest<span class="w"> </span>run<span class="w"> </span>--coverage<span class="w"> </span>--coverage.provider<span class="o">=</span>v8<span class="w"> </span>--coverage.thresholds.lines<span class="o">=</span><span class="m">100</span>
 </code></pre></div>
 <p>The gate is a forcing function for explicitness, not a claim that every line was
 exercised — see <a href="../testing-and-coverage/">Testing and Coverage</a> for the 100%

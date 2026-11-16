@@ -17967,8 +17967,9 @@ so the set means the same thing on every run.</p>
 tested in the packaged <code>tsconfig.base.json</code> — that is the single source of truth,
 and this document mirrors it. If the set changes, it changes in the base
 tsconfig first and this page is updated to match, never the other way around.</p>
-<p>Consumers do not restate the set. A repository's <code>tsconfig.json</code> extends the base
-and inherits the strict set through that inheritance; enforcing it is the base's
+<p>Consumers do not restate the set. A repository's <code>tsconfig.json</code> extends the
+base, written into the repository as the managed <code>tsconfig.vergil.json</code>, and
+inherits the strict set through that inheritance; enforcing it is the base's
 job, not each repo's. This is the direct analog of a C++ repository inheriting
 the shared warning flags rather than re-declaring <code>-Wall -Wextra</code> on its own
 compile lines.</p>
@@ -18001,11 +18002,12 @@ blanketed away.</p>
 <p>The strict set is distinct from the LINT stage, which runs <strong>Prettier</strong> (format)
 and <strong>ESLint</strong> (type-aware typescript-eslint rules) once:</p>
 <ul>
-<li><strong>Prettier</strong> runs <code>prettier --check</code> against the packaged Prettier config
+<li><strong>Prettier</strong> runs <code>prettier --check</code> against the managed <code>.prettierrc.json</code>
   (<code>semi: true</code>, <code>singleQuote: false</code>, <code>trailingComma: "all"</code>,
   <code>printWidth: 100</code>) — formatting only, no logic judgments.</li>
-<li><strong>ESLint</strong> runs its flat config with <code>js.configs.recommended</code> plus
-  typescript-eslint's <code>recommendedTypeChecked</code> (type-aware rules resolved via
+<li><strong>ESLint</strong> runs the repository's <code>eslint.config.mjs</code>, which spreads Vergil's
+  managed <code>eslint.vergil.config.mjs</code>: its flat config with
+  <code>js.configs.recommended</code> plus typescript-eslint's <code>recommendedTypeChecked</code> (type-aware rules resolved via
   <code>projectService: true</code>, which auto-discovers the nearest <code>tsconfig</code>), and
   carries the <code>ban-ts-comment</code> rule above.</li>
 </ul>
