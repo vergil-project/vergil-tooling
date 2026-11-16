@@ -27,7 +27,7 @@ harness.
   — Credential Provisioning
 
 **Relationship to Plan 5:** This plan supersedes Tasks 3-4 of the
-vergil-tooling VM adaptations plan (`docs/plans/in-progress/2026-05-20-p5-vergil-tooling-vm-adaptations.md`).
+vergil-tooling VM adaptations plan (`docs/plans/completed/2026-05-20-p5-vergil-tooling-vm-adaptations.md`).
 
 > **Update 2026-05-22:** `installation_id` has been removed from
 > `identities.toml` and the `Identity` dataclass (#1004).

@@ -29,10 +29,10 @@ isolation system.
 | Plan | Scope | Status |
 |---|---|---|
 | 1. Repository + Working VM | vergil-vm repo, Lima template | Complete |
-| **2. Session Management** (this plan) | vrg-session, identities.toml | This plan |
-| 3. Credential Provisioning | GitHub App credentials, GHCR auth | Planned |
+| **2. Session Management** (this plan) | vrg-session, identities.toml | **Complete** |
+| 3. Credential Provisioning | GitHub App credentials, GHCR auth | Complete |
 | ~~4. Egress Filtering~~ | ~~HAProxy, pf, iptables~~ | Deferred to v2.2 (#901) |
-| 5. vergil-tooling Adaptations | nerdctl runtime detection | Planned |
+| 5. vergil-tooling Adaptations | nerdctl runtime detection | Complete |
 | 6. Distribution + Updates | Pre-built images, vrg-vm-update | Planned |
 
 **Repository:** vergil-tooling
@@ -122,7 +122,7 @@ If `ANTHROPIC_API_KEY` is not set in the host environment,
 - Create: `src/vergil_tooling/lib/identity.py`
 - Create: `tests/vergil_tooling/test_identity.py`
 
-- [ ] **Step 1: Write the failing tests for config loading**
+- [x] **Step 1: Write the failing tests for config loading**
 
 ```python
 # tests/vergil_tooling/test_identity.py
@@ -217,12 +217,12 @@ def test_missing_config_file(tmp_path: Path) -> None:
         load_config(tmp_path / "nonexistent.toml")
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_identity.py -v`
 Expected: FAIL (module not found)
 
-- [ ] **Step 3: Implement the identity config parser**
+- [x] **Step 3: Implement the identity config parser**
 
 ```python
 # src/vergil_tooling/lib/identity.py
@@ -304,12 +304,12 @@ def resolve_project(
     return matches[0]
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_identity.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 vrg-commit --type feat --scope session \
@@ -326,7 +326,7 @@ vrg-commit --type feat --scope session \
 - Create: `tests/vergil_tooling/test_vrg_session.py`
 - Modify: `pyproject.toml` (add entry point)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/vergil_tooling/test_vrg_session.py
@@ -407,12 +407,12 @@ def test_missing_api_key(
         main(["vergil-tooling"])
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_session.py -v`
 Expected: FAIL (module not found)
 
-- [ ] **Step 3: Implement vrg-session**
+- [x] **Step 3: Implement vrg-session**
 
 ```python
 # src/vergil_tooling/bin/vrg_session.py
@@ -530,7 +530,7 @@ def main(argv: list[str] | None = None) -> None:
     raise SystemExit(result)
 ```
 
-- [ ] **Step 4: Add entry point to pyproject.toml**
+- [x] **Step 4: Add entry point to pyproject.toml**
 
 Add to the `[project.scripts]` section:
 
@@ -538,12 +538,12 @@ Add to the `[project.scripts]` section:
 vrg-session = "vergil_tooling.bin.vrg_session:main"
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_session.py -v`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 vrg-commit --type feat --scope session \
@@ -562,7 +562,7 @@ running and start it if needed.
 - Modify: `src/vergil_tooling/bin/vrg_session.py`
 - Modify: `tests/vergil_tooling/test_vrg_session.py`
 
-- [ ] **Step 1: Write the failing test for VM readiness**
+- [x] **Step 1: Write the failing test for VM readiness**
 
 ```python
 # Add to tests/vergil_tooling/test_vrg_session.py
@@ -595,12 +595,12 @@ def test_check_vm_running_false(monkeypatch: pytest.MonkeyPatch) -> None:
     assert check_vm_running("vergil-agent") is False
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_session.py::test_check_vm_running_true -v`
 Expected: FAIL
 
-- [ ] **Step 3: Implement check_vm_running and auto-start**
+- [x] **Step 3: Implement check_vm_running and auto-start**
 
 Add to `vrg_session.py`:
 
@@ -633,12 +633,12 @@ def ensure_vm_running(instance: str) -> None:
 Call `ensure_vm_running(identity.vm_instance)` in `main()` before
 building the command.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_session.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 vrg-commit --type feat --scope session \
@@ -652,13 +652,13 @@ vrg-commit --type feat --scope session \
 
 Run the full test suite and validate manually.
 
-- [ ] **Step 1: Run full validation**
+- [x] **Step 1: Run full validation**
 
 ```bash
 vrg-container-run -- uv run vrg-validate
 ```
 
-- [ ] **Step 2: Manual validation (requires working VM from Plan 1)**
+- [x] **Step 2: Manual validation (requires working VM from Plan 1)**
 
 ```bash
 # On the host, with ANTHROPIC_API_KEY set:
@@ -672,7 +672,7 @@ vrg-session --shell --identity vergil
 # Should open a zsh shell in the VM home directory
 ```
 
-- [ ] **Step 3: Commit any fixes**
+- [x] **Step 3: Commit any fixes**
 
 ---
 

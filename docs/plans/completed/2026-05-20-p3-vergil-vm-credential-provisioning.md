@@ -37,7 +37,7 @@ isolation system.
 | 2. Session Management | vrg-session, identities.toml | Complete |
 | **3. Credential Provisioning** (this plan) | GitHub App credentials | **Complete** |
 | ~~4. Egress Filtering~~ | ~~HAProxy, pf, iptables~~ | Deferred to v2.2 (#901) |
-| 5. vergil-tooling Adaptations | nerdctl runtime detection | Planned |
+| 5. vergil-tooling Adaptations | nerdctl runtime detection | Complete |
 | 6. Distribution + Updates | Pre-built images, vrg-vm-update | Planned |
 
 **Repository:** vergil-vm
