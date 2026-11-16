@@ -1601,13 +1601,27 @@ unwarmed-but-usable container, and the warmup runs normally on every
 later build once the lock is committed
 ([epic vergil-project/.github#342](https://github.com/vergil-project/.github/issues/342)).
 
+**Integration tests are refused.** `[ci].integration-tests = true` would
+make the `CI gates` ruleset require `test / integration / <version>`,
+which no vergil-actions CI job produces yet
+([#2721](https://github.com/vergil-project/vergil-tooling/issues/2721)),
+so the repo could never merge a PR. The wizard refuses the setting as
+early as it can name it: `--integration-tests` fails at argument
+parsing, before step 1 creates the repository, and a "yes" to the
+prompt (or an adopted `vergil.toml` that sets it) stops the run in
+step 3, before `vergil.toml` is written and before step 8 makes the
+first push. A resumed run whose committed `vergil.toml` sets it stops
+before the remaining steps. The config loader still accepts the key,
+so other tools keep working in a repo that sets it.
+`--no-integration-tests` turns off an adopted repo's setting.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_github_repo_init` |
 | Args | `org/name` positional; `--adopt`, `--non-interactive`, `--target-dir`, and per-field overrides (`--language`, `--repository-type`, …) |
 | Preconditions | `gh` and `git` on PATH; run from the org-layout parent (or pass `--target-dir`) |
-| Failure mode | Loud refusal on a foreign-repo CWD, an occupied clone path, or missing required non-interactive values |
-| Exit codes | 0 success, 1 error |
+| Failure mode | Loud refusal on a foreign-repo CWD, an occupied clone path, missing required non-interactive values, or `[ci].integration-tests = true` |
+| Exit codes | 0 success, 1 error, 2 a refused argument (including `--integration-tests`) |
 | Status | Active |
 
 ### vrg-container-run

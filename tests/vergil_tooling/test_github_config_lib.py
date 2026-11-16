@@ -827,6 +827,67 @@ def test_assert_ci_gates_producible_names_source_and_missing_context() -> None:
     assert "Unproducible required contexts: docs / docs" in message
 
 
+def test_assert_ci_gates_producible_names_integration_tests_as_the_cause() -> None:
+    """The integration contexts are put down to ``[ci].integration-tests = true``
+    directly, with the reason, not offered as one guess among several (#4448)."""
+    ruleset = desired_ci_gates_ruleset(
+        _project(),
+        _ci(integration_tests=True),
+        ghas=True,
+        docs=True,
+        integration_versions=("3.13", "3.14"),
+    )
+    with pytest.raises(RuntimeError) as exc:
+        assert_ci_gates_producible(
+            _desired_with([ruleset]), _ci_yaml(jobs=_FULL_CI_JOBS), ghas=True, source="ci.yml"
+        )
+    message = str(exc.value)
+    assert (
+        "Unproducible required contexts: test / integration / 3.13, test / integration / 3.14"
+        in message
+    )
+    assert (
+        "Cause of test / integration / 3.13, test / integration / 3.14: "
+        "[ci].integration-tests = true makes the CI-gates ruleset require" in message
+    )
+    assert "no vergil-actions CI job produces that check" in message
+    assert "vergil-project/vergil-tooling#2721" in message
+    assert "Likely causes" not in message
+    # No other context is unproducible, so no other cause is offered.
+    assert "regenerate or fix ci.yml" not in message
+
+
+def test_assert_ci_gates_producible_separates_integration_from_other_causes() -> None:
+    ruleset = desired_ci_gates_ruleset(
+        _project(),
+        _ci(integration_tests=True),
+        ghas=True,
+        docs=True,
+        integration_versions=("3.14",),
+    )
+    jobs_without_docs = {k: v for k, v in _FULL_CI_JOBS.items() if k != "docs"}
+    with pytest.raises(RuntimeError) as exc:
+        assert_ci_gates_producible(
+            _desired_with([ruleset]), _ci_yaml(jobs=jobs_without_docs), ghas=True, source="ci.yml"
+        )
+    message = str(exc.value)
+    assert "Cause of test / integration / 3.14: [ci].integration-tests = true" in message
+    assert "Cause of docs / docs: every required context must correspond" in message
+    assert "regenerate or fix ci.yml first." in message
+
+
+def test_assert_ci_gates_producible_other_cause_does_not_blame_integration_tests() -> None:
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
+    jobs_without_docs = {k: v for k, v in _FULL_CI_JOBS.items() if k != "docs"}
+    with pytest.raises(RuntimeError) as exc:
+        assert_ci_gates_producible(
+            _desired_with([ruleset]), _ci_yaml(jobs=jobs_without_docs), ghas=True, source="ci.yml"
+        )
+    message = str(exc.value)
+    assert "integration-tests" not in message
+    assert "Cause of docs / docs: " in message
+
+
 def test_assert_ci_gates_producible_no_ci_gates_ruleset_is_a_no_op() -> None:
     """With no ``CI gates`` ruleset there is nothing required to cross-check."""
     assert_ci_gates_producible(_desired_with([]), "", ghas=True, source="ci.yml")

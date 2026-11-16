@@ -13,6 +13,7 @@ from vergil_tooling.lib.languages import language_lock_command
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
     foreign_repo_refusal,
+    integration_tests_refusal,
     prompt_choice,
     prompt_free_text,
     prompt_yes_no,
@@ -221,7 +222,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--integration-tests",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Enable integration tests (default: no)",
+        help=(
+            "Integration tests (default: no). --integration-tests is refused: no CI "
+            "job produces the check it would require (vergil-project/vergil-tooling#2721). "
+            "--no-integration-tests turns off an adopted vergil.toml's setting."
+        ),
     )
     parser.add_argument(
         "--publish-release",
@@ -275,6 +280,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     if args.repo and "/" not in args.repo:
         parser.error("repo must be in ORG/NAME format")
+
+    # Refused at parsing, before main's step 1 creates the repository (#4448).
+    if args.integration_tests:
+        subject = f"to initialize {args.repo}" if args.repo else "to adopt this repo"
+        parser.error(
+            integration_tests_refusal(subject, "--integration-tests") + " Nothing was changed."
+        )
 
     # A --non-interactive new-repo run must supply every no-default prompt.
     # Adopt runs draw those from the existing vergil.toml, so they are validated
