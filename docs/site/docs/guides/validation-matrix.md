@@ -23,7 +23,7 @@ where it runs. No git hooks are installed: every check runs inside a
 | Dependency audit | `vrg-validate` | Yes (primary version) | `audit / dependencies / <version>` |
 | Custom validator | `vrg-validate` (custom stage) | Yes (primary version) | `quality / custom` (once, primary version) |
 | Semgrep scan | `vrg-validate` (semgrep stage) | Yes | `security / semgrep` |
-| Trivy scan | `ci-security.yml` | -- (follow-up #4445) | `security / trivy` |
+| Trivy scan | `vrg-validate` (trivy stage) | Yes | `security / trivy` |
 | CodeQL scan | `ci-security.yml` | -- (CI-only) | `security / codeql` |
 | GitHub code scanning results | GitHub, from the uploaded SARIF | -- (CI-only) | `Trivy`, `Semgrep OSS`, `CodeQL` |
 | Strict docs build | `vrg-validate` (docs stage) | Yes | `docs / docs` |
@@ -64,6 +64,7 @@ before the PR is opened.
 
 Already run locally: `quality / common`, `quality / custom`,
 `security / semgrep` (the [Semgrep scan](#semgrep-scan) stage),
+`security / trivy` (the [Trivy scan](#trivy-scan) stage, #4445),
 `docs / docs` (the [Docs build](#docs-build) stage, #4446), and
 lint, typecheck, tests and audit on the primary version. The
 repo-specific gates run locally too: vergil-containers'
@@ -72,9 +73,8 @@ shell suites (vergil-actions#1108).
 
 | PR CI check | Decision | Reason |
 | ----------- | -------- | ------ |
-| `security / trivy` | Run locally, planned in #4445 | A `trivy` stage would run `trivy fs --scanners vuln --severity CRITICAL,HIGH --exit-code 1` with the repo's `.trivyignore`, as CI does, caching the vulnerability database between runs. |
 | `security / codeql` | CI-only | It needs GitHub code scanning, its CLI is not in the dev images, and building its database is heavy. |
-| `Trivy`, `Semgrep OSS`, `CodeQL` | CI-only | GitHub computes them from the uploaded SARIF for the changed lines, so they cannot run locally. The local semgrep stage, and the trivy stage once it lands, cover the findings behind them. |
+| `Trivy`, `Semgrep OSS`, `CodeQL` | CI-only | GitHub computes them from the uploaded SARIF for the changed lines, so they cannot run locally. The local semgrep and trivy stages cover the findings behind them. |
 | `version / version-bump` | CI-only | It compares the branch's version with `main`'s, so its result depends on where the release cycle stands, not on the change. |
 | `package / evidence` | CI-only | It builds the `.deb` and `.rpm` packages and install-tests them across the distro matrix, which needs nested containers and a long run. |
 | `images / evidence` | CI-only | It builds and scans the changed images on each architecture's own runner. |
@@ -154,7 +154,8 @@ container. The outer layer, `vrg-container-run`, launches the dev
 container once and runs `vrg-validate` inside it. The inner layer,
 `vrg-validate`, reads `[project].primary-language` from `vergil.toml` and
 runs the common checks, then the language's checks from the built-in
-command registry, then the semgrep scan, then the strict docs build,
+command registry, then the semgrep scan, then the Trivy scan, then
+the strict docs build,
 then the repository's custom validator, as below. The
 dev images come from
 [vergil-containers](https://github.com/vergil-project/vergil-containers)
@@ -246,9 +247,42 @@ stage. A repository with no ruleset to run (no language ruleset, no
 Dockerfile and no workflow) records the stage as a warning (⚠). For
 this repository the scan takes about 15 seconds.
 
+### Trivy scan
+
+After the semgrep scan, `vrg-validate` runs the vulnerability scan of
+PR CI's `security / trivy` gate, so a CRITICAL or HIGH vulnerability
+in a dependency fails locally before the PR is opened. `--check trivy`
+runs only this stage. It runs the commands of vergil-actions'
+`actions/shared/security/trivy/scan.sh` with the gate's inputs:
+`trivy fs --scanners vuln --severity CRITICAL,HIGH` writes the JSON
+report (skipping pip's vendored `bom.cdx.json`), `trivy convert`
+prints the findings table, and `trivy convert --exit-code 1` writes
+the SARIF report and fails on a finding. As in CI, Trivy reads the
+repository's `.trivyignore` and `trivy.yaml` from the directory it
+scans. The scan runs on a temporary copy of the tracked and untracked
+files that `.gitignore` does not exclude, which stands in for CI's
+fresh checkout: an ignored `.venv`, `node_modules`, `target` or
+`build` directory cannot add a finding CI would not report. The
+reports go to the same temporary directory, never the working tree.
+
+The stage needs network access to download Trivy's vulnerability
+database. The database is cached between runs, never in the working
+tree: `vrg-container-run` mounts the `vergil-trivy-cache` volume
+for it (see
+[Container Config](../reference/container-config.md#variables-vrg-container-run-always-sets)).
+`vrg-container-run` points `VRG_TRIVY_CACHE_DIR` at the volume; in
+a container started without it, the cache is `vergil/trivy` under
+`$XDG_CACHE_HOME` or `~/.cache`, which lasts only as long as the
+container. A cache directory inside the working tree fails the stage. Runs that share the cache take turns, so parallel validations
+never download into it at once. A scan that writes no report, such as
+one whose database download failed, is retried twice, after 15 and 30
+seconds, as in CI, and then fails the stage as a scan error, never as
+a pass. With the database cached, the scan of this repository takes
+about a second.
+
 ### Docs build
 
-After the semgrep scan, `vrg-validate` runs the strict mkdocs build of
+After the Trivy scan, `vrg-validate` runs the strict mkdocs build of
 PR CI's `docs / docs` gate (`ci-docs.yml`), so a broken internal link
 or a nav entry for a missing page fails locally before the PR is
 opened. `--check docs` runs only this stage. A repository with no

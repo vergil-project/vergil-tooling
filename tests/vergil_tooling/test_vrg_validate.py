@@ -7,7 +7,7 @@ import os
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, mock_open, patch
 
 if TYPE_CHECKING:
@@ -37,12 +37,15 @@ from vergil_tooling.bin.vrg_validate import (
     _run_common_checks,
     _run_docs_build,
     _run_semgrep,
+    _run_trivy,
     _semgrep_rulesets,
     _semgrep_stage,
     _skip_conan_audit_scan,
     _skip_rust_doctests_without_lib,
     _sources_without_manifest_stage,
+    _stage_trivy_target,
     _test_context,
+    _trivy_stage,
     main,
 )
 from vergil_tooling.lib.config import ConfigError, TestConfig
@@ -71,6 +74,9 @@ def _container_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         # No full run may scan for real (semgrep needs its registry); the
         # semgrep stage has its own tests, which call the real function.
         patch(_MOD + "._run_semgrep"),
+        # Nor run Trivy for real (it needs its vulnerability database); the
+        # trivy stage has its own tests.
+        patch(_MOD + "._run_trivy"),
         # Nor build docs for real; the docs stage has its own tests.
         patch(_MOD + "._run_docs_build"),
     ):
@@ -113,6 +119,7 @@ def test_build_stages_full_run_order() -> None:
         "test",
         "audit",
         "semgrep",
+        "trivy",
         "docs",
     ]
     assert stages[1].mode == "fail_fast"
@@ -159,7 +166,7 @@ def test_build_stages_check_lint_no_install_commands() -> None:
 def test_build_stages_no_language_skips_language_checks() -> None:
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(None, None, Path("/tmp/r"))  # noqa: S108
-    assert [s.name for s in stages] == ["common", "semgrep", "docs"]
+    assert [s.name for s in stages] == ["common", "semgrep", "trivy", "docs"]
 
 
 def test_build_stages_no_commands_for_check() -> None:
@@ -1310,6 +1317,7 @@ def test_build_stages_version_stages_follow_test_before_audit() -> None:
         "test (python 3.13)",
         "audit",
         "semgrep",
+        "trivy",
         "docs",
     ]
 
@@ -1660,6 +1668,7 @@ def test_unbootstrapped_rust_skips_language_stages_loudly(
         "test",
         "audit",
         "semgrep",
+        "trivy",
         "docs",
         "custom",
     )
@@ -1676,7 +1685,7 @@ def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
     _write_config(tmp_path, "rust")
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(None, "rust", tmp_path)
-    language_stages = [s for s in stages if s.name not in ("common", "semgrep", "docs")]
+    language_stages = [s for s in stages if s.name not in ("common", "semgrep", "trivy", "docs")]
     assert [s.name for s in language_stages] == ["install", "lint", "typecheck", "test", "audit"]
     assert all(s.mode == "warn" for s in language_stages)
     _run_validate(tmp_path, [])
@@ -1690,6 +1699,7 @@ def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
         "test": "warn",
         "audit": "warn",
         "semgrep": "ok",
+        "trivy": "ok",
         "docs": "ok",
     }
 
@@ -1792,7 +1802,7 @@ def test_rust_sources_without_cargo_toml_stage_shape(tmp_path: Path) -> None:
     (tmp_path / "src" / "lib.rs").write_text("")
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(None, "rust", tmp_path)
-    language_stages = [s for s in stages if s.name not in ("common", "semgrep", "docs")]
+    language_stages = [s for s in stages if s.name not in ("common", "semgrep", "trivy", "docs")]
     assert [s.name for s in language_stages] == ["install", "lint", "typecheck", "test", "audit"]
     assert language_stages[0].mode == "fail_fast"
     with pytest.raises(ValidationError, match="add the manifest or remove the sources"):
@@ -1980,7 +1990,7 @@ def test_build_stages_semgrep_comes_before_custom() -> None:
         patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"),
     ):
         stages = _build_stages(None, "python", Path("/tmp/r"))  # noqa: S108
-    assert [s.name for s in stages][-4:] == ["audit", "semgrep", "docs", "custom"]
+    assert [s.name for s in stages][-5:] == ["audit", "semgrep", "trivy", "docs", "custom"]
 
 
 def test_semgrep_stage_runs_the_scan_for_its_language() -> None:
@@ -2144,6 +2154,207 @@ def test_run_semgrep_without_rulesets_warns(
     reason = "no semgrep rulesets for language <not set>, and no Dockerfile or workflow to scan"
     m_warn.assert_called_once_with(reason)
     assert f"NOTICE: semgrep: {reason}" in capsys.readouterr().out
+
+
+# -- trivy stage (issue #4445) ---------------------------------------------------
+
+
+def _fake_trivy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fs_rc: int = 0,
+    sarif_rc: int = 0,
+    report: bool = True,
+) -> Path:
+    """Put a ``trivy`` first on PATH that plays scan.sh's three commands.
+
+    It logs each argv and working directory, and the files the scan target
+    holds. ``trivy fs`` exits *fs_rc*; the SARIF ``convert`` writes its
+    ``--output`` when *report* and exits *sarif_rc*. Returns the log.
+    """
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    log = tmp_path / "trivy-calls.jsonl"
+    script = fake_bin / "trivy"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, pathlib, sys\n"
+        "argv = sys.argv[1:]\n"
+        "files = sorted("
+        "str(p.relative_to('.')) for p in pathlib.Path('.').rglob('*') if p.is_file())\n"
+        f"with open({str(log)!r}, 'a') as fh:\n"
+        "    fh.write(json.dumps({'argv': argv, 'cwd': os.getcwd(), 'files': files}) + '\\n')\n"
+        "if argv[0] == 'fs':\n"
+        f"    sys.exit({fs_rc})\n"
+        "if '--format' in argv and argv[argv.index('--format') + 1] == 'sarif':\n"
+        f"    if {report!r}:\n"
+        "        pathlib.Path(argv[argv.index('--output') + 1]).write_text('{}')\n"
+        f"    sys.exit({sarif_rc})\n"
+        "print('TABLE OF FINDINGS')\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("VRG_TRIVY_CACHE_DIR", str(tmp_path / "trivy-cache"))
+    return log
+
+
+def _trivy_calls(log: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in log.read_text().splitlines()]
+
+
+def test_build_stages_check_trivy_runs_only_trivy() -> None:
+    with patch(_MOD + ".language_commands") as m_cmds:
+        stages = _build_stages("trivy", "python", Path("/tmp/r"))  # noqa: S108
+    assert [s.name for s in stages] == ["trivy"]
+    assert stages[0].mode == "fail_defer"
+    m_cmds.assert_not_called()
+
+
+def test_trivy_stage_runs_the_scan() -> None:
+    stage = _trivy_stage(Path("/r"))
+    with patch(_MOD + "._run_trivy") as m_run:
+        stage.fn(None)
+    m_run.assert_called_once_with(Path("/r"))
+
+
+def test_check_trivy_runs_only_the_trivy_stage(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".language_commands") as m_cmds,
+        patch(_MOD + "._run_trivy") as m_trivy,
+    ):
+        assert main(["--check", "trivy"]) == 0
+    m_trivy.assert_called_once_with(tmp_path)
+    m_cmds.assert_not_called()
+
+
+def test_check_trivy_failure_fails_the_run(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._run_trivy", side_effect=ValidationError("Trivy found vulnerabilities")),
+    ):
+        assert main(["--check", "trivy"]) == 1
+
+
+def test_run_trivy_clean_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _git_repo(tmp_path / "repo", "uv.lock", ".trivyignore", "build/out.txt")
+    (repo / ".gitignore").write_text("build/\n")
+    log = _fake_trivy(tmp_path, monkeypatch)
+
+    _run_trivy(repo)
+
+    calls = _trivy_calls(log)
+    assert [call["argv"][:2] for call in calls] == [
+        ["fs", "--scanners"],
+        ["convert", "--severity"],
+        ["convert", "--severity"],
+    ]
+    fs_argv = calls[0]["argv"]
+    assert fs_argv[-1] == "."
+    cache = (tmp_path / "trivy-cache").resolve()
+    assert fs_argv[fs_argv.index("--cache-dir") + 1] == str(cache)
+    # The scan runs from a copy of the checkout, outside the repo: the
+    # ignored build/ is not in it, and the .trivyignore is.
+    cwd = Path(str(calls[0]["cwd"]))
+    assert not cwd.is_relative_to(repo)
+    assert calls[0]["files"] == [".gitignore", ".trivyignore", "uv.lock"]
+    assert {call["cwd"] for call in calls} == {str(cwd)}
+    # The reports went to the temporary directory, which is gone.
+    assert not cwd.exists()
+    assert sorted(p.name for p in repo.iterdir()) == [
+        ".git",
+        ".gitignore",
+        ".trivyignore",
+        "build",
+        "uv.lock",
+    ]
+    assert (cache / "vrg-validate.lock").is_file()
+    out = capsys.readouterr().out
+    assert f"trivy: vulnerability database cache {cache}" in out
+    assert "TABLE OF FINDINGS" in out
+    assert "trivy: no CRITICAL,HIGH vulnerabilities" in out
+
+
+def test_run_trivy_findings_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _git_repo(tmp_path / "repo", "requirements.txt")
+    log = _fake_trivy(tmp_path, monkeypatch, sarif_rc=1)
+
+    with pytest.raises(
+        ValidationError,
+        match=r"^Trivy found CRITICAL,HIGH vulnerabilities \(exit 1; see the table above\)$",
+    ):
+        _run_trivy(repo)
+    # Findings are never retried.
+    assert len(_trivy_calls(log)) == 3
+
+
+def test_run_trivy_failed_database_fetch_fails_loudly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _git_repo(tmp_path / "repo", "uv.lock")
+    log = _fake_trivy(tmp_path, monkeypatch, fs_rc=1, report=False)
+    sleeps: list[float] = []
+
+    with pytest.raises(
+        ValidationError, match=r"^Trivy scan errored \(no report produced\) after 3 attempts"
+    ):
+        _run_trivy(repo, sleep=sleeps.append)
+    assert [call["argv"][0] for call in _trivy_calls(log)] == ["fs", "fs", "fs"]
+    assert sleeps == [15, 30]
+    assert "attempt 3/3" in capsys.readouterr().out
+
+
+def test_run_trivy_refuses_a_cache_in_the_working_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _git_repo(tmp_path / "repo", "uv.lock")
+    log = _fake_trivy(tmp_path, monkeypatch)
+    monkeypatch.setenv("VRG_TRIVY_CACHE_DIR", str(repo / ".trivy-cache"))
+
+    with pytest.raises(ValidationError, match=r"is inside the working tree"):
+        _run_trivy(repo)
+    assert not log.exists()
+    assert not (repo / ".trivy-cache").exists()
+
+
+def test_run_trivy_unusable_cache_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _git_repo(tmp_path / "repo", "uv.lock")
+    _fake_trivy(tmp_path, monkeypatch)
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("")
+    monkeypatch.setenv("VRG_TRIVY_CACHE_DIR", str(blocker / "cache"))
+
+    with pytest.raises(
+        ValidationError, match=r"^trivy: cannot use the vulnerability database cache "
+    ):
+        _run_trivy(repo)
+
+
+def test_run_trivy_without_trivy_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _git_repo(tmp_path / "repo", "uv.lock")
+    monkeypatch.setenv("VRG_TRIVY_CACHE_DIR", str(tmp_path / "trivy-cache"))
+    with (
+        patch(_MOD + ".progress.run", side_effect=FileNotFoundError("trivy")),
+        pytest.raises(ValidationError, match=r"^trivy not found: trivy$"),
+    ):
+        _run_trivy(repo)
+
+
+def test_stage_trivy_target_copies_the_checkout_files(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path / "repo", "a/b.txt", "node_modules/x/package.json")
+    (repo / ".gitignore").write_text("node_modules/\n")
+    target = tmp_path / "target"
+    target.mkdir()
+    _stage_trivy_target(repo, target)
+    assert sorted(str(p.relative_to(target)) for p in target.rglob("*") if p.is_file()) == [
+        ".gitignore",
+        "a/b.txt",
+    ]
 
 
 # -- docs stage (issue #4446) ----------------------------------------------------

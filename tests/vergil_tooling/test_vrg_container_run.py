@@ -792,6 +792,26 @@ def test_main_passes_test_tuning_env_to_container(tmp_path: Path) -> None:
     assert "VRG_TEST_CONTEXT=ci" in mock_exec.call_args[0][1]
 
 
+def test_main_mounts_the_trivy_cache_volume(tmp_path: Path) -> None:
+    # The trivy stage's vulnerability database outlives the --rm container in
+    # a named volume, never in the bind-mounted working tree (issue #4445).
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="img"),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        main(["--", "vrg-validate"])
+    args = mock_exec.call_args[0][1]
+    mount = "vergil-trivy-cache:/var/cache/vergil/trivy"
+    assert args[args.index(mount) - 1] == "-v"
+    assert "VRG_TRIVY_CACHE_DIR=/var/cache/vergil/trivy" in args
+    assert args.index(mount) < args.index("img")
+
+
 # -- Conan audit token injection (issue #2902) ----------------------------------
 
 _TOKEN_ENV = "CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER"  # noqa: S105

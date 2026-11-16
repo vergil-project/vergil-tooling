@@ -1632,6 +1632,9 @@ project language to select the Docker image; falls back to
 Local-settings guard: on the host, before any container starts, it refuses an
 agent (warns a human) while a loadable `.claude/settings.local.json` is not
 absent or `{}` (epic vergil-project/.github#558).
+Every launch mounts the `vergil-trivy-cache` volume, where `vrg-validate`'s
+trivy stage caches the vulnerability database (see
+[Container Config](container-config.md#variables-vrg-container-run-always-sets)).
 
 | Attribute | Value |
 |---|---|
@@ -1920,7 +1923,8 @@ markdownlint, yamllint) are available on PATH.
 The unified validation driver. It reads `[project].primary-language`
 from `vergil.toml` and runs the stages in order: common checks, the
 language's install, lint, typecheck, test and audit commands, the
-semgrep scan of PR CI's `security / semgrep` gate, the strict mkdocs
+semgrep scan of PR CI's `security / semgrep` gate, the Trivy
+vulnerability scan of its `security / trivy` gate, the strict mkdocs
 build of its `docs / docs` gate (a notice and a pass when there is no
 `docs/site/mkdocs.yml`), and last the repository's custom validator (`scripts/bin/validate-custom` or
 `vrg-validate-custom` on `PATH`) when it has one. `--check` runs one
@@ -1938,7 +1942,7 @@ start, and each stage's status. `vrg-merge-review-request` reads it.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_validate` |
-| Args | `--check {common,lint,typecheck,test,audit,semgrep,docs,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
+| Args | `--check {common,lint,typecheck,test,audit,semgrep,trivy,docs,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
 | Preconditions | Inside a dev container (run it as `vrg-container-run -- vrg-validate`) |
 | Failure mode | Runs every stage after install and reports all failures in one run; install fails fast |
 | Exit codes | 0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example `--check custom --all-versions`) |

@@ -64,6 +64,7 @@ value `vrg-container-run` resolves:
 | `PYTHONPYCACHEPREFIX` | `/tmp/pycache` (container-local, discarded with the container) | A non-empty host value wins; an empty value falls back to the default |
 | `NODE_PATH` | npm global root, only when `build-command` is declared (see below) | An explicit host value wins |
 | `UV_PYTHON`, `UV_PYTHON_PREFERENCE` | Python only: the resolved primary version and `only-system` | None: the resolver decides |
+| `VRG_TRIVY_CACHE_DIR` | `/var/cache/vergil/trivy`, where the `vergil-trivy-cache` volume is mounted (see below) | None |
 
 For a **Python** repo, `UV_PYTHON` and `UV_PYTHON_PREFERENCE=only-system` make uv
 use the image's interpreter at the resolved version, so a repo's own
@@ -104,6 +105,16 @@ prefix, bytecode is still cached and shared by every worker within a run, and an
 stale `.pyc` already in the working tree is ignored. A host override pointing
 inside the repo would put bytecode back on the mount, so keep any override
 outside it.
+
+Every launch also mounts the named volume `vergil-trivy-cache` at
+`/var/cache/vergil/trivy`. `vrg-validate`'s trivy stage caches Trivy's
+vulnerability database there, so the database outlives each `--rm` container
+and is downloaded again only when Trivy finds it out of date, never into the
+bind-mounted working tree
+([#4445](https://github.com/vergil-project/vergil-tooling/issues/4445)). The
+runtime creates the volume on first use; nerdctl then warns on each launch that
+it already exists, which is harmless. `docker volume rm vergil-trivy-cache` (or
+`nerdctl volume rm`) clears it.
 
 ### `VRG_VERSION_WINDOW`: a local version window
 
