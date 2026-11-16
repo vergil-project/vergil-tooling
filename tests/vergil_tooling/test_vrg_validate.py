@@ -7,7 +7,7 @@ import os
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, mock_open, patch
 
 if TYPE_CHECKING:
@@ -2181,7 +2181,8 @@ def _fake_trivy(
         "#!/usr/bin/env python3\n"
         "import json, os, pathlib, sys\n"
         "argv = sys.argv[1:]\n"
-        "files = sorted(str(p.relative_to('.')) for p in pathlib.Path('.').rglob('*') if p.is_file())\n"
+        "files = sorted("
+        "str(p.relative_to('.')) for p in pathlib.Path('.').rglob('*') if p.is_file())\n"
         f"with open({str(log)!r}, 'a') as fh:\n"
         "    fh.write(json.dumps({'argv': argv, 'cwd': os.getcwd(), 'files': files}) + '\\n')\n"
         "if argv[0] == 'fs':\n"
@@ -2198,7 +2199,7 @@ def _fake_trivy(
     return log
 
 
-def _trivy_calls(log: Path) -> list[dict[str, object]]:
+def _trivy_calls(log: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in log.read_text().splitlines()]
 
 
@@ -2248,8 +2249,10 @@ def test_run_trivy_clean_scan(
     _run_trivy(repo)
 
     calls = _trivy_calls(log)
-    assert [call["argv"][:2] for call in calls] == [["fs", "--scanners"], ["convert", "--severity"]] + [
-        ["convert", "--severity"]
+    assert [call["argv"][:2] for call in calls] == [
+        ["fs", "--scanners"],
+        ["convert", "--severity"],
+        ["convert", "--severity"],
     ]
     fs_argv = calls[0]["argv"]
     assert fs_argv[-1] == "."
@@ -2263,7 +2266,13 @@ def test_run_trivy_clean_scan(
     assert {call["cwd"] for call in calls} == {str(cwd)}
     # The reports went to the temporary directory, which is gone.
     assert not cwd.exists()
-    assert sorted(p.name for p in repo.iterdir()) == [".git", ".gitignore", ".trivyignore", "build", "uv.lock"]
+    assert sorted(p.name for p in repo.iterdir()) == [
+        ".git",
+        ".gitignore",
+        ".trivyignore",
+        "build",
+        "uv.lock",
+    ]
     assert (cache / "vrg-validate.lock").is_file()
     out = capsys.readouterr().out
     assert f"trivy: vulnerability database cache {cache}" in out
@@ -2291,7 +2300,9 @@ def test_run_trivy_failed_database_fetch_fails_loudly(
     log = _fake_trivy(tmp_path, monkeypatch, fs_rc=1, report=False)
     sleeps: list[float] = []
 
-    with pytest.raises(ValidationError, match=r"^Trivy scan errored \(no report produced\) after 3 attempts"):
+    with pytest.raises(
+        ValidationError, match=r"^Trivy scan errored \(no report produced\) after 3 attempts"
+    ):
         _run_trivy(repo, sleep=sleeps.append)
     assert [call["argv"][0] for call in _trivy_calls(log)] == ["fs", "fs", "fs"]
     assert sleeps == [15, 30]
@@ -2318,7 +2329,9 @@ def test_run_trivy_unusable_cache_fails(tmp_path: Path, monkeypatch: pytest.Monk
     blocker.write_text("")
     monkeypatch.setenv("VRG_TRIVY_CACHE_DIR", str(blocker / "cache"))
 
-    with pytest.raises(ValidationError, match=r"^trivy: cannot use the vulnerability database cache "):
+    with pytest.raises(
+        ValidationError, match=r"^trivy: cannot use the vulnerability database cache "
+    ):
         _run_trivy(repo)
 
 

@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Generator, Mapping, Sequence
 
 # The gate's inputs (vergil-actions actions/shared/security/trivy/action.yml
 # defaults, which ci-security.yml's trivy job does not override).
@@ -154,7 +154,7 @@ def scan_commands(workdir: Path, cache: Path) -> list[list[str]]:
 
 
 @contextlib.contextmanager
-def cache_lock(cache: Path, log: Callable[[str], None]) -> Iterator[None]:
+def cache_lock(cache: Path, log: Callable[[str], None]) -> Generator[None]:
     """Hold an exclusive lock on *cache* for one scan, creating the directory.
 
     Parallel validation runs share the cache volume; taking turns keeps two
@@ -205,7 +205,9 @@ def run_scan(
                 break
         if report.is_file():
             return ScanOutcome("passed", 0) if rc == 0 else ScanOutcome("findings", rc)
-        log(f"WARNING: trivy: the scan produced no report (exit {rc}, attempt {attempt}/{attempts})")
+        log(
+            f"WARNING: trivy: the scan produced no report (exit {rc}, attempt {attempt}/{attempts})"
+        )
         if attempt < attempts:
             backoff = attempt * delay
             log(f"trivy: retrying the scan in {backoff}s")

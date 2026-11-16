@@ -96,7 +96,17 @@ def test_scan_commands_mirror_scan_sh(tmp_path: Path) -> None:
             "/cache",
             ".",
         ],
-        ["trivy", "convert", "--severity", "CRITICAL,HIGH", "--format", "table", "--exit-code", "0", raw],
+        [
+            "trivy",
+            "convert",
+            "--severity",
+            "CRITICAL,HIGH",
+            "--format",
+            "table",
+            "--exit-code",
+            "0",
+            raw,
+        ],
         [
             "trivy",
             "convert",
@@ -222,9 +232,12 @@ def test_run_scan_ignores_a_stale_report(tmp_path: Path) -> None:
 def test_cache_lock_creates_the_cache_and_locks_it(tmp_path: Path) -> None:
     cache = tmp_path / "a" / "cache"
     logs: list[str] = []
-    with cache_lock(cache, logs.append), (cache / "vrg-validate.lock").open() as other:
-        with pytest.raises(BlockingIOError):
-            fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with (
+        cache_lock(cache, logs.append),
+        (cache / "vrg-validate.lock").open() as other,
+        pytest.raises(BlockingIOError),
+    ):
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
     assert logs == []
 
 
