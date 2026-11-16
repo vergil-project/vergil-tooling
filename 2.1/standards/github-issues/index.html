@@ -1430,6 +1430,8 @@
       
         
       
+        
+      
     
     
     
@@ -1482,6 +1484,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.316/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.316
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19048,6 +19078,14 @@ relocating epics when a repo's visibility changes.</p>
   public → private flip, for a human to resolve (see
   <a href="../../guides/epic-home-visibility-flip/">Epic home visibility flips</a>). Tooling
   never migrates or retracts it.</li>
+<li><strong>An archive stands top-level, labelled <code>archive</code>.</strong> An open archive (an
+  <code>archive</code> label, or a stamped <code>Archive (&lt;kind&gt;): &lt;name&gt; — &lt;YYYY&gt;-Qn</code> title)
+  with a native parent, one whose stamped title lacks the <code>archive</code> label, or
+  one labelled <code>archive</code> whose title is not stamped, is reported for a human
+  to unlink, relabel or retitle. An archive under a queue epic is counted
+  there as a queue item, and one without the label or the stamped title is
+  out of the drain's reach. The orphan pass recognises an archive by its title too, so it
+  never attaches one that has lost its label.</li>
 <li><strong>Every epic links its documents.</strong> Every epic in the home, open or closed,
   except the standing and <code>[archived]</code> epics, has a well-formed
   <a href="#the-documents-section">Documents section</a>: both markers, the heading, and

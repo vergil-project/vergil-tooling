@@ -1428,6 +1428,8 @@
       
         
       
+        
+      
     
     
     
@@ -1480,6 +1482,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.316/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.316
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -20859,7 +20889,8 @@ advisory to an existing issue, or resumes an unfinished pair), <code>list</code>
 issues, <code>sync</code> sets each paired advisory's state from its issues and
 reports broken pairs (<code>--dry-run</code> previews it), and <code>close</code> closes a draft
 advisory whose issues are all closed, posting the GHSA ID and a required
-<code>--reason</code> on each of them first. Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
+<code>--reason</code> on each of them first, and <code>note</code> appends a dated private note
+from a file to an advisory's description (append-only). Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
 <a href="../dev/security-record/">vrg-security-record</a> and
 <a href="../../guides/security-records/">Security Records</a>.</p>
 <table>
@@ -20876,7 +20907,7 @@ advisory whose issues are all closed, posting the GHSA ID and a required
 </tr>
 <tr>
 <td>Args</td>
-<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code>; <code>sync [--dry-run]</code>; <code>close GHSA-ID --reason TEXT</code></td>
+<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code>; <code>sync [--dry-run]</code>; <code>close GHSA-ID --reason TEXT</code>; <code>note GHSA-ID --file FILE</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -21474,7 +21505,9 @@ an open finite epic whose children are all closed. The <strong>invariant</strong
 are the <a href="../../standards/github-issues/#compliance-invariants">compliance invariants</a>:
 epics outside <code>.github</code>, stray <code>.github</code> issues, a closed epic with an open
 child, orphans, retired kind labels, body-only <code>Parent:</code> links, self-homed
-queues in a now-public repo, and private work under a public epic. It also
+queues in a now-public repo, private work under a public epic, and a
+misplaced archive (one with a parent, one without its <code>archive</code> label, or one
+labelled <code>archive</code> whose title is not a stamped archive title). It also
 lists open epics with operational tasks still pending, and closed
 operational tasks with no <code>Outcome: SUCCESS</code>.</p>
 <p>An <strong>Epic documents</strong> section checks the
@@ -22542,7 +22575,8 @@ markdownlint, yamllint) are available on PATH.</p>
 <h3 id="vrg-validate">vrg-validate<a class="headerlink" href="#vrg-validate" title="Permanent link">&para;</a></h3>
 <p>The unified validation driver. It reads <code>[project].primary-language</code>
 from <code>vergil.toml</code> and runs the stages in order: common checks, the
-language's install, lint, typecheck, test and audit commands, and last
+language's install, lint, typecheck, test and audit commands, the
+semgrep scan of PR CI's <code>security / semgrep</code> gate, and last
 the repository's custom validator (<code>scripts/bin/validate-custom</code> or
 <code>vrg-validate-custom</code> on <code>PATH</code>) when it has one. <code>--check</code> runs one
 stage. <code>--check custom</code> runs the install stage (when the language has
@@ -22569,7 +22603,7 @@ start, and each stage's status. <code>vrg-merge-review-request</code> reads it.<
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--check {common,lint,typecheck,test,audit,custom}</code>, <code>--all-versions</code> (Python only; alone or with <code>--check test</code>)</td>
+<td><code>--check {common,lint,typecheck,test,audit,semgrep,custom}</code>, <code>--all-versions</code> (Python only; alone or with <code>--check test</code>)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
