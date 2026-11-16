@@ -267,10 +267,10 @@ reports go to the same temporary directory, never the working tree.
 
 The stage needs network access to download Trivy's vulnerability
 database. The database is cached between runs, never in the working
-tree: `vrg-container-run` mounts the `vergil-trivy-cache` volume
-for it (see
+tree: `vrg-container-run` bind-mounts the per-user
+`~/.cache/vergil/trivy` directory for it (see
 [Container Config](../reference/container-config.md#variables-vrg-container-run-always-sets)).
-`vrg-container-run` points `VRG_TRIVY_CACHE_DIR` at the volume; in
+`vrg-container-run` points `VRG_TRIVY_CACHE_DIR` at the mount; in
 a container started without it, the cache is `vergil/trivy` under
 `$XDG_CACHE_HOME` or `~/.cache`, which lasts only as long as the
 container. A cache directory inside the working tree fails the stage. Runs that share the cache take turns, so parallel validations

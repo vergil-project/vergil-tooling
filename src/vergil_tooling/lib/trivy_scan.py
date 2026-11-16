@@ -20,9 +20,10 @@ passes.
 
 The one addition is ``--cache-dir`` on the scan, so the vulnerability
 database is cached between runs, outside the working tree
-(:func:`cache_dir`). ``vrg-container-run`` mounts the named volume
-:data:`CACHE_VOLUME` at :data:`CONTAINER_CACHE_DIR` and points
-:data:`CACHE_ENV` at it, so the cache outlives each ``--rm`` container.
+(:func:`cache_dir`). ``vrg-container-run`` bind-mounts the per-user cache
+directory on the host (:func:`default_cache_dir`) at
+:data:`CONTAINER_CACHE_DIR` and points :data:`CACHE_ENV` at it, so the cache
+outlives each ``--rm`` container.
 Concurrent runs sharing the cache take turns (:func:`cache_lock`).
 """
 
@@ -54,10 +55,10 @@ SKIP_FILES = "**/pip/_vendor/bom.cdx.json"
 SCAN_ATTEMPTS = 3
 RETRY_DELAY_SECS = 15
 
-# Where the vulnerability database is cached. vrg-container-run mounts the
-# named volume at the container path and sets the env var to it.
+# Where the vulnerability database is cached. vrg-container-run bind-mounts
+# the host's default_cache_dir() at the container path and sets the env var
+# to it.
 CACHE_ENV = "VRG_TRIVY_CACHE_DIR"
-CACHE_VOLUME = "vergil-trivy-cache"
 CONTAINER_CACHE_DIR = "/var/cache/vergil/trivy"
 
 _LOCK_NAME = "vrg-validate.lock"
@@ -79,13 +80,24 @@ class ScanOutcome:
     returncode: int
 
 
+def default_cache_dir(environ: Mapping[str, str], home: Path | None = None) -> Path:
+    """The per-user cache directory: ``vergil/trivy`` under the XDG cache home.
+
+    The XDG cache home is ``$XDG_CACHE_HOME`` when it is an absolute path,
+    else ``~/.cache``. The path is returned as is, neither resolved nor
+    created.
+    """
+    xdg = environ.get("XDG_CACHE_HOME", "")
+    base = Path(xdg) if xdg and Path(xdg).is_absolute() else (home or Path.home()) / ".cache"
+    return base / "vergil" / "trivy"
+
+
 def cache_dir(repo_root: Path, environ: Mapping[str, str], home: Path | None = None) -> Path:
     """The vulnerability database cache directory, never inside *repo_root*.
 
     :data:`CACHE_ENV` names it when set (``vrg-container-run`` sets it to the
-    mounted volume); it must be a non-empty absolute path. Otherwise it is
-    ``vergil/trivy`` under ``$XDG_CACHE_HOME`` (when absolute) or
-    ``~/.cache``. Raises :class:`TrivyError` for an unusable value, or for a
+    bind-mounted cache); it must be a non-empty absolute path. Otherwise it is
+    :func:`default_cache_dir`. Raises :class:`TrivyError` for an unusable value, or for a
     directory in the working tree, where the database would be written into
     the repository.
     """
@@ -99,9 +111,7 @@ def cache_dir(repo_root: Path, environ: Mapping[str, str], home: Path | None = N
             msg = f"{CACHE_ENV} must be an absolute path, not {raw!r}"
             raise TrivyError(msg)
     else:
-        xdg = environ.get("XDG_CACHE_HOME", "")
-        base = Path(xdg) if xdg and Path(xdg).is_absolute() else (home or Path.home()) / ".cache"
-        path = base / "vergil" / "trivy"
+        path = default_cache_dir(environ, home)
     resolved = path.resolve()
     root = repo_root.resolve()
     if resolved == root or resolved.is_relative_to(root):

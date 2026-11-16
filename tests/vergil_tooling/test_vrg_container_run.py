@@ -16,7 +16,7 @@ from tests.vergil_tooling.conftest import (
     window_default_resolution,
 )
 from vergil_tooling.bin.vrg_container_run import _test_context, _test_tuning_env, main
-from vergil_tooling.lib import container, local_settings
+from vergil_tooling.lib import container, local_settings, trivy_scan
 from vergil_tooling.lib.container import VERSION_WINDOW_MOUNT
 from vergil_tooling.lib.platform_env import Platform
 from vergil_tooling.lib.versions.window import WINDOW_ENV
@@ -27,6 +27,19 @@ if TYPE_CHECKING:
     from unittest.mock import MagicMock
 
     from vergil_tooling.lib.versions.resolve import Resolution
+
+
+@pytest.fixture(autouse=True)
+def trivy_home(tmp_path: Path) -> Iterator[Path]:
+    # Every launch creates the per-user Trivy cache directory; keep it out of
+    # the real home. XDG_CACHE_HOME, when a test sets it, still wins.
+    home = tmp_path / "trivy-home"
+    real = trivy_scan.default_cache_dir
+    with patch(
+        "vergil_tooling.bin.vrg_container_run.trivy_scan.default_cache_dir",
+        side_effect=lambda environ: real(environ, home=home),
+    ):
+        yield home
 
 
 @pytest.fixture(autouse=True)
@@ -792,24 +805,71 @@ def test_main_passes_test_tuning_env_to_container(tmp_path: Path) -> None:
     assert "VRG_TEST_CONTEXT=ci" in mock_exec.call_args[0][1]
 
 
-def test_main_mounts_the_trivy_cache_volume(tmp_path: Path) -> None:
-    # The trivy stage's vulnerability database outlives the --rm container in
-    # a named volume, never in the bind-mounted working tree (issue #4445).
-    (tmp_path / "pyproject.toml").write_text("[project]\n")
+def _launch_for_trivy(tmp_path: Path, runtime: str, env: dict[str, str]) -> tuple[int, MagicMock]:
+    repo = tmp_path / "repo"
+    repo.mkdir(exist_ok=True)
+    (repo / "pyproject.toml").write_text("[project]\n")
     with (
-        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=repo),
         patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
         patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="img"),
-        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value=runtime),
         patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
-        patch.dict("os.environ", {}, clear=True),
+        patch.dict("os.environ", env, clear=True),
     ):
-        main(["--", "vrg-validate"])
+        rc = main(["--", "vrg-validate"])
+    return rc, mock_exec
+
+
+@pytest.mark.parametrize("runtime", ["docker", "nerdctl"])
+@pytest.mark.parametrize("existing", [False, True], ids=["missing", "existing"])
+def test_main_bind_mounts_the_trivy_cache_dir(
+    tmp_path: Path, trivy_home: Path, runtime: str, existing: bool
+) -> None:
+    # The trivy stage's vulnerability database outlives the --rm container in
+    # a per-user host directory, never in the bind-mounted working tree (issue
+    # #4445). A bind mount, not a named volume, so nerdctl does not warn that
+    # the volume already exists on every launch (issue #4469).
+    host = trivy_home / ".cache" / "vergil" / "trivy"
+    if existing:
+        host.mkdir(parents=True)
+        (host / "db").write_text("kept")
+    rc, mock_exec = _launch_for_trivy(tmp_path, runtime, {})
+    assert rc == 0
+    assert mock_exec.call_args[0][0] == runtime
     args = mock_exec.call_args[0][1]
-    mount = "vergil-trivy-cache:/var/cache/vergil/trivy"
+    mount = f"{host}:/var/cache/vergil/trivy"
     assert args[args.index(mount) - 1] == "-v"
     assert "VRG_TRIVY_CACHE_DIR=/var/cache/vergil/trivy" in args
     assert args.index(mount) < args.index("img")
+    assert host.is_dir()
+    if existing:
+        assert (host / "db").read_text() == "kept"
+    assert not any("vergil-trivy-cache" in a for a in args)
+    assert not any(a in {"volume", "volumes"} for a in args)
+
+
+def test_main_trivy_cache_dir_follows_xdg_cache_home(tmp_path: Path) -> None:
+    xdg = tmp_path / "xdg"
+    rc, mock_exec = _launch_for_trivy(tmp_path, "nerdctl", {"XDG_CACHE_HOME": str(xdg)})
+    assert rc == 0
+    host = xdg / "vergil" / "trivy"
+    assert host.is_dir()
+    assert f"{host}:/var/cache/vergil/trivy" in mock_exec.call_args[0][1]
+
+
+@pytest.mark.parametrize("runtime", ["docker", "nerdctl"])
+def test_main_fails_when_the_trivy_cache_dir_cannot_be_created(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], runtime: str
+) -> None:
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory")
+    rc, mock_exec = _launch_for_trivy(tmp_path, runtime, {"XDG_CACHE_HOME": str(blocker)})
+    assert rc == 1
+    mock_exec.assert_not_called()
+    err = capsys.readouterr().err
+    assert "error: cannot create the Trivy cache directory:" in err
+    assert str(blocker) in err
 
 
 # -- Conan audit token injection (issue #2902) ----------------------------------

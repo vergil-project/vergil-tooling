@@ -85,9 +85,11 @@ environment variables:
                           [test.<context>] worker count (default: ci on GitHub
                           Actions, else the vrg-whoami --platform token)
 
-volumes:
-  vergil-trivy-cache      mounted at /var/cache/vergil/trivy (VRG_TRIVY_CACHE_DIR):
-                          the vulnerability database vrg-validate's trivy stage
+mounts:
+  $XDG_CACHE_HOME/vergil/trivy (default ~/.cache/vergil/trivy)
+                          created if missing and bind-mounted at
+                          /var/cache/vergil/trivy (VRG_TRIVY_CACHE_DIR): the
+                          vulnerability database vrg-validate's trivy stage
                           caches between runs, outside the working tree
 
 examples:
@@ -202,6 +204,12 @@ def main(argv: list[str] | None = None) -> int:
 
     assert_runtime_available(runtime)
 
+    try:
+        trivy_cache_mount = _trivy_cache_mount()
+    except OSError as exc:
+        print(f"error: cannot create the Trivy cache directory: {exc}", file=sys.stderr)
+        return 1
+
     env_prefixes = container_env_prefixes(repo_root)
     pull_policy = "never" if image_source == "cached" else "always"
     container_args = build_container_args(
@@ -217,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         # another interpreter (spec §6.5).
         extra_env={**_test_tuning_env(), **container_env(resolution), **_trivy_cache_env()},
         version_window=version_window,
-        volumes=(_TRIVY_CACHE_MOUNT,),
+        volumes=(trivy_cache_mount,),
     )
     if runtime == "nerdctl":
         exec_replace("nerdctl", container_args)
@@ -226,10 +234,18 @@ def main(argv: list[str] | None = None) -> int:
     return 0  # pragma: no cover
 
 
-# vrg-validate's trivy stage caches the vulnerability database in a named
-# volume, so it outlives each --rm container and never lands in the bind-mounted
-# working tree (issue #4445).
-_TRIVY_CACHE_MOUNT = f"{trivy_scan.CACHE_VOLUME}:{trivy_scan.CONTAINER_CACHE_DIR}"
+def _trivy_cache_mount() -> str:
+    """Create the host's Trivy cache directory if missing; return its ``-v`` spec.
+
+    vrg-validate's trivy stage caches the vulnerability database in a per-user
+    host directory, so it outlives each --rm container and never lands in the
+    bind-mounted working tree (issue #4445). It is a bind mount, not a named
+    volume: nerdctl warns on every run that mounts an existing named volume
+    (issue #4469). Raises :class:`OSError` when the directory cannot be created.
+    """
+    host = trivy_scan.default_cache_dir(os.environ)
+    host.mkdir(parents=True, exist_ok=True)
+    return f"{host}:{trivy_scan.CONTAINER_CACHE_DIR}"
 
 
 def _trivy_cache_env() -> dict[str, str]:
