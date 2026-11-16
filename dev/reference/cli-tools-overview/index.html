@@ -21040,6 +21040,22 @@ first; each item's note is its latest deferral
 deferral comment sorts first with an empty note. A bare <code>vrg-queue</code> lists all
 three queues in that order (intake, planning, deferred). Used by the
 collect step of <code>epic-review</code> and by <code>epic-create</code>'s no-argument summary.</p>
+<p>Each planning and deferred line shows the item's <strong>epic size</strong> after its age:
+<code>M/14</code> (the size and the estimated task count), <code>?</code> when unsized, or <code>!</code> when
+its sizing is in error: its <code>epic-size:*</code> label and its latest trusted sizing
+comment disagree, one is missing, it has several size labels, or the comment
+is malformed. Only comments by trusted authors count. For an item in error, a
+held or deferral note is kept with <code>| size: &lt;error&gt;</code> appended; otherwise
+<code>size: &lt;error&gt;</code> replaces its latest-comment note. <code>--json</code> adds <code>epic_size</code>,
+<code>estimated_tasks</code>, <code>confidence</code> and <code>size_error</code> (each <code>null</code> when unset) to
+every planning and deferred item; intake items are unchanged. For the
+planning view only, <code>--sort age|size|tasks</code> orders the queue (<code>age</code>, oldest
+first, is the default; <code>size</code> is S, M, L, XL, then unsized, then items in
+error, oldest first within each; <code>tasks</code> is by estimated task count, then
+unsized, then in error), and <code>--size S,M</code> filters it to those sizes
+(<code>unsized</code> selects the unsized). An item in error is always listed, whatever
+the filter, and a filtered header reads <code>planning queue for &lt;name&gt; in &lt;home&gt;:
+&lt;N&gt; open item(s), &lt;M&gt; shown</code>.</p>
 <p><code>vrg-queue adhoc</code> lists the open tasks under every live ad-hoc epic
 (<code>Epic (ad hoc): &lt;repo&gt;</code>, labelled <code>epic</code> + <code>ad-hoc</code>) in the home, grouped by
 repo and oldest first within each. Each line is
@@ -21089,19 +21105,19 @@ step of <code>epic-implement adhoc</code>, as the other queues are of <code>epic
 </tr>
 <tr>
 <td>Args</td>
-<td><code>{intake,planning,deferred,adhoc}</code> (optional; default: intake, planning and deferred); <code>--repo OWNER/NAME</code> (that repo's queue home, and for <code>adhoc</code> on a public repo its own ad-hoc epic; default: the current org's <code>.github</code> queues); <code>--root DIR</code> (<code>adhoc</code> only, repeatable: where to find each repo's main clone; default: the platform's repo roots); <code>--json</code> (a list of items; with no queue named, an object keyed by queue, <code>null</code> for a missing one)</td>
+<td><code>{intake,planning,deferred,adhoc}</code> (optional; default: intake, planning and deferred); <code>--repo OWNER/NAME</code> (that repo's queue home, and for <code>adhoc</code> on a public repo its own ad-hoc epic; default: the current org's <code>.github</code> queues); <code>--root DIR</code> (<code>adhoc</code> only, repeatable: where to find each repo's main clone; default: the platform's repo roots); <code>--sort age\|size\|tasks</code> and <code>--size LIST</code> (<code>planning</code> only; refused with any other queue or with none); <code>--json</code> (a list of items; with no queue named, an object keyed by queue, <code>null</code> for a missing one)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>GitHub App credentials for the target org. The planning view also reads the org's advisories when its <code>.github</code> is public, or when a planning item has an advisory line (then a <code>.github</code> that is not public is refused): the identity needs Repository security advisories access</td>
+<td>GitHub App credentials for the target org. The planning and deferred views read the configured trusted authors (the VM's <code>trusted-authors.toml</code>, else the host's <code>identities.toml</code> stanza). The planning view also reads the org's advisories when its <code>.github</code> is public, or when a planning item has an advisory line (then a <code>.github</code> that is not public is refused): the identity needs Repository security advisories access</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: no queue yet</code> and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a <code>.github</code> that is not public; an advisory line naming another org; a malformed response) is named on stderr as <code>vrg-queue: &lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt; could not be read: &lt;reason&gt;</code> and the run exits 1; with no queue named, a text run still lists the other queues and prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: not shown (failed; see stderr)</code> in its place, and a <code>--json</code> run prints nothing on stdout. For <code>adhoc</code>, a failed read of the epics, a task's sub-issues, a task, its blockers or a blocker's state, an epic search that reaches its listing limit, two live ad-hoc epics for one repo, a failed read of any in-flight source (the open PRs, the remote refs, a relay payload, a clone's branches or remotes), a malformed relay payload, repo roots that cannot be determined (no <code>--root</code> on a physical host) or do not exist, or a repo with open ad-hoc tasks and no clone, or two, under the repo roots is reported the same way (<code>adhoc queue for &lt;name&gt; in &lt;home&gt; could not be read</code>) and exits 1; no ad-hoc epic is an empty list and exit 0. Nothing is created</td>
+<td>A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: no queue yet</code> and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a <code>.github</code> that is not public; an advisory line naming another org; a malformed response; trusted authors not configured or invalid) is named on stderr as <code>vrg-queue: &lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt; could not be read: &lt;reason&gt;</code> and the run exits 1; with no queue named, a text run still lists the other queues and prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: not shown (failed; see stderr)</code> in its place, and a <code>--json</code> run prints nothing on stdout. For <code>adhoc</code>, a failed read of the epics, a task's sub-issues, a task, its blockers or a blocker's state, an epic search that reaches its listing limit, two live ad-hoc epics for one repo, a failed read of any in-flight source (the open PRs, the remote refs, a relay payload, a clone's branches or remotes), a malformed relay payload, repo roots that cannot be determined (no <code>--root</code> on a physical host) or do not exist, or a repo with open ad-hoc tasks and no clone, or two, under the repo roots is reported the same way (<code>adhoc queue for &lt;name&gt; in &lt;home&gt; could not be read</code>) and exits 1; no ad-hoc epic is an empty list and exit 0. When every queue was read but an item's sizing is in error, the full listing is printed (<code>--json</code> included), each such item is named on stderr as <code>vrg-queue: &lt;ref&gt;: &lt;error&gt;</code>, and the run exits 2. <code>--sort</code> or <code>--size</code> with a queue other than <code>planning</code>, or with none, and an unknown <code>--size</code> token exit 1. Nothing is created</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success, 1 error, 2 bad arguments</td>
+<td>0 success; 2 every queue read, one or more items' sizing in error; 1 a queue could not be read, or bad arguments (every usage error exits 1, never 2). 1 wins over 2</td>
 </tr>
 <tr>
 <td>Status</td>
