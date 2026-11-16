@@ -114,11 +114,21 @@ PYTHON_REPORT_FILES = (
 # output-file flag, so the AUDIT command redirects its stderr here.
 CARGO_DENY_REPORT = "cargo-deny.json"
 
-# The workspace-root report files the Rust gate commands emit: the TEST gate's
-# Cobertura coverage and cargo-nextest JUnit report
-# (vergil-project/vergil-tooling#4394, #4395) and the AUDIT gate's cargo-deny
-# diagnostics.
+# The rust ``quality`` gate's evidence (epic vergil-project/.github#1165, spec
+# §6.5): clippy's and ``cargo check``'s ``--message-format=json`` output, from
+# the LINT and TYPECHECK gates' own runs. The names are the contract with
+# vergil-actions' ``reports.sh`` (its ``rust/lint`` and ``rust/typecheck``
+# entries), beside RUFF_REPORT and MYPY_REPORT, so keep them exact.
+CLIPPY_REPORT = "quality-clippy.json"
+CARGO_CHECK_REPORT = "quality-cargo-check.json"
+
+# The workspace-root report files the Rust gate commands emit: the LINT and
+# TYPECHECK gates' cargo JSON messages, the TEST gate's Cobertura coverage and
+# cargo-nextest JUnit report (vergil-project/vergil-tooling#4394, #4395) and the
+# AUDIT gate's cargo-deny diagnostics.
 RUST_REPORT_FILES = (
+    CLIPPY_REPORT,
+    CARGO_CHECK_REPORT,
     COVERAGE_REPORT,
     JUNIT_REPORT,
     CARGO_DENY_REPORT,
@@ -210,6 +220,53 @@ _RUST_AUDIT_SCRIPT = (
     "rc=$?; "
     f"cat {CARGO_DENY_REPORT} >&2 || exit 1; "
     'exit "$rc"'
+)
+
+# The rust LINT clippy and TYPECHECK commands (epic vergil-project/.github#1165,
+# spec §6.5). One cargo run both gates and writes the report:
+# ``--message-format=json`` sends cargo's JSON messages (one object per line) to
+# stdout, which the shell writes to the report. The compiler's diagnostics are
+# then only in that JSON, so once cargo exits ``jq`` prints each
+# ``compiler-message``'s ``message.rendered`` text, the diagnostic as cargo
+# would have shown it, to stderr for the log; cargo's own status lines stay on
+# its stderr, so they come first. The JSON holds a diagnostic once per target
+# that hit it (``--all-targets`` builds the lib and the lib's tests from the
+# same source), where cargo's human output prints identical diagnostics once,
+# so the filter prints each distinct rendered text once, in first-seen order.
+# The command exits with cargo's status, so a failing lint or check still
+# writes its report. ``jq`` failing (missing, or the report unreadable) fails
+# the gate; jq is in every vergil-containers image (its ``base`` layer). The
+# ``>`` redirect replaces any stale report before cargo runs. Plain POSIX
+# ``sh`` (dash).
+_CARGO_RENDER_FILTER = (
+    '[inputs | select(.reason == "compiler-message") | .message.rendered // empty] '
+    "| reduce .[] as $r ([]; if any(.[]; . == $r) then . else . + [$r] end) "
+    "| .[]"
+)
+
+
+def _rust_json_report_script(cargo_args: str, report: str) -> str:
+    """The ``sh -c`` script that runs *cargo_args* and writes its JSON to *report*."""
+    return (
+        f"{cargo_args} >{report}; "
+        "rc=$?; "
+        f"jq -j -n '{_CARGO_RENDER_FILTER}' {report} >&2 || exit 1; "
+        'exit "$rc"'
+    )
+
+
+# ``--all-targets`` is ``--lib --bins --tests --benches --examples``; with no
+# target flag clippy checks only the lib and bins, so ``tests/`` and
+# ``#[cfg(test)]`` code went unlinted (vergil-project/vergil-tooling#4379).
+# ``--message-format`` is cargo's option, so it goes before the ``--`` that
+# starts clippy's own.
+_RUST_CLIPPY_SCRIPT = _rust_json_report_script(
+    "cargo clippy --all-targets --locked --workspace --message-format=json -- -D warnings",
+    CLIPPY_REPORT,
+)
+_RUST_CHECK_SCRIPT = _rust_json_report_script(
+    "cargo check --locked --workspace --message-format=json",
+    CARGO_CHECK_REPORT,
 )
 
 # The rust doctest command, over every workspace member (spec §6.4).
@@ -587,22 +644,13 @@ _REGISTRY: dict[str, Language] = {
             CheckKind.INSTALL: [["cargo", "fetch", "--locked"]],
             CheckKind.LINT: [
                 ["cargo", "fmt", "--all", "--", "--check"],
-                # ``--all-targets`` is ``--lib --bins --tests --benches
-                # --examples``; with no target flag clippy checks only the lib
-                # and bins, so ``tests/`` and ``#[cfg(test)]`` code went unlinted
-                # (vergil-project/vergil-tooling#4379).
-                [
-                    "cargo",
-                    "clippy",
-                    "--all-targets",
-                    "--locked",
-                    "--workspace",
-                    "--",
-                    "-D",
-                    "warnings",
-                ],
+                # clippy writes ``quality-clippy.json``; see
+                # ``_RUST_CLIPPY_SCRIPT``.
+                ["sh", "-c", _RUST_CLIPPY_SCRIPT],
             ],
-            CheckKind.TYPECHECK: [["cargo", "check", "--locked", "--workspace"]],
+            # ``cargo check`` writes ``quality-cargo-check.json``; see
+            # ``_RUST_CHECK_SCRIPT``.
+            CheckKind.TYPECHECK: [["sh", "-c", _RUST_CHECK_SCRIPT]],
             # The coverage run is cargo-nextest under cargo-llvm-cov, gating
             # on 100% lines and regions and writing ``coverage.xml`` and ``junit.xml``
             # (issues #4394, #4395); see ``_RUST_TEST_SCRIPT``. Nextest runs

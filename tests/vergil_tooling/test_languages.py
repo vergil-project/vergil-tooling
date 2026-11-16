@@ -14,7 +14,9 @@ from vergil_tooling.lib import languages
 from vergil_tooling.lib.languages import (
     _RUST_LICENSES_ALLOWLIST,
     _TYPESCRIPT_LICENSES_ALLOWLIST,
+    CARGO_CHECK_REPORT,
     CARGO_DENY_REPORT,
+    CLIPPY_REPORT,
     COVERAGE_REPORT,
     JUNIT_REPORT,
     LICENSES_REPORT,
@@ -372,27 +374,84 @@ def test_rust_install_commands() -> None:
     assert cmds == [["cargo", "fetch", "--locked"]]
 
 
+# Each distinct rendered diagnostic once, in first-seen order (cargo's human
+# output dedupes the copies ``--all-targets`` gives the lib and its tests).
+_RUST_RENDER = (
+    "jq -j -n "
+    '\'[inputs | select(.reason == "compiler-message") | .message.rendered // empty] '
+    "| reduce .[] as $r ([]; if any(.[]; . == $r) then . else . + [$r] end) "
+    "| .[]' "
+)
+
+
 def test_rust_lint_commands() -> None:
     # clippy lints every target (tests, examples and benches included), not
-    # only the lib and bins it checks with no target flag (#4379).
+    # only the lib and bins it checks with no target flag (#4379). Its JSON
+    # messages are the lint report, and their rendered text goes to the log
+    # (spec §6.5).
     assert language_commands("rust", CheckKind.LINT) == [
         ["cargo", "fmt", "--all", "--", "--check"],
         [
-            "cargo",
-            "clippy",
-            "--all-targets",
-            "--locked",
-            "--workspace",
-            "--",
-            "-D",
-            "warnings",
+            "sh",
+            "-c",
+            "cargo clippy --all-targets --locked --workspace --message-format=json "
+            "-- -D warnings >quality-clippy.json; "
+            "rc=$?; "
+            f"{_RUST_RENDER}quality-clippy.json >&2 || exit 1; "
+            'exit "$rc"',
         ],
     ]
 
 
 def test_rust_typecheck_commands() -> None:
-    joined = _joined(language_commands("rust", CheckKind.TYPECHECK))
-    assert joined == ["cargo check --locked --workspace"]
+    assert language_commands("rust", CheckKind.TYPECHECK) == [
+        [
+            "sh",
+            "-c",
+            "cargo check --locked --workspace --message-format=json >quality-cargo-check.json; "
+            "rc=$?; "
+            f"{_RUST_RENDER}quality-cargo-check.json >&2 || exit 1; "
+            'exit "$rc"',
+        ]
+    ]
+
+
+def test_rust_quality_report_names() -> None:
+    """The names are the contract with vergil-actions' reports.sh (spec §6.5)."""
+    assert CLIPPY_REPORT == "quality-clippy.json"
+    assert CARGO_CHECK_REPORT == "quality-cargo-check.json"
+
+
+def test_rust_report_files_include_quality() -> None:
+    assert CLIPPY_REPORT in RUST_REPORT_FILES
+    assert CARGO_CHECK_REPORT in RUST_REPORT_FILES
+
+
+def test_rust_lint_writes_clippy_report() -> None:
+    """clippy's JSON goes to the report; the gate flags are unchanged."""
+    (_, (_, _, script)) = language_commands("rust", CheckKind.LINT)
+    clippy = _cargo_args(script, "cargo clippy")
+    assert clippy[-1] == f">{CLIPPY_REPORT}"
+    # cargo's own option, so before the ``--`` that starts clippy's.
+    assert "--message-format=json" in clippy[: clippy.index("--")]
+    assert " ".join(clippy) == (
+        "cargo clippy --all-targets --locked --workspace --message-format=json "
+        f"-- -D warnings >{CLIPPY_REPORT}"
+    )
+
+
+def test_rust_typecheck_writes_report() -> None:
+    """cargo check's JSON goes to the typecheck report."""
+    ((_, _, script),) = language_commands("rust", CheckKind.TYPECHECK)
+    check = _cargo_args(script, "cargo check")
+    assert check == [
+        "cargo",
+        "check",
+        "--locked",
+        "--workspace",
+        "--message-format=json",
+        f">{CARGO_CHECK_REPORT}",
+    ]
 
 
 def _rust_nextest_toml() -> Path:
@@ -500,8 +559,9 @@ def test_rust_lockfile_commands_are_locked() -> None:
     fmt, clippy = cmds[CheckKind.LINT]
     assert fmt.startswith("cargo fmt ")
     assert "--locked" not in fmt
-    assert clippy.startswith("cargo clippy --all-targets --locked ")
-    assert cmds[CheckKind.TYPECHECK] == ["cargo check --locked --workspace"]
+    assert "cargo clippy --all-targets --locked " in clippy
+    (check,) = cmds[CheckKind.TYPECHECK]
+    assert "cargo check --locked --workspace " in check
     coverage, doctest = cmds[CheckKind.TEST]
     assert "cargo llvm-cov nextest --locked " in coverage
     assert "cargo llvm-cov report --locked " in coverage
@@ -527,10 +587,11 @@ def _cargo_args(script: str, subcommand: str) -> list[str]:
 
 def test_rust_gate_commands_cover_workspace() -> None:
     """Every Rust gate command that selects packages validates every member (spec §6.4)."""
-    (clippy,) = (c for c in language_commands("rust", CheckKind.LINT) if c[1] == "clippy")
+    (_, (_, _, lint)) = language_commands("rust", CheckKind.LINT)
+    clippy = _cargo_args(lint, "cargo clippy")
     assert "--workspace" in clippy[: clippy.index("--")]
-    (check,) = language_commands("rust", CheckKind.TYPECHECK)
-    assert "--workspace" in check
+    ((_, _, typecheck),) = language_commands("rust", CheckKind.TYPECHECK)
+    assert "--workspace" in _cargo_args(typecheck, "cargo check")
     (coverage, doctest) = language_commands("rust", CheckKind.TEST)
     script = coverage[2]
     assert "--workspace" in _cargo_args(script, "cargo llvm-cov nextest")
@@ -564,9 +625,17 @@ def test_rust_build_and_publish_locked() -> None:
 
 
 def test_rust_report_files_contract() -> None:
-    """The rust report names match vergil-actions' staging (issues #4394, #4395)."""
-    assert RUST_REPORT_FILES == ("coverage.xml", "junit.xml", "cargo-deny.json")
+    """The rust report names match vergil-actions' staging (issues #4394, #4395, #4473)."""
+    assert RUST_REPORT_FILES == (
+        "quality-clippy.json",
+        "quality-cargo-check.json",
+        "coverage.xml",
+        "junit.xml",
+        "cargo-deny.json",
+    )
     assert CARGO_DENY_REPORT == "cargo-deny.json"
+    assert f">{CLIPPY_REPORT};" in language_commands("rust", CheckKind.LINT)[1][2]
+    assert f">{CARGO_CHECK_REPORT};" in language_commands("rust", CheckKind.TYPECHECK)[0][2]
     test_script = language_commands("rust", CheckKind.TEST)[0][2]
     assert f"--output-path {COVERAGE_REPORT};" in test_script
     assert f" {JUNIT_REPORT} || exit 1;" in test_script

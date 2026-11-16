@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import gitignore
+from vergil_tooling.lib.languages import CARGO_CHECK_REPORT, CLIPPY_REPORT
 
 if TYPE_CHECKING:
     import pytest
@@ -36,7 +37,9 @@ if TYPE_CHECKING:
 #: report files of any paad review run never show in a worktree. Epic
 #: vergil-project/.github#1091 then filled the empty rust fragment with
 #: ``target/``, Cargo's build directory, a deliberate addition, and #4394 added
-#: ``cargo-deny.json``, the rust audit gate's report, beside it. The
+#: ``cargo-deny.json``, the rust audit gate's report, beside it. #4473 added
+#: ``quality-clippy.json`` and ``quality-cargo-check.json``, the rust lint and
+#: typecheck gates' reports. The
 #: lossless-split invariant below proves ``base ∪ all-fragments`` still
 #: reconstitutes exactly this set, so a future fragment edit that silently drops
 #: or invents a pattern fails CI. This is the regression guard the monolith used
@@ -92,6 +95,8 @@ _LEGACY_GITIGNORE_PATTERNS: tuple[str, ...] = (
     "CMakeUserPresets.json",
     "target/",
     "cargo-deny.json",
+    "quality-clippy.json",
+    "quality-cargo-check.json",
 )
 
 
@@ -244,7 +249,19 @@ def test_compose_unknown_language_is_base_only() -> None:
 
 
 def test_rust_fragment_ignores_cargo_target_and_audit_report() -> None:
-    assert gitignore.load_fragment("rust") == ["target/", "cargo-deny.json"]
+    assert gitignore.load_fragment("rust") == [
+        "target/",
+        "cargo-deny.json",
+        "quality-clippy.json",
+        "quality-cargo-check.json",
+    ]
+
+
+def test_rust_gitignore_lists_quality_reports() -> None:
+    """The rust lint and typecheck reports are ignored, by their contract names."""
+    fragment = gitignore.load_fragment("rust")
+    assert CLIPPY_REPORT in fragment
+    assert CARGO_CHECK_REPORT in fragment
 
 
 def test_load_fragment_unknown_is_empty() -> None:
