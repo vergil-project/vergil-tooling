@@ -632,6 +632,15 @@ It defaults to the current org's `.github` queues; `--repo <owner>/<repo>`
 selects that repo's queue home (a self-homed private repo's own queues), and
 `--json` emits machine-readable output. It is read-only.
 
+Planning and deferred items show their epic size (`M/14`, `?` unsized, `!` in
+error). `vrg-queue planning --sort size` (or `tasks`) puts the small end of the
+planning queue first, and `--size S,unsized` filters it; an item in error is
+always listed. The run exits 2 when every queue was read but an item's sizing
+is in error, naming each on stderr, and 1 when a queue could not be read or
+the command line is invalid. The
+[CLI reference](../reference/cli-tools-overview.md#vrg-queue) gives the
+details.
+
 `vrg-queue adhoc` lists the open tasks under every live ad-hoc epic, grouped by
 repo, each with a state: **ready**, **blocked** (an open `Blocked-by:`
 dependency) or **in-flight** (an open PR, a ready record, a branch, a
