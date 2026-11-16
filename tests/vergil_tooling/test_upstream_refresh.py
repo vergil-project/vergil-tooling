@@ -734,21 +734,51 @@ def test_fence_new_series_block_allowed(tmp_path: Path) -> None:
     assert _runtime_fence(tmp_path, after) == []
 
 
-def test_fence_dropped_series_block_allowed(tmp_path: Path) -> None:
+_DROPPED_313 = (
+    "runtime.toml: refused, the block with anchor '3.13' is removed; a refresh never "
+    "removes an existing block (dropping a series is a human change)"
+)
+
+
+def test_fence_dropped_series_block_refused(tmp_path: Path) -> None:
+    # Removing an existing block is a human change (spec 6.2).
     old_block = _RUNTIME_TOML.replace("3.14.10", "3.13.9").replace('"3.14"', '"3.13"')
     before = _RUNTIME_TOML + "\n" + old_block
-    assert (
-        _fence(
-            tmp_path, _rules(_RUNTIME), {"runtime.toml": before}, {"runtime.toml": _RUNTIME_TOML}
-        )
-        == []
-    )
+    assert _fence(
+        tmp_path, _rules(_RUNTIME), {"runtime.toml": before}, {"runtime.toml": _RUNTIME_TOML}
+    ) == [_DROPPED_313]
 
 
-def test_fence_series_dropped_added_and_bumped_in_one_run_allowed(tmp_path: Path) -> None:
-    # 3.13 drops out, 3.14 moves forward and 3.15 appears, all in one refresh.
+def test_fence_dropped_anchor_refused_under_a_rule_with_no_version_group(
+    tmp_path: Path,
+) -> None:
+    # The removal rule rests on the anchor alone, not on a version group.
+    rule = PathRule(glob="blocks.txt", lines=r"^(name = (?P<anchor>\w+)|value = \w+)$")
+    before = "name = a\nvalue = x\nname = b\nvalue = y\n"
+    after = "name = a\nvalue = z\n"
+    assert _fence(tmp_path, _rules(rule), {"blocks.txt": before}, {"blocks.txt": after}) == [
+        "blocks.txt: refused, the block with anchor 'b' is removed; a refresh never "
+        "removes an existing block (dropping a series is a human change)"
+    ]
+
+
+def test_fence_series_dropped_while_others_move_refused(tmp_path: Path) -> None:
+    # 3.13 drops out while 3.14 moves forward and 3.15 appears: only the drop
+    # is refused.
     after = (
         _series("3.14", "3.14.11", "20261102", _H2)
+        + "\n"
+        + _series("3.15", "3.15.0", "20261102", _H2)
+    )
+    assert _two_series_fence(tmp_path, after) == [_DROPPED_313]
+
+
+def test_fence_series_added_and_bumped_in_one_run_allowed(tmp_path: Path) -> None:
+    # 3.13 and 3.14 move forward and 3.15 appears, all in one refresh.
+    after = (
+        _series("3.13", "3.13.10", "20261102", _H2)
+        + "\n"
+        + _series("3.14", "3.14.11", "20261102", _H2)
         + "\n"
         + _series("3.15", "3.15.0", "20261102", _H2)
     )
@@ -760,6 +790,7 @@ def test_fence_relabelled_series_block_refused(tmp_path: Path) -> None:
     # and the real 3.14 block is deleted: series 3.14 would drop to 3.14.9.
     after = _series("3.14", "3.14.9", "20261026", _H2)
     assert _two_series_fence(tmp_path, after) == [
+        _DROPPED_313,
         "runtime.toml: refused, 'cpython = \"' (anchor '3.14') lowers its version from 3.14.10 "
         "to 3.14.9 (a refresh never lowers a pinned version)"
     ]
@@ -769,6 +800,7 @@ def test_fence_duplicate_series_block_refused(tmp_path: Path) -> None:
     # Relabelling 3.13 as a second, lower 3.14 block leaves two 3.14 pins.
     after = _series("3.14", "3.14.9", "20261026", _H2) + "\n" + _series("3.14", "3.14.10")
     assert _two_series_fence(tmp_path, after) == [
+        _DROPPED_313,
         "runtime.toml: refused, 'cpython = \"' (anchor '3.14') has more than one versioned line "
         "(3.14.10 to 3.14.9, 3.14.10), so the no-downgrade rule cannot pair them",
         "runtime.toml: refused, 'pbs_tag = \"' (anchor '3.14') has more than one versioned line "
@@ -1042,8 +1074,11 @@ def test_fence_vergil_toml_new_entry_bad_upstream_version_refused(tmp_path: Path
     assert "'vergil-python3.15': upstream-version '3.15.0+x' does not match" in violations[0]
 
 
-def test_fence_vergil_toml_removed_package_allowed(tmp_path: Path) -> None:
-    assert _toml_fence(tmp_path, _PY_TOML, before=_PY_TOML + _PY_315) == []
+def test_fence_vergil_toml_removed_package_refused(tmp_path: Path) -> None:
+    assert _toml_fence(tmp_path, _PY_TOML, before=_PY_TOML + _PY_315) == [
+        "vergil.toml: refused, [[package]] 'vergil-python3.15' is removed; a refresh never "
+        "removes an existing entry (dropping a series is a human change)"
+    ]
 
 
 def test_fence_vergil_toml_dependencies_change_refused(tmp_path: Path) -> None:

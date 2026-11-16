@@ -305,7 +305,9 @@ class PathRule:
     compared per key across the whole file, so a file that repeats a key in
     several blocks (one ``cpython`` per ``[[series]]``) marks the line that
     names each block with a ``(?P<anchor>…)`` group, such as its ``series``
-    value; without one, a change to a repeated key is refused.
+    value; without one, a change to a repeated key is refused. A refresh
+    never removes an existing anchored block: dropping a series is a human
+    change.
     """
 
     glob: str

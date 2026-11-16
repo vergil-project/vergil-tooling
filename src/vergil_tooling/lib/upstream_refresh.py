@@ -481,7 +481,8 @@ def fence_violations(
     - under a rule with ``lines``, every removed and added line must match the
       regex in full, an added, deleted, binary or mode-changed file is
       refused, and a ``(?P<version>…)`` group may not go down, compared
-      per line identity across the whole file (:func:`_downgrades`);
+      per line identity across the whole file, and an existing
+      ``(?P<anchor>…)`` block may not be removed (:func:`_downgrades`);
     - ``vergil.toml`` follows its own rules (:func:`_vergil_toml_violations`).
     """
     violations: list[str] = []
@@ -553,8 +554,9 @@ def _line_rule_violations(path: str, glob: str, regex: str, diff: _FileDiff) -> 
         # The file is refused already; a line outside the rule is not versioned,
         # so pairing would only repeat that refusal as an unpaired line.
         return violations
-    if not groups:
-        # With no version group, nothing is versioned, so there is nothing to compare.
+    if not groups and _ANCHOR_GROUP not in pattern.groupindex:
+        # With no version group and no anchor, nothing is versioned and no block
+        # can be removed, so there is nothing to compare.
         return []
     if not diff.whole_file:
         return [
@@ -651,21 +653,29 @@ def _downgrades(
     - present on one side only: allowed as a new or a dropped entry only
       when the whole block goes with it. Under a rule with no anchor group,
       that is any key (a new or a dropped tool pin). Under a rule with one,
-      the identity's anchor value must itself be on that side only (a new or
-      a dropped ``[[series]]`` block); a versioned line that appears or
-      disappears inside a block that stays, or before the first anchor, is
-      refused, since moving a pin above its block's anchor line would
-      otherwise give it a new identity;
+      the identity's anchor value must itself be on that side only (a new
+      ``[[series]]`` block, or a removed one, refused below); a versioned
+      line that appears or disappears inside a block that stays, or before
+      the first anchor, is refused, since moving a pin above its block's
+      anchor line would otherwise give it a new identity;
     - one version on each side: it may not go down or be non-numeric;
     - more than one version on either side, and a change: refused, since the
       pairing would be a guess. A rule over a file with repeated keys
       (one ``cpython`` per ``[[series]]`` block) names its blocks with a
       ``(?P<anchor>…)`` group, such as the block's ``series`` value.
+
+    An existing anchored block is never removed: an anchor value in *before*
+    and not in *after* is refused. Dropping a series is a human change
+    (spec §6.2).
     """
     old_versions, old_anchors = _versioned(pattern, groups, before)
     new_versions, new_anchors = _versioned(pattern, groups, after)
     anchored = _ANCHOR_GROUP in pattern.groupindex
-    violations: list[str] = []
+    violations = [
+        f"{path}: refused, the block with anchor {anchor!r} is removed; a refresh never "
+        "removes an existing block (dropping a series is a human change)"
+        for anchor in sorted(old_anchors - new_anchors)
+    ]
     identities = sorted(
         old_versions.keys() | new_versions.keys(),
         key=lambda ident: (ident[0] is not None, ident[0] or "", ident[1]),
@@ -720,8 +730,9 @@ def _vergil_toml_violations(before: str | None, after: str | None) -> list[str]:
     """``vergil.toml``'s own rules (spec §6.2); one message per violation.
 
     Outside ``[[package]]`` nothing may change. An existing entry (matched by
-    ``name``) may change only ``upstream-version`` and ``summary``; a removed
-    entry is allowed; a new entry must be a series copy of an existing one.
+    ``name``) may change only ``upstream-version`` and ``summary``; an
+    existing entry is never removed (dropping a series is a human change);
+    a new entry must be a series copy of an existing one.
     Every changed or new ``upstream-version`` must be ``<cpython>+<pbs_tag>``
     and must not go down.
     """
@@ -769,7 +780,11 @@ def _package_violations(old_value: object, new_value: object) -> list[str]:
     new = _package_entries(new_value)
     if isinstance(new, str):
         return [f"{CONFIG_FILE}: refused, {new}"]
-    violations: list[str] = []
+    violations = [
+        f"{CONFIG_FILE}: refused, [[package]] {name!r} is removed; a refresh never removes "
+        "an existing entry (dropping a series is a human change)"
+        for name in sorted(old.keys() - new.keys())
+    ]
     for name, entry in new.items():
         violations.extend(_upstream_version_violations(name, old.get(name), entry))
         if name in old:
