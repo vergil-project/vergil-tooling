@@ -812,17 +812,44 @@ deferral — so no review skill hand-rolls them. Routes:
 
   If a record fails after the move, the command fails loudly and prints every
   comment still to post by hand.
+
+  `planning [--tasks N [--confidence high|med|low] --reason TEXT]` also sizes
+  the item once it is in planning, as `size` does, and prints the `Sized`
+  line after the `Routed` one. `--tasks` and `--reason` are given together
+  or not at all, and `--confidence` needs `--tasks`; a bad sizing is refused
+  before the move. A sizing that fails after the move fails loudly, naming the
+  item (now in planning) and the `size` command that finishes it. Without a
+  sizing the item keeps any size it already carries.
 - `split --into REF [--into REF …] --reason TEXT` — comment links to the
   replacement tasks (already created with `vrg-issue-create`) and close.
+- `size --tasks N [--confidence high|med|low] --reason TEXT` — record a
+  planning or deferred item's estimated epic size. The size is derived from
+  the task count (S 1–9, M 10–19, L 20–39, XL 40+); `--confidence` defaults
+  to `med` and `--reason` is one line. It posts the dated sizing comment
+  first, as the record:
+
+  ```text
+  Sized <YYYY-MM-DD>: epic-size <X>, about <N> tasks.
+  Epic-size: <X>
+  Estimated-tasks: <N>
+  Confidence: <high|med|low>
+  Reason: <one line>
+  ```
+
+  then, in one edit, adds the `epic-size:<X>` label and removes any other
+  `epic-size:*` label. It neither moves nor closes the item, and prints
+  `Sized <ref>: epic-size X, about N tasks.`. If the label cannot be set
+  after the comment posted, it fails loudly with the command that finishes
+  it; re-running the same `size` is safe.
 
 Which routes an item allows depends on the container epic it is in:
 
 | Item is in | Allowed routes |
 |---|---|
 | intake | `drop`, `defer`, `one-off`, `planning`, `split` |
-| planning | `defer`, `drop`, `one-off` — each refused while any development epic of the item is open |
+| planning | `defer`, `drop`, `one-off` — each refused while any development epic of the item is open; `size` |
 | ad hoc | `defer` — refused while an open PR would close the item |
-| deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split` |
+| deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split`, `size` |
 | no parent | `planning` (the `epic-create` free-text path) |
 | a development epic | `planning` for a follow-on brainstorm only; any other task is refused, naming the parent |
 | anything else | none — refused, naming the parent |
@@ -830,10 +857,10 @@ Which routes an item allows depends on the container epic it is in:
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_intake_route` (mechanics and route table: `lib/intake_route.py`) |
-| Args | `<issue-ref>` (`owner/repo#N`, or `#N` in the current repo), then a route: `drop`, `defer`, `intake`, `one-off`, `planning`, `split` |
+| Args | `<issue-ref>` (`owner/repo#N`, or `#N` in the current repo), then a route: `drop`, `defer`, `intake`, `one-off`, `planning`, `split`, `size` |
 | Preconditions | The item is a child of a container epic that allows the route (`planning` also accepts an unparented issue and a follow-on brainstorm under a development epic); GitHub App credentials for the item's org |
-| Failure mode | A refused route — not allowed from the item's container, a development-epic task other than a follow-on brainstorm sent to planning, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it |
-| Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when` or a malformed `--date`) |
+| Failure mode | A refused route — not allowed from the item's container, a development-epic task other than a follow-on brainstorm sent to planning, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr, as does a bad sizing (a task count below 1, an empty or multi-line reason, `--tasks` or `--reason` alone on `planning`). A route half-applied by a failure raises with the state it left and how to fix it |
+| Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when`, a malformed `--date`, a non-integer `--tasks` or an unknown `--confidence`) |
 | Status | Active |
 
 A `security` item keeps its advisory links. A recreate retargets every
