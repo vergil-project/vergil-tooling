@@ -2931,3 +2931,109 @@ def test_run_docs_build_refuses_unignored_staging_paths(
     # Nothing was staged.
     assert not (repo / "docs" / "site" / "docs" / "changelog.md").exists()
     assert not (repo / "docs" / "site" / "mkdocs.staged.yml").exists()
+
+
+# -- TypeScript pre-gate stage (epic vergil-project/.github#1174, spec §6.3) ---------
+
+
+@pytest.mark.parametrize("check", [None, "lint", "typecheck", "test", "audit"])
+def test_typescript_pre_gate_runs_right_after_install(check: str | None) -> None:
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages(check, "typescript", Path("/tmp/r"))  # noqa: S108
+    names = [s.name for s in stages]
+    install = names.index("install")
+    assert names[install + 1] == "typescript-tools"
+    assert stages[install + 1].mode == "fail_fast"
+    assert names.count("typescript-tools") == 1
+
+
+@pytest.mark.parametrize("check", ["common", "semgrep", "trivy", "docs", "custom"])
+def test_typescript_pre_gate_not_in_non_language_checks(check: str) -> None:
+    with patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"):
+        stages = _build_stages(check, "typescript", Path("/tmp/r"))  # noqa: S108
+    assert "typescript-tools" not in [s.name for s in stages]
+
+
+def test_build_stages_other_languages_have_no_pre_gate() -> None:
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages(None, "python", Path("/tmp/r"))  # noqa: S108
+    assert "typescript-tools" not in [s.name for s in stages]
+
+
+def test_typescript_pre_gate_stage_fails_with_every_problem(tmp_path: Path) -> None:
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("lint", "typescript", tmp_path)
+    stage = next(s for s in stages if s.name == "typescript-tools")
+    with (
+        patch(
+            _MOD + ".typescript_tools.run_pre_gate_checks", return_value=["a: bad", "Fix: x"]
+        ) as m_checks,
+        pytest.raises(ValidationError) as excinfo,
+    ):
+        stage.fn(None)
+    m_checks.assert_called_once_with(tmp_path)
+    assert str(excinfo.value) == (
+        "the repo's TypeScript tools are not within Vergil's accepted ranges:"
+        "\n  a: bad\n  Fix: x"
+    )
+
+
+def test_typescript_pre_gate_stage_passes_with_no_problems(tmp_path: Path) -> None:
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("lint", "typescript", tmp_path)
+    stage = next(s for s in stages if s.name == "typescript-tools")
+    with patch(_MOD + ".typescript_tools.run_pre_gate_checks", return_value=[]):
+        stage.fn(None)
+
+
+def _run_typescript_validate(tmp_path: Path, argv: list[str]) -> tuple[int, list[str]]:
+    """Run main() for real on a TypeScript repo at *tmp_path*; return rc and commands run."""
+    _write_config(tmp_path, "typescript")
+    ran: list[str] = []
+
+    def mock_run(cmd: tuple[str, ...] | list[str], *, check: bool = True) -> int:
+        ran.append(" ".join(cmd))
+        return 0
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._versions_resolve", return_value=("node-24",)),
+        patch(_MOD + "._find_custom_validator", return_value=None),
+        patch(_MOD + ".progress.run", side_effect=mock_run),
+    ):
+        rc = main(argv)
+    return rc, ran
+
+
+def test_check_lint_fails_on_missing_dev_dependency(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"name": "x", "devDependencies": {"typescript": "^6.0.3"}}', encoding="utf-8"
+    )
+    rc, ran = _run_typescript_validate(tmp_path, ["--check", "lint"])
+    assert rc == 1
+    # Install ran; no lint command ran on the out-of-range tools.
+    assert ran == ["npm ci --ignore-scripts"]
+    record = read_record(tmp_path)
+    assert record.not_passed[0] == "typescript-tools"
+    assert "lint" not in record.passed
+    out = capsys.readouterr().out
+    assert "eslint: not in devDependencies" in out
+    assert "npm install --save-dev typescript@^6" in out
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_unbootstrapped_typescript_repo_skips_pre_gate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, ran = _run_typescript_validate(tmp_path, ["--check", "lint"])
+    assert rc == 0
+    assert ran == []
+    record = read_record(tmp_path)
+    assert record.passed == ("install", "typescript-tools", "lint")
+    out = capsys.readouterr().out
+    assert (
+        "NOTICE: typescript-tools: skipped: no package.json, package-lock.json "
+        "(typescript repo not bootstrapped yet); add them to run the typescript-tools stage"
+    ) in out

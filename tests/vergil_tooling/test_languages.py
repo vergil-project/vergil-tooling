@@ -973,9 +973,30 @@ def test_typescript_is_supported() -> None:
     assert "typescript" in supported_languages()
 
 
-def test_typescript_install_commands() -> None:
-    cmds = language_commands("typescript", CheckKind.INSTALL)
-    assert cmds == [["npm", "ci"]]
+def test_typescript_install_ignores_scripts() -> None:
+    """INSTALL never runs install scripts (epic vergil-project/.github#1174, §6.3)."""
+    assert language_commands("typescript", CheckKind.INSTALL) == [
+        ["npm", "ci", "--ignore-scripts"]
+    ]
+
+
+def test_typescript_gates_run_repo_binaries_by_path() -> None:
+    """TYPECHECK, TEST and LINT's ESLint step run the repo's tools by path.
+
+    No bare name a global binary could answer, and no ``npx``, which falls
+    back to the global ``bin`` even with ``--no-install`` (spec §6.3).
+    """
+    for kind in (CheckKind.TYPECHECK, CheckKind.TEST):
+        for cmd in language_commands("typescript", kind):
+            assert cmd[0].startswith("node_modules/.bin/"), cmd
+    lint = language_commands("typescript", CheckKind.LINT)
+    eslint = [cmd for cmd in lint if "eslint" in " ".join(cmd)]
+    assert len(eslint) == 1
+    script = eslint[0][2]
+    assert 'node_modules/.bin/eslint . --config "$cfg"' in script
+    assert "npx" not in " ".join(arg for cmd in lint for arg in cmd)
+    # Prettier stays an image tool.
+    assert [cmd[0] for cmd in lint if cmd is not eslint[0]] == ["prettier"]
 
 
 def test_typescript_lint_commands() -> None:
@@ -1048,7 +1069,7 @@ def test_typescript_typecheck_commands() -> None:
     cmds = language_commands("typescript", CheckKind.TYPECHECK)
     # One canonical type engine; strict set lives in the base tsconfig consumers
     # extend, so the command is a bare --noEmit typecheck.
-    assert cmds == [["tsc", "--noEmit"]]
+    assert cmds == [["node_modules/.bin/tsc", "--noEmit"]]
 
 
 def test_typescript_base_tsconfig_curated_extras() -> None:
@@ -1056,7 +1077,7 @@ def test_typescript_base_tsconfig_curated_extras() -> None:
 
     This task (T4) owns and tests the concrete strictness set (spec §3.2); T8
     only documents it. Every option must be present and enabled, and each is a
-    real ``tsc`` 5.x compiler option.
+    real ``tsc`` 6.x compiler option.
     """
     base = _ts_config_path("tsconfig.base.json")
     # tsconfig.base.json is authored as pure JSON (no comments) so it is both
@@ -1082,14 +1103,14 @@ def test_typescript_test_commands() -> None:
     cmds = language_commands("typescript", CheckKind.TEST)
     joined = _joined(cmds)
     # Vitest with the V8 coverage provider.
-    assert any(c.startswith("vitest run --coverage") for c in joined)
+    assert any(c.startswith("node_modules/.bin/vitest run --coverage") for c in joined)
     assert any("--coverage.provider=v8" in c for c in joined)
 
 
 def test_typescript_test_enforces_100_line_coverage() -> None:
     """The gate must fail under 100% line coverage (spec §5)."""
     cmds = language_commands("typescript", CheckKind.TEST)
-    vitest_cmd = [c for c in cmds if c[0] == "vitest"]
+    vitest_cmd = [c for c in cmds if c[0] == "node_modules/.bin/vitest"]
     assert len(vitest_cmd) == 1
     assert "--coverage.thresholds.lines=100" in vitest_cmd[0]
 

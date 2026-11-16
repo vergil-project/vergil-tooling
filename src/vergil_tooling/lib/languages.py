@@ -973,8 +973,19 @@ _REGISTRY: dict[str, Language] = {
     "typescript": Language(
         name="typescript",
         checks={
-            # Clean, lockfile-pinned install from ``package-lock.json``.
-            CheckKind.INSTALL: [["npm", "ci"]],
+            # Clean install from ``package-lock.json``. Install scripts never
+            # run (epic vergil-project/.github#1174, spec §6.3): a repo that
+            # needs one declares it as an exception.
+            #
+            # **The repo's own tools.** ESLint, ``tsc`` and Vitest are the
+            # repo's devDependencies, run by path from ``node_modules/.bin``,
+            # so a tool missing from the repo fails instead of falling back to
+            # a global binary (``npx`` falls back to the global ``bin`` even
+            # with ``--no-install``). ``vrg-validate``'s pre-gate stage checks
+            # them against the accepted majors in
+            # ``{configs}/typescript/dev-dependencies.json`` first. Prettier
+            # and license-checker stay image tools.
+            CheckKind.INSTALL: [["npm", "ci", "--ignore-scripts"]],
             # LINT runs *once* (§3.6): Prettier for format, then ESLint's flat
             # config with type-aware typescript-eslint rules. Both point at the
             # packaged configs; the ESLint flat config carries
@@ -1017,14 +1028,14 @@ _REGISTRY: dict[str, Language] = {
                     "cfg=./.vergil-eslint.config.mjs; "
                     "trap 'rm -f \"$cfg\"' EXIT; "
                     'cp "{configs}/typescript/eslint.config.mjs" "$cfg"; '
-                    'eslint . --config "$cfg"',
+                    'node_modules/.bin/eslint . --config "$cfg"',
                 ],
             ],
             # TYPECHECK runs *once* (§3.6) — one canonical type engine. The
             # curated "warnings to 11" set lives in the packaged base tsconfig
             # the consumer extends (see the class comment above); this command
             # reads the consumer's ``tsconfig.json`` and never emits output.
-            CheckKind.TYPECHECK: [["tsc", "--noEmit"]],
+            CheckKind.TYPECHECK: [["node_modules/.bin/tsc", "--noEmit"]],
             # TEST runs *per Node version* (§3.6) — the only fan-out stage,
             # because runtime behavior differs across Node majors. Vitest with
             # the V8 coverage provider, held to a **100% line** threshold so the
@@ -1034,7 +1045,7 @@ _REGISTRY: dict[str, Language] = {
             # instruments source directly). Decided against the real gate in T10.
             CheckKind.TEST: [
                 [
-                    "vitest",
+                    "node_modules/.bin/vitest",
                     "run",
                     "--coverage",
                     "--coverage.provider=v8",

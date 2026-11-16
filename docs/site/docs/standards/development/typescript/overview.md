@@ -44,10 +44,15 @@ more than one major fails resolution (see
 
 Package management is **npm**, chosen for universality at zero adoption barrier:
 
-- **INSTALL is `npm ci`** — a clean, lockfile-pinned install from
-  `package-lock.json`. The lockfile is the pinned dependency graph; `npm ci`
+- **INSTALL is `npm ci --ignore-scripts`** — a clean install from
+  `package-lock.json`. The lockfile records the dependency graph; `npm ci`
   installs exactly what it records and fails if `package.json` and the lockfile
   disagree.
+- **Install scripts never run.** Every `npm ci` Vergil runs for TypeScript
+  passes `--ignore-scripts`. Repositories Vergil manages do not rely on install
+  scripts; one that genuinely needs one declares it as an exception, under
+  exception management
+  ([vergil-project/.github#375](https://github.com/vergil-project/.github/issues/375)).
 - **Modules are ESM.** The shipped base tsconfig sets `module` and
   `moduleResolution` to `nodenext` and targets `es2022`, so repositories are
   native ES modules resolved the way modern Node resolves them. A repository's
@@ -90,6 +95,38 @@ Where each tool lives follows the
   and typescript-eslint declares typescript and eslint as peer dependencies.
 - The image owns prettier and license-checker.
 
+### Required devDependencies and their accepted majors
+
+The gates run the repository's own tools by path, from `node_modules/.bin`:
+LINT's ESLint step, TYPECHECK (`node_modules/.bin/tsc`) and TEST
+(`node_modules/.bin/vitest`). A tool missing from the repository fails the
+gate; nothing falls back to a global binary or downloads one.
+
+Before the gates run, `vrg-validate`'s `typescript-tools` stage (right after
+INSTALL, in the full run and in every single `--check` of a language gate)
+checks each required devDependency against the major Vergil accepts for it:
+
+| devDependency | Accepted major |
+|---|---|
+| `typescript` | 6 |
+| `typescript-eslint` | 8 |
+| `eslint` | 10 |
+| `@eslint/js` | 10 |
+| `vitest` | 5 |
+| `@vitest/coverage-v8` | 5 |
+
+A package fails when `devDependencies` does not declare it, when its declared
+range is not `^M…`, `~M…` or `M…` with `M` the accepted major (so
+`latest`, `*` and `>=5` all fail), when `npm ci` did not install it, or
+when the installed version has another major. The failure names every failing
+package and the one command that fixes them all, for example
+`npm install --save-dev typescript@^6 eslint@^10`.
+
+The majors live in one place,
+`src/vergil_tooling/configs/typescript/dev-dependencies.json`, which this
+table mirrors. Within its major, each tool's version floats through the
+repository's lockfile.
+
 ## Prebuilt Toolchains Only
 
 Node toolchains come **exclusively from prebuilt stable binary packages — never
@@ -98,10 +135,12 @@ slow, non-reproducible, and a supply-chain liability; the dev images pin
 prebuilt official stable Node binaries for each supported major instead
 (`prod-ts-node:<major>`).
 
-The analysis-tool layer pins a **stable TypeScript 5.x release** alongside
-`eslint` + `typescript-eslint`, `prettier`, and the Vitest runner, so every
-repository typechecks and lints against the same pinned tool versions rather
-than whatever floats in from a fresh install.
+The image does not pin the repository's TypeScript tools. TypeScript, ESLint,
+typescript-eslint and Vitest come from the repository's own devDependencies,
+held to their accepted majors (see
+[Required devDependencies](#required-devdependencies-and-their-accepted-majors)),
+and their exact versions float through the lockfile. Only the image's own
+tools, Prettier and license-checker, come with the image.
 
 ## `tsc --noEmit`: Compile-Correctness Without a Bundler
 

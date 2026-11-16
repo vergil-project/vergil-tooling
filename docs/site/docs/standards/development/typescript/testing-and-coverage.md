@@ -14,10 +14,13 @@ everything you could, and positively acknowledged the things you could not.
 ## Test Runner and Coverage Provider
 
 Tests run through **Vitest**, the mandated runner, with the **V8 coverage
-provider**:
+provider**. Both are the repository's own devDependencies, `vitest` and
+`@vitest/coverage-v8`, held to accepted major 5 (see
+[Required devDependencies](overview.md#required-devdependencies-and-their-accepted-majors)),
+and TEST runs the repository's copy by path:
 
 ```bash
-vitest run --coverage --coverage.provider=v8 --coverage.thresholds.lines=100
+node_modules/.bin/vitest run --coverage --coverage.provider=v8 --coverage.thresholds.lines=100
 ```
 
 The `--coverage.thresholds.lines=100` flag is the gate: Vitest exits non-zero

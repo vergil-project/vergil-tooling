@@ -11,7 +11,8 @@ single source of truth.
 
 ## TYPECHECK Is "The Compiler"
 
-For TypeScript, the TYPECHECK stage is `tsc --noEmit`: a full typecheck under the
+For TypeScript, the TYPECHECK stage is `tsc --noEmit`, run as the
+repository's own `node_modules/.bin/tsc`: a full typecheck under the
 one canonical type engine with the curated strict set turned on. There is no
 Clang-vs-GCC analog — there is exactly one `tsc` — so the two-diagnostics win
 comes instead from pairing `tsc` (structural typing) with typescript-eslint
@@ -72,8 +73,11 @@ What each extra buys:
 | `noUnusedLocals` | a declared local that is never read |
 | `noUnusedParameters` | a function parameter that is never read (prefix with `_` to intend it) |
 
-The base pins these against a **stable TypeScript 5.x release** (pinned in the
-dev images), so the set means the same thing on every run.
+The set targets **TypeScript 6.x**: the repository declares `typescript` as a
+devDependency, and `vrg-validate` holds both its declared range and its
+installed version to major 6 (see
+[Required devDependencies](overview.md#required-devdependencies-and-their-accepted-majors)),
+so the set means the same thing on every run.
 
 ## Ownership Lives in the Base tsconfig
 
