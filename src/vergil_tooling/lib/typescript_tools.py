@@ -1,11 +1,12 @@
-"""The TypeScript pre-gate checks: the repo's own tools, within accepted ranges.
+"""The TypeScript pre-gate checks: the repo's own tools and its ``build`` script.
 
 TypeScript gates run the tools the repo declares, from ``node_modules/.bin``
 (epic vergil-project/.github#1174, spec §6.3). Before they run,
 ``vrg-validate`` checks that ``package.json`` declares each required
 devDependency, and that both its declared range and its installed version sit
 inside the accepted major kept in ``configs/typescript/dev-dependencies.json``,
-the one place the majors live.
+the one place the majors live. It also checks that ``package.json`` defines
+the ``build`` script the BUILD check and the release build run (spec §6.5).
 
 Every check in :data:`PRE_GATE_CHECKS` takes the repo root and returns its
 problems, empty when all pass; the pre-gate stage fails with every problem from
@@ -131,13 +132,40 @@ def check_version_matches(repo_root: Path) -> list[str]:
     return []
 
 
+def check_build_script(repo_root: Path) -> list[str]:
+    """Return the problem with the repo's ``build`` script, empty when it has one.
+
+    The BUILD check and the release build run ``npm run build`` (spec §6.5),
+    so ``package.json`` must define ``scripts.build`` as a non-empty string.
+    A ``package.json`` that cannot be parsed is the one problem returned.
+    """
+    try:
+        manifest = read_package_json(repo_root / "package.json")
+    except PackageJsonError as exc:
+        return [str(exc)]
+    scripts = manifest.get("scripts")
+    build = scripts.get("build") if isinstance(scripts, dict) else None
+    if isinstance(build, str) and build.strip():
+        return []
+    return [
+        'package.json: no "build" script (the BUILD check and the release build run it)',
+        'Fix: add a "build" script to package.json (for example "tsc -p tsconfig.json")',
+    ]
+
+
 PRE_GATE_CHECKS: tuple[Callable[[Path], list[str]], ...] = (
     check_dev_dependencies,
     check_version_matches,
+    check_build_script,
 )
 """The TypeScript pre-gate checks, run in order; every problem is reported."""
 
 
 def run_pre_gate_checks(repo_root: Path) -> list[str]:
-    """Return every problem from every check in :data:`PRE_GATE_CHECKS`."""
-    return [problem for check in PRE_GATE_CHECKS for problem in check(repo_root)]
+    """Return every problem from every check in :data:`PRE_GATE_CHECKS`.
+
+    A problem two checks share (a ``package.json`` neither can parse) is
+    reported once, where it first appears.
+    """
+    problems = (problem for check in PRE_GATE_CHECKS for problem in check(repo_root))
+    return list(dict.fromkeys(problems))

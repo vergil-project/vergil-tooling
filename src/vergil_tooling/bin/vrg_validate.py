@@ -28,8 +28,9 @@ everything else is fail_defer so all failures are reported in one run.
 A TypeScript repo gets one more stage right after install, whenever any of
 its language checks runs: ``typescript-tools``, fail_fast, which checks that
 the repo declares and installs each required devDependency within Vergil's
-accepted major (:mod:`~vergil_tooling.lib.typescript_tools`), since the
-gates run the repo's own tools from ``node_modules/.bin``.
+accepted major, since the gates run the repo's own tools from
+``node_modules/.bin``, and that ``package.json`` defines the ``build``
+script the build stage runs (:mod:`~vergil_tooling.lib.typescript_tools`).
 
 A repo with none of its language's manifests (a Rust repo with no
 ``Cargo.toml`` yet) is not bootstrapped: the image warmup skips it, and so
@@ -800,21 +801,21 @@ _TYPESCRIPT_TOOLS_STAGE = "typescript-tools"
 
 
 def _typescript_tools_stage(repo_root: Path) -> Stage:
-    """The TypeScript pre-gate stage: the repo's tools, within accepted ranges.
+    """The TypeScript pre-gate stage: the repo's tools and its ``build`` script.
 
     It runs right after install, whenever any TypeScript language check kind
     runs, so every TypeScript CI job (one ``--check`` each) enforces it
     (epic vergil-project/.github#1174, spec §6.3). It runs every check in
     :data:`~vergil_tooling.lib.typescript_tools.PRE_GATE_CHECKS` and fails
     with all their problems at once; ``fail_fast``, so no gate runs on a tool
-    outside its accepted range.
+    outside its accepted range, and no build runs without a ``build`` script.
     """
 
     def fn(_ctx: object) -> None:
         problems = typescript_tools.run_pre_gate_checks(repo_root)
         if problems:
             lines = "".join(f"\n  {problem}" for problem in problems)
-            msg = f"the repo's TypeScript tools are not within Vergil's accepted ranges:{lines}"
+            msg = f"the repo's TypeScript setup fails Vergil's pre-gate checks:{lines}"
             raise ValidationError(msg)
 
     return Stage(_TYPESCRIPT_TOOLS_STAGE, fn, mode="fail_fast")

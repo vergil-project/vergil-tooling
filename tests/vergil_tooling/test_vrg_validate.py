@@ -2936,7 +2936,7 @@ def test_run_docs_build_refuses_unignored_staging_paths(
 # -- TypeScript pre-gate stage (epic vergil-project/.github#1174, spec §6.3) ---------
 
 
-@pytest.mark.parametrize("check", [None, "lint", "typecheck", "test", "audit"])
+@pytest.mark.parametrize("check", [None, "lint", "typecheck", "build", "test", "audit"])
 def test_typescript_pre_gate_runs_right_after_install(check: str | None) -> None:
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(check, "typescript", Path("/tmp/r"))  # noqa: S108
@@ -2973,7 +2973,7 @@ def test_typescript_pre_gate_stage_fails_with_every_problem(tmp_path: Path) -> N
         stage.fn(None)
     m_checks.assert_called_once_with(tmp_path)
     assert str(excinfo.value) == (
-        "the repo's TypeScript tools are not within Vergil's accepted ranges:\n  a: bad\n  Fix: x"
+        "the repo's TypeScript setup fails Vergil's pre-gate checks:\n  a: bad\n  Fix: x"
     )
 
 
@@ -3036,3 +3036,27 @@ def test_unbootstrapped_typescript_repo_skips_pre_gate(
         "NOTICE: typescript-tools: skipped: no package.json, package-lock.json "
         "(typescript repo not bootstrapped yet); add them to run the typescript-tools stage"
     ) in out
+
+
+def test_check_build_runs_typescript_pre_gate_then_build(tmp_path: Path) -> None:
+    # --check build on a TypeScript repo installs, runs the pre-gate stage,
+    # then the release build command, the one cd-release runs (spec §6.5).
+    with patch(_MOD + ".typescript_tools.run_pre_gate_checks", return_value=[]) as m_checks:
+        rc, ran = _run_typescript_validate(tmp_path, ["--check", "build"])
+    assert rc == 0
+    m_checks.assert_called_once_with(tmp_path)
+    assert ran == ["npm ci --ignore-scripts", "sh -c npm ci --ignore-scripts && npm run build"]
+    assert read_record(tmp_path).passed == ("install", "typescript-tools", "build")
+
+
+def test_check_build_fails_on_missing_build_script(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "package.json").write_text('{"name": "x", "scripts": {}}', encoding="utf-8")
+    with patch(_MOD + ".typescript_tools.check_dev_dependencies", return_value=[]):
+        rc, ran = _run_typescript_validate(tmp_path, ["--check", "build"])
+    assert rc == 1
+    # No build ran without a build script to run.
+    assert ran == ["npm ci --ignore-scripts"]
+    assert read_record(tmp_path).not_passed[0] == "typescript-tools"
+    assert 'add a "build" script to package.json' in capsys.readouterr().out
