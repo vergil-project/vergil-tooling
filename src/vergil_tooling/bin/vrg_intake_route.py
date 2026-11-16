@@ -75,20 +75,21 @@ def main(argv: list[str] | None = None) -> int:
     except github.NoInstallationError as exc:
         print(f"{_PROG}: {github.no_installation_message(exc)}", file=sys.stderr)
         return 1
+    sizing = None
+    if isinstance(action, intake_route.SizeItem | intake_route.ToPlanning):
+        sizing = action.sizing
     # The size route moves nothing, so it prints only its Sized line.
     if not isinstance(action, intake_route.SizeItem):
-        if result.final == ref:
-            print(f"Routed {ref.slug}: {args.route}.")
-        else:
-            print(
-                f"Routed {ref.slug}: {args.route}, now {result.final.slug} "
-                f"(by {result.moved_by})."
-            )
-    sized = isinstance(action, intake_route.SizeItem | intake_route.ToPlanning)
-    sizing = action.sizing if sized else None
+        print(_routed_line(ref, args.route, result))
     if sizing is not None:
         print(f"Sized {ref.slug}: epic-size {sizing.size}, about {sizing.tasks} tasks.")
     return 0
+
+
+def _routed_line(ref: epics.IssueRef, route: str, result: intake_route.RouteResult) -> str:
+    if result.final == ref:
+        return f"Routed {ref.slug}: {route}."
+    return f"Routed {ref.slug}: {route}, now {result.final.slug} (by {result.moved_by})."
 
 
 def _sizing(args: argparse.Namespace) -> Sizing:
