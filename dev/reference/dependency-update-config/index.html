@@ -14249,6 +14249,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#package-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Package changes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-held-back-report" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17796,6 +17807,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#package-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Package changes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-held-back-report" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18054,6 +18076,31 @@ them in a script and point <code>hook</code> at the script.</p>
 </ul>
 <p>A hook failure is an <code>update</code> failure: nothing is pushed and no PR is
 opened, but a fix task naming the hook is filed.</p>
+<h2 id="package-changes">Package changes<a class="headerlink" href="#package-changes" title="Permanent link">&para;</a></h2>
+<p>The dependency-update PR body lists what each updater changed, after
+its <strong>Updated</strong> section. Each updater that changed something gets a
+count, and every package it moved is a row in one table:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">-</span><span class="w"> </span><span class="gs">**python**</span> — 2 packages
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">-</span><span class="w"> </span><span class="gs">**hook**</span> — not itemized
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>| Updater | Package | From | To |
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>|---|---|---|---|
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>| python | requests | 2.31.0 | 2.32.0 |
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>| python | idna | (new) | 3.10 |
+</code></pre></div>
+<p>Each updater takes its list from a machine-readable source:</p>
+<ul>
+<li><code>python</code> diffs the package versions in the parsed <code>uv.lock</code> before and
+  after <code>uv lock --upgrade</code>, transitive packages included. A package
+  added or dropped shows <code>(new)</code> or <code>(removed)</code>.</li>
+<li><code>vergil</code> lists the <code>vergil</code> version it bumped and the
+  <code>vergil-python&lt;x.y&gt;</code> runtime pin it moved. Normalizing workflow refs to
+  the declared version moves no package.</li>
+<li><code>images</code> lists each image ref whose tag it bumped.</li>
+<li><code>hook</code> is not itemized: its edits are the repo's own.</li>
+</ul>
+<p>An updater that changed files but moved no package version says "no
+package versions changed".</p>
 <h2 id="the-held-back-report">The held-back report<a class="headerlink" href="#the-held-back-report" title="Permanent link">&para;</a></h2>
 <p>The held-back report lists the dependencies whose newest release is
 outside the bounds the repo declares. It appears in the dependency-update
@@ -18083,7 +18130,7 @@ at the end of every <code>vrg-update-deps</code> run, as a table:</p>
 their declared bounds."</p>
 <p>A hook adds entries by writing one JSON object per line to
 <code>$VRG_DEPS_REPORT</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"tofu"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hashicorp/aws"</span><span class="p">,</span><span class="w"> </span><span class="nt">"current"</span><span class="p">:</span><span class="w"> </span><span class="s2">"5.80.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"latest"</span><span class="p">:</span><span class="w"> </span><span class="s2">"6.2.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"note"</span><span class="p">:</span><span class="w"> </span><span class="s2">"provider pinned to ~&gt; 5.0"</span><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"tofu"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hashicorp/aws"</span><span class="p">,</span><span class="w"> </span><span class="nt">"current"</span><span class="p">:</span><span class="w"> </span><span class="s2">"5.80.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"latest"</span><span class="p">:</span><span class="w"> </span><span class="s2">"6.2.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"note"</span><span class="p">:</span><span class="w"> </span><span class="s2">"provider pinned to ~&gt; 5.0"</span><span class="p">}</span>
 </code></pre></div>
 <table>
 <thead>
