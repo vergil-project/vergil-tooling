@@ -1829,10 +1829,12 @@ def test_transfer_security_item_retargets_to_final(env: Env) -> None:
     env.retarget.assert_called_once_with("org/.github", GHSA, (final,), renamed=(ITEM,))
     # The settle wait and its confirming wait both come before the retarget.
     assert order == ["settle", "settle", "retarget"]
-    # The item was read before the move, while it still had its labels.
-    env.read_json.assert_called_once_with(
-        "issue", "view", "352", "--repo", "org/.github", "--json", "labels,body"
-    )
+    # The item was read before the move, while it still had its labels: once
+    # for its size (and in-progress), once for its advisories.
+    assert env.read_json.call_args_list == [
+        call("issue", "view", "352", "--repo", "org/.github", "--json", "labels,comments"),
+        call("issue", "view", "352", "--repo", "org/.github", "--json", "labels,body"),
+    ]
 
 
 def test_transfer_retarget_failure_reports_moved_not_refused(env: Env) -> None:
@@ -2687,3 +2689,237 @@ def test_planning_brainstorm_record_failure_with_sizing_names_the_size_command(e
     message = str(excinfo.value)
     assert "on org/.github#352: Handed to planning from: org/.github#400" in message
     assert message.endswith(f"then size it with: {SIZE_COMMAND}")
+
+
+# -- a one-off clears the size (epic vergil-project/.github#1191) ------------
+
+CLEARED_MARKER = "Size cleared 2026-10-23: moved out of planning as a one-off."
+
+
+def _sized_item(env: Env, parent: IssueRef = PLANNING, *, label: bool = True) -> None:
+    """An item in *parent* sized M: its label (unless *label* is False) and its comment."""
+    env.parent = parent
+    env.native_parent[ITEM] = parent
+    env.labels = ["epic-size:M"] if label else []
+    env.comments = [SIZING_BODY]
+    # What the final issue's own label read returns.
+    _sized_labels(env, "bug", *(["epic-size:M"] if label else []))
+
+
+def _cleared_calls(number: str, repo: str) -> list[tuple[str, ...]]:
+    return [
+        ("issue", "edit", number, "--repo", repo, "--remove-label", "epic-size:M"),
+        ("issue", "comment", number, "--repo", repo, "--body", CLEARED_MARKER),
+    ]
+
+
+def test_one_off_transfer_clears_size(env: Env) -> None:
+    _sized_item(env)
+    order: list[str] = []
+    env.reparent_child.side_effect = lambda *a: order.append("link") or env.attach(*a)
+    env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=MOVED, moved_by="transfer")
+    assert _sizing_calls(env) == _cleared_calls("900", "org/tool")
+    # Both after the move settled, the label edit before the marker.
+    assert order == ["link", "issue:edit", "issue:comment"]
+
+
+def test_one_off_same_repo_clears_size(env: Env) -> None:
+    _sized_item(env)
+    env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
+    result = route(ITEM, OneOff(repo="org/.github"), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    assert _sizing_calls(env) == _cleared_calls("352", "org/.github")
+
+
+def test_one_off_removes_every_size_label_in_one_edit(env: Env) -> None:
+    _sized_item(env)
+    _sized_labels(env, "epic-size:S", "bug", "epic-size:M")
+    route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert _sizing_calls(env)[0] == (
+        "issue",
+        "edit",
+        "900",
+        "--repo",
+        "org/tool",
+        "--remove-label",
+        "epic-size:M",
+        "--remove-label",
+        "epic-size:S",
+    )
+
+
+def test_one_off_recreate_drops_size_label(env: Env) -> None:
+    _sized_item(env)
+    _transfer_fails(env)
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=IssueRef("org", "tool", 901), moved_by="recreate")
+    assert env.create_issue.call_args.kwargs["labels"] == ["bug"]
+    env.ensure_labels.assert_called_once_with("org/tool", ["bug"])
+    # Only the original's close: no label edit and no cleared marker.
+    assert [c[:2] for c in _sizing_calls(env)] == [("issue", "close")]
+
+
+def test_one_off_unsized_item_untouched(env: Env) -> None:
+    env.parent = PLANNING
+    env.native_parent[ITEM] = PLANNING
+    env.comments = ["Sized by hand, not a sizing comment"]
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result.moved_by == "transfer"
+    env.run.assert_not_called()
+
+
+def test_one_off_comment_only_size_gets_marker(env: Env) -> None:
+    # The label was lost (removed by hand, or dropped by the transfer): no edit.
+    _sized_item(env, label=False)
+    route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert _sizing_calls(env) == _cleared_calls("900", "org/tool")[1:]
+
+
+def test_one_off_label_only_size_gets_marker(env: Env) -> None:
+    _sized_item(env)
+    env.comments = []
+    route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert _sizing_calls(env) == _cleared_calls("900", "org/tool")
+
+
+def test_one_off_transfer_that_dropped_the_size_label_only_posts_marker(env: Env) -> None:
+    # The target repo lacks the label, so the transfer dropped it.
+    _sized_item(env)
+    _sized_labels(env, "bug")
+    route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert _sizing_calls(env) == _cleared_calls("900", "org/tool")[1:]
+
+
+def test_one_off_clear_failure_is_half_applied(env: Env) -> None:
+    _sized_item(env)
+
+    def run(*args: str) -> None:
+        if args[:2] == ("issue", "comment"):
+            raise github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+
+    env.run.side_effect = run
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith("moved org/.github#352 to org/tool#900, but ")
+    assert "posting the cleared marker failed (" in message
+    assert "HTTP 502" in message
+    assert (
+        "gh issue comment 900 --repo org/tool --body "
+        "'Size cleared 2026-10-23: moved out of planning as a one-off.'"
+    ) in message
+    assert env.native_parent[MOVED] == TOOL_ADHOC
+
+
+def test_one_off_size_label_failure_names_both_fixes(env: Env) -> None:
+    _sized_item(env)
+    env.run.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith("moved org/.github#352 to org/tool#900, but ")
+    assert "routing one-off left the 'epic-size:M' label on org/tool#900" in message
+    assert "gh issue edit 900 --repo org/tool --remove-label epic-size:M" in message
+    assert message.endswith(
+        "then post the cleared marker with: gh issue comment 900 --repo org/tool --body "
+        "'Size cleared 2026-10-23: moved out of planning as a one-off.'"
+    )
+    # The marker is never posted over labels left in place.
+    assert [c[:2] for c in _sizing_calls(env)] == [("issue", "edit")]
+
+
+def test_one_off_size_label_read_failure_is_half_applied(env: Env) -> None:
+    _sized_item(env)
+    plain_read = env.read_json.side_effect
+
+    def read_json(*args: str) -> object:
+        if args[-1] == "labels" and args[2] == "900":
+            raise github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+        return plain_read(*args)
+
+    env.read_json.side_effect = read_json
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith("moved org/.github#352 to org/tool#900, but ")
+    assert "could not read the labels of org/tool#900 to clear its size (" in message
+    assert "Remove every 'epic-size:*' label from it, then post the cleared marker" in message
+    env.run.assert_not_called()
+
+
+@pytest.mark.parametrize("step", ["read", "edit", "comment"])
+def test_one_off_clear_missing_token_is_left_as_it_came(env: Env, step: str) -> None:
+    _sized_item(env)
+    missing = github.MissingGitHubTokenError(1, ["gh"], "", "GH_TOKEN environment variable")
+    plain_read = env.read_json.side_effect
+
+    def read_json(*args: str) -> object:
+        if step == "read" and args[-1] == "labels" and args[2] == "900":
+            raise missing
+        return plain_read(*args)
+
+    def run(*args: str) -> None:
+        if args[1] == step:
+            raise missing
+
+    env.read_json.side_effect = read_json
+    env.run.side_effect = run
+    with pytest.raises(github.MissingGitHubTokenError):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+
+
+def test_one_off_in_progress_and_size_failures_are_reported_together(env: Env) -> None:
+    _closed_planning_item(env)
+    env.labels = ["in-progress", "epic-size:M"]
+    env.comments = [*env.comments, SIZING_BODY]
+    _sized_labels(env, "in-progress", "epic-size:M")
+    env.run.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith("moved org/.github#352 to org/tool#900, but ")
+    assert "gh issue edit 900 --repo org/tool --remove-label in-progress" in message
+    assert "gh issue edit 900 --repo org/tool --remove-label epic-size:M" in message
+    # The size was still tried after the in-progress edit failed.
+    assert [c[:2] for c in _sizing_calls(env)] == [("issue", "edit"), ("issue", "edit")]
+
+
+def test_one_off_removes_in_progress_then_clears_size(env: Env) -> None:
+    _closed_planning_item(env)
+    env.labels = ["in-progress", "epic-size:M"]
+    _sized_labels(env, "in-progress", "epic-size:M")
+    route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert _sizing_calls(env) == [
+        ("issue", "edit", "900", "--repo", "org/tool", "--remove-label", "in-progress"),
+        *_cleared_calls("900", "org/tool"),
+    ]
+
+
+def test_one_off_from_intake_clears_size(env: Env) -> None:
+    # A sized deferred item revived to intake keeps its size until it leaves.
+    _sized_item(env, INTAKE)
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=MOVED, moved_by="transfer")
+    assert _sizing_calls(env) == _cleared_calls("900", "org/tool")
+
+
+def test_one_off_from_deferred_clears_size(env: Env) -> None:
+    _sized_item(env, DEFERRED)
+    env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
+    result = route(ITEM, OneOff(repo="org/.github"), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    assert _sizing_calls(env) == _cleared_calls("352", "org/.github")
+
+
+def test_one_off_needs_no_trusted_authors(env: Env) -> None:
+    _sized_item(env)
+    unconfigured = RuntimeError("trusted authors are not configured")
+    with (
+        patch("vergil_tooling.lib.epic_size.load_trusted_authors", side_effect=unconfigured),
+        patch("vergil_tooling.lib.trusted_authors.load_trusted_authors", side_effect=unconfigured),
+    ):
+        result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=MOVED, moved_by="transfer")
+    assert _sizing_calls(env) == _cleared_calls("900", "org/tool")

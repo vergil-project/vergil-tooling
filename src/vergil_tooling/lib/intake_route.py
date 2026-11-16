@@ -36,7 +36,17 @@ routes each container allows:
   naming the item, where it is and how to recover it, as does a link or
   read-back that fails outright. A planning item's ``in-progress`` label is
   removed from its final issue once the move has settled (a recreate never
-  carries it). The parent field alone never proves the link: every read-back
+  carries it). An item routed one-off is no longer an epic candidate, so its
+  estimated size ends there (epic vergil-project/.github#1191), from intake,
+  planning or deferred alike: a recreate never carries an ``epic-size:*``
+  label, and a transfer or a same-repo one-off removes every one from the
+  final issue once the move has settled. When the item carried any size (an
+  ``epic-size:*`` label, or a ``Sized …`` comment by anyone, so this needs no
+  trusted authors configured), the final issue of a transfer or a same-repo
+  one-off then gets the cleared marker, ending its sizing history; a
+  recreated issue carries no comments to end. A failed step here raises
+  :class:`RouteHalfAppliedError` naming the moved item and the by-hand fix.
+  The parent field alone never proves the link: every read-back
   also needs the target epic's sub-issue list to hold the item, and a round
   that finds it missing links it again (#4291). A re-run on an item already
   in the target repo whose parent reads the target epic, but which that epic
@@ -98,7 +108,14 @@ from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from vergil_tooling.lib import epics, github, security_records
-from vergil_tooling.lib.epic_size import LABEL_PREFIX, Sizing, label_for, render_sizing_comment
+from vergil_tooling.lib.epic_size import (
+    LABEL_PREFIX,
+    Sizing,
+    has_size,
+    label_for,
+    render_cleared_marker,
+    render_sizing_comment,
+)
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.labels import (
     RETIRED_LABELS,
@@ -114,7 +131,7 @@ from vergil_tooling.lib.queue_view import (
 from vergil_tooling.lib.shell_ref import quoted_slug
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Sequence
 
 DROP_COMMENT = "Dropped in {queue} review: {reason}"
 DEFER_COMMENT = "Deferred {day}: {reason}\nRevisit when: {revisit_when}"
@@ -304,7 +321,7 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         _guard_visibility(ref, _repo_of(intake))
         _link(intake, ref)
         return RouteResult(final=ref, moved_by="none")
-    return _one_off(ref, action, parent, kind)
+    return _one_off(ref, action, parent, kind, today)
 
 
 def _check_eligible(ref: IssueRef, action: RouteAction, parent: IssueRef | None) -> str | None:
@@ -571,21 +588,66 @@ def _defer(ref: IssueRef, action: Defer, kind: str | None, parent: IssueRef, day
 
 
 def _remove_in_progress(target: IssueRef, *, doing: str) -> None:
-    """Remove the planning ``in-progress`` label from *target*.
+    """Remove the planning ``in-progress`` label from *target* (see :func:`_remove_labels`)."""
+    _remove_labels(target, [epics.PLANNING_IN_PROGRESS_LABEL], doing=doing)
 
-    Raise :class:`RuntimeError` naming *doing* (the route that removes it) and
-    the command that removes it by hand when the edit fails.
+
+def _remove_labels(target: IssueRef, labels: Sequence[str], *, doing: str) -> None:
+    """Remove every one of *labels* from *target* in one edit.
+
+    Raise :class:`RuntimeError` naming *doing* (the route that removes them)
+    and the command that removes them by hand when the edit fails. A missing
+    token is a configuration error and is left as it came.
     """
-    label = epics.PLANNING_IN_PROGRESS_LABEL
+    flags = [arg for label in labels for arg in ("--remove-label", label)]
     try:
-        github.run(
-            "issue", "edit", str(target.number), "--repo", _repo_of(target), "--remove-label", label
-        )
+        github.run("issue", "edit", str(target.number), "--repo", _repo_of(target), *flags)
+    except github.MissingGitHubTokenError:
+        raise
+    except subprocess.CalledProcessError as exc:
+        named = ", ".join(f"'{label}'" for label in labels)
+        noun, pronoun = ("label", "it") if len(labels) == 1 else ("labels", "them")
+        raise RuntimeError(
+            f"{doing} left the {named} {noun} on {target.slug}: removing {pronoun} failed "
+            f"({' '.join(error_text(exc).split())}). Fix it with: gh issue edit "
+            f"{target.number} --repo {_repo_of(target)} {' '.join(flags)}"
+        ) from exc
+
+
+def _clear_size(final: IssueRef, day: date) -> None:
+    """End the estimated size of *final*, an item just routed one-off.
+
+    Read its labels, remove every ``epic-size:*`` one in one edit when any is
+    present, then post the cleared marker, so any sizing comment it carried
+    no longer counts. Raise :class:`RuntimeError` with the by-hand fix of
+    every step not done; a missing token is left as it came.
+    """
+    marker = render_cleared_marker(day)
+    post = f"gh issue comment {final.number} --repo {_repo_of(final)} --body {shlex.quote(marker)}"
+    try:
+        view = _view(final, "labels")
+    except github.MissingGitHubTokenError:
+        raise
+    except (subprocess.CalledProcessError, RuntimeError) as exc:
+        raise RuntimeError(
+            f"routing one-off could not read the labels of {final.slug} to clear its size "
+            f"({' '.join(error_text(exc).split())}). Remove every '{LABEL_PREFIX}*' label "
+            f"from it, then post the cleared marker with: {post}"
+        ) from exc
+    sizes = sorted(name for name in _label_names(view) if name.startswith(LABEL_PREFIX))
+    if sizes:
+        try:
+            _remove_labels(final, sizes, doing="routing one-off")
+        except RuntimeError as exc:
+            raise RuntimeError(f"{exc}, then post the cleared marker with: {post}") from exc
+    try:
+        _comment(final, marker)
+    except github.MissingGitHubTokenError:
+        raise
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
-            f"{doing} left the '{label}' label on {target.slug}: removing it failed "
-            f"({' '.join(error_text(exc).split())}). Fix it with: gh issue edit "
-            f"{target.number} --repo {_repo_of(target)} --remove-label {label}"
+            f"routing one-off did not clear the size of {final.slug}: posting the cleared "
+            f"marker failed ({' '.join(error_text(exc).split())}). Post it with: {post}"
         ) from exc
 
 
@@ -604,28 +666,41 @@ def _guard_visibility(ref: IssueRef, *targets: str) -> None:
 
 
 def _one_off(
-    ref: IssueRef, action: OneOff, old_parent: IssueRef | None, kind: str | None
+    ref: IssueRef, action: OneOff, old_parent: IssueRef | None, kind: str | None, today: date
 ) -> RouteResult:
-    """Route *ref* one-off; a planning item is guarded first and loses ``in-progress`` after.
+    """Route *ref* one-off; it loses ``in-progress`` and any size once the move has settled.
 
-    The guard runs before anything that can create the target's ad-hoc epic.
-    The label comes off the item's final issue once the move has settled: a
-    recreate never carries it, and a transfer keeps it only when the target
-    repo has the label, so each is read rather than assumed.
+    A planning item is guarded first, before anything that can create the
+    target's ad-hoc epic. Whether the item carries a size is read before the
+    move, from any container (:func:`has_size`, which needs no trusted
+    authors). Both labels come off the item's final issue: a recreate never
+    carries them, and a transfer keeps one only when the target repo has it,
+    so each is read rather than assumed. Every step is tried, and those that
+    fail are reported together in one :class:`RouteHalfAppliedError`.
     """
-    labelled = False
+    view = _view(ref, "labels,comments")
     if kind == epics.PLANNING.key:
-        view = _view(ref, "labels,comments")
         _guard_open_planning_epics(ref, view, "routing one-off")
-        labelled = epics.PLANNING_IN_PROGRESS_LABEL in _label_names(view)
+    labels = _label_names(view)
+    labelled = kind == epics.PLANNING.key and epics.PLANNING_IN_PROGRESS_LABEL in labels
+    sized = has_size(labels, [str(c.get("body") or "") for c in view.get("comments") or []])
     result = _move_one_off(ref, action, old_parent)
+    failures: list[RuntimeError] = []
     if labelled:
         try:
             if _still_in_progress(result):
                 _remove_in_progress(result.final, doing="routing one-off")
         except RuntimeError as exc:
-            # The move has settled: say so, so nobody re-runs a route now refused.
-            raise RouteHalfAppliedError(f"{_moved(ref, result.final)}, but {exc}") from exc
+            failures.append(exc)
+    if sized and result.moved_by != "recreate":
+        try:
+            _clear_size(result.final, today)
+        except RuntimeError as exc:
+            failures.append(exc)
+    if failures:
+        # The move has settled: say so, so nobody re-runs a route now refused.
+        detail = "; and ".join(str(exc) for exc in failures)
+        raise RouteHalfAppliedError(f"{_moved(ref, result.final)}, but {detail}") from failures[0]
     return result
 
 
@@ -1163,9 +1238,10 @@ def _recreate(
     )
     names = [str(label.get("name", "")) for label in raw.get("labels") or []]
     registry = {entry["name"] for entry in load_labels()["labels"]}
-    # A routed one-off is never an epic-create session underway: in-progress stays behind.
+    # A routed one-off is never an epic-create session underway, nor an epic
+    # candidate: in-progress and every epic-size:* label stay behind.
     dropped = {*RETIRED_LABELS, epics.PLANNING_IN_PROGRESS_LABEL}
-    kept = [name for name in names if name not in dropped]
+    kept = [name for name in names if name not in dropped and not name.startswith(LABEL_PREFIX)]
     carried = [name for name in kept if name in registry]
     uncarried = [name for name in kept if name not in registry]
     if carried:
