@@ -47,6 +47,17 @@ legacy form) is skipped. A home with no ad-hoc epic, or a ``repo`` with none,
 is an empty list, not an error. The marks are read only for repos with open
 ad-hoc tasks, each of which must have a main clone under the repo roots.
 
+Planning and deferred items carry an **epic size**
+(:mod:`vergil_tooling.lib.epic_size`): each view reads the item's labels and
+its comments with their authors, and derives its size record from the
+``epic-size:*`` label and the latest trusted sizing comment, reading the
+trusted authors once per view (the loader's errors propagate). An item whose
+size is in error keeps a held or deferral note with ``| size: <error>``
+appended; otherwise ``size: <error>`` replaces its latest-comment note.
+:func:`sort_planning` orders the planning queue by age, size or task count,
+and :func:`filter_planning` narrows it to some sizes, always keeping the
+items in error. Intake items carry no size.
+
 Nothing here mutates GitHub: the queue epic is looked up with
 :func:`epics.find_standing_epic` (never created), and a missing queue epic is
 reported as :class:`QueueNotFoundError` rather than an empty queue.
@@ -59,13 +70,21 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from vergil_tooling.lib import epics, github, in_flight, live_branches, security_records
+from vergil_tooling.lib import (
+    epic_size,
+    epics,
+    github,
+    in_flight,
+    live_branches,
+    security_records,
+)
 from vergil_tooling.lib.epics import IssueRef
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from vergil_tooling.lib.epic_size import SizeRecord
     from vergil_tooling.lib.in_flight import Disposition
     from vergil_tooling.lib.security_records import Advisory
 
@@ -89,6 +108,13 @@ _REVISIT_WHEN = "Revisit when:"
 
 QueueState = Literal["waiting", "in-progress", "ready-to-close"]
 AdhocState = Literal["ready", "blocked", "in-flight"]
+PlanningSort = Literal["age", "size", "tasks"]
+
+# The orders ``sort_planning`` accepts; ``age`` (oldest first) is the default.
+PLANNING_SORTS: tuple[PlanningSort, ...] = ("age", "size", "tasks")
+
+# The ``--size`` filter token that selects unsized items, beside the sizes.
+UNSIZED_TOKEN = "unsized"
 
 # The labels that give an ad-hoc task an operational kind; any other is a "task".
 _OPERATIONAL_KINDS = ("validation", "deployment")
@@ -104,7 +130,11 @@ class AdvisoryLineError(ValueError):
 
 @dataclass(frozen=True)
 class QueueItem:
-    """One open queue item, as the views render it."""
+    """One open queue item, as the views render it.
+
+    ``size`` is the item's size record: always set on planning and deferred
+    items, never on intake items.
+    """
 
     ref: IssueRef
     title: str
@@ -112,6 +142,7 @@ class QueueItem:
     state: QueueState
     note: str
     epic: IssueRef | None
+    size: SizeRecord | None = None
 
 
 @dataclass(frozen=True)
@@ -225,6 +256,36 @@ def _open_children(kind: epics.StandingKind, home: str, name: str) -> list[Issue
 
 def _comment_bodies(view: dict[str, Any]) -> list[str]:
     return [str(c.get("body") or "") for c in view.get("comments") or []]
+
+
+def _authored_comments(view: dict[str, Any]) -> list[tuple[str, str]]:
+    """Each comment as ``(author login, body)``, oldest first.
+
+    A comment whose author GitHub does not give (a deleted account) has the
+    login ``""``, which no trusted author matches.
+    """
+    out: list[tuple[str, str]] = []
+    for c in view.get("comments") or []:
+        author = c.get("author") or {}
+        out.append((str(author.get("login") or ""), str(c.get("body") or "")))
+    return out
+
+
+def _labels(view: dict[str, Any]) -> set[str]:
+    return {str(lbl.get("name") or "") for lbl in view.get("labels") or []}
+
+
+def _size_record(view: dict[str, Any], trusted: frozenset[str]) -> SizeRecord:
+    return epic_size.size_record(_labels(view), _authored_comments(view), trusted)
+
+
+def _with_size_error(note: str, size: SizeRecord, *, keep_note: bool) -> str:
+    """*note*, with *size*'s error appended (*keep_note*) or in its place."""
+    if size.error is None:
+        return note
+    if keep_note and note:
+        return f"{note} | size: {size.error}"
+    return f"size: {size.error}"
 
 
 def _latest_note(comments: list[str]) -> str:
@@ -344,6 +405,7 @@ def planning_items(home: str, name: str) -> list[QueueItem]:
     tracks it, whether or not its body names that advisory (spec 4.4b of epic
     vergil-project/.github#517, spec 4.2 of #573; #3826).
     """
+    trusted = epic_size.trusted_logins()
     views = [
         (ref, _view(ref, "title,createdAt,labels,comments,body"))
         for ref in _open_children(epics.PLANNING, home, name)
@@ -353,17 +415,19 @@ def planning_items(home: str, name: str) -> list[QueueItem]:
     for ref, view in views:
         comments = _comment_bodies(view)
         markers = parse_planning_markers(comments)
-        labels = {str(lbl.get("name") or "") for lbl in view.get("labels") or []}
         holding = tracking.get(ref, ())
-        state, demoted = _planning_state(labels, markers, advisory_held=bool(holding))
+        state, demoted = _planning_state(_labels(view), markers, advisory_held=bool(holding))
+        size = _size_record(view, trusted)
+        note = _held_note(holding) if demoted else _latest_note(comments)
         items.append(
             QueueItem(
                 ref=ref,
                 title=str(view.get("title") or ""),
                 created_at=str(view.get("createdAt") or ""),
                 state=state,
-                note=_held_note(holding) if demoted else _latest_note(comments),
+                note=_with_size_error(note, size, keep_note=demoted),
                 epic=markers.epic,
+                size=size,
             )
         )
     return _oldest_first(items)
@@ -375,9 +439,11 @@ def deferred_items(home: str, name: str) -> list[QueueItem]:
     Least recently deferred first; an item with no deferral comment sorts first,
     with an empty note.
     """
+    trusted = epic_size.trusted_logins()
     keyed: list[tuple[str, QueueItem]] = []
     for ref in _open_children(epics.DEFERRED, home, name):
-        view = _view(ref, "title,createdAt,comments")
+        view = _view(ref, "title,createdAt,labels,comments")
+        size = _size_record(view, trusted)
         deferral = parse_latest_deferral(_comment_bodies(view))
         note = (
             f"Deferred {deferral.day}: {deferral.reason} | Revisit when: {deferral.revisit_when}"
@@ -389,8 +455,9 @@ def deferred_items(home: str, name: str) -> list[QueueItem]:
             title=str(view.get("title") or ""),
             created_at=str(view.get("createdAt") or ""),
             state="waiting",
-            note=note,
+            note=_with_size_error(note, size, keep_note=deferral is not None),
             epic=None,
+            size=size,
         )
         keyed.append((deferral.day if deferral is not None else "", item))
     keyed.sort(key=lambda pair: (pair[0], pair[1].created_at, pair[1].ref.slug))
@@ -514,7 +581,7 @@ def adhoc_items(
     signals = _in_flight_signals([ref for ref, _, _ in found], roots)
     items: list[AdhocItem] = []
     for ref, view, open_blockers in found:
-        labels = {str(lbl.get("name") or "") for lbl in view.get("labels") or []}
+        labels = _labels(view)
         marks = in_flight.marks_for(ref.number, signals[_repo_of(ref)])
         state: AdhocState = "in-flight" if marks else "blocked" if open_blockers else "ready"
         items.append(
@@ -537,11 +604,101 @@ def _age(created_at: str, now: datetime) -> str:
     return f"{(now - created).days}d"
 
 
+_SIZED, _UNSIZED, _IN_ERROR = 0, 1, 2
+
+
+def _size_group(item: QueueItem) -> int:
+    """Sized, unsized (or no size record at all) or in error."""
+    if item.size is None:
+        return _UNSIZED
+    if item.size.error is not None:
+        return _IN_ERROR
+    return _UNSIZED if item.size.size is None else _SIZED
+
+
+def sort_planning(items: Sequence[QueueItem], key: PlanningSort) -> list[QueueItem]:
+    """*items* in the order *key* names; ties oldest first, then by slug.
+
+    ``age`` is oldest first. ``size`` orders the sized items by
+    :data:`epic_size.SIZES`, then the unsized, then those in error. ``tasks``
+    orders the sized items by estimated task count, then the unsized, then
+    those in error. An item with no size record sorts as unsized.
+    """
+    if key not in PLANNING_SORTS:
+        raise ValueError(f"unknown planning sort {key!r} (expected one of {PLANNING_SORTS})")
+
+    def order(item: QueueItem) -> tuple[int, int, str, str]:
+        if key == "age":
+            return (0, 0, item.created_at, item.ref.slug)
+        group = _size_group(item)
+        rank = 0
+        if group == _SIZED and item.size is not None and item.size.size is not None:
+            if key == "size":
+                rank = epic_size.SIZES.index(item.size.size)
+            elif item.size.tasks is not None:
+                rank = item.size.tasks
+        return (group, rank, item.created_at, item.ref.slug)
+
+    return sorted(items, key=order)
+
+
+def parse_size_filter(text: str) -> frozenset[str]:
+    """The tokens of a ``--size`` value (``S,M``, ``S,unsized``); refuses an unknown one.
+
+    Tokens are the sizes of :data:`epic_size.SIZES` and ``unsized``, comma
+    separated; an empty or unknown token raises ValueError.
+    """
+    allowed = (*epic_size.SIZES, UNSIZED_TOKEN)
+    tokens = [token.strip() for token in text.split(",")]
+    unknown = [token for token in tokens if token not in allowed]
+    if unknown:
+        raise ValueError(
+            f"unknown size {', '.join(repr(t) for t in unknown)} "
+            f"(expected a comma list of {', '.join(allowed)})"
+        )
+    return frozenset(tokens)
+
+
+def filter_planning(items: Sequence[QueueItem], sizes: frozenset[str]) -> list[QueueItem]:
+    """The *items* whose size is in *sizes* (``unsized`` for the unsized), and every item in error.
+
+    A filter never hides a problem: an item in error is always kept. An item
+    with no size record counts as unsized.
+    """
+    kept: list[QueueItem] = []
+    for item in items:
+        group = _size_group(item)
+        if group == _IN_ERROR:
+            kept.append(item)
+        elif group == _UNSIZED:
+            if UNSIZED_TOKEN in sizes:
+                kept.append(item)
+        elif item.size is not None and item.size.size in sizes:
+            kept.append(item)
+    return kept
+
+
+def size_errors(items: Sequence[QueueItem]) -> list[tuple[QueueItem, str]]:
+    """Each item in *items* whose size is in error, with its error, in order."""
+    return [
+        (item, item.size.error)
+        for item in items
+        if item.size is not None and item.size.error is not None
+    ]
+
+
 def render_text(items: Sequence[QueueItem], *, now: datetime) -> str:
-    """One line per item: ``<slug>  <age>  <state>  <title>[  — <note>]``."""
+    """One line per item: ``<slug>  <age>  [<size>  ]<state>  <title>[  — <note>]``.
+
+    The size (``M/14``, ``?`` unsized, ``!`` in error) is shown only for an
+    item with a size record (planning and deferred).
+    """
     lines = []
     for item in items:
-        line = f"{item.ref.slug}  {_age(item.created_at, now)}  {item.state}  {item.title}"
+        line = f"{item.ref.slug}  {_age(item.created_at, now)}  "
+        if item.size is not None:
+            line += f"{item.size.display}  "
+        line += f"{item.state}  {item.title}"
         if item.note:
             line += f"  — {item.note}"
         lines.append(line)
@@ -549,8 +706,23 @@ def render_text(items: Sequence[QueueItem], *, now: datetime) -> str:
 
 
 def to_json(items: Sequence[QueueItem]) -> list[dict[str, Any]]:
-    """The items as JSON-serializable ``QueueItem`` dicts."""
-    return [asdict(item) for item in items]
+    """The items as JSON-serializable ``QueueItem`` dicts.
+
+    A size record is flattened into ``epic_size``, ``estimated_tasks``,
+    ``confidence`` and ``size_error``; an item without one (intake) has none
+    of these keys, and no ``size`` key.
+    """
+    out: list[dict[str, Any]] = []
+    for item in items:
+        row = asdict(item)
+        del row["size"]
+        if item.size is not None:
+            row["epic_size"] = item.size.size
+            row["estimated_tasks"] = item.size.tasks
+            row["confidence"] = item.size.confidence
+            row["size_error"] = item.size.error
+        out.append(row)
+    return out
 
 
 def render_adhoc_text(items: Sequence[AdhocItem], *, now: datetime) -> str:

@@ -10,7 +10,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_queue import main, parse_args
-from vergil_tooling.lib import github, in_flight, live_branches, queue_view, security_records
+from vergil_tooling.lib import (
+    github,
+    in_flight,
+    live_branches,
+    queue_view,
+    security_records,
+    trusted_authors,
+)
+from vergil_tooling.lib.epic_size import SizeRecord
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.queue_view import AdhocItem, QueueItem
 
@@ -594,3 +602,218 @@ def test_vrg_queue_adhoc_repo_without_clone_exits_1(capsys: pytest.CaptureFixtur
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "no main clone under /r" in captured.err
+
+
+# -- epic size: exit 2, --sort, --size --------------------------------------------
+
+
+def _planning_item(number: int, created_at: str, size: SizeRecord, note: str = "") -> QueueItem:
+    return QueueItem(
+        ref=IssueRef("org", ".github", number),
+        title=f"plan {number}",
+        created_at=created_at,
+        state="waiting",
+        note=note,
+        epic=None,
+        size=size,
+    )
+
+
+_S3 = _planning_item(1, "2026-09-01T00:00:00Z", SizeRecord("S", 3, "high", None))
+_M14 = _planning_item(2, "2026-01-01T00:00:00Z", SizeRecord("M", 14, "med", None))
+_UNSIZED = _planning_item(3, "2026-05-01T00:00:00Z", SizeRecord(None, None, None, None))
+_ERROR = "label epic-size:M without a sizing comment"
+_IN_ERROR = _planning_item(
+    4, "2026-03-01T00:00:00Z", SizeRecord(None, None, None, _ERROR), f"size: {_ERROR}"
+)
+
+
+def _run(
+    capsys: pytest.CaptureFixture[str], argv: list[str], views: dict[str, Any]
+) -> tuple[int, str, str]:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
+        patch.dict(f"{_MOD}._VIEWS", views),
+    ):
+        rc = main(argv)
+    captured = capsys.readouterr()
+    return rc, captured.out, captured.err
+
+
+def _planning_view(*items: QueueItem) -> dict[str, Any]:
+    return {"planning": lambda _h, _n: list(items)}
+
+
+def test_exit_2_on_size_error(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, out, err = _run(capsys, ["planning"], _planning_view(_S3, _IN_ERROR))
+    assert rc == 2
+    lines = out.splitlines()
+    assert lines[0] == "planning queue for org in org/.github: 2 open item(s)"
+    assert "  !  waiting  plan 4  — size: " in lines[1]
+    assert "  S/3  waiting  plan 1" in lines[2]
+    assert err == f"vrg-queue: org/.github#4: {_ERROR}\n"
+    rc, out, err = _run(capsys, ["planning", "--json"], _planning_view(_S3, _IN_ERROR))
+    assert rc == 2
+    data = json.loads(out)
+    assert [row["ref"]["number"] for row in data] == [4, 1]
+    assert data[0]["size_error"] == _ERROR
+    assert data[1]["epic_size"] == "S"
+    assert err == f"vrg-queue: org/.github#4: {_ERROR}\n"
+
+
+def test_exit_2_on_deferred_size_error(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, out, err = _run(capsys, ["deferred"], {"deferred": lambda _h, _n: [_IN_ERROR]})
+    assert rc == 2
+    assert "  !  waiting  plan 4" in out
+    assert err == f"vrg-queue: org/.github#4: {_ERROR}\n"
+
+
+def test_exit_0_when_clean(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, out, err = _run(capsys, ["planning"], _planning_view(_S3, _UNSIZED))
+    assert rc == 0
+    assert err == ""
+    assert "  ?  waiting  plan 3" in out
+
+
+def test_bare_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
+    views = {
+        "intake": lambda _h, _n: [_ITEM],
+        "planning": lambda _h, _n: [_IN_ERROR, _S3],
+        "deferred": lambda _h, _n: [],
+    }
+    rc, out, err = _run(capsys, [], views)
+    assert rc == 2
+    assert "plan 4" in out
+    assert err == f"vrg-queue: org/.github#4: {_ERROR}\n"
+    rc, out, err = _run(capsys, ["--json"], views)
+    assert rc == 2
+    assert json.loads(out)["planning"][0]["size_error"] == _ERROR
+    assert err == f"vrg-queue: org/.github#4: {_ERROR}\n"
+
+
+def test_bare_text_failure_beats_size_error(capsys: pytest.CaptureFixture[str]) -> None:
+    views = {
+        "intake": lambda _h, _n: [],
+        "planning": lambda _h, _n: [_IN_ERROR],
+        "deferred": _failing(ValueError("bad row")),
+    }
+    rc, out, err = _run(capsys, [], views)
+    assert rc == 1
+    assert "plan 4" in out
+    assert f"vrg-queue: org/.github#4: {_ERROR}" in err
+    assert "deferred queue for org in org/.github could not be read: bad row" in err
+
+
+def test_bare_json_failure_beats_size_error(capsys: pytest.CaptureFixture[str]) -> None:
+    views = {
+        "intake": lambda _h, _n: [],
+        "planning": lambda _h, _n: [_IN_ERROR],
+        "deferred": _failing(ValueError("bad row")),
+    }
+    rc, out, err = _run(capsys, ["--json"], views)
+    assert rc == 1
+    assert out == ""
+    assert err == "vrg-queue: deferred queue for org in org/.github could not be read: bad row\n"
+
+
+def test_sort_size_and_tasks(capsys: pytest.CaptureFixture[str]) -> None:
+    items = (_S3, _M14, _UNSIZED, _IN_ERROR)
+    rc, out, _err = _run(capsys, ["planning", "--sort", "size", "--json"], _planning_view(*items))
+    assert rc == 2
+    assert [row["ref"]["number"] for row in json.loads(out)] == [1, 2, 3, 4]
+    rc, out, _err = _run(capsys, ["planning", "--json"], _planning_view(*items))
+    # The default is age, oldest first.
+    assert [row["ref"]["number"] for row in json.loads(out)] == [2, 4, 3, 1]
+    rc, out, _err = _run(capsys, ["planning", "--sort", "tasks", "--json"], _planning_view(*items))
+    assert [row["ref"]["number"] for row in json.loads(out)] == [1, 2, 3, 4]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["deferred", "--sort", "size"],
+        ["intake", "--size", "S"],
+        ["adhoc", "--sort", "age"],
+        ["--size", "S"],
+        ["--sort", "tasks"],
+    ],
+)
+def test_sort_and_size_only_with_planning(capsys: pytest.CaptureFixture[str], argv: list[str]) -> None:
+    with patch(f"{_MOD}.github.current_repo") as cur:
+        rc = main(argv)
+    captured = capsys.readouterr()
+    out, err = captured.out, captured.err
+    assert rc == 1
+    assert out == ""
+    flag = "--sort" if "--sort" in argv else "--size"
+    assert err == f"vrg-queue: {flag} applies only to planning\n"
+    cur.assert_not_called()
+
+
+def test_unknown_size_token(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["planning", "--size", "S,medium"])
+    captured = capsys.readouterr()
+    out, err = captured.out, captured.err
+    assert rc == 1
+    assert out == ""
+    assert err.startswith("vrg-queue: --size: unknown size 'medium'")
+
+
+@pytest.mark.parametrize(
+    "argv", [["planning", "--sort", "bogus"], ["planning", "--bogus"], ["triage"]]
+)
+def test_usage_errors_exit_1(capsys: pytest.CaptureFixture[str], argv: list[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(argv)
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "usage: vrg-queue" in err
+    assert "vrg-queue: error:" in err
+
+
+def test_filtered_header(capsys: pytest.CaptureFixture[str]) -> None:
+    items = (_S3, _M14, _UNSIZED, _IN_ERROR)
+    rc, out, err = _run(capsys, ["planning", "--size", "S"], _planning_view(*items))
+    assert rc == 2
+    lines = out.splitlines()
+    assert lines[0] == "planning queue for org in org/.github: 4 open item(s), 2 shown"
+    assert len(lines) == 3
+    assert "plan 4" in lines[1]
+    assert "plan 1" in lines[2]
+    assert err == f"vrg-queue: org/.github#4: {_ERROR}\n"
+    rc, out, _err = _run(capsys, ["planning", "--size", "S,unsized", "--json"], _planning_view(*items))
+    assert [row["ref"]["number"] for row in json.loads(out)] == [4, 3, 1]
+
+
+def test_unfiltered_header_has_no_shown_count(capsys: pytest.CaptureFixture[str]) -> None:
+    _rc, out, _err = _run(capsys, ["planning"], _planning_view(_S3))
+    assert out.splitlines()[0] == "planning queue for org in org/.github: 1 open item(s)"
+
+
+@pytest.mark.parametrize("argv", [["planning"], ["deferred"]])
+def test_trusted_authors_missing_fails(capsys: pytest.CaptureFixture[str], argv: list[str]) -> None:
+    msg = "trusted authors are not configured: no /x and no [trusted_authors] stanza in /y"
+    exc = trusted_authors.TrustedAuthorsNotConfiguredError(msg)
+    rc, out, err = _run(capsys, argv, {argv[0]: _failing(exc)})
+    assert rc == 1
+    assert out == ""
+    assert err == f"vrg-queue: {argv[0]} queue for org in org/.github could not be read: {msg}\n"
+
+
+def test_trusted_authors_missing_fails_through_the_real_view(capsys: pytest.CaptureFixture[str]) -> None:
+    exc = trusted_authors.TrustedAuthorsNotConfiguredError("trusted authors are not configured")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
+        patch("vergil_tooling.lib.epic_size.load_trusted_authors", side_effect=exc),
+    ):
+        rc = main(["planning"])
+    captured = capsys.readouterr()
+    out, err = captured.out, captured.err
+    assert rc == 1
+    assert out == ""
+    assert err == (
+        "vrg-queue: planning queue for org in org/.github could not be read: "
+        "trusted authors are not configured\n"
+    )
