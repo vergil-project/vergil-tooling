@@ -233,7 +233,7 @@ these names, before `ci-test.yml` and `ci-audit.yml` stage them:
 | ------- | --------------------------------- | ------------------------------------------------------------------ |
 | `test`  | `coverage.xml` (Cobertura)        | the gating `cargo llvm-cov report --cobertura --output-path coverage.xml` run |
 | `test`  | `junit.xml` (JUnit)               | the gating `cargo llvm-cov nextest` run, copied from `target/nextest/vergil/junit.xml` |
-| `audit` | `cargo-deny.json` (JSON Lines)    | the gating `cargo deny --locked --format json … check --show-stats` run, its stderr |
+| `audit` | `cargo-deny.json` (JSON Lines)    | the gating `cargo deny --format json … --locked --workspace check --show-stats` run, its stderr |
 
 The test gate runs the tests once with cargo-nextest under cargo-llvm-cov,
 using the `vergil` nextest profile that vergil-tooling packages, which turns

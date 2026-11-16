@@ -51,7 +51,7 @@ from vergil_tooling.bin.vrg_validate import (
 )
 from vergil_tooling.lib.config import ConfigError, TestConfig
 from vergil_tooling.lib.container_cache import unbootstrapped_manifests
-from vergil_tooling.lib.languages import CheckKind, language_commands
+from vergil_tooling.lib.languages import RUST_DOCTEST_CMD, CheckKind, language_commands
 from vergil_tooling.lib.validate_record import RECORD_PATH, read_record
 
 _MOD = "vergil_tooling.bin.vrg_validate"
@@ -871,12 +871,20 @@ def _package(name: str, *kinds: list[str]) -> dict[str, object]:
     }
 
 
-def _metadata(packages: list[dict[str, object]], defaults: list[str]) -> str:
+def _metadata(
+    packages: list[dict[str, object]],
+    *,
+    members: list[str] | None = None,
+    defaults: list[str] | None = None,
+) -> str:
+    """``cargo metadata --no-deps`` output; every package is a member by default."""
+    member_ids = [p["id"] for p in packages] if members is None else [f"{n}-id" for n in members]
+    default_ids = member_ids if defaults is None else [f"{n}-id" for n in defaults]
     return json.dumps(
         {
             "packages": packages,
-            "workspace_members": [p["id"] for p in packages],
-            "workspace_default_members": [f"{name}-id" for name in defaults],
+            "workspace_members": member_ids,
+            "workspace_default_members": default_ids,
         }
     )
 
@@ -891,7 +899,7 @@ def _cargo_metadata(stdout: str, returncode: int = 0, stderr: str = "") -> Gener
 
 
 def test_rust_doctests_kept_for_a_lib_crate(tmp_path: Path) -> None:
-    stdout = _metadata([_package("app", ["lib"], ["bin"])], ["app"])
+    stdout = _metadata([_package("app", ["lib"], ["bin"])])
     with _cargo_metadata(stdout) as m_run:
         assert _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path) == _RUST_TEST_CMDS
     assert m_run.call_args.args[0] == [
@@ -907,7 +915,7 @@ def test_rust_doctests_kept_for_a_lib_crate(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("kind", ["rlib", "dylib", "cdylib", "staticlib", "proc-macro"])
 def test_rust_doctests_kept_for_every_library_kind(tmp_path: Path, kind: str) -> None:
-    stdout = _metadata([_package("lib", [kind])], ["lib"])
+    stdout = _metadata([_package("lib", [kind])])
     with _cargo_metadata(stdout):
         assert _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path) == _RUST_TEST_CMDS
 
@@ -915,7 +923,7 @@ def test_rust_doctests_kept_for_every_library_kind(tmp_path: Path, kind: str) ->
 def test_rust_doctests_dropped_for_a_bin_only_crate(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    stdout = _metadata([_package("tool", ["bin"], ["test"])], ["tool"])
+    stdout = _metadata([_package("tool", ["bin"], ["test"])])
     with _cargo_metadata(stdout):
         result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
     assert result == [_RUST_COVERAGE_CMD]
@@ -924,28 +932,52 @@ def test_rust_doctests_dropped_for_a_bin_only_crate(
     assert "no library target in tool" in err
 
 
-def test_rust_doctests_judge_only_the_default_members(tmp_path: Path) -> None:
-    # A library outside the default members is not selected by `cargo test`,
-    # so it does not keep the doctest command.
-    packages = [_package("cli", ["bin"]), _package("core", ["lib"])]
-    with _cargo_metadata(_metadata(packages, ["cli"])):
-        result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
-    assert result == [_RUST_COVERAGE_CMD]
+def test_doctest_skip_uses_real_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # The commands come from the real registry, so the skip matches the
+    # doctest command exactly as it is built, flags included (spec §6.4). A
+    # workspace whose members are all binary-only has it dropped.
+    cmds = language_commands("rust", CheckKind.TEST)
+    assert RUST_DOCTEST_CMD in cmds
+    assert "--workspace" in RUST_DOCTEST_CMD
+    packages = [_package("cli", ["bin"]), _package("daemon", ["bin"], ["test"])]
+    with _cargo_metadata(_metadata(packages)):
+        result = _skip_rust_doctests_without_lib(cmds, tmp_path)
+    assert result == [cmd for cmd in cmds if cmd != RUST_DOCTEST_CMD]
+    assert len(result) == len(cmds) - 1
+    assert "no library target in cli, daemon" in capsys.readouterr().err
 
 
-def test_rust_doctests_kept_when_any_default_member_has_a_lib(tmp_path: Path) -> None:
+def test_doctest_skip_keeps_lib_member(tmp_path: Path) -> None:
+    # A binary-only root whose library member is not a default member: the
+    # doctests run with --workspace, which selects every member, so the
+    # library member keeps the doctest command.
     packages = [_package("cli", ["bin"]), _package("core", ["lib"])]
-    with _cargo_metadata(_metadata(packages, ["cli", "core"])):
+    with _cargo_metadata(_metadata(packages, defaults=["cli"])):
         assert _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path) == _RUST_TEST_CMDS
 
 
-def test_rust_doctests_notice_with_no_default_members(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    with _cargo_metadata(_metadata([], [])):
+def test_rust_doctests_judge_only_the_workspace_members(tmp_path: Path) -> None:
+    # A package outside workspace_members is not selected by --workspace, so
+    # its library does not keep the doctest command.
+    packages = [_package("cli", ["bin"]), _package("core", ["lib"])]
+    with _cargo_metadata(_metadata(packages, members=["cli"])):
         result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
     assert result == [_RUST_COVERAGE_CMD]
-    assert "the workspace default members" in capsys.readouterr().err
+
+
+def test_rust_doctests_kept_when_any_member_has_a_lib(tmp_path: Path) -> None:
+    packages = [_package("cli", ["bin"]), _package("core", ["lib"])]
+    with _cargo_metadata(_metadata(packages)):
+        assert _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path) == _RUST_TEST_CMDS
+
+
+def test_rust_doctests_notice_with_no_members(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with _cargo_metadata(_metadata([])):
+        result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
+    assert result == [_RUST_COVERAGE_CMD]
+    assert "the workspace members" in capsys.readouterr().err
 
 
 def test_rust_doctests_no_probe_without_the_command(tmp_path: Path) -> None:
@@ -977,8 +1009,8 @@ def test_rust_doctests_probe_that_cannot_run_is_loud(tmp_path: Path, exc: Except
     [
         "not json",
         json.dumps({"packages": []}),
-        json.dumps({"packages": [{"id": "x"}], "workspace_default_members": ["x"]}),
-        json.dumps({"packages": None, "workspace_default_members": []}),
+        json.dumps({"packages": [{"id": "x"}], "workspace_members": ["x"]}),
+        json.dumps({"packages": None, "workspace_members": []}),
     ],
 )
 def test_rust_doctests_unexpected_metadata_is_loud(tmp_path: Path, stdout: str) -> None:
@@ -993,7 +1025,7 @@ def test_rust_test_stage_probes_at_stage_time(tmp_path: Path) -> None:
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages("test", "rust", tmp_path)
     assert [s.name for s in stages] == ["install", "test"]
-    stdout = _metadata([_package("tool", ["bin"])], ["tool"])
+    stdout = _metadata([_package("tool", ["bin"])])
     with (
         _cargo_metadata(stdout),
         patch(_MOD + ".progress.run", return_value=0) as m_progress,
@@ -1764,7 +1796,7 @@ def test_missing_cargo_lock_fails_install_before_cargo_runs(
 
 
 def test_cargo_metadata_locked(tmp_path: Path) -> None:
-    with _cargo_metadata(_metadata([_package("core", ["lib"])], ["core"])) as m_run:
+    with _cargo_metadata(_metadata([_package("core", ["lib"])])) as m_run:
         _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
     assert "--locked" in m_run.call_args.args[0]
 

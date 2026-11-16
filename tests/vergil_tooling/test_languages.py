@@ -375,13 +375,22 @@ def test_rust_lint_commands() -> None:
     # only the lib and bins it checks with no target flag (#4379).
     assert language_commands("rust", CheckKind.LINT) == [
         ["cargo", "fmt", "--all", "--", "--check"],
-        ["cargo", "clippy", "--all-targets", "--locked", "--", "-D", "warnings"],
+        [
+            "cargo",
+            "clippy",
+            "--all-targets",
+            "--locked",
+            "--workspace",
+            "--",
+            "-D",
+            "warnings",
+        ],
     ]
 
 
 def test_rust_typecheck_commands() -> None:
     joined = _joined(language_commands("rust", CheckKind.TYPECHECK))
-    assert joined == ["cargo check --locked"]
+    assert joined == ["cargo check --locked --workspace"]
 
 
 def _rust_nextest_toml() -> Path:
@@ -399,10 +408,11 @@ def test_rust_test_commands() -> None:
             "-c",
             "rm -f coverage.xml junit.xml target/nextest/vergil/junit.xml; "
             "cargo llvm-cov clean --workspace || exit 1; "
-            "NEXTEST_PROFILE=vergil cargo llvm-cov nextest --locked --no-report "
+            "NEXTEST_PROFILE=vergil cargo llvm-cov nextest --locked --workspace --no-report "
             f'--tool-config-file "vergil:{_rust_nextest_toml()}"; '
             "test_rc=$?; "
-            "cargo llvm-cov report --locked --fail-under-lines 100 --show-missing-lines "
+            "cargo llvm-cov report --locked --workspace --fail-under-lines 100 "
+            "--show-missing-lines "
             "--cobertura --output-path coverage.xml; "
             "cov_rc=$?; "
             "if [ -f target/nextest/vergil/junit.xml ]; then "
@@ -414,7 +424,7 @@ def test_rust_test_commands() -> None:
             '[ "$test_rc" -ne 0 ] && exit "$test_rc"; '
             'exit "$cov_rc"',
         ],
-        ["cargo", "test", "--doc", "--locked"],
+        ["cargo", "test", "--doc", "--locked", "--workspace"],
     ]
 
 
@@ -435,11 +445,13 @@ def test_rust_audit_commands() -> None:
     # cargo-deny 0.20 takes ``--config`` (and ``--format``) on the root
     # command, before ``check`` (EmbarkStudios/cargo-deny#881); after ``check``
     # it is a usage error. Its stderr is the JSON report (issue #4394).
+    # ``--locked`` and ``--workspace`` are root options too (spec §6.4).
     assert language_commands("rust", CheckKind.AUDIT) == [
         [
             "sh",
             "-c",
-            f'cargo deny --locked --format json --config "{_rust_deny_toml()}" check --show-stats '
+            f'cargo deny --format json --config "{_rust_deny_toml()}" --locked --workspace '
+            "check --show-stats "
             f"2>{CARGO_DENY_REPORT}; rc=$?; cat {CARGO_DENY_REPORT} >&2 || exit 1; "
             'exit "$rc"',
         ]
@@ -462,19 +474,60 @@ def test_rust_lockfile_commands_are_locked() -> None:
     fmt, clippy = cmds[CheckKind.LINT]
     assert fmt.startswith("cargo fmt ")
     assert "--locked" not in fmt
-    assert clippy.startswith("cargo clippy --all-targets --locked -- ")
-    assert cmds[CheckKind.TYPECHECK] == ["cargo check --locked"]
+    assert clippy.startswith("cargo clippy --all-targets --locked ")
+    assert cmds[CheckKind.TYPECHECK] == ["cargo check --locked --workspace"]
     coverage, doctest = cmds[CheckKind.TEST]
     assert "cargo llvm-cov nextest --locked " in coverage
     assert "cargo llvm-cov report --locked " in coverage
-    assert doctest == "cargo test --doc --locked"
-    assert "cargo deny --locked " in cmds[CheckKind.AUDIT][0]
+    assert doctest == "cargo test --doc --locked --workspace"
+    assert " --locked " in cmds[CheckKind.AUDIT][0]
+
+
+def _cargo_args(script: str, subcommand: str) -> list[str]:
+    """Return the words of the one ``<subcommand>`` call in a shell script.
+
+    A leading ``NAME=value`` environment assignment is dropped first.
+    """
+    calls = []
+    for part in script.split(";"):
+        words = part.split()
+        while words and "=" in words[0] and not words[0].startswith("-"):
+            words = words[1:]
+        if " ".join(words).startswith(f"{subcommand} "):
+            calls.append(words)
+    assert len(calls) == 1, (subcommand, calls)
+    return calls[0]
+
+
+def test_rust_gate_commands_cover_workspace() -> None:
+    """Every Rust gate command that selects packages validates every member (spec §6.4)."""
+    (clippy,) = (c for c in language_commands("rust", CheckKind.LINT) if c[1] == "clippy")
+    assert "--workspace" in clippy[: clippy.index("--")]
+    (check,) = language_commands("rust", CheckKind.TYPECHECK)
+    assert "--workspace" in check
+    (coverage, doctest) = language_commands("rust", CheckKind.TEST)
+    script = coverage[2]
+    assert "--workspace" in _cargo_args(script, "cargo llvm-cov nextest")
+    assert "--workspace" in _cargo_args(script, "cargo llvm-cov report")
+    assert "--workspace" in doctest
+    ((_, _, audit),) = language_commands("rust", CheckKind.AUDIT)
+    assert "--workspace" in _cargo_args(audit, "cargo deny")
+
+
+def test_cargo_deny_root_flags_before_check() -> None:
+    # cargo-deny's ``--format``, ``--config``, ``--locked`` and ``--workspace``
+    # are root options: after ``check`` they are a usage error.
+    ((_, _, audit),) = language_commands("rust", CheckKind.AUDIT)
+    args = _cargo_args(audit, "cargo deny")
+    check = args.index("check")
+    for flag in ("--format", "--config", "--locked", "--workspace"):
+        assert args.index(flag) < check, flag
 
 
 def test_rust_doctest_cmd_is_the_test_list_entry() -> None:
     # vrg-validate's doctest skip matches this exact list, so the TEST list
     # must carry it unchanged.
-    assert languages.RUST_DOCTEST_CMD == ["cargo", "test", "--doc", "--locked"]
+    assert languages.RUST_DOCTEST_CMD == ["cargo", "test", "--doc", "--locked", "--workspace"]
     assert languages.RUST_DOCTEST_CMD in language_commands("rust", CheckKind.TEST)
 
 
