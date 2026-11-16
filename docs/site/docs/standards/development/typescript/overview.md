@@ -160,19 +160,34 @@ release. The `typescript-tools` stage fails, naming the fix, when
 
 There is no publish target: a TypeScript release publishes nothing to npm.
 
-## Extending the Shareable Base tsconfig
+## Extending the Shareable Base
 
-The curated strict set is delivered as a **shareable strict base tsconfig
-shipped by Vergil** that consumers `extends` — the direct analog to C++
-enforcing a concrete `-Wall -Wextra -Werror -Wpedantic`-plus-extras warning set
-through a shared flag list.
+The curated strict set, Vergil's ESLint rules and its Prettier settings are
+delivered as **three managed files** that the fleet sync writes whole into
+every TypeScript repository's root, each a byte-for-byte copy of a master in
+vergil-tooling (see the
+[managed-file list](../../../reference/config-audit.md#_check_language_files-per-language-managed-files)):
 
-A consuming repository authors a minimal `tsconfig.json` that extends the
-Vergil-shipped base and adds only repo-local paths:
+| File | What it carries |
+|---|---|
+| `tsconfig.vergil.json` | The strict base tsconfig |
+| `eslint.vergil.config.mjs` | Vergil's ESLint flat config |
+| `.prettierrc.json` | Vergil's Prettier config |
+
+A repository never edits these files: the sync rewrites them. It owns its
+**entry points**, `tsconfig.json` and `eslint.config.mjs`, and each one builds
+on Vergil's base. This is the direct analog to C++ enforcing a concrete
+`-Wall -Wextra -Werror -Wpedantic`-plus-extras warning set through a shared
+flag list.
+
+### `tsconfig.json`
+
+A consuming repository's `tsconfig.json` extends the managed base and adds only
+repo-local paths:
 
 ```json
 {
-  "extends": "<vergil>/typescript/tsconfig.base.json",
+  "extends": "./tsconfig.vergil.json",
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist"
@@ -181,6 +196,11 @@ Vergil-shipped base and adds only repo-local paths:
 }
 ```
 
+The `./` matters: without it, `tsc` looks the name up as a package in
+`node_modules`. The base may also be one entry of an `extends` array, beside a
+preset such as `@tsconfig/node24/tsconfig.json`; comments and trailing commas
+are allowed, as `tsc` allows them.
+
 The strict set lives in the base and is inherited through `extends`, so
 TYPECHECK is a bare `tsc --noEmit`, run as the repository's own
 `node_modules/.bin/tsc`, that reads the consumer's own `tsconfig.json`. A
@@ -188,6 +208,61 @@ repository never re-declares the strict flags — it inherits them, exactly as
 a C++ repository inherits the warning set threaded onto every compile line.
 The concrete set the base carries is documented in
 [Toolchain and Strictness](toolchain-and-strictness.md).
+
+### `eslint.config.mjs`
+
+The repository's `eslint.config.mjs` imports Vergil's config and spreads it. It
+may add ignores (generated code, for example) and rules of its own:
+
+```js
+import vergil from "./eslint.vergil.config.mjs";
+
+export default [
+  { ignores: ["src/generated/"] },
+  ...vergil,
+];
+```
+
+Passing the imported config to `defineConfig(…)` (from `eslint/config`) or to
+`tseslint.config(…)` works too. LINT runs `node_modules/.bin/eslint .`, which
+reads `eslint.config.mjs` itself. The managed config sits in the repository
+root, so its imports (`@eslint/js`, `typescript-eslint`) resolve from the
+repository's `node_modules`. No other `eslint.config.*` may sit beside
+`eslint.config.mjs`, since ESLint would read `eslint.config.js` first.
+
+### One Prettier config
+
+LINT runs `prettier --check . --config .prettierrc.json`, and an editor finds
+the same `.prettierrc.json` on its own, so both format by the same config. A
+second config source fails `vrg-validate`: a `"prettier"` key in
+`package.json`, or any `.prettierrc`, `.prettierrc.*` or `prettier.config.*`
+other than the root `.prettierrc.json`.
+
+The same config does not mean the same Prettier **version**. Prettier is an
+image tool, so the version the gate runs is guaranteed only inside the
+container: format with `vrg-container-run -- prettier --write .`. An editor's
+own Prettier may be a different version and format some code differently.
+
+### What `vrg-validate` checks
+
+The `typescript-tools` stage (see
+[Required devDependencies](#required-devdependencies-and-their-accepted-majors))
+also checks the entry points and the Prettier config, and fails with the fix:
+
+- `tsconfig.json` exists and its `extends` is `"./tsconfig.vergil.json"`, or
+  an array containing it;
+- `eslint.config.mjs` exists, imports a binding from
+  `"./eslint.vergil.config.mjs"`, and includes it in its default export:
+  spread into an array, or passed to `defineConfig(…)` or `tseslint.config(…)`;
+- Prettier has no config source but `.prettierrc.json`.
+
+**Weakening a rule is an exception, not a failure.** A repository that turns
+off or weakens a rule from Vergil's ESLint config, or a strict flag from the
+base tsconfig, has made a repository-level exception under exception management
+([vergil-project/.github#375](https://github.com/vergil-project/.github/issues/375)),
+as a Python repository that disables a ruff rule in its `pyproject.toml` has.
+These checks do not block it. Leaving out Vergil's base altogether is not an
+exception: the checks above fail it.
 
 ## Testing: Vitest Runner, V8 Coverage Default
 

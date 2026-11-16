@@ -28,9 +28,11 @@ everything else is fail_defer so all failures are reported in one run.
 A TypeScript repo gets one more stage right after install, whenever any of
 its language checks runs: ``typescript-tools``, fail_fast, which checks that
 the repo declares and installs each required devDependency within Vergil's
-accepted major, since the gates run the repo's own tools from
-``node_modules/.bin``, and that ``package.json`` defines the ``build``
-script the build stage runs (:mod:`~vergil_tooling.lib.typescript_tools`).
+accepted major (:mod:`~vergil_tooling.lib.typescript_tools`), since the
+gates run the repo's own tools from ``node_modules/.bin``; that the
+``package.json`` version matches ``VERSION``; that ``package.json``
+defines the ``build`` script the build stage runs; that its entry points
+build on the managed configs; and that Prettier has one config source.
 
 A repo with none of its language's manifests (a Rust repo with no
 ``Cargo.toml`` yet) is not bootstrapped: the image warmup skips it, and so
@@ -801,7 +803,7 @@ _TYPESCRIPT_TOOLS_STAGE = "typescript-tools"
 
 
 def _typescript_tools_stage(repo_root: Path) -> Stage:
-    """The TypeScript pre-gate stage: the repo's tools and its ``build`` script.
+    """The TypeScript pre-gate stage: every check in ``PRE_GATE_CHECKS``.
 
     It runs right after install, whenever any TypeScript language check kind
     runs, so every TypeScript CI job (one ``--check`` each) enforces it

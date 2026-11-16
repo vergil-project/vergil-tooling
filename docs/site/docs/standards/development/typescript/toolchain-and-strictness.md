@@ -86,8 +86,9 @@ tested in the packaged `tsconfig.base.json` — that is the single source of tru
 and this document mirrors it. If the set changes, it changes in the base
 tsconfig first and this page is updated to match, never the other way around.
 
-Consumers do not restate the set. A repository's `tsconfig.json` extends the base
-and inherits the strict set through that inheritance; enforcing it is the base's
+Consumers do not restate the set. A repository's `tsconfig.json` extends the
+base, written into the repository as the managed `tsconfig.vergil.json`, and
+inherits the strict set through that inheritance; enforcing it is the base's
 job, not each repo's. This is the direct analog of a C++ repository inheriting
 the shared warning flags rather than re-declaring `-Wall -Wextra` on its own
 compile lines.
@@ -126,11 +127,12 @@ blanketed away.
 The strict set is distinct from the LINT stage, which runs **Prettier** (format)
 and **ESLint** (type-aware typescript-eslint rules) once:
 
-- **Prettier** runs `prettier --check` against the packaged Prettier config
+- **Prettier** runs `prettier --check` against the managed `.prettierrc.json`
   (`semi: true`, `singleQuote: false`, `trailingComma: "all"`,
   `printWidth: 100`) — formatting only, no logic judgments.
-- **ESLint** runs its flat config with `js.configs.recommended` plus
-  typescript-eslint's `recommendedTypeChecked` (type-aware rules resolved via
+- **ESLint** runs the repository's `eslint.config.mjs`, which spreads Vergil's
+  managed `eslint.vergil.config.mjs`: its flat config with
+  `js.configs.recommended` plus typescript-eslint's `recommendedTypeChecked` (type-aware rules resolved via
   `projectService: true`, which auto-discovers the nearest `tsconfig`), and
   carries the `ban-ts-comment` rule above.
 
