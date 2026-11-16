@@ -36,11 +36,11 @@ isolation system.
 
 | Plan | Scope | Status |
 |---|---|---|
-| 1. Repository + Working VM | vergil-vm repo, Lima template | Planned |
-| 2. Session Management | vrg-session, identities.toml | Planned |
-| 3. Credential Provisioning | GitHub App credentials, GHCR auth | Planned |
+| 1. Repository + Working VM | vergil-vm repo, Lima template | Complete |
+| 2. Session Management | vrg-session, identities.toml | Complete |
+| 3. Credential Provisioning | GitHub App credentials, GHCR auth | Complete |
 | ~~4. Egress Filtering~~ | ~~HAProxy, pf, iptables~~ | Deferred to v2.2 (#901) |
-| **5. vergil-tooling Adaptations** (this plan) | nerdctl runtime detection | This plan |
+| **5. vergil-tooling Adaptations** (this plan) | nerdctl runtime detection | **Complete** |
 | 6. Distribution + Updates | Pre-built images, vrg-vm-update | Planned |
 | — | Wrapper simplification (vrg-gh, vrg-git) | Moved to #933 identity plan |
 
@@ -104,7 +104,7 @@ breaking changes for non-VM users.
 - Modify: `src/vergil_tooling/lib/docker.py`
 - Modify: `tests/vergil_tooling/test_docker.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # Add to tests/vergil_tooling/test_docker.py
@@ -151,12 +151,12 @@ def test_detect_runtime_none_found(
         detect_runtime()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_docker.py -k detect_runtime -v`
 Expected: FAIL
 
-- [ ] **Step 3: Implement detect_runtime()**
+- [x] **Step 3: Implement detect_runtime()**
 
 Add to `src/vergil_tooling/lib/docker.py`:
 
@@ -176,12 +176,12 @@ def detect_runtime() -> str:
     raise SystemExit(1)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_docker.py -k detect_runtime -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 vrg-commit --type feat --scope docker \
@@ -197,7 +197,7 @@ vrg-commit --type feat --scope docker \
 - Modify: `src/vergil_tooling/bin/vrg_container_run.py`
 - Modify: `tests/vergil_tooling/test_vrg_container_run.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # Add to tests/vergil_tooling/test_vrg_container_run.py
@@ -212,9 +212,9 @@ def test_uses_detected_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     # (exact test depends on how the command is built)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-- [ ] **Step 3: Replace hardcoded "docker" with detect_runtime()**
+- [x] **Step 3: Replace hardcoded "docker" with detect_runtime()**
 
 In `vrg_container_run.py`, find all places where `"docker"` is used
 as a command name and replace with `detect_runtime()`. Call it
@@ -237,12 +237,12 @@ cmd = [runtime, "run", ...]
 Apply the same change to `docker build`, `docker images`, and
 any other Docker CLI invocations.
 
-- [ ] **Step 4: Run full test suite**
+- [x] **Step 4: Run full test suite**
 
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_container_run.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 vrg-commit --type feat --scope docker \
@@ -254,13 +254,13 @@ vrg-commit --type feat --scope docker \
 
 ### Task 3: Full Validation and Manual Testing
 
-- [ ] **Step 1: Run full validation**
+- [x] **Step 1: Run full validation**
 
 ```bash
 vrg-container-run -- uv run vrg-validate
 ```
 
-- [ ] **Step 2: Test inside the VM (requires working VM from Plan 1)**
+- [x] **Step 2: Test inside the VM (requires working VM from Plan 1)**
 
 ```bash
 limactl shell vergil-agent
@@ -272,7 +272,7 @@ uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-t
 vrg-container-run -- echo "runtime works"
 ```
 
-- [ ] **Step 3: Commit any fixes**
+- [x] **Step 3: Commit any fixes**
 
 ---
 
