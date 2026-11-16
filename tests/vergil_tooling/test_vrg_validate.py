@@ -2054,7 +2054,7 @@ def test_semgrep_rulesets_skip_gitignored_files(tmp_path: Path) -> None:
     ("language", "expected"),
     [("cpp", ["p/c"]), ("typescript", ["p/typescript"])],
 )
-def test_semgrep_rulesets_add_ci_extra_config(
+def test_semgrep_rulesets_resolve_the_language_ruleset(
     tmp_path: Path, language: str, expected: list[str]
 ) -> None:
     repo = _git_repo(tmp_path, "README.md")

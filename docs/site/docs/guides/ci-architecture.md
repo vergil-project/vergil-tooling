@@ -245,11 +245,14 @@ standards-compliance job is gone: PR issue linkage is now checked by
 
 !!! tip "Semgrep rulesets"
     `vrg-semgrep-scan` maps the language to a registry ruleset:
-    `python` and `rust` map to `p/<language>`, and `go`
-    maps to `p/golang`. It adds `p/dockerfile` when the repository has
-    Dockerfiles and `p/github-actions` when it has workflows.
-    `ci-security.yml` adds `p/c` for `cpp` and `p/typescript` for
-    `typescript`.
+    `python`, `rust` and `typescript` map to `p/<language>`, `go`
+    maps to `p/golang`, and `cpp` maps to `p/c`. It adds `p/dockerfile`
+    when the repository has Dockerfiles and `p/github-actions` when it
+    has workflows. This mapping in `vrg-semgrep-scan` is the only one:
+    CI's semgrep job and the local `vrg-validate` semgrep stage both use
+    it. A ruleset passed again through `--extra-config` is scanned once.
+    `p/c` covers `.c` files only: the community registry has no C++
+    rules, so C++ static analysis comes from the quality stage.
 
 #### Fleet-excluded semgrep rules
 
