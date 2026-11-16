@@ -745,3 +745,27 @@ def test_main_staging_failure_skips_the_container(tmp_path: Path, stub_staging: 
     ):
         assert main(["build"]) == 1
     mock_exec.assert_not_called()
+
+
+# -- a package.json that cannot be parsed (epic vergil-project/.github#1174) ----
+
+
+def test_container_docs_reports_broken_package_json(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # build_container_args resolves the language for the workspace mount; a repo
+    # with no declared language and a broken package.json stops there.
+    (tmp_path / "package.json").write_text("{not json")
+    with (
+        patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
+        patch(f"{_MOD}.detect_runtime", return_value="docker"),
+        patch(f"{_MOD}.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main(["build"])
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith(f"ERROR: package.json at {tmp_path / 'package.json'} cannot be parsed")
+    assert "Traceback" not in err
+    mock_exec.assert_not_called()

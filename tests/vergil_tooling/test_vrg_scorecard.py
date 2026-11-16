@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
+
 from vergil_tooling.bin.vrg_scorecard import main
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def test_help_flag(capsys: pytest.CaptureFixture[str]) -> None:
@@ -168,3 +168,28 @@ def test_argv_none_uses_sys_argv(tmp_path: Path) -> None:
         main()
 
     assert mock_build.call_args[0][2] == ["scorecard", "--repo=github.com/org/repo"]
+
+
+# -- a package.json that cannot be parsed (epic vergil-project/.github#1174) ----
+
+
+def test_scorecard_reports_broken_package_json(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # build_container_args resolves the language for the workspace mount; a repo
+    # with no declared language and a broken package.json stops there.
+    (tmp_path / "package.json").write_text("{not json")
+    with (
+        patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_scorecard.github.get_installation_token", return_value="tok"),
+        patch("vergil_tooling.bin.vrg_scorecard.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_scorecard.assert_runtime_available"),
+        patch("vergil_tooling.lib.process.os.execvp") as mock_exec,
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main(["--repo=github.com/org/repo"])
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith(f"ERROR: package.json at {tmp_path / 'package.json'} cannot be parsed")
+    assert "Traceback" not in err
+    mock_exec.assert_not_called()

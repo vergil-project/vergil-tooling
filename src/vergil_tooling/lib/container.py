@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -77,27 +77,67 @@ def container_platform() -> str:
 docker_platform = container_platform
 
 
+class PackageJsonError(ValueError):
+    """A ``package.json`` cannot be read, is not JSON, or is not a JSON object."""
+
+
+def _package_json_error(path: Path, reason: str) -> PackageJsonError:
+    return PackageJsonError(
+        f"package.json at {path} cannot be parsed: {reason}. Fix: correct the JSON"
+    )
+
+
+def read_package_json(path: Path) -> dict[str, object]:
+    """Return the parsed ``package.json`` at *path* as a JSON object.
+
+    The one parser of ``package.json``. Raises :class:`PackageJsonError` naming
+    the file and the failure when it cannot be read, is not JSON, or is not a
+    JSON object (epic vergil-project/.github#1174, spec §6.7): a broken
+    manifest is an error to fix, never "not TypeScript".
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise _package_json_error(path, exc.strerror or str(exc)) from exc
+    except UnicodeDecodeError as exc:
+        raise _package_json_error(path, f"not UTF-8 ({exc.reason})") from exc
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise _package_json_error(path, str(exc)) from exc
+    if not isinstance(data, dict):
+        reason = f"the top level is a JSON {type(data).__name__}, not an object"
+        raise _package_json_error(path, reason)
+    return data
+
+
+def report_package_json_error(exc: PackageJsonError) -> NoReturn:
+    """Print ``ERROR: <message>`` for *exc* to stderr and exit 1.
+
+    The one way a user-facing command reports a broken ``package.json``: the
+    message names the file and the fix, and no traceback reaches the user.
+    """
+    print(f"ERROR: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+
 def _package_json_has_typescript_dep(package_json: Path) -> bool:
     """Return True when *package_json* declares ``typescript`` as a devDependency.
 
     A plain ``package.json`` (any Node project) is not a TypeScript marker on its
-    own — only the presence of the ``typescript`` devDependency is. A malformed or
-    unreadable manifest is treated as "no TypeScript dep" (detection must not crash
-    on a stray file); this is a bounded, documented fallback, not a swallowed error
-    that would surface later as a wrong image.
+    own — only the presence of the ``typescript`` devDependency is. A manifest
+    that cannot be parsed raises :class:`PackageJsonError`.
     """
-    try:
-        data = json.loads(package_json.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    if not isinstance(data, dict):
-        return False
-    dev_deps = data.get("devDependencies")
+    dev_deps = read_package_json(package_json).get("devDependencies")
     return isinstance(dev_deps, dict) and "typescript" in dev_deps
 
 
 def detect_language(repo_root: Path) -> str:
-    """Detect the project language from repo contents."""
+    """Detect the project language from repo contents.
+
+    Raises :class:`PackageJsonError` when a ``package.json`` is present but
+    cannot be parsed.
+    """
     if (repo_root / "pyproject.toml").is_file():
         return "python"
     if (repo_root / "go.mod").is_file():
@@ -114,10 +154,12 @@ def detect_language(repo_root: Path) -> str:
     # TypeScript is identified by a tsconfig.json, or a package.json that carries
     # a `typescript` devDependency (epic vergil-project/.github#284 §3.3). A plain
     # package.json alone (a JS-only Node project) must NOT misdetect as TypeScript.
-    if (repo_root / "tsconfig.json").is_file():
-        return "typescript"
+    # The package.json is read first, whenever it exists, so a tsconfig.json
+    # cannot hide one that does not parse (epic vergil-project/.github#1174
+    # §6.7): that raises PackageJsonError.
     package_json = repo_root / "package.json"
-    if package_json.is_file() and _package_json_has_typescript_dep(package_json):
+    has_ts_dep = package_json.is_file() and _package_json_has_typescript_dep(package_json)
+    if has_ts_dep or (repo_root / "tsconfig.json").is_file():
         return "typescript"
     return ""
 
@@ -137,6 +179,9 @@ def resolve_language(repo_root: Path) -> str:
     which then failed the C++ validate pipeline with a missing toolchain
     (``FileNotFoundError: conan``). Selecting off the asserted language keeps the
     image and the validate pipeline agreed on one source of truth.
+
+    Detection raises :class:`PackageJsonError` for a ``package.json`` that
+    cannot be parsed; a declared language never reads it.
     """
     from vergil_tooling.lib.config import declared_primary_language
 

@@ -27,7 +27,12 @@ from vergil_tooling.bin import vrg_docs_patch_nav, vrg_docs_stage
 from vergil_tooling.lib import git
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import container_env_prefixes
-from vergil_tooling.lib.container import build_container_args, detect_runtime
+from vergil_tooling.lib.container import (
+    PackageJsonError,
+    build_container_args,
+    detect_runtime,
+    report_package_json_error,
+)
 from vergil_tooling.lib.docs import staging_outputs, unignored_staging_error
 from vergil_tooling.lib.output import emit_error
 from vergil_tooling.lib.process import exec_replace
@@ -132,14 +137,17 @@ def main(argv: list[str] | None = None) -> int:
         docs_env.update(source_env())
 
     env_prefixes = container_env_prefixes(repo_root)
-    container_args = build_container_args(
-        repo_root,
-        image,
-        ["bash", "-c", container_cmd],
-        runtime=runtime,
-        env_prefixes=env_prefixes,
-        extra_env=docs_env,
-    )
+    try:
+        container_args = build_container_args(
+            repo_root,
+            image,
+            ["bash", "-c", container_cmd],
+            runtime=runtime,
+            env_prefixes=env_prefixes,
+            extra_env=docs_env,
+        )
+    except PackageJsonError as exc:
+        report_package_json_error(exc)
 
     if command == "serve":
         idx = container_args.index(image)

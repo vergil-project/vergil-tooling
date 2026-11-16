@@ -29,9 +29,11 @@ from vergil_tooling.lib.config import (
 from vergil_tooling.lib.container import (
     assert_runtime_available,
     build_container_args,
+    PackageJsonError,
     default_image,
     detect_runtime,
     repo_resolution,
+    report_package_json_error,
     resolve_language,
     version_window_override,
 )
@@ -141,7 +143,10 @@ def main(argv: list[str] | None = None) -> int:
 
     runtime = detect_runtime()
     repo_root = git.repo_root()
-    lang = resolve_language(repo_root)
+    try:
+        lang = resolve_language(repo_root)
+    except PackageJsonError as exc:
+        report_package_json_error(exc)
     command = _apply_validation_override(command, repo_root)
 
     # Check the explicit window override before any image work: it must reach

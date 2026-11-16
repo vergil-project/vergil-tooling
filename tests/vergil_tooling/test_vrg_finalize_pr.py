@@ -2635,6 +2635,34 @@ def test_stage_provision_failure_raises(tmp_path: Path) -> None:
         _stage_provision(ctx)
 
 
+def test_stage_provision_broken_package_json_raises(tmp_path: Path) -> None:
+    # A repo with no declared language and a broken package.json fails the stage
+    # with the parse message, before any provisioning.
+    (tmp_path / "package.json").write_text("{not json")
+    ctx = _stage_ctx([], root=tmp_path)
+    with (
+        patch(_MOD + ".provision_dev_image") as prov,
+        pytest.raises(FinalizeError, match=r"provisioning failed: package\.json at .* cannot be"),
+    ):
+        _stage_provision(ctx)
+    prov.assert_not_called()
+
+
+def test_stage_validation_reprovision_broken_package_json_raises(tmp_path: Path) -> None:
+    # The launch-failure rebuild re-reads the language; a broken package.json
+    # fails the stage with the parse message instead of a traceback.
+    (tmp_path / "package.json").write_text("{not json")
+    ctx = _stage_ctx([], root=tmp_path)
+    with (
+        patch(_MOD + ".progress.run", side_effect=[_launch_err()]),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
+        patch(_MOD + ".provision_dev_image") as prov,
+        pytest.raises(FinalizeError, match=r"provisioning failed: package\.json at .* cannot be"),
+    ):
+        _stage_validation(ctx)
+    prov.assert_not_called()
+
+
 def test_stage_provision_dry_run_skips(tmp_path: Path) -> None:
     ctx = _stage_ctx(["--dry-run"], root=tmp_path)
     with patch(_MOD + ".provision_dev_image") as prov:
