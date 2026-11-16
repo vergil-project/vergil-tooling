@@ -9,9 +9,11 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib.version import (
+    CargoVersionError,
     VersionSyncError,
     bump,
     bump_paths,
+    cargo_version_table,
     next_version,
     show,
     show_major_minor,
@@ -636,3 +638,368 @@ def test_bump_paths_go_without_version_file(tmp_path: Path) -> None:
 def test_bump_paths_generic(tmp_path: Path) -> None:
     _write_toml(tmp_path)
     assert bump_paths(tmp_path) == {"VERSION", ".claude-plugin/plugin.json"}
+
+
+# -- Rust workspace versions (epic vergil-project/.github#1165, spec §6.4) -----
+
+
+def _rust_repo(tmp_path: Path, cargo_toml: str, version: str) -> Path:
+    _write_toml(tmp_path, "rust")
+    (tmp_path / "VERSION").write_text(f"{version}\n")
+    (tmp_path / "Cargo.toml").write_text(cargo_toml)
+    return tmp_path
+
+
+def _crate(root: Path, rel: str, body: str) -> Path:
+    crate_dir = root / rel
+    crate_dir.mkdir(parents=True)
+    (crate_dir / "Cargo.toml").write_text(body)
+    return crate_dir
+
+
+_INHERITING_ROOT = (
+    "[workspace]\n"
+    'members = ["foo"]\n\n'
+    "[workspace.package]\n"
+    'version = "1.2.3"\n\n'
+    "[package]\n"
+    'name = "root"\n'
+    "version.workspace = true\n"
+)
+
+
+def test_cargo_version_from_package() -> None:
+    data = {"package": {"name": "x", "version": "1.0.0"}, "workspace": {"package": {}}}
+    assert cargo_version_table(data) == ("package",)
+
+
+def test_cargo_version_from_virtual_workspace(tmp_path: Path) -> None:
+    data = {"workspace": {"members": ["foo"], "package": {"version": "2.0.0"}}}
+    assert cargo_version_table(data) == ("workspace", "package")
+    _rust_repo(
+        tmp_path,
+        '[workspace]\nmembers = ["foo"]\n\n[workspace.package]\nversion = "2.0.0"\n',
+        "2.0.0",
+    )
+    assert show(tmp_path) == "2.0.0"
+
+
+def test_cargo_version_from_inheriting_root(tmp_path: Path) -> None:
+    data = {
+        "package": {"name": "root", "version": {"workspace": True}},
+        "workspace": {"package": {"version": "1.2.3"}},
+    }
+    assert cargo_version_table(data) == ("workspace", "package")
+    _rust_repo(tmp_path, _INHERITING_ROOT, "1.2.3")
+    assert show(tmp_path) == "1.2.3"
+
+
+@pytest.mark.parametrize(
+    ("data", "match"),
+    [
+        ({}, r"no \[package\] and \[workspace\.package\] has no version"),
+        ({"workspace": {"members": []}}, r"no \[package\] and \[workspace\.package\]"),
+        ({"workspace": {"package": {"edition": "2021"}}}, r"\[workspace\.package\]"),
+        ({"package": {"name": "x"}}, r"\[package\] has no version.*\[workspace\.package\]"),
+        (
+            {"package": {"name": "x", "version": {"workspace": False}}},
+            r"\[package\] has no version.*\[workspace\.package\]",
+        ),
+        (
+            {"package": {"name": "x", "version": {"workspace": True}}},
+            r"\[package\] inherits its version but \[workspace\.package\]",
+        ),
+    ],
+)
+def test_cargo_version_table_without_version_fails(data: dict[str, object], match: str) -> None:
+    with pytest.raises(CargoVersionError, match=match):
+        cargo_version_table(data)
+
+
+def test_cargo_version_error_is_not_a_value_error() -> None:
+    """bump()'s ``except (FileNotFoundError, ValueError)`` must not swallow it."""
+    assert not issubclass(CargoVersionError, ValueError)
+
+
+def test_show_with_no_version_table_fails(tmp_path: Path) -> None:
+    _rust_repo(tmp_path, '[workspace]\nmembers = ["foo"]\n', "1.0.0")
+    with pytest.raises(CargoVersionError, match=r"\[package\].*\[workspace\.package\]"):
+        show(tmp_path)
+
+
+def test_bump_with_no_version_table_fails(tmp_path: Path) -> None:
+    manifest = '[workspace]\nmembers = ["foo"]\n'
+    _rust_repo(tmp_path, manifest, "1.0.0")
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run") as mock_run,
+        pytest.raises(CargoVersionError, match=r"\[package\].*\[workspace\.package\]"),
+    ):
+        bump(tmp_path)
+    mock_run.assert_not_called()
+    assert (tmp_path / "VERSION").read_text() == "1.0.0\n"
+    assert (tmp_path / "Cargo.toml").read_text() == manifest
+
+
+def test_bump_writes_workspace_package_not_dependencies(tmp_path: Path) -> None:
+    manifest = (
+        "[workspace]\n"
+        'members = ["foo"]\n\n'
+        "[workspace.dependencies]\n"
+        'foo = { path = "foo", version = "1.2.3" }\n'
+        "[workspace.dependencies.bar]\n"
+        'version = "1.2.3"\n\n'
+        "[workspace.package]  # shared metadata\n"
+        'edition = "2021"\n'
+        'version = "1.2.3"  # the release version\n'
+    )
+    _rust_repo(tmp_path, manifest, "1.2.3")
+    _crate(tmp_path, "foo", '[package]\nname = "foo"\nversion.workspace = true\n')
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        assert bump(tmp_path) == "1.2.4"
+    assert (tmp_path / "Cargo.toml").read_text() == manifest.replace(
+        'version = "1.2.3"  # the release version', 'version = "1.2.4"  # the release version'
+    )
+    assert (tmp_path / "VERSION").read_text() == "1.2.4\n"
+    assert show(tmp_path) == "1.2.4"
+
+
+def test_bump_inheriting_root_writes_workspace_package(tmp_path: Path) -> None:
+    _rust_repo(tmp_path, _INHERITING_ROOT, "1.2.3")
+    _crate(tmp_path, "foo", '[package]\nname = "foo"\nversion.workspace = true\n')
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        assert bump(tmp_path, "minor") == "1.3.0"
+    text = (tmp_path / "Cargo.toml").read_text()
+    assert text == _INHERITING_ROOT.replace('version = "1.2.3"', 'version = "1.3.0"')
+
+
+def test_bump_package_version_skips_earlier_tables(tmp_path: Path) -> None:
+    """A single crate whose dependency happens to share its version is untouched."""
+    manifest = (
+        "[dependencies]\n"
+        'serde = { version = "0.3.7" }\n\n'
+        "[[bin]]\n"
+        'name = "tool"\n\n'
+        '[ "package" ]\n'
+        'name = "example"\n'
+        "version = '0.3.7'\n"
+    )
+    _rust_repo(tmp_path, manifest, "0.3.7")
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        assert bump(tmp_path) == "0.3.8"
+    text = (tmp_path / "Cargo.toml").read_text()
+    assert text == manifest.replace("version = '0.3.7'", "version = '0.3.8'")
+
+
+def test_bump_skips_version_line_inside_multiline_string(tmp_path: Path) -> None:
+    manifest = (
+        "[package]\n"
+        'name = "example"\n'
+        'description = """\n'
+        'version = "0.1.0"\n'
+        '"""\n'
+        'version = "0.1.0"\n'
+    )
+    _rust_repo(tmp_path, manifest, "0.1.0")
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        bump(tmp_path)
+    text = (tmp_path / "Cargo.toml").read_text()
+    assert text == manifest[: manifest.rindex('version = "0.1.0"')] + 'version = "0.1.1"\n'
+
+
+def test_bump_version_not_rewritable_fails_first(tmp_path: Path) -> None:
+    manifest = '[workspace]\npackage = { version = "1.0.0" }\n'
+    _rust_repo(tmp_path, manifest, "1.0.0")
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run"),
+        pytest.raises(CargoVersionError, match=r"cannot rewrite.*\[workspace\.package\]"),
+    ):
+        bump(tmp_path)
+    assert (tmp_path / "VERSION").read_text() == "1.0.0\n"
+    assert (tmp_path / "Cargo.toml").read_text() == manifest
+
+
+def test_bump_rust_version_mismatch_fails_first(tmp_path: Path) -> None:
+    manifest = '[package]\nname = "example"\nversion = "0.9.0"\n'
+    _rust_repo(tmp_path, manifest, "1.0.0")
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run"),
+        pytest.raises(VersionSyncError, match=r"VERSION contains 1\.0\.0.*\[package\].*0\.9\.0"),
+    ):
+        bump(tmp_path)
+    assert (tmp_path / "VERSION").read_text() == "1.0.0\n"
+
+
+def test_bump_rust_without_cargo_toml(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "rust")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        assert bump(tmp_path) == "1.0.1"
+    assert not (tmp_path / "Cargo.toml").exists()
+
+
+_VERSIONED_MEMBER_DEP = (
+    "[workspace]\n"
+    'members = ["foo"]\n\n'
+    "[workspace.package]\n"
+    'version = "0.1.3"\n\n'
+    "[workspace.dependencies]\n"
+    'foo = { path = "foo", version = "0.1.3" }\n'
+)
+
+
+def test_bump_breaking_member_requirement_fails_first(tmp_path: Path) -> None:
+    _rust_repo(tmp_path, _VERSIONED_MEMBER_DEP, "0.1.3")
+    _crate(tmp_path, "foo", '[package]\nname = "foo"\nversion.workspace = true\n')
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run") as mock_run,
+        pytest.raises(CargoVersionError, match=r"(?s)0\.2\.0.*\[workspace\.dependencies\] foo"),
+    ):
+        bump(tmp_path, "minor")
+    mock_run.assert_not_called()
+    assert (tmp_path / "VERSION").read_text() == "0.1.3\n"
+    assert (tmp_path / "Cargo.toml").read_text() == _VERSIONED_MEMBER_DEP
+
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        assert bump(tmp_path, "patch") == "0.1.4"
+    assert 'foo = { path = "foo", version = "0.1.3" }' in (tmp_path / "Cargo.toml").read_text()
+
+
+def test_bump_breaking_member_manifest_requirement_fails_first(tmp_path: Path) -> None:
+    manifest = '[workspace]\nmembers = ["crates/*"]\n\n[workspace.package]\nversion = "0.1.3"\n'
+    _rust_repo(tmp_path, manifest, "0.1.3")
+    _crate(tmp_path, "crates/foo", '[package]\nname = "foo"\nversion.workspace = true\n')
+    baz = _crate(
+        tmp_path,
+        "crates/baz",
+        '[package]\nname = "baz"\nversion.workspace = true\n\n'
+        "[dependencies]\n"
+        'bar = { path = "../foo", version = "0.1.3", package = "foo" }\n\n'
+        "[target.'cfg(unix)'.dev-dependencies]\n"
+        'qux = { path = "../foo", version = "~0.1" }\n',
+    )
+    (tmp_path / "crates" / "README.md").write_text("not a crate\n")
+    before = (baz / "Cargo.toml").read_text()
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run"),
+        pytest.raises(CargoVersionError) as excinfo,
+    ):
+        bump(tmp_path, "minor")
+    message = str(excinfo.value)
+    assert "crates/baz/Cargo.toml [dependencies] bar" in message
+    assert "crates/baz/Cargo.toml [target.cfg(unix).dev-dependencies] qux" in message
+    assert (tmp_path / "VERSION").read_text() == "0.1.3\n"
+    assert (tmp_path / "Cargo.toml").read_text() == manifest
+    assert (baz / "Cargo.toml").read_text() == before
+
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        assert bump(tmp_path, "patch") == "0.1.4"
+
+
+def test_bump_ignores_dependencies_on_crates_it_does_not_bump(tmp_path: Path) -> None:
+    """Only a crate whose version the bump writes is checked."""
+    manifest = (
+        "[workspace]\n"
+        'members = ["own", "user"]\n'
+        'exclude = ["vendored"]\n\n'
+        "[workspace.package]\n"
+        'version = "0.1.3"\n\n'
+        "[workspace.dependencies]\n"
+        'own = { path = "own", version = "0.1.3" }\n'
+        'serde = "1.0"\n'
+        'outside = { path = "../outside", version = "0.1.3" }\n'
+        'unversioned = { path = "user" }\n'
+    )
+    _rust_repo(tmp_path, manifest, "0.1.3")
+    _crate(tmp_path, "own", '[package]\nname = "own"\nversion = "0.1.3"\n')
+    _crate(
+        tmp_path,
+        "user",
+        '[package]\nname = "user"\nversion.workspace = true\n\n'
+        "[dependencies]\n"
+        'vendored = { path = "../vendored", version = "0.1.3" }\n'
+        "own = { workspace = true }\n",
+    )
+    _crate(tmp_path, "vendored", '[package]\nname = "vendored"\nversion.workspace = true\n')
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        assert bump(tmp_path, "minor") == "0.2.0"
+
+
+def test_bump_root_package_checks_members_depending_on_it(tmp_path: Path) -> None:
+    """A root [package] with its own version: members' requirements on it are checked."""
+    manifest = (
+        "[package]\n"
+        'name = "root"\n'
+        'version = "1.4.0"\n\n'
+        "[dependencies]\n"
+        'helper = { path = "helper" }\n\n'
+        "[workspace]\n"
+    )
+    _rust_repo(tmp_path, manifest, "1.4.0")
+    _crate(
+        tmp_path,
+        "helper",
+        '[package]\nname = "helper"\nversion = "0.1.0"\n\n'
+        "[build-dependencies]\n"
+        'root = { path = "..", version = "1.4" }\n',
+    )
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        assert bump(tmp_path, "minor") == "1.5.0"
+        with pytest.raises(CargoVersionError, match=r"helper/Cargo\.toml \[build-dependencies\]"):
+            bump(tmp_path, "major")
+    assert (tmp_path / "VERSION").read_text() == "1.5.0\n"
+
+
+def test_bump_unparseable_member_requirement_fails(tmp_path: Path) -> None:
+    manifest = _VERSIONED_MEMBER_DEP.replace('version = "0.1.3" }', 'version = "nope" }')
+    _rust_repo(tmp_path, manifest, "0.1.3")
+    _crate(tmp_path, "foo", '[package]\nname = "foo"\nversion.workspace = true\n')
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run"),
+        pytest.raises(CargoVersionError, match=r"cannot check Cargo\.toml .*foo"),
+    ):
+        bump(tmp_path)
+    assert (tmp_path / "VERSION").read_text() == "0.1.3\n"
+
+
+def test_bump_missing_member_manifest_fails(tmp_path: Path) -> None:
+    _rust_repo(tmp_path, _VERSIONED_MEMBER_DEP, "0.1.3")
+    (tmp_path / "foo").mkdir()
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run"),
+        pytest.raises(CargoVersionError, match=r"foo/Cargo\.toml not found"),
+    ):
+        bump(tmp_path)
+    assert (tmp_path / "VERSION").read_text() == "0.1.3\n"
+
+
+def test_bump_unparseable_member_manifest_fails(tmp_path: Path) -> None:
+    _rust_repo(tmp_path, _VERSIONED_MEMBER_DEP, "0.1.3")
+    _crate(tmp_path, "foo", "[package\n")
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run"),
+        pytest.raises(CargoVersionError, match=r"cannot parse foo/Cargo\.toml"),
+    ):
+        bump(tmp_path)
+    assert (tmp_path / "VERSION").read_text() == "0.1.3\n"
+
+
+def test_bump_tolerates_odd_manifest_shapes(tmp_path: Path) -> None:
+    """Non-table values where tables are expected are not dependencies."""
+    manifest = (
+        "workspace = 1\n"
+        'target = "x"\n'
+        'dependencies = "x"\n\n'
+        "[package]\n"
+        'name = "odd"\n'
+        'version = "1.0.0"\n'
+    )
+    _rust_repo(tmp_path, manifest, "1.0.0")
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        assert bump(tmp_path) == "1.0.1"
+
+
+def test_bump_target_table_that_is_not_a_table(tmp_path: Path) -> None:
+    manifest = '[package]\nname = "odd"\nversion = "1.0.0"\n\n[target]\nlinux = "x"\n'
+    _rust_repo(tmp_path, manifest, "1.0.0")
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        assert bump(tmp_path) == "1.0.1"

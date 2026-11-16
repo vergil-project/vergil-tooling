@@ -443,6 +443,16 @@ For a Python or Rust repo, `bump` then refreshes the lockfile (`uv lock`,
 `vrg-container-run`, so no host toolchain is needed. Used by the CD
 workflows to read the release version.
 
+In a Rust repo the version is read from `[package].version` when it is a
+string, and from `[workspace.package].version` in a virtual workspace or
+when `[package]` inherits it (`version.workspace = true`). `bump` rewrites
+the key in that table only, never a `[workspace.dependencies]` entry, and
+members that inherit the version follow it. A `Cargo.toml` with neither
+version fails, naming both tables. Before writing any file, `bump` also
+fails, naming each entry, when the new version would not satisfy a
+versioned path dependency on a bumped workspace member (for example `0.1.3`
+to `0.2.0` under `^0.1.3`).
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_version` |
