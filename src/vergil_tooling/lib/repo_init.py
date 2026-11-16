@@ -103,6 +103,10 @@ class RepoInitContext:
     opt_release_model: str | None = None
     opt_ci_versions: str | None = None
     opt_integration_tests: bool | None = None
+    # The answer to 'Integration tests?' when run_wizard asked it before step 1
+    # (issue #4462); None when it was not asked there. Only False is ever
+    # stored: a yes is refused on the spot.
+    answered_integration_tests: bool | None = None
     opt_publish_release: bool | None = None
     opt_publish_docs: bool | None = None
     opt_vergil_version: str | None = None
@@ -1052,10 +1056,13 @@ def _resolve_versions(vergil_toml: str) -> Resolution | None:
 
 
 def integration_tests_refusal(subject: str, source: str) -> str:
-    """The message refusing ``[ci].integration-tests = true`` (issue #4448).
+    """The message refusing ``[ci].integration-tests = true`` (issues #4448, #4462).
 
-    ``subject`` names what is refused (a repo slug, or "this init");
-    ``source`` names where the true came from (a flag, a file, an answer).
+    ``subject`` names what is refused: "to initialize <org>/<name>",
+    "to adopt <org>/<name>", or "to adopt this repo" (at argument parsing,
+    before the adopted repo's slug is known). ``source`` names where the true
+    came from: "--integration-tests", "the adopted vergil.toml", "the answer to
+    'Integration tests?'" or "the committed <path to vergil.toml>".
     """
     from vergil_tooling.lib.github_config import INTEGRATION_TESTS_UNSUPPORTED
 
@@ -1067,19 +1074,54 @@ def integration_tests_refusal(subject: str, source: str) -> str:
 def refuse_integration_tests(ctx: RepoInitContext, source: str) -> NoReturn:
     """Stop the wizard on ``[ci].integration-tests = true``, before step 8 pushes.
 
-    Step 8 makes the first push of the wizard, so a refusal at step 3 leaves
-    nothing pushed and no ruleset applied (step 1 may already have created an
-    empty repository for a new-repo run). A resumed run whose step 8 already
-    ran says so instead: it still stops before step 9.
+    Step 8 makes the first push of the wizard, so a refusal before it leaves
+    nothing pushed and no ruleset applied. ``ctx.completed_steps`` holds every
+    step done so far, by this run or an earlier one, so the message says what
+    is left behind: a new repo that step 1 has created (or found) is named, so
+    it is never left silently (#4462). A resumed run whose step 8 already ran
+    says so instead: it still stops before step 9.
     """
     if 8 in ctx.completed_steps:
         state = (
             " Step 8 had already pushed; this run stops before step 9 applies any GitHub settings."
         )
-    else:
+    elif ctx.adopt:
         state = " Nothing has been pushed and no GitHub settings were applied."
-    emit_error(integration_tests_refusal(f"to initialize {ctx.repo}", source) + state)
+    elif 1 in ctx.completed_steps:
+        state = (
+            f" Nothing has been pushed and no GitHub settings were applied, but step 1 "
+            f"has created {ctx.repo} on GitHub (or found it there) and it is left in "
+            f"place: delete it, or re-run vrg-github-repo-init {ctx.repo} without "
+            f"integration tests to finish initializing it."
+        )
+    else:
+        state = " Nothing was changed."
+    verb = "adopt" if ctx.adopt else "initialize"
+    emit_error(integration_tests_refusal(f"to {verb} {ctx.repo}", source) + state)
     raise SystemExit(1)
+
+
+def ask_integration_tests_before_creation(ctx: RepoInitContext) -> None:
+    """Ask 'Integration tests?' before step 1 creates the repository (#4462).
+
+    Every yes is refused, and for a new repo step 1 creates the GitHub
+    repository before step 3 would ask, so an interactive new-repo run asks
+    here instead and refuses a yes with nothing created. Step 3 then takes the
+    answer rather than asking again. It is not asked here on an adopt run
+    (step 1 creates nothing there, and step 3's default comes from the adopted
+    vergil.toml), on a --non-interactive run or after --[no-]integration-tests
+    (neither prompts), or when step 3 is already done (its answer is committed).
+    """
+    if (
+        ctx.adopt
+        or ctx.non_interactive
+        or ctx.opt_integration_tests is not None
+        or 3 in ctx.completed_steps
+    ):
+        return
+    if prompt_yes_no("Integration tests?", default=False):
+        refuse_integration_tests(ctx, "the answer to 'Integration tests?'")
+    ctx.answered_integration_tests = False
 
 
 def step_generate_config(ctx: RepoInitContext) -> None:
@@ -1185,7 +1227,10 @@ def step_generate_config(ctx: RepoInitContext) -> None:
 
     it_default = ci_raw.get("integration-tests", False)
     ctx.integration_tests = _resolve(
-        ctx.opt_integration_tests,
+        # An answer given before step 1 counts as the flag would (#4462).
+        ctx.opt_integration_tests
+        if ctx.opt_integration_tests is not None
+        else ctx.answered_integration_tests,
         non_interactive=ni,
         default=it_default,
         prompt=lambda: prompt_yes_no("Integration tests?", default=it_default),
@@ -1937,6 +1982,9 @@ def run_wizard(ctx: RepoInitContext) -> None:
         (10, "GitHub Pages", lambda: step_github_pages(ctx)),
     ]
 
+    # Refuse a yes to integration tests before step 1 creates anything (#4462).
+    ask_integration_tests_before_creation(ctx)
+
     for step_num, desc, func in steps:
         if step_num in ctx.completed_steps:
             print(f"Step {step_num} ({desc}): already completed, skipping.")
@@ -1946,6 +1994,8 @@ def run_wizard(ctx: RepoInitContext) -> None:
                 restore_generated_config(ctx)
         else:
             func()
+            # A later refusal names what this run has already done (#4462).
+            ctx.completed_steps.add(step_num)
         if step_num == 8:
             # Every resumed run checks too: a run stopped by this check skips
             # step 8 when it is re-run (#4376).
