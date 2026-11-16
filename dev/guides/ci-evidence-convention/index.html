@@ -18156,7 +18156,7 @@ show the <strong>intended shape</strong>, not what every bundle carries today:</
   (<a href="https://github.com/vergil-project/vergil-tooling/issues/4416">vergil-tooling#4416</a>).</li>
 <li>The <code>test</code> and <code>audit</code> gates name their tools and hold their reports only
   for a language with an entry in vergil-actions' report table
-  (<a href="https://vergil-project.github.io/vergil-actions/actions/ci-evidence-reports/"><code>ci/evidence/reports</code></a>),
+  (<a href="https://vergil-project.github.io/vergil-actions/latest/actions/ci-evidence-reports/"><code>ci/evidence/reports</code></a>),
   today Python and Rust. For any other language (today go, cpp and
   typescript) those two gates ship an empty <code>tools</code> array and no report,
   with a warning on each leg.</li>
@@ -18346,7 +18346,7 @@ report, because nextest does not run doctests.</p>
 names, as for Python: <code>coverage-&lt;ver&gt;.xml</code>, <code>junit-&lt;ver&gt;.xml</code> and
 <code>cargo-deny-&lt;ver&gt;.json</code>. The names they stage come from a per-language table
 in vergil-actions
-(<a href="https://vergil-project.github.io/vergil-actions/actions/ci-evidence-reports/"><code>ci/evidence/reports</code></a>),
+(<a href="https://vergil-project.github.io/vergil-actions/latest/actions/ci-evidence-reports/"><code>ci/evidence/reports</code></a>),
 which must match the names these gates write. The Rust test entry requires
 <code>junit.xml</code> from vergil-actions v2.1.76, so a Rust repository needs a
 vergil-tooling release whose test gate writes it (2.1.314 or later).</p>
