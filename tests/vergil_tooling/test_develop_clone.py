@@ -128,6 +128,57 @@ def test_clone_failure_leaves_no_temp_dir() -> None:
     assert not targets[0].parent.exists()
 
 
+def test_clone_with_token_uses_auth_header_env() -> None:
+    seen: list[tuple[tuple[str, ...], dict[str, str]]] = []
+
+    def _run(argv: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        seen.append((argv, env))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    with (
+        patch.object(develop_clone.subprocess, "run", side_effect=_run),
+        patch.object(develop_clone.git, "read_output") as mock_read,
+        clone_develop("o/r", token="s3cret-token"),
+    ):
+        pass
+    mock_read.assert_not_called()
+    assert len(seen) == 1
+    argv, env = seen[0]
+    assert "s3cret-token" not in " ".join(argv)
+    assert argv[:-1] == (
+        "git",
+        "clone",
+        "--quiet",
+        "--depth",
+        "1",
+        "--single-branch",
+        "--branch",
+        "develop",
+        "https://github.com/o/r.git",
+    )
+    assert env == develop_clone.git._git_auth_env("s3cret-token")  # noqa: SLF001
+    assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraHeader"
+
+
+def test_clone_with_token_against_local_origin(origin: Path) -> None:
+    del origin
+    with clone_develop("o/r", token="t") as clone:
+        assert (clone / "vergil.toml").read_text() == "develop-2\n"
+
+
+def test_clone_with_token_failure_names_repo_not_token(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.git"
+    with (
+        patch.object(develop_clone, "clone_url", lambda _repo: missing.as_uri()),
+        pytest.raises(DevelopCloneError, match="o/r") as info,
+        clone_develop("o/r", token="s3cret-token"),
+    ):
+        pytest.fail("the body must not run when the clone fails")
+    assert "s3cret-token" not in str(info.value)
+
+
 def test_clone_argv_carries_no_token() -> None:
     with (
         patch.object(develop_clone.git, "read_output") as mock_read,
