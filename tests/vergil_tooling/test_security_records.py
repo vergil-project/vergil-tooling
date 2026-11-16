@@ -1425,7 +1425,10 @@ def test_note_keeps_every_tracking_line_last_in_order() -> None:
     [
         (SECRET, f"{SECRET}\n\nNote (2026-11-16):\n{NOTE}"),
         ("", f"Note (2026-11-16):\n{NOTE}"),
-        ("Tracking issue: org/.github#10", f"Note (2026-11-16):\n{NOTE}\n\nTracking issue: org/.github#10"),
+        (
+            "Tracking issue: org/.github#10",
+            f"Note (2026-11-16):\n{NOTE}\n\nTracking issue: org/.github#10",
+        ),
     ],
 )
 def test_with_note_without_text_or_tracking(description: str, expected: str) -> None:

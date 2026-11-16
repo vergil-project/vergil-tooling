@@ -1014,7 +1014,10 @@ def test_note_cli_failure_exits_nonzero_without_the_note(
     ("content", "message"),
     [
         ("\n  \n", "--file: the note is empty"),
-        (f"{_NOTE}\nTracking issue: org/tool#12\n", "--file: the note has a 'Tracking issue:' line"),
+        (
+            f"{_NOTE}\nTracking issue: org/tool#12\n",
+            "--file: the note has a 'Tracking issue:' line",
+        ),
     ],
 )
 def test_note_cli_refuses_a_bad_note(

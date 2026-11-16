@@ -868,8 +868,7 @@ def note_record(home: str, ghsa_id: str, note: str, day: date) -> bool:
     if advisory.external or advisory.state not in _SYNCED_STATES:
         kind = "an external report" if advisory.external else f"in state {advisory.state}"
         raise NoteError(
-            f"advisory {ghsa_id} is {kind}; note only annotates a draft or closed "
-            "security record"
+            f"advisory {ghsa_id} is {kind}; note only annotates a draft or closed security record"
         )
     with _step(ghsa_id, "reading the description", NoteError):
         _summary, description = read_text(home, ghsa_id)
