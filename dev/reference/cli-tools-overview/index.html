@@ -22545,7 +22545,8 @@ markdownlint, yamllint) are available on PATH.</p>
 <h3 id="vrg-validate">vrg-validate<a class="headerlink" href="#vrg-validate" title="Permanent link">&para;</a></h3>
 <p>The unified validation driver. It reads <code>[project].primary-language</code>
 from <code>vergil.toml</code> and runs the stages in order: common checks, the
-language's install, lint, typecheck, test and audit commands, and last
+language's install, lint, typecheck, test and audit commands, the
+semgrep scan of PR CI's <code>security / semgrep</code> gate, and last
 the repository's custom validator (<code>scripts/bin/validate-custom</code> or
 <code>vrg-validate-custom</code> on <code>PATH</code>) when it has one. <code>--check</code> runs one
 stage. <code>--check custom</code> runs the install stage (when the language has
@@ -22572,7 +22573,7 @@ start, and each stage's status. <code>vrg-merge-review-request</code> reads it.<
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--check {common,lint,typecheck,test,audit,custom}</code>, <code>--all-versions</code> (Python only; alone or with <code>--check test</code>)</td>
+<td><code>--check {common,lint,typecheck,test,audit,semgrep,custom}</code>, <code>--all-versions</code> (Python only; alone or with <code>--check test</code>)</td>
 </tr>
 <tr>
 <td>Preconditions</td>

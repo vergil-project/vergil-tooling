@@ -17517,6 +17517,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#pr-ci-gates-not-run-locally" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PR CI Gates Not Run Locally
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#agent-and-git-wrappers" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17605,6 +17616,17 @@
     <span class="md-ellipsis">
       
         Language checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#semgrep-scan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Semgrep scan
       
     </span>
   </a>
@@ -17731,6 +17753,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#pr-ci-gates-not-run-locally" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PR CI Gates Not Run Locally
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#agent-and-git-wrappers" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17819,6 +17852,17 @@
     <span class="md-ellipsis">
       
         Language checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#semgrep-scan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Semgrep scan
       
     </span>
   </a>
@@ -17980,16 +18024,52 @@ where it runs. No git hooks are installed: every check runs inside a
 <td><code>quality / custom</code> (once, primary version)</td>
 </tr>
 <tr>
-<td>Security scans (CodeQL, Trivy, Semgrep)</td>
+<td>Semgrep scan</td>
+<td><code>vrg-validate</code> (semgrep stage)</td>
+<td>Yes</td>
+<td><code>security / semgrep</code></td>
+</tr>
+<tr>
+<td>Trivy scan</td>
 <td><code>ci-security.yml</code></td>
-<td>--</td>
-<td><code>security / *</code></td>
+<td>-- (follow-up #4445)</td>
+<td><code>security / trivy</code></td>
+</tr>
+<tr>
+<td>CodeQL scan</td>
+<td><code>ci-security.yml</code></td>
+<td>-- (CI-only)</td>
+<td><code>security / codeql</code></td>
+</tr>
+<tr>
+<td>GitHub code scanning results</td>
+<td>GitHub, from the uploaded SARIF</td>
+<td>-- (CI-only)</td>
+<td><code>Trivy</code>, <code>Semgrep OSS</code>, <code>CodeQL</code></td>
+</tr>
+<tr>
+<td>Strict docs build</td>
+<td><code>ci-docs.yml</code></td>
+<td>-- (follow-up #4446)</td>
+<td><code>docs / docs</code></td>
 </tr>
 <tr>
 <td>Version bump</td>
 <td><code>ci-version-bump.yml</code></td>
-<td>--</td>
+<td>-- (CI-only)</td>
 <td><code>version / version-bump</code></td>
+</tr>
+<tr>
+<td>Package build and install tests</td>
+<td><code>ci-package.yml</code></td>
+<td>-- (CI-only)</td>
+<td><code>package / evidence</code></td>
+</tr>
+<tr>
+<td>Image build and scan (vergil-containers)</td>
+<td>vergil-containers CI</td>
+<td>-- (CI-only)</td>
+<td><code>images / evidence</code></td>
 </tr>
 </tbody>
 </table>
@@ -18013,6 +18093,78 @@ for Go, the <code>go.mod</code> <code>go</code> directive; for Rust, the root <c
 <a href="../../standards/development/python/version-management/#toolchain-selection-in-the-repo">Python version management</a>
 and the Rust standards'
 <a href="../../standards/development/rust/overview/#toolchain-selection">Toolchain Selection</a>.</p>
+<h2 id="pr-ci-gates-not-run-locally">PR CI Gates Not Run Locally<a class="headerlink" href="#pr-ci-gates-not-run-locally" title="Permanent link">&para;</a></h2>
+<p>Each required PR CI check (see <a href="../ci-architecture/#ci-gates">CI gates</a>)
+was compared with what <code>vrg-container-run -- vrg-validate</code> runs, in
+vergil-tooling#4003. Every gap has a decision: it runs locally, it is
+planned to run locally in a follow-up, or it stays CI-only for the
+reason given. A gap that stays CI-only is a failure an agent cannot see
+before the PR is opened.</p>
+<p>Already run locally: <code>quality / common</code>, <code>quality / custom</code>,
+<code>security / semgrep</code> (the <a href="#semgrep-scan">Semgrep scan</a> stage), and
+lint, typecheck, tests and audit on the primary version. The
+repo-specific gates run locally too: vergil-containers'
+<code>quality / hadolint</code> (vergil-containers#761) and vergil-actions' action
+shell suites (vergil-actions#1108).</p>
+<table>
+<thead>
+<tr>
+<th>PR CI check</th>
+<th>Decision</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>security / trivy</code></td>
+<td>Run locally, planned in #4445</td>
+<td>A <code>trivy</code> stage would run <code>trivy fs --scanners vuln --severity CRITICAL,HIGH --exit-code 1</code> with the repo's <code>.trivyignore</code>, as CI does, caching the vulnerability database between runs.</td>
+</tr>
+<tr>
+<td><code>docs / docs</code></td>
+<td>Run locally, planned in #4446</td>
+<td>A docs stage would run the strict mkdocs build when <code>docs/site/mkdocs.yml</code> exists. Until then, vergil-tooling runs it in its own custom validator.</td>
+</tr>
+<tr>
+<td><code>security / codeql</code></td>
+<td>CI-only</td>
+<td>It needs GitHub code scanning, its CLI is not in the dev images, and building its database is heavy.</td>
+</tr>
+<tr>
+<td><code>Trivy</code>, <code>Semgrep OSS</code>, <code>CodeQL</code></td>
+<td>CI-only</td>
+<td>GitHub computes them from the uploaded SARIF for the changed lines, so they cannot run locally. The local semgrep stage, and the trivy stage once it lands, cover the findings behind them.</td>
+</tr>
+<tr>
+<td><code>version / version-bump</code></td>
+<td>CI-only</td>
+<td>It compares the branch's version with <code>main</code>'s, so its result depends on where the release cycle stands, not on the change.</td>
+</tr>
+<tr>
+<td><code>package / evidence</code></td>
+<td>CI-only</td>
+<td>It builds the <code>.deb</code> and <code>.rpm</code> packages and install-tests them across the distro matrix, which needs nested containers and a long run.</td>
+</tr>
+<tr>
+<td><code>images / evidence</code></td>
+<td>CI-only</td>
+<td>It builds and scans the changed images on each architecture's own runner.</td>
+</tr>
+<tr>
+<td>Non-primary versions of lint, typecheck, tests and audit</td>
+<td>CI-only</td>
+<td>Locally only the primary version runs, plus every version's tests with <code>--all-versions</code> (Python only). Lint and typecheck rarely differ between versions.</td>
+</tr>
+</tbody>
+</table>
+<p>Two follow-ups came out of the same review and change no gate's
+decision. The semgrep stage repeats the <code>p/c</code> and <code>p/typescript</code>
+rulesets that <code>ci-security.yml</code> adds; #4447 makes <code>vrg-semgrep-scan</code>
+the one source of that mapping. The CI gates require
+<code>test / integration / &lt;version&gt;</code> when <code>[ci].integration-tests</code> is on,
+but no reusable workflow runs an integration job yet, so such a repo
+could not merge; #4448 either adds the job or refuses the setting. No
+fleet repo turns it on today.</p>
 <h2 id="agent-and-git-wrappers">Agent and Git Wrappers<a class="headerlink" href="#agent-and-git-wrappers" title="Permanent link">&para;</a></h2>
 <h3 id="claude-code-hook-guard">Claude Code hook guard<a class="headerlink" href="#claude-code-hook-guard" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> every <code>Bash</code> tool call in a Claude Code session, in a
@@ -18095,7 +18247,8 @@ container. The outer layer, <code>vrg-container-run</code>, launches the dev
 container once and runs <code>vrg-validate</code> inside it. The inner layer,
 <code>vrg-validate</code>, reads <code>[project].primary-language</code> from <code>vergil.toml</code> and
 runs the common checks, then the language's checks from the built-in
-command registry, then the repository's custom validator, as below. The
+command registry, then the semgrep scan, then the repository's custom
+validator, as below. The
 dev images come from
 <a href="https://github.com/vergil-project/vergil-containers">vergil-containers</a>
 (see <a href="../ci-architecture/#dev-container-images">Dev container images</a>).</p>
@@ -18176,6 +18329,27 @@ its manifests, such as a branch that deletes <code>Cargo.toml</code> from an
 existing crate or adds Rust sources without one, has lost its manifest
 rather than never had one: its install stage fails, naming the missing
 manifests and the first sources found, and no language stage runs.</p>
+<h3 id="semgrep-scan">Semgrep scan<a class="headerlink" href="#semgrep-scan" title="Permanent link">&para;</a></h3>
+<p>After the language checks, <code>vrg-validate</code> runs the scan of PR CI's
+<code>security / semgrep</code> gate, so a finding fails locally before the PR
+is opened. <code>--check semgrep</code> runs only this stage. It resolves the
+rulesets the CI job does: the language's registry ruleset (see
+<a href="../ci-architecture/#shared-security-workflow">Shared security workflow</a>), <code>p/dockerfile</code>
+when the repository has a <code>Dockerfile*</code> anywhere, <code>p/github-actions</code>
+when <code>.github/workflows/</code> holds a <code>*.yml</code> or <code>*.yaml</code>, and the
+<code>p/c</code> (C++) or <code>p/typescript</code> (TypeScript) ruleset that
+<code>ci-security.yml</code> adds. The files it looks at are the tracked and
+untracked ones that <code>.gitignore</code> does not exclude. The
+fleet-excluded rules stay excluded, and a finding with an in-source
+<code>nosemgrep</code> suppression is listed but does not fail the stage, as in
+CI.</p>
+<p>Semgrep downloads the rulesets from its registry, so the stage
+needs network access, like the audit stage. Its usage metrics are
+off (<code>--metrics off</code>). The SARIF goes to a temporary directory, never
+the working tree. A scan that errors or writes no SARIF fails the
+stage. A repository with no ruleset to run (no language ruleset, no
+Dockerfile and no workflow) records the stage as a warning (⚠). For
+this repository the scan takes about 15 seconds.</p>
 <h3 id="custom-validator">Custom validator<a class="headerlink" href="#custom-validator" title="Permanent link">&para;</a></h3>
 <p>Last, <code>vrg-validate</code> runs the repository's custom validator, when it has
 one: <code>scripts/bin/validate-custom</code> or a <code>vrg-validate-custom</code> on <code>PATH</code>.
