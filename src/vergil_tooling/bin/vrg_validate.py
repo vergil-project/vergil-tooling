@@ -55,7 +55,7 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import audit_retry, config, git, progress, trivy_scan
+from vergil_tooling.lib import audit_retry, config, git, progress, rust_coverage, trivy_scan
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.container_cache import language_sources, unbootstrapped_manifests
 from vergil_tooling.lib.docs import (
@@ -71,6 +71,7 @@ from vergil_tooling.lib.languages import (
     CheckKind,
     build_python_test_argv,
     language_commands,
+    rust_coverage_export_cmd,
 )
 from vergil_tooling.lib.progress import Stage, StageMode
 from vergil_tooling.lib.sarif import evaluate_findings, format_summary, parse_sarif
@@ -619,6 +620,57 @@ def _run_audit_command(cmd: list[str]) -> int:
     return progress.run(cmd, check=False)
 
 
+def _print_uncovered_regions(repo_root: Path) -> None:
+    """List the uncovered regions of the Rust coverage run that just failed.
+
+    ``--show-missing-lines`` names only lines that never ran, so a missed
+    region on a line that ran (an untested ``?`` error path) would fail the
+    region gate without saying where (spec §6.2). This runs the gate's report
+    again as JSON and prints each uncovered region by file, line and column.
+    It runs here, in vergil-tooling's own process, because the Rust image's
+    ``python3`` cannot import vergil-tooling. Every way it can fail is
+    printed as an error; the stage fails on the coverage command's status
+    either way.
+    """
+    with tempfile.TemporaryDirectory(prefix="vrg-rust-coverage-") as tmp:
+        export_path = Path(tmp) / "coverage.json"
+        cmd = rust_coverage_export_cmd(str(export_path))
+        print(f"Running (test): {' '.join(cmd)}")
+        rc = progress.run(cmd, check=False)
+        if rc != 0:
+            print(f"error: the coverage export exited {rc}; the uncovered regions are not listed")
+            return
+        try:
+            export = json.loads(export_path.read_text(encoding="utf-8"))
+            if not isinstance(export, dict):
+                msg = "coverage export: not a JSON object"
+                raise rust_coverage.CoverageExportError(msg)
+            regions = rust_coverage.uncovered_regions(export)
+            missed = rust_coverage.missed_regions(export)
+        except (OSError, json.JSONDecodeError, rust_coverage.CoverageExportError) as exc:
+            print(f"error: could not read the coverage export: {exc}")
+            return
+    if regions:
+        print(f"Uncovered regions ({len(regions)}):")
+        for line in rust_coverage.format_regions(regions, root=repo_root.resolve()):
+            print(f"  {line}")
+    else:
+        print("Uncovered regions: none")
+    if len(regions) != missed:
+        print(
+            f"error: {len(regions)} uncovered region(s) listed, but the coverage totals "
+            f"count {missed} missed; the listing is incomplete"
+        )
+
+
+def _run_rust_test_command(cmd: list[str], *, coverage_cmd: list[str], repo_root: Path) -> int:
+    """Run one Rust TEST command; after a failed coverage run, list its misses."""
+    rc = progress.run(cmd, check=False)
+    if rc != 0 and cmd == coverage_cmd:
+        _print_uncovered_regions(repo_root)
+    return rc
+
+
 def _not_bootstrapped_stage(name: str, language: str, missing: list[str]) -> Stage:
     """A language stage skipped, loudly, because the repo has no manifest yet.
 
@@ -1141,6 +1193,9 @@ def _build_stages(
                             kind.value,
                             partial(_skip_rust_doctests_without_lib, cmds, repo_root),
                             mode="fail_defer",
+                            run_cmd=partial(
+                                _run_rust_test_command, coverage_cmd=cmds[0], repo_root=repo_root
+                            ),
                         )
                     )
                     continue

@@ -51,9 +51,22 @@ maintainability, and long-term survivability across repositories.
   JUnit report to `junit.xml`. Rustdoc examples run separately with
   `cargo test --doc`, because nextest does not run doctests.
 - Coverage: cargo-llvm-cov (LLVM instrumentation, cross-platform) measures
-  that nextest run, held to 100% line coverage. Its report writes Cobertura
-  XML to `coverage.xml`. `coverage.xml` and `junit.xml` are the test gate's
-  evidence.
+  that nextest run, held to 100% line coverage and 100% region coverage. Its
+  report writes Cobertura XML to `coverage.xml`. `coverage.xml` and
+  `junit.xml` are the test gate's evidence.
+  - A region is a span of code with its own execution count. Each arm of an
+    `if` or a `match`, and each `?` early return, is its own region, so a
+    line can run while one of its regions never does. Regions are the stable
+    toolchain's stand-in for branch coverage. Branch coverage itself needs a
+    nightly toolchain and is deferred to
+    [vergil-project/.github#1171](https://github.com/vergil-project/.github/issues/1171).
+  - The report names the lines that never ran. When the gate fails,
+    `vrg-validate` also lists every uncovered region as
+    `<file>:<line>:<col>: uncovered region`, from the same report's JSON
+    export. The list counts regions as cargo-llvm-cov's region total does: for
+    a generic function, only its best-covered instantiation counts.
+  - Nothing can be excluded from coverage. An unreachable region is a design
+    signal: remove it or make it testable.
 - If a repository uses different tools, document the reason and equivalents.
 
 ## Toolchain Selection
@@ -97,8 +110,8 @@ rules):
 
 - `quality / evidence`: the common checks, the custom validator, rustfmt,
   clippy and `cargo check`
-- `test / evidence`: the nextest run under cargo-llvm-cov at 100% line
-  coverage, and the doctests
+- `test / evidence`: the nextest run under cargo-llvm-cov at 100% line and
+  region coverage, and the doctests
 - `audit / evidence`: `cargo deny` against the fleet policy
 - `security / trivy` and `security / semgrep`
 - `security / codeql`, and GitHub's own `CodeQL`, `Trivy` and `Semgrep OSS`
