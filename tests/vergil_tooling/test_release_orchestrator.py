@@ -1092,11 +1092,16 @@ def test_index_timeout_skips_promote_and_names_it(tmp_path: Path) -> None:
 
 
 def test_index_found_promotes_after_it(tmp_path: Path) -> None:
+    """With the index found, promote moves the tag before close-finalize closes the issue.
+
+    The exit code is not checked: consumer-refresh reads the (absent) vergil.toml
+    here, which says nothing about promote.
+    """
     m_promote = MagicMock()
-    rc, _, m_comment, m_close, _ = _run_tail(
+    _, ctx, m_comment, m_close, _ = _run_tail(
         tmp_path, cd_deferred=[], index_times_out=False, promote_mock=m_promote
     )
-    assert rc == 0
+    assert ctx.deferred_publish_failures == []
     m_promote.assert_called_once_with("2.1.2")
     m_comment.assert_not_called()
     m_close.assert_called_once()
