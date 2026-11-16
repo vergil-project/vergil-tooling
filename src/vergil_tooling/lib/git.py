@@ -251,9 +251,17 @@ def _git_env(args: tuple[str, ...]) -> dict[str, str]:
     token is layered on when available — for a ``-C <repo>`` call, the token of
     that repo's org rather than the CWD's, and none for a repo with no remote on
     GitHub (``github.repo_installation_token``).
+
+    A registered token source (``github.set_token_source``) comes first: a
+    remote-capable call gets the source's current token in the same header
+    form, and the App mode is not consulted (#4496). The header lives only in
+    the child's environment; no git config file is written.
     """
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     if _needs_token(args):
+        source_token = github.registered_token()
+        if source_token is not None:
+            return _git_auth_env(source_token)
         repo = _split_repo(args)[0]
         token = (
             github.repo_installation_token(repo)
@@ -265,16 +273,30 @@ def _git_env(args: tuple[str, ...]) -> dict[str, str]:
     return env
 
 
+def _git_env_factory(args: tuple[str, ...]) -> Callable[[], dict[str, str]]:
+    """The per-attempt environment builder for a git invocation's retry loop.
+
+    With a token source registered, every attempt calls :func:`_git_env`
+    afresh, so a retried push or fetch gets the source's current token
+    (#4496). With none, the environment is built once, here, and reused for
+    every attempt, exactly as before.
+    """
+    if github.has_token_source():
+        return lambda: _git_env(args)
+    env = _git_env(args)
+    return lambda: env
+
+
 def run(*args: str) -> None:
     """Run a git command, streaming output, and raise on failure.
 
     Network subcommands (push/pull/fetch/ls-remote/clone) are retried on
     transient GitHub failures; every other subcommand runs exactly once (#2835).
     """
-    env = _git_env(args)
+    env_for = _git_env_factory(args)
 
     def _once() -> int:
-        return progress.run(("git", *args), env=env)
+        return progress.run(("git", *args), env=env_for())
 
     subcommand = _subcommand(args)
     if subcommand in _RETRYABLE_SUBCOMMANDS:
@@ -289,7 +311,7 @@ def read_output(*args: str) -> str:
     Network subcommands (e.g. ``ls-remote``) are retried on transient GitHub
     failures; every other subcommand runs exactly once (#2835).
     """
-    env = _git_env(args)
+    env_for = _git_env_factory(args)
 
     def _once() -> subprocess.CompletedProcess[str]:
         return subprocess.run(  # noqa: S603
@@ -297,7 +319,7 @@ def read_output(*args: str) -> str:
             check=True,
             text=True,
             capture_output=True,
-            env=env,
+            env=env_for(),
         )
 
     try:
