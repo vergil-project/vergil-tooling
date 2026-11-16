@@ -12,9 +12,11 @@ import sys
 from vergil_tooling.lib import git, github
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.container import (
+    PackageJsonError,
     assert_runtime_available,
     build_container_args,
     detect_runtime,
+    report_package_json_error,
 )
 from vergil_tooling.lib.process import exec_replace
 
@@ -83,7 +85,12 @@ def main(argv: list[str] | None = None) -> int:
     runtime = detect_runtime()
     assert_runtime_available(runtime)
 
-    container_args = build_container_args(repo_root, image, ["scorecard", *args], runtime=runtime)
+    try:
+        container_args = build_container_args(
+            repo_root, image, ["scorecard", *args], runtime=runtime
+        )
+    except PackageJsonError as exc:
+        report_package_json_error(exc)
     idx = container_args.index(image)
     container_args[idx:idx] = ["-e", f"GH_TOKEN={token}"]
 

@@ -76,7 +76,7 @@ from vergil_tooling.lib import (
 from vergil_tooling.lib.cache_prune import clean_branch_images, prune_orphan_branch_images
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
-from vergil_tooling.lib.container import resolve_language
+from vergil_tooling.lib.container import PackageJsonError, resolve_language
 from vergil_tooling.lib.container_cache import provision_dev_image
 from vergil_tooling.lib.live_branches import RepoSetError, default_repo_roots, discover_repos
 from vergil_tooling.lib.pr_workflow import batch, batch_rules, github_transport
@@ -1642,7 +1642,10 @@ def _stage_provision(ctx: FinalizeContext) -> None:
         print("  [dry-run] provision dev image for the target branch")
         return
     print("Provisioning dev image for post-finalization validation...")
-    lang = resolve_language(ctx.root)
+    try:
+        lang = resolve_language(ctx.root)
+    except PackageJsonError as exc:
+        raise FinalizeError(f"dev-image provisioning failed: {exc}") from exc
     try:
         # quiet_warmup: this stage runs under the live progress display, so the
         # warmup build is captured (surfaced on failure) rather than streamed
@@ -1735,7 +1738,10 @@ def _reprovision_target_image(ctx: FinalizeContext, retry: tuple[str, ...]) -> N
     """
     branch = ctx.args.target_branch
     _clean_branch_images(branch, ctx.root)
-    lang = resolve_language(ctx.root)
+    try:
+        lang = resolve_language(ctx.root)
+    except PackageJsonError as exc:
+        raise FinalizeError(f"dev-image provisioning failed: {exc}") from exc
     try:
         provision_dev_image(ctx.root, lang, quiet_warmup=True)
     except (RuntimeError, VersionsError, subprocess.CalledProcessError) as exc:

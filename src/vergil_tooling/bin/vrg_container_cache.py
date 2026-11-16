@@ -26,10 +26,12 @@ from vergil_tooling.lib.cache_prune import (
 from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.container import (
+    PackageJsonError,
     assert_runtime_available,
     default_image,
     detect_runtime,
     repo_resolution,
+    report_package_json_error,
     resolve_language,
 )
 from vergil_tooling.lib.container_cache import (
@@ -103,6 +105,8 @@ def main(argv: list[str] | None = None) -> int:
     }
     try:
         return dispatch[args.command](args, runtime=runtime)
+    except PackageJsonError as exc:
+        report_package_json_error(exc)
     except (VersionsError, CacheSpaceError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

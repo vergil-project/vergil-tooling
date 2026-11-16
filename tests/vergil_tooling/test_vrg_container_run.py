@@ -1072,3 +1072,29 @@ def test_vrg_container_run_warns_for_human(
         main(["--", "true"])
     mock_exec.assert_called_once()
     assert local_settings.WARNING_TEMPLATE.format(path=path) in capsys.readouterr().err.splitlines()
+
+
+# -- a package.json that cannot be parsed (epic vergil-project/.github#1174) ----
+
+
+def test_container_run_reports_broken_package_json(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # No declared language, so detection reads the broken package.json: the run
+    # stops with one ERROR line and no traceback, before any image work.
+    (tmp_path / "package.json").write_text("{not json")
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image") as mock_cache,
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main(["--", "echo", "hi"])
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith(f"ERROR: package.json at {tmp_path / 'package.json'} cannot be parsed")
+    assert "Traceback" not in err
+    mock_cache.assert_not_called()
+    mock_exec.assert_not_called()
