@@ -31,6 +31,7 @@ from vergil_tooling.lib.languages import (
     check_cardinality,
     ecosystem_metadata,
     language_commands,
+    rust_coverage_export_cmd,
     supported_languages,
 )
 
@@ -412,7 +413,7 @@ def test_rust_test_commands() -> None:
             f'--tool-config-file "vergil:{_rust_nextest_toml()}"; '
             "test_rc=$?; "
             "cargo llvm-cov report --locked --workspace --fail-under-lines 100 "
-            "--show-missing-lines "
+            "--fail-under-regions 100 --show-missing-lines "
             "--cobertura --output-path coverage.xml; "
             "cov_rc=$?; "
             "if [ -f target/nextest/vergil/junit.xml ]; then "
@@ -425,6 +426,30 @@ def test_rust_test_commands() -> None:
             'exit "$cov_rc"',
         ],
         ["cargo", "test", "--doc", "--locked", "--workspace"],
+    ]
+
+
+def test_rust_gate_requires_regions() -> None:
+    """The coverage report gates on 100% lines and 100% regions (spec §6.2)."""
+    script = language_commands("rust", CheckKind.TEST)[0][2]
+    report = _cargo_args(script, "cargo llvm-cov report")
+    assert "--fail-under-lines" in report
+    assert report[report.index("--fail-under-lines") + 1] == "100"
+    assert "--fail-under-regions" in report
+    assert report[report.index("--fail-under-regions") + 1] == "100"
+
+
+def test_rust_coverage_export_cmd() -> None:
+    """The JSON export reads the gate's report with its --locked --workspace."""
+    assert rust_coverage_export_cmd("out/coverage.json") == [
+        "cargo",
+        "llvm-cov",
+        "report",
+        "--locked",
+        "--workspace",
+        "--json",
+        "--output-path",
+        "out/coverage.json",
     ]
 
 

@@ -1036,6 +1036,162 @@ def test_rust_test_stage_probes_at_stage_time(tmp_path: Path) -> None:
     assert "cargo llvm-cov nextest" in _RUST_COVERAGE_CMD[2]
 
 
+# -- the uncovered-region listing (epic vergil-project/.github#1165, spec §6.2) --
+
+
+def _coverage_export(root: Path, *, count: int = 0, notcovered: int = 1) -> dict[str, object]:
+    """An llvm-cov export whose region at 12:21 ran *count* times; line 12 otherwise ran."""
+    lib = str(root / "src" / "lib.rs")
+    return {
+        "data": [
+            {
+                "files": [{"filename": lib}],
+                "functions": [
+                    {
+                        "name": "f",
+                        "regions": [[12, 5, 12, 20, 4, 0, 0, 0], [12, 21, 12, 30, count, 0, 0, 0]],
+                        "filenames": [lib],
+                    }
+                ],
+                "totals": {"regions": {"count": 2, "covered": 1, "notcovered": notcovered}},
+            }
+        ]
+    }
+
+
+def _run_rust_test_stage(
+    tmp_path: Path,
+    *,
+    coverage_rc: int = 1,
+    export: object = None,
+    export_rc: int = 0,
+    doctest_rc: int = 0,
+) -> tuple[list[list[str]], bool]:
+    """Run the Rust TEST stage on a library crate; return the commands and whether it failed.
+
+    The coverage command exits *coverage_rc*. The JSON export writes *export*
+    (a string as it is, anything else as JSON) and exits *export_rc*.
+    """
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("test", "rust", tmp_path)
+    ran: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kw: object) -> int:
+        ran.append(list(cmd))
+        if cmd == _RUST_COVERAGE_CMD:
+            return coverage_rc
+        if cmd == RUST_DOCTEST_CMD:
+            return doctest_rc
+        assert cmd[:3] == ["cargo", "llvm-cov", "report"]
+        if export is not None:
+            text = export if isinstance(export, str) else json.dumps(export)
+            Path(cmd[cmd.index("--output-path") + 1]).write_text(text, encoding="utf-8")
+        return export_rc
+
+    failed = False
+    with (
+        _cargo_metadata(_metadata([_package("lib", ["lib"])])),
+        patch(_MOD + ".progress.run", side_effect=fake_run),
+    ):
+        try:
+            stages[1].fn(None)
+        except ValidationError:
+            failed = True
+    return ran, failed
+
+
+def test_failed_coverage_prints_regions(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    ran, failed = _run_rust_test_stage(tmp_path, export=_coverage_export(tmp_path))
+    assert failed
+    out = capsys.readouterr().out
+    assert "Uncovered regions (1):" in out
+    assert "src/lib.rs:12:21: uncovered region" in out
+    assert str(tmp_path) not in out.split("Uncovered regions")[1]
+    assert "\nerror:" not in out
+    export_cmd = ran[1]
+    assert export_cmd[:-1] == [
+        "cargo",
+        "llvm-cov",
+        "report",
+        "--locked",
+        "--workspace",
+        "--json",
+        "--output-path",
+    ]
+    assert ran == [_RUST_COVERAGE_CMD, export_cmd, RUST_DOCTEST_CMD]
+    # The export is written to a temporary directory, removed afterwards.
+    assert not Path(export_cmd[-1]).exists()
+
+
+def test_passing_coverage_runs_no_export(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ran, failed = _run_rust_test_stage(tmp_path, coverage_rc=0)
+    assert not failed
+    assert ran == [_RUST_COVERAGE_CMD, RUST_DOCTEST_CMD]
+    assert "Uncovered regions" not in capsys.readouterr().out
+
+
+def test_failed_doctest_runs_no_export(tmp_path: Path) -> None:
+    ran, failed = _run_rust_test_stage(tmp_path, coverage_rc=0, doctest_rc=101)
+    assert failed
+    assert ran == [_RUST_COVERAGE_CMD, RUST_DOCTEST_CMD]
+
+
+def test_failed_coverage_with_no_uncovered_region(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A failed test run with every region covered: the listing says so.
+    export = _coverage_export(tmp_path, count=2, notcovered=0)
+    _, failed = _run_rust_test_stage(tmp_path, export=export)
+    assert failed
+    out = capsys.readouterr().out
+    assert "Uncovered regions: none" in out
+    assert "\nerror:" not in out
+
+
+def test_failed_coverage_export_failure_is_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ran, failed = _run_rust_test_stage(tmp_path, export_rc=2)
+    assert failed
+    assert len(ran) == 3
+    out = capsys.readouterr().out
+    assert "error: the coverage export exited 2; the uncovered regions are not listed" in out
+
+
+@pytest.mark.parametrize(
+    ("export", "reason"),
+    [
+        (None, "No such file"),
+        ("{not json", "Expecting property name"),
+        ("[1]", "coverage export: not a JSON object"),
+        ({"data": "x"}, "coverage export: no 'data' list"),
+    ],
+)
+def test_failed_coverage_unreadable_export_is_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], export: object, reason: str
+) -> None:
+    _, failed = _run_rust_test_stage(tmp_path, export=export)
+    assert failed
+    out = capsys.readouterr().out
+    assert "error: could not read the coverage export: " in out
+    assert reason in out
+
+
+def test_failed_coverage_listing_disagreeing_with_totals_is_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, failed = _run_rust_test_stage(tmp_path, export=_coverage_export(tmp_path, notcovered=3))
+    assert failed
+    out = capsys.readouterr().out
+    assert "src/lib.rs:12:21: uncovered region" in out
+    assert (
+        "error: 1 uncovered region(s) listed, but the coverage totals count 3 missed; "
+        "the listing is incomplete"
+    ) in out
+
+
 def test_build_stages_drops_audit_when_only_scan_and_no_token() -> None:
     # cpp audit degrades to just the scan in this mock; with no token the scan
     # is dropped, the audit command list empties, and the stage is omitted.

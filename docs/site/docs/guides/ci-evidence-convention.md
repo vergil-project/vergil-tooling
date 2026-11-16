@@ -238,7 +238,8 @@ these names, before `ci-test.yml` and `ci-audit.yml` stage them:
 The test gate runs the tests once with cargo-nextest under cargo-llvm-cov,
 using the `vergil` nextest profile that vergil-tooling packages, which turns
 on nextest's JUnit report. One coverage report from that run then gates on
-100% line coverage. Both files are written whether the gate passes or fails.
+100% line and region coverage. Both files are written whether the gate passes
+or fails.
 Rustdoc examples run in a separate `cargo test --doc` step, which writes no
 report, because nextest does not run doctests.
 

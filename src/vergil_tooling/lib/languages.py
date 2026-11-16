@@ -238,9 +238,13 @@ RUST_DOCTEST_CMD = ["cargo", "test", "--doc", "--locked", "--workspace"]
 #   workspace with a binary root and a library member reported only
 #   ``src/main.rs``. ``report --help`` does not list the flag, but the report
 #   accepts it.
-# * ``report --fail-under-lines 100`` is the gate on llvm-cov's own line
-#   summary; ``--cobertura --output-path`` writes ``coverage.xml`` and
-#   ``--show-missing-lines`` names the uncovered lines.
+# * ``report --fail-under-lines 100 --fail-under-regions 100`` is the gate on
+#   llvm-cov's own line and region summary (epic vergil-project/.github#1165,
+#   spec §6.2); ``--cobertura --output-path`` writes ``coverage.xml`` and
+#   ``--show-missing-lines`` names the uncovered lines. A missed region on a
+#   line that ran is not among them, so when this command fails vrg-validate
+#   runs :func:`rust_coverage_export_cmd` and lists every uncovered region
+#   (:mod:`vergil_tooling.lib.rust_coverage`).
 # * Nextest writes the JUnit report under its store directory,
 #   ``target/nextest/<profile>/`` (https://nexte.st/docs/machine-readable/junit/,
 #   ``store.dir`` in https://nexte.st/docs/configuration/reference/); the
@@ -259,7 +263,8 @@ _RUST_TEST_SCRIPT = (
     f"NEXTEST_PROFILE={_NEXTEST_PROFILE} cargo llvm-cov nextest --locked --workspace "
     '--no-report --tool-config-file "vergil:{configs}/rust/nextest.toml"; '
     "test_rc=$?; "
-    "cargo llvm-cov report --locked --workspace --fail-under-lines 100 --show-missing-lines "
+    "cargo llvm-cov report --locked --workspace --fail-under-lines 100 --fail-under-regions 100 "
+    "--show-missing-lines "
     f"--cobertura --output-path {COVERAGE_REPORT}; "
     "cov_rc=$?; "
     f"if [ -f {_NEXTEST_JUNIT} ]; then cp {_NEXTEST_JUNIT} {JUNIT_REPORT} || exit 1; "
@@ -269,6 +274,25 @@ _RUST_TEST_SCRIPT = (
     '[ "$test_rc" -ne 0 ] && exit "$test_rc"; '
     'exit "$cov_rc"'
 )
+
+
+def rust_coverage_export_cmd(output_path: str) -> list[str]:
+    """The JSON export of the Rust TEST gate's coverage report, to *output_path*.
+
+    It reads the profiles the gate's nextest run left, with the gate's own
+    ``--locked --workspace``, so it covers the sources the gate judged.
+    """
+    return [
+        "cargo",
+        "llvm-cov",
+        "report",
+        "--locked",
+        "--workspace",
+        "--json",
+        "--output-path",
+        output_path,
+    ]
+
 
 # C++ license allowlist (epic vergil-project/.github#207 §4). C++/Conan has no
 # turnkey allowlist-enforcing gate the way pip-licenses / go-licenses do, so v1
@@ -571,14 +595,14 @@ _REGISTRY: dict[str, Language] = {
             ],
             CheckKind.TYPECHECK: [["cargo", "check", "--locked", "--workspace"]],
             # The coverage run is cargo-nextest under cargo-llvm-cov, gating
-            # on 100% lines and writing ``coverage.xml`` and ``junit.xml``
+            # on 100% lines and regions and writing ``coverage.xml`` and ``junit.xml``
             # (issues #4394, #4395); see ``_RUST_TEST_SCRIPT``. Nextest runs
             # no doctests (https://nexte.st/docs/running/), so ``cargo test
             # --doc`` runs them as a second command. ``cargo llvm-cov
             # --doctests`` is not used: it passes rustdoc ``-Z
             # unstable-options --persist-doctests``, which stable rustc
             # refuses, and the dev image ships stable only. Doctests
-            # therefore count toward no coverage; the 100% line gate is met
+            # therefore count toward no coverage; the 100% gate is met
             # by the unit and integration tests alone (issue #4378). ``cargo
             # test --doc`` refuses a crate with no library target, so
             # vrg-validate drops it when no workspace member has one
