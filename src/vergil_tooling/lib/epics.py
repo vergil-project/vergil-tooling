@@ -1157,9 +1157,12 @@ def _normalize_archive_in_place(ref: IssueRef, new_title: str) -> None:
     # edit`` does not apply its title, add and remove atomically: a failed add
     # of ``archive`` still retitled the issue and dropped ``epic``, leaving it
     # with neither label, and the orphan pass then attached it to an intake
-    # epic. With ``archive`` added first, a failure at either step leaves an
-    # issue that is still top-level and still matched by
-    # :func:`plan_normalize_adhoc`, so a re-run finishes the conversion.
+    # epic. With ``archive`` added first, a failed first edit leaves the issue
+    # unchanged, so a re-run finishes the conversion. The second edit has the
+    # same split: if it drops ``epic`` but fails to retitle, the issue keeps
+    # ``archive`` and so is never orphaned, but no normalize path finds it
+    # again; while it is open, ``vrg-epic-audit``'s misplaced-archive check
+    # reports it for a human to retitle.
     github.run("issue", "edit", str(ref.number), "--repo", repo, "--add-label", "archive")
     github.run(
         "issue",

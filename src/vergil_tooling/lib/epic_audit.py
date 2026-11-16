@@ -998,7 +998,7 @@ def private_under_public_epic(org: str, *, issues: list[OpenIssue] | None = None
 
 @dataclass(frozen=True)
 class MisplacedArchive:
-    """An open archive in the wrong shape: parented, or missing its ``archive`` label."""
+    """An open archive in the wrong shape: parented, unlabelled or unstamped."""
 
     ref: epics.IssueRef
     problem: str
@@ -1007,14 +1007,17 @@ class MisplacedArchive:
 def misplaced_archives(
     org: str, *, issues: list[OpenIssue] | None = None
 ) -> list[MisplacedArchive]:
-    """Open archives with a native parent or without the ``archive`` label (report only).
+    """Open archives that are parented, unlabelled or unstamped (report only).
 
     An archive (:func:`epics.is_archive`, by label or stamped title) is a
     top-level container: nothing ever parents one, and one under a live queue
     epic is counted there as a queue item (vergil-tooling#3817). A stamped
     archive title without the label is the shape a partial legacy normalize
-    left, which the drain can no longer find or close. Tooling never repairs
-    either: a human unlinks the archive and adds its label.
+    left, which the drain can no longer find or close. An ``archive`` label on
+    a title that is not stamped is the shape a normalize leaves when its
+    second edit drops ``epic`` but fails to retitle: no normalize path, legacy
+    lookup or drain listing finds it again. Tooling never repairs any of
+    these: a human unlinks, relabels or retitles the archive.
     """
     if issues is None:
         issues = open_issues(org)
@@ -1030,6 +1033,8 @@ def misplaced_archives(
             problems.append(f"parented under {where}")
         if "archive" not in issue.labels:
             problems.append("missing the `archive` label")
+        elif not epics.is_stamped_archive_title(issue.title):
+            problems.append("title is not a stamped archive title")
         if problems:
             found.append(MisplacedArchive(ref=issue.ref, problem="; ".join(problems)))
     return found
@@ -1269,7 +1274,7 @@ def _render_private_under_public(slugs: list[str]) -> list[str]:
 
 _MISPLACED_ARCHIVES_HEADING = (
     "**Misplaced archives** — an archive stands top-level with the `archive` "
-    "label; unlink it from its parent and add the label by hand:"
+    "label and a stamped title; fix each one by hand:"
 )
 
 

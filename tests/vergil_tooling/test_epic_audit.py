@@ -1744,6 +1744,18 @@ def test_misplaced_archives_flags_parented_and_unlabelled_archives() -> None:
             title="Archive (intake): org — 2026-Q4",
         ),
         _issue("org/tool", 5, native_parent=_INTAKE_EPIC),  # a queued task: not an archive
+        _issue(  # a normalize whose second edit dropped epic but not the legacy title
+            "org/.github",
+            183,
+            labels=("archive", "ad-hoc"),
+            title="Epic (ad hoc): lab — 2026-Q3",
+        ),
+        _issue(  # an overflow segment's stamped title: fine
+            "org/.github",
+            184,
+            labels=("archive", "ad-hoc"),
+            title="Archive (ad hoc): lab — 2026-Q4 (2)",
+        ),
     ]
     kinds = {_INTAKE_EPIC: "intake", _ADHOC_EPIC: None}
     with (
@@ -1760,6 +1772,9 @@ def test_misplaced_archives_flags_parented_and_unlabelled_archives() -> None:
             epics.IssueRef("org", ".github", 181), "parented under org/.github#7"
         ),
         epic_audit.MisplacedArchive(epics.IssueRef("org", "lab", 9), "missing the `archive` label"),
+        epic_audit.MisplacedArchive(
+            epics.IssueRef("org", ".github", 183), "title is not a stamped archive title"
+        ),
     ]
     assert qk.call_count == 2  # only parented archives read their parent's labels
     run.assert_not_called()  # report only

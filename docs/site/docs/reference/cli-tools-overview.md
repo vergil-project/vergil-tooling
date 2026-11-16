@@ -1222,7 +1222,8 @@ are the [compliance invariants](../standards/github-issues.md#compliance-invaria
 epics outside `.github`, stray `.github` issues, a closed epic with an open
 child, orphans, retired kind labels, body-only `Parent:` links, self-homed
 queues in a now-public repo, private work under a public epic, and a
-misplaced archive (one with a parent, or without its `archive` label). It also
+misplaced archive (one with a parent, one without its `archive` label, or one
+labelled `archive` whose title is not a stamped archive title). It also
 lists open epics with operational tasks still pending, and closed
 operational tasks with no `Outcome: SUCCESS`.
 
