@@ -18338,7 +18338,8 @@ security SARIF are <strong>not</strong> per-version:</p>
 </tbody>
 </table>
 <p>A Rust repository's gates write their reports at the workspace root under
-these names, before <code>ci-test.yml</code> and <code>ci-audit.yml</code> stage them:</p>
+these names, before <code>ci-quality.yml</code>, <code>ci-test.yml</code> and <code>ci-audit.yml</code> stage
+them:</p>
 <table>
 <thead>
 <tr>
@@ -18348,6 +18349,16 @@ these names, before <code>ci-test.yml</code> and <code>ci-audit.yml</code> stage
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><code>quality</code> (lint)</td>
+<td><code>quality-clippy.json</code> (JSON Lines)</td>
+<td>the gating <code>cargo clippy --all-targets --locked --workspace --message-format=json -- -D warnings</code> run, its stdout</td>
+</tr>
+<tr>
+<td><code>quality</code> (typecheck)</td>
+<td><code>quality-cargo-check.json</code> (JSON Lines)</td>
+<td>the gating <code>cargo check --locked --workspace --message-format=json</code> run, its stdout</td>
+</tr>
 <tr>
 <td><code>test</code></td>
 <td><code>coverage.xml</code> (Cobertura)</td>
@@ -18372,8 +18383,14 @@ on nextest's JUnit report. One coverage report from that run then gates on
 or fails.
 Rustdoc examples run in a separate <code>cargo test --doc</code> step, which writes no
 report, because nextest does not run doctests.</p>
-<p><code>ci-test.yml</code> and <code>ci-audit.yml</code> stage each leg's reports with version-suffixed
-names, as for Python: <code>coverage-&lt;ver&gt;.xml</code>, <code>junit-&lt;ver&gt;.xml</code> and
+<p>The lint and typecheck gates each run cargo once. Its JSON messages go to the
+report. When cargo exits, the readable diagnostics in them (each distinct
+compiler message's <code>rendered</code> text, once, as cargo's own output shows it) are
+printed to the gate's log, after cargo's status lines. Both reports are written whether the gate passes or fails, and the
+gate exits with cargo's status.</p>
+<p><code>ci-quality.yml</code>, <code>ci-test.yml</code> and <code>ci-audit.yml</code> stage each leg's reports
+with version-suffixed names, as for Python: <code>quality-clippy-&lt;ver&gt;.json</code>,
+<code>quality-cargo-check-&lt;ver&gt;.json</code>, <code>coverage-&lt;ver&gt;.xml</code>, <code>junit-&lt;ver&gt;.xml</code> and
 <code>cargo-deny-&lt;ver&gt;.json</code>. The names they stage come from a per-language table
 in vergil-actions
 (<a href="https://vergil-project.github.io/vergil-actions/latest/actions/ci-evidence-reports/"><code>ci/evidence/reports</code></a>),
