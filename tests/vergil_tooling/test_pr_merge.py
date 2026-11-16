@@ -155,6 +155,23 @@ def test_failure_naming_an_unregistered_check_with_no_known_job() -> None:
     gh.merge.assert_not_called()
 
 
+def test_failure_naming_two_unregistered_uploaded_checks_reads_the_checks_once() -> None:
+    gh = _gh(
+        failed=["security / semgrep", "security / trivy"],
+        required=frozenset({"Semgrep OSS", "Trivy"}),
+        outstanding=[{"Semgrep OSS": "not registered", "Trivy": "not registered"}],
+    )
+    gh.pr_checks.return_value = [
+        {"name": "security / semgrep", "bucket": "fail"},
+        {"name": "security / trivy", "bucket": "fail"},
+    ]
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError) as err:
+        wait_and_merge("99", strategy="squash")
+    assert "producing job security / semgrep (failed)" in str(err.value)
+    assert "producing job security / trivy (failed)" in str(err.value)
+    gh.pr_checks.assert_called_once_with("99")
+
+
 def test_failure_naming_known_and_unknown_unregistered_checks() -> None:
     gh = _gh(
         failed=["security / trivy", "test / unit / 3.14"],

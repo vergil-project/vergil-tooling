@@ -146,9 +146,7 @@ def test_wait_for_checks_returns_at_once_when_the_producing_job_failed(
     )
     monkeypatch.setattr(github, "failed_check_names", lambda pr: [f"security / {job}"])
     monkeypatch.setattr(github.time, "sleep", lambda s: pytest.fail("must not wait"))
-    github.wait_for_checks(
-        "1", poll_interval=3, poll_timeout=1000, required=frozenset({required})
-    )
+    github.wait_for_checks("1", poll_interval=3, poll_timeout=1000, required=frozenset({required}))
     out = capsys.readouterr().out
     assert (
         f"Required checks not registered: {required}; security / {job} (failed) already "
