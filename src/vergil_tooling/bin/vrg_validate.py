@@ -2,9 +2,12 @@
 
 Reads primary_language from vergil.toml, then either runs a
 specific check type (--check) or all checks in sequence:
-  common -> install -> lint -> typecheck -> test -> audit -> custom
+  common -> install -> lint -> typecheck -> test -> audit -> semgrep -> custom
 
-The single checks are common, lint, typecheck, test, audit and custom.
+The single checks are common, lint, typecheck, test, audit, semgrep and
+custom. The semgrep stage runs the scan PR CI's ``security / semgrep`` gate
+runs, with the same rulesets and fleet exclusions, so a finding fails here
+before the PR is opened (issue #4003).
 ``--check custom`` runs only the repo's custom validator
 (``scripts/bin/validate-custom`` or ``vrg-validate-custom``), after the
 install stage when the language has one so the validator sees the dev
@@ -57,6 +60,8 @@ from vergil_tooling.lib.languages import (
     language_commands,
 )
 from vergil_tooling.lib.progress import Stage, StageMode
+from vergil_tooling.lib.sarif import evaluate_findings, format_summary, parse_sarif
+from vergil_tooling.lib.semgrep import resolve_rulesets, run_scan, scan_failure_message
 from vergil_tooling.lib.validate_record import write_record
 from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.versions.floors import check_floors, check_toolchain_selection
@@ -72,6 +77,7 @@ _CHECK_KINDS = {
     "typecheck": CheckKind.TYPECHECK,
     "test": CheckKind.TEST,
     "audit": CheckKind.AUDIT,
+    "semgrep": None,
     "custom": None,
 }
 
@@ -790,6 +796,91 @@ def _python_version_test_stage(
     return Stage(f"test (python {version})", fn, mode="fail_defer")
 
 
+# The rulesets ci-security.yml's semgrep job adds through ``extra-config`` for
+# the languages whose ruleset vrg-semgrep-scan does not resolve from the
+# language name alone (vergil-actions .github/workflows/ci-security.yml). Kept
+# in step with that job so the local scan runs the rules the gate runs.
+_SEMGREP_CI_EXTRA_CONFIG: dict[str, list[str]] = {
+    "cpp": ["p/c"],
+    "typescript": ["p/typescript"],
+}
+
+_DOCKERFILE_PREFIX = "Dockerfile"
+_WORKFLOWS_DIR = ".github/workflows/"
+
+
+def _semgrep_rulesets(language: str | None, repo_root: Path) -> list[str]:
+    """The rulesets PR CI's semgrep job resolves for this repo.
+
+    The job's action adds the Dockerfile rules when the checkout holds a
+    ``Dockerfile*`` anywhere, and the GitHub Actions rules when
+    ``.github/workflows/`` holds a ``*.yml`` or ``*.yaml``. Here the repo's
+    tracked and untracked, not ignored, files stand in for the checkout.
+    """
+    files = _repo_files(repo_root)
+    has_dockerfiles = any(Path(path).name.startswith(_DOCKERFILE_PREFIX) for path in files)
+    has_workflows = any(
+        path.startswith(_WORKFLOWS_DIR) and Path(path).suffix in (".yml", ".yaml") for path in files
+    )
+    return resolve_rulesets(
+        language or "",
+        has_dockerfiles=has_dockerfiles,
+        has_workflows=has_workflows,
+        extra_config=_SEMGREP_CI_EXTRA_CONFIG.get(language or ""),
+    )
+
+
+def _run_semgrep(language: str | None, repo_root: Path) -> None:
+    """Run the semgrep scan of PR CI's ``security / semgrep`` gate (issue #4003).
+
+    The rulesets, the fleet rule exclusions and the gate's verdict
+    (:func:`~vergil_tooling.lib.sarif.evaluate_findings`, where an
+    in-source ``nosemgrep`` suppression does not count) are the gate's, so a
+    finding fails here before the PR is opened. Semgrep fetches the rulesets
+    from its registry, so the stage needs network access, as the audit stage
+    does. Its usage metrics are turned off: a local run sends nothing beyond
+    the ruleset download. The SARIF goes to a temporary directory, never the
+    working tree. A scan that errors, or writes no SARIF, fails the stage.
+    """
+    rulesets = _semgrep_rulesets(language, repo_root)
+    if not rulesets:
+        reason = (
+            f"no semgrep rulesets for language {language or '<not set>'}, "
+            "and no Dockerfile or workflow to scan"
+        )
+        print(f"NOTICE: semgrep: {reason}")
+        progress.mark_warn(reason)
+        return
+    print(f"Running (semgrep): semgrep scan --config {' --config '.join(rulesets)}")
+    with tempfile.TemporaryDirectory(prefix="vrg-validate-semgrep-") as tmp:
+        output = Path(tmp) / "semgrep-results.sarif"
+        scan = run_scan(rulesets, repo_root, output, metrics="off")
+        if scan.returncode > 1:
+            raise ValidationError(scan_failure_message(scan))
+        if not scan.sarif_produced:
+            msg = f"semgrep exited {scan.returncode} but wrote no SARIF output"
+            raise ValidationError(msg)
+        result = evaluate_findings([parse_sarif(output)])
+    if result.findings or result.suppressed:
+        print(format_summary(result))
+    if not result.passed:
+        for finding in result.findings:
+            print(
+                f"ERROR: {finding.file}:{finding.line}: [{finding.rule_id}] {finding.message}",
+                file=sys.stderr,
+            )
+        msg = f"{len(result.findings)} semgrep finding(s)"
+        raise ValidationError(msg)
+    print(f"semgrep: no findings ({len(result.suppressed)} suppressed in source)")
+
+
+def _semgrep_stage(language: str | None, repo_root: Path) -> Stage:
+    def fn(_ctx: object) -> None:
+        _run_semgrep(language, repo_root)
+
+    return Stage("semgrep", fn, mode="fail_defer")
+
+
 def _build_stages(
     check: str | None,
     language: str | None,
@@ -816,7 +907,7 @@ def _build_stages(
 
         stages.append(Stage("common", common_fn, mode="fail_defer"))
 
-    if language is not None and check != "common":
+    if language is not None and check not in ("common", "semgrep"):
         kinds = [kind for kind in _LANGUAGE_CHECK_ORDER if check is None or check == kind.value]
         kind_cmds = [
             (
@@ -891,6 +982,9 @@ def _build_stages(
                     )
                     for version in all_versions
                 )
+
+    if check in (None, "semgrep"):
+        stages.append(_semgrep_stage(language, repo_root))
 
     if check in (None, "custom"):
         custom = _find_custom_validator(repo_root)

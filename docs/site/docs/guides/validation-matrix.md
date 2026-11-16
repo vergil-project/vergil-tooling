@@ -22,7 +22,8 @@ where it runs. No git hooks are installed: every check runs inside a
 | Tests | `vrg-validate` | Yes (primary version; every version with `--all-versions`, Python only) | `test / unit / <version>` |
 | Dependency audit | `vrg-validate` | Yes (primary version) | `audit / dependencies / <version>` |
 | Custom validator | `vrg-validate` (custom stage) | Yes (primary version) | `quality / custom` (once, primary version) |
-| Security scans (CodeQL, Trivy, Semgrep) | `ci-security.yml` | -- | `security / *` |
+| Semgrep scan | `vrg-validate` (semgrep stage) | Yes | `security / semgrep` |
+| Security scans (CodeQL, Trivy) | `ci-security.yml` | -- | `security / codeql`, `security / trivy` |
 | Version bump | `ci-version-bump.yml` | -- | `version / version-bump` |
 
 "Local" for `vrg-validate` means `vrg-container-run -- vrg-validate`,
@@ -110,7 +111,8 @@ container. The outer layer, `vrg-container-run`, launches the dev
 container once and runs `vrg-validate` inside it. The inner layer,
 `vrg-validate`, reads `[project].primary-language` from `vergil.toml` and
 runs the common checks, then the language's checks from the built-in
-command registry, then the repository's custom validator, as below. The
+command registry, then the semgrep scan, then the repository's custom
+validator, as below. The
 dev images come from
 [vergil-containers](https://github.com/vergil-project/vergil-containers)
 (see [Dev container images](ci-architecture.md#dev-container-images)).
@@ -176,6 +178,30 @@ its manifests, such as a branch that deletes `Cargo.toml` from an
 existing crate or adds Rust sources without one, has lost its manifest
 rather than never had one: its install stage fails, naming the missing
 manifests and the first sources found, and no language stage runs.
+
+### Semgrep scan
+
+After the language checks, `vrg-validate` runs the scan of PR CI's
+`security / semgrep` gate, so a finding fails locally before the PR
+is opened. `--check semgrep` runs only this stage. It resolves the
+rulesets the CI job does: the language's registry ruleset (see
+[Shared security workflow](ci-architecture.md#shared-security-workflow)), `p/dockerfile`
+when the repository has a `Dockerfile*` anywhere, `p/github-actions`
+when `.github/workflows/` holds a `*.yml` or `*.yaml`, and the
+`p/c` (C++) or `p/typescript` (TypeScript) ruleset that
+`ci-security.yml` adds. The files it looks at are the tracked and
+untracked ones that `.gitignore` does not exclude. The
+fleet-excluded rules stay excluded, and a finding with an in-source
+`nosemgrep` suppression is listed but does not fail the stage, as in
+CI.
+
+Semgrep downloads the rulesets from its registry, so the stage
+needs network access, like the audit stage. Its usage metrics are
+off (`--metrics off`). The SARIF goes to a temporary directory, never
+the working tree. A scan that errors or writes no SARIF fails the
+stage. A repository with no ruleset to run (no language ruleset, no
+Dockerfile and no workflow) records the stage as a warning (⚠). For
+this repository the scan takes about 15 seconds.
 
 ### Custom validator
 
