@@ -1906,8 +1906,9 @@ markdownlint, yamllint) are available on PATH.
 The unified validation driver. It reads `[project].primary-language`
 from `vergil.toml` and runs the stages in order: common checks, the
 language's install, lint, typecheck, test and audit commands, the
-semgrep scan of PR CI's `security / semgrep` gate, and last
-the repository's custom validator (`scripts/bin/validate-custom` or
+semgrep scan of PR CI's `security / semgrep` gate, the strict mkdocs
+build of its `docs / docs` gate (a notice and a pass when there is no
+`docs/site/mkdocs.yml`), and last the repository's custom validator (`scripts/bin/validate-custom` or
 `vrg-validate-custom` on `PATH`) when it has one. `--check` runs one
 stage. `--check custom` runs the install stage (when the language has
 one) and then the custom stage; with no custom validator it prints one
@@ -1923,7 +1924,7 @@ start, and each stage's status. `vrg-merge-review-request` reads it.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_validate` |
-| Args | `--check {common,lint,typecheck,test,audit,semgrep,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
+| Args | `--check {common,lint,typecheck,test,audit,semgrep,docs,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
 | Preconditions | Inside a dev container (run it as `vrg-container-run -- vrg-validate`) |
 | Failure mode | Runs every stage after install and reports all failures in one run; install fails fast |
 | Exit codes | 0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example `--check custom --all-versions`) |
