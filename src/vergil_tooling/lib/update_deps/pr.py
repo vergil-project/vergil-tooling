@@ -13,7 +13,7 @@ from vergil_tooling.lib import git, github, pr_merge
 from vergil_tooling.lib.labels import ensure_labels
 from vergil_tooling.lib.managed_worktree import remove_worktree
 from vergil_tooling.lib.process_errors import error_text
-from vergil_tooling.lib.update_deps import report
+from vergil_tooling.lib.update_deps import changes, report
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL, DepsFailure, UpdateDepsError
 from vergil_tooling.lib.update_deps.failure import failure_markdown, tail_output
 
@@ -39,9 +39,10 @@ def _pr_title(ctx: UpdateDepsContext) -> str:
 
 
 def build_pr_body(ctx: UpdateDepsContext) -> str:
-    """Build the PR body: updates, warnings, held-back report, and any failure."""
+    """Build the PR body: updates, package changes, warnings, held-back report, any failure."""
     lines = ["Mechanized dependency update (`vrg-update-deps`).", "", "## Updated", ""]
     lines.extend(f"- **{r.updater}** — {r.summary}" for r in ctx.results if r.changed)
+    lines.extend(["", changes.render_markdown(ctx.results)])
     warnings = [w for r in ctx.results for w in r.warnings]
     if warnings:
         lines.extend(["", "## Warnings", ""])

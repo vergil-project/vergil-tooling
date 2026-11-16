@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from vergil_tooling.lib.update_deps.changes import PackageChange
 from vergil_tooling.lib.update_deps.context import UpdateDepsContext, UpdateDepsError
 from vergil_tooling.lib.update_deps.registry import ImageRef, parse_image_ref
 from vergil_tooling.lib.update_deps.report import HeldBack
@@ -210,6 +211,7 @@ def test_apply_rewrites_exact_ref_and_collects_report(
     )
     assert [e.latest for e in result.held_back] == ["1.0.0"]
     assert result.commit_message == "chore(deps): bump image tags"
+    assert result.packages == [PackageChange("ghcr.io/aquasecurity/trivy", "0.71.0", "0.74.0")]
     assert calls == [("-C", str(tmp_path), "ls-files")]
 
 
@@ -230,6 +232,7 @@ def test_apply_rewrites_only_the_exact_ref(monkeypatch: pytest.MonkeyPatch, tmp_
     )
     assert looked_up == ["library/tool", "my/tool"]
     assert result.summary == "tool:1.0.0 → tool:1.1.0"
+    assert result.packages == [PackageChange("tool", "1.0.0", "1.1.0")]
 
 
 def test_apply_same_ref_in_two_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -242,6 +245,7 @@ def test_apply_same_ref_in_two_files(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert (tmp_path / "Dockerfile").read_text() == "FROM a/b:1.0.1\n"
     assert (tmp_path / "Dockerfile.ci").read_text() == "FROM a/b:1.0.1\n"
     assert result.summary == "a/b:1.0.0 → a/b:1.0.1"
+    assert result.packages == [PackageChange("a/b", "1.0.0", "1.0.1")]
     assert len(result.held_back) == 1
 
 
@@ -253,6 +257,7 @@ def test_apply_no_change_reports_series(monkeypatch: pytest.MonkeyPatch, tmp_pat
     )
     assert result.changed is False
     assert result.summary == "image tags already newest within their major"
+    assert result.packages == []
     assert [e.latest for e in result.held_back] == ["3.15-slim"]
     assert (tmp_path / "Dockerfile").read_text() == "FROM python:3.14-slim\n"
 
