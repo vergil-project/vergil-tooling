@@ -18200,7 +18200,7 @@ value <code>vrg-container-run</code> resolves:</p>
 </tr>
 <tr>
 <td><code>VRG_TRIVY_CACHE_DIR</code></td>
-<td><code>/var/cache/vergil/trivy</code>, where the <code>vergil-trivy-cache</code> volume is mounted (see below)</td>
+<td><code>/var/cache/vergil/trivy</code>, where the host's Trivy cache directory is mounted (see below)</td>
 <td>None</td>
 </tr>
 </tbody>
@@ -18241,15 +18241,23 @@ prefix, bytecode is still cached and shared by every worker within a run, and an
 stale <code>.pyc</code> already in the working tree is ignored. A host override pointing
 inside the repo would put bytecode back on the mount, so keep any override
 outside it.</p>
-<p>Every launch also mounts the named volume <code>vergil-trivy-cache</code> at
-<code>/var/cache/vergil/trivy</code>. <code>vrg-validate</code>'s trivy stage caches Trivy's
-vulnerability database there, so the database outlives each <code>--rm</code> container
-and is downloaded again only when Trivy finds it out of date, never into the
-bind-mounted working tree
-(<a href="https://github.com/vergil-project/vergil-tooling/issues/4445">#4445</a>). The
-runtime creates the volume on first use; nerdctl then warns on each launch that
-it already exists, which is harmless. <code>docker volume rm vergil-trivy-cache</code> (or
-<code>nerdctl volume rm</code>) clears it.</p>
+<p>Every launch also bind-mounts a per-user cache directory at
+<code>/var/cache/vergil/trivy</code>: <code>vergil/trivy</code> under <code>$XDG_CACHE_HOME</code> when that is
+an absolute path, else <code>~/.cache/vergil/trivy</code>. <code>vrg-container-run</code> creates the
+directory if it is missing, and a failure to create it stops the launch with an
+error. <code>vrg-validate</code>'s trivy stage caches Trivy's vulnerability database
+there, so the database outlives each <code>--rm</code> container and is downloaded again
+only when Trivy finds it out of date, never into the bind-mounted working tree
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/4445">#4445</a>). It is
+the same for docker and nerdctl. Removing the directory clears the cache.</p>
+<p>The path is resolved on the machine that runs <code>vrg-container-run</code>, so it must
+also be visible, and writable, where the container runtime resolves bind
+mounts. With nerdctl under Lima, that is inside the VM: the directory must be
+on one of the VM's writable mounts, as the working tree is. The named volume
+<code>vergil-trivy-cache</code> that earlier releases mounted is no longer used
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/4469">#4469</a>): remove
+it by hand with <code>docker volume rm vergil-trivy-cache</code> (or
+<code>nerdctl volume rm vergil-trivy-cache</code>).</p>
 <h3 id="vrg_version_window-a-local-version-window"><code>VRG_VERSION_WINDOW</code>: a local version window<a class="headerlink" href="#vrg_version_window-a-local-version-window" title="Permanent link">&para;</a></h3>
 <p>The version resolver reads the language version window that <code>vergil-containers</code>
 publishes at the repo's <code>[dependencies].vergil</code> ref, over the network.

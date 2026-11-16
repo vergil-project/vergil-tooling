@@ -18467,10 +18467,10 @@ fresh checkout: an ignored <code>.venv</code>, <code>node_modules</code>, <code>
 reports go to the same temporary directory, never the working tree.</p>
 <p>The stage needs network access to download Trivy's vulnerability
 database. The database is cached between runs, never in the working
-tree: <code>vrg-container-run</code> mounts the <code>vergil-trivy-cache</code> volume
-for it (see
+tree: <code>vrg-container-run</code> bind-mounts the per-user
+<code>~/.cache/vergil/trivy</code> directory for it (see
 <a href="../../reference/container-config/#variables-vrg-container-run-always-sets">Container Config</a>).
-<code>vrg-container-run</code> points <code>VRG_TRIVY_CACHE_DIR</code> at the volume; in
+<code>vrg-container-run</code> points <code>VRG_TRIVY_CACHE_DIR</code> at the mount; in
 a container started without it, the cache is <code>vergil/trivy</code> under
 <code>$XDG_CACHE_HOME</code> or <code>~/.cache</code>, which lasts only as long as the
 container. A cache directory inside the working tree fails the stage. Runs that share the cache take turns, so parallel validations
