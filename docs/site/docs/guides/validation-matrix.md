@@ -19,7 +19,7 @@ where it runs. No git hooks are installed: every check runs inside a
 | Versions resolve against the window; toolchain selection; language floor | `vrg-validate` (config check, before any stage) | Yes | Every `vrg-validate` job |
 | Markdown, shell, YAML, Dockerfile, workflow and Ansible lint | `vrg-validate` (common checks) | Yes | `quality / common` |
 | Lint and typecheck | `vrg-validate` | Yes (primary version) | `quality / lint / <version>`, `quality / typecheck / <version>` |
-| Release build | `vrg-validate` (build stage) | Yes (primary version), for a language that turns it on: Rust only | -- (no CI job yet) |
+| Release build | `vrg-validate` (build stage) | Yes (primary version), for a language that turns it on: Rust and TypeScript | `quality / build / <version>` (once, primary version), for the same languages |
 | Tests | `vrg-validate` | Yes (primary version; every version with `--all-versions`, Python only) | `test / unit / <version>` |
 | Dependency audit | `vrg-validate` | Yes (primary version) | `audit / dependencies / <version>` |
 | Custom validator | `vrg-validate` (custom stage) | Yes (primary version) | `quality / custom` (once, primary version) |
@@ -209,8 +209,13 @@ command the release job runs, so a build that would fail at release
 fails on the PR instead. It runs once, on the primary version, and only
 for a language that turns it on. Rust does, with
 `cargo build --release --locked --workspace` (epic
-vergil-project/.github#1165); TypeScript's is turned on by epic
-vergil-project/.github#1174. For a language with no build check,
+vergil-project/.github#1165), and TypeScript does, with
+`npm ci --ignore-scripts && npm run build` (epic
+vergil-project/.github#1174). A TypeScript repository must define a
+`build` script in `package.json`; the `typescript-tools` stage checks
+for it before any gate runs. In CI the build stage runs as
+`quality / build / <version>`, once on the primary version, for the same
+languages. For a language with no build check,
 `--check build` prints `build: no build check for <language> — nothing
 to run` and exits 0. `vrg-ci-resolve` reports the same answer as its
 `build-enabled` field, the one CI reads.

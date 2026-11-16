@@ -1150,12 +1150,28 @@ def test_typescript_audit_license_allowlist_reviewed_set() -> None:
     assert ";" in _TYPESCRIPT_LICENSES_ALLOWLIST
 
 
-def test_typescript_ecosystem_metadata() -> None:
+def test_typescript_build_cmd_installs_first_without_scripts() -> None:
+    # The release job's Build step runs on a fresh checkout with no
+    # node_modules, so the build installs from the lockfile first, with no
+    # install script run (epic vergil-project/.github#1174, spec §6.5).
     info = ecosystem_metadata("typescript")
-    # v1 mandates no bundler/emit and no publish target (spec §8, ledger #6).
-    assert info.build_cmd is None
+    assert info.build_cmd == ["sh", "-c", "npm ci --ignore-scripts && npm run build"]
+
+
+def test_publish_cmd_stays_none() -> None:
+    # No npm publishing (spec §6.5): a TypeScript release publishes nothing.
+    info = ecosystem_metadata("typescript")
     assert info.publish_cmd is None
     assert info.publish_env_var is None
+
+
+def test_build_on_for_typescript() -> None:
+    assert ecosystem_metadata("typescript").validate_build is True
+    assert language_commands("typescript", CheckKind.BUILD) == [
+        ["sh", "-c", "npm ci --ignore-scripts && npm run build"]
+    ]
+    for lang in ("python", "go", "cpp"):
+        assert language_commands(lang, CheckKind.BUILD) == []
 
 
 def test_typescript_cardinality_typecheck_lint_audit_run_once() -> None:
@@ -1291,9 +1307,9 @@ def test_build_kind_value() -> None:
 
 
 def test_build_kind_off_for_every_other_language() -> None:
-    # On for Rust only (its own test above): each other language turns it on
-    # in its own task, with a fixture run.
-    for lang in ("python", "go", "cpp", "typescript"):
+    # On for Rust and TypeScript only (their own tests above): each other
+    # language turns it on in its own task, with a fixture run.
+    for lang in ("python", "go", "cpp"):
         assert ecosystem_metadata(lang).validate_build is False
         assert language_commands(lang, CheckKind.BUILD) == []
     assert language_commands(None, CheckKind.BUILD) == []

@@ -1071,11 +1071,19 @@ _REGISTRY: dict[str, Language] = {
             ],
         },
         ecosystem=EcosystemInfo(
-            # v1 mandates no bundler/emit step — ``tsc --noEmit`` covers
-            # compile-correctness — and no publish target (spec §8, ledger #6).
-            build_cmd=None,
+            # The release build, run by the release job and, as the BUILD
+            # check, by vrg-validate (epic vergil-project/.github#1174, spec
+            # §6.5). It installs from the lockfile first, since the release
+            # job's Build step runs on a fresh checkout with no node_modules,
+            # and, as every npm ci Vergil runs, with no install script. In
+            # vrg-validate this reinstalls what INSTALL already installed: the
+            # cost is accepted so validate and release run one command. The
+            # repo's ``build`` script is required by the typescript-tools
+            # pre-gate stage. No npm publishing: publish_cmd stays None.
+            build_cmd=["sh", "-c", "npm ci --ignore-scripts && npm run build"],
             publish_cmd=None,
             publish_env_var=None,
+            validate_build=True,
         ),
         # TYPECHECK/LINT/AUDIT are runtime-agnostic → one gate each (§3.6). Only
         # TEST is per Node version, which is the PER_VERSION default, so it is

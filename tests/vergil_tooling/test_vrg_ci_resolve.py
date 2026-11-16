@@ -119,6 +119,15 @@ def test_ci_resolve_build_enabled(
     assert build_enabled() == "true"
 
 
+def test_ci_resolve_build_enabled_for_typescript(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # TypeScript turns BUILD on, so CI's build job runs for it (spec §6.5).
+    _write_config(tmp_path, language="typescript")
+    assert main(["--format", "github-output", "--repo-root", str(tmp_path)]) == 0
+    assert _lines(capsys.readouterr().out)["build-enabled"] == "true"
+
+
 def test_cli_error_exits_1_with_message(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_config(tmp_path, language="python", ci='versions = ["3.11"]\n')
     assert main(["--repo-root", str(tmp_path)]) == 1

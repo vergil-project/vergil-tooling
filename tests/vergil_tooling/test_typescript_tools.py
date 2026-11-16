@@ -12,6 +12,7 @@ import pytest
 from vergil_tooling.lib import typescript_tools
 from vergil_tooling.lib.typescript_tools import (
     PRE_GATE_CHECKS,
+    check_build_script,
     check_dev_dependencies,
     check_version_matches,
     load_required,
@@ -259,3 +260,63 @@ def test_run_pre_gate_checks_reports_every_check(tmp_path: Path) -> None:
 
     with patch.object(typescript_tools, "PRE_GATE_CHECKS", (first, second)):
         assert run_pre_gate_checks(tmp_path) == ["a", "b", "c"]
+
+
+def test_run_pre_gate_checks_reports_a_shared_problem_once(tmp_path: Path) -> None:
+    # Two checks that both read a broken package.json report its error once.
+    def first(_root: Path) -> list[str]:
+        return ["broken", "a"]
+
+    def second(_root: Path) -> list[str]:
+        return ["broken", "b"]
+
+    with patch.object(typescript_tools, "PRE_GATE_CHECKS", (first, second)):
+        assert run_pre_gate_checks(tmp_path) == ["broken", "a", "b"]
+
+
+# -- check_build_script -------------------------------------------------------------
+
+_BUILD_FIX = 'Fix: add a "build" script to package.json (for example "tsc -p tsconfig.json")'
+
+
+def _manifest(tmp_path: Path, manifest: object) -> Path:
+    (tmp_path / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return tmp_path
+
+
+def test_pre_gate_checks_include_build_script() -> None:
+    assert check_build_script in PRE_GATE_CHECKS
+
+
+def test_build_script_present_passes(tmp_path: Path) -> None:
+    repo = _manifest(tmp_path, {"name": "x", "scripts": {"build": "tsc -p tsconfig.json"}})
+    assert check_build_script(repo) == []
+
+
+def test_missing_build_script_fails(tmp_path: Path) -> None:
+    repo = _manifest(tmp_path, {"name": "x", "scripts": {"test": "vitest run"}})
+    assert check_build_script(repo) == [
+        'package.json: no "build" script (the BUILD check and the release build run it)',
+        _BUILD_FIX,
+    ]
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        {"name": "x"},
+        {"name": "x", "scripts": "tsc"},
+        {"name": "x", "scripts": {"build": ""}},
+        {"name": "x", "scripts": {"build": "   "}},
+        {"name": "x", "scripts": {"build": ["tsc"]}},
+    ],
+)
+def test_absent_or_empty_build_script_fails(tmp_path: Path, manifest: object) -> None:
+    assert check_build_script(_manifest(tmp_path, manifest))[-1] == _BUILD_FIX
+
+
+def test_build_script_unparseable_package_json_is_the_one_problem(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text("{not json", encoding="utf-8")
+    problems = check_build_script(tmp_path)
+    assert len(problems) == 1
+    assert "package.json" in problems[0]

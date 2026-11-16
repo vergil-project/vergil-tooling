@@ -142,13 +142,23 @@ held to their accepted majors (see
 and their exact versions float through the lockfile. Only the image's own
 tools, Prettier and license-checker, come with the image.
 
-## `tsc --noEmit`: Compile-Correctness Without a Bundler
+## `tsc --noEmit` and the `build` Script
 
-v1 mandates **no bundler and no emit step**. `tsc --noEmit` covers
-compile-correctness — it reads the consumer's `tsconfig.json` and reports type
-errors without writing any output — and there is no publish target. Bundling,
-emit, and published-artifact validation (tsup / esbuild / rollup) are
-deliberately deferred (spec §8, deferral ledger #6).
+TYPECHECK runs `tsc --noEmit`: it reads the consumer's `tsconfig.json` and
+reports type errors without writing any output.
+
+The artifact a release ships comes from the repository's own **`build`
+script**, which every TypeScript repository must define in `package.json`
+(for example `"build": "tsc -p tsconfig.json"`). The build command is
+`npm ci --ignore-scripts && npm run build`: it installs from the lockfile
+first, since the release job builds on a fresh checkout with no
+`node_modules`, and runs no install script. `vrg-validate`'s build stage runs
+the same command, so the build's own emit options (output directory,
+declaration files, a build-only tsconfig) are proven on the PR, not first at
+release. The `typescript-tools` stage fails, naming the fix, when
+`package.json` has no `build` script.
+
+There is no publish target: a TypeScript release publishes nothing to npm.
 
 ## Extending the Shareable Base tsconfig
 
@@ -207,6 +217,8 @@ TypeScript hard gates:
 - **LINT** (once) — Prettier `--check` for format, then ESLint's flat config
   with type-aware typescript-eslint rules, carrying the no-standing-suppression
   rule (`@typescript-eslint/ban-ts-comment`).
+- **BUILD** (once) — `npm ci --ignore-scripts && npm run build`, the release
+  build (see [`tsc --noEmit` and the `build` Script](#tsc-noemit-and-the-build-script)).
 - **TEST** (per Node version) — Vitest with the V8 coverage provider, held to
   100% line coverage per Node major (see
   [Testing and Coverage](testing-and-coverage.md)).
