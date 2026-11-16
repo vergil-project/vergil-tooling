@@ -69,6 +69,15 @@ maintainability, and long-term survivability across repositories.
     signal: remove it or make it testable.
 - If a repository uses different tools, document the reason and equivalents.
 
+## Tool Ownership
+
+Where each tool lives follows the
+[Tool Ownership Guideline](../tool-ownership.md). For Rust:
+
+- The repository declares no gate tool.
+- rustfmt and clippy ship with the toolchain, and cargo-deny, cargo-llvm-cov
+  and cargo-nextest come from the image.
+
 ## Toolchain Selection
 
 Vergil selects the Rust toolchain, never the repository. Each Vergil Rust

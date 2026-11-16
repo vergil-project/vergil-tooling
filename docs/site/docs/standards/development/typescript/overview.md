@@ -78,6 +78,18 @@ library consumed through `import` needs a different mechanism (a repo-local
 full contract and the runtime details are in
 [Container Config Reference → `build-command`](../../../reference/container-config.md#build-command).
 
+## Tool Ownership
+
+Where each tool lives follows the
+[Tool Ownership Guideline](../tool-ownership.md). For TypeScript:
+
+- The repository declares typescript, eslint, typescript-eslint, `@eslint/js`,
+  vitest and `@vitest/coverage-v8` as devDependencies. Its tests import
+  vitest, and Vitest loads `@vitest/coverage-v8` from the repository for the
+  coverage run. Its ESLint config imports typescript-eslint and `@eslint/js`,
+  and typescript-eslint declares typescript and eslint as peer dependencies.
+- The image owns prettier and license-checker.
+
 ## Prebuilt Toolchains Only
 
 Node toolchains come **exclusively from prebuilt stable binary packages — never
