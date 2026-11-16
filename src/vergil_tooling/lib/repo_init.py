@@ -1051,6 +1051,37 @@ def _resolve_versions(vergil_toml: str) -> Resolution | None:
     return resolution
 
 
+def integration_tests_refusal(subject: str, source: str) -> str:
+    """The message refusing ``[ci].integration-tests = true`` (issue #4448).
+
+    ``subject`` names what is refused (a repo slug, or "this init");
+    ``source`` names where the true came from (a flag, a file, an answer).
+    """
+    from vergil_tooling.lib.github_config import INTEGRATION_TESTS_UNSUPPORTED
+
+    return (
+        f"Refusing {subject}: {source} sets integration tests on. {INTEGRATION_TESTS_UNSUPPORTED}"
+    )
+
+
+def refuse_integration_tests(ctx: RepoInitContext, source: str) -> NoReturn:
+    """Stop the wizard on ``[ci].integration-tests = true``, before step 8 pushes.
+
+    Step 8 makes the first push of the wizard, so a refusal at step 3 leaves
+    nothing pushed and no ruleset applied (step 1 may already have created an
+    empty repository for a new-repo run). A resumed run whose step 8 already
+    ran says so instead: it still stops before step 9.
+    """
+    if 8 in ctx.completed_steps:
+        state = (
+            " Step 8 had already pushed; this run stops before step 9 applies any GitHub settings."
+        )
+    else:
+        state = " Nothing has been pushed and no GitHub settings were applied."
+    emit_error(integration_tests_refusal(f"to initialize {ctx.repo}", source) + state)
+    raise SystemExit(1)
+
+
 def step_generate_config(ctx: RepoInitContext) -> None:
     """Step 3: Interactive vergil.toml generation."""
     print("Step 3: Generating vergil.toml...")
@@ -1159,6 +1190,17 @@ def step_generate_config(ctx: RepoInitContext) -> None:
         default=it_default,
         prompt=lambda: prompt_yes_no("Integration tests?", default=it_default),
     )
+    if ctx.integration_tests:
+        # Refused here, as soon as the answer is resolved and before vergil.toml
+        # is written or step 8 pushes anything, rather than at step 9 (#4448).
+        # Name where the true came from, in _resolve's order.
+        if ctx.opt_integration_tests:
+            source = "--integration-tests"
+        elif ni:
+            source = "the adopted vergil.toml"
+        else:
+            source = "the answer to 'Integration tests?'"
+        refuse_integration_tests(ctx, source)
 
     release_default = ctx.release_model != "none"
     pr_default = pub_raw.get("release", release_default)
@@ -1307,6 +1349,11 @@ def restore_generated_config(ctx: RepoInitContext) -> None:
             + "; ".join(conflicts)
             + ". Drop them, or edit vergil.toml and amend the step 3 commit."
         )
+
+    # A step-3 commit from before #4448 may still carry the setting; refuse it
+    # before the remaining steps run, rather than at step 9.
+    if cfg.ci.integration_tests:
+        refuse_integration_tests(ctx, f"the committed {toml_path}")
 
     for key, value in restored.items():
         setattr(ctx, key, value)

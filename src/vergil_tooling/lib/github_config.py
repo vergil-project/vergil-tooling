@@ -646,6 +646,24 @@ def unproducible_ci_yaml_contexts(
     return sorted(missing)
 
 
+# The required-context family ``[ci].integration-tests = true`` adds to the CI
+# gates, one per resolved version (``desired_ci_gates_ruleset``).
+_INTEGRATION_CONTEXT_PREFIX = "test / integration / "
+
+# Why ``[ci].integration-tests = true`` is refused: shared by the guard below and
+# by vrg-github-repo-init's early refusals (issue #4448), so every path names the
+# setting and the reason in the same words. The config loader still accepts the
+# key, so the dormant repos that set it keep loading (#2721).
+INTEGRATION_TESTS_UNSUPPORTED = (
+    "[ci].integration-tests = true makes the CI-gates ruleset require a "
+    "test / integration / <version> check for every CI version, and no "
+    "vergil-actions CI job produces that check: ci-test.yml runs unit tests only, "
+    "and an integration job is deferred (vergil-project/vergil-tooling#2721). A "
+    "repository with this setting could never merge a PR. Set "
+    "integration-tests = false in vergil.toml, or drop the key."
+)
+
+
 def assert_ci_gates_producible(
     desired: DesiredState, ci_workflow_yaml: str, *, ghas: bool, source: str
 ) -> None:
@@ -657,6 +675,11 @@ def assert_ci_gates_producible(
     issue #2788). A mismatch means the repository cannot merge any PR: every
     check that runs is green while the merge stays blocked on a context that
     never reports (issue #2720). ``source`` names the ci.yml that was checked.
+
+    A ``test / integration / <version>`` context comes only from
+    ``[ci].integration-tests = true``, and no CI job produces it, so the error
+    names that setting as the cause of those contexts and says why (issue
+    #4448), rather than listing it as one guess among several.
     """
     ci_gates = next((rs for rs in desired.rulesets if rs.name == _CI_GATES_RULESET_NAME), None)
     if ci_gates is None:
@@ -664,20 +687,26 @@ def assert_ci_gates_producible(
     unproducible = unproducible_ci_yaml_contexts(
         ci_workflow_yaml, required_status_contexts(ci_gates), ghas=ghas
     )
-    if unproducible:
-        raise RuntimeError(
-            f"GitHub CI-gates ruleset requires status checks that {source} never "
-            "emits on a pull_request, so the repository could not merge any PR "
-            "(every check that runs would be green while the merge stays blocked).\n"
-            "  Unproducible required contexts: " + ", ".join(unproducible) + "\n"
-            "Every required context must correspond to a job ci.yml runs on "
-            "pull_request. Likely causes:\n"
-            "  - integration-tests = true: ci.yml has no integration job yet "
-            "(vergil-project/vergil-tooling#2721) — set integration-tests = false "
-            "in vergil.toml until it is a first-class feature.\n"
-            "  - a ci.yml that predates a vergil.toml flag (e.g. publish.docs = true "
-            "with no docs job on pull_request) — regenerate or fix ci.yml first."
+    if not unproducible:
+        return
+    integration = [c for c in unproducible if c.startswith(_INTEGRATION_CONTEXT_PREFIX)]
+    other = [c for c in unproducible if not c.startswith(_INTEGRATION_CONTEXT_PREFIX)]
+    lines = [
+        f"GitHub CI-gates ruleset requires status checks that {source} never "
+        "emits on a pull_request, so the repository could not merge any PR "
+        "(every check that runs would be green while the merge stays blocked).",
+        "  Unproducible required contexts: " + ", ".join(unproducible),
+    ]
+    if integration:
+        lines.append("Cause of " + ", ".join(integration) + ": " + INTEGRATION_TESTS_UNSUPPORTED)
+    if other:
+        lines.append(
+            "Cause of " + ", ".join(other) + ": every required context must correspond "
+            "to a job ci.yml runs on pull_request, and this one has none. A ci.yml "
+            "that predates a vergil.toml flag (e.g. publish.docs = true with no docs "
+            "job on pull_request) does this: regenerate or fix ci.yml first."
         )
+    raise RuntimeError("\n".join(lines))
 
 
 # The stable status-check contexts the vergil-actions reusable workflows emit as

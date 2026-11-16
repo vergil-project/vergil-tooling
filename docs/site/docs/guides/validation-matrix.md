@@ -86,8 +86,10 @@ rulesets that `ci-security.yml` adds; #4447 makes `vrg-semgrep-scan`
 the one source of that mapping. The CI gates require
 `test / integration / <version>` when `[ci].integration-tests` is on,
 but no reusable workflow runs an integration job yet, so such a repo
-could not merge; #4448 either adds the job or refuses the setting. No
-fleet repo turns it on today.
+could not merge. The job stays deferred (#2721); since #4448
+`vrg-github-repo-init` refuses the setting before it pushes anything,
+and the CI-gates guard names it as the cause. No fleet repo turns it on
+today.
 
 ## Agent and Git Wrappers
 

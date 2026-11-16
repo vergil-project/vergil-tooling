@@ -431,7 +431,13 @@ generates it, for a new repository or for an existing one with
 - **The `CI gates` ruleset** is applied to `main` and `develop` with
   the required checks listed in [CI gates](#ci-gates). Before it is
   applied, the tool checks that the generated `ci.yml` produces every
-  required check and fails if it does not.
+  required check and fails if it does not. `vrg-github-repo-config`
+  runs the same check against the committed `ci.yml` before it writes
+  the ruleset. `[ci].integration-tests = true` always fails it, since no
+  reusable workflow runs an integration job yet
+  ([#2721](https://github.com/vergil-project/vergil-tooling/issues/2721)):
+  the error names the setting as the cause, and `vrg-github-repo-init`
+  refuses the setting earlier, before it pushes anything.
 
 After that, `vrg-github-repo-config` keeps the repository in line:
 `audit` reports drift, `diff` shows the GitHub side's, and `update`,
@@ -457,7 +463,7 @@ The `CI gates` ruleset requires these checks. The list is computed from
 | `images / evidence` | `[ci].images` is on |
 | `security / codeql`, `CodeQL` | GHAS is available and CodeQL supports the language (`python`, `go`, `rust`, `cpp` or `typescript`) |
 | `Trivy`, `Semgrep OSS` | GHAS is available |
-| `test / integration / <version>` | `[ci].integration-tests` is on (one per resolved version) |
+| `test / integration / <version>` | `[ci].integration-tests` is on (one per resolved version). No CI job produces it yet, so the setting is refused (#2721) |
 
 GHAS (GitHub Advanced Security) is taken from `[project].ghas` when it
 is set. Otherwise it counts as available for any repository that is not
