@@ -27,6 +27,7 @@ and any value that loader rejects fails the check. The core rules:
 | `[project].branching-model` | Required; one of `application-promotion`, `docs-single-branch`, `library-release` |
 | `[project].release-model` | Required; one of `artifact-publishing`, `environment-promotion`, `none`, `tagged-release` |
 | `[project].ghas` | Optional; must be a boolean |
+| `[ci]` | Required table, even when it sets no keys |
 | `[ci].versions` | Optional pin; when set, a non-empty list of strings |
 | `[ci].primary-version` | Optional; a string |
 | `[ci].images` | Optional; must be a boolean |
