@@ -414,7 +414,7 @@ _FRAGMENT_RULE = (
 )
 _FRAGMENT = PathRule(glob="docker/common/*", lines=_FRAGMENT_RULE)
 _RUNTIME_RULE = (
-    r"^(\[\[series\]\]|\[series\.sha256\]|series = \"\d+\.\d+\""
+    r"^(\[\[series\]\]|\[series\.sha256\]|series = \"(?P<anchor>\d+\.\d+)\""
     r"|cpython = \"(?P<version>\d+\.\d+\.\d+)\"|pbs_tag = \"(?P<version_pbs>\d{8})\""
     r"|x86_64 = \"[0-9a-f]{64}\"|aarch64 = \"[0-9a-f]{64}\"|)$"
 )
@@ -705,14 +705,27 @@ def test_fence_runtime_toml_line_rule_refuses_traversal_pbs_tag(tmp_path: Path) 
 def test_fence_version_downgrade_refused_in_runtime_toml(tmp_path: Path) -> None:
     lower_cpython = _RUNTIME_TOML.replace('cpython = "3.14.10"', 'cpython = "3.14.9"')
     assert _runtime_fence(tmp_path / "c", lower_cpython) == [
-        "runtime.toml: refused, 'cpython = \"' lowers its version from 3.14.10 to 3.14.9 "
-        "(a refresh never lowers a pinned version)"
+        "runtime.toml: refused, 'cpython = \"' (anchor '3.14') lowers its version from 3.14.10 "
+        "to 3.14.9 (a refresh never lowers a pinned version)"
     ]
     lower_tag = _RUNTIME_TOML.replace('pbs_tag = "20261026"', 'pbs_tag = "20261001"')
     assert _runtime_fence(tmp_path / "t", lower_tag) == [
-        "runtime.toml: refused, 'pbs_tag = \"' lowers its version from 20261026 to 20261001 "
-        "(a refresh never lowers a pinned version)"
+        "runtime.toml: refused, 'pbs_tag = \"' (anchor '3.14') lowers its version from "
+        "20261026 to 20261001 (a refresh never lowers a pinned version)"
     ]
+
+
+def _series(series: str, cpython: str, tag: str = "20261026", digest: str = _H1) -> str:
+    """One ``[[series]]`` block of a runtime.toml."""
+    return (
+        f'[[series]]\nseries = "{series}"\ncpython = "{cpython}"\npbs_tag = "{tag}"\n\n'
+        f'[series.sha256]\nx86_64 = "{digest}"\naarch64 = "{digest}"\n'
+    )
+
+
+def _two_series_fence(tmp_path: Path, after: str) -> list[str]:
+    before = _series("3.13", "3.13.9", "20261001") + "\n" + _series("3.14", "3.14.10")
+    return _fence(tmp_path, _rules(_RUNTIME), {"runtime.toml": before}, {"runtime.toml": after})
 
 
 def test_fence_new_series_block_allowed(tmp_path: Path) -> None:
@@ -732,15 +745,46 @@ def test_fence_dropped_series_block_allowed(tmp_path: Path) -> None:
     )
 
 
+def test_fence_series_dropped_added_and_bumped_in_one_run_allowed(tmp_path: Path) -> None:
+    # 3.13 drops out, 3.14 moves forward and 3.15 appears, all in one refresh.
+    after = (
+        _series("3.14", "3.14.11", "20261102", _H2)
+        + "\n"
+        + _series("3.15", "3.15.0", "20261102", _H2)
+    )
+    assert _two_series_fence(tmp_path, after) == []
+
+
+def test_fence_relabelled_series_block_refused(tmp_path: Path) -> None:
+    # The 3.13 block is relabelled 3.14 in place (every paired line goes up)
+    # and the real 3.14 block is deleted: series 3.14 would drop to 3.14.9.
+    after = _series("3.14", "3.14.9", "20261026", _H2)
+    assert _two_series_fence(tmp_path, after) == [
+        "runtime.toml: refused, 'cpython = \"' (anchor '3.14') lowers its version from 3.14.10 "
+        "to 3.14.9 (a refresh never lowers a pinned version)"
+    ]
+
+
+def test_fence_duplicate_series_block_refused(tmp_path: Path) -> None:
+    # Relabelling 3.13 as a second, lower 3.14 block leaves two 3.14 pins.
+    after = _series("3.14", "3.14.9", "20261026", _H2) + "\n" + _series("3.14", "3.14.10")
+    assert _two_series_fence(tmp_path, after) == [
+        "runtime.toml: refused, 'cpython = \"' (anchor '3.14') has more than one versioned line "
+        "(3.14.10 to 3.14.9, 3.14.10), so the no-downgrade rule cannot pair them",
+        "runtime.toml: refused, 'pbs_tag = \"' (anchor '3.14') has more than one versioned line "
+        "(20261026 to 20261026, 20261026), so the no-downgrade rule cannot pair them",
+    ]
+
+
 def test_fence_moved_and_lowered_version_refused(tmp_path: Path) -> None:
-    # Moving the line above an unchanged one splits its removal and addition
-    # into two -U0 hunks; the downgrade must still be refused.
+    # Moving the line above an unchanged one puts its removal and its addition
+    # far apart in the diff; the downgrade must still be refused.
     moved = _DOCKERFILE.replace("ARG TRIVY_VERSION=0.60.0\n", "").replace(
         "ARG FOO_VERSION=1.2.3\n", "ARG TRIVY_VERSION=0.59.1\nARG FOO_VERSION=1.2.3\n"
     )
     assert _frag_fence(tmp_path, moved) == [
-        f"{_FRAG}: refused, 'ARG TRIVY_VERSION=' has a versioned line removed in one place "
-        "and added in another, so the no-downgrade rule cannot pair it"
+        f"{_FRAG}: refused, 'ARG TRIVY_VERSION=' lowers its version from 0.60.0 to 0.59.1 "
+        "(a refresh never lowers a pinned version)"
     ]
 
 
@@ -749,14 +793,36 @@ def test_fence_moved_and_lowered_version_refused_in_runtime_toml(tmp_path: Path)
         f'aarch64 = "{_H1}"\n', f'aarch64 = "{_H1}"\ncpython = "3.14.9"\n'
     )
     assert _runtime_fence(tmp_path, moved) == [
-        "runtime.toml: refused, 'cpython = \"' has a versioned line removed in one place "
-        "and added in another, so the no-downgrade rule cannot pair it"
+        "runtime.toml: refused, 'cpython = \"' (anchor '3.14') lowers its version from 3.14.10 "
+        "to 3.14.9 (a refresh never lowers a pinned version)"
     ]
 
 
-def test_fence_unpaired_version_beside_other_edits_refused() -> None:
-    # A new series' line and a lowered one in the same hunk: in-order pairing
-    # matches 3.14.10 with the higher 3.15.0 and leaves the lowered 3.14.9 over.
+def test_fence_version_moved_above_its_anchor_refused(tmp_path: Path) -> None:
+    # TOML key order is free, so a pin moved above its block's series line
+    # is still that block's; it must not pass as a new identity.
+    moved = _RUNTIME_TOML.replace('cpython = "3.14.10"\n', "").replace(
+        "[[series]]\n", '[[series]]\ncpython = "3.14.9"\n'
+    )
+    assert _runtime_fence(tmp_path, moved) == [
+        "runtime.toml: refused, 'cpython = \"' has a versioned line added in a block that "
+        "stays, so the no-downgrade rule cannot pair it",
+        "runtime.toml: refused, 'cpython = \"' (anchor '3.14') has a versioned line removed in "
+        "a block that stays, so the no-downgrade rule cannot pair it",
+    ]
+
+
+def test_fence_version_line_dropped_from_a_kept_block_refused(tmp_path: Path) -> None:
+    after = _RUNTIME_TOML.replace('pbs_tag = "20261026"\n', "")
+    assert _runtime_fence(tmp_path, after) == [
+        "runtime.toml: refused, 'pbs_tag = \"' (anchor '3.14') has a versioned line removed in "
+        "a block that stays, so the no-downgrade rule cannot pair it"
+    ]
+
+
+def test_fence_repeated_key_without_anchor_refused() -> None:
+    # With no anchor group, two lines of one key cannot be told apart, so a
+    # change to them is refused rather than paired by guess.
     rule = PathRule(glob="f", lines=r'^cpython = "(?P<version>[0-9.]+)"$')
     lines = [
         "diff --git a/f b/f",
@@ -766,16 +832,26 @@ def test_fence_unpaired_version_beside_other_edits_refused() -> None:
         '+cpython = "3.14.9"',
     ]
     assert fence_violations(_rules(rule), ["f"], {"f": lines}, None, None) == [
-        "f: refused, 'cpython = \"' has a versioned line with no counterpart in a hunk that "
-        "both removes and adds lines, so the no-downgrade rule cannot pair it"
+        "f: refused, 'cpython = \"' has more than one versioned line (3.14.10 to 3.15.0, "
+        "3.14.9), so the no-downgrade rule cannot pair them"
     ]
 
 
-def test_fence_pure_hunks_of_other_keys_allowed() -> None:
-    # A removal-only hunk and an addition-only hunk are fine when their keys differ.
+def test_fence_dropped_and_new_keys_allowed() -> None:
+    # Without an anchor group, a dropped key and a new key are a dropped and a new pin.
+    rule = PathRule(glob="f", lines=r"^(?P<k>[A-Z]+)=(?P<version>[0-9.]+)$")
+    lines = ["diff --git a/f b/f", "@@ -1,2 +1,2 @@", "-A=1.0", " C=2", "+B=0.1"]
+    assert fence_violations(_rules(rule), ["f"], {"f": lines}, None, None) == []
+
+
+def test_fence_partial_diff_refused_under_a_version_rule() -> None:
+    # A diff that is not one whole-file hunk cannot place its versioned lines.
     rule = PathRule(glob="f", lines=r"^(?P<k>[A-Z]+)=(?P<version>[0-9.]+)$")
     lines = ["diff --git a/f b/f", "@@ -1 +0,0 @@", "-A=1.0", "@@ -3,0 +3 @@", "+B=0.1"]
-    assert fence_violations(_rules(rule), ["f"], {"f": lines}, None, None) == []
+    assert fence_violations(_rules(rule), ["f"], {"f": lines}, None, None) == [
+        "f: refused by the line rule of paths entry 'f': the diff does not show the whole "
+        "file, so the no-downgrade rule cannot place its versioned lines"
+    ]
 
 
 def test_fence_non_numeric_version_refused() -> None:

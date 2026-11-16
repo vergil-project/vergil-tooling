@@ -89,6 +89,13 @@ _SERIES_TOKEN_RE = re.compile(r"\d+\.\d+")
 _LINK_MODES = frozenset({"120000", "160000"})
 #: The longest slice of an offending line a violation quotes.
 _QUOTE_LIMIT = 120
+#: Context lines for :func:`diff_changed_lines`: more than any data file holds,
+#: so each file's diff is one hunk over the whole file, and small enough that
+#: git's doubling of it stays inside a 32-bit int.
+_WHOLE_FILE_CONTEXT = 999_999_999
+_HUNK_HEADER_RE = re.compile(r"@@ -(?P<old>\d+)(?:,\d+)? \+(?P<new>\d+)(?:,\d+)? @@")
+#: The line-rule group that names the block a versioned line belongs to.
+_ANCHOR_GROUP = "anchor"
 
 
 class UpstreamRefreshError(Exception):
@@ -337,9 +344,12 @@ def render_body(notes: list[str], paths: list[str]) -> str:
 
 
 def diff_changed_lines(tree: Path, base_sha: str, paths: Sequence[str]) -> dict[str, list[str]]:
-    """Each path's ``git diff -U0 <base_sha>`` in *tree*, as :func:`fence_violations` reads it.
+    """Each path's whole-file ``git diff <base_sha>`` in *tree*, as :func:`fence_violations` reads it.
 
-    Each value is the path's whole diff section (its header, then its hunks),
+    Every unchanged line comes as context, so a changed file's diff is one
+    hunk over the whole file: the no-downgrade rule needs each versioned
+    line's place in the file, not only the changed lines.
+    Each value is the path's whole diff section (its header, then its hunk),
     split on ``\\n`` only, so a ``\\r`` stays inside its line. A new file must
     be in the index (``git apply --index``), or it has no diff and the fence
     refuses it. No textconv or external diff driver runs.
@@ -349,7 +359,7 @@ def diff_changed_lines(tree: Path, base_sha: str, paths: Sequence[str]) -> dict[
         raw = _git_bytes(
             tree,
             "diff",
-            "-U0",
+            f"--unified={_WHOLE_FILE_CONTEXT}",
             "--no-renames",
             "--no-ext-diff",
             "--no-textconv",
@@ -387,27 +397,48 @@ class _FileDiff:
     mode_changed: bool = False
     link: bool = False
     hunks: list[tuple[list[str], list[str]]] = field(default_factory=list)
+    #: The file before and after the patch, in order, as far as the hunks show it.
+    before: list[str] = field(default_factory=list)
+    after: list[str] = field(default_factory=list)
+    #: True when the diff is one hunk starting at the first line on both sides,
+    #: so ``before`` and ``after`` are the whole file (:func:`diff_changed_lines`).
+    whole_file: bool = False
 
 
 def _parse_file_diff(lines: Sequence[str]) -> _FileDiff:
     """Parse one path's diff; a type change (file to symlink) gives two sections, both read."""
     diff = _FileDiff()
     in_header = True
+    starts: list[bool] = []
     for line in lines:
         if line.startswith("diff --git "):
             in_header = True
         elif line.startswith("@@"):
             in_header = False
             diff.hunks.append(([], []))
+            header = _HUNK_HEADER_RE.match(line)
+            starts.append(
+                header is not None and header["old"] in {"0", "1"} and header["new"] in {"0", "1"}
+            )
         elif not in_header:
-            removed, added = diff.hunks[-1]
-            if line.startswith("-"):
-                removed.append(line[1:])
-            elif line.startswith("+"):
-                added.append(line[1:])
+            _parse_hunk_line(diff, line)
         else:
             _parse_header_line(diff, line)
+    diff.whole_file = starts == [True]
     return diff
+
+
+def _parse_hunk_line(diff: _FileDiff, line: str) -> None:
+    removed, added = diff.hunks[-1]
+    if line.startswith("-"):
+        removed.append(line[1:])
+        diff.before.append(line[1:])
+    elif line.startswith("+"):
+        added.append(line[1:])
+        diff.after.append(line[1:])
+    elif line.startswith(" "):
+        diff.before.append(line[1:])
+        diff.after.append(line[1:])
 
 
 def _parse_header_line(diff: _FileDiff, line: str) -> None:
@@ -440,7 +471,7 @@ def fence_violations(
 
     *paths* is always the touched set the caller computed from the applied
     tree, never one read from prepare's output. *changed_lines* maps each of
-    them to its ``git diff -U0 <base_sha>`` lines (:func:`diff_changed_lines`).
+    them to its whole-file ``git diff <base_sha>`` lines (:func:`diff_changed_lines`).
     The rules (spec §6.2):
 
     - a path must be repo-relative and must match a ``rules.paths`` glob; with
@@ -449,9 +480,8 @@ def fence_violations(
     - a symlink or submodule is always refused;
     - under a rule with ``lines``, every removed and added line must match the
       regex in full, an added, deleted, binary or mode-changed file is
-      refused, and a ``(?P<version>…)`` group may not go down, nor may a
-      versioned line be moved or left unpaired beside other edits
-      (:func:`_downgrades`);
+      refused, and a ``(?P<version>…)`` group may not go down, compared
+      per line identity across the whole file (:func:`_downgrades`);
     - ``vergil.toml`` follows its own rules (:func:`_vergil_toml_violations`).
     """
     violations: list[str] = []
@@ -523,8 +553,15 @@ def _line_rule_violations(path: str, glob: str, regex: str, diff: _FileDiff) -> 
         # The file is refused already; a line outside the rule is not versioned,
         # so pairing would only repeat that refusal as an unpaired line.
         return violations
-    # With no version group, nothing is versioned, so the no-downgrade check finds nothing.
-    return _downgrades(path, pattern, groups, diff.hunks)
+    if not groups:
+        # With no version group, nothing is versioned, so there is nothing to compare.
+        return []
+    if not diff.whole_file:
+        return [
+            f"{where}: the diff does not show the whole file, so the no-downgrade rule "
+            "cannot place its versioned lines"
+        ]
+    return _downgrades(path, pattern, groups, diff.before, diff.after)
 
 
 def _quote(line: str) -> str:
@@ -544,22 +581,45 @@ def _version_groups(pattern: re.Pattern[str]) -> list[str]:
     return sorted(names, key=lambda name: pattern.groupindex[name])
 
 
+#: A versioned line's identity: the anchor value in force (None before any
+#: anchor line, or with no anchor group) and the text before the version group.
+_Identity = tuple[str | None, str]
+
+
 def _versioned(
     pattern: re.Pattern[str], groups: Sequence[str], lines: Sequence[str]
-) -> dict[str, list[str]]:
-    """The *lines* where a version group took part, by the text before that group.
+) -> tuple[dict[_Identity, list[str]], set[str]]:
+    """The versions in one whole file, by line identity in file order, and its anchor values.
 
-    Every line has already passed the line rule (:func:`_line_rule_violations`).
+    *lines* is the whole file. A line that does not match the rule in full
+    (an unchanged line the rule does not cover) is neither versioned nor an
+    anchor. A line whose ``(?P<anchor>…)`` group took part starts a new block:
+    its anchor value names every versioned line after it, up to the next
+    anchor line.
     """
-    by_key: dict[str, list[str]] = {}
+    has_anchor = _ANCHOR_GROUP in pattern.groupindex
+    anchor: str | None = None
+    anchors: set[str] = set()
+    by_identity: dict[_Identity, list[str]] = {}
     for line in lines:
         match = pattern.fullmatch(line)
-        assert match is not None  # noqa: S101 - only called once every line matched in full
+        if match is None:
+            continue
+        if has_anchor and match.start(_ANCHOR_GROUP) >= 0:
+            anchor = match.group(_ANCHOR_GROUP)
+            anchors.add(anchor)
         group = next((name for name in groups if match.start(name) >= 0), None)
         if group is None:
             continue
-        by_key.setdefault(line[: match.start(group)], []).append(match.group(group))
-    return by_key
+        identity = (anchor, line[: match.start(group)])
+        by_identity.setdefault(identity, []).append(match.group(group))
+    return by_identity, anchors
+
+
+def _describe(identity: _Identity) -> str:
+    anchor, key = identity
+    where = "" if anchor is None else f" (anchor {anchor!r})"
+    return f"{key.strip()!r}{where}"
 
 
 def _version_tuple(text: str) -> tuple[int, ...] | None:
@@ -577,60 +637,77 @@ def _downgrades(
     path: str,
     pattern: re.Pattern[str],
     groups: Sequence[str],
-    hunks: Sequence[tuple[list[str], list[str]]],
+    before: Sequence[str],
+    after: Sequence[str],
 ) -> list[str]:
-    """The no-downgrade rule over one file's hunks; one violation per breach.
+    """The no-downgrade rule over one whole file; one violation per breach.
 
-    Within a hunk, removed and added versioned lines are paired by the text
-    before the version group (the key), in order, and a paired version may
-    not go down or be non-numeric. A versioned line left unpaired is a new or
-    a dropped series only when its hunk holds nothing but added lines, or
-    nothing but removed lines, and no hunk of the file leaves a line of the
-    same key unpaired on the other side. Anything else is refused: a pinned
-    line moved within the file would otherwise escape the comparison, since
-    ``git diff -U0`` can split its removal and its addition into two hunks.
+    Each versioned line is identified by the anchor value in force and the
+    text before its version group (:func:`_versioned`), wherever it stands in
+    the file, so moving a line or editing a block's lines in place changes
+    nothing about which versions are compared. Per identity:
+
+    - the same versions before and after: nothing to compare;
+    - present on one side only: allowed as a new or a dropped entry only
+      when the whole block goes with it. Under a rule with no anchor group,
+      that is any key (a new or a dropped tool pin). Under a rule with one,
+      the identity's anchor value must itself be on that side only (a new or
+      a dropped ``[[series]]`` block); a versioned line that appears or
+      disappears inside a block that stays, or before the first anchor, is
+      refused, since moving a pin above its block's anchor line would
+      otherwise give it a new identity;
+    - one version on each side: it may not go down or be non-numeric;
+    - more than one version on either side, and a change: refused, since the
+      pairing would be a guess. A rule over a file with repeated keys
+      (one ``cpython`` per ``[[series]]`` block) names its blocks with a
+      ``(?P<anchor>…)`` group, such as the block's ``series`` value.
     """
+    old_versions, old_anchors = _versioned(pattern, groups, before)
+    new_versions, new_anchors = _versioned(pattern, groups, after)
+    anchored = _ANCHOR_GROUP in pattern.groupindex
     violations: list[str] = []
-    removed_keys: set[str] = set()  # keys with an unpaired removed line in a removal-only hunk
-    added_keys: set[str] = set()  # keys with an unpaired added line in an addition-only hunk
-    for removed, added in hunks:
-        old_by_key = _versioned(pattern, groups, removed)
-        new_by_key = _versioned(pattern, groups, added)
-        for key in sorted(old_by_key.keys() | new_by_key.keys()):
-            olds, news = old_by_key.get(key, []), new_by_key.get(key, [])
-            for old, new in zip(olds, news, strict=False):
-                violations.extend(_compare_versions(path, key, old, new))
-            if len(olds) == len(news):
-                continue
-            if removed and added:
-                violations.append(
-                    f"{path}: refused, {key.strip()!r} has a versioned line with no "
-                    "counterpart in a hunk that both removes and adds lines, so the "
-                    "no-downgrade rule cannot pair it"
-                )
-            elif removed:
-                removed_keys.add(key)
-            else:
-                added_keys.add(key)
-    violations.extend(
-        f"{path}: refused, {key.strip()!r} has a versioned line removed in one place and "
-        "added in another, so the no-downgrade rule cannot pair it"
-        for key in sorted(removed_keys & added_keys)
+    identities = sorted(
+        old_versions.keys() | new_versions.keys(),
+        key=lambda ident: (ident[0] is not None, ident[0] or "", ident[1]),
     )
+    for identity in identities:
+        olds, news = old_versions.get(identity, []), new_versions.get(identity, [])
+        if olds == news:
+            continue
+        if not olds or not news:
+            anchor = identity[0]
+            whole_block = not anchored or (
+                anchor is not None and (anchor in old_anchors) != (anchor in new_anchors)
+            )
+            if not whole_block:
+                side = "added" if news else "removed"
+                violations.append(
+                    f"{path}: refused, {_describe(identity)} has a versioned line {side} "
+                    "in a block that stays, so the no-downgrade rule cannot pair it"
+                )
+            continue
+        if len(olds) > 1 or len(news) > 1:
+            violations.append(
+                f"{path}: refused, {_describe(identity)} has more than one versioned line "
+                f"({', '.join(olds)} to {', '.join(news)}), so the no-downgrade rule cannot "
+                "pair them"
+            )
+            continue
+        violations.extend(_compare_versions(path, identity, olds[0], news[0]))
     return violations
 
 
-def _compare_versions(path: str, key: str, old: str, new: str) -> list[str]:
+def _compare_versions(path: str, identity: _Identity, old: str, new: str) -> list[str]:
     """A violation if the paired version *new* is below *old*, or either is not numeric."""
     old_t, new_t = _version_tuple(old), _version_tuple(new)
     if old_t is None or new_t is None:
         return [
-            f"{path}: refused, {key.strip()!r} has a version that is not numeric "
+            f"{path}: refused, {_describe(identity)} has a version that is not numeric "
             f"({old!r} to {new!r}), so the no-downgrade rule cannot compare it"
         ]
     if new_t < old_t:
         return [
-            f"{path}: refused, {key.strip()!r} lowers its version from {old} to {new} "
+            f"{path}: refused, {_describe(identity)} lowers its version from {old} to {new} "
             "(a refresh never lowers a pinned version)"
         ]
     return []

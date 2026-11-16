@@ -301,7 +301,11 @@ class PathRule:
     regex every removed and added line of such a file must match in full; a
     ``(?P<version>…)`` group in it marks a version the refresh may not lower
     (a second marked version in the same regex is ``(?P<version_<suffix>>…)``,
-    since Python's ``re`` refuses a repeated group name).
+    since Python's ``re`` refuses a repeated group name). Versions are
+    compared per key across the whole file, so a file that repeats a key in
+    several blocks (one ``cpython`` per ``[[series]]``) marks the line that
+    names each block with a ``(?P<anchor>…)`` group, such as its ``series``
+    value; without one, a change to a repeated key is refused.
     """
 
     glob: str
