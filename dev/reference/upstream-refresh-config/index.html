@@ -14300,6 +14300,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-path-fence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The path fence
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The path fence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-refresh-never-lowers-a-pinned-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A refresh never lowers a pinned version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vergiltoml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vergil.toml
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-fence-relies-on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the fence relies on
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-hook-contract" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -14333,10 +14383,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#identity" class="md-nav__link">
+  <a href="#identity-and-credentials" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Identity
+        Identity and credentials
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging
       
     </span>
   </a>
@@ -17826,6 +17887,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-path-fence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The path fence
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The path fence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-refresh-never-lowers-a-pinned-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A refresh never lowers a pinned version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vergiltoml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vergil.toml
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-fence-relies-on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the fence relies on
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-hook-contract" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17859,10 +17970,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#identity" class="md-nav__link">
+  <a href="#identity-and-credentials" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Identity
+        Identity and credentials
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging
       
     </span>
   </a>
@@ -17900,11 +18022,17 @@
 <h1 id="upstream-refresh-reference-upstream-refresh">Upstream Refresh Reference (<code>[upstream-refresh]</code>)<a class="headerlink" href="#upstream-refresh-reference-upstream-refresh" title="Permanent link">&para;</a></h1>
 <p><code>vrg-upstream-refresh</code> keeps a repo's upstream inputs current. The repo
 supplies the logic in a hook, and the command supplies the mechanics: it
-runs the hook, then opens, refreshes or closes one PR. A human reviews
-and merges that PR; nothing auto-merges.</p>
-<p>The design is epic
+runs the hook, checks the change against the repo's path fence, and
+opens a PR that merges itself once CI passes. No human merges a refresh
+PR.</p>
+<p>The command was introduced by epic
 <a href="https://github.com/vergil-project/.github/issues/472">vergil-project/.github#472</a>
-(spec <code>epics/472-multi-series-runtime/spec.md</code>, section 5.6).</p>
+(spec <code>epics/472-multi-series-runtime/spec.md</code>, section 5.6) and rebuilt
+on the mechanized-PR building block by epic
+<a href="https://github.com/vergil-project/.github/issues/1168">vergil-project/.github#1168</a>
+(spec <code>epics/1168-upstream-refresh-merge/spec.md</code>, section 6). The
+unattended merge carries out the policy decided in
+<a href="https://github.com/vergil-project/.github/issues/470">vergil-project/.github#470</a>.</p>
 <h2 id="how-it-differs-from-a-dependency-update">How it differs from a dependency update<a class="headerlink" href="#how-it-differs-from-a-dependency-update" title="Permanent link">&para;</a></h2>
 <p>An upstream refresh and a <a href="../dependency-update-config/">dependency update</a>
 are separate pipelines with separate hooks:</p>
@@ -17924,7 +18052,7 @@ are separate pipelines with separate hooks:</p>
 </tr>
 <tr>
 <td>Config</td>
-<td><code>[upstream-refresh].hook</code></td>
+<td><code>[upstream-refresh].hook</code> and <code>.paths</code></td>
 <td><code>[dependency-update].hook</code></td>
 </tr>
 <tr>
@@ -17934,17 +18062,17 @@ are separate pipelines with separate hooks:</p>
 </tr>
 <tr>
 <td>Branch</td>
-<td><code>upstream-refresh</code> (one, fixed)</td>
+<td><code>automation/upstream-refresh/&lt;run-id&gt;</code>, a new one per run</td>
 <td><code>deps/update-&lt;version&gt;</code></td>
 </tr>
 <tr>
 <td>Validation</td>
-<td>None; the PR's own CI checks it</td>
+<td>The path fence before the push; the PR's own CI decides the merge</td>
 <td>One <code>vrg-validate</code> run before the PR</td>
 </tr>
 <tr>
 <td>Merge</td>
-<td>Never; a human merges</td>
+<td>Merged by the job, as the org automation App, once CI passes</td>
 <td>Merged when green</td>
 </tr>
 <tr>
@@ -17982,15 +18110,17 @@ does the repo deliver it?</p>
 </ul>
 <p>The current users of a dependency update are listed on the
 <a href="../dependency-update-config/#which-mechanism-do-i-use">dependency update page</a>.</p>
-<p>Neither PR merges unattended today. A human merges every upstream
-refresh PR, and a dependency update merges its own PR once it is green,
-but only from a <code>vrg-release</code> or <code>vrg-update-deps</code> that a human runs.
-How the merge policy is expected to change for these automation PRs is
-tracked in
-<a href="https://github.com/vergil-project/.github/issues/470">vergil-project/.github#470</a>.</p>
+<p>An upstream refresh PR merges unattended, as the org automation App,
+from the scheduled job. A dependency update merges its own PR once it is
+green, but only from a <code>vrg-release</code> or <code>vrg-update-deps</code> that a human
+runs.</p>
 <h2 id="upstream-refresh"><code>[upstream-refresh]</code><a class="headerlink" href="#upstream-refresh" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[upstream-refresh]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">hook</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"scripts/dev/upstream-refresh.sh"</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="s2">"docker/pins/toolchains.yml"</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"docker/common/*"</span><span class="p">,</span><span class="w"> </span><span class="n">lines</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s1">'^ARG [A-Z0-9_]+_(VERSION=(?P&lt;version&gt;\d+(\.\d+)*)|SHA256_(AMD64|ARM64)=[0-9a-f]{64})$'</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">]</span>
 </code></pre></div>
 <table>
 <thead>
@@ -18008,98 +18138,238 @@ tracked in
 <td><em>(required)</em></td>
 <td>Command that refreshes the repo's upstream inputs. Must be non-empty</td>
 </tr>
+<tr>
+<td><code>paths</code></td>
+<td>array</td>
+<td><code>[]</code></td>
+<td>The path fence's allowlist: the files the hook may change. Each entry is a glob string, or a <code>{ path, lines }</code> table: a glob and a line regex. An empty or absent list refuses every patch</td>
+</tr>
 </tbody>
 </table>
 <p>The table is optional, but <code>vrg-upstream-refresh</code> refuses to run without
-it (<code>vergil.toml has no [upstream-refresh] section</code>). When the table is
-present, <code>hook</code> is required, and any other key is an error.</p>
-<h2 id="the-hook-contract">The hook contract<a class="headerlink" href="#the-hook-contract" title="Permanent link">&para;</a></h2>
-<p>The command runs the hook as <code>bash -c "&lt;hook&gt;"</code> from the root of a
-temporary worktree, detached at <code>origin/&lt;base&gt;</code>. That worktree holds the
-base branch's tracked files only, as a fresh CI checkout does: files
-that are ignored or untracked in your checkout are not there, so the
-hook must not rely on them. The hook:</p>
+it (<code>vergil.toml on &lt;repo&gt;'s develop has no [upstream-refresh] section</code>).
+When the table is present, <code>hook</code> is required, and any other key than
+<code>hook</code> and <code>paths</code> is an error. A <code>paths</code> entry's table takes only
+<code>path</code> (required) and <code>lines</code>; <code>lines</code> must compile as a Python regex.</p>
+<p>A glob is repo-relative (no leading <code>/</code>, and no empty, <code>.</code> or <code>..</code>
+segment). <code>*</code> matches within one path segment, and <code>**</code> matches any
+number of segments. A path's first matching entry decides which line
+rule applies to it.</p>
+<h2 id="the-path-fence">The path fence<a class="headerlink" href="#the-path-fence" title="Permanent link">&para;</a></h2>
+<p>No human reviews a refresh PR before it merges, so the patch the hook
+produced is treated as untrusted data. Publish checks every path it
+touches before anything is pushed, and a refused patch fails the run,
+naming each path or table and the rule it broke.</p>
+<p><strong>Inputs come from publish's own clone.</strong> The touched set is computed
+from publish's clone after the patch is applied: added, modified,
+deleted, mode-changed and untracked files. It must equal the list of
+changed paths prepare recorded, exactly. That list is otherwise used
+only for the PR body. The rules are read from the <code>develop</code> tip of
+publish's clone, never from prepare's output. A rules change therefore
+takes effect only once it has merged; <code>--dry-run --rules-from</code> tests one
+before then (see <a href="#cli">CLI</a>).</p>
+<p><strong>The rules:</strong></p>
 <ul>
-<li><strong>Edits tracked files only.</strong> It must not commit, and it must not
-  leave new untracked files. If it does, the command fails and names
-  them (<code>hook left untracked files: &lt;paths&gt;</code>), and nothing is pushed.
-  Files the repo's <code>.gitignore</code> ignores are allowed and never committed.</li>
+<li><strong>The allowlist.</strong> A path outside every <code>paths</code> entry is refused. With
+  no <code>paths</code>, every path is refused.</li>
+<li><strong><code>.github/**</code> is always refused</strong>, whatever <code>paths</code> allows, even
+  <code>**</code>. PR CI is no gate against a change to the workflows that CI
+  itself runs.</li>
+<li><strong>Symlinks and submodules</strong> are always refused.</li>
+<li><strong>A line rule.</strong> Under an entry with <code>lines</code>, every removed and added
+  line must match the regex as a whole line (<code>re.fullmatch</code>). An added,
+  deleted, binary or mode-changed file is refused under a line rule.</li>
+<li><strong><code>vergil.toml</code></strong>, where <code>paths</code> allows it, has its own rules (below).</li>
+</ul>
+<p>An allowlist names the data files the hook writes, as exact paths where
+the set is fixed. It never covers the hook, its resolvers or
+generators, or files the hook does not change. Where a file's content
+follows a format, a line rule pins it.</p>
+<h3 id="a-refresh-never-lowers-a-pinned-version">A refresh never lowers a pinned version<a class="headerlink" href="#a-refresh-never-lowers-a-pinned-version" title="Permanent link">&para;</a></h3>
+<p>A line rule marks each version in its regex with a named group:</p>
+<ul>
+<li><code>(?P&lt;version&gt;…)</code> for the first one;</li>
+<li><code>(?P&lt;version_&lt;suffix&gt;&gt;…)</code> for each further one in the same regex,
+  such as <code>(?P&lt;version_pbs&gt;…)</code>. Python's <code>re</code> refuses two groups of the
+  same name, so a rule that pins two keys' versions, such as <code>cpython</code>
+  and <code>pbs_tag</code>, names the second <code>version_&lt;suffix&gt;</code>.</li>
+</ul>
+<p>A file under a versioned rule is compared as a whole, before and after
+the patch, so publish takes its diff with the whole file as context. A
+versioned line's <strong>identity</strong> is its block's anchor value (none under a
+rule with no anchor group) and the text before its version group.
+Versions are compared per identity, wherever the line stands in the
+file, as tuples of integers split on <code>.</code> (trailing zeros dropped). A
+version that goes down is refused, and so is one that is not numeric.</p>
+<p><strong>Blocks and anchors.</strong> A file that repeats a key in several blocks,
+such as one <code>cpython</code> per <code>[[series]]</code> in vergil-python's
+<code>runtime.toml</code>, marks the line that names each block with an optional
+<code>(?P&lt;anchor&gt;…)</code> group, such as the block's <code>series</code> value. Each
+versioned line belongs to the block named by the most recent anchor
+line above it. Under a rule with no anchor group, the whole file is one
+block. For example, a <code>runtime.toml</code> rule:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="err">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"runtime.toml"</span><span class="err">,</span><span class="w"> </span><span class="n">lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'^(\[\[series\]\]|\[series\.sha256\]|series = "(?P&lt;anchor&gt;\d+\.\d+)"|cpython = "(?P&lt;version&gt;\d+\.\d+\.\d+)"|pbs_tag = "(?P&lt;version_pbs&gt;\d{8})"|x86_64 = "[0-9a-f]{64}"|aarch64 = "[0-9a-f]{64}"|)$'</span><span class="w"> </span><span class="err">}</span>
+</code></pre></div>
+<p><strong>What is refused, and what is allowed:</strong></p>
+<ul>
+<li><strong>Ambiguity is refused.</strong> An identity with more than one versioned
+  line on either side, where the versions change, cannot be paired: a
+  key that repeats in a file whose rule has no anchor. Under a rule
+  with an anchor, a versioned line that appears or disappears inside a
+  block that stays, or above the first anchor line, is refused too.</li>
+<li><strong>New blocks and new pins are allowed.</strong> A whole new anchored block
+  (a new <code>[[series]]</code>) is allowed, as is a new or a dropped versioned
+  line under a rule with no anchor group.</li>
+<li><strong>Removals are a human change.</strong> An automated refresh never removes
+  an existing anchored block. Dropping a series is made by a human, in
+  an ordinary PR.</li>
+</ul>
+<h3 id="vergiltoml"><code>vergil.toml</code><a class="headerlink" href="#vergiltoml" title="Permanent link">&para;</a></h3>
+<p>Where <code>paths</code> allows <code>vergil.toml</code>, publish parses it before (at the
+recorded commit) and after the patch:</p>
+<ul>
+<li>outside <code>[[package]]</code>, nothing may change. Above all, that covers
+  <code>[dependencies]</code> (the tooling pin) and <code>[upstream-refresh]</code> (the hook
+  and this allowlist);</li>
+<li>in an existing <code>[[package]]</code> entry, matched by <code>name</code>, only
+  <code>upstream-version</code> and <code>summary</code> may change. <code>upstream-version</code> must
+  keep its <code>&lt;cpython&gt;+&lt;pbs_tag&gt;</code> format and must not go down, compared
+  on its <code>&lt;cpython&gt;</code> part, then its <code>&lt;pbs_tag&gt;</code>;</li>
+<li>an existing <code>[[package]]</code> entry is never removed: dropping a series is
+  a human change, as for an anchored block;</li>
+<li>a new entry is allowed only as a series copy of an existing one: the
+  names differ by one <code>\d+\.\d+</code> series token, and every other value,
+  including <code>smoke</code> and <code>staged</code>, is the existing entry's with that
+  token replaced.</li>
+</ul>
+<p>The file may be edited but never added or deleted by a refresh.</p>
+<h3 id="what-the-fence-relies-on">What the fence relies on<a class="headerlink" href="#what-the-fence-relies-on" title="Permanent link">&para;</a></h3>
+<p>The fence limits which files change. For an allowlisted data file that
+workflows read, what goes into it is limited by the repo's PR CI checks,
+and each repo names them. In vergil-containers, <code>generate.py --check</code>
+requires <code>docker/versions/matrix.json</code> to equal what is generated from
+<code>manifest.yml</code> (which the fence never allows to change) and
+<code>docker/pins/toolchains.yml</code>, and <code>check_pins.py</code> checks the pins. Those
+checks must be required status checks on <code>develop</code>. Where a data file's
+format allows it, a value-format line rule bounds its content as well.</p>
+<h2 id="the-hook-contract">The hook contract<a class="headerlink" href="#the-hook-contract" title="Permanent link">&para;</a></h2>
+<p>Prepare runs the hook as <code>bash -c "&lt;hook&gt;"</code> from the root of a fresh
+clone of <code>develop</code>, taken in a temporary directory. The clone holds
+<code>develop</code>'s tracked files only, as a fresh CI checkout does: files that
+are ignored or untracked in your checkout are not there, so the hook
+must not rely on them. The hook runs with no GitHub token and no App
+credential: <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>, every <code>VRG_AUTOMATION_*</code>
+variable, <code>VRG_APP_ID</code>, <code>VRG_PRIVATE_KEY_PATH</code>, Actions' own tokens and
+git's environment config are removed from its environment. The hook:</p>
+<ul>
+<li><strong>Edits tracked files only.</strong> It must not leave new untracked files.
+  If it does, the command fails and names them
+  (<code>hook left untracked files: &lt;paths&gt;</code>), and nothing is published.
+  Files the repo's <code>.gitignore</code> ignores are allowed and never published.</li>
 <li><strong>May write notes</strong> to the file named in <code>$VRG_UPSTREAM_REPORT</code>, one
   note per line. Each non-empty line becomes a bullet under <code>## Notes</code>
   in the PR body. The format of each line is the repo's choice.</li>
 <li><strong>Fails with a non-zero exit.</strong> The command then stops with
   <code>[upstream-refresh].hook failed (exit &lt;n&gt;): &lt;hook&gt;</code>, and nothing is
-  pushed.</li>
+  published.</li>
 </ul>
 <h2 id="what-the-command-does">What the command does<a class="headerlink" href="#what-the-command-does" title="Permanent link">&para;</a></h2>
-<p><code>vrg-upstream-refresh</code> first fetches <code>origin/&lt;base&gt;</code> and requires a
-clean working tree with <code>HEAD</code> at <code>origin/&lt;base&gt;</code>. It then adds a
-temporary linked worktree at <code>origin/&lt;base&gt;</code> outside the checkout, runs
-the hook there and asks git what changed. Every run ends in one of
-these outcomes:</p>
+<p>The command runs in two halves, split by the <strong>key boundary</strong>: the
+automation App's private key never shares a runner with the hook, or
+with anything the hook installs or loads.</p>
+<p><strong>prepare</strong> (<code>vrg-upstream-refresh prepare --out DIR</code>) clones <code>develop</code>,
+runs the hook there, and writes to <code>DIR</code>, which must not already hold
+prepare's output:</p>
+<ul>
+<li><code>changes.patch</code>: the hook's tracked changes as a binary patch against
+  the clone's <code>develop</code> commit (absent when nothing changed);</li>
+<li><code>meta.json</code>: the repo, that commit's SHA, the changed paths and the
+  hook's notes.</li>
+</ul>
+<p>It holds no App credentials and needs no write token. It refuses to run
+when the App's credentials are in its environment.</p>
+<p><strong>publish</strong> (<code>vrg-upstream-refresh publish --from DIR</code>) reads that
+output as data. It never runs the hook, and never runs git in the tree
+prepare worked in. In order, it:</p>
+<ol>
+<li>takes the App's credentials, when given, from its environment and
+   removes them, so no child process starts with them;</li>
+<li>installs SIGINT and SIGTERM handlers, then mints its first
+   repo-scoped token and checks the identity (see
+   <a href="#identity-and-credentials">Identity and credentials</a>);</li>
+<li>clones <code>develop</code>, and reads the fence rules from that tip;</li>
+<li>checks that the recorded commit is still on <code>develop</code> (GitHub's
+   compare API says <code>identical</code> or <code>ahead</code>), fetches it, checks it out
+   and applies the patch with <code>git apply --index</code>. A recorded commit
+   that is no longer on <code>develop</code>, or a patch that does not apply
+   cleanly, is refused;</li>
+<li>computes the touched set from the clone and runs the
+   <a href="#the-path-fence">path fence</a>;</li>
+<li>commits as the App's bot user, <code>&lt;app-slug&gt;[bot]</code> with its
+   <code>&lt;id&gt;+&lt;app-slug&gt;[bot]@users.noreply.github.com</code> address. A human's
+   run commits as the human;</li>
+<li>hands the clone to the mechanized-PR building block, which closes an
+   earlier run's open PR and deletes its branch, pushes the new branch,
+   opens the PR with squash auto-merge, and waits until it merges.</li>
+</ol>
+<p>The PR's commit is parented on the recorded commit, so the patch lands
+on exactly the tree the hook ran against. If <code>develop</code> has moved since,
+the wait updates the PR's branch from <code>develop</code> and CI decides. The
+wait merges the PR itself once its checks are green on an up-to-date
+branch; a failed check, a conflict, a closed PR, the branch-update cap
+or the deadline ends it unmerged. Under a token source the deadline is
+7200 seconds, counted from publish's own start, so the clone, the patch
+and the push are inside it. A human's run keeps the building block's
+own deadline, <code>$VRG_MECHANIZED_PR_DEADLINE</code> seconds (2400 by default).</p>
+<p>The commit and the PR title are <code>chore(upstream): refresh upstream
+inputs</code>. The PR body says that the job merges it once CI passes, and
+lists the changed files and the hook's notes.</p>
+<p>Every run ends in one of these outcomes:</p>
 <table>
 <thead>
 <tr>
 <th>Outcome</th>
 <th>When</th>
-<th>What happens</th>
+<th>Exit</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>nothing</code></td>
-<td>No change and no open refresh PR</td>
-<td>Exits quietly; no GitHub writes</td>
+<td>In sync</td>
+<td>No change. An earlier run's open refresh PR is still closed and its branch deleted</td>
+<td>0</td>
 </tr>
 <tr>
-<td><code>closed</code></td>
-<td>No change, but a refresh PR is open</td>
-<td>Closes it with <code>Nothing to refresh on &lt;base&gt;; closing.</code> and deletes its branch</td>
+<td>Merged</td>
+<td>A change: the PR was opened and merged within the run</td>
+<td>0</td>
 </tr>
 <tr>
-<td><code>opened</code></td>
-<td>A change and no open refresh PR</td>
-<td>Pushes one commit to <code>upstream-refresh</code> and opens the PR</td>
+<td>Not merged</td>
+<td>The PR was opened but did not merge; the PR and the reason are named</td>
+<td>2</td>
 </tr>
 <tr>
-<td><code>refreshed</code></td>
-<td>A change that differs from the open PR</td>
-<td>Force-pushes the new commit, updates the PR body and adds one comment</td>
-</tr>
-<tr>
-<td><code>unchanged</code></td>
-<td>A change identical to the open PR's tree</td>
-<td>Pushes nothing and comments nothing, so the PR does not churn</td>
+<td>Refused or failed</td>
+<td>The hook, the clone, the path fence, the base check, a refused identity, a failed mint or revocation, or a usage error; nothing is pushed unless the failure came after the push</td>
+<td>1</td>
 </tr>
 </tbody>
 </table>
-<p>The refresh commit is <code>chore(upstream): refresh upstream inputs</code>, built
-directly on top of <code>origin/&lt;base&gt;</code>. Every run recomputes it from
-scratch, so the PR always holds a full snapshot rather than an
-increment. Its title is the commit subject, and its body lists the
-changed files and the hook's notes. The commit is built with git
-plumbing, so no local branch moves and no commit hook runs. Pushes use
-<code>--force-with-lease</code>, so a branch someone else moved is never
-overwritten.</p>
-<p>A refresh PR is an open PR against the base whose head is
-<code>upstream-refresh</code> or <code>upstream-refresh-&lt;anything&gt;</code> (a manual
-re-create). When more than one is open, the oldest is kept and
-refreshed. The others are closed with a comment naming it, and their
-branches are deleted.</p>
-<p>The hook's edits never reach your checkout. The commit is built in
-the temporary worktree, and fetches and pushes run from your checkout
-with its remote and credentials. The worktree is removed when the run
-ends, whether it succeeded, failed or was a <code>--dry-run</code>. So after any
-run the checkout is exactly as the command found it, and
-<code>git worktree list</code> no longer shows the temporary worktree. If the
-worktree cannot be removed, the run fails and names the path and the
-<code>git worktree</code> commands that remove it. If the run had already failed,
-the cleanup error is printed and the run's own error is reported.</p>
-<p>The command works from a shallow, depth-1 checkout, such as the default
-<code>actions/checkout</code>. It fetches the refs it needs itself, at depth 1 when
-the checkout is shallow, so it never deepens the clone.</p>
+<p><strong>The combined mode</strong> (no mode named) runs prepare and publish in one
+process, for a human's local run under the human's own credentials. The
+key boundary does not apply, since no App key is involved, and no token
+source is registered. It is refused under GitHub Actions.</p>
+<p><strong><code>--dry-run</code></strong> runs prepare, applies the patch in a second clone
+exactly as publish does, and runs the path fence. It prints the PR body
+and every violation, pushes nothing and opens nothing. It exits 1 if
+any violation is found.</p>
+<p>The command never reads or touches the caller's checkout. Every clone
+lives in a temporary directory, removed when the run ends.</p>
 <h2 id="cli">CLI<a class="headerlink" href="#cli" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-upstream-refresh [--repo OWNER/NAME] [--base BRANCH] [--dry-run]
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-upstream-refresh prepare --out DIR [--repo OWNER/NAME]
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>vrg-upstream-refresh publish --from DIR [--repo OWNER/NAME]
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>vrg-upstream-refresh [--repo OWNER/NAME] [--dry-run [--rules-from PATH]]
 </code></pre></div>
 <table>
 <thead>
@@ -18111,36 +18381,125 @@ the checkout is shallow, so it never deepens the clone.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>--repo</code></td>
-<td><code>$GITHUB_REPOSITORY</code>, then the <code>origin</code> remote</td>
-<td>Repository that owns the refresh PR</td>
+<td><code>prepare --out DIR</code></td>
+<td>—</td>
+<td>Run the hook with no credentials; write the patch and <code>meta.json</code> to <code>DIR</code></td>
 </tr>
 <tr>
-<td><code>--base</code></td>
-<td>The repository's default branch</td>
-<td>Base branch to refresh against</td>
+<td><code>publish --from DIR</code></td>
+<td>—</td>
+<td>Publish prepare's output from <code>DIR</code>: apply, fence, open the PR and wait until it merges</td>
+</tr>
+<tr>
+<td><code>--repo</code></td>
+<td><code>$GITHUB_REPOSITORY</code>, then the <code>origin</code> remote</td>
+<td>Repository to refresh. Publish refuses output prepared for another repo</td>
 </tr>
 <tr>
 <td><code>--dry-run</code></td>
 <td>off</td>
-<td>Run the hook and print the PR body; push nothing and change no PR</td>
+<td>Run prepare and the path fence; print the PR body and every violation; push nothing</td>
+</tr>
+<tr>
+<td><code>--rules-from PATH</code></td>
+<td>the <code>develop</code> tip</td>
+<td>With <code>--dry-run</code> only: read the fence rules from this <code>vergil.toml</code>, so a branch can test its new <code>paths</code> before they merge</td>
 </tr>
 </tbody>
 </table>
-<p>It exits 0 on every outcome above, and 1 on any error or refusal.</p>
-<h2 id="identity">Identity<a class="headerlink" href="#identity" title="Permanent link">&para;</a></h2>
-<p>The command opens PRs, so agent identity modes (<code>user</code> and <code>audit</code>)
-are refused with <code>vrg-upstream-refresh opens PRs and is not run by
-agents</code>. It runs from a scheduled ops workflow under the per-org
-automation App token, or by hand as a human. It needs contents and
-pull-requests write on its own repo.</p>
+<p>Exit codes, also given by <code>--help</code>:</p>
+<ul>
+<li><strong>0:</strong> merged, or nothing to change (a dry run: no fence violation);</li>
+<li><strong>1:</strong> any other failure or refusal, with the reason, including a
+  usage error such as the removed <code>--base</code> (argparse's own exit 2 is
+  mapped to 1);</li>
+<li><strong>2:</strong> the PR was opened but did not merge, naming the PR and the
+  reason (a terminal outcome or the deadline);</li>
+<li><strong>130 or 143:</strong> publish was interrupted by SIGINT or SIGTERM, after
+  revoking its token.</li>
+</ul>
+<p>The fixed <code>upstream-refresh</code> branch, the temporary linked worktree, the
+clean-checkout check and <code>--base</code> are gone: the base is always
+<code>develop</code>, as with every mechanized PR.</p>
+<h2 id="identity-and-credentials">Identity and credentials<a class="headerlink" href="#identity-and-credentials" title="Permanent link">&para;</a></h2>
+<p>The command accepts the <code>human</code> and <code>automation</code> identity modes. The
+agent modes (<code>user</code> and <code>audit</code>) are refused with
+<code>vrg-upstream-refresh opens PRs and is not run by agents</code>, except for
+<code>--dry-run</code>, which mints no token, pushes nothing and opens nothing, so
+an agent can check a repo's allowlist before it merges.</p>
+<p>Under GitHub Actions (<code>GITHUB_ACTIONS</code> set):</p>
+<ul>
+<li><strong>publish</strong> refuses to run, before touching GitHub, unless it was given
+  the App's credentials and resolves to <code>automation</code>;</li>
+<li><strong>prepare</strong> runs without credentials, and refuses if they are present;</li>
+<li><strong>the combined mode</strong> is refused.</li>
+</ul>
+<p>Publish's credentials are three environment variables, set only on the
+step that runs it:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>VRG_AUTOMATION_APP</code></td>
+<td>The automation App's slug (from the org-level Actions variable of the same name)</td>
+</tr>
+<tr>
+<td><code>VRG_AUTOMATION_CLIENT_ID</code></td>
+<td>The App's client ID</td>
+</tr>
+<tr>
+<td><code>VRG_AUTOMATION_PRIVATE_KEY</code></td>
+<td>The App's PEM private key</td>
+</tr>
+</tbody>
+</table>
+<p>The key and every token are never in argv, a log line, an exception
+message or a file. Publish refuses to run when the agent App mode is
+configured (<code>VRG_APP_ID</code> or <code>VRG_PRIVATE_KEY_PATH</code> set), so the two
+minting paths never mix.</p>
+<p>With the credentials, publish mints installation tokens limited to the
+one target repo, with <code>contents: write</code>, <code>pull_requests: write</code>,
+<code>workflows: write</code> and <code>metadata: read</code>. Workflows write is needed only
+for the wait's branch update, which merges <code>develop</code> into the PR
+branch: GitHub refuses that merge from an App token without it whenever
+<code>develop</code> has changed a workflow file. The path fence keeps every
+patch out of <code>.github/**</code>. Each token is checked against
+<code>&lt;VRG_AUTOMATION_APP&gt;[bot]</code> before use. The token is renewed once it is
+older than 1800 seconds, and the replaced token is revoked at once.
+Every <code>gh</code> and <code>git</code> call takes the current token, so a wait longer
+than one token's hour keeps working. When publish exits, on success,
+on failure or on SIGINT or SIGTERM, it revokes the current token. A
+revocation that fails fails the run.</p>
+<h2 id="logging">Logging<a class="headerlink" href="#logging" title="Permanent link">&para;</a></h2>
+<p>Every run prints enough to tell what happened without opening GitHub:</p>
+<ul>
+<li>the earlier run's PR it closed, if any;</li>
+<li>the PR it opened, or that it is in sync;</li>
+<li>each token mint, renewal and revocation, with the time (never the
+  token);</li>
+<li>how the wait ended, with the PR URL and the time waited.</li>
+</ul>
 <h2 id="the-scheduled-workflow">The scheduled workflow<a class="headerlink" href="#the-scheduled-workflow" title="Permanent link">&para;</a></h2>
 <p>The reusable vergil-actions workflow <code>ops-upstream-refresh.yml</code> runs the
-command on a schedule. It mints a repo-scoped App token, checks out with
-it so pushes are App-authored and trigger CI, and runs
-<code>vrg-upstream-refresh --base &lt;ref&gt;</code> in the <code>prod-base</code> image. Each
-consuming repo calls it from its own <code>ops.yml</code> on its own schedule. A
-failed run shows as a red scheduled run.</p>
+command as two jobs, each on a fresh runner:</p>
+<ul>
+<li><strong>prepare</strong> holds no secrets and a read-only <code>GITHUB_TOKEN</code>, runs
+  <code>vrg-upstream-refresh prepare</code>, and uploads its output as an artifact;</li>
+<li><strong>publish</strong> downloads that artifact and runs
+  <code>vrg-upstream-refresh publish</code> with <code>VRG_AUTOMATION_APP</code> and the App's
+  client ID and key set on that step only.</li>
+</ul>
+<p>Each consuming repo calls it from its own <code>ops.yml</code> on its own schedule,
+and declares its allowlist in <code>[upstream-refresh].paths</code>. A failed or
+unmerged run shows as a red scheduled run. Until the two-job workflow
+is released, a run of the older single-job workflow against this
+version of the command fails loudly and merges nothing (spec section
+6.4 of epic #1168).</p>
 
 
 

@@ -20351,14 +20351,20 @@ the <a href="../dependency-update-config/">dependency-update reference</a>.</p>
 </tbody>
 </table>
 <h3 id="vrg-upstream-refresh">vrg-upstream-refresh<a class="headerlink" href="#vrg-upstream-refresh" title="Permanent link">&para;</a></h3>
-<p>Run the repo's <code>[upstream-refresh].hook</code> in a temporary worktree of
-the base branch, then open, refresh or close the single
-<code>upstream-refresh</code> PR. The checkout it runs from must be clean and on
-the base, and it is left exactly as found. A no-change run closes any
-stale refresh PR, or exits quietly when there is none. It never merges, and never runs dependency updaters,
-validation or a release. It runs from the scheduled
-<code>ops-upstream-refresh</code> workflow under the App token, or by hand as a
-human; it refuses agent identities. See the
+<p>Run the repo's <code>[upstream-refresh].hook</code> in a fresh clone of
+<code>develop</code>, check the patch against the repo's path fence
+(<code>[upstream-refresh].paths</code>), and open an
+<code>automation/upstream-refresh/&lt;run-id&gt;</code> PR that merges itself once CI
+passes. It runs in two halves split by the key boundary: <code>prepare</code>
+runs the hook with no credentials and writes a patch; <code>publish</code> holds
+the automation App's key, applies the patch on the recorded <code>develop</code>
+commit in its own clone, checks the fence, commits as the App's bot,
+and waits until the PR merges, renewing and revoking its token as it
+goes. A no-change run still closes an earlier run's open PR. With no
+mode, both halves run in one process for a human's local run.
+<code>--dry-run</code> runs prepare and the fence and pushes nothing. It never
+touches the caller's checkout, and never runs dependency updaters,
+validation or a release. See the
 <a href="../upstream-refresh-config/">upstream-refresh reference</a>.</p>
 <table>
 <thead>
@@ -20374,19 +20380,19 @@ human; it refuses agent identities. See the
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--repo OWNER/NAME</code> (default: <code>$GITHUB_REPOSITORY</code>, then origin), <code>--base BRANCH</code> (default: the repo's default branch), <code>--dry-run</code></td>
+<td><code>prepare --out DIR</code>, <code>publish --from DIR</code>, or no mode (prepare and publish in one process); <code>--repo OWNER/NAME</code> (default: <code>$GITHUB_REPOSITORY</code>, then origin); <code>--dry-run</code>, with <code>--rules-from PATH</code> to read the fence rules from a branch's <code>vergil.toml</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Not an agent identity; <code>[upstream-refresh]</code> in <code>vergil.toml</code>; clean working tree with <code>HEAD</code> at <code>origin/&lt;base&gt;</code>; <code>gh</code> authenticated with contents and pull-requests write</td>
+<td><code>[upstream-refresh]</code> in <code>vergil.toml</code> on <code>develop</code>. Agent identities may run <code>--dry-run</code> only. Under GitHub Actions: publish needs <code>VRG_AUTOMATION_APP</code>, <code>VRG_AUTOMATION_CLIENT_ID</code> and <code>VRG_AUTOMATION_PRIVATE_KEY</code>; prepare refuses them; the combined mode is refused</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A hook failure or untracked files left by the hook stop the run before any push; errors on stderr</td>
+<td>A hook failure, untracked files, a patch that does not apply, a recorded commit no longer on <code>develop</code>, or a fence violation stops the run before any push, naming the cause on stderr</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 any outcome (<code>nothing</code>, <code>closed</code>, <code>opened</code>, <code>refreshed</code>, <code>unchanged</code>), 1 error or refusal</td>
+<td>0 merged or nothing to change, 1 failure or refusal (usage errors included), 2 PR opened but not merged (PR and reason named), 130/143 interrupted</td>
 </tr>
 <tr>
 <td>Status</td>

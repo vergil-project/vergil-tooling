@@ -18027,10 +18027,12 @@ stage of its <code>vrg-release</code>:</p>
   version within its major.</li>
 </ul>
 <p>A dependency update merges its own PR once it is green, but only from a
-<code>vrg-release</code> or <code>vrg-update-deps</code> that a human runs; a human merges
-every upstream refresh PR. How the merge policy is expected to change
-for these automation PRs is tracked in
-<a href="https://github.com/vergil-project/.github/issues/470">vergil-project/.github#470</a>.</p>
+<code>vrg-release</code> or <code>vrg-update-deps</code> that a human runs. An upstream
+refresh PR merges unattended, as the org automation App, from its
+scheduled job once CI passes and the path fence has allowed the change
+(<a href="https://github.com/vergil-project/.github/issues/1168">vergil-project/.github#1168</a>,
+carrying out the policy decided in
+<a href="https://github.com/vergil-project/.github/issues/470">vergil-project/.github#470</a>).</p>
 <h2 id="updaters">Updaters<a class="headerlink" href="#updaters" title="Permanent link">&para;</a></h2>
 <p>The updaters run in this order. Each one runs only when the repo has
 what it updates, and each one's changes become a separate commit on the
