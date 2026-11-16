@@ -87,9 +87,11 @@ one of the two fails the build. The build log names the path it took.
 [repo-profile](../reference/lint/repo-profile.md) check, markdownlint,
 shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the
 repository has Ansible content. It then runs the language's lint,
-typecheck, test and audit commands, and last the repository's custom
+typecheck, test and audit commands, the semgrep scan of the
+`security / semgrep` gate, and last the repository's custom
 validator when it has one. To run one stage, pass
-`--check common`, `lint`, `typecheck`, `test`, `audit` or `custom`. The
+`--check common`, `lint`, `typecheck`, `test`, `audit`, `semgrep` or
+`custom`. The
 [Validation Matrix](validation-matrix.md) lists every check and where
 it runs.
 

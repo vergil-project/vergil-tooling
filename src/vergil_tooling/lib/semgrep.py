@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -67,6 +68,7 @@ def run_scan(
     output_path: Path,
     *,
     exclude_rules: list[str] | None = None,
+    metrics: str | None = None,
 ) -> ScanResult:
     """Execute semgrep scan with the given rulesets.
 
@@ -77,6 +79,9 @@ def run_scan(
     The fleet defaults in ``DEFAULT_EXCLUDED_RULES`` are always excluded via
     ``--exclude-rule``; any ``exclude_rules`` the caller supplies are added on
     top of (never in place of) the defaults.
+
+    *metrics*, when given, is passed as semgrep's ``--metrics`` value; with
+    none, semgrep's own default applies, as in PR CI.
     """
     excluded: list[str] = list(DEFAULT_EXCLUDED_RULES)
     for rule in exclude_rules or []:
@@ -88,6 +93,8 @@ def run_scan(
         cmd.extend(["--config", ruleset])
     for rule in excluded:
         cmd.extend(["--exclude-rule", rule])
+    if metrics is not None:
+        cmd.extend(["--metrics", metrics])
     cmd.append(str(target_dir))
 
     result = subprocess.run(  # noqa: S603
@@ -105,3 +112,28 @@ def run_scan(
         stdout=result.stdout,
         stderr=result.stderr,
     )
+
+
+def _last_line(text: str) -> str:
+    """Return the last non-empty line of *text*, stripped, or ``""``."""
+    for line in reversed(text.splitlines()):
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def scan_failure_message(scan_result: ScanResult) -> str:
+    """Print semgrep's captured output to stderr; return the failure's message.
+
+    The message names the exit code and, when semgrep printed anything, the
+    last line of its stderr (else of its stdout), which carries the cause.
+    """
+    for name, text in (("stdout", scan_result.stdout), ("stderr", scan_result.stderr)):
+        if text.strip():
+            print(f"--- semgrep {name} ---", file=sys.stderr)
+            print(text.rstrip("\n"), file=sys.stderr)
+    msg = f"semgrep scan failed with exit code {scan_result.returncode}"
+    detail = _last_line(scan_result.stderr) or _last_line(scan_result.stdout)
+    if detail:
+        msg = f"{msg}: {detail}"
+    return msg

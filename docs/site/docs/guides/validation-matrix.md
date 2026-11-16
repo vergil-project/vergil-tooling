@@ -22,8 +22,14 @@ where it runs. No git hooks are installed: every check runs inside a
 | Tests | `vrg-validate` | Yes (primary version; every version with `--all-versions`, Python only) | `test / unit / <version>` |
 | Dependency audit | `vrg-validate` | Yes (primary version) | `audit / dependencies / <version>` |
 | Custom validator | `vrg-validate` (custom stage) | Yes (primary version) | `quality / custom` (once, primary version) |
-| Security scans (CodeQL, Trivy, Semgrep) | `ci-security.yml` | -- | `security / *` |
-| Version bump | `ci-version-bump.yml` | -- | `version / version-bump` |
+| Semgrep scan | `vrg-validate` (semgrep stage) | Yes | `security / semgrep` |
+| Trivy scan | `ci-security.yml` | -- (follow-up #4445) | `security / trivy` |
+| CodeQL scan | `ci-security.yml` | -- (CI-only) | `security / codeql` |
+| GitHub code scanning results | GitHub, from the uploaded SARIF | -- (CI-only) | `Trivy`, `Semgrep OSS`, `CodeQL` |
+| Strict docs build | `ci-docs.yml` | -- (follow-up #4446) | `docs / docs` |
+| Version bump | `ci-version-bump.yml` | -- (CI-only) | `version / version-bump` |
+| Package build and install tests | `ci-package.yml` | -- (CI-only) | `package / evidence` |
+| Image build and scan (vergil-containers) | vergil-containers CI | -- (CI-only) | `images / evidence` |
 
 "Local" for `vrg-validate` means `vrg-container-run -- vrg-validate`,
 which runs one container on the resolved primary version. PR CI
@@ -46,6 +52,42 @@ for Go, the `go.mod` `go` directive; for Rust, the root `Cargo.toml`'s
 [Python version management](../standards/development/python/version-management.md#toolchain-selection-in-the-repo)
 and the Rust standards'
 [Toolchain Selection](../standards/development/rust/overview.md#toolchain-selection).
+
+## PR CI Gates Not Run Locally
+
+Each required PR CI check (see [CI gates](ci-architecture.md#ci-gates))
+was compared with what `vrg-container-run -- vrg-validate` runs, in
+vergil-tooling#4003. Every gap has a decision: it runs locally, it is
+planned to run locally in a follow-up, or it stays CI-only for the
+reason given. A gap that stays CI-only is a failure an agent cannot see
+before the PR is opened.
+
+Already run locally: `quality / common`, `quality / custom`,
+`security / semgrep` (the [Semgrep scan](#semgrep-scan) stage), and
+lint, typecheck, tests and audit on the primary version. The
+repo-specific gates run locally too: vergil-containers'
+`quality / hadolint` (vergil-containers#761) and vergil-actions' action
+shell suites (vergil-actions#1108).
+
+| PR CI check | Decision | Reason |
+| ----------- | -------- | ------ |
+| `security / trivy` | Run locally, planned in #4445 | A `trivy` stage would run `trivy fs --scanners vuln --severity CRITICAL,HIGH --exit-code 1` with the repo's `.trivyignore`, as CI does, caching the vulnerability database between runs. |
+| `docs / docs` | Run locally, planned in #4446 | A docs stage would run the strict mkdocs build when `docs/site/mkdocs.yml` exists. Until then, vergil-tooling runs it in its own custom validator. |
+| `security / codeql` | CI-only | It needs GitHub code scanning, its CLI is not in the dev images, and building its database is heavy. |
+| `Trivy`, `Semgrep OSS`, `CodeQL` | CI-only | GitHub computes them from the uploaded SARIF for the changed lines, so they cannot run locally. The local semgrep stage, and the trivy stage once it lands, cover the findings behind them. |
+| `version / version-bump` | CI-only | It compares the branch's version with `main`'s, so its result depends on where the release cycle stands, not on the change. |
+| `package / evidence` | CI-only | It builds the `.deb` and `.rpm` packages and install-tests them across the distro matrix, which needs nested containers and a long run. |
+| `images / evidence` | CI-only | It builds and scans the changed images on each architecture's own runner. |
+| Non-primary versions of lint, typecheck, tests and audit | CI-only | Locally only the primary version runs, plus every version's tests with `--all-versions` (Python only). Lint and typecheck rarely differ between versions. |
+
+Two follow-ups came out of the same review and change no gate's
+decision. The semgrep stage repeats the `p/c` and `p/typescript`
+rulesets that `ci-security.yml` adds; #4447 makes `vrg-semgrep-scan`
+the one source of that mapping. The CI gates require
+`test / integration / <version>` when `[ci].integration-tests` is on,
+but no reusable workflow runs an integration job yet, so such a repo
+could not merge; #4448 either adds the job or refuses the setting. No
+fleet repo turns it on today.
 
 ## Agent and Git Wrappers
 
@@ -110,7 +152,8 @@ container. The outer layer, `vrg-container-run`, launches the dev
 container once and runs `vrg-validate` inside it. The inner layer,
 `vrg-validate`, reads `[project].primary-language` from `vergil.toml` and
 runs the common checks, then the language's checks from the built-in
-command registry, then the repository's custom validator, as below. The
+command registry, then the semgrep scan, then the repository's custom
+validator, as below. The
 dev images come from
 [vergil-containers](https://github.com/vergil-project/vergil-containers)
 (see [Dev container images](ci-architecture.md#dev-container-images)).
@@ -176,6 +219,30 @@ its manifests, such as a branch that deletes `Cargo.toml` from an
 existing crate or adds Rust sources without one, has lost its manifest
 rather than never had one: its install stage fails, naming the missing
 manifests and the first sources found, and no language stage runs.
+
+### Semgrep scan
+
+After the language checks, `vrg-validate` runs the scan of PR CI's
+`security / semgrep` gate, so a finding fails locally before the PR
+is opened. `--check semgrep` runs only this stage. It resolves the
+rulesets the CI job does: the language's registry ruleset (see
+[Shared security workflow](ci-architecture.md#shared-security-workflow)), `p/dockerfile`
+when the repository has a `Dockerfile*` anywhere, `p/github-actions`
+when `.github/workflows/` holds a `*.yml` or `*.yaml`, and the
+`p/c` (C++) or `p/typescript` (TypeScript) ruleset that
+`ci-security.yml` adds. The files it looks at are the tracked and
+untracked ones that `.gitignore` does not exclude. The
+fleet-excluded rules stay excluded, and a finding with an in-source
+`nosemgrep` suppression is listed but does not fail the stage, as in
+CI.
+
+Semgrep downloads the rulesets from its registry, so the stage
+needs network access, like the audit stage. Its usage metrics are
+off (`--metrics off`). The SARIF goes to a temporary directory, never
+the working tree. A scan that errors or writes no SARIF fails the
+stage. A repository with no ruleset to run (no language ruleset, no
+Dockerfile and no workflow) records the stage as a warning (⚠). For
+this repository the scan takes about 15 seconds.
 
 ### Custom validator
 
