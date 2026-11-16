@@ -505,12 +505,12 @@ permanently blocked with no `--admin` escape (epic
 `quality / custom` jobs: it needs `common`, `custom`, `lint` and `typecheck` and
 fails if any of them did not succeed. That holds in every repo, whatever its
 language, so `quality / evidence` is required everywhere and `quality / common`,
-which still runs, is not required on its own. It also needs the `build` job,
-which runs only when `vrg-ci-resolve` reports `build-enabled` (Rust and
-TypeScript), and checks its result against that flag: a build skipped with
-the flag off passes, and a failed build, or one skipped with the flag on,
-fails the gate. A failing custom validator
-therefore blocks the merge even in a repo with no primary language. The other
+which still runs, is not required on its own. A failing custom validator
+therefore blocks the merge even in a repo with no primary language.
+`quality / evidence` also needs the `build` job, which runs only when
+`vrg-ci-resolve` reports `build-enabled` (Rust and TypeScript), and checks
+its result against that flag: a build skipped with the flag off passes, and
+a failed build, or one skipped with the flag on, fails the gate. The other
 non-matrixed checks (the security scanners, the version-bump gate,
 `docs / docs`) keep their fixed, version-free names. A repo whose
 `vergil.toml` has a `[package]` section also requires `package / evidence`, the
