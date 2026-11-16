@@ -344,7 +344,7 @@ def render_body(notes: list[str], paths: list[str]) -> str:
 
 
 def diff_changed_lines(tree: Path, base_sha: str, paths: Sequence[str]) -> dict[str, list[str]]:
-    """Each path's whole-file ``git diff <base_sha>`` in *tree*, as :func:`fence_violations` reads it.
+    """Each path's whole-file ``git diff <base_sha>`` in *tree*, for :func:`fence_violations`.
 
     Every unchanged line comes as context, so a changed file's diff is one
     hunk over the whole file: the no-downgrade rule needs each versioned

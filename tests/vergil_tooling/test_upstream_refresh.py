@@ -844,6 +844,13 @@ def test_fence_dropped_and_new_keys_allowed() -> None:
     assert fence_violations(_rules(rule), ["f"], {"f": lines}, None, None) == []
 
 
+def test_fence_line_rule_without_version_group_needs_no_whole_file() -> None:
+    # With nothing versioned there is nothing to place, so any diff shape passes.
+    rule = PathRule(glob="f", lines=r"^[A-Z]+=[0-9.]+$")
+    lines = ["diff --git a/f b/f", "@@ -1 +0,0 @@", "-A=1.0", "@@ -3,0 +3 @@", "+B=0.1"]
+    assert fence_violations(_rules(rule), ["f"], {"f": lines}, None, None) == []
+
+
 def test_fence_partial_diff_refused_under_a_version_rule() -> None:
     # A diff that is not one whole-file hunk cannot place its versioned lines.
     rule = PathRule(glob="f", lines=r"^(?P<k>[A-Z]+)=(?P<version>[0-9.]+)$")
