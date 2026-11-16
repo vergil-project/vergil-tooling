@@ -1704,6 +1704,111 @@ def test_render_closed_lists_private_under_public() -> None:
     assert "- org/secret#3" in out
 
 
+# -- Misplaced archives (vergil-tooling#3817) ----------------------------------
+
+_INTAKE_EPIC = epics.IssueRef("org", ".github", 381)
+_ADHOC_EPIC = epics.IssueRef("org", ".github", 7)
+_LOST_LABEL_TITLE = "Archive (ad hoc): lab — 2026-Q3"
+
+
+def test_orphan_drift_never_adopts_an_archive_that_lost_its_label() -> None:
+    # The #3817 shape: a partial legacy normalize left the new title, no epic
+    # and no archive label; the orphan pass attached it to an intake epic.
+    issues = [_issue("org/.github", 180, labels=("ad-hoc",), title=_LOST_LABEL_TITLE)]
+    with patch("vergil_tooling.lib.epics.queue_home", side_effect=_homes) as qh:
+        assert epic_audit.orphan_drift("org", issues=issues) == []
+    qh.assert_not_called()
+
+
+def test_misplaced_archives_flags_parented_and_unlabelled_archives() -> None:
+    issues = [
+        _issue(  # the #3817 case: under an intake epic, label lost
+            "org/.github",
+            180,
+            labels=("ad-hoc",),
+            title=_LOST_LABEL_TITLE,
+            native_parent=_INTAKE_EPIC,
+        ),
+        _issue(  # labelled, but parented under a non-queue epic
+            "org/.github",
+            181,
+            labels=("archive", "ad-hoc"),
+            title="Archive (ad hoc): lab — 2026-Q4",
+            native_parent=_ADHOC_EPIC,
+        ),
+        _issue("org/lab", 9, labels=("ad-hoc",), title=_LOST_LABEL_TITLE),  # top-level, no label
+        _issue(  # a well-formed archive: fine
+            "org/.github",
+            182,
+            labels=("archive", "intake"),
+            title="Archive (intake): org — 2026-Q4",
+        ),
+        _issue("org/tool", 5, native_parent=_INTAKE_EPIC),  # a queued task: not an archive
+        _issue(  # a normalize whose second edit dropped epic but not the legacy title
+            "org/.github",
+            183,
+            labels=("archive", "ad-hoc"),
+            title="Epic (ad hoc): lab — 2026-Q3",
+        ),
+        _issue(  # an overflow segment's stamped title: fine
+            "org/.github",
+            184,
+            labels=("archive", "ad-hoc"),
+            title="Archive (ad hoc): lab — 2026-Q4 (2)",
+        ),
+    ]
+    kinds = {_INTAKE_EPIC: "intake", _ADHOC_EPIC: None}
+    with (
+        patch("vergil_tooling.lib.epics.queue_kind", side_effect=kinds.__getitem__) as qk,
+        patch("vergil_tooling.lib.github.run") as run,
+    ):
+        found = epic_audit.misplaced_archives("org", issues=issues)
+    assert found == [
+        epic_audit.MisplacedArchive(
+            epics.IssueRef("org", ".github", 180),
+            "parented under the intake queue epic org/.github#381; missing the `archive` label",
+        ),
+        epic_audit.MisplacedArchive(
+            epics.IssueRef("org", ".github", 181), "parented under org/.github#7"
+        ),
+        epic_audit.MisplacedArchive(epics.IssueRef("org", "lab", 9), "missing the `archive` label"),
+        epic_audit.MisplacedArchive(
+            epics.IssueRef("org", ".github", 183), "title is not a stamped archive title"
+        ),
+    ]
+    assert qk.call_count == 2  # only parented archives read their parent's labels
+    run.assert_not_called()  # report only
+
+
+def test_misplaced_archives_enumerates_when_not_handed_issues() -> None:
+    issues = [_issue("org/lab", 9, labels=("ad-hoc",), title=_LOST_LABEL_TITLE)]
+    with patch("vergil_tooling.lib.epic_audit.open_issues", return_value=issues) as enum:
+        found = epic_audit.misplaced_archives("org")
+    enum.assert_called_once_with("org")
+    assert [m.ref for m in found] == [epics.IssueRef("org", "lab", 9)]
+
+
+def test_render_lists_misplaced_archives_as_invariant_violations() -> None:
+    misplaced = [
+        epic_audit.MisplacedArchive(epics.IssueRef("org", "lab", 9), "missing the `archive` label")
+    ]
+    out = epic_audit.render([], [], org="org", window_days=30, misplaced=misplaced)
+    assert "No drift" not in out
+    assert "## Invariant violations" in out
+    assert "**Misplaced archives**" in out
+    assert "- org/lab#9 — missing the `archive` label" in out
+
+
+def test_render_closed_lists_misplaced_archives() -> None:
+    misplaced = [
+        epic_audit.MisplacedArchive(epics.IssueRef("org", "lab", 9), "missing the `archive` label")
+    ]
+    out = epic_audit.render_closed([], org="org", window_days=30, misplaced=misplaced)
+    assert "No drift" not in out
+    assert "## Needs a human (report only)" in out
+    assert "- org/lab#9 — missing the `archive` label" in out
+
+
 # -- Deferred queue kind (epic .github#508) ------------------------------------
 
 
