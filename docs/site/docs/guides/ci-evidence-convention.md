@@ -110,18 +110,15 @@ show the **intended shape**, not what every bundle carries today:
 - `metrics` currently ships **empty** (`{}`) for **every** gate; the
   `findings_by_severity` / `coverage_pct` / `tests` summaries are the target
   shape, not yet populated.
-- The `quality` gate's `tools` always names Python's tools (ruff and mypy),
-  and on a non-Python repository it holds no lint or typecheck report. A
-  Rust repository's `quality` gate therefore carries only its common and
-  custom transcripts. The fix is part of the single source of truth for the
-  report files
-  ([vergil-tooling#4416](https://github.com/vergil-project/vergil-tooling/issues/4416)).
-- The `test` and `audit` gates name their tools and hold their reports only
-  for a language with an entry in vergil-actions' report table
+- The `test` and `audit` gates, and the `quality` gate's lint and typecheck
+  legs, name their tools and hold their reports only for a language with an
+  entry in vergil-actions' report table
   ([`ci/evidence/reports`](https://vergil-project.github.io/vergil-actions/latest/actions/ci-evidence-reports/)),
-  today Python and Rust. For any other language (today go, cpp and
-  typescript) those two gates ship an empty `tools` array and no report,
-  with a warning on each leg.
+  today Python, Rust and TypeScript (the lint and typecheck entries since
+  vergil-actions v2.1.78). For any other language (today go and cpp) those
+  legs ship an empty `tools` array and no report, with a warning on each
+  leg, so that language's `quality` gate carries only its common and custom
+  transcripts.
 - Since vergil-actions v2.1.75 the `security` gate names its scanners
   (`trivy` and `semgrep`, plus `codeql` when its job ran and passed), where
   it used to ship an empty `tools` array.
@@ -165,15 +162,15 @@ prefix:
 | `security / …`, plus GHAS `Trivy` / `Semgrep OSS` / `CodeQL` | `security`    | Yes                 |
 | `test / …`                                         | `test`        | Yes                 |
 | `audit / …`                                        | `audit`       | Yes                 |
-| `quality / …` (common, custom, lint, typecheck)    | `quality`     | Yes                 |
+| `quality / …` (common, custom, lint, typecheck, build) | `quality` | Yes                 |
 | `package / …` (only with `[package]`)              | `package`     | Yes                 |
 | `images / …` (only with `[ci].images`)             | `images`      | Yes                 |
 | `version / …`                                      | —             | No (non-blocking)   |
 | `docs`                                             | —             | No (low-signal)     |
 
 The guiding principle: **any gate that can block the build is evidence worth
-keeping.** Quality (common checks, custom validator, lint and typecheck)
-sits alongside security, test, and audit as first-class evidence, and
+keeping.** Quality (common checks, custom validator, lint, typecheck and,
+for a language that turns it on, the release build) sits alongside security, test, and audit as first-class evidence, and
 every repo requires the `quality / evidence` gate, whatever its language.
 A repo whose `vergil.toml` has a `[package]` section also requires the
 `package / evidence` gate (the `ci-package.yml` aggregate over its whole
