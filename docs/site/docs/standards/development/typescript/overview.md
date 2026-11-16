@@ -270,7 +270,11 @@ exception: the checks above fail it.
 held to a **100% line threshold per Node version**:
 
 ```bash
-node_modules/.bin/vitest run --coverage --coverage.provider=v8 --coverage.thresholds.lines=100
+node_modules/.bin/vitest run --coverage --coverage.provider=v8 \
+  --coverage.thresholds.lines=100 --coverage.reportOnFailure \
+  --coverage.reportsDirectory=coverage \
+  --coverage.reporter=text --coverage.reporter=cobertura \
+  --reporter=default --reporter=junit --outputFile.junit=junit.xml
 ```
 
 The gate is a forcing function for explicitness, not a claim that every line was
@@ -288,17 +292,23 @@ TypeScript hard gates:
 
 - **TYPECHECK** (once) — `node_modules/.bin/tsc --noEmit` with the curated
   strict set inherited from the base tsconfig (see
-  [Toolchain and Strictness](toolchain-and-strictness.md)).
+  [Toolchain and Strictness](toolchain-and-strictness.md)). The run writes
+  its diagnostics and closing statistics (`--pretty false --diagnostics`) to
+  `quality-tsc.txt`, the typecheck gate's evidence, and prints them to the log.
 - **LINT** (once) — Prettier `--check` for format, then ESLint's flat config
   with type-aware typescript-eslint rules, carrying the no-standing-suppression
-  rule (`@typescript-eslint/ban-ts-comment`).
+  rule (`@typescript-eslint/ban-ts-comment`). The ESLint run writes its JSON
+  report to `quality-eslint.json`, the lint gate's evidence, and prints each
+  finding to the log.
 - **BUILD** (once) — `npm ci --ignore-scripts && npm run build`, the release
   build (see [Typecheck and the Release Build](#typecheck-and-the-release-build)).
 - **TEST** (per Node version) — Vitest with the V8 coverage provider, held to
   100% line coverage per Node major (see
-  [Testing and Coverage](testing-and-coverage.md)).
-- **AUDIT** (once) — `npm audit --audit-level=high`, plus a best-effort
-  license summary. The vulnerability audit covers every package in
+  [Testing and Coverage](testing-and-coverage.md)). The run writes
+  `junit.xml` and Cobertura `coverage.xml`, even when a test fails.
+- **AUDIT** (once) — `npm audit --audit-level=high --json`, plus a best-effort
+  license summary. The audit run writes its JSON to `npm-audit.json`, the
+  audit gate's evidence, and exits with its own status. The vulnerability audit covers every package in
   `package-lock.json`, devDependencies included, so a vulnerable docs or test
   tool fails the audit just as a runtime dependency does. The license summary
   still covers production dependencies only.

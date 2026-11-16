@@ -18,14 +18,18 @@ from vergil_tooling.lib.languages import (
     CARGO_DENY_REPORT,
     CLIPPY_REPORT,
     COVERAGE_REPORT,
+    ESLINT_REPORT,
     JUNIT_REPORT,
     LICENSES_REPORT,
     MYPY_REPORT,
+    NPM_AUDIT_REPORT,
     PIP_AUDIT_REPORT,
     PIP_AUDIT_REQUIREMENTS,
     PYTHON_REPORT_FILES,
     RUFF_REPORT,
     RUST_REPORT_FILES,
+    TSC_REPORT,
+    TYPESCRIPT_REPORT_FILES,
     Cardinality,
     CheckKind,
     EcosystemInfo,
@@ -976,25 +980,38 @@ def test_typescript_gates_run_repo_binaries_by_path() -> None:
     No bare name a global binary could answer, and no ``npx``, which falls
     back to the global ``bin`` even with ``--no-install`` (spec §6.3).
     """
-    for kind in (CheckKind.TYPECHECK, CheckKind.TEST):
-        for cmd in language_commands("typescript", kind):
-            assert cmd[0].startswith("node_modules/.bin/"), cmd
-    lint = language_commands("typescript", CheckKind.LINT)
-    assert "npx" not in " ".join(arg for cmd in lint for arg in cmd)
-    # ESLint runs by path; Prettier stays an image tool.
-    assert [cmd[0] for cmd in lint] == ["prettier", "node_modules/.bin/eslint"]
+    for kind, tool in (
+        (CheckKind.LINT, "eslint"),
+        (CheckKind.TYPECHECK, "tsc"),
+        (CheckKind.TEST, "vitest"),
+    ):
+        script = _ts_script(kind)
+        assert f"node_modules/.bin/{tool} " in script, kind
+        # The tool appears only by path, never as a bare command.
+        assert f"; {tool} " not in script, kind
+        assert not script.startswith(f"{tool} "), kind
+        assert "npx" not in script, kind
+    # Prettier stays an image tool.
+    assert language_commands("typescript", CheckKind.LINT)[0][0] == "prettier"
+
+
+def _ts_script(kind: CheckKind) -> str:
+    """The one ``sh -c`` script of a TypeScript gate (its report-writing run)."""
+    scripts = [cmd[2] for cmd in language_commands("typescript", kind) if cmd[:2] == ["sh", "-c"]]
+    assert len(scripts) == 1, scripts
+    return scripts[0]
 
 
 def test_typescript_lint_commands() -> None:
     """Prettier reads the managed ``.prettierrc.json``; ESLint finds the repo's own config."""
-    assert language_commands("typescript", CheckKind.LINT) == [
-        ["prettier", "--check", ".", "--config", ".prettierrc.json"],
-        ["node_modules/.bin/eslint", "."],
-    ]
+    lint = language_commands("typescript", CheckKind.LINT)
+    assert lint[0] == ["prettier", "--check", ".", "--config", ".prettierrc.json"]
+    assert lint[1][:2] == ["sh", "-c"]
+    assert len(lint) == 2
 
 
 def test_lint_has_no_staging() -> None:
-    """LINT reads the repo's configs in place: no staged copy, no shell, no packaged path.
+    """LINT reads the repo's configs in place: no staged copy, no packaged path.
 
     The managed ``eslint.vergil.config.mjs`` sits in the repo root, so its bare
     imports resolve from the repo's ``node_modules`` and the copy-in,
@@ -1002,10 +1019,24 @@ def test_lint_has_no_staging() -> None:
     """
     flat = [arg for cmd in language_commands("typescript", CheckKind.LINT) for arg in cmd]
     assert not any(".vergil-eslint.config.mjs" in arg for arg in flat)
-    assert "sh" not in flat
     assert not any("/typescript/" in arg for arg in flat)
     # ESLint takes no --config: it reads the repo's eslint.config.mjs itself.
-    assert flat.count("--config") == 1
+    assert "--config" not in _ts_script(CheckKind.LINT)
+
+
+def test_typescript_lint_writes_eslint_report() -> None:
+    """The gating ESLint run writes its JSON report and keeps ESLint's status (spec §6.6)."""
+    assert ESLINT_REPORT == "quality-eslint.json"
+    script = _ts_script(CheckKind.LINT)
+    assert script.startswith(f"rm -f {ESLINT_REPORT}; ")
+    assert (
+        f"node_modules/.bin/eslint . --format json --output-file {ESLINT_REPORT}; rc=$?; " in script
+    )
+    # The findings are printed from the report, and the gate exits with ESLint's status.
+    assert f"' {ESLINT_REPORT} || exit 1; " in script
+    assert script.endswith('exit "$rc"')
+    # A passing run that left no report fails the gate.
+    assert f'echo "error: ESLint wrote no report at {ESLINT_REPORT}" >&2; exit 1; ' in script
 
 
 def test_typescript_lint_ban_ts_comment_rule_present() -> None:
@@ -1024,8 +1055,20 @@ def test_typescript_lint_ban_ts_comment_rule_present() -> None:
 def test_typescript_typecheck_commands() -> None:
     cmds = language_commands("typescript", CheckKind.TYPECHECK)
     # One canonical type engine; strict set lives in the base tsconfig consumers
-    # extend, so the command is a bare --noEmit typecheck.
-    assert cmds == [["node_modules/.bin/tsc", "--noEmit"]]
+    # extend, so the command is a --noEmit typecheck with no strictness flags.
+    assert cmds == [["sh", "-c", languages._TYPESCRIPT_TSC_SCRIPT]]
+    assert "node_modules/.bin/tsc --noEmit --pretty false --diagnostics >" in cmds[0][2]
+
+
+def test_typescript_typecheck_writes_tsc_report() -> None:
+    """The gating ``tsc`` run writes its diagnostics, and its status is kept (spec §6.6)."""
+    assert TSC_REPORT == "quality-tsc.txt"
+    assert _ts_script(CheckKind.TYPECHECK) == (
+        f"node_modules/.bin/tsc --noEmit --pretty false --diagnostics >{TSC_REPORT}; "
+        "rc=$?; "
+        f"cat {TSC_REPORT} || exit 1; "
+        'exit "$rc"'
+    )
 
 
 def test_typescript_base_tsconfig_curated_extras() -> None:
@@ -1057,18 +1100,79 @@ def test_typescript_base_tsconfig_curated_extras() -> None:
 
 def test_typescript_test_commands() -> None:
     cmds = language_commands("typescript", CheckKind.TEST)
-    joined = _joined(cmds)
+    assert len(cmds) == 1
+    script = _ts_script(CheckKind.TEST)
     # Vitest with the V8 coverage provider.
-    assert any(c.startswith("node_modules/.bin/vitest run --coverage") for c in joined)
-    assert any("--coverage.provider=v8" in c for c in joined)
+    assert "node_modules/.bin/vitest run --coverage --coverage.provider=v8 " in script
+
+
+def _vitest_args() -> list[str]:
+    """The arguments of the TEST gate's one Vitest run."""
+    script = _ts_script(CheckKind.TEST)
+    runs = [part for part in script.split("; ") if part.startswith("node_modules/.bin/vitest ")]
+    assert len(runs) == 1, runs
+    return runs[0].split()
 
 
 def test_typescript_test_enforces_100_line_coverage() -> None:
     """The gate must fail under 100% line coverage (spec §5)."""
-    cmds = language_commands("typescript", CheckKind.TEST)
-    vitest_cmd = [c for c in cmds if c[0] == "node_modules/.bin/vitest"]
-    assert len(vitest_cmd) == 1
-    assert "--coverage.thresholds.lines=100" in vitest_cmd[0]
+    assert "--coverage.thresholds.lines=100" in _vitest_args()
+
+
+def test_typescript_test_writes_junit_and_cobertura() -> None:
+    """One Vitest run writes ``junit.xml`` and Cobertura ``coverage.xml`` (spec §6.6)."""
+    args = _vitest_args()
+    # The console reporter stays, beside JUnit to the root report.
+    assert "--reporter=default" in args
+    assert "--reporter=junit" in args
+    assert f"--outputFile.junit={JUNIT_REPORT}" in args
+    # The coverage table stays on the console, beside Cobertura.
+    assert "--coverage.reporter=text" in args
+    assert "--coverage.reporter=cobertura" in args
+    assert "--coverage.reportsDirectory=coverage" in args
+    script = _ts_script(CheckKind.TEST)
+    # Stale reports are removed first; Cobertura is copied to the root report.
+    assert script.startswith(
+        f"rm -f {COVERAGE_REPORT} {JUNIT_REPORT} coverage/cobertura-coverage.xml; "
+    )
+    assert f"cp coverage/cobertura-coverage.xml {COVERAGE_REPORT} || exit 1; " in script
+    # A passing run that left either report missing fails the gate.
+    assert "Vitest wrote no Cobertura report" in script
+    assert f"Vitest wrote no JUnit report at {JUNIT_REPORT}" in script
+    assert script.endswith('exit "$rc"')
+
+
+def test_typescript_test_reports_coverage_on_failure() -> None:
+    """Vitest writes no coverage when a test fails unless it is told to (spec §6.6)."""
+    assert "--coverage.reportOnFailure" in _vitest_args()
+
+
+def test_typescript_audit_writes_json_and_gates() -> None:
+    """The gating ``npm audit`` run writes ``npm-audit.json`` at the unchanged threshold."""
+    assert NPM_AUDIT_REPORT == "npm-audit.json"
+    assert _ts_script(CheckKind.AUDIT) == (
+        f"npm audit --audit-level=high --json >{NPM_AUDIT_REPORT}; "
+        "rc=$?; "
+        f"cat {NPM_AUDIT_REPORT} || exit 1; "
+        'exit "$rc"'
+    )
+
+
+def test_typescript_report_files() -> None:
+    """The TypeScript report names match vergil-actions' staging (spec §6.6)."""
+    assert TYPESCRIPT_REPORT_FILES == (
+        "coverage.xml",
+        "junit.xml",
+        "npm-audit.json",
+        "quality-eslint.json",
+        "quality-tsc.txt",
+    )
+    every_script = " ".join(
+        _ts_script(kind)
+        for kind in (CheckKind.LINT, CheckKind.TYPECHECK, CheckKind.TEST, CheckKind.AUDIT)
+    )
+    for report in TYPESCRIPT_REPORT_FILES:
+        assert report in every_script, report
 
 
 def test_typescript_audit_commands() -> None:
@@ -1076,9 +1180,7 @@ def test_typescript_audit_commands() -> None:
     joined = _joined(cmds)
     # npm audit is the CVE scan, over the whole locked dependency set with an
     # explicit severity threshold.
-    npm_audit = [c for c in cmds if c[:2] == ["npm", "audit"]]
-    assert len(npm_audit) == 1
-    assert any(arg.startswith("--audit-level=") for arg in npm_audit[0])
+    assert _ts_script(CheckKind.AUDIT).startswith("npm audit --audit-level=high ")
     # OSV-Scanner is the documented contingency, not the v1 default.
     assert not any("osv-scanner" in c for c in joined)
     # Best-effort license-metadata surfacing (hardened gating deferred, §9 #7).
@@ -1091,11 +1193,10 @@ def test_typescript_audit_covers_dev_dependencies() -> None:
     A vulnerable devDependency (docs tooling, test runners) must fail the
     gate, so ``npm audit`` must not narrow its scope to production.
     """
-    cmds = language_commands("typescript", CheckKind.AUDIT)
-    npm_audit = [c for c in cmds if c[:2] == ["npm", "audit"]]
-    assert len(npm_audit) == 1
-    assert not any(arg.startswith(("--omit", "--only")) for arg in npm_audit[0])
-    assert "--production" not in npm_audit[0]
+    npm_audit = _ts_script(CheckKind.AUDIT).split(" >")[0].split()
+    assert npm_audit[:2] == ["npm", "audit"]
+    assert not any(arg.startswith(("--omit", "--only")) for arg in npm_audit)
+    assert "--production" not in npm_audit
 
 
 def test_typescript_audit_license_allowlist_reviewed_set() -> None:

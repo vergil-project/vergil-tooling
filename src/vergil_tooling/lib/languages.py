@@ -134,6 +134,25 @@ RUST_REPORT_FILES = (
     CARGO_DENY_REPORT,
 )
 
+# The TypeScript gates' evidence (epic vergil-project/.github#1174, spec §6.6),
+# each from the gate's own run: ESLint's JSON formatter output from LINT, the
+# diagnostics of ``tsc`` from TYPECHECK and ``npm audit --json`` from AUDIT.
+# TEST writes COVERAGE_REPORT and JUNIT_REPORT, as for Python and Rust. The
+# names are the contract with vergil-actions' ``reports.sh`` (its
+# ``typescript/*`` entries), so keep them exact.
+ESLINT_REPORT = "quality-eslint.json"
+TSC_REPORT = "quality-tsc.txt"
+NPM_AUDIT_REPORT = "npm-audit.json"
+
+# The workspace-root report files the TypeScript gate commands emit.
+TYPESCRIPT_REPORT_FILES = (
+    COVERAGE_REPORT,
+    JUNIT_REPORT,
+    NPM_AUDIT_REPORT,
+    ESLINT_REPORT,
+    TSC_REPORT,
+)
+
 # The pip-audit input: every package pinned in ``uv.lock`` — all dependency
 # groups and extras, not just the synced ``dev`` environment (issue #3498). An
 # installed-environment audit never saw a ``docs``-only pin, so a vulnerable
@@ -407,6 +426,92 @@ _TYPESCRIPT_LICENSES_ALLOWLIST = ";".join(
         "Python-2.0",
         "Unlicense",
     ]
+)
+
+# The TypeScript LINT ESLint, TYPECHECK, TEST and AUDIT commands (epic
+# vergil-project/.github#1174, spec §6.6). Each runs its tool once, and that
+# one run both gates and writes the report, so the evidence is the gate's own
+# result. Each exits with the tool's status, so a failing gate still writes its
+# report, and each prints the tool's findings to the log. Plain POSIX ``sh``
+# (the image's ``sh`` is dash, with no ``pipefail``, so no ``tee``).
+#
+# ESLint takes one formatter per run, so ``--format json --output-file`` writes
+# the report and prints nothing; once ESLint exits, ``jq`` prints each message
+# from the report as ``path:line:column: severity message [rule]``, the path
+# relative to the repo root. A stale report is removed first. An ESLint run that
+# fails before linting (a broken config) writes no report and has printed its
+# own error, so the gate exits with ESLint's status; one that passes with no
+# report fails the gate. ``jq`` failing fails the gate; jq is in every
+# vergil-containers image (its ``base`` layer).
+_ESLINT_RENDER_FILTER = (
+    ".[] | (.filePath | ltrimstr($root)) as $f | .messages[] "
+    '| "\\($f):\\(.line // 0):\\(.column // 0): '
+    '\\(if .severity == 2 then "error" else "warning" end) '
+    '\\(.message) [\\(.ruleId // "fatal")]"'
+)
+_TYPESCRIPT_ESLINT_SCRIPT = (
+    f"rm -f {ESLINT_REPORT}; "
+    f"node_modules/.bin/eslint . --format json --output-file {ESLINT_REPORT}; "
+    "rc=$?; "
+    f"if [ -f {ESLINT_REPORT} ]; then "
+    f"jq -r --arg root \"$PWD/\" '{_ESLINT_RENDER_FILTER}' {ESLINT_REPORT} || exit 1; "
+    'elif [ "$rc" -eq 0 ]; then '
+    f'echo "error: ESLint wrote no report at {ESLINT_REPORT}" >&2; exit 1; '
+    "fi; "
+    'exit "$rc"'
+)
+
+# ``tsc`` writes its diagnostics to stdout, one per line with
+# ``--pretty false`` (``file(line,col): error TSnnnn: message``), so the shell
+# writes stdout to the report and prints the report back for the log.
+# ``--diagnostics`` adds the compiler's closing statistics (files and lines
+# checked, timings) after the diagnostics, so a clean typecheck still writes a
+# report with real data, as cargo-deny's ``--show-stats`` does for rust AUDIT.
+# Neither flag changes what is checked. ``cat`` failing fails the gate.
+_TYPESCRIPT_TSC_SCRIPT = (
+    f"node_modules/.bin/tsc --noEmit --pretty false --diagnostics >{TSC_REPORT}; "
+    "rc=$?; "
+    f"cat {TSC_REPORT} || exit 1; "
+    'exit "$rc"'
+)
+
+# Vitest writes ``junit.xml`` through its JUnit reporter, beside the default
+# console reporter, and the Cobertura coverage report beside the ``text``
+# table. Istanbul's Cobertura reporter names its file
+# ``cobertura-coverage.xml`` under the reports directory, which the command
+# fixes as ``coverage/`` (Vitest empties the reports directory before each
+# run, so it must never be the repo root), then copies it to ``coverage.xml``. Vitest writes no coverage
+# when a test fails unless ``--coverage.reportOnFailure`` is set. The two root
+# reports and the Cobertura file are removed first, so a stale one is never
+# staged; a run that passes but leaves either report missing fails the gate.
+_VITEST_COBERTURA = "coverage/cobertura-coverage.xml"
+_TYPESCRIPT_TEST_SCRIPT = (
+    f"rm -f {COVERAGE_REPORT} {JUNIT_REPORT} {_VITEST_COBERTURA}; "
+    "node_modules/.bin/vitest run --coverage --coverage.provider=v8 "
+    "--coverage.thresholds.lines=100 --coverage.reportOnFailure "
+    "--coverage.reportsDirectory=coverage "
+    "--coverage.reporter=text --coverage.reporter=cobertura "
+    f"--reporter=default --reporter=junit --outputFile.junit={JUNIT_REPORT}; "
+    "rc=$?; "
+    f"if [ -f {_VITEST_COBERTURA} ]; then cp {_VITEST_COBERTURA} {COVERAGE_REPORT} || exit 1; "
+    'elif [ "$rc" -eq 0 ]; then '
+    f'echo "error: Vitest wrote no Cobertura report at {_VITEST_COBERTURA}" >&2; exit 1; '
+    "fi; "
+    f'if [ "$rc" -eq 0 ] && [ ! -f {JUNIT_REPORT} ]; then '
+    f'echo "error: Vitest wrote no JUnit report at {JUNIT_REPORT}" >&2; exit 1; '
+    "fi; "
+    'exit "$rc"'
+)
+
+# ``npm audit --json`` writes the report to stdout and keeps the
+# ``--audit-level`` exit status, so the shell writes it to the report, prints
+# it back for the log, and exits with npm's status. ``cat`` failing fails the
+# gate.
+_TYPESCRIPT_AUDIT_SCRIPT = (
+    f"npm audit --audit-level=high --json >{NPM_AUDIT_REPORT}; "
+    "rc=$?; "
+    f"cat {NPM_AUDIT_REPORT} || exit 1; "
+    'exit "$rc"'
 )
 
 # -- C++ warning set (epic vergil-project/.github#207 §3.2, owned by T5) -------
@@ -1001,16 +1106,19 @@ _REGISTRY: dict[str, Language] = {
             # that Prettier has no second config source. Vergil's ESLint config
             # carries ``@typescript-eslint/ban-ts-comment`` (the
             # no-standing-suppression rule, §3.2). Prettier and ESLint ignore
-            # ``node_modules`` by default.
+            # ``node_modules`` by default. The ESLint run writes
+            # ``quality-eslint.json``; see ``_TYPESCRIPT_ESLINT_SCRIPT``.
             CheckKind.LINT: [
                 ["prettier", "--check", ".", "--config", ".prettierrc.json"],
-                ["node_modules/.bin/eslint", "."],
+                ["sh", "-c", _TYPESCRIPT_ESLINT_SCRIPT],
             ],
             # TYPECHECK runs *once* (§3.6) — one canonical type engine. The
             # curated "warnings to 11" set lives in the packaged base tsconfig
             # the consumer extends (see the class comment above); this command
-            # reads the consumer's ``tsconfig.json`` and never emits output.
-            CheckKind.TYPECHECK: [["node_modules/.bin/tsc", "--noEmit"]],
+            # reads the consumer's ``tsconfig.json`` and never emits JavaScript.
+            # Its diagnostics go to ``quality-tsc.txt``; see
+            # ``_TYPESCRIPT_TSC_SCRIPT``.
+            CheckKind.TYPECHECK: [["sh", "-c", _TYPESCRIPT_TSC_SCRIPT]],
             # TEST runs *per Node version* (§3.6) — the only fan-out stage,
             # because runtime behavior differs across Node majors. Vitest with
             # the V8 coverage provider, held to a **100% line** threshold so the
@@ -1018,15 +1126,9 @@ _REGISTRY: dict[str, Language] = {
             # V8's byte-range→TS-source-map mapping proves imprecise at the 100%
             # bar, switch the provider to ``@vitest/coverage-istanbul`` (which
             # instruments source directly). Decided against the real gate in T10.
-            CheckKind.TEST: [
-                [
-                    "node_modules/.bin/vitest",
-                    "run",
-                    "--coverage",
-                    "--coverage.provider=v8",
-                    "--coverage.thresholds.lines=100",
-                ],
-            ],
+            # The run writes ``junit.xml`` and ``coverage.xml``, even when a
+            # test fails; see ``_TYPESCRIPT_TEST_SCRIPT``.
+            CheckKind.TEST: [["sh", "-c", _TYPESCRIPT_TEST_SCRIPT]],
             # AUDIT runs *once* (§3.6). ``npm audit`` is the CVE scan over the
             # whole locked dependency set, devDependencies included — no
             # ``--omit=dev``, so a vulnerable docs or test tool fails the gate
@@ -1039,9 +1141,10 @@ _REGISTRY: dict[str, Language] = {
             # checking stays best-effort surfacing in v1 (``license-checker
             # --summary``, non-gating — npm license metadata is inconsistent);
             # hardened gating against ``_TYPESCRIPT_LICENSES_ALLOWLIST`` is
-            # deferred (spec §9 ledger #7).
+            # deferred (spec §9 ledger #7). The ``npm audit`` run writes
+            # ``npm-audit.json``; see ``_TYPESCRIPT_AUDIT_SCRIPT``.
             CheckKind.AUDIT: [
-                ["npm", "audit", "--audit-level=high"],
+                ["sh", "-c", _TYPESCRIPT_AUDIT_SCRIPT],
                 ["license-checker", "--production", "--summary"],
             ],
         },
