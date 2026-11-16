@@ -679,9 +679,15 @@ _REGISTRY: dict[str, Language] = {
             CheckKind.AUDIT: [["sh", "-c", _RUST_AUDIT_SCRIPT]],
         },
         ecosystem=EcosystemInfo(
-            build_cmd=["cargo", "build", "--release", "--locked"],
+            # The release build, run by the release job and, as the BUILD
+            # check, by vrg-validate, so the --release profile (its
+            # optimisation and its cfg(debug_assertions) code) is built
+            # before the release PR merges (spec §6.9). --workspace builds
+            # every member, as every other Rust gate does (spec §6.4).
+            build_cmd=["cargo", "build", "--release", "--locked", "--workspace"],
             publish_cmd=["cargo", "publish", "--locked"],
             publish_env_var="CARGO_REGISTRY_TOKEN",
+            validate_build=True,
         ),
     ),
     # C++ (epic vergil-project/.github#207, T5). CMake + Conan 2; two co-equal

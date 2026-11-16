@@ -627,10 +627,19 @@ def test_rust_doctest_cmd_is_the_test_list_entry() -> None:
     assert languages.RUST_DOCTEST_CMD in language_commands("rust", CheckKind.TEST)
 
 
-def test_rust_build_and_publish_locked() -> None:
+def test_rust_build_cmd_is_locked_release_workspace() -> None:
+    # The release job's build and vrg-validate's BUILD stage run this one
+    # command, so validation builds the profile the release ships (spec §6.9).
     info = ecosystem_metadata("rust")
-    assert info.build_cmd == ["cargo", "build", "--release", "--locked"]
+    assert info.build_cmd == ["cargo", "build", "--release", "--locked", "--workspace"]
     assert info.publish_cmd == ["cargo", "publish", "--locked"]
+
+
+def test_rust_build_check_enabled() -> None:
+    assert ecosystem_metadata("rust").validate_build is True
+    assert language_commands("rust", CheckKind.BUILD) == [
+        ["cargo", "build", "--release", "--locked", "--workspace"]
+    ]
 
 
 def test_rust_report_files_contract() -> None:
@@ -1262,9 +1271,10 @@ def test_build_kind_value() -> None:
     assert CheckKind.BUILD.value == "build"
 
 
-def test_build_kind_off_for_every_language() -> None:
-    # On for no language yet: each turns it on in its own task, with a fixture run.
-    for lang in ("python", "go", "rust", "cpp", "typescript"):
+def test_build_kind_off_for_every_other_language() -> None:
+    # On for Rust only (its own test above): each other language turns it on
+    # in its own task, with a fixture run.
+    for lang in ("python", "go", "cpp", "typescript"):
         assert ecosystem_metadata(lang).validate_build is False
         assert language_commands(lang, CheckKind.BUILD) == []
     assert language_commands(None, CheckKind.BUILD) == []

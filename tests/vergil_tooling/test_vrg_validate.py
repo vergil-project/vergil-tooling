@@ -1929,6 +1929,7 @@ def test_unbootstrapped_rust_skips_language_stages_loudly(
         "install",
         "lint",
         "typecheck",
+        "build",
         "test",
         "audit",
         "semgrep",
@@ -1937,7 +1938,7 @@ def test_unbootstrapped_rust_skips_language_stages_loudly(
         "custom",
     )
     out = capsys.readouterr().out
-    for stage in ("install", "lint", "typecheck", "test", "audit"):
+    for stage in ("install", "lint", "typecheck", "build", "test", "audit"):
         assert f"NOTICE: {stage}: {_NOT_BOOTSTRAPPED}; add them to run the {stage} stage" in out
     # Each skip is a warning row and a summary line, never a silent ✓.
     assert "warnings (non-fatal):" in out
@@ -1950,7 +1951,14 @@ def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(None, "rust", tmp_path)
     language_stages = [s for s in stages if s.name not in ("common", "semgrep", "trivy", "docs")]
-    assert [s.name for s in language_stages] == ["install", "lint", "typecheck", "test", "audit"]
+    assert [s.name for s in language_stages] == [
+        "install",
+        "lint",
+        "typecheck",
+        "build",
+        "test",
+        "audit",
+    ]
     assert all(s.mode == "warn" for s in language_stages)
     _run_validate(tmp_path, [])
     data = json.loads((tmp_path / RECORD_PATH).read_text())
@@ -1960,6 +1968,7 @@ def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
         "install": "warn",
         "lint": "warn",
         "typecheck": "warn",
+        "build": "warn",
         "test": "warn",
         "audit": "warn",
         "semgrep": "ok",
@@ -1978,6 +1987,52 @@ def test_bootstrapped_rust_with_failing_fetch_still_fails(tmp_path: Path) -> Non
     # The install stage is fail_fast: its first cargo command failed and stopped it.
     assert ran[0] == "cargo fetch --locked"
     assert read_record(tmp_path).not_passed[0] == "install"
+
+
+# -- The Rust release build (epic vergil-project/.github#1165, spec §6.9) ------
+
+_RUST_BUILD = "cargo build --release --locked --workspace"
+
+
+def _run_rust_build(tmp_path: Path, build_rc: int) -> tuple[int, list[str]]:
+    """Run ``--check build`` on a bootstrapped rust repo; the build exits *build_rc*."""
+    _write_config(tmp_path, "rust")
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "x"\n')
+    (tmp_path / "Cargo.lock").write_text("version = 4\n")
+    ran: list[str] = []
+
+    def mock_run(cmd: Sequence[str], *, check: bool = True) -> int:
+        ran.append(" ".join(cmd))
+        return build_rc if " ".join(cmd) == _RUST_BUILD else 0
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._versions_resolve", return_value=("1.90",)),
+        patch(_MOD + ".progress.run", side_effect=mock_run),
+    ):
+        rc = main(["--check", "build"])
+    return rc, ran
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_rust_build_runs_the_release_build(tmp_path: Path) -> None:
+    rc, ran = _run_rust_build(tmp_path, 0)
+    assert rc == 0
+    assert ran == ["cargo fetch --locked", _RUST_BUILD]
+    assert read_record(tmp_path).passed == ("install", "build")
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_rust_build_failure_fails_validate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, ran = _run_rust_build(tmp_path, 101)
+    assert rc == 1
+    assert ran[-1] == _RUST_BUILD
+    record = read_record(tmp_path)
+    assert record.passed == ("install",)
+    assert record.not_passed == ("build",)
+    assert "1 of 1 build command(s) failed" in capsys.readouterr().out
 
 
 # -- Cargo.lock is enforced (epic vergil-project/.github#1165, spec §6.1) -------
@@ -2114,7 +2169,14 @@ def test_rust_sources_without_cargo_toml_stage_shape(tmp_path: Path) -> None:
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(None, "rust", tmp_path)
     language_stages = [s for s in stages if s.name not in ("common", "semgrep", "trivy", "docs")]
-    assert [s.name for s in language_stages] == ["install", "lint", "typecheck", "test", "audit"]
+    assert [s.name for s in language_stages] == [
+        "install",
+        "lint",
+        "typecheck",
+        "build",
+        "test",
+        "audit",
+    ]
     assert language_stages[0].mode == "fail_fast"
     with pytest.raises(ValidationError, match="add the manifests or remove the sources"):
         language_stages[0].fn(None)
