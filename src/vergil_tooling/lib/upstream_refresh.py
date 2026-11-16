@@ -547,12 +547,14 @@ def _version_groups(pattern: re.Pattern[str]) -> list[str]:
 def _versioned(
     pattern: re.Pattern[str], groups: Sequence[str], lines: Sequence[str]
 ) -> dict[str, list[str]]:
-    """The *lines* where a version group took part, by the text before that group."""
+    """The *lines* where a version group took part, by the text before that group.
+
+    Every line has already passed the line rule (:func:`_line_rule_violations`).
+    """
     by_key: dict[str, list[str]] = {}
     for line in lines:
         match = pattern.fullmatch(line)
-        if match is None:
-            continue
+        assert match is not None  # noqa: S101 - only called once every line matched in full
         group = next((name for name in groups if match.start(name) >= 0), None)
         if group is None:
             continue

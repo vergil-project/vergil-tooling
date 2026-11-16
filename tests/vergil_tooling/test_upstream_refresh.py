@@ -724,9 +724,12 @@ def test_fence_new_series_block_allowed(tmp_path: Path) -> None:
 def test_fence_dropped_series_block_allowed(tmp_path: Path) -> None:
     old_block = _RUNTIME_TOML.replace("3.14.10", "3.13.9").replace('"3.14"', '"3.13"')
     before = _RUNTIME_TOML + "\n" + old_block
-    assert _fence(
-        tmp_path, _rules(_RUNTIME), {"runtime.toml": before}, {"runtime.toml": _RUNTIME_TOML}
-    ) == []
+    assert (
+        _fence(
+            tmp_path, _rules(_RUNTIME), {"runtime.toml": before}, {"runtime.toml": _RUNTIME_TOML}
+        )
+        == []
+    )
 
 
 def test_fence_moved_and_lowered_version_refused(tmp_path: Path) -> None:
