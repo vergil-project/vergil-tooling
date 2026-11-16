@@ -336,6 +336,25 @@ def test_path_and_git_dependencies_skipped(tmp_path: Path, monkeypatch) -> None:
     assert cargo.held_back(_ctx(tmp_path), fetch) == []
 
 
+@pytest.mark.parametrize("patched_source", [None, "git+https://github.com/o/serde#abc"])
+def test_patched_crates_io_dependency_skipped(
+    tmp_path: Path, monkeypatch, patched_source: str | None
+) -> None:
+    """A crates.io dependency that [patch.crates-io] points at a path or git crate is skipped."""
+    fetched: list[str] = []
+
+    def fetch(url: str) -> bytes:
+        fetched.append(url)
+        return _index({"tokio": _stable("1.0.0", "2.0.0")})(url)
+
+    _project(tmp_path, _lock(("serde", "1.0.200", patched_source), ("tokio", "1.0.0")))
+    deps = [_dep("serde", "^1"), _dep("tokio", "^1")]
+    _install(monkeypatch, _Runner(_metadata(_member("app", deps))))
+    entries = cargo.held_back(_ctx(tmp_path), fetch)
+    assert [(e.name, e.latest) for e in entries] == [("tokio", "2.0.0")]
+    assert fetched == ["https://index.crates.io/to/ki/tokio"]
+
+
 def test_other_registry_dependency_fails_loud(tmp_path: Path, monkeypatch) -> None:
     _project(tmp_path, _lock())
     deps = [_dep("internal", "^1", source="sparse+https://registry.example.com/")]

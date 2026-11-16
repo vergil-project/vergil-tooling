@@ -63,8 +63,10 @@ The newest versions come from Cargo's sparse index
 from the crates.io web API. A workspace-inherited dependency
 (`foo.workspace = true`) is checked against the workspace's
 requirement. Path and git dependencies are not reported, since they have
-no index entry. A dependency from a registry other than crates.io fails
-the updater rather than go unchecked.
+no index entry, and neither is a crates.io dependency that
+`[patch.crates-io]` or `[replace]` points at a path or git crate. A
+dependency from a registry other than crates.io fails the updater rather
+than go unchecked.
 
 A failed `cargo update` or `cargo metadata`, an unreadable `Cargo.toml`
 or `Cargo.lock`, and a failed sparse-index read each fail the update as

@@ -108,12 +108,14 @@ def locked_package_versions(
     return found
 
 
-def _crates_io_locked(lock: dict[str, Any]) -> dict[str, list[str]]:
-    """Crate name to every version locked from crates.io."""
-    found: dict[str, list[str]] = {}
+def _locked_with_sources(lock: dict[str, Any]) -> dict[str, list[tuple[str, str | None]]]:
+    """Crate name to every ``(version, source)`` locked for it; a path crate has no source."""
+    found: dict[str, list[tuple[str, str | None]]] = {}
     for p in _lock_packages(lock, where="Cargo.lock"):
-        if p.get("source") in CRATES_IO_SOURCES:
-            found.setdefault(p["name"], []).append(p["version"])
+        source = p.get("source")
+        found.setdefault(p["name"], []).append(
+            (p["version"], source if isinstance(source, str) else None)
+        )
     return found
 
 
@@ -191,9 +193,21 @@ def _members(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     return members
 
 
-def _locked_version(name: str, req: str, locked: dict[str, list[str]], member: str) -> str:
-    """The highest crates.io version locked for *name* that satisfies *req*."""
-    candidates = [v for v in locked.get(name, []) if _matches(req, v, name=name)]
+def _locked_version(
+    name: str, req: str, locked: dict[str, list[tuple[str, str | None]]], member: str
+) -> str | None:
+    """The highest crates.io version locked for *name* that satisfies *req*.
+
+    ``None`` when the dependency is declared from crates.io but locked only
+    from a path or git crate, as a ``[patch.crates-io]`` or ``[replace]``
+    override does: like a path or git dependency, the crate it resolves to has
+    no index entry to compare against, so it is skipped. A dependency with no
+    matching lock entry at all fails loud.
+    """
+    matching = [(v, s) for v, s in locked.get(name, []) if _matches(req, v, name=name)]
+    candidates = [v for v, s in matching if s in CRATES_IO_SOURCES]
+    if not candidates and matching:
+        return None
     if not candidates:
         raise UpdateDepsError(
             phase="update",
@@ -271,7 +285,7 @@ def held_back(ctx: UpdateDepsContext, fetch: Fetch = sparse_index.fetch_url) -> 
     workspace's. Identical entries from several members or tables are
     reported once.
     """
-    locked = _crates_io_locked(read_toml(_base(ctx) / "Cargo.lock"))
+    locked = _locked_with_sources(read_toml(_base(ctx) / "Cargo.lock"))
     metadata = cargo_metadata()
     newest_by_crate: dict[str, IndexVersion | None] = {}
     entries: list[HeldBack] = []
@@ -282,12 +296,14 @@ def held_back(ctx: UpdateDepsContext, fetch: Fetch = sparse_index.fetch_url) -> 
             raise _metadata_error(f"{member_name}: rust_version is not a string.")
         for dep in _direct_dependencies(member):
             name, req = dep["name"], dep["req"]
+            current = _locked_version(name, req, locked, member_name)
+            if current is None:
+                continue
             if name not in newest_by_crate:
                 newest_by_crate[name] = sparse_index.newest_stable(
                     sparse_index.versions(name, fetch)
                 )
             newest = newest_by_crate[name]
-            current = _locked_version(name, req, locked, member_name)
             if newest is None or sparse_index.version_key(current) >= sparse_index.version_key(
                 newest.vers
             ):
