@@ -244,7 +244,11 @@ def language_sources(lang: str, paths: Iterable[str]) -> list[str]:
 # a skip is never silent.
 WARMUP_SKIPPED_MARKER = "VRG-WARMUP-SKIPPED:"
 # cargo's own error when ``--locked`` refuses a lockfile that needs updating.
-_CARGO_STALE_LOCK_ERROR = "needs to be updated but --locked was passed"
+# Its wording has changed: older cargo says "the lock file <path> needs to be
+# updated but --locked was passed to prevent this", cargo 1.99 says "cannot
+# update the lock file <path> because --locked was passed to prevent this".
+# This is the part both share.
+_CARGO_STALE_LOCK_ERROR = "--locked was passed to prevent this"
 _RUST_STALE_LOCK_NOTICE = (
     "warmup skipped: Cargo.lock does not match Cargo.toml; update it in the "
     "container (a cargo command without --locked, such as 'cargo fetch') and commit it"
@@ -277,7 +281,7 @@ def _rust_warmup(line: str) -> str:
         "{ vrg_log=$(mktemp) || exit 1; "
         f'( set -o pipefail; {line} 2>&1 | tee "$vrg_log" ); vrg_rc=$?; '
         'if [ "$vrg_rc" -ne 0 ]; then '
-        f'if grep -qF {stale} "$vrg_log"; then echo {notice}; '
+        f'if grep -qF -e {stale} "$vrg_log"; then echo {notice}; '
         'else exit "$vrg_rc"; fi; '
         'fi; rm -f "$vrg_log"; }'
     )
