@@ -31,7 +31,8 @@ maintainability, and long-term survivability across repositories.
   container.
 - Workspaces: every workspace member is validated, not only the root
   package. Clippy, check, the coverage run (the tests and the coverage
-  report), the doctests and the audit all run with `--workspace`, and
+  report), the doctests, the audit and the release build all run with
+  `--workspace`, and
   `cargo fmt --all` formats every member. The doctests are skipped, with a
   notice, only when no workspace member has a library target. A
   single-crate repository is validated exactly as before.
@@ -72,6 +73,16 @@ maintainability, and long-term survivability across repositories.
     a generic function, only its best-covered instantiation counts.
   - Nothing can be excluded from coverage. An unreachable region is a design
     signal: remove it or make it testable.
+- Release build: `vrg-validate` builds the release profile in its build
+  stage, after the typecheck and before the tests, with
+  `cargo build --release --locked --workspace`. The release job's build runs
+  the same command, so validation builds what the release ships. The tests
+  compile the debug profile with coverage instrumentation, so without this
+  stage the `--release` profile (its optimisation, and any code under
+  `cfg(debug_assertions)` or `cfg(not(debug_assertions))`) would be built for
+  the first time after the release PR merges. A failing release build fails
+  `vrg-validate`, as every other stage does. Run it alone with
+  `vrg-validate --check build`.
 - If a repository uses different tools, document the reason and equivalents.
 
 ## Tool Ownership

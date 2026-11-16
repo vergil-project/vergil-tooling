@@ -1987,7 +1987,7 @@ markdownlint, yamllint) are available on PATH.
 The unified validation driver. It reads `[project].primary-language`
 from `vergil.toml` and runs the stages in order: common checks, the
 language's install, lint, typecheck, build, test and audit commands
-(build only for a language that turns it on, none yet), the
+(build only for a language that turns it on, Rust only), the
 semgrep scan of PR CI's `security / semgrep` gate, the Trivy
 vulnerability scan of its `security / trivy` gate, the strict mkdocs
 build of its `docs / docs` gate (a notice and a pass when there is no

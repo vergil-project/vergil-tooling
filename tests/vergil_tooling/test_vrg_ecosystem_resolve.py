@@ -76,7 +76,7 @@ def test_rust_ecosystem_ci_mode(tmp_path: Path) -> None:
         rc = main(["rust"])
     assert rc == 0
     content = output_file.read_text()
-    assert "build=cargo build --release --locked\n" in content
+    assert "build=cargo build --release --locked --workspace\n" in content
     assert "publish=cargo publish --locked\n" in content
     assert "credential-secret=CARGO_REGISTRY_TOKEN\n" in content
 
