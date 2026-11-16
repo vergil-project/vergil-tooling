@@ -174,17 +174,25 @@ dev images come from
    pass with the canonical config bundled in vergil-tooling. See the
    [Markdown Validation](../reference/lint/markdown-standards.md)
    reference.
-3. shellcheck on shell scripts under `scripts/` and on every `*.sh`
+3. docs-links: a link to a mike-versioned Vergil docs site must carry a
+   version segment after the site name (`latest`, `dev` or a version
+   number such as `2.1`), since a deep link without one returns 404. A
+   bare site root is allowed, as mike redirects it. The check reads the
+   same markdown as markdownlint, less `epics/archive/`, against the
+   fixed list of versioned sites in vergil-tooling (no network), and
+   names each hit by path and line with its `/latest/` form. See
+   [Links to other Vergil docs sites](../reference/lint/markdown-standards.md#links-to-other-vergil-docs-sites).
+4. shellcheck on shell scripts under `scripts/` and on every `*.sh`
    file elsewhere in the repository.
-4. yamllint on YAML under `.github/` and `docs/`, with the bundled
+5. yamllint on YAML under `.github/` and `docs/`, with the bundled
    config.
-5. hadolint on `Dockerfile*` at the repository root.
-6. actionlint on `.github/workflows/`.
-7. runner-labels: no value in a `.github/workflows/*.yml` or `*.yaml`
+6. hadolint on `Dockerfile*` at the repository root.
+7. actionlint on `.github/workflows/`.
+8. runner-labels: no value in a `.github/workflows/*.yml` or `*.yaml`
    file (a `runs-on`, a matrix value, a `with:` input) may be
    `ubuntu-latest`. Pin GitHub-hosted runners to `ubuntu-24.04`; the
    check names each hit by path and line.
-8. ansible-lint, when the repository has Ansible content.
+9. ansible-lint, when the repository has Ansible content.
 
 The first failing check stops the run. In CI the common checks run once,
 as `quality / common`.

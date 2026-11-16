@@ -145,7 +145,7 @@ workflow on a daily schedule. That job runs
 (identity mode `automation`), with a token scoped to the calling repo.
 It runs only from `develop`, checks out `develop`, and is capped at 60
 minutes, the life of the App's installation token (see the vergil-actions
-[ops-github-config](https://vergil-project.github.io/vergil-actions/workflows/ops-github-config/)
+[ops-github-config](https://vergil-project.github.io/vergil-actions/latest/workflows/ops-github-config/)
 reference).
 
 Drift that a fixer can correct arrives as one sync PR, which merges

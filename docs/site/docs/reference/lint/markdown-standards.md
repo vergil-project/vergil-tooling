@@ -68,6 +68,30 @@ config that is now gone.
 
 This runs inside the dev container where `markdownlint` is on PATH.
 
+## Links to other Vergil docs sites
+
+Right after markdownlint, the common checks run docs-links over the same
+markdown, less `epics/archive/`. The `[markdownlint].ignore` paths do
+not apply to it: a file left out of the lint still publishes its links.
+
+The Vergil docs sites that mike versions serve every page under a
+version segment, so a deep link written as
+`https://vergil-project.github.io/<site>/<page>/` returns 404. Write it
+as `https://vergil-project.github.io/<site>/latest/<page>/` instead.
+The check accepts `latest`, `dev` or a version number (such as `2.1`)
+as the first path segment, and a bare site root
+(`https://vergil-project.github.io/<site>/`), which mike redirects to
+the default version. Each hit is named by path and line, with its
+`/latest/` form.
+
+The versioned sites are a fixed list in vergil-tooling
+(`vergil_tooling.lib.doc_links.VERSIONED_SITES`), so the check needs
+no network: vergil-actions, vergil-claude-plugin, vergil-containers,
+vergil-tooling, vergil-vm and the four vergil-fixture-* sites. The
+org's `docs` and `packages` sites are not versioned, and links to them
+are not checked. A repository that starts publishing versioned docs is
+added to the list.
+
 ## Exit Codes
 
 | Code | Meaning |

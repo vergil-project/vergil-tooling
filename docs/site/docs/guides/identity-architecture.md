@@ -238,7 +238,7 @@ workflows use it for:
 
 The App's full permission set, and the scoped permissions each job's
 token requests, are in the vergil-actions
-[configuration reference](https://vergil-project.github.io/vergil-actions/configuration/).
+[configuration reference](https://vergil-project.github.io/vergil-actions/latest/configuration/).
 Four of the App's permissions matter to the tooling in this repo:
 
 - **Dependabot alerts: Read.** `vrg-dependabot-audit` needs it to list
