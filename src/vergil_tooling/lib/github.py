@@ -53,7 +53,7 @@ _target_org: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 
 
-class TokenProvider(Protocol):
+class TokenProvider(Protocol):  # pragma: no cover
     """A source of the GitHub token every ``gh`` and ``git`` call starts with.
 
     :meth:`token` returns the token that is current at the moment of the call,
@@ -61,9 +61,7 @@ class TokenProvider(Protocol):
     vergil-project/.github#1168).
     """
 
-    def token(self) -> str:
-        """Return the current token."""
-        ...
+    def token(self) -> str: ...
 
 
 # The registered token source (#4496). When set, _gh_env() and git._git_env()

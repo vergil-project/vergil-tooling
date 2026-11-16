@@ -171,8 +171,8 @@ def run_with_retry(
         raise TypeError(msg)
 
     def _attempt(env: dict[str, str] | None) -> subprocess.CompletedProcess[str]:
-        extra: dict[str, Any] = {} if env is None else {"env": env}
-        return subprocess.run(*args, **kwargs, **extra)  # noqa: S603
+        attempt_kwargs = kwargs if env is None else {**kwargs, "env": env}
+        return subprocess.run(*args, **attempt_kwargs)  # noqa: S603
 
     return call_with_retry(_attempt, env_factory=env_factory)
 

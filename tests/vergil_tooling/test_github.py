@@ -4266,9 +4266,7 @@ def test_wait_for_checks_poll_picks_up_renewal(monkeypatch: pytest.MonkeyPatch) 
 
 @pytest.mark.parametrize("name", ["VRG_APP_ID", "VRG_PRIVATE_KEY_PATH"])
 @pytest.mark.usefixtures("real_gh_env")
-def test_source_and_app_mode_configured_refuses(
-    monkeypatch: pytest.MonkeyPatch, name: str
-) -> None:
+def test_source_and_app_mode_configured_refuses(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     monkeypatch.setenv(name, "x")
     source = _Tokens("t1")
     with pytest.raises(github.TokenSourceConflictError, match=name):
@@ -4300,15 +4298,16 @@ def test_token_source_context_restores_the_previous_source() -> None:
         with github.token_source(inner):
             assert github.registered_token() == "i1"
         assert github.registered_token() == "o2"
+        with github.token_source(None):
+            assert not github.has_token_source()
+        assert github.has_token_source()
     assert not github.has_token_source()
     assert github.registered_token() is None
 
 
 def test_set_token_source_registers_and_clears(monkeypatch: pytest.MonkeyPatch) -> None:
     # Registration is context-local; restore the unset value for later tests.
-    monkeypatch.setattr(
-        github, "_token_source", github.contextvars.ContextVar("t", default=None)
-    )
+    monkeypatch.setattr(github, "_token_source", github.contextvars.ContextVar("t", default=None))
     github.set_token_source(_Tokens("t1"))
     assert github.registered_token() == "t1"
     github.set_token_source(None)
