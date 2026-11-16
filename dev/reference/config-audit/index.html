@@ -14233,6 +14233,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#_check_language_files-per-language-managed-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _check_language_files — per-language managed files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#_check_required_workflows-opsyml-wiring" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18139,6 +18150,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#_check_language_files-per-language-managed-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _check_language_files — per-language managed files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#_check_required_workflows-opsyml-wiring" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18275,7 +18297,8 @@ reconciles it. It combines two independent halves:</p>
   every managed repo checks in:
   <code>vergil.toml</code>, <code>CLAUDE.md</code>, <code>.claude/settings.json</code>,
   <code>.claude/hooks/guard.sh</code>, reusable-workflow pins, <code>.gitignore</code>,
-  <code>.github/dependabot.yml</code>, and <code>.github/workflows/ops.yml</code>.</li>
+  <code>.github/dependabot.yml</code>, the per-language managed files (such as
+  TypeScript's <code>tsconfig.vergil.json</code>), and <code>.github/workflows/ops.yml</code>.</li>
 <li><strong>GitHub API checks</strong> — repo settings, branch rulesets, and the
   required-status-check set, fetched from the GitHub API.</li>
 </ul>
@@ -18365,8 +18388,8 @@ order:</p>
 <li><strong>The managed files.</strong> A fresh shallow clone of <code>develop</code>, in which
    every fixer runs: the hook-guard shim (mode 0755 included), the
    CLAUDE.md template region, <code>.claude/settings.json</code>, the <code>.gitignore</code>
-   managed fence, <code>.github/dependabot.yml</code> and the <code>vergil-*</code> workflow
-   pins. Each fixer shares its definition of "correct" with its check.
+   managed fence, <code>.github/dependabot.yml</code>, the per-language managed
+   files and the <code>vergil-*</code> workflow pins. Each fixer shares its definition of "correct" with its check.
    A fixer that cannot compute a fix (a CLAUDE.md with no template
    markers, for example) is reported and does not stop the others.</li>
 <li><strong>One sync PR.</strong> Whatever the fixers changed is committed on a new
@@ -18549,6 +18572,10 @@ divergence:</p>
 <td><code>.github/dependabot.yml</code> is the canonical report-only render for the repo's language <strong>(.github#420)</strong></td>
 </tr>
 <tr>
+<td><code>_check_language_files</code></td>
+<td>each managed file of the repo's language is its packaged master, byte for byte <strong>(.github#1174)</strong></td>
+</tr>
+<tr>
 <td><code>_check_required_workflows</code></td>
 <td><code>ops.yml</code> is present, wires the audit, and is scheduled <strong>(new, #311)</strong></td>
 </tr>
@@ -18665,6 +18692,54 @@ actions-only: the check reports one explicit failure,
 <code>DiffItem(field="local.dependabot", expected="resolvable [project].primary-language",
 actual="cannot resolve the dependabot language: &lt;config error&gt;")</code>, and
 nothing else for the file (#3451).</p>
+<h3 id="_check_language_files-per-language-managed-files"><code>_check_language_files</code> — per-language managed files<a class="headerlink" href="#_check_language_files-per-language-managed-files" title="Permanent link">&para;</a></h3>
+<p>Some files are managed whole for the repos of one
+<code>[project].primary-language</code>, each a byte-for-byte copy of a master in
+vergil-tooling's package data (epic
+<a href="https://github.com/vergil-project/.github/issues/1174">vergil-project/.github#1174</a>).
+<code>LANGUAGE_MANAGED_FILES</code> in <code>lib/repo_config.py</code> lists them; another
+language adds managed files with an entry there. The masters stay where
+the gates read them, so there is one copy of each.</p>
+<table>
+<thead>
+<tr>
+<th>Language</th>
+<th>File in the repo</th>
+<th>Master</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>typescript</code></td>
+<td><code>tsconfig.vergil.json</code></td>
+<td><code>configs/typescript/tsconfig.base.json</code></td>
+</tr>
+<tr>
+<td><code>typescript</code></td>
+<td><code>eslint.vergil.config.mjs</code></td>
+<td><code>configs/typescript/eslint.config.mjs</code></td>
+</tr>
+<tr>
+<td><code>typescript</code></td>
+<td><code>.prettierrc.json</code></td>
+<td><code>configs/typescript/prettier.config.json</code></td>
+</tr>
+</tbody>
+</table>
+<p>The repo never edits these files. It owns its entry points
+(<code>tsconfig.json</code>, <code>eslint.config.mjs</code>), which build on them.</p>
+<p>A missing file, or one whose bytes differ from the master (a stale or
+locally edited copy, or one with other line ends), is one
+<code>DiffItem(field="local.language_files", expected="&lt;file&gt;: matches the master (configs/&lt;master&gt;)",
+actual="&lt;file&gt;: missing" | "&lt;file&gt;: differs from the master (stale or locally edited)")</code>.
+<a href="#the-update-command"><code>update</code></a> writes the master whole, keeping the
+file's mode, or 0644 for a new file.</p>
+<p>A repo of any other language, or with no <code>vergil.toml</code>, has no such
+files, and a file of the same name in it is left alone. A <code>vergil.toml</code>
+that fails to load is reported as one
+<code>DiffItem(field="local.language_files", expected="resolvable [project].primary-language",
+actual="cannot resolve the managed-file language: &lt;config error&gt;")</code>,
+which <code>update</code> cannot fix (#3451).</p>
 <h3 id="_check_required_workflows-opsyml-wiring"><code>_check_required_workflows</code> — ops.yml wiring<a class="headerlink" href="#_check_required_workflows-opsyml-wiring" title="Permanent link">&para;</a></h3>
 <p>A <strong>wiring validator</strong> for a <em>present</em> <code>ops.yml</code>. It asserts the file
 (a) exists, (b) references <code>ops-github-config.yml</code> (so a repo cannot
@@ -18764,6 +18839,10 @@ passes their checks from day one:</p>
   <code>lib/dependabot.py::render(&lt;language&gt;)</code>, the same render
   <code>_check_dependabot_yml</code> compares against, so a new repo passes that
   check from day one.</li>
+<li><strong>The per-language managed files</strong> — the config-files step writes the
+  language's entries in <code>LANGUAGE_MANAGED_FILES</code> from their masters, so
+  a new TypeScript repo passes <code>_check_language_files</code> from its first
+  commit, with no wait for the nightly sync.</li>
 </ul>
 <h2 id="github-checks-security-settings">GitHub checks — security settings<a class="headerlink" href="#github-checks-security-settings" title="Permanent link">&para;</a></h2>
 <p>The GitHub half also compares the repo's security settings
