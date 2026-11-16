@@ -32,6 +32,9 @@ The main modules under `src/vergil_tooling/lib/`:
 - **`epic_audit.py`**, **`intake_route.py`** and **`queue_view.py`** build
   on `epics.py`: the `vrg-epic-audit` drift report and orphan pass, the
   `vrg-intake-route` mechanics and route table, and the `vrg-queue` views.
+- **`epic_size.py`**: the epic-size scale, the sizing comment and cleared
+  marker formats, and an item's size record, shared by the
+  `vrg-intake-route` `size` route and the `vrg-queue` size column.
 - **`security_records.py`**: `vrg-security-record`, including the
   security-records pass of `vrg-security-record sync` (previewed by the
   read-only `vrg-epic-audit`).
