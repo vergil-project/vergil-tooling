@@ -148,6 +148,18 @@ required checks cannot be read (permissions or an API error), finalize
 prints a warning and falls back to waiting on registered checks only
 (issue #3061).
 
+A required check can also be one a job's upload creates: `Semgrep OSS`,
+`Trivy` and `CodeQL` are registered by GitHub Advanced Security only once
+the `security / semgrep`, `security / trivy` or `security / codeql` job
+uploads its SARIF results. When that job fails before its upload, the check
+never registers. So once every registered check has finished, one of them
+has failed, and the only required checks still outstanding are
+unregistered, finalize stops waiting at once. It fails naming the failed
+checks and each unregistered required check, with the failed job behind it
+when that job is known (for example `Required check Semgrep OSS was never
+registered: it is uploaded by security / semgrep, which failed first, so it
+will not arrive.`), rather than waiting out the deadline (issue #4294).
+
 After the merge, the PR's own branch and worktree are cleaned up
 explicitly (a squash merge hides them from `git branch --merged`),
 followed by the usual sweep, pull, and prune.
