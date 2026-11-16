@@ -360,7 +360,7 @@ repositories, not per contributor, so a leaked key reaches every repo
 in that org. It does not reach the other orgs, which have their own
 Apps and keys. Its permission set is not listed in the Account Setup
 tables; the vergil-actions
-[configuration reference](https://vergil-project.github.io/vergil-actions/configuration/)
+[configuration reference](https://vergil-project.github.io/vergil-actions/latest/configuration/)
 lists it. Read the exact permissions from the App's settings page before
 you assess the impact. The key mints tokens with every permission the
 App holds, whatever the workflows' scoped tokens request. With
