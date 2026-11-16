@@ -286,8 +286,8 @@ def build_container_args(
 ) -> list[str]:
     """Build the container ``run`` argument list.
 
-    *volumes* are extra ``-v`` specs (a named volume such as
-    ``name:/path``), mounted after ``DOCKER_EXTRA_VOLUMES``.
+    *volumes* are extra ``-v`` specs (such as a bind mount
+    ``/host/path:/container/path``), mounted after ``DOCKER_EXTRA_VOLUMES``.
 
     *env_names* are forwarded as bare ``-e NAME``: the runtime copies each value
     from its own environment, so a secret the caller placed there never appears

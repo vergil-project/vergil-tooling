@@ -18,6 +18,7 @@ from vergil_tooling.lib.trivy_scan import (
     TrivyError,
     cache_dir,
     cache_lock,
+    default_cache_dir,
     run_scan,
     scan_commands,
 )
@@ -44,6 +45,31 @@ def test_cache_dir_defaults_under_home_cache(tmp_path: Path, xdg: str | None) ->
     home = tmp_path / "home"
     expected = (home / ".cache" / "vergil" / "trivy").resolve()
     assert cache_dir(tmp_path / "repo", env, home=home) == expected
+
+
+def test_default_cache_dir_under_xdg_cache_home(tmp_path: Path) -> None:
+    env = {"XDG_CACHE_HOME": str(tmp_path / "xdg")}
+    assert default_cache_dir(env, home=tmp_path / "home") == tmp_path / "xdg" / "vergil" / "trivy"
+
+
+@pytest.mark.parametrize("xdg", [None, "", "relative/cache"])
+def test_default_cache_dir_under_home_cache(tmp_path: Path, xdg: str | None) -> None:
+    env = {} if xdg is None else {"XDG_CACHE_HOME": xdg}
+    home = tmp_path / "home"
+    assert default_cache_dir(env, home=home) == home / ".cache" / "vergil" / "trivy"
+
+
+def test_default_cache_dir_ignores_the_container_env(tmp_path: Path) -> None:
+    # VRG_TRIVY_CACHE_DIR names the in-container path; the host directory
+    # vrg-container-run bind-mounts is always the per-user XDG cache.
+    env = {CACHE_ENV: str(tmp_path / "elsewhere")}
+    home = tmp_path / "home"
+    assert default_cache_dir(env, home=home) == home / ".cache" / "vergil" / "trivy"
+
+
+def test_default_cache_dir_creates_nothing(tmp_path: Path) -> None:
+    default_cache_dir({}, home=tmp_path / "home")
+    assert not (tmp_path / "home").exists()
 
 
 @pytest.mark.parametrize("value", ["", "  "])

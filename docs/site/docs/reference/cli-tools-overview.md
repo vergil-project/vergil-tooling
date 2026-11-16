@@ -1632,8 +1632,9 @@ project language to select the Docker image; falls back to
 Local-settings guard: on the host, before any container starts, it refuses an
 agent (warns a human) while a loadable `.claude/settings.local.json` is not
 absent or `{}` (epic vergil-project/.github#558).
-Every launch mounts the `vergil-trivy-cache` volume, where `vrg-validate`'s
-trivy stage caches the vulnerability database (see
+Every launch bind-mounts the per-user `~/.cache/vergil/trivy` directory
+(under `$XDG_CACHE_HOME` when set), creating it if missing, where
+`vrg-validate`'s trivy stage caches the vulnerability database (see
 [Container Config](container-config.md#variables-vrg-container-run-always-sets)).
 
 | Attribute | Value |
