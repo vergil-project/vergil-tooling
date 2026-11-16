@@ -29,6 +29,7 @@ from vergil_tooling.lib.repo_config import (
     dependabot_yml_drift,
     gitignore_drift,
     hook_guard_shim_drift,
+    language_files_drift,
     workflow_refs_drift,
 )
 
@@ -80,6 +81,11 @@ def fix_workflow_refs(root: Path) -> bool:
     return _apply(root, workflow_refs_drift(root))
 
 
+def fix_language_files(root: Path) -> bool:
+    """Write each drifted per-language managed file whole from its packaged master."""
+    return _apply(root, language_files_drift(root))
+
+
 #: Every managed-file fixer, in the order ``update`` runs them.
 FIXERS: list[Callable[[Path], bool]] = [
     fix_hook_guard_shim,
@@ -87,6 +93,7 @@ FIXERS: list[Callable[[Path], bool]] = [
     fix_claude_settings,
     fix_gitignore,
     fix_dependabot_yml,
+    fix_language_files,
     fix_workflow_refs,
 ]
 

@@ -11,12 +11,19 @@ import ssl
 import subprocess
 import urllib.error
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 
+from tests.vergil_tooling.test_app_token import REPO, SLUG, Clock, FakeGitHub, _pem
 from vergil_tooling.lib import epics, github
+from vergil_tooling.lib.app_token import (
+    UPSTREAM_REFRESH_PERMISSIONS,
+    AppCredentials,
+    AppTokenSource,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -4086,3 +4093,250 @@ class TestDownloadApiBinary:
         with patch("vergil_tooling.lib.github.subprocess.run", side_effect=fake_run):
             github.download_api_binary("repos/o/r/actions/artifacts/7/zip", tmp_path / "a.zip")
         assert calls[0]["env"] == {"GH_TOKEN": "t"}
+
+
+# --------------------------------------------------------------------------- token source
+# A registered token source reaches every gh call, and every retrying caller
+# rebuilds its environment per attempt (#4496, epic vergil-project/.github#1168).
+
+_BAD_CREDENTIALS = "HTTP 401: Bad credentials (https://api.github.com/graphql)"
+
+
+class _Tokens:
+    """A token source handing out *tokens* in order, one per call."""
+
+    def __init__(self, *tokens: str) -> None:
+        self._tokens = list(tokens)
+        self.calls = 0
+
+    def token(self) -> str:
+        self.calls += 1
+        return self._tokens.pop(0)
+
+
+@pytest.fixture
+def real_gh_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Undo the module's autouse ``_gh_env`` stub, with no App mode configured."""
+    monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
+    for name in ("VRG_APP_ID", "VRG_PRIVATE_KEY_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(
+        github,
+        "get_installation_token",
+        lambda **_kw: pytest.fail("the App mode must not be consulted with a token source"),
+    )
+
+
+def _gh_token_of(call: Any) -> str:
+    return str(call.kwargs["env"]["GH_TOKEN"])
+
+
+@pytest.mark.usefixtures("real_gh_env")
+def test_gh_env_uses_registered_source_per_call() -> None:
+    with (
+        github.token_source(_Tokens("t1", "t2")),
+        patch("vergil_tooling.lib.retry.subprocess.run", return_value=_completed()) as mock_run,
+    ):
+        github.run("pr", "list")
+        github.run("pr", "list")
+    assert [_gh_token_of(c) for c in mock_run.call_args_list] == ["t1", "t2"]
+
+
+@pytest.mark.usefixtures("real_gh_env")
+def test_gh_retry_after_401_rebuilds_env() -> None:
+    err = subprocess.CalledProcessError(1, ("gh", "pr", "view"), "", _BAD_CREDENTIALS)
+    with (
+        github.token_source(_Tokens("t1", "t2")),
+        patch(
+            "vergil_tooling.lib.retry.subprocess.run", side_effect=[err, _completed(stdout="ok")]
+        ) as mock_run,
+        patch("vergil_tooling.lib.retry.time.sleep"),
+    ):
+        assert github.read_output("pr", "view") == "ok"
+    assert [_gh_token_of(c) for c in mock_run.call_args_list] == ["t1", "t2"]
+
+
+@pytest.mark.usefixtures("real_gh_env")
+def test_run_tolerating_retry_rebuilds_env() -> None:
+    # The gh pr checks call behind every wait_for_checks poll.
+    with (
+        github.token_source(_Tokens("t1", "t2")),
+        patch(
+            "vergil_tooling.lib.github.subprocess.run",
+            side_effect=[
+                _completed(returncode=1, stderr=_BAD_CREDENTIALS),
+                _completed(returncode=0, stdout=_CHECKS_JSON),
+            ],
+        ) as mock_run,
+        patch("vergil_tooling.lib.github.time.sleep"),
+    ):
+        assert github.pr_checks("https://github.com/o/r/pull/1")[0]["name"] == "build"
+    assert [_gh_token_of(c) for c in mock_run.call_args_list] == ["t1", "t2"]
+
+
+@pytest.mark.usefixtures("real_gh_env")
+def test_post_json_once_takes_the_current_token_and_never_retries() -> None:
+    # Sent exactly once by contract (a retry could duplicate a landed create),
+    # so it has no retry to rebuild: each call takes the token current then.
+    with (
+        github.token_source(_Tokens("t1", "t2")),
+        patch(
+            "vergil_tooling.lib.github.subprocess.run",
+            side_effect=[
+                _completed(stdout='{"id": 1}'),
+                _completed(returncode=1, stderr=_BAD_CREDENTIALS),
+            ],
+        ) as mock_run,
+    ):
+        assert github.post_json_once("repos/o/r/x", {}) == {"id": 1}
+        with pytest.raises(github.GitHubAPIError, match="Bad credentials"):
+            github.post_json_once("repos/o/r/x", {})
+    assert [_gh_token_of(c) for c in mock_run.call_args_list] == ["t1", "t2"]
+
+
+@pytest.mark.usefixtures("real_gh_env")
+def test_post_json_with_status_takes_the_current_token_and_never_retries() -> None:
+    with (
+        github.token_source(_Tokens("t1", "t2")),
+        patch(
+            "vergil_tooling.lib.github.subprocess.run",
+            side_effect=[
+                _completed(stdout="HTTP/2.0 201 Created\n"),
+                _completed(returncode=1, stdout="HTTP/2.0 401 Unauthorized\n"),
+            ],
+        ) as mock_run,
+    ):
+        assert github.post_json_with_status("repos/o/r/pages", {}).returncode == 0
+        assert github.post_json_with_status("repos/o/r/pages", {}).returncode == 1
+    assert [_gh_token_of(c) for c in mock_run.call_args_list] == ["t1", "t2"]
+
+
+@pytest.mark.usefixtures("real_gh_env")
+def test_download_api_binary_retry_rebuilds_env(tmp_path: Path) -> None:
+    fake_run, calls = _writing_run([(b"", 1, _BAD_CREDENTIALS), (b"PK", 0, "")])
+    dest = tmp_path / "a.zip"
+    with (
+        github.token_source(_Tokens("t1", "t2")),
+        patch("vergil_tooling.lib.github.subprocess.run", side_effect=fake_run),
+        patch("vergil_tooling.lib.retry.time.sleep"),
+    ):
+        github.download_api_binary("repos/o/r/actions/artifacts/7/zip", dest)
+    assert dest.read_bytes() == b"PK"
+    tokens = [cast("dict[str, str]", call["env"])["GH_TOKEN"] for call in calls]
+    assert tokens == ["t1", "t2"]
+
+
+@pytest.mark.usefixtures("real_gh_env")
+def test_wait_for_checks_poll_picks_up_renewal(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Review focus 1: a renewal falls due between two polls of one wait. The
+    # second poll's gh call carries the renewed token, and the replaced token
+    # is revoked. The source is the real App token source (Task 1), with its
+    # endpoints faked at the urllib boundary.
+    fake = FakeGitHub()
+    monkeypatch.setattr("urllib.request.urlopen", fake.urlopen)
+    clock = Clock()
+    key = _pem(rsa.generate_private_key(public_exponent=65537, key_size=2048))
+    creds = AppCredentials(client_id="Iv23liClientId", private_key=key)
+    pending = json.dumps([{"name": "build", "bucket": "pending", "state": "QUEUED", "link": ""}])
+    monkeypatch.setattr(github, "_reconcile_stale_checks", lambda _pr, checks: checks)
+
+    def _sleep(_secs: float) -> None:
+        clock.now += 1801.0  # the poll interval that carries the token past renewal
+
+    monkeypatch.setattr(github.time, "sleep", _sleep)
+    source = AppTokenSource(
+        creds, REPO, UPSTREAM_REFRESH_PERMISSIONS, expected_slug=SLUG, clock=clock
+    )
+    with (
+        source,
+        github.token_source(source),
+        patch(
+            "vergil_tooling.lib.github.subprocess.run",
+            side_effect=[
+                _completed(returncode=8, stdout=pending),
+                _completed(returncode=0, stdout=_CHECKS_JSON),
+            ],
+        ) as mock_run,
+    ):
+        github.wait_for_checks("https://github.com/o/r/pull/1", poll_timeout=7200, required=())
+        assert [_gh_token_of(c) for c in mock_run.call_args_list] == fake.minted
+        assert fake.minted == ["ghs_token1", "ghs_token2"]
+        assert fake.revoked == ["ghs_token1"]
+
+
+@pytest.mark.parametrize("name", ["VRG_APP_ID", "VRG_PRIVATE_KEY_PATH"])
+@pytest.mark.usefixtures("real_gh_env")
+def test_source_and_app_mode_configured_refuses(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    monkeypatch.setenv(name, "x")
+    source = _Tokens("t1")
+    with pytest.raises(github.TokenSourceConflictError, match=name):
+        github.set_token_source(source)
+    assert not github.has_token_source()
+    with pytest.raises(github.TokenSourceConflictError, match=name), github.token_source(source):
+        pytest.fail("the block must not run")
+    assert source.calls == 0
+
+
+@pytest.mark.parametrize("name", ["VRG_APP_ID", "VRG_PRIVATE_KEY_PATH"])
+@pytest.mark.usefixtures("real_gh_env")
+def test_app_mode_set_after_registration_refuses_the_call(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    source = _Tokens("t1")
+    with github.token_source(source):
+        monkeypatch.setenv(name, "x")
+        with pytest.raises(github.TokenSourceConflictError, match=name):
+            github._gh_env()
+    assert source.calls == 0
+
+
+@pytest.mark.usefixtures("real_gh_env")
+def test_token_source_context_restores_the_previous_source() -> None:
+    outer, inner = _Tokens("o1", "o2"), _Tokens("i1")
+    with github.token_source(outer):
+        assert github.registered_token() == "o1"
+        with github.token_source(inner):
+            assert github.registered_token() == "i1"
+        assert github.registered_token() == "o2"
+        with github.token_source(None):
+            assert not github.has_token_source()
+        assert github.has_token_source()
+    assert not github.has_token_source()
+    assert github.registered_token() is None
+
+
+def test_set_token_source_registers_and_clears(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Registration is context-local; restore the unset value for later tests.
+    monkeypatch.setattr(github, "_token_source", github.contextvars.ContextVar("t", default=None))
+    github.set_token_source(_Tokens("t1"))
+    assert github.registered_token() == "t1"
+    github.set_token_source(None)
+    assert github.registered_token() is None
+
+
+@pytest.mark.parametrize("minted", ["ghs_app", None])
+def test_no_source_env_unchanged(monkeypatch: pytest.MonkeyPatch, minted: str | None) -> None:
+    # With no source, _gh_env is the App mode's answer exactly, and a retrying
+    # caller builds its environment once for all attempts, as it always has.
+    monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
+    mints: list[object] = []
+
+    def _mint(**kwargs: object) -> str | None:
+        mints.append(kwargs)
+        return minted
+
+    monkeypatch.setattr(github, "get_installation_token", _mint)
+    expected = None if minted is None else {**github.os.environ, "GH_TOKEN": minted}
+    assert github._gh_env() == expected
+    mints.clear()
+    err = subprocess.CalledProcessError(1, ("gh", "pr", "view"), "", _BAD_CREDENTIALS)
+    with (
+        patch(
+            "vergil_tooling.lib.retry.subprocess.run", side_effect=[err, _completed(stdout="ok")]
+        ) as mock_run,
+        patch("vergil_tooling.lib.retry.time.sleep"),
+    ):
+        assert github.read_output("pr", "view") == "ok"
+    assert len(mints) == 1
+    for call in mock_run.call_args_list:
+        assert call.kwargs.get("env") == expected

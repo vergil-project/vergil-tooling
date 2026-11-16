@@ -651,3 +651,25 @@ def test_prune_stops_before_removing_when_a_lookup_fails(
         assert main(["prune", "--apply"]) == 1
     m_remove.assert_not_called()
     assert "boom" in capsys.readouterr().err
+
+
+# -- a package.json that cannot be parsed (epic vergil-project/.github#1174) ----
+
+
+@pytest.mark.parametrize("command", ["build", "clean", "status"])
+def test_container_cache_reports_broken_package_json(
+    command: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "package.json").write_text("{not json")
+    with (
+        patch("vergil_tooling.bin.vrg_container_cache.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_cache.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_cache.repo_resolution") as resolution,
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main([command])
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith(f"ERROR: package.json at {tmp_path / 'package.json'} cannot be parsed")
+    assert "Traceback" not in err
+    resolution.assert_not_called()

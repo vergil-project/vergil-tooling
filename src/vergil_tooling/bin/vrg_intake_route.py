@@ -1,15 +1,29 @@
-"""Route one container-epic item: drop, defer, intake, one-off, planning, or split.
+"""Route one container-epic item: drop, defer, intake, one-off, planning, split, or size.
 
 A thin argparse layer over :func:`vergil_tooling.lib.intake_route.route`,
 which owns the mechanics (transfer-or-recreate, reparent, re-link, close with
-a pointer, record a deferral) so no queue review hand-rolls them::
+a pointer, record a deferral, record a size) so no queue review hand-rolls
+them::
 
     vrg-intake-route <issue-ref> drop --reason TEXT
     vrg-intake-route <issue-ref> defer --reason TEXT --revisit-when TEXT [--date YYYY-MM-DD]
     vrg-intake-route <issue-ref> intake
     vrg-intake-route <issue-ref> one-off --repo OWNER/REPO [--epic REF]
-    vrg-intake-route <issue-ref> planning
+    vrg-intake-route <issue-ref> planning [--tasks N [--confidence high|med|low] --reason TEXT]
     vrg-intake-route <issue-ref> split --into REF [--into REF ...] --reason TEXT
+    vrg-intake-route <issue-ref> size --tasks N [--confidence high|med|low] --reason TEXT
+
+``size`` records a planning or deferred item's estimated epic size: it posts
+the dated sizing comment, then sets the ``epic-size:*`` label derived from
+``--tasks`` (S 1-9, M 10-19, L 20-39, XL 40+) and removes any other; it
+neither moves nor closes the item. ``--confidence`` defaults to ``med``, and
+``--reason`` is one line. It prints ``Sized <ref>: epic-size X, about N
+tasks.``. If the label cannot be set after the comment posted, it exits 1
+naming the command that finishes it (re-running the same ``size`` is safe).
+``planning`` takes the same sizing, ``--tasks`` and ``--reason`` together or
+not at all (``--confidence`` needs ``--tasks``), and applies it once the item
+is in planning, printing the ``Sized`` line after ``Routed``; a bad sizing is
+refused before anything changes. Without it the item keeps any size it has.
 
 A bare ``#N`` item ref reads against the current repo; a bare ``--into`` ref
 reads against the item's repo. Which routes an item allows depends on the
@@ -36,6 +50,7 @@ from datetime import date
 
 from vergil_tooling.lib import epics, github, intake_route
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.epic_size import CONFIDENCES, Sizing
 
 _PROG = "vrg-intake-route"
 
@@ -60,11 +75,41 @@ def main(argv: list[str] | None = None) -> int:
     except github.NoInstallationError as exc:
         print(f"{_PROG}: {github.no_installation_message(exc)}", file=sys.stderr)
         return 1
-    if result.final == ref:
-        print(f"Routed {ref.slug}: {args.route}.")
-    else:
-        print(f"Routed {ref.slug}: {args.route}, now {result.final.slug} (by {result.moved_by}).")
+    sizing = None
+    if isinstance(action, intake_route.SizeItem | intake_route.ToPlanning):
+        sizing = action.sizing
+    # The size route moves nothing, so it prints only its Sized line.
+    if not isinstance(action, intake_route.SizeItem):
+        print(_routed_line(ref, args.route, result))
+    if sizing is not None:
+        print(f"Sized {ref.slug}: epic-size {sizing.size}, about {sizing.tasks} tasks.")
     return 0
+
+
+def _routed_line(ref: epics.IssueRef, route: str, result: intake_route.RouteResult) -> str:
+    if result.final == ref:
+        return f"Routed {ref.slug}: {route}."
+    return f"Routed {ref.slug}: {route}, now {result.final.slug} (by {result.moved_by})."
+
+
+def _sizing(args: argparse.Namespace) -> Sizing:
+    """The sizing *args* give; :class:`Sizing` refuses a bad value with a ValueError."""
+    if args.tasks is None or args.reason is None:
+        raise ValueError("--tasks and --reason are given together or not at all")
+    return Sizing(tasks=args.tasks, confidence=args.confidence or "med", reason=args.reason)
+
+
+def _planning_sizing(args: argparse.Namespace) -> Sizing | None:
+    """The optional sizing of the planning route, refused before anything is routed.
+
+    ``--tasks`` and ``--reason`` come together or not at all, and
+    ``--confidence`` needs ``--tasks``.
+    """
+    if args.tasks is None and args.reason is None:
+        if args.confidence is not None:
+            raise ValueError("--confidence needs --tasks and --reason")
+        return None
+    return _sizing(args)
 
 
 def _action(args: argparse.Namespace, *, item_repo: str) -> intake_route.RouteAction:
@@ -77,7 +122,9 @@ def _action(args: argparse.Namespace, *, item_repo: str) -> intake_route.RouteAc
     if args.route == "one-off":
         return intake_route.OneOff(repo=args.repo, epic=args.epic)
     if args.route == "planning":
-        return intake_route.ToPlanning()
+        return intake_route.ToPlanning(sizing=_planning_sizing(args))
+    if args.route == "size":
+        return intake_route.SizeItem(sizing=_sizing(args))
     into = tuple(epics.parse_issue_ref(r, default_repo=item_repo) for r in args.into)
     return intake_route.Split(into=into, reason=args.reason)
 
@@ -138,11 +185,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "repo's epic home), or owner/repo#N",
     )
 
-    routes.add_parser(
+    planning = routes.add_parser(
         "planning",
         help="Reparent the item onto the planning epic (intake, deferred or unparented item, "
-        "or a follow-on brainstorm under a development epic)",
+        "or a follow-on brainstorm under a development epic), optionally sizing it",
     )
+    _add_sizing_args(planning, required=False)
 
     split = routes.add_parser("split", help="Close the item, linking the tasks it was split into")
     split.add_argument(
@@ -152,7 +200,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="A task the item was split into (repeatable; #N reads against the item's repo)",
     )
     split.add_argument("--reason", required=True)
+
+    size = routes.add_parser(
+        "size",
+        help="Record a planning or deferred item's estimated epic size (comment and label)",
+    )
+    _add_sizing_args(size, required=True)
     return parser.parse_args(argv)
+
+
+def _add_sizing_args(route: argparse.ArgumentParser, *, required: bool) -> None:
+    """Add ``--tasks``, ``--confidence`` and ``--reason`` to *route*."""
+    route.add_argument(
+        "--tasks",
+        type=int,
+        required=required,
+        default=None,
+        help="Estimated task count (a positive integer); the size is derived from it",
+    )
+    route.add_argument(
+        "--confidence",
+        choices=CONFIDENCES,
+        default=None,
+        help="Confidence in the estimate (default: med)",
+    )
+    route.add_argument(
+        "--reason",
+        required=required,
+        default=None,
+        help="One line on why the estimate is what it is",
+    )
 
 
 if __name__ == "__main__":

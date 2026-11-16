@@ -11,14 +11,22 @@ import re
 import subprocess
 import sys
 import tomllib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from vergil_tooling.lib import cargo_semver
 from vergil_tooling.lib.config import read_config
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 _GO_VERSION_RE = re.compile(r'Version\s*=\s*"([^"]+)"')
+
+# A TOML table header line, ``[name]`` or ``[[name]]``, with an optional comment.
+_TOML_HEADER_RE = re.compile(r"^\s*\[\[?(?P<name>[^\[\]]+)\]\]?\s*(?:#.*)?$")
+
+# The Cargo manifest tables that hold dependencies, in a crate or under a
+# ``[target.<cfg>]`` table.
+_CARGO_DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 
 # The command that refreshes a language's committed lockfile after a version
 # bump. Each runs in the repo's dev container (see _run_lockfile_maintenance),
@@ -30,10 +38,13 @@ _LOCKFILE_COMMANDS: dict[str, list[str]] = {
     "rust": ["cargo", "update", "--workspace"],
 }
 
-# The lockfile each _LOCKFILE_COMMANDS entry rewrites, relative to the repo root.
+# The lockfile a bump rewrites, relative to the repo root: by the language's
+# _LOCKFILE_COMMANDS entry or, for TypeScript, by a direct edit of its root
+# version fields (_write_package_lock_version), which runs no npm.
 _LOCKFILES: dict[str, str] = {
     "python": "uv.lock",
     "rust": "Cargo.lock",
+    "typescript": "package-lock.json",
 }
 
 # Runs a command in the repo's dev container: the language image, the
@@ -43,6 +54,7 @@ _CONTAINER_RUN = ("vrg-container-run", "--")
 _DEFAULT_VERSION_FILES: dict[str, str] = {
     "python": "pyproject.toml",
     "rust": "Cargo.toml",
+    "typescript": "package.json",
 }
 
 VERSION_FILE = "VERSION"
@@ -52,6 +64,7 @@ _LANGUAGES_WITH_SEPARATE_VERSION = frozenset(
         "python",
         "rust",
         "go",
+        "typescript",
     }
 )
 
@@ -62,6 +75,404 @@ _SECONDARY_VERSION_FILES: dict[str, str] = {
 
 class VersionSyncError(Exception):
     """Raised when VERSION and language-specific file disagree."""
+
+
+class CargoVersionError(Exception):
+    """A Cargo manifest's version cannot be read, or a bump of it would break the workspace.
+
+    Deliberately not a :class:`ValueError`: :func:`bump` and :func:`bump_paths`
+    skip a language file on ``(FileNotFoundError, ValueError)``, and this error
+    must pass through them rather than leave ``VERSION`` and ``Cargo.toml``
+    out of step.
+    """
+
+
+def cargo_version_table(data: dict[str, Any]) -> tuple[str, ...]:
+    """The TOML table path of the table holding a parsed ``Cargo.toml``'s version.
+
+    The source is chosen by value: ``("package",)`` when ``[package].version``
+    is a string, and ``("workspace", "package")`` when there is no
+    ``[package]`` (a virtual workspace) or it inherits its version with
+    ``version.workspace = true``. Anything else raises
+    :class:`CargoVersionError` naming both tables.
+    """
+    package = data.get("package")
+    if isinstance(package, dict):
+        package_version = package.get("version")
+        if isinstance(package_version, str):
+            return ("package",)
+        inherits = isinstance(package_version, dict) and package_version.get("workspace") is True
+        if not inherits:
+            msg = (
+                "Cargo.toml holds no version: [package] has no version string "
+                "and does not inherit one from [workspace.package] "
+                "(version.workspace = true)"
+            )
+            raise CargoVersionError(msg)
+    workspace = data.get("workspace")
+    workspace_package = workspace.get("package") if isinstance(workspace, dict) else None
+    if isinstance(workspace_package, dict) and isinstance(workspace_package.get("version"), str):
+        return ("workspace", "package")
+    where = (
+        "[package] inherits its version but" if isinstance(package, dict) else "no [package] and"
+    )
+    msg = f"Cargo.toml holds no version: {where} [workspace.package] has no version string"
+    raise CargoVersionError(msg)
+
+
+def _cargo_version(data: dict[str, Any]) -> str:
+    table: Any = data
+    for key in cargo_version_table(data):
+        table = table[key]
+    return str(table["version"])
+
+
+def _toml_header_path(line: str) -> tuple[str, ...] | None:
+    """The table path a TOML header line opens, or ``None`` for any other line."""
+    m = _TOML_HEADER_RE.match(line)
+    if m is None:
+        return None
+    return tuple(part.strip().strip("\"'") for part in m["name"].split("."))
+
+
+def _rewrite_cargo_version(text: str, old: str, new: str) -> str:
+    """*text* with the version in the table :func:`cargo_version_table` names set to *new*.
+
+    A line edit scoped to that table, from its header to the next header, so
+    a ``version = "<old>"`` in any other table (a ``[workspace.dependencies]``
+    entry, say) is never touched. Raises :class:`VersionSyncError` when the
+    manifest's version is not *old*, and :class:`CargoVersionError` when the
+    key cannot be rewritten in place.
+    """
+    data = tomllib.loads(text)
+    table = cargo_version_table(data)
+    current = _cargo_version(data)
+    header = "[" + ".".join(table) + "]"
+    if current != old:
+        msg = f"VERSION contains {old} but Cargo.toml {header} contains {current}"
+        raise VersionSyncError(msg)
+    key_re = re.compile(
+        r"^(?P<lead>\s*version\s*=\s*)(?P<q>[\"'])" + re.escape(old) + r"(?P=q)(?P<tail>.*)$",
+        re.DOTALL,
+    )
+    lines = text.splitlines(keepends=True)
+    in_table = False
+    for index, line in enumerate(lines):
+        path = _toml_header_path(line)
+        if path is not None:
+            in_table = path == table
+            continue
+        m = key_re.match(line) if in_table else None
+        if m is not None:
+            lines[index] = f"{m['lead']}{m['q']}{new}{m['q']}{m['tail']}"
+            rewritten = "".join(lines)
+            # A matching line inside a multi-line string is not the key: the
+            # parse would still read the old version, so keep looking.
+            if _cargo_version(tomllib.loads(rewritten)) == new:
+                return rewritten
+            lines[index] = line
+    msg = (
+        f"cannot rewrite the version in Cargo.toml {header}: no "
+        f'version = "{old}" line in that table (write it as a plain key)'
+    )
+    raise CargoVersionError(msg)
+
+
+def _load_manifest(manifest: Path, root: Path) -> dict[str, Any]:
+    rel = manifest.relative_to(root).as_posix()
+    try:
+        return tomllib.loads(manifest.read_text())
+    except FileNotFoundError as exc:
+        msg = f"workspace member manifest {rel} not found"
+        raise CargoVersionError(msg) from exc
+    except tomllib.TOMLDecodeError as exc:
+        msg = f"cannot parse {rel}: {exc}"
+        raise CargoVersionError(msg) from exc
+
+
+def _path_dependencies(data: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
+    """Every ``(table, key, entry)`` path dependency a crate manifest declares."""
+    tables: list[tuple[str, Any]] = [(name, data.get(name)) for name in _CARGO_DEPENDENCY_TABLES]
+    targets = data.get("target")
+    if isinstance(targets, dict):
+        for cfg, target in targets.items():
+            if isinstance(target, dict):
+                tables.extend(
+                    (f"target.{cfg}.{name}", target.get(name)) for name in _CARGO_DEPENDENCY_TABLES
+                )
+    found: list[tuple[str, str, dict[str, Any]]] = []
+    for table_name, table in tables:
+        if not isinstance(table, dict):
+            continue
+        for key, entry in table.items():
+            if isinstance(entry, dict) and isinstance(entry.get("path"), str):
+                found.append((table_name, key, entry))
+    return found
+
+
+def _workspace_members(repo_root: Path, data: dict[str, Any]) -> dict[Path, dict[str, Any]]:
+    """Every crate in the workspace rooted at *repo_root*, by resolved directory.
+
+    The root itself when it is a package, every ``[workspace].members`` glob
+    match not under ``exclude``, and, as Cargo does, every path dependency of
+    a member that lies inside the workspace directory.
+    """
+    root = repo_root.resolve()
+    workspace = data.get("workspace")
+    workspace = workspace if isinstance(workspace, dict) else {}
+    excluded = {(root / str(p)).resolve() for p in workspace.get("exclude", [])}
+    members: dict[Path, dict[str, Any]] = {}
+    pending: list[Path] = []
+    if isinstance(data.get("package"), dict):
+        members[root] = data
+        pending.extend(root / entry["path"] for _table, _key, entry in _path_dependencies(data))
+    for pattern in workspace.get("members", []):
+        pending.extend(sorted(p for p in root.glob(str(pattern)) if p.is_dir()))
+    while pending:
+        crate_dir = pending.pop(0).resolve()
+        if crate_dir in members or crate_dir in excluded or not crate_dir.is_relative_to(root):
+            continue
+        crate_data = _load_manifest(crate_dir / "Cargo.toml", root)
+        members[crate_dir] = crate_data
+        pending.extend(
+            crate_dir / entry["path"] for _table, _key, entry in _path_dependencies(crate_data)
+        )
+    return members
+
+
+def _inherits_version(crate_data: dict[str, Any]) -> bool:
+    package = crate_data.get("package")
+    version = package.get("version") if isinstance(package, dict) else None
+    return isinstance(version, dict) and version.get("workspace") is True
+
+
+def _check_member_requirements(repo_root: Path, data: dict[str, Any], new: str) -> None:
+    """Fail when *new* would break a versioned path dependency on a bumped crate.
+
+    The bumped crates are those whose version is the one the bump writes:
+    the root package alone when it holds its own version, else every member
+    inheriting ``[workspace.package].version``. Every ``[workspace.dependencies]``
+    entry and every member's own dependency that points at one of them by
+    ``path`` and carries a ``version`` must still accept *new*, or Cargo
+    rejects the bumped workspace. Raises :class:`CargoVersionError` naming
+    each entry that would not, before anything is written.
+    """
+    root = repo_root.resolve()
+    members = _workspace_members(repo_root, data)
+    if cargo_version_table(data) == ("package",):
+        bumped = {root}
+    else:
+        bumped = {path for path, crate in members.items() if _inherits_version(crate)}
+    entries: list[tuple[str, Path, str, str, dict[str, Any]]] = []
+    workspace = data.get("workspace")
+    workspace_deps = workspace.get("dependencies") if isinstance(workspace, dict) else None
+    if isinstance(workspace_deps, dict):
+        entries.extend(
+            ("Cargo.toml", root, "workspace.dependencies", key, entry)
+            for key, entry in workspace_deps.items()
+            if isinstance(entry, dict) and isinstance(entry.get("path"), str)
+        )
+    for crate_dir, crate_data in members.items():
+        rel = (crate_dir / "Cargo.toml").relative_to(root).as_posix()
+        entries.extend(
+            (rel, crate_dir, table, key, entry)
+            for table, key, entry in _path_dependencies(crate_data)
+        )
+    broken: list[str] = []
+    for manifest, base, table, key, entry in entries:
+        req = entry.get("version")
+        if not isinstance(req, str) or (base / entry["path"]).resolve() not in bumped:
+            continue
+        where = f'{manifest} [{table}] {key} = {{ path = "{entry["path"]}", version = "{req}" }}'
+        try:
+            ok = cargo_semver.matches(req, new)
+        except ValueError as exc:
+            msg = f"cannot check {where}: {exc}"
+            raise CargoVersionError(msg) from exc
+        if not ok:
+            broken.append(where)
+    if broken:
+        listed = "\n  ".join(broken)
+        msg = (
+            f"bumping to {new} would break these versioned path dependencies on "
+            f"workspace members, so nothing was written; update their version "
+            f"requirements first:\n  {listed}"
+        )
+        raise CargoVersionError(msg)
+
+
+def _check_cargo_bump(repo_root: Path, cargo_toml: Path, old: str, new: str) -> None:
+    """Everything a Rust bump checks before it writes any file."""
+    text = cargo_toml.read_text()
+    _rewrite_cargo_version(text, old, new)
+    _check_member_requirements(repo_root, tomllib.loads(text), new)
+
+
+_JSON_DECODER = json.JSONDecoder()
+
+_PACKAGE_JSON = "package.json"
+
+# The two root version fields of an npm lockfile (lockfileVersion 2 and 3).
+_PACKAGE_LOCK_VERSION_PATHS: tuple[tuple[str, ...], ...] = (
+    ("version",),
+    ("packages", "", "version"),
+)
+
+
+def _skip_json_whitespace(text: str, pos: int) -> int:
+    while pos < len(text) and text[pos] in " \t\n\r":
+        pos += 1
+    return pos
+
+
+def _json_member_span(text: str, start: int, key: str) -> tuple[int, int] | None:
+    """The ``(start, end)`` span of member *key*'s value in the JSON object at *start*.
+
+    *text* is valid JSON and *start* the index of an object's ``{``. The
+    members are walked by the JSON grammar, so any spacing works and a nested
+    member of the same name is never taken. With a duplicate key the last one
+    wins, as in :func:`json.loads`. ``None`` when the object has no such member.
+    """
+    found: tuple[int, int] | None = None
+    pos = _skip_json_whitespace(text, start + 1)
+    while text[pos] != "}":
+        name, pos = _JSON_DECODER.raw_decode(text, pos)
+        pos = _skip_json_whitespace(text, pos) + 1  # past the ':'
+        value_start = _skip_json_whitespace(text, pos)
+        _value, value_end = _JSON_DECODER.raw_decode(text, value_start)
+        if name == key:
+            found = (value_start, value_end)
+        pos = _skip_json_whitespace(text, value_end)
+        if text[pos] == ",":
+            pos = _skip_json_whitespace(text, pos + 1)
+    return found
+
+
+def _json_path_label(path: tuple[str, ...]) -> str:
+    return "".join(f"[{json.dumps(key)}]" for key in path)
+
+
+def _parse_json_object(text: str, name: str) -> dict[str, Any]:
+    """The JSON object *text*; :class:`VersionSyncError` naming *name* otherwise."""
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        msg = f"{name} cannot be parsed: {exc}. Fix: correct the JSON"
+        raise VersionSyncError(msg) from exc
+    if not isinstance(data, dict):
+        msg = f"{name} cannot be parsed: the top level is not a JSON object. Fix: correct the JSON"
+        raise VersionSyncError(msg)
+    return data
+
+
+def _rewrite_json_string(text: str, path: tuple[str, ...], new: str, name: str) -> str:
+    """*text* with the string at member *path* set to *new*, every other byte kept.
+
+    The value's exact span is found by walking the parsed structure, never by
+    a text replace, so ``"version":"0.1.0"`` with no space is rewritten too.
+    Raises :class:`VersionSyncError` naming *name* when *text* is not a JSON
+    object or the value at *path* is not a string.
+    """
+    value: Any = _parse_json_object(text, name)
+    span = (_skip_json_whitespace(text, 0), len(text))
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            msg = f"{name} has no {_json_path_label(path)}"
+            raise VersionSyncError(msg)
+        value = value[key]
+        member = _json_member_span(text, span[0], key)
+        if member is None:  # pragma: no cover - the parse above found the key
+            msg = f"cannot locate {_json_path_label(path)} in {name}"
+            raise VersionSyncError(msg)
+        span = member
+    if not isinstance(value, str):
+        msg = f"{name} {_json_path_label(path)} is not a string"
+        raise VersionSyncError(msg)
+    return text[: span[0]] + json.dumps(new) + text[span[1] :]
+
+
+def _package_json_version(text: str, canonical: str) -> str:
+    """The top-level ``version`` of the ``package.json`` *text*.
+
+    Raises :class:`VersionSyncError` naming the fix, setting it to the
+    VERSION file's *canonical*, when it is missing or not a string.
+    """
+    version = _parse_json_object(text, _PACKAGE_JSON).get("version")
+    if not isinstance(version, str):
+        what = "no" if version is None else "a non-string"
+        msg = (
+            f'{_PACKAGE_JSON} has {what} "version". Fix: set it to the VERSION file\'s {canonical}'
+        )
+        raise VersionSyncError(msg)
+    return version
+
+
+def _version_mismatch(rel: str, canonical: str, found: str, language: str | None) -> str:
+    msg = f"VERSION contains {canonical} but {rel} contains {found}"
+    if language == "typescript":
+        msg += f". Fix: set it to the VERSION file's {canonical}"
+    return msg
+
+
+def _read_typescript_file(path: Path, fix: str) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        msg = f"{path.name} not found at {path.parent}. Fix: {fix}"
+        raise VersionSyncError(msg) from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        msg = f"cannot read {path.name}: {exc}"
+        raise VersionSyncError(msg) from exc
+
+
+def _write_typescript_file(path: Path, text: str) -> None:
+    try:
+        path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        msg = f"cannot write {path.name}: {exc}. Fix: make it writable, then bump again"
+        raise VersionSyncError(msg) from exc
+
+
+def _rewrite_package_json_version(text: str, old: str, new: str) -> str:
+    """``package.json`` *text* with its ``version`` moved from *old* to *new*."""
+    current = _package_json_version(text, old)
+    if current != old:
+        raise VersionSyncError(_version_mismatch(_PACKAGE_JSON, old, current, "typescript"))
+    return _rewrite_json_string(text, ("version",), new, _PACKAGE_JSON)
+
+
+def _rewrite_package_lock_version(text: str, new: str, name: str) -> str:
+    for path in _PACKAGE_LOCK_VERSION_PATHS:
+        text = _rewrite_json_string(text, path, new, name)
+    return text
+
+
+def _write_package_lock_version(lockfile: Path, new: str) -> None:
+    """Set ``package-lock.json``'s top-level ``version`` and ``packages[""].version``.
+
+    A direct edit of those two values in place: it runs no npm, so no script
+    runs and no dependency is re-resolved, and every other byte is kept
+    (epic vergil-project/.github#1174, spec §6.5). Raises
+    :class:`VersionSyncError` naming the file when it is missing, cannot be
+    parsed, lacks either field, or cannot be written.
+    """
+    text = _read_typescript_file(lockfile, "run npm install to create it, then commit it")
+    _write_typescript_file(lockfile, _rewrite_package_lock_version(text, new, lockfile.name))
+
+
+def _check_typescript_bump(repo_root: Path, old: str, new: str) -> None:
+    """Everything a TypeScript bump checks before it writes any file.
+
+    ``package.json`` must exist and hold the version *old*, and both root
+    version fields of ``package-lock.json`` must be present. Raises
+    :class:`VersionSyncError` naming the file and the fix otherwise.
+    """
+    package_json = repo_root / _PACKAGE_JSON
+    text = _read_typescript_file(package_json, f'create it with "version": "{old}"')
+    _rewrite_package_json_version(text, old, new)
+    lockfile = repo_root / _LOCKFILES["typescript"]
+    lock_text = _read_typescript_file(lockfile, "run npm install to create it, then commit it")
+    _rewrite_package_lock_version(lock_text, new, lockfile.name)
 
 
 def _discover_version_file(repo_root: Path, language: str) -> Path:
@@ -91,6 +502,14 @@ def _cross_check_language_file(
                 file=sys.stderr,
             )
         else:
+            if language == "typescript" and not lang_file.is_file():
+                # A TypeScript repo's version lives in package.json too: a
+                # missing one is an error to fix, never a skipped check.
+                msg = (
+                    f"{_PACKAGE_JSON} not found at {repo_root}. "
+                    f'Fix: create it with "version": "{canonical_version}"'
+                )
+                raise VersionSyncError(msg)
             if not lang_file.is_file():
                 rel = lang_file.relative_to(repo_root)
                 print(
@@ -98,10 +517,14 @@ def _cross_check_language_file(
                     file=sys.stderr,
                 )
             else:
-                lang_version = _read_version(lang_file.read_text(), language)
+                text = lang_file.read_text()
+                if language == "typescript":
+                    lang_version = _package_json_version(text, canonical_version)
+                else:
+                    lang_version = _read_version(text, language)
                 if lang_version != canonical_version:
-                    rel = lang_file.relative_to(repo_root)
-                    msg = f"VERSION contains {canonical_version} but {rel} contains {lang_version}"
+                    lang_rel = lang_file.relative_to(repo_root).as_posix()
+                    msg = _version_mismatch(lang_rel, canonical_version, lang_version, language)
                     raise VersionSyncError(msg)
 
     for rel_path, fmt in _SECONDARY_VERSION_FILES.items():
@@ -119,8 +542,7 @@ def _read_version(text: str, language: str) -> str:
         return str(data["project"]["version"])
 
     if language == "rust":
-        data = tomllib.loads(text)
-        return str(data["package"]["version"])
+        return _cargo_version(tomllib.loads(text))
 
     if language == "go":
         m = _GO_VERSION_RE.search(text)
@@ -195,9 +617,16 @@ def _increment_version(version: str, part: str) -> str:
 
 
 def _write_version(version_file: Path, language: str, old: str, new: str) -> None:
+    if language == "typescript":
+        text = _read_typescript_file(version_file, f'create it with "version": "{old}"')
+        _write_typescript_file(version_file, _rewrite_package_json_version(text, old, new))
+        return
+
     text = version_file.read_text()
 
-    if language in ("python", "rust"):
+    if language == "rust":
+        text = _rewrite_cargo_version(text, old, new)
+    elif language == "python":
         text = text.replace(f'version = "{old}"', f'version = "{new}"', 1)
     elif language == "go":
         text = text.replace(f'Version = "{old}"', f'Version = "{new}"', 1)
@@ -217,7 +646,15 @@ def _run_lockfile_maintenance(repo_root: Path, language: str) -> None:
     ``uv`` or ``cargo`` that validation checks it with (#4407). A missing or
     stopped container runtime, or a failing lock command, raises
     :class:`subprocess.CalledProcessError` after its output is shown.
+
+    TypeScript runs no command: its lockfile's root version fields are set
+    to the VERSION file's version, which :func:`bump` has just written, by
+    :func:`_write_package_lock_version`.
     """
+    if language == "typescript":
+        new = (repo_root / VERSION_FILE).read_text().strip()
+        _write_package_lock_version(repo_root / _LOCKFILES[language], new)
+        return
     cmd = _LOCKFILE_COMMANDS.get(language)
     if cmd is None:
         return
@@ -253,11 +690,29 @@ def bump(repo_root: Path, part: str = "patch") -> str:
     old_version = version_file.read_text().strip()
     new_version = _increment_version(old_version, part)
 
-    version_file.write_text(new_version + "\n")
-
     cfg = read_config(repo_root)
     language = cfg.project.primary_language
-    if language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
+
+    # Every Rust check runs before any file is written, VERSION included, so a
+    # manifest with no version table, or a bump that would break a member's
+    # versioned path dependency, fails with nothing changed.
+    if language == "rust":
+        cargo_toml = _discover_version_file(repo_root, language)
+        if cargo_toml.is_file():
+            _check_cargo_bump(repo_root, cargo_toml, old_version, new_version)
+
+    # Likewise for TypeScript: a missing package.json or lockfile, a missing
+    # or mismatched version, or a lockfile with no root version fields fails
+    # before VERSION is written. It never reaches the handler below, which
+    # other languages keep (#1165 Task 5).
+    if language == "typescript":
+        _check_typescript_bump(repo_root, old_version, new_version)
+
+    version_file.write_text(new_version + "\n")
+
+    if language == "typescript":
+        _write_version(repo_root / _PACKAGE_JSON, language, old_version, new_version)
+    elif language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
         try:
             lang_file = _discover_version_file(repo_root, language)
             if lang_file.is_file():

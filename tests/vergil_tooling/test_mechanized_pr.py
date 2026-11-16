@@ -589,6 +589,83 @@ def test_deadline_follows_the_env_override(
     assert fake.waits == [(fake.prs[0].url, "squash", 600)]
 
 
+def test_caller_deadline_overrides_the_env(
+    fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VRG_MECHANIZED_PR_DEADLINE", "600")
+    (clone / "vergil.toml").write_text("v2\n")
+
+    open_sync_pr(REPO, clone, job=JOB, title="chore: sync", body="the body", deadline_secs=6600)
+
+    assert fake.waits == [(fake.prs[0].url, "squash", 6600)]
+
+
+def test_no_caller_deadline_keeps_the_env_rule(
+    fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VRG_MECHANIZED_PR_DEADLINE", "900")
+    (clone / "vergil.toml").write_text("v2\n")
+
+    open_sync_pr(REPO, clone, job=JOB, title="chore: sync", body="the body", deadline_secs=None)
+
+    assert fake.waits == [(fake.prs[0].url, "squash", 900)]
+
+
+@pytest.mark.parametrize("secs", [0, -1, True])
+def test_bad_caller_deadline_raises_before_any_pr(fake: FakeGitHub, clone: Path, secs: int) -> None:
+    (clone / "vergil.toml").write_text("v2\n")
+    with pytest.raises(MechanizedPRError, match="deadline must be a positive whole number"):
+        open_sync_pr(REPO, clone, job=JOB, title="t", body="the body", deadline_secs=secs)
+    assert fake.prs == []
+
+
+def test_commit_parent_is_the_clone_head(fake: FakeGitHub, origin: Path, clone: Path) -> None:
+    older = _git(clone, "rev-parse", "HEAD")
+    seed = origin.parent / "seed"
+    (seed / "later.txt").write_text("later\n")
+    _git(seed, "add", "later.txt")
+    _git(seed, "commit", "-qm", "later")
+    _git(seed, "push", "-q", "origin", "develop")
+    # The clone stays on the older develop commit; the PR's commit builds on it.
+    (clone / "vergil.toml").write_text("v2\n")
+
+    _sync(clone)
+
+    assert _git(origin, "rev-parse", f"{BRANCH}^") == older
+    assert _git(origin, "rev-parse", "develop") != older
+
+
+def test_log_lines_name_closed_opened_and_wait(
+    fake: FakeGitHub, origin: Path, clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    earlier = f"automation/{JOB}/1"
+    _leave_branch(origin, earlier)
+    fake.prs.append(_PR(7, earlier))
+    (clone / "vergil.toml").write_text("v2\n")
+
+    _sync(clone)
+
+    out = capsys.readouterr().out
+    new_url = fake.prs[1].url
+    assert f"{REPO}: closed the earlier run's PR {fake.prs[0].url}" in out
+    assert f"{REPO}: opened {new_url}; waiting up to 2400s for it to merge" in out
+    assert re.search(rf"{REPO}: the wait for {re.escape(new_url)} ended after \d+s: merged", out)
+
+
+def test_log_line_names_a_wait_that_did_not_merge(
+    fake: FakeGitHub, clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.wait_failure = pr_merge.MergeAbortError("Checks failed on PR x: ci / test")
+    (clone / "vergil.toml").write_text("v2\n")
+
+    with pytest.raises(PRNotMergedError):
+        _sync(clone)
+
+    assert "ended after 0s: not merged (Checks failed on PR x: ci / test)" in (
+        capsys.readouterr().out
+    )
+
+
 @pytest.mark.parametrize("raw", ["0", "-5", "forty", "1.5"])
 def test_malformed_deadline_raises_before_any_pr(
     fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch, raw: str

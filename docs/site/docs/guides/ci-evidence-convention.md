@@ -118,7 +118,7 @@ show the **intended shape**, not what every bundle carries today:
   ([vergil-tooling#4416](https://github.com/vergil-project/vergil-tooling/issues/4416)).
 - The `test` and `audit` gates name their tools and hold their reports only
   for a language with an entry in vergil-actions' report table
-  ([`ci/evidence/reports`](https://vergil-project.github.io/vergil-actions/actions/ci-evidence-reports/)),
+  ([`ci/evidence/reports`](https://vergil-project.github.io/vergil-actions/latest/actions/ci-evidence-reports/)),
   today Python and Rust. For any other language (today go, cpp and
   typescript) those two gates ship an empty `tools` array and no report,
   with a warning on each leg.
@@ -227,29 +227,64 @@ security SARIF are **not** per-version:
 | `security`| `python.sarif`, `trivy-results.sarif`, `semgrep-results.sarif`      |
 
 A Rust repository's gates write their reports at the workspace root under
-these names, before `ci-test.yml` and `ci-audit.yml` stage them:
+these names, before `ci-quality.yml`, `ci-test.yml` and `ci-audit.yml` stage
+them:
 
 | Gate    | Report file at the workspace root | Written by                                                         |
 | ------- | --------------------------------- | ------------------------------------------------------------------ |
+| `quality` (lint) | `quality-clippy.json` (JSON Lines) | the gating `cargo clippy --all-targets --locked --workspace --message-format=json -- -D warnings` run, its stdout |
+| `quality` (typecheck) | `quality-cargo-check.json` (JSON Lines) | the gating `cargo check --locked --workspace --message-format=json` run, its stdout |
 | `test`  | `coverage.xml` (Cobertura)        | the gating `cargo llvm-cov report --cobertura --output-path coverage.xml` run |
 | `test`  | `junit.xml` (JUnit)               | the gating `cargo llvm-cov nextest` run, copied from `target/nextest/vergil/junit.xml` |
-| `audit` | `cargo-deny.json` (JSON Lines)    | the gating `cargo deny --format json … check --show-stats` run, its stderr |
+| `audit` | `cargo-deny.json` (JSON Lines)    | the gating `cargo deny --format json … --locked --workspace check --show-stats` run, its stderr |
 
 The test gate runs the tests once with cargo-nextest under cargo-llvm-cov,
 using the `vergil` nextest profile that vergil-tooling packages, which turns
 on nextest's JUnit report. One coverage report from that run then gates on
-100% line coverage. Both files are written whether the gate passes or fails.
+100% line and region coverage. Both files are written whether the gate passes
+or fails.
 Rustdoc examples run in a separate `cargo test --doc` step, which writes no
 report, because nextest does not run doctests.
 
-`ci-test.yml` and `ci-audit.yml` stage each leg's reports with version-suffixed
-names, as for Python: `coverage-<ver>.xml`, `junit-<ver>.xml` and
+The lint and typecheck gates each run cargo once. Its JSON messages go to the
+report. When cargo exits, the readable diagnostics in them (each distinct
+compiler message's `rendered` text, once, as cargo's own output shows it) are
+printed to the gate's log, after cargo's status lines. Both reports are written whether the gate passes or fails, and the
+gate exits with cargo's status.
+
+`ci-quality.yml`, `ci-test.yml` and `ci-audit.yml` stage each leg's reports
+with version-suffixed names, as for Python: `quality-clippy-<ver>.json`,
+`quality-cargo-check-<ver>.json`, `coverage-<ver>.xml`, `junit-<ver>.xml` and
 `cargo-deny-<ver>.json`. The names they stage come from a per-language table
 in vergil-actions
-([`ci/evidence/reports`](https://vergil-project.github.io/vergil-actions/actions/ci-evidence-reports/)),
+([`ci/evidence/reports`](https://vergil-project.github.io/vergil-actions/latest/actions/ci-evidence-reports/)),
 which must match the names these gates write. The Rust test entry requires
 `junit.xml` from vergil-actions v2.1.76, so a Rust repository needs a
 vergil-tooling release whose test gate writes it (2.1.314 or later).
+
+A TypeScript repository's gates write their reports at the workspace root
+under these names. Each report comes from the gate's own run, which exits with
+the tool's status, so every report is written whether the gate passes or
+fails:
+
+| Gate    | Report file at the workspace root | Written by                                                         |
+| ------- | --------------------------------- | ------------------------------------------------------------------ |
+| `quality` (lint) | `quality-eslint.json` (ESLint's JSON formatter) | the gating `node_modules/.bin/eslint . --format json --output-file quality-eslint.json` run |
+| `quality` (typecheck) | `quality-tsc.txt` (text) | the gating `node_modules/.bin/tsc --noEmit --pretty false --diagnostics` run, its stdout |
+| `test`  | `coverage.xml` (Cobertura)        | the gating `node_modules/.bin/vitest run --coverage …` run, copied from `coverage/cobertura-coverage.xml` |
+| `test`  | `junit.xml` (JUnit)               | the same Vitest run, its JUnit reporter |
+| `audit` | `npm-audit.json` (JSON)           | the gating `npm audit --audit-level=high --json` run, its stdout |
+
+The lint gate prints each ESLint finding from the report to the log, as
+`path:line:column: severity message [rule]`. The typecheck report holds
+`tsc`'s diagnostics, one per line, then the compiler's closing statistics,
+so a clean typecheck still writes real data. The test gate keeps Vitest's
+console output and coverage table; `--coverage.reportOnFailure` makes Vitest
+write the coverage report when a test fails. `TYPESCRIPT_REPORT_FILES` in
+vergil-tooling's `languages.py` names all five, and a TypeScript repository's
+managed `.gitignore` block ignores them, with Vitest's `coverage/` directory, so a
+second local `vrg-validate` never lints the first run's reports. vergil-actions
+stages them once its report table has a TypeScript entry.
 
 `quality-common.log` is the transcript of `vrg-validate --check common` and
 `quality-custom.log` the transcript of `vrg-validate --check custom`, each

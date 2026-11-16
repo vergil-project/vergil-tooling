@@ -11,7 +11,8 @@ single source of truth.
 
 ## TYPECHECK Is "The Compiler"
 
-For TypeScript, the TYPECHECK stage is `tsc --noEmit`: a full typecheck under the
+For TypeScript, the TYPECHECK stage is `tsc --noEmit`, run as the
+repository's own `node_modules/.bin/tsc`: a full typecheck under the
 one canonical type engine with the curated strict set turned on. There is no
 Clang-vs-GCC analog — there is exactly one `tsc` — so the two-diagnostics win
 comes instead from pairing `tsc` (structural typing) with typescript-eslint
@@ -72,8 +73,11 @@ What each extra buys:
 | `noUnusedLocals` | a declared local that is never read |
 | `noUnusedParameters` | a function parameter that is never read (prefix with `_` to intend it) |
 
-The base pins these against a **stable TypeScript 5.x release** (pinned in the
-dev images), so the set means the same thing on every run.
+The set targets **TypeScript 6.x**: the repository declares `typescript` as a
+devDependency, and `vrg-validate` holds both its declared range and its
+installed version to major 6 (see
+[Required devDependencies](overview.md#required-devdependencies-and-their-accepted-majors)),
+so the set means the same thing on every run.
 
 ## Ownership Lives in the Base tsconfig
 
@@ -82,8 +86,9 @@ tested in the packaged `tsconfig.base.json` — that is the single source of tru
 and this document mirrors it. If the set changes, it changes in the base
 tsconfig first and this page is updated to match, never the other way around.
 
-Consumers do not restate the set. A repository's `tsconfig.json` extends the base
-and inherits the strict set through that inheritance; enforcing it is the base's
+Consumers do not restate the set. A repository's `tsconfig.json` extends the
+base, written into the repository as the managed `tsconfig.vergil.json`, and
+inherits the strict set through that inheritance; enforcing it is the base's
 job, not each repo's. This is the direct analog of a C++ repository inheriting
 the shared warning flags rather than re-declaring `-Wall -Wextra` on its own
 compile lines.
@@ -122,11 +127,12 @@ blanketed away.
 The strict set is distinct from the LINT stage, which runs **Prettier** (format)
 and **ESLint** (type-aware typescript-eslint rules) once:
 
-- **Prettier** runs `prettier --check` against the packaged Prettier config
+- **Prettier** runs `prettier --check` against the managed `.prettierrc.json`
   (`semi: true`, `singleQuote: false`, `trailingComma: "all"`,
   `printWidth: 100`) — formatting only, no logic judgments.
-- **ESLint** runs its flat config with `js.configs.recommended` plus
-  typescript-eslint's `recommendedTypeChecked` (type-aware rules resolved via
+- **ESLint** runs the repository's `eslint.config.mjs`, which spreads Vergil's
+  managed `eslint.vergil.config.mjs`: its flat config with
+  `js.configs.recommended` plus typescript-eslint's `recommendedTypeChecked` (type-aware rules resolved via
   `projectService: true`, which auto-discovers the nearest `tsconfig`), and
   carries the `ban-ts-comment` rule above.
 

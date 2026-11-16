@@ -697,6 +697,25 @@ def test_preflight_wraps_version_sync_error() -> None:
         preflight(version_override=None, repo_root=root)
 
 
+def test_preflight_wraps_cargo_version_error() -> None:
+    from vergil_tooling.lib.version import CargoVersionError
+
+    root = Path("/tmp/repo")  # noqa: S108
+    with (
+        patch(_MOD + "._check_host_prerequisites"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + "._read_and_validate_config"),
+        patch(_MOD + "._check_branch_and_tree"),
+        patch(_MOD + ".audit_repo_config"),
+        patch(
+            _MOD + ".version.show",
+            side_effect=CargoVersionError("Cargo.toml holds no version: [workspace.package]"),
+        ),
+        pytest.raises(ReleaseError, match=r"\[workspace\.package\]"),
+    ):
+        preflight(version_override=None, repo_root=root)
+
+
 # --- dependency-update release gate (epic vergil-project/.github#381, spec §5.3) ---
 
 _HEAD = "deps/update-2.1.0"

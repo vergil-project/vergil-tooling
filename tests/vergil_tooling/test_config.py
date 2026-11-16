@@ -24,6 +24,7 @@ from vergil_tooling.lib.config import (
     DependencyUpdateConfig,
     MarkdownlintConfig,
     MergeReviewConfig,
+    PathRule,
     TestConfig,
     TypeScriptConfig,
     ValidationConfig,
@@ -1116,6 +1117,76 @@ def test_config_upstream_refresh_unknown_key(tmp_path: Path) -> None:
 )
 def test_config_upstream_refresh_invalid(tmp_path: Path, toml: str, match: str) -> None:
     (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=match):
+        read_config(tmp_path)
+
+
+# -- [upstream-refresh].paths, the path fence's allowlist (epic .github#1168) --
+
+
+def _refresh_toml(paths: str) -> str:
+    return _VALID_TOML + f'\n[upstream-refresh]\nhook = "h"\npaths = {paths}\n'
+
+
+def test_config_upstream_refresh_paths_default_empty(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + '\n[upstream-refresh]\nhook = "h"\n')
+    cfg = read_config(tmp_path)
+    assert cfg.upstream_refresh is not None
+    assert cfg.upstream_refresh.paths == ()
+
+
+def test_config_accepts_paths_key(tmp_path: Path) -> None:
+    paths = (
+        '[\n  "docker/pins/toolchains.yml",\n'
+        "  { path = \"docker/common/*\", lines = '^ARG (?P<version>\\d+)$' },\n"
+        '  { path = "docs/**" },\n]'
+    )
+    (tmp_path / "vergil.toml").write_text(_refresh_toml(paths))
+    cfg = read_config(tmp_path)
+    assert cfg.upstream_refresh is not None
+    assert cfg.upstream_refresh.paths == (
+        PathRule(glob="docker/pins/toolchains.yml"),
+        PathRule(glob="docker/common/*", lines=r"^ARG (?P<version>\d+)$"),
+        PathRule(glob="docs/**"),
+    )
+
+
+def test_config_rejects_bad_line_regex(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_refresh_toml("[{ path = \"x\", lines = '^(ARG$' }]"))
+    with pytest.raises(ConfigError, match=r"paths\[0\]\.lines is not a valid regex"):
+        read_config(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("paths", "match"),
+    [
+        ('[{ path = "x", glob = "y" }]', r"paths\[0\]: unknown key\(s\): glob"),
+        ('[{ path = "x", lines = "a", extra = 1 }]', r"paths\[0\]: unknown key\(s\): extra"),
+    ],
+)
+def test_config_rejects_unknown_key(tmp_path: Path, paths: str, match: str) -> None:
+    (tmp_path / "vergil.toml").write_text(_refresh_toml(paths))
+    with pytest.raises(ConfigError, match=match):
+        read_config(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("paths", "match"),
+    [
+        ('"docker/*"', r"\[upstream-refresh\]\.paths must be an array"),
+        ("[3]", r"paths\[0\] must be a glob string or a \{ path, lines \} table"),
+        ('[{ lines = "a" }]', r"paths\[0\]\.path is required"),
+        ('[{ path = "x", lines = "" }]', r"paths\[0\]\.lines must be a non-empty regex"),
+        ('[{ path = "x", lines = 3 }]', r"paths\[0\]\.lines must be a non-empty regex"),
+        ('["ok", ""]', r"paths\[1\]: '' must be a repo-relative glob"),
+        ('["/etc/x"]', "must be a repo-relative glob"),
+        ('["docker//x"]', "must be a repo-relative glob"),
+        ('["docker/../.github/x"]', "must be a repo-relative glob"),
+        ('["./x"]', "must be a repo-relative glob"),
+    ],
+)
+def test_config_rejects_bad_paths(tmp_path: Path, paths: str, match: str) -> None:
+    (tmp_path / "vergil.toml").write_text(_refresh_toml(paths))
     with pytest.raises(ConfigError, match=match):
         read_config(tmp_path)
 

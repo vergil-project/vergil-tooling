@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import git, retry
+from vergil_tooling.lib import git, github, retry
 
 
 def _completed(returncode: int = 0, stdout: str = "") -> subprocess.CompletedProcess[str]:
@@ -791,3 +791,145 @@ def test_remote_tracking_branches_omits_head(tmp_path: Path) -> None:
 def test_remote_tracking_branches_empty() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value=""):
         assert git.remote_tracking_branches() == set()
+
+
+# --------------------------------------------------------------------------- token source
+# A registered token source authenticates git's remote calls, and git's retry
+# loop rebuilds the environment per attempt (#4496).
+
+
+class _Tokens:
+    """A token source handing out *tokens* in order, one per call."""
+
+    def __init__(self, *tokens: str) -> None:
+        self._tokens = list(tokens)
+        self.calls = 0
+
+    def token(self) -> str:
+        self.calls += 1
+        return self._tokens.pop(0)
+
+
+@pytest.fixture
+def no_app_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("VRG_APP_ID", "VRG_PRIVATE_KEY_PATH"):
+        monkeypatch.delenv(name, raising=False)
+
+    def _fail(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("the App mode must not be consulted with a token source")
+
+    monkeypatch.setattr("vergil_tooling.lib.git.github.get_installation_token", _fail)
+    monkeypatch.setattr("vergil_tooling.lib.git.github.repo_installation_token", _fail)
+
+
+def _header(token: str) -> str:
+    return git._git_auth_env(token)["GIT_CONFIG_VALUE_0"]
+
+
+@pytest.mark.usefixtures("no_app_mode")
+def test_git_remote_call_uses_source_header() -> None:
+    with (
+        github.token_source(_Tokens("t1")),
+        patch("vergil_tooling.lib.git.progress") as m_progress,
+        patch("vergil_tooling.lib.git.subprocess.run") as m_run,
+    ):
+        m_progress.run.return_value = 0
+        git.run("push", "origin", "refs/heads/b:refs/heads/b")
+    (call,) = m_progress.run.call_args_list
+    assert call.args[0] == ("git", "push", "origin", "refs/heads/b:refs/heads/b")
+    env = call.kwargs["env"]
+    assert env["GIT_CONFIG_COUNT"] == "1"
+    assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraHeader"
+    assert env["GIT_CONFIG_VALUE_0"] == _header("t1")
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    # The header lives only in the child's environment: no `git config` call.
+    m_run.assert_not_called()
+
+
+@pytest.mark.usefixtures("no_app_mode")
+def test_git_dash_c_remote_call_uses_source_header() -> None:
+    with (
+        github.token_source(_Tokens("t1")),
+        patch("vergil_tooling.lib.git.progress") as m_progress,
+    ):
+        m_progress.run.return_value = 0
+        git.run("-C", "/clone", "push", "origin", "b")
+    assert m_progress.run.call_args.kwargs["env"]["GIT_CONFIG_VALUE_0"] == _header("t1")
+
+
+@pytest.mark.usefixtures("no_app_mode")
+def test_git_push_retry_rebuilds_env() -> None:
+    err = subprocess.CalledProcessError(128, ("git", "push"), stderr="the remote end hung up")
+    with (
+        github.token_source(_Tokens("t1", "t2")),
+        patch("vergil_tooling.lib.git.progress") as m_progress,
+        patch("vergil_tooling.lib.git.time.sleep"),
+    ):
+        m_progress.run.side_effect = [err, 0]
+        git.run("push", "origin", "b")
+    headers = [c.kwargs["env"]["GIT_CONFIG_VALUE_0"] for c in m_progress.run.call_args_list]
+    assert headers == [_header("t1"), _header("t2")]
+
+
+@pytest.mark.usefixtures("no_app_mode")
+def test_git_ls_remote_retry_rebuilds_env() -> None:
+    err = subprocess.CalledProcessError(128, ("git", "ls-remote"), stderr="the remote end hung up")
+    with (
+        github.token_source(_Tokens("t1", "t2")),
+        patch(
+            "vergil_tooling.lib.git.subprocess.run", side_effect=[err, _completed(stdout="sha\n")]
+        ) as m_run,
+        patch("vergil_tooling.lib.git.time.sleep"),
+    ):
+        assert git.read_output("ls-remote", "origin", "develop") == "sha"
+    headers = [c.kwargs["env"]["GIT_CONFIG_VALUE_0"] for c in m_run.call_args_list]
+    assert headers == [_header("t1"), _header("t2")]
+
+
+@pytest.mark.usefixtures("no_app_mode")
+def test_git_local_call_does_not_consult_the_source() -> None:
+    source = _Tokens()
+    with (
+        github.token_source(source),
+        patch("vergil_tooling.lib.git.progress") as m_progress,
+    ):
+        m_progress.run.return_value = 0
+        git.run("commit", "-m", "msg")
+    env = m_progress.run.call_args.kwargs["env"]
+    assert "GIT_CONFIG_KEY_0" not in env
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert source.calls == 0
+
+
+@pytest.mark.parametrize("name", ["VRG_APP_ID", "VRG_PRIVATE_KEY_PATH"])
+@pytest.mark.usefixtures("no_app_mode")
+def test_git_source_and_app_mode_configured_refuses(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    source = _Tokens("t1")
+    with github.token_source(source):
+        monkeypatch.setenv(name, "x")
+        with (
+            patch("vergil_tooling.lib.git.progress") as m_progress,
+            pytest.raises(github.TokenSourceConflictError, match=name),
+        ):
+            git.run("fetch", "origin")
+    m_progress.run.assert_not_called()
+    assert source.calls == 0
+
+
+def test_no_source_git_env_built_once_for_all_attempts() -> None:
+    # With no source, the retry loop reuses one environment, as it always has.
+    err = subprocess.CalledProcessError(128, ("git", "push"), stderr="the remote end hung up")
+    with (
+        patch(
+            "vergil_tooling.lib.git.github.get_installation_token", return_value="ghs_t"
+        ) as m_token,
+        patch("vergil_tooling.lib.git.progress") as m_progress,
+        patch("vergil_tooling.lib.git.time.sleep"),
+    ):
+        m_progress.run.side_effect = [err, 0]
+        git.run("push", "origin", "b")
+    m_token.assert_called_once_with()
+    envs = [c.kwargs["env"] for c in m_progress.run.call_args_list]
+    assert envs == [git._git_auth_env("ghs_t")] * 2

@@ -15,12 +15,39 @@ maintainability, and long-term survivability across repositories.
 
 ## Tooling Expectations
 
+- Lockfile: `Cargo.lock` is committed and enforced, for libraries as well as
+  applications, following Cargo's guidance since 2023. Every gate command that
+  reads it (fetch, clippy, check, the coverage run, the doctests and the audit,
+  and the release build and publish) runs with `--locked`, so it is used as it
+  is and never re-resolved. `vrg-validate` fails a repository with no
+  `Cargo.lock` at install, naming the file and how to create it
+  (`cargo generate-lockfile` in the container, then commit it). A
+  `Cargo.lock` that no longer matches `Cargo.toml` fails the install with
+  cargo's own `--locked` error. The dev image's dependency warmup also runs
+  with `--locked` and never writes `Cargo.lock`: with no lockfile it is
+  skipped, and with a stale one it prints
+  `warmup skipped: Cargo.lock does not match Cargo.toml` and the image builds
+  unwarmed, so the lockfile can still be created or refreshed in the
+  container.
+- Workspaces: every workspace member is validated, not only the root
+  package. Clippy, check, the coverage run (the tests and the coverage
+  report), the doctests, the audit and the release build all run with
+  `--workspace`, and
+  `cargo fmt --all` formats every member. The doctests are skipped, with a
+  notice, only when no workspace member has a library target. A
+  single-crate repository is validated exactly as before.
 - Formatting: rustfmt (canonical; any formatting configuration goes in
   `rustfmt.toml`).
 - Linting: clippy (official Rust linter, 800+ lint rules), run on all targets
-  (`cargo clippy --all-targets -- -D warnings`), so the library, binaries,
-  tests, examples and benches are linted and any warning fails the gate.
-- Type checking: `cargo check` (inherent in the Rust compiler).
+  (`cargo clippy --all-targets --locked --workspace -- -D warnings`), so the
+  library, binaries, tests, examples and benches are linted and any warning
+  fails the gate. The run writes cargo's JSON messages to
+  `quality-clippy.json`, the lint gate's evidence, and prints the readable
+  diagnostics to the log.
+- Type checking: `cargo check --locked --workspace` (inherent in the Rust
+  compiler). The run writes cargo's JSON messages to
+  `quality-cargo-check.json`, the typecheck gate's evidence, and prints the
+  readable diagnostics to the log.
 - Dependency audit and license compliance: cargo-deny (advisories, licenses,
   bans, and sources in a single tool), run against the fleet policy that
   vergil-tooling packages, so a repo's own `deny.toml` is not used. The
@@ -30,10 +57,42 @@ maintainability, and long-term survivability across repositories.
   JUnit report to `junit.xml`. Rustdoc examples run separately with
   `cargo test --doc`, because nextest does not run doctests.
 - Coverage: cargo-llvm-cov (LLVM instrumentation, cross-platform) measures
-  that nextest run, held to 100% line coverage. Its report writes Cobertura
-  XML to `coverage.xml`. `coverage.xml` and `junit.xml` are the test gate's
-  evidence.
+  that nextest run, held to 100% line coverage and 100% region coverage. Its
+  report writes Cobertura XML to `coverage.xml`. `coverage.xml` and
+  `junit.xml` are the test gate's evidence.
+  - A region is a span of code with its own execution count. Each arm of an
+    `if` or a `match`, and each `?` early return, is its own region, so a
+    line can run while one of its regions never does. Regions are the stable
+    toolchain's stand-in for branch coverage. Branch coverage itself needs a
+    nightly toolchain and is deferred to
+    [vergil-project/.github#1171](https://github.com/vergil-project/.github/issues/1171).
+  - The report names the lines that never ran. When the gate fails,
+    `vrg-validate` also lists every uncovered region as
+    `<file>:<line>:<col>: uncovered region`, from the same report's JSON
+    export. The list counts regions as cargo-llvm-cov's region total does: for
+    a generic function, only its best-covered instantiation counts.
+  - Nothing can be excluded from coverage. An unreachable region is a design
+    signal: remove it or make it testable.
+- Release build: `vrg-validate` builds the release profile in its build
+  stage, after the typecheck and before the tests, with
+  `cargo build --release --locked --workspace`. The release job's build runs
+  the same command, so validation builds what the release ships. The tests
+  compile the debug profile with coverage instrumentation, so without this
+  stage the `--release` profile (its optimisation, and any code under
+  `cfg(debug_assertions)` or `cfg(not(debug_assertions))`) would be built for
+  the first time after the release PR merges. A failing release build fails
+  `vrg-validate`, as every other stage does. Run it alone with
+  `vrg-validate --check build`.
 - If a repository uses different tools, document the reason and equivalents.
+
+## Tool Ownership
+
+Where each tool lives follows the
+[Tool Ownership Guideline](../tool-ownership.md). For Rust:
+
+- The repository declares no gate tool.
+- rustfmt and clippy ship with the toolchain, and cargo-deny, cargo-llvm-cov
+  and cargo-nextest come from the image.
 
 ## Toolchain Selection
 
@@ -76,8 +135,8 @@ rules):
 
 - `quality / evidence`: the common checks, the custom validator, rustfmt,
   clippy and `cargo check`
-- `test / evidence`: the nextest run under cargo-llvm-cov at 100% line
-  coverage, and the doctests
+- `test / evidence`: the nextest run under cargo-llvm-cov at 100% line and
+  region coverage, and the doctests
 - `audit / evidence`: `cargo deny` against the fleet policy
 - `security / trivy` and `security / semgrep`
 - `security / codeql`, and GitHub's own `CodeQL`, `Trivy` and `Semgrep OSS`

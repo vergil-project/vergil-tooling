@@ -209,7 +209,7 @@ Required keys and accepted values:
 | `[project].branching-model` | `application-promotion`, `docs-single-branch`, `library-release` | Required. Determines which branch prefixes `vrg-commit` allows. |
 | `[project].release-model` | `artifact-publishing`, `environment-promotion`, `none`, `tagged-release` | Required. |
 | `[project].primary-language` | `cpp`, `go`, `python`, `rust`, `typescript` | Optional. Omit it for a repo with no primary language; it selects the per-language checks, container image and `.gitignore` fragment. |
-| `[ci].versions` | non-empty list of strings | Optional pin. Omit it to follow the version window. Every pinned version must be in the window, and an app may pin only one version; either violation is an error. C++ and TypeScript repos must pin. |
+| `[ci].versions` | non-empty list of strings | Optional pin. Omit it to follow the version window. Every pinned version must be in the window, and an app may pin only one version; either violation is an error. A pin is an exception: only a language whose window has more than one family must pin, which today is C++ (Clang and GCC). |
 | `[dependencies].vergil` | `vX.Y` | Required. The vergil release line; new repos get the line of the vergil-tooling that created them. |
 
 `[publish]` (`release`, default `false`; `docs`, default `true`; `vrg-release`

@@ -897,3 +897,95 @@ class TestCheckRequiredWorkflows:
         repo_config._check_required_workflows(tmp_path, items)
         assert all(i.field == "local.ops_workflow" for i in items)
         assert any("no schedule" in i.actual for i in items)
+
+
+# --- per-language managed files (epic vergil-project/.github#1174) ---------
+
+_TS_FILES = ("tsconfig.vergil.json", "eslint.vergil.config.mjs", ".prettierrc.json")
+
+
+def _write_lang_toml(root: Path, lang: str) -> None:
+    (root / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML.replace('"python"', f'"{lang}"'))
+
+
+def _write_ts_files(root: Path) -> None:
+    for entry in repo_config.LANGUAGE_MANAGED_FILES["typescript"]:
+        (root / entry.repo_path).write_bytes(repo_config.read_language_master(entry))
+
+
+def _language_items(root: Path) -> list[DiffItem]:
+    return [i for i in audit_local_config(root).items if i.field == "local.language_files"]
+
+
+class TestLanguageFiles:
+    def test_typescript_table(self) -> None:
+        """TypeScript manages its three base configs, each from its packaged master."""
+        table = repo_config.LANGUAGE_MANAGED_FILES["typescript"]
+        assert [(e.repo_path, e.master) for e in table] == [
+            ("tsconfig.vergil.json", "typescript/tsconfig.base.json"),
+            ("eslint.vergil.config.mjs", "typescript/eslint.config.mjs"),
+            (".prettierrc.json", "typescript/prettier.config.json"),
+        ]
+        for entry in table:
+            assert repo_config.read_language_master(entry)
+
+    def test_typescript_repo_missing_files_is_drift(self, tmp_path: Path) -> None:
+        _write_lang_toml(tmp_path, "typescript")
+        items = _language_items(tmp_path)
+        assert [i.actual for i in items] == [f"{name}: missing" for name in _TS_FILES]
+        drift = repo_config.language_files_drift(tmp_path)
+        assert drift is not None
+        assert drift.fixes is not None
+        assert [(f.path, f.mode) for f in drift.fixes] == [(name, 0o644) for name in _TS_FILES]
+
+    def test_edited_managed_file_is_drift(self, tmp_path: Path) -> None:
+        _write_lang_toml(tmp_path, "typescript")
+        _write_ts_files(tmp_path)
+        (tmp_path / ".prettierrc.json").write_text('{"semi": false}\n')
+        [item] = _language_items(tmp_path)
+        assert item.actual == ".prettierrc.json: differs from the master (stale or locally edited)"
+        assert item.expected == (
+            ".prettierrc.json: matches the master (configs/typescript/prettier.config.json)"
+        )
+
+    def test_crlf_copy_is_drift(self, tmp_path: Path) -> None:
+        """The comparison is on bytes, so a copy with other line ends is drift."""
+        _write_lang_toml(tmp_path, "typescript")
+        _write_ts_files(tmp_path)
+        path = tmp_path / "tsconfig.vergil.json"
+        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+        assert [str(i.actual).split(":")[0] for i in _language_items(tmp_path)] == [
+            "tsconfig.vergil.json"
+        ]
+
+    def test_matching_files_no_drift(self, tmp_path: Path) -> None:
+        _write_lang_toml(tmp_path, "typescript")
+        _write_ts_files(tmp_path)
+        assert _language_items(tmp_path) == []
+        assert repo_config.language_files_drift(tmp_path) is None
+
+    @pytest.mark.parametrize("lang", ["python", "rust", "go", "cpp", "shell"])
+    def test_non_typescript_repo_gets_none(self, tmp_path: Path, lang: str) -> None:
+        _write_lang_toml(tmp_path, lang)
+        assert repo_config.language_files_drift(tmp_path) is None
+
+    def test_no_vergil_toml_gets_none(self, tmp_path: Path) -> None:
+        """With no vergil.toml there is no language; the vergil.toml check reports it."""
+        assert repo_config.language_files_drift(tmp_path) is None
+
+    def test_unloadable_vergil_toml_is_drift_with_no_fix(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text("[project]\n")
+        drift = repo_config.language_files_drift(tmp_path)
+        assert drift is not None
+        assert drift.fixes is None
+        [item] = drift.items
+        assert item.field == "local.language_files"
+        assert str(item.actual).startswith("cannot resolve the managed-file language: ")
+
+    def test_language_managed_files_lookup(self) -> None:
+        assert repo_config.language_managed_files(None) == ()
+        assert repo_config.language_managed_files("python") == ()
+        assert (
+            repo_config.language_managed_files("typescript")
+            == (repo_config.LANGUAGE_MANAGED_FILES["typescript"])
+        )

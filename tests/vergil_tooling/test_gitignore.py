@@ -11,6 +11,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import gitignore
+from vergil_tooling.lib.languages import (
+    CARGO_CHECK_REPORT,
+    CLIPPY_REPORT,
+    COVERAGE_REPORT,
+    JUNIT_REPORT,
+    TYPESCRIPT_REPORT_FILES,
+)
 
 if TYPE_CHECKING:
     import pytest
@@ -36,7 +43,12 @@ if TYPE_CHECKING:
 #: report files of any paad review run never show in a worktree. Epic
 #: vergil-project/.github#1091 then filled the empty rust fragment with
 #: ``target/``, Cargo's build directory, a deliberate addition, and #4394 added
-#: ``cargo-deny.json``, the rust audit gate's report, beside it. The
+#: ``cargo-deny.json``, the rust audit gate's report, beside it. #4473 added
+#: ``quality-clippy.json`` and ``quality-cargo-check.json``, the rust lint and
+#: typecheck gates' reports. Epic vergil-project/.github#1174 added
+#: coverage/, npm-audit.json, quality-eslint.json and
+#: quality-tsc.txt, the typescript test, audit, lint and typecheck gates'
+#: reports, to the typescript fragment. The
 #: lossless-split invariant below proves ``base ∪ all-fragments`` still
 #: reconstitutes exactly this set, so a future fragment edit that silently drops
 #: or invents a pattern fails CI. This is the regression guard the monolith used
@@ -83,6 +95,10 @@ _LEGACY_GITIGNORE_PATTERNS: tuple[str, ...] = (
     "mkdocs.staged.yml",
     "node_modules/",
     "*.tsbuildinfo",
+    "coverage/",
+    "npm-audit.json",
+    "quality-eslint.json",
+    "quality-tsc.txt",
     "*.test",
     "*.out",
     "*.o",
@@ -92,6 +108,8 @@ _LEGACY_GITIGNORE_PATTERNS: tuple[str, ...] = (
     "CMakeUserPresets.json",
     "target/",
     "cargo-deny.json",
+    "quality-clippy.json",
+    "quality-cargo-check.json",
 )
 
 
@@ -244,7 +262,41 @@ def test_compose_unknown_language_is_base_only() -> None:
 
 
 def test_rust_fragment_ignores_cargo_target_and_audit_report() -> None:
-    assert gitignore.load_fragment("rust") == ["target/", "cargo-deny.json"]
+    assert gitignore.load_fragment("rust") == [
+        "target/",
+        "cargo-deny.json",
+        "quality-clippy.json",
+        "quality-cargo-check.json",
+    ]
+
+
+def test_rust_gitignore_lists_quality_reports() -> None:
+    """The rust lint and typecheck reports are ignored, by their contract names."""
+    fragment = gitignore.load_fragment("rust")
+    assert CLIPPY_REPORT in fragment
+    assert CARGO_CHECK_REPORT in fragment
+
+
+def test_typescript_fragment_ignores_reports() -> None:
+    """Every TypeScript gate report is ignored, with Vitest's report directory.
+
+    ``base`` already ignores ``coverage.xml`` and ``junit.xml``; the fragment
+    adds the rest, so Prettier (which reads ``.gitignore``) never lints a
+    previous run's reports and they are never committed (spec §6.6).
+    """
+    fragment = gitignore.load_fragment("typescript")
+    assert fragment == [
+        "*.tsbuildinfo",
+        "coverage/",
+        "npm-audit.json",
+        "quality-eslint.json",
+        "quality-tsc.txt",
+    ]
+    composed = gitignore.compose("typescript")
+    for report in TYPESCRIPT_REPORT_FILES:
+        assert report in composed, report
+    assert COVERAGE_REPORT in gitignore.load_base()
+    assert JUNIT_REPORT in gitignore.load_base()
 
 
 def test_load_fragment_unknown_is_empty() -> None:

@@ -42,10 +42,12 @@ stage of its `vrg-release`:
   version within its major.
 
 A dependency update merges its own PR once it is green, but only from a
-`vrg-release` or `vrg-update-deps` that a human runs; a human merges
-every upstream refresh PR. How the merge policy is expected to change
-for these automation PRs is tracked in
-[vergil-project/.github#470](https://github.com/vergil-project/.github/issues/470).
+`vrg-release` or `vrg-update-deps` that a human runs. An upstream
+refresh PR merges unattended, as the org automation App, from its
+scheduled job once CI passes and the path fence has allowed the change
+([vergil-project/.github#1168](https://github.com/vergil-project/.github/issues/1168),
+carrying out the policy decided in
+[vergil-project/.github#470](https://github.com/vergil-project/.github/issues/470)).
 
 ## Updaters
 
@@ -56,6 +58,7 @@ what it updates, and each one's changes become a separate commit on the
 | Name | Runs when | Commit message |
 |---|---|---|
 | `python` | `pyproject.toml` and `uv.lock` exist | `chore(deps): uv lock --upgrade` |
+| `cargo` | `Cargo.toml` and `Cargo.lock` exist | `chore(deps): cargo update`, listing the crates moved, or `chore(deps): refresh Cargo.lock` |
 | `vergil` | `vergil.toml` exists | `chore(deps): …` naming what changed |
 | `images` | A Dockerfile, workflow or `action.yml` is tracked | `chore(deps): bump image tags` |
 | `hook` | `[dependency-update].hook` is set | `chore(deps): repo hook` |
@@ -78,6 +81,26 @@ requires` and `[tool.uv] constraint-dependencies`. A requirement whose
 latest release falls outside its own specifier is reported as held
 back. Requirements without a specifier, URL requirements and transitive
 packages are never reported.
+
+### `cargo`
+
+Runs `cargo update` in the dev container, which moves every crate in
+`Cargo.lock` to the newest version its `Cargo.toml` requirement allows.
+It never edits a `Cargo.toml`.
+
+It then reads every workspace member's normal, dev and build
+dependencies from `cargo metadata`, also run in the dev container, and
+compares each one's locked version with the newest version in Cargo's
+sparse index (`https://index.crates.io`) that is neither yanked nor a
+pre-release. A dependency locked below that version is reported as held
+back, with a note giving the reason: `outside the Cargo.toml
+requirement`, `needs a newer Rust than rust-version`, both, or, when
+neither applies, `held by the resolver: another requirement in the
+dependency graph`. A workspace-inherited dependency is checked against
+the workspace's requirement. Path and git dependencies, and crates.io
+dependencies patched to a path or git crate, are never reported; a
+dependency from another registry, or patched to one, is an error. See
+[the Cargo updater](dev/update-deps.md#the-cargo-updater).
 
 ### `vergil`
 
@@ -215,6 +238,9 @@ Each updater takes its list from a machine-readable source:
 - `python` diffs the package versions in the parsed `uv.lock` before and
   after `uv lock --upgrade`, transitive packages included. A package
   added or dropped shows `(new)` or `(removed)`.
+- `cargo` diffs the crate versions in the parsed `Cargo.lock` before and
+  after `cargo update` the same way. A crate locked at several versions
+  shows them comma-joined.
 - `vergil` lists the `vergil` version it bumped and the
   `vergil-python<x.y>` runtime pin it moved. Normalizing workflow refs to
   the declared version moves no package.
@@ -234,6 +260,7 @@ at the end of every `vrg-update-deps` run, as a table:
 | Source | Dependency | Current | Latest | Note |
 |---|---|---|---|---|
 | python | example-lib | 1.4.2 | 2.0.0 | project.dependencies: example-lib<2 |
+| cargo | serde | 1.0.200 | 2.0.0 | outside the Cargo.toml requirement |
 
 When nothing is held back it says "No dependencies are held back by
 their declared bounds."

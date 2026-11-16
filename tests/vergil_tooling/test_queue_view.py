@@ -4,18 +4,32 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
-from unittest.mock import patch
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.lib import epics, github, in_flight, queue_view, security_records
+from vergil_tooling.lib.epic_size import SizeRecord
 from vergil_tooling.lib.epics import ChildState, IssueRef
 from vergil_tooling.lib.queue_view import Deferral, PlanningMarkers, QueueItem
 from vergil_tooling.lib.security_records import Advisory
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 _MOD = "vergil_tooling.lib.queue_view"
 _EPIC = IssueRef("org", ".github", 1)
+
+
+_TRUSTED = frozenset({"vergil-user", "human"})
+
+
+@pytest.fixture(autouse=True)
+def trusted() -> Iterator[MagicMock]:
+    # The planning and deferred views read the trusted authors once each.
+    with patch(f"{_MOD}.epic_size.trusted_logins", return_value=_TRUSTED) as loader:
+        yield loader
 
 
 def _view(
@@ -23,14 +37,16 @@ def _view(
     created_at: str,
     *,
     labels: tuple[str, ...] = (),
-    comments: tuple[str, ...] = (),
+    comments: tuple[str | tuple[str, str], ...] = (),
     body: str = "",
 ) -> dict[str, Any]:
+    """An issue view; a comment is a body (by ``someone``) or ``(author, body)``."""
+    authored = [c if isinstance(c, tuple) else ("someone", c) for c in comments]
     return {
         "title": title,
         "createdAt": created_at,
         "labels": [{"name": name} for name in labels],
-        "comments": [{"body": comment} for comment in comments],
+        "comments": [{"author": {"login": a}, "body": b} for a, b in authored],
         "body": body,
     }
 
@@ -55,9 +71,13 @@ class _FakeGh:
         if args[:2] == ("issue", "list"):
             return self.listing
         number = int(args[2])
-        if args[args.index("--json") + 1] == "state":
+        fields = args[args.index("--json") + 1]
+        if fields == "state":
             return {"state": self.states[number]}
-        return self.views[number]
+        # Only the requested fields, as gh returns them: a view that forgets
+        # one sees it missing.
+        wanted = fields.split(",")
+        return {k: v for k, v in self.views[number].items() if k in wanted}
 
 
 _fake_gh = _FakeGh
@@ -675,6 +695,279 @@ def test_to_json_dicts() -> None:
             "epic": {"owner": "org", "repo": ".github", "number": 50},
         }
     ]
+
+
+# -- epic size --------------------------------------------------------------------
+
+_SIZED_M14 = (
+    "app/vergil-user",
+    "Sized 2026-11-16: epic-size M, about 14 tasks.\nEpic-size: M\n"
+    "Estimated-tasks: 14\nConfidence: med\nReason: One sentence.",
+)
+_M14 = SizeRecord(size="M", tasks=14, confidence="med", error=None)
+_LABEL_ERROR = "label epic-size:M without a sizing comment"
+
+
+def _fields(gh: _FakeGh) -> set[str]:
+    return {c[c.index("--json") + 1] for c in gh.calls}
+
+
+def test_view_field_lists() -> None:
+    views = {5: _view("p", "2026-10-01T00:00:00Z")}
+    children = [ChildState(IssueRef("org", ".github", 5), "OPEN", "")]
+    for reader, kind in (
+        (queue_view.planning_items, epics.PLANNING),
+        (queue_view.deferred_items, epics.DEFERRED),
+    ):
+        gh = _fake_gh(views)
+        with (
+            patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC) as find,
+            patch(f"{_MOD}.epics.child_states", return_value=children),
+            patch(f"{_MOD}.github.read_json", side_effect=gh),
+            patch(f"{_MOD}.github.repo_exists", return_value=False),
+        ):
+            reader("org/.github", "org")
+        find.assert_called_once_with(kind, "org/.github", "org")
+        [fields] = _fields(gh)
+        assert {"labels", "comments"} <= set(fields.split(",")), (kind, fields)
+
+
+def test_planning_item_carries_size(trusted: MagicMock) -> None:
+    [item] = _planning(
+        {5: _view("p", "2026-10-01T00:00:00Z", labels=("epic-size:M",), comments=(_SIZED_M14,))}
+    )
+    assert item.size == _M14
+    assert item.note == "Sized 2026-11-16: epic-size M, about 14 tasks."
+    trusted.assert_called_once_with()
+
+
+def test_planning_item_untrusted_sizing_is_ignored() -> None:
+    untrusted = ("stranger", _SIZED_M14[1])
+    [item] = _planning({5: _view("p", "2026-10-01T00:00:00Z", comments=(untrusted,))})
+    assert item.size == SizeRecord(None, None, None, None)
+
+
+def test_deferred_item_carries_size(trusted: MagicMock) -> None:
+    deferral = ("app/vergil-user", "Deferred 2026-11-17: waits\nRevisit when: X ships")
+    [item] = _deferred(
+        {
+            1: _view(
+                "d",
+                "2026-10-01T00:00:00Z",
+                labels=("epic-size:M",),
+                comments=(_SIZED_M14, deferral),
+            )
+        }
+    )
+    assert item.size == _M14
+    assert item.size.display == "M/14"
+    assert item.note == "Deferred 2026-11-17: waits | Revisit when: X ships"
+    trusted.assert_called_once_with()
+
+
+def test_error_keeps_held_note() -> None:
+    view = _ready_view()
+    view["labels"].append({"name": "epic-size:M"})
+    [item], _home, _listing = _security_planning({5: view}, [_advisory(_GHSA, _PLAN)])
+    assert item.size is not None
+    assert item.size.error == _LABEL_ERROR
+    assert item.note == f"{_HELD_NOTE} | size: {_LABEL_ERROR}"
+
+
+def test_error_keeps_deferral_note() -> None:
+    view = _view(
+        "d",
+        "2026-10-01T00:00:00Z",
+        labels=("epic-size:M",),
+        comments=("Deferred 2026-10-01: r\nRevisit when: c",),
+    )
+    [item] = _deferred({1: view})
+    assert item.note == f"Deferred 2026-10-01: r | Revisit when: c | size: {_LABEL_ERROR}"
+
+
+def test_error_on_deferred_item_without_deferral() -> None:
+    [item] = _deferred({1: _view("d", "2026-10-01T00:00:00Z", labels=("epic-size:M",))})
+    assert item.note == f"size: {_LABEL_ERROR}"
+
+
+def test_error_replaces_latest_comment_note() -> None:
+    view = _view("p", "2026-10-01T00:00:00Z", labels=("epic-size:M",), comments=("a note",))
+    [item] = _planning({5: view})
+    assert item.note == f"size: {_LABEL_ERROR}"
+
+
+def test_intake_item_has_no_size(trusted: MagicMock) -> None:
+    children = [ChildState(IssueRef("org", "tool", 3), "OPEN", "")]
+    views = {3: _view("t", "2026-10-20T00:00:00Z", labels=("epic-size:M",))}
+    with (
+        patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC),
+        patch(f"{_MOD}.epics.child_states", return_value=children),
+        patch(f"{_MOD}.github.read_json", side_effect=_fake_gh(views)),
+    ):
+        [item] = queue_view.intake_items("org/.github", "org")
+    assert item.size is None
+    trusted.assert_not_called()
+
+
+def test_trusted_authors_error_propagates(trusted: MagicMock) -> None:
+    trusted.side_effect = ValueError("trusted_authors: 'human' is empty")
+    with (
+        patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC),
+        patch(f"{_MOD}.epics.child_states", return_value=[]),
+        pytest.raises(ValueError, match="'human' is empty"),
+    ):
+        queue_view.deferred_items("org/.github", "org")
+
+
+def _sized(number: int, created_at: str, size: SizeRecord | None) -> QueueItem:
+    return QueueItem(
+        IssueRef("org", ".github", number), f"t{number}", created_at, "waiting", "", None, size
+    )
+
+
+_UNSIZED_RECORD = SizeRecord(None, None, None, None)
+_S3_OLD = _sized(1, "2026-01-01T00:00:00Z", SizeRecord("S", 3, "high", None))
+_S8_NEW = _sized(2, "2026-09-01T00:00:00Z", SizeRecord("S", 8, "low", None))
+_M12 = _sized(3, "2026-03-01T00:00:00Z", SizeRecord("M", 12, "med", None))
+_UNSIZED_ITEM = _sized(4, "2025-01-01T00:00:00Z", _UNSIZED_RECORD)
+_ERROR_ITEM = _sized(5, "2024-01-01T00:00:00Z", SizeRecord(None, None, None, "bad"))
+_SORT_INPUT = [_ERROR_ITEM, _M12, _UNSIZED_ITEM, _S8_NEW, _S3_OLD]
+
+
+def test_sort_age() -> None:
+    assert queue_view.sort_planning(_SORT_INPUT, "age") == [
+        _ERROR_ITEM,
+        _UNSIZED_ITEM,
+        _S3_OLD,
+        _M12,
+        _S8_NEW,
+    ]
+
+
+def test_sort_size() -> None:
+    assert queue_view.sort_planning(_SORT_INPUT, "size") == [
+        _S3_OLD,
+        _S8_NEW,
+        _M12,
+        _UNSIZED_ITEM,
+        _ERROR_ITEM,
+    ]
+    # Ties within a size are oldest first, whatever the task count.
+    s9_old = _sized(6, "2025-06-01T00:00:00Z", SizeRecord("S", 9, "low", None))
+    assert queue_view.sort_planning([_S3_OLD, _S8_NEW, s9_old], "size") == [
+        s9_old,
+        _S3_OLD,
+        _S8_NEW,
+    ]
+
+
+def test_sort_tasks() -> None:
+    m12_old = _sized(7, "2020-01-01T00:00:00Z", SizeRecord("M", 12, "med", None))
+    assert queue_view.sort_planning([*_SORT_INPUT, m12_old], "tasks") == [
+        _S3_OLD,
+        _S8_NEW,
+        m12_old,
+        _M12,
+        _UNSIZED_ITEM,
+        _ERROR_ITEM,
+    ]
+
+
+def test_sort_rejects_unknown_key() -> None:
+    bogus: Any = "bogus"
+    with pytest.raises(ValueError, match="bogus"):
+        queue_view.sort_planning(_SORT_INPUT, bogus)
+
+
+def test_no_size_record_sorts_and_filters_as_unsized() -> None:
+    bare = _sized(8, "2026-12-01T00:00:00Z", None)
+    assert queue_view.sort_planning([bare, _ERROR_ITEM, _S3_OLD], "size") == [
+        _S3_OLD,
+        bare,
+        _ERROR_ITEM,
+    ]
+    assert queue_view.filter_planning([bare, _S3_OLD], frozenset({"S"})) == [_S3_OLD]
+    assert queue_view.filter_planning([bare, _S3_OLD], frozenset({"unsized"})) == [bare]
+
+
+def test_filter_keeps_errors() -> None:
+    assert queue_view.filter_planning(_SORT_INPUT, frozenset({"S"})) == [
+        _ERROR_ITEM,
+        _S8_NEW,
+        _S3_OLD,
+    ]
+
+
+def test_filter_unsized() -> None:
+    assert queue_view.filter_planning(_SORT_INPUT, frozenset({"unsized", "M"})) == [
+        _ERROR_ITEM,
+        _M12,
+        _UNSIZED_ITEM,
+    ]
+
+
+def test_parse_size_filter() -> None:
+    assert queue_view.parse_size_filter("S,unsized") == frozenset({"S", "unsized"})
+    assert queue_view.parse_size_filter(" M , XL") == frozenset({"M", "XL"})
+    for bad in ("s", "S,medium", "", "S,"):
+        with pytest.raises(ValueError, match="unknown size"):
+            queue_view.parse_size_filter(bad)
+
+
+def test_size_errors() -> None:
+    assert queue_view.size_errors(_SORT_INPUT) == [(_ERROR_ITEM, "bad")]
+
+
+def test_render_text_size_column() -> None:
+    error = QueueItem(
+        IssueRef("org", ".github", 5),
+        "e",
+        "2026-10-20T08:00:00Z",
+        "waiting",
+        "size: bad",
+        None,
+        SizeRecord(None, None, None, "bad"),
+    )
+    items = [
+        _sized(1, "2026-10-20T08:00:00Z", SizeRecord("M", 14, "med", None)),
+        _sized(2, "2026-10-20T08:00:00Z", _UNSIZED_RECORD),
+        error,
+    ]
+    assert queue_view.render_text(items, now=_NOW).splitlines() == [
+        "org/.github#1  3d  M/14  waiting  t1",
+        "org/.github#2  3d  ?  waiting  t2",
+        "org/.github#5  3d  !  waiting  e  — size: bad",
+    ]
+
+
+def test_to_json_size_fields() -> None:
+    [sized, unsized, error] = queue_view.to_json([_M12, _UNSIZED_ITEM, _ERROR_ITEM])
+    assert "size" not in sized
+    assert {k: sized[k] for k in ("epic_size", "estimated_tasks", "confidence", "size_error")} == {
+        "epic_size": "M",
+        "estimated_tasks": 12,
+        "confidence": "med",
+        "size_error": None,
+    }
+    assert [unsized[k] for k in ("epic_size", "estimated_tasks", "confidence", "size_error")] == [
+        None,
+        None,
+        None,
+        None,
+    ]
+    assert error["size_error"] == "bad"
+    assert error["epic_size"] is None
+    intake = QueueItem(
+        IssueRef("org", ".github", 9), "i", "2026-10-01T00:00:00Z", "waiting", "", None
+    )
+    assert set(queue_view.to_json([intake])[0]) == {
+        "ref",
+        "title",
+        "created_at",
+        "state",
+        "note",
+        "epic",
+    }
 
 
 # -- adhoc_items -----------------------------------------------------------------

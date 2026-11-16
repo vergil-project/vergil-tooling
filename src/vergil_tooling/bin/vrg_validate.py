@@ -2,13 +2,16 @@
 
 Reads primary_language from vergil.toml, then either runs a
 specific check type (--check) or all checks in sequence:
-  common -> install -> lint -> typecheck -> test -> audit -> semgrep -> trivy
-  -> docs -> custom
+  common -> install -> lint -> typecheck -> build -> test -> audit -> semgrep
+  -> trivy -> docs -> custom
 
-The single checks are common, lint, typecheck, test, audit, semgrep, trivy,
-docs and custom. The semgrep stage runs the scan PR CI's ``security / semgrep``
-gate runs, with the same rulesets and fleet exclusions, so a finding fails
-here before the PR is opened (issue #4003). The trivy stage runs the
+The single checks are common, lint, typecheck, build, test, audit, semgrep,
+trivy, docs and custom. The build stage runs the language's release build
+command, for a language that turns it on (epic vergil-project/.github#1174);
+with none, ``--check build`` reports that and exits 0. The semgrep stage
+runs the scan PR CI's ``security / semgrep`` gate runs, with the same
+rulesets and fleet exclusions, so a finding fails here before the PR is
+opened (issue #4003). The trivy stage runs the
 vulnerability scan of PR CI's ``security / trivy`` gate (issue #4445). The
 docs stage runs the strict
 mkdocs build of PR CI's ``docs / docs`` gate when the repo has
@@ -21,6 +24,15 @@ validator that is present but unusable still fails (issue #3650).
 
 Checks run as progress-framework stages: install is fail_fast,
 everything else is fail_defer so all failures are reported in one run.
+
+A TypeScript repo gets one more stage right after install, whenever any of
+its language checks runs: ``typescript-tools``, fail_fast, which checks that
+the repo declares and installs each required devDependency within Vergil's
+accepted major (:mod:`~vergil_tooling.lib.typescript_tools`), since the
+gates run the repo's own tools from ``node_modules/.bin``; that the
+``package.json`` version matches ``VERSION``; that ``package.json``
+defines the ``build`` script the build stage runs; that its entry points
+build on the managed configs; and that Prettier has one config source.
 
 A repo with none of its language's manifests (a Rust repo with no
 ``Cargo.toml`` yet) is not bootstrapped: the image warmup skips it, and so
@@ -55,7 +67,15 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import audit_retry, config, git, progress, trivy_scan
+from vergil_tooling.lib import (
+    audit_retry,
+    config,
+    git,
+    progress,
+    rust_coverage,
+    trivy_scan,
+    typescript_tools,
+)
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.container_cache import language_sources, unbootstrapped_manifests
 from vergil_tooling.lib.docs import (
@@ -67,9 +87,11 @@ from vergil_tooling.lib.docs import (
 from vergil_tooling.lib.languages import (
     COVERAGE_REPORT,
     JUNIT_REPORT,
+    RUST_DOCTEST_CMD,
     CheckKind,
     build_python_test_argv,
     language_commands,
+    rust_coverage_export_cmd,
 )
 from vergil_tooling.lib.progress import Stage, StageMode
 from vergil_tooling.lib.sarif import evaluate_findings, format_summary, parse_sarif
@@ -87,6 +109,7 @@ _CHECK_KINDS = {
     "common": None,
     "lint": CheckKind.LINT,
     "typecheck": CheckKind.TYPECHECK,
+    "build": CheckKind.BUILD,
     "test": CheckKind.TEST,
     "audit": CheckKind.AUDIT,
     "semgrep": None,
@@ -103,6 +126,7 @@ _NO_CUSTOM_VALIDATOR = (
 _LANGUAGE_CHECK_ORDER = [
     CheckKind.LINT,
     CheckKind.TYPECHECK,
+    CheckKind.BUILD,
     CheckKind.TEST,
     CheckKind.AUDIT,
 ]
@@ -203,6 +227,9 @@ def main(argv: list[str] | None = None) -> int:
     if not stages:
         if args.check == "custom":
             print(_NO_CUSTOM_VALIDATOR)
+            return 0
+        if args.check == "build":
+            print(f"build: no build check for {language or '<not set>'} — nothing to run")
             return 0
         print(f"No {args.check} commands for language '{language or '<not set>'}'")
         return 0
@@ -485,22 +512,23 @@ def _skip_conan_audit_scan(cmds: list[list[str]]) -> list[list[str]]:
     return kept
 
 
-_RUST_DOCTEST_CMD = ["cargo", "test", "--doc"]
 # Cargo's library target kinds: any of them makes ``cargo test --doc`` select a
 # library target instead of refusing with "no library targets found".
 _RUST_LIB_KINDS = frozenset({"lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro"})
 
 
 def _rust_lib_packages(repo_root: Path) -> tuple[list[str], list[str]]:
-    """Return the default-member package names with and without a library target.
+    """Return the workspace-member package names with and without a library target.
 
-    ``cargo test --doc`` runs on the workspace's default members and refuses
-    with "no library targets found" when none of them has a library target,
-    so this reads exactly those packages from ``cargo metadata --no-deps``. A
-    probe that cannot run, exits non-zero or prints unexpected output raises
+    ``cargo test --doc --workspace`` runs on every workspace member and
+    refuses with "no library targets found" when none of them has a library
+    target, so this reads exactly those packages, ``workspace_members`` (not
+    ``workspace_default_members``), from ``cargo metadata --no-deps``
+    (epic vergil-project/.github#1165, spec §6.4). A probe that cannot run,
+    exits non-zero or prints unexpected output raises
     :class:`ValidationError` (issue #4378).
     """
-    cmd = ["cargo", "metadata", "--no-deps", "--format-version", "1"]
+    cmd = ["cargo", "metadata", "--no-deps", "--format-version", "1", "--locked"]
     try:
         result = subprocess.run(  # noqa: S603
             cmd,
@@ -521,11 +549,11 @@ def _rust_lib_packages(repo_root: Path) -> tuple[list[str], list[str]]:
         raise ValidationError(msg)
     try:
         metadata = json.loads(result.stdout)
-        defaults = set(metadata["workspace_default_members"])
+        members = set(metadata["workspace_members"])
         with_lib: list[str] = []
         without_lib: list[str] = []
         for package in metadata["packages"]:
-            if package["id"] not in defaults:
+            if package["id"] not in members:
                 continue
             kinds = {kind for target in package["targets"] for kind in target["kind"]}
             (with_lib if kinds & _RUST_LIB_KINDS else without_lib).append(package["name"])
@@ -536,7 +564,7 @@ def _rust_lib_packages(repo_root: Path) -> tuple[list[str], list[str]]:
 
 
 def _skip_rust_doctests_without_lib(cmds: list[list[str]], repo_root: Path) -> list[list[str]]:
-    """Drop ``cargo test --doc`` when no default-member package has a library target.
+    """Drop ``cargo test --doc`` when no workspace member has a library target.
 
     Rustdoc examples run only for a library target, and on a crate with none
     (a plain ``cargo new`` binary) ``cargo test --doc`` exits non-zero with
@@ -544,18 +572,35 @@ def _skip_rust_doctests_without_lib(cmds: list[list[str]], repo_root: Path) -> l
     with no doctest to run. The probe runs at stage time, after the install
     stage has fetched the dependencies, and only when the command is present.
     """
-    if _RUST_DOCTEST_CMD not in cmds:
+    if RUST_DOCTEST_CMD not in cmds:
         return cmds
     with_lib, without_lib = _rust_lib_packages(repo_root)
     if with_lib:
         return cmds
     print(
         "NOTICE: skipping `cargo test --doc` — no library target in "
-        f"{', '.join(without_lib) or 'the workspace default members'}; "
+        f"{', '.join(without_lib) or 'the workspace members'}; "
         "rustdoc examples run only for a library target.",
         file=sys.stderr,
     )
-    return [cmd for cmd in cmds if cmd != _RUST_DOCTEST_CMD]
+    return [cmd for cmd in cmds if cmd != RUST_DOCTEST_CMD]
+
+
+_RUST_LOCKFILE_MISSING = (
+    "Cargo.lock is missing: run 'cargo generate-lockfile' in the container and commit it"
+)
+
+
+def check_rust_lockfile(repo_root: Path) -> None:
+    """Fail a Rust repo that has ``Cargo.toml`` but no committed ``Cargo.lock``.
+
+    Every Rust gate command runs with ``--locked``, which on a missing lockfile
+    gives cargo's generic "needs to be updated" error. This check runs before
+    the install stage instead, naming the file and how to create it. Libraries
+    commit the lockfile too (epic vergil-project/.github#1165, spec §6.1).
+    """
+    if (repo_root / "Cargo.toml").is_file() and not (repo_root / "Cargo.lock").is_file():
+        raise ValidationError(_RUST_LOCKFILE_MISSING)
 
 
 def _command_stage(
@@ -598,6 +643,57 @@ def _run_audit_command(cmd: list[str]) -> int:
     if cmd and cmd[0] == "pip-audit":
         return audit_retry.run_pip_audit(cmd)
     return progress.run(cmd, check=False)
+
+
+def _print_uncovered_regions(repo_root: Path) -> None:
+    """List the uncovered regions of the Rust coverage run that just failed.
+
+    ``--show-missing-lines`` names only lines that never ran, so a missed
+    region on a line that ran (an untested ``?`` error path) would fail the
+    region gate without saying where (spec §6.2). This runs the gate's report
+    again as JSON and prints each uncovered region by file, line and column.
+    It runs here, in vergil-tooling's own process, because the Rust image's
+    ``python3`` cannot import vergil-tooling. Every way it can fail is
+    printed as an error; the stage fails on the coverage command's status
+    either way.
+    """
+    with tempfile.TemporaryDirectory(prefix="vrg-rust-coverage-") as tmp:
+        export_path = Path(tmp) / "coverage.json"
+        cmd = rust_coverage_export_cmd(str(export_path))
+        print(f"Running (test): {' '.join(cmd)}")
+        rc = progress.run(cmd, check=False)
+        if rc != 0:
+            print(f"error: the coverage export exited {rc}; the uncovered regions are not listed")
+            return
+        try:
+            export = json.loads(export_path.read_text(encoding="utf-8"))
+            if not isinstance(export, dict):
+                msg = "coverage export: not a JSON object"
+                raise rust_coverage.CoverageExportError(msg)
+            regions = rust_coverage.uncovered_regions(export)
+            missed = rust_coverage.missed_regions(export)
+        except (OSError, json.JSONDecodeError, rust_coverage.CoverageExportError) as exc:
+            print(f"error: could not read the coverage export: {exc}")
+            return
+    if regions:
+        print(f"Uncovered regions ({len(regions)}):")
+        for line in rust_coverage.format_regions(regions, root=repo_root.resolve()):
+            print(f"  {line}")
+    else:
+        print("Uncovered regions: none")
+    if len(regions) != missed:
+        print(
+            f"error: {len(regions)} uncovered region(s) listed, but the coverage totals "
+            f"count {missed} missed; the listing is incomplete"
+        )
+
+
+def _run_rust_test_command(cmd: list[str], *, coverage_cmd: list[str], repo_root: Path) -> int:
+    """Run one Rust TEST command; after a failed coverage run, list its misses."""
+    rc = progress.run(cmd, check=False)
+    if rc != 0 and cmd == coverage_cmd:
+        _print_uncovered_regions(repo_root)
+    return rc
 
 
 def _not_bootstrapped_stage(name: str, language: str, missing: list[str]) -> Stage:
@@ -678,11 +774,14 @@ def _install_stage(
     install_cmds: list[list[str]],
     missing: list[str],
     sources: list[str],
+    *,
+    repo_root: Path,
 ) -> Stage | None:
     """The install stage for *language*, or ``None`` when it has no install.
 
     With every manifest missing it is skipped, loudly, when the repo has no
-    sources, and failed when it has some.
+    sources, and failed when it has some. A Rust install first runs
+    :func:`check_rust_lockfile`, so a missing ``Cargo.lock`` fails it.
     """
     if missing and sources:
         return _sources_without_manifest_stage(language, missing, sources)
@@ -690,7 +789,38 @@ def _install_stage(
         return None
     if missing:
         return _not_bootstrapped_stage("install", language, missing)
+    if language == "rust":
+
+        def rust_install_cmds() -> list[list[str]]:
+            check_rust_lockfile(repo_root)
+            return install_cmds
+
+        return _command_stage("install", rust_install_cmds, mode="fail_fast")
     return _command_stage("install", install_cmds, mode="fail_fast")
+
+
+_TYPESCRIPT_TOOLS_STAGE = "typescript-tools"
+
+
+def _typescript_tools_stage(repo_root: Path) -> Stage:
+    """The TypeScript pre-gate stage: every check in ``PRE_GATE_CHECKS``.
+
+    It runs right after install, whenever any TypeScript language check kind
+    runs, so every TypeScript CI job (one ``--check`` each) enforces it
+    (epic vergil-project/.github#1174, spec §6.3). It runs every check in
+    :data:`~vergil_tooling.lib.typescript_tools.PRE_GATE_CHECKS` and fails
+    with all their problems at once; ``fail_fast``, so no gate runs on a tool
+    outside its accepted range, and no build runs without a ``build`` script.
+    """
+
+    def fn(_ctx: object) -> None:
+        problems = typescript_tools.run_pre_gate_checks(repo_root)
+        if problems:
+            lines = "".join(f"\n  {problem}" for problem in problems)
+            msg = f"the repo's TypeScript setup fails Vergil's pre-gate checks:{lines}"
+            raise ValidationError(msg)
+
+    return Stage(_TYPESCRIPT_TOOLS_STAGE, fn, mode="fail_fast")
 
 
 def _python_test_stage(
@@ -1096,15 +1226,21 @@ def _build_stages(
             install_cmds = language_commands(
                 language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
             )
-            names = (["install"] if install_cmds else []) + [kind.value for kind, _ in kind_cmds]
+            names = (
+                (["install"] if install_cmds else [])
+                + ([_TYPESCRIPT_TOOLS_STAGE] if language == "typescript" else [])
+                + [kind.value for kind, _ in kind_cmds]
+            )
             stages.extend(_not_bootstrapped_stage(name, language, missing) for name in names)
         elif kind_cmds:
             install_cmds = language_commands(
                 language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
             )
-            install = _install_stage(language, install_cmds, missing, sources)
+            install = _install_stage(language, install_cmds, missing, sources, repo_root=repo_root)
             if install is not None:
                 stages.append(install)
+            if language == "typescript" and not missing:
+                stages.append(_typescript_tools_stage(repo_root))
             for kind, cmds in kind_cmds:
                 if language == "rust" and kind is CheckKind.TEST:
                     stages.append(
@@ -1112,6 +1248,9 @@ def _build_stages(
                             kind.value,
                             partial(_skip_rust_doctests_without_lib, cmds, repo_root),
                             mode="fail_defer",
+                            run_cmd=partial(
+                                _run_rust_test_command, coverage_cmd=cmds[0], repo_root=repo_root
+                            ),
                         )
                     )
                     continue
@@ -1165,7 +1304,9 @@ def _build_stages(
                     language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
                 )
                 missing, sources = _bootstrap_state(language, repo_root)
-                install = _install_stage(language, install_cmds, missing, sources)
+                install = _install_stage(
+                    language, install_cmds, missing, sources, repo_root=repo_root
+                )
                 if install is not None:
                     stages.append(install)
 

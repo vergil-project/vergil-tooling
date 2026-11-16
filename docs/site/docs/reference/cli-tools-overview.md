@@ -443,12 +443,33 @@ For a Python or Rust repo, `bump` then refreshes the lockfile (`uv lock`,
 `vrg-container-run`, so no host toolchain is needed. Used by the CD
 workflows to read the release version.
 
+In a TypeScript repo the version is also kept in `package.json`. `show`
+fails, naming the fix, when `package.json` is missing, has no `version`, or
+holds another version than `VERSION`; `vrg-validate`'s TypeScript pre-gate
+makes the same check on the PR. `bump` rewrites only the top-level `version`
+of `package.json` and the two root version fields of `package-lock.json`
+(its top-level `version` and `packages[""].version`), keeping every other
+byte. It runs no npm, so no script runs and no dependency moves. Before
+writing any file, `bump` fails, naming the file and the fix, when either
+file is missing, `package.json` does not hold the current version, or the
+lockfile lacks a root version field; a file it cannot write fails the bump.
+
+In a Rust repo the version is read from `[package].version` when it is a
+string, and from `[workspace.package].version` in a virtual workspace or
+when `[package]` inherits it (`version.workspace = true`). `bump` rewrites
+the key in that table only, never a `[workspace.dependencies]` entry, and
+members that inherit the version follow it. A `Cargo.toml` with neither
+version fails, naming both tables. Before writing any file, `bump` also
+fails, naming each entry, when the new version would not satisfy a
+versioned path dependency on a bumped workspace member (for example `0.1.3`
+to `0.2.0` under `^0.1.3`).
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_version` |
 | Args | `show [--major-minor] [--ref REF]`, `bump [{patch,minor,major}]` |
-| Preconditions | Run from the repo root; `bump` in a Python or Rust repo needs a running container runtime |
-| Failure mode | An unreadable version raises an uncaught error |
+| Preconditions | Run from the repo root; `bump` in a Python or Rust repo needs a running container runtime (a TypeScript repo does not) |
+| Failure mode | An unreadable version raises an uncaught error; for a TypeScript repo's `package.json` or `package-lock.json`, its message names the fix |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 
@@ -474,7 +495,7 @@ commit-to-pulls lookup; `--pr` skips the lookup. Used by the
 
 Update the repo's dependencies to the newest versions their declared
 bounds allow, in a `deps/update-<version>` managed worktree: run the
-applicable updaters (`python`, `vergil`, `images`, then the repo
+applicable updaters (`python`, `cargo`, `vergil`, `images`, then the repo
 `hook`), validate once, open a `dependency-update`-labelled PR, and
 merge it. A no-op run opens no PR. A validation or merge failure leaves
 the PR open and files a fix task; an updater or hook failure opens no PR
@@ -494,23 +515,29 @@ the [dependency-update reference](dependency-update-config.md).
 
 ### vrg-upstream-refresh
 
-Run the repo's `[upstream-refresh].hook` in a temporary worktree of
-the base branch, then open, refresh or close the single
-`upstream-refresh` PR. The checkout it runs from must be clean and on
-the base, and it is left exactly as found. A no-change run closes any
-stale refresh PR, or exits quietly when there is none. It never merges, and never runs dependency updaters,
-validation or a release. It runs from the scheduled
-`ops-upstream-refresh` workflow under the App token, or by hand as a
-human; it refuses agent identities. See the
+Run the repo's `[upstream-refresh].hook` in a fresh clone of
+`develop`, check the patch against the repo's path fence
+(`[upstream-refresh].paths`), and open an
+`automation/upstream-refresh/<run-id>` PR that merges itself once CI
+passes. It runs in two halves split by the key boundary: `prepare`
+runs the hook with no credentials and writes a patch; `publish` holds
+the automation App's key, applies the patch on the recorded `develop`
+commit in its own clone, checks the fence, commits as the App's bot,
+and waits until the PR merges, renewing and revoking its token as it
+goes. A no-change run still closes an earlier run's open PR. With no
+mode, both halves run in one process for a human's local run.
+`--dry-run` runs prepare and the fence and pushes nothing. It never
+touches the caller's checkout, and never runs dependency updaters,
+validation or a release. See the
 [upstream-refresh reference](upstream-refresh-config.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_upstream_refresh` |
-| Args | `--repo OWNER/NAME` (default: `$GITHUB_REPOSITORY`, then origin), `--base BRANCH` (default: the repo's default branch), `--dry-run` |
-| Preconditions | Not an agent identity; `[upstream-refresh]` in `vergil.toml`; clean working tree with `HEAD` at `origin/<base>`; `gh` authenticated with contents and pull-requests write |
-| Failure mode | A hook failure or untracked files left by the hook stop the run before any push; errors on stderr |
-| Exit codes | 0 any outcome (`nothing`, `closed`, `opened`, `refreshed`, `unchanged`), 1 error or refusal |
+| Args | `prepare --out DIR`, `publish --from DIR`, or no mode (prepare and publish in one process); `--repo OWNER/NAME` (default: `$GITHUB_REPOSITORY`, then origin); `--dry-run`, with `--rules-from PATH` to read the fence rules from a branch's `vergil.toml` |
+| Preconditions | `[upstream-refresh]` in `vergil.toml` on `develop`. Agent identities may run `--dry-run` only. Under GitHub Actions: publish needs `VRG_AUTOMATION_APP`, `VRG_AUTOMATION_CLIENT_ID` and `VRG_AUTOMATION_PRIVATE_KEY`; prepare refuses them; the combined mode is refused |
+| Failure mode | A hook failure, untracked files, a patch that does not apply, a recorded commit no longer on `develop`, or a fence violation stops the run before any push, naming the cause on stderr |
+| Exit codes | 0 merged or nothing to change, 1 failure or refusal (usage errors included), 2 PR opened but not merged (PR and reason named), 130/143 interrupted |
 | Status | Active |
 
 ### vrg-finalize-pr
@@ -763,7 +790,7 @@ by the `intake-capture` skill. See
 Route one item between the container epics — intake, planning, ad hoc and
 deferred — applying one queue-review decision. Owns the routing mechanics —
 transfer-or-recreate, reparent, re-link, close with a pointer, record a
-deferral — so no review skill hand-rolls them. Routes:
+deferral or an estimated epic size — so no review skill hand-rolls them. Routes:
 
 - `drop --reason TEXT` — comment the reason, naming the queue it was dropped
   from (`Dropped in <queue> review: …`), and close (not planned).
@@ -787,7 +814,16 @@ deferral — so no review skill hand-rolls them. Routes:
   repo (transfer, or recreate with a link back when GitHub refuses the
   transfer) and link it under that repo's ad-hoc epic (default `adhoc`) or the
   named epic. A planning item's `in-progress` label is removed from the moved
-  issue once the move has settled; a recreated issue never carries it.
+  issue once the move has settled; a recreated issue never carries it. A
+  one-off also ends the item's estimated size, from intake, planning or
+  deferred alike: a recreated issue never carries an `epic-size:*` label, and
+  a transferred or same-repo issue has every one removed once the move has
+  settled. When the item carried a size (an `epic-size:*` label, or any
+  `Sized …` comment), the transferred or same-repo issue then gets the
+  marker `Size cleared <YYYY-MM-DD>: moved out of planning as a one-off.`,
+  so the sizing comments it carries no longer count. This needs no trusted
+  authors configured. If a step fails after the move, the command fails
+  loudly, naming the moved item and the by-hand fix for each step not done.
 - `planning` — reparent the item onto the planning epic of the same queue
   home. It also takes a **follow-on brainstorm** out of a development epic: a
   task titled `Follow-on brainstorm: …` whose native parent is a development
@@ -802,17 +838,44 @@ deferral — so no review skill hand-rolls them. Routes:
 
   If a record fails after the move, the command fails loudly and prints every
   comment still to post by hand.
+
+  `planning [--tasks N [--confidence high|med|low] --reason TEXT]` also sizes
+  the item once it is in planning, as `size` does, and prints the `Sized`
+  line after the `Routed` one. `--tasks` and `--reason` are given together
+  or not at all, and `--confidence` needs `--tasks`; a bad sizing is refused
+  before the move. A sizing that fails after the move fails loudly, naming the
+  item (now in planning) and the `size` command that finishes it. Without a
+  sizing the item keeps any size it already carries.
 - `split --into REF [--into REF …] --reason TEXT` — comment links to the
   replacement tasks (already created with `vrg-issue-create`) and close.
+- `size --tasks N [--confidence high|med|low] --reason TEXT` — record a
+  planning or deferred item's estimated epic size. The size is derived from
+  the task count (S 1–9, M 10–19, L 20–39, XL 40+); `--confidence` defaults
+  to `med` and `--reason` is one line. It posts the dated sizing comment
+  first, as the record:
+
+  ```text
+  Sized <YYYY-MM-DD>: epic-size <X>, about <N> tasks.
+  Epic-size: <X>
+  Estimated-tasks: <N>
+  Confidence: <high|med|low>
+  Reason: <one line>
+  ```
+
+  then, in one edit, adds the `epic-size:<X>` label and removes any other
+  `epic-size:*` label. It neither moves nor closes the item, and prints
+  `Sized <ref>: epic-size X, about N tasks.`. If the label cannot be set
+  after the comment posted, it fails loudly with the command that finishes
+  it; re-running the same `size` is safe.
 
 Which routes an item allows depends on the container epic it is in:
 
 | Item is in | Allowed routes |
 |---|---|
 | intake | `drop`, `defer`, `one-off`, `planning`, `split` |
-| planning | `defer`, `drop`, `one-off` — each refused while any development epic of the item is open |
+| planning | `defer`, `drop`, `one-off` — each refused while any development epic of the item is open; `size` |
 | ad hoc | `defer` — refused while an open PR would close the item |
-| deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split` |
+| deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split`, `size` |
 | no parent | `planning` (the `epic-create` free-text path) |
 | a development epic | `planning` for a follow-on brainstorm only; any other task is refused, naming the parent |
 | anything else | none — refused, naming the parent |
@@ -820,10 +883,10 @@ Which routes an item allows depends on the container epic it is in:
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_intake_route` (mechanics and route table: `lib/intake_route.py`) |
-| Args | `<issue-ref>` (`owner/repo#N`, or `#N` in the current repo), then a route: `drop`, `defer`, `intake`, `one-off`, `planning`, `split` |
+| Args | `<issue-ref>` (`owner/repo#N`, or `#N` in the current repo), then a route: `drop`, `defer`, `intake`, `one-off`, `planning`, `split`, `size` |
 | Preconditions | The item is a child of a container epic that allows the route (`planning` also accepts an unparented issue and a follow-on brainstorm under a development epic); GitHub App credentials for the item's org |
-| Failure mode | A refused route — not allowed from the item's container, a development-epic task other than a follow-on brainstorm sent to planning, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr. A route half-applied by a failure raises with the state it left and how to fix it |
-| Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when` or a malformed `--date`) |
+| Failure mode | A refused route — not allowed from the item's container, a development-epic task other than a follow-on brainstorm sent to planning, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr, as does a bad sizing (a task count below 1, an empty or multi-line reason, `--tasks` or `--reason` alone on `planning`). A route half-applied by a failure raises with the state it left and how to fix it |
+| Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when`, a malformed `--date`, a non-integer `--tasks` or an unknown `--confidence`) |
 | Status | Active |
 
 A `security` item keeps its advisory links. A recreate retargets every
@@ -887,6 +950,23 @@ deferral comment sorts first with an empty note. A bare `vrg-queue` lists all
 three queues in that order (intake, planning, deferred). Used by the
 collect step of `epic-review` and by `epic-create`'s no-argument summary.
 
+Each planning and deferred line shows the item's **epic size** after its age:
+`M/14` (the size and the estimated task count), `?` when unsized, or `!` when
+its sizing is in error: its `epic-size:*` label and its latest trusted sizing
+comment disagree, one is missing, it has several size labels, or the comment
+is malformed. Only comments by trusted authors count. For an item in error, a
+held or deferral note is kept with `| size: <error>` appended; otherwise
+`size: <error>` replaces its latest-comment note. `--json` adds `epic_size`,
+`estimated_tasks`, `confidence` and `size_error` (each `null` when unset) to
+every planning and deferred item; intake items are unchanged. For the
+planning view only, `--sort age|size|tasks` orders the queue (`age`, oldest
+first, is the default; `size` is S, M, L, XL, then unsized, then items in
+error, oldest first within each; `tasks` is by estimated task count, then
+unsized, then in error), and `--size S,M` filters it to those sizes
+(`unsized` selects the unsized). An item in error is always listed, whatever
+the filter, and a filtered header reads `planning queue for <name> in <home>:
+<N> open item(s), <M> shown`.
+
 `vrg-queue adhoc` lists the open tasks under every live ad-hoc epic
 (`Epic (ad hoc): <repo>`, labelled `epic` + `ad-hoc`) in the home, grouped by
 repo and oldest first within each. Each line is
@@ -927,10 +1007,10 @@ step of `epic-implement adhoc`, as the other queues are of `epic-review`.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_queue` (views: `lib/queue_view.py`) |
-| Args | `{intake,planning,deferred,adhoc}` (optional; default: intake, planning and deferred); `--repo OWNER/NAME` (that repo's queue home, and for `adhoc` on a public repo its own ad-hoc epic; default: the current org's `.github` queues); `--root DIR` (`adhoc` only, repeatable: where to find each repo's main clone; default: the platform's repo roots); `--json` (a list of items; with no queue named, an object keyed by queue, `null` for a missing one) |
-| Preconditions | GitHub App credentials for the target org. The planning view also reads the org's advisories when its `.github` is public, or when a planning item has an advisory line (then a `.github` that is not public is refused): the identity needs Repository security advisories access |
-| Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a `.github` that is not public; an advisory line naming another org; a malformed response) is named on stderr as `vrg-queue: <queue> queue for <name> in <home> could not be read: <reason>` and the run exits 1; with no queue named, a text run still lists the other queues and prints `<queue> queue for <name> in <home>: not shown (failed; see stderr)` in its place, and a `--json` run prints nothing on stdout. For `adhoc`, a failed read of the epics, a task's sub-issues, a task, its blockers or a blocker's state, an epic search that reaches its listing limit, two live ad-hoc epics for one repo, a failed read of any in-flight source (the open PRs, the remote refs, a relay payload, a clone's branches or remotes), a malformed relay payload, repo roots that cannot be determined (no `--root` on a physical host) or do not exist, or a repo with open ad-hoc tasks and no clone, or two, under the repo roots is reported the same way (`adhoc queue for <name> in <home> could not be read`) and exits 1; no ad-hoc epic is an empty list and exit 0. Nothing is created |
-| Exit codes | 0 success, 1 error, 2 bad arguments |
+| Args | `{intake,planning,deferred,adhoc}` (optional; default: intake, planning and deferred); `--repo OWNER/NAME` (that repo's queue home, and for `adhoc` on a public repo its own ad-hoc epic; default: the current org's `.github` queues); `--root DIR` (`adhoc` only, repeatable: where to find each repo's main clone; default: the platform's repo roots); `--sort age\|size\|tasks` and `--size LIST` (`planning` only; refused with any other queue or with none); `--json` (a list of items; with no queue named, an object keyed by queue, `null` for a missing one) |
+| Preconditions | GitHub App credentials for the target org. The planning and deferred views read the configured trusted authors (the VM's `trusted-authors.toml`, else the host's `identities.toml` stanza). The planning view also reads the org's advisories when its `.github` is public, or when a planning item has an advisory line (then a `.github` that is not public is refused): the identity needs Repository security advisories access |
+| Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a `.github` that is not public; an advisory line naming another org; a malformed response; trusted authors not configured or invalid) is named on stderr as `vrg-queue: <queue> queue for <name> in <home> could not be read: <reason>` and the run exits 1; with no queue named, a text run still lists the other queues and prints `<queue> queue for <name> in <home>: not shown (failed; see stderr)` in its place, and a `--json` run prints nothing on stdout. For `adhoc`, a failed read of the epics, a task's sub-issues, a task, its blockers or a blocker's state, an epic search that reaches its listing limit, two live ad-hoc epics for one repo, a failed read of any in-flight source (the open PRs, the remote refs, a relay payload, a clone's branches or remotes), a malformed relay payload, repo roots that cannot be determined (no `--root` on a physical host) or do not exist, or a repo with open ad-hoc tasks and no clone, or two, under the repo roots is reported the same way (`adhoc queue for <name> in <home> could not be read`) and exits 1; no ad-hoc epic is an empty list and exit 0. When every queue was read but an item's sizing is in error, the full listing is printed (`--json` included), each such item is named on stderr as `vrg-queue: <ref>: <error>`, and the run exits 2. `--sort` or `--size` with a queue other than `planning`, or with none, and an unknown `--size` token exit 1. Nothing is created |
+| Exit codes | 0 success; 2 every queue read, one or more items' sizing in error; 1 a queue could not be read, or bad arguments (every usage error exits 1, never 2). 1 wins over 2 |
 | Status | Active |
 
 ### vrg-roadmap
@@ -1923,7 +2003,8 @@ markdownlint, yamllint) are available on PATH.
 
 The unified validation driver. It reads `[project].primary-language`
 from `vergil.toml` and runs the stages in order: common checks, the
-language's install, lint, typecheck, test and audit commands, the
+language's install, lint, typecheck, build, test and audit commands
+(build only for a language that turns it on: Rust and TypeScript), the
 semgrep scan of PR CI's `security / semgrep` gate, the Trivy
 vulnerability scan of its `security / trivy` gate, the strict mkdocs
 build of its `docs / docs` gate (a notice and a pass when there is no
@@ -1932,7 +2013,9 @@ build of its `docs / docs` gate (a notice and a pass when there is no
 stage. `--check custom` runs the install stage (when the language has
 one) and then the custom stage; with no custom validator it prints one
 "no custom validator" line and exits 0, and a validator that is present
-but not an executable regular file fails. PR CI runs each stage through
+but not an executable regular file fails. `--check build` for a
+language with no build check prints one "nothing to run" line and exits
+0. PR CI runs each stage through
 the `vergil-actions` reusable workflows, the custom stage as
 `quality / custom`. See the [Validation Matrix](../guides/validation-matrix.md)
 for every check and where it runs. Every pipeline run, pass or fail,
@@ -1943,7 +2026,7 @@ start, and each stage's status. `vrg-merge-review-request` reads it.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_validate` |
-| Args | `--check {common,lint,typecheck,test,audit,semgrep,trivy,docs,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
+| Args | `--check {common,lint,typecheck,build,test,audit,semgrep,trivy,docs,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
 | Preconditions | Inside a dev container (run it as `vrg-container-run -- vrg-validate`) |
 | Failure mode | Runs every stage after install and reports all failures in one run; install fails fast |
 | Exit codes | 0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example `--check custom --all-versions`) |
@@ -1955,7 +2038,10 @@ Not a command on `PATH`: the module `vrg-validate` runs as its common
 stage. Shared validation checks for all repos: the
 [repo-profile](lint/repo-profile.md) check (`vergil.toml` and the
 `README.md` structure), markdownlint on published markdown
-(`docs/site/**/*.md` and `README.md`) using the bundled canonical config, shellcheck on
+(`docs/site/**/*.md`, `README.md` and `epics/**/*.md`) using the bundled canonical config,
+the docs-links guard (over the same markdown less `epics/archive/`, a link
+to a mike-versioned Vergil docs site must carry a `latest`, `dev` or
+version-number segment after the site name), shellcheck on
 `scripts/` and every `*.sh` file in the repository, yamllint on `.github/`
 and `docs/` YAML files, the
 dependabot-limit guard (when `.github/dependabot.yml` exists, every
@@ -1987,10 +2073,14 @@ A repo with no language resolves to `latest`. See
 [Version resolution](../guides/ci-architecture.md#version-resolution).
 
 - `--format json` (default) — one JSON object with `versions`,
-  `primary-version`, `primary-container-tag`, `container-tags` and
-  `container-suffixes`.
-- `--format github-output` — `versions`, `primary-version` and
-  `primary-container-tag` as `key=value` lines for `$GITHUB_OUTPUT`.
+  `primary-version`, `primary-container-tag`, `container-tags`,
+  `container-suffixes` and `build-enabled`.
+- `--format github-output` — `versions`, `primary-version`,
+  `primary-container-tag` and `build-enabled` as `key=value` lines for
+  `$GITHUB_OUTPUT`.
+- `build-enabled` is `"true"` when the repo's language has a build
+  check (`vrg-validate --check build` has a command to run), else
+  `"false"`. CI reads it to decide whether to run its build job.
 - `--repo-root PATH` — the directory holding `vergil.toml` (default:
   the current directory).
 
@@ -1999,7 +2089,7 @@ A repo with no language resolves to `latest`. See
 | Source | `vergil_tooling.bin.vrg_ci_resolve` |
 | Args | `--format {json,github-output}`, `--repo-root PATH` |
 | Preconditions | `vergil.toml` in the repo root; network access to the published window, or `VRG_VERSION_WINDOW` |
-| Failure mode | `vrg-ci-resolve: error:` on stderr for a missing or invalid `vergil.toml`, an unreadable or malformed window, or a resolution error (a pin outside the window, an app pin of more than one version, a C++ or TypeScript repo with no pin) |
+| Failure mode | `vrg-ci-resolve: error:` on stderr for a missing or invalid `vergil.toml`, an unreadable or malformed window, or a resolution error (a pin outside the window, an app pin of more than one version, a C++ repo, whose window has more than one family, with no pin) |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 

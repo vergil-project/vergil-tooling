@@ -6,12 +6,13 @@ import json
 import os
 import subprocess
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, mock_open, patch
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Callable, Generator, Iterator, Sequence
 
 import pytest
 
@@ -46,11 +47,13 @@ from vergil_tooling.bin.vrg_validate import (
     _stage_trivy_target,
     _test_context,
     _trivy_stage,
+    check_rust_lockfile,
     main,
 )
+from vergil_tooling.lib import languages
 from vergil_tooling.lib.config import ConfigError, TestConfig
 from vergil_tooling.lib.container_cache import unbootstrapped_manifests
-from vergil_tooling.lib.languages import CheckKind, language_commands
+from vergil_tooling.lib.languages import RUST_DOCTEST_CMD, CheckKind, language_commands
 from vergil_tooling.lib.validate_record import RECORD_PATH, read_record
 
 _MOD = "vergil_tooling.bin.vrg_validate"
@@ -116,6 +119,7 @@ def test_build_stages_full_run_order() -> None:
         "install",
         "lint",
         "typecheck",
+        "build",
         "test",
         "audit",
         "semgrep",
@@ -323,7 +327,7 @@ def test_run_all_executes_stages_in_order(tmp_path: Path) -> None:
     ):
         result = main([])
     assert result == 0
-    assert order == ["common", "install", "lint", "typecheck", "test", "audit"]
+    assert order == ["common", "install", "lint", "typecheck", "build", "test", "audit"]
 
 
 def test_run_all_common_failure_reported(tmp_path: Path) -> None:
@@ -870,12 +874,20 @@ def _package(name: str, *kinds: list[str]) -> dict[str, object]:
     }
 
 
-def _metadata(packages: list[dict[str, object]], defaults: list[str]) -> str:
+def _metadata(
+    packages: list[dict[str, object]],
+    *,
+    members: list[str] | None = None,
+    defaults: list[str] | None = None,
+) -> str:
+    """``cargo metadata --no-deps`` output; every package is a member by default."""
+    member_ids = [p["id"] for p in packages] if members is None else [f"{n}-id" for n in members]
+    default_ids = member_ids if defaults is None else [f"{n}-id" for n in defaults]
     return json.dumps(
         {
             "packages": packages,
-            "workspace_members": [p["id"] for p in packages],
-            "workspace_default_members": [f"{name}-id" for name in defaults],
+            "workspace_members": member_ids,
+            "workspace_default_members": default_ids,
         }
     )
 
@@ -890,16 +902,23 @@ def _cargo_metadata(stdout: str, returncode: int = 0, stderr: str = "") -> Gener
 
 
 def test_rust_doctests_kept_for_a_lib_crate(tmp_path: Path) -> None:
-    stdout = _metadata([_package("app", ["lib"], ["bin"])], ["app"])
+    stdout = _metadata([_package("app", ["lib"], ["bin"])])
     with _cargo_metadata(stdout) as m_run:
         assert _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path) == _RUST_TEST_CMDS
-    assert m_run.call_args.args[0] == ["cargo", "metadata", "--no-deps", "--format-version", "1"]
+    assert m_run.call_args.args[0] == [
+        "cargo",
+        "metadata",
+        "--no-deps",
+        "--format-version",
+        "1",
+        "--locked",
+    ]
     assert m_run.call_args.kwargs["cwd"] == tmp_path
 
 
 @pytest.mark.parametrize("kind", ["rlib", "dylib", "cdylib", "staticlib", "proc-macro"])
 def test_rust_doctests_kept_for_every_library_kind(tmp_path: Path, kind: str) -> None:
-    stdout = _metadata([_package("lib", [kind])], ["lib"])
+    stdout = _metadata([_package("lib", [kind])])
     with _cargo_metadata(stdout):
         assert _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path) == _RUST_TEST_CMDS
 
@@ -907,7 +926,7 @@ def test_rust_doctests_kept_for_every_library_kind(tmp_path: Path, kind: str) ->
 def test_rust_doctests_dropped_for_a_bin_only_crate(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    stdout = _metadata([_package("tool", ["bin"], ["test"])], ["tool"])
+    stdout = _metadata([_package("tool", ["bin"], ["test"])])
     with _cargo_metadata(stdout):
         result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
     assert result == [_RUST_COVERAGE_CMD]
@@ -916,28 +935,52 @@ def test_rust_doctests_dropped_for_a_bin_only_crate(
     assert "no library target in tool" in err
 
 
-def test_rust_doctests_judge_only_the_default_members(tmp_path: Path) -> None:
-    # A library outside the default members is not selected by `cargo test`,
-    # so it does not keep the doctest command.
-    packages = [_package("cli", ["bin"]), _package("core", ["lib"])]
-    with _cargo_metadata(_metadata(packages, ["cli"])):
-        result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
-    assert result == [_RUST_COVERAGE_CMD]
+def test_doctest_skip_uses_real_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # The commands come from the real registry, so the skip matches the
+    # doctest command exactly as it is built, flags included (spec §6.4). A
+    # workspace whose members are all binary-only has it dropped.
+    cmds = language_commands("rust", CheckKind.TEST)
+    assert RUST_DOCTEST_CMD in cmds
+    assert "--workspace" in RUST_DOCTEST_CMD
+    packages = [_package("cli", ["bin"]), _package("daemon", ["bin"], ["test"])]
+    with _cargo_metadata(_metadata(packages)):
+        result = _skip_rust_doctests_without_lib(cmds, tmp_path)
+    assert result == [cmd for cmd in cmds if cmd != RUST_DOCTEST_CMD]
+    assert len(result) == len(cmds) - 1
+    assert "no library target in cli, daemon" in capsys.readouterr().err
 
 
-def test_rust_doctests_kept_when_any_default_member_has_a_lib(tmp_path: Path) -> None:
+def test_doctest_skip_keeps_lib_member(tmp_path: Path) -> None:
+    # A binary-only root whose library member is not a default member: the
+    # doctests run with --workspace, which selects every member, so the
+    # library member keeps the doctest command.
     packages = [_package("cli", ["bin"]), _package("core", ["lib"])]
-    with _cargo_metadata(_metadata(packages, ["cli", "core"])):
+    with _cargo_metadata(_metadata(packages, defaults=["cli"])):
         assert _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path) == _RUST_TEST_CMDS
 
 
-def test_rust_doctests_notice_with_no_default_members(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    with _cargo_metadata(_metadata([], [])):
+def test_rust_doctests_judge_only_the_workspace_members(tmp_path: Path) -> None:
+    # A package outside workspace_members is not selected by --workspace, so
+    # its library does not keep the doctest command.
+    packages = [_package("cli", ["bin"]), _package("core", ["lib"])]
+    with _cargo_metadata(_metadata(packages, members=["cli"])):
         result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
     assert result == [_RUST_COVERAGE_CMD]
-    assert "the workspace default members" in capsys.readouterr().err
+
+
+def test_rust_doctests_kept_when_any_member_has_a_lib(tmp_path: Path) -> None:
+    packages = [_package("cli", ["bin"]), _package("core", ["lib"])]
+    with _cargo_metadata(_metadata(packages)):
+        assert _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path) == _RUST_TEST_CMDS
+
+
+def test_rust_doctests_notice_with_no_members(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with _cargo_metadata(_metadata([])):
+        result = _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
+    assert result == [_RUST_COVERAGE_CMD]
+    assert "the workspace members" in capsys.readouterr().err
 
 
 def test_rust_doctests_no_probe_without_the_command(tmp_path: Path) -> None:
@@ -969,8 +1012,8 @@ def test_rust_doctests_probe_that_cannot_run_is_loud(tmp_path: Path, exc: Except
     [
         "not json",
         json.dumps({"packages": []}),
-        json.dumps({"packages": [{"id": "x"}], "workspace_default_members": ["x"]}),
-        json.dumps({"packages": None, "workspace_default_members": []}),
+        json.dumps({"packages": [{"id": "x"}], "workspace_members": ["x"]}),
+        json.dumps({"packages": None, "workspace_members": []}),
     ],
 )
 def test_rust_doctests_unexpected_metadata_is_loud(tmp_path: Path, stdout: str) -> None:
@@ -985,7 +1028,7 @@ def test_rust_test_stage_probes_at_stage_time(tmp_path: Path) -> None:
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages("test", "rust", tmp_path)
     assert [s.name for s in stages] == ["install", "test"]
-    stdout = _metadata([_package("tool", ["bin"])], ["tool"])
+    stdout = _metadata([_package("tool", ["bin"])])
     with (
         _cargo_metadata(stdout),
         patch(_MOD + ".progress.run", return_value=0) as m_progress,
@@ -994,6 +1037,162 @@ def test_rust_test_stage_probes_at_stage_time(tmp_path: Path) -> None:
     assert [c.args[0] for c in m_progress.call_args_list] == [_RUST_COVERAGE_CMD]
     assert _RUST_COVERAGE_CMD[:2] == ["sh", "-c"]
     assert "cargo llvm-cov nextest" in _RUST_COVERAGE_CMD[2]
+
+
+# -- the uncovered-region listing (epic vergil-project/.github#1165, spec §6.2) --
+
+
+def _coverage_export(root: Path, *, count: int = 0, notcovered: int = 1) -> dict[str, object]:
+    """An llvm-cov export whose region at 12:21 ran *count* times; line 12 otherwise ran."""
+    lib = str(root / "src" / "lib.rs")
+    return {
+        "data": [
+            {
+                "files": [{"filename": lib}],
+                "functions": [
+                    {
+                        "name": "f",
+                        "regions": [[12, 5, 12, 20, 4, 0, 0, 0], [12, 21, 12, 30, count, 0, 0, 0]],
+                        "filenames": [lib],
+                    }
+                ],
+                "totals": {"regions": {"count": 2, "covered": 1, "notcovered": notcovered}},
+            }
+        ]
+    }
+
+
+def _run_rust_test_stage(
+    tmp_path: Path,
+    *,
+    coverage_rc: int = 1,
+    export: object = None,
+    export_rc: int = 0,
+    doctest_rc: int = 0,
+) -> tuple[list[list[str]], bool]:
+    """Run the Rust TEST stage on a library crate; return the commands and whether it failed.
+
+    The coverage command exits *coverage_rc*. The JSON export writes *export*
+    (a string as it is, anything else as JSON) and exits *export_rc*.
+    """
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("test", "rust", tmp_path)
+    ran: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kw: object) -> int:
+        ran.append(list(cmd))
+        if cmd == _RUST_COVERAGE_CMD:
+            return coverage_rc
+        if cmd == RUST_DOCTEST_CMD:
+            return doctest_rc
+        assert cmd[:3] == ["cargo", "llvm-cov", "report"]
+        if export is not None:
+            text = export if isinstance(export, str) else json.dumps(export)
+            Path(cmd[cmd.index("--output-path") + 1]).write_text(text, encoding="utf-8")
+        return export_rc
+
+    failed = False
+    with (
+        _cargo_metadata(_metadata([_package("lib", ["lib"])])),
+        patch(_MOD + ".progress.run", side_effect=fake_run),
+    ):
+        try:
+            stages[1].fn(None)
+        except ValidationError:
+            failed = True
+    return ran, failed
+
+
+def test_failed_coverage_prints_regions(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    ran, failed = _run_rust_test_stage(tmp_path, export=_coverage_export(tmp_path))
+    assert failed
+    out = capsys.readouterr().out
+    assert "Uncovered regions (1):" in out
+    assert "src/lib.rs:12:21: uncovered region" in out
+    assert str(tmp_path) not in out.split("Uncovered regions")[1]
+    assert "\nerror:" not in out
+    export_cmd = ran[1]
+    assert export_cmd[:-1] == [
+        "cargo",
+        "llvm-cov",
+        "report",
+        "--locked",
+        "--workspace",
+        "--json",
+        "--output-path",
+    ]
+    assert ran == [_RUST_COVERAGE_CMD, export_cmd, RUST_DOCTEST_CMD]
+    # The export is written to a temporary directory, removed afterwards.
+    assert not Path(export_cmd[-1]).exists()
+
+
+def test_passing_coverage_runs_no_export(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ran, failed = _run_rust_test_stage(tmp_path, coverage_rc=0)
+    assert not failed
+    assert ran == [_RUST_COVERAGE_CMD, RUST_DOCTEST_CMD]
+    assert "Uncovered regions" not in capsys.readouterr().out
+
+
+def test_failed_doctest_runs_no_export(tmp_path: Path) -> None:
+    ran, failed = _run_rust_test_stage(tmp_path, coverage_rc=0, doctest_rc=101)
+    assert failed
+    assert ran == [_RUST_COVERAGE_CMD, RUST_DOCTEST_CMD]
+
+
+def test_failed_coverage_with_no_uncovered_region(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A failed test run with every region covered: the listing says so.
+    export = _coverage_export(tmp_path, count=2, notcovered=0)
+    _, failed = _run_rust_test_stage(tmp_path, export=export)
+    assert failed
+    out = capsys.readouterr().out
+    assert "Uncovered regions: none" in out
+    assert "\nerror:" not in out
+
+
+def test_failed_coverage_export_failure_is_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ran, failed = _run_rust_test_stage(tmp_path, export_rc=2)
+    assert failed
+    assert len(ran) == 3
+    out = capsys.readouterr().out
+    assert "error: the coverage export exited 2; the uncovered regions are not listed" in out
+
+
+@pytest.mark.parametrize(
+    ("export", "reason"),
+    [
+        (None, "No such file"),
+        ("{not json", "Expecting property name"),
+        ("[1]", "coverage export: not a JSON object"),
+        ({"data": "x"}, "coverage export: no 'data' list"),
+    ],
+)
+def test_failed_coverage_unreadable_export_is_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], export: object, reason: str
+) -> None:
+    _, failed = _run_rust_test_stage(tmp_path, export=export)
+    assert failed
+    out = capsys.readouterr().out
+    assert "error: could not read the coverage export: " in out
+    assert reason in out
+
+
+def test_failed_coverage_listing_disagreeing_with_totals_is_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, failed = _run_rust_test_stage(tmp_path, export=_coverage_export(tmp_path, notcovered=3))
+    assert failed
+    out = capsys.readouterr().out
+    assert "src/lib.rs:12:21: uncovered region" in out
+    assert (
+        "error: 1 uncovered region(s) listed, but the coverage totals count 3 missed; "
+        "the listing is incomplete"
+    ) in out
 
 
 def test_build_stages_drops_audit_when_only_scan_and_no_token() -> None:
@@ -1312,6 +1511,7 @@ def test_build_stages_version_stages_follow_test_before_audit() -> None:
         "install",
         "lint",
         "typecheck",
+        "build",
         "test",
         "test (python 3.14)",
         "test (python 3.13)",
@@ -1482,6 +1682,70 @@ def test_default_test_version_without_pytest_is_loud() -> None:
         _default_test_version()
 
 
+# -- BUILD stage (epic vergil-project/.github#1174) ----------------------------
+
+
+def _python_with_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turn BUILD on for Python, which leaves it off, with ``uv build``."""
+    entry = languages._REGISTRY["python"]
+    ecosystem = replace(entry.ecosystem, build_cmd=["uv", "build"], validate_build=True)
+    monkeypatch.setitem(languages._REGISTRY, "python", replace(entry, ecosystem=ecosystem))
+
+
+def test_check_build_nothing_to_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _write_config(tmp_path, "python")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline") as m_pipeline,
+    ):
+        assert main(["--check", "build"]) == 0
+    m_pipeline.assert_not_called()
+    assert "build: no build check for python — nothing to run" in capsys.readouterr().out
+
+
+def test_full_validate_runs_build_after_typecheck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _python_with_build(monkeypatch)
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages(None, "python", tmp_path)
+    names = [s.name for s in stages]
+    assert names[names.index("typecheck") + 1] == "build"
+    assert names[names.index("build") + 1] == "test"
+    assert next(s for s in stages if s.name == "build").mode == "fail_defer"
+
+
+def test_check_build_runs_install_then_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _python_with_build(monkeypatch)
+    _write_config(tmp_path, "python")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main(["--check", "build"]) == 0
+    assert [s.name for s in m_pipeline.call_args.args[1]] == ["install", "build"]
+
+
+def test_build_stage_runs_the_build_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _python_with_build(monkeypatch)
+    ran: list[tuple[str, ...]] = []
+
+    def mock_run(cmd: Sequence[str], *, check: bool = True) -> int:
+        ran.append(tuple(cmd))
+        return 0
+
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("build", "python", tmp_path)
+    build = next(s for s in stages if s.name == "build")
+    with patch(_MOD + ".progress.run", side_effect=mock_run):
+        build.fn(None)
+    assert ran == [("uv", "build")]
+
+
 # -- --check custom (issue #3650) ----------------------------------------------
 
 _NO_CUSTOM_LINE = (
@@ -1610,7 +1874,7 @@ def test_check_custom_rejects_all_versions() -> None:
 
 # -- A repo not bootstrapped yet (issue #4384) ---------------------------------
 
-_NOT_BOOTSTRAPPED = "skipped: no Cargo.toml (rust repo not bootstrapped yet)"
+_NOT_BOOTSTRAPPED = "skipped: no Cargo.toml, Cargo.lock (rust repo not bootstrapped yet)"
 
 
 @pytest.fixture
@@ -1665,6 +1929,7 @@ def test_unbootstrapped_rust_skips_language_stages_loudly(
         "install",
         "lint",
         "typecheck",
+        "build",
         "test",
         "audit",
         "semgrep",
@@ -1673,8 +1938,8 @@ def test_unbootstrapped_rust_skips_language_stages_loudly(
         "custom",
     )
     out = capsys.readouterr().out
-    for stage in ("install", "lint", "typecheck", "test", "audit"):
-        assert f"NOTICE: {stage}: {_NOT_BOOTSTRAPPED}; add it to run the {stage} stage" in out
+    for stage in ("install", "lint", "typecheck", "build", "test", "audit"):
+        assert f"NOTICE: {stage}: {_NOT_BOOTSTRAPPED}; add them to run the {stage} stage" in out
     # Each skip is a warning row and a summary line, never a silent ✓.
     assert "warnings (non-fatal):" in out
     assert f"install — {_NOT_BOOTSTRAPPED}" in out
@@ -1686,7 +1951,14 @@ def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(None, "rust", tmp_path)
     language_stages = [s for s in stages if s.name not in ("common", "semgrep", "trivy", "docs")]
-    assert [s.name for s in language_stages] == ["install", "lint", "typecheck", "test", "audit"]
+    assert [s.name for s in language_stages] == [
+        "install",
+        "lint",
+        "typecheck",
+        "build",
+        "test",
+        "audit",
+    ]
     assert all(s.mode == "warn" for s in language_stages)
     _run_validate(tmp_path, [])
     data = json.loads((tmp_path / RECORD_PATH).read_text())
@@ -1696,6 +1968,7 @@ def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
         "install": "warn",
         "lint": "warn",
         "typecheck": "warn",
+        "build": "warn",
         "test": "warn",
         "audit": "warn",
         "semgrep": "ok",
@@ -1708,11 +1981,103 @@ def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
 def test_bootstrapped_rust_with_failing_fetch_still_fails(tmp_path: Path) -> None:
     _write_config(tmp_path, "rust")
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "x"\n')
+    (tmp_path / "Cargo.lock").write_text("version = 4\n")
     rc, ran = _run_validate(tmp_path, [])
     assert rc == 1
     # The install stage is fail_fast: its first cargo command failed and stopped it.
-    assert ran[0].startswith("cargo ")
+    assert ran[0] == "cargo fetch --locked"
     assert read_record(tmp_path).not_passed[0] == "install"
+
+
+# -- The Rust release build (epic vergil-project/.github#1165, spec §6.9) ------
+
+_RUST_BUILD = "cargo build --release --locked --workspace"
+
+
+def _run_rust_build(tmp_path: Path, build_rc: int) -> tuple[int, list[str]]:
+    """Run ``--check build`` on a bootstrapped rust repo; the build exits *build_rc*."""
+    _write_config(tmp_path, "rust")
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "x"\n')
+    (tmp_path / "Cargo.lock").write_text("version = 4\n")
+    ran: list[str] = []
+
+    def mock_run(cmd: Sequence[str], *, check: bool = True) -> int:
+        ran.append(" ".join(cmd))
+        return build_rc if " ".join(cmd) == _RUST_BUILD else 0
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._versions_resolve", return_value=("1.90",)),
+        patch(_MOD + ".progress.run", side_effect=mock_run),
+    ):
+        rc = main(["--check", "build"])
+    return rc, ran
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_rust_build_runs_the_release_build(tmp_path: Path) -> None:
+    rc, ran = _run_rust_build(tmp_path, 0)
+    assert rc == 0
+    assert ran == ["cargo fetch --locked", _RUST_BUILD]
+    assert read_record(tmp_path).passed == ("install", "build")
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_rust_build_failure_fails_validate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, ran = _run_rust_build(tmp_path, 101)
+    assert rc == 1
+    assert ran[-1] == _RUST_BUILD
+    record = read_record(tmp_path)
+    assert record.passed == ("install",)
+    assert record.not_passed == ("build",)
+    assert "1 of 1 build command(s) failed" in capsys.readouterr().out
+
+
+# -- Cargo.lock is enforced (epic vergil-project/.github#1165, spec §6.1) -------
+
+_LOCKFILE_MISSING = (
+    "Cargo.lock is missing: run 'cargo generate-lockfile' in the container and commit it"
+)
+
+
+def test_missing_cargo_lock_fails_with_guidance(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "x"\n')
+    with pytest.raises(ValidationError) as exc:
+        check_rust_lockfile(tmp_path)
+    assert str(exc.value) == _LOCKFILE_MISSING
+
+
+def test_present_cargo_lock_passes_the_check(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "x"\n')
+    (tmp_path / "Cargo.lock").write_text("version = 4\n")
+    check_rust_lockfile(tmp_path)
+
+
+def test_lockfile_check_needs_a_cargo_toml(tmp_path: Path) -> None:
+    check_rust_lockfile(tmp_path)
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_missing_cargo_lock_fails_install_before_cargo_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_config(tmp_path, "rust")
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "x"\n')
+    rc, ran = _run_validate(tmp_path, [])
+    assert rc == 1
+    assert not any(cmd.startswith("cargo ") for cmd in ran)
+    record = read_record(tmp_path)
+    assert record.not_passed[0] == "install"
+    assert "lint" not in record.passed
+    assert _LOCKFILE_MISSING in capsys.readouterr().out
+
+
+def test_cargo_metadata_locked(tmp_path: Path) -> None:
+    with _cargo_metadata(_metadata([_package("core", ["lib"])])) as m_run:
+        _skip_rust_doctests_without_lib(_RUST_TEST_CMDS, tmp_path)
+    assert "--locked" in m_run.call_args.args[0]
 
 
 @pytest.mark.usefixtures("real_bootstrap_check")
@@ -1773,8 +2138,9 @@ def test_not_bootstrapped_stage_names_every_missing_manifest(
 # -- Sources with no manifest are not unbootstrapped (issue #4384, R1) ---------
 
 _SOURCES_NO_MANIFEST = (
-    "no Cargo.toml, but the repo has rust sources (src/lib.rs); only a repo with no "
-    "sources is skipped as not bootstrapped yet, so add the manifest or remove the sources"
+    "no Cargo.toml, Cargo.lock, but the repo has rust sources (src/lib.rs); only a repo "
+    "with no sources is skipped as not bootstrapped yet, so add the manifests or remove "
+    "the sources"
 )
 
 
@@ -1803,9 +2169,16 @@ def test_rust_sources_without_cargo_toml_stage_shape(tmp_path: Path) -> None:
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages(None, "rust", tmp_path)
     language_stages = [s for s in stages if s.name not in ("common", "semgrep", "trivy", "docs")]
-    assert [s.name for s in language_stages] == ["install", "lint", "typecheck", "test", "audit"]
+    assert [s.name for s in language_stages] == [
+        "install",
+        "lint",
+        "typecheck",
+        "build",
+        "test",
+        "audit",
+    ]
     assert language_stages[0].mode == "fail_fast"
-    with pytest.raises(ValidationError, match="add the manifest or remove the sources"):
+    with pytest.raises(ValidationError, match="add the manifests or remove the sources"):
         language_stages[0].fn(None)
 
 
@@ -1870,15 +2243,15 @@ def test_ignored_and_deleted_sources_do_not_block_the_skip(tmp_path: Path) -> No
     assert [s.mode for s in stages] == ["warn", "warn"]
 
 
-def test_install_stage_choices() -> None:
-    cmds = [["cargo", "fetch"]]
-    assert _install_stage("rust", [], [], []) is None
-    assert _install_stage("rust", [], ["Cargo.toml"], []) is None
+def test_install_stage_choices(tmp_path: Path) -> None:
+    cmds = [["cargo", "fetch", "--locked"]]
+    assert _install_stage("rust", [], [], [], repo_root=tmp_path) is None
+    assert _install_stage("rust", [], ["Cargo.toml"], [], repo_root=tmp_path) is None
     for missing, mode in (([], "fail_fast"), (["Cargo.toml"], "warn")):
-        stage = _install_stage("rust", cmds, missing, [])
+        stage = _install_stage("rust", cmds, missing, [], repo_root=tmp_path)
         assert stage is not None
         assert stage.mode == mode
-    failed = _install_stage("rust", [], ["Cargo.toml"], ["src/lib.rs"])
+    failed = _install_stage("rust", [], ["Cargo.toml"], ["src/lib.rs"], repo_root=tmp_path)
     assert failed is not None
     assert failed.mode == "fail_fast"
 
@@ -2558,3 +2931,137 @@ def test_run_docs_build_refuses_unignored_staging_paths(
     # Nothing was staged.
     assert not (repo / "docs" / "site" / "docs" / "changelog.md").exists()
     assert not (repo / "docs" / "site" / "mkdocs.staged.yml").exists()
+
+
+# -- TypeScript pre-gate stage (epic vergil-project/.github#1174, spec §6.3) ---------
+
+
+@pytest.mark.parametrize("check", [None, "lint", "typecheck", "build", "test", "audit"])
+def test_typescript_pre_gate_runs_right_after_install(check: str | None) -> None:
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages(check, "typescript", Path("/tmp/r"))  # noqa: S108
+    names = [s.name for s in stages]
+    install = names.index("install")
+    assert names[install + 1] == "typescript-tools"
+    assert stages[install + 1].mode == "fail_fast"
+    assert names.count("typescript-tools") == 1
+
+
+@pytest.mark.parametrize("check", ["common", "semgrep", "trivy", "docs", "custom"])
+def test_typescript_pre_gate_not_in_non_language_checks(check: str) -> None:
+    with patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"):
+        stages = _build_stages(check, "typescript", Path("/tmp/r"))  # noqa: S108
+    assert "typescript-tools" not in [s.name for s in stages]
+
+
+def test_build_stages_other_languages_have_no_pre_gate() -> None:
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages(None, "python", Path("/tmp/r"))  # noqa: S108
+    assert "typescript-tools" not in [s.name for s in stages]
+
+
+def test_typescript_pre_gate_stage_fails_with_every_problem(tmp_path: Path) -> None:
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("lint", "typescript", tmp_path)
+    stage = next(s for s in stages if s.name == "typescript-tools")
+    with (
+        patch(
+            _MOD + ".typescript_tools.run_pre_gate_checks", return_value=["a: bad", "Fix: x"]
+        ) as m_checks,
+        pytest.raises(ValidationError) as excinfo,
+    ):
+        stage.fn(None)
+    m_checks.assert_called_once_with(tmp_path)
+    assert str(excinfo.value) == (
+        "the repo's TypeScript setup fails Vergil's pre-gate checks:\n  a: bad\n  Fix: x"
+    )
+
+
+def test_typescript_pre_gate_stage_passes_with_no_problems(tmp_path: Path) -> None:
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("lint", "typescript", tmp_path)
+    stage = next(s for s in stages if s.name == "typescript-tools")
+    with patch(_MOD + ".typescript_tools.run_pre_gate_checks", return_value=[]):
+        stage.fn(None)
+
+
+def _run_typescript_validate(tmp_path: Path, argv: list[str]) -> tuple[int, list[str]]:
+    """Run main() for real on a TypeScript repo at *tmp_path*; return rc and commands run.
+
+    *tmp_path* is a real git repository: the Prettier check lists files with
+    ``git ls-files``.
+    """
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    _write_config(tmp_path, "typescript")
+    ran: list[str] = []
+
+    def mock_run(cmd: tuple[str, ...] | list[str], *, check: bool = True) -> int:
+        ran.append(" ".join(cmd))
+        return 0
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._versions_resolve", return_value=("node-24",)),
+        patch(_MOD + "._find_custom_validator", return_value=None),
+        patch(_MOD + ".progress.run", side_effect=mock_run),
+    ):
+        rc = main(argv)
+    return rc, ran
+
+
+def test_check_lint_fails_on_missing_dev_dependency(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"name": "x", "devDependencies": {"typescript": "^6.0.3"}}', encoding="utf-8"
+    )
+    rc, ran = _run_typescript_validate(tmp_path, ["--check", "lint"])
+    assert rc == 1
+    # Install ran; no lint command ran on the out-of-range tools.
+    assert ran == ["npm ci --ignore-scripts"]
+    record = read_record(tmp_path)
+    assert record.not_passed[0] == "typescript-tools"
+    assert "lint" not in record.passed
+    out = capsys.readouterr().out
+    assert "eslint: not in devDependencies" in out
+    assert "npm install --save-dev typescript@^6" in out
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_unbootstrapped_typescript_repo_skips_pre_gate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, ran = _run_typescript_validate(tmp_path, ["--check", "lint"])
+    assert rc == 0
+    assert ran == []
+    record = read_record(tmp_path)
+    assert record.passed == ("install", "typescript-tools", "lint")
+    out = capsys.readouterr().out
+    assert (
+        "NOTICE: typescript-tools: skipped: no package.json, package-lock.json "
+        "(typescript repo not bootstrapped yet); add them to run the typescript-tools stage"
+    ) in out
+
+
+def test_check_build_runs_typescript_pre_gate_then_build(tmp_path: Path) -> None:
+    # --check build on a TypeScript repo installs, runs the pre-gate stage,
+    # then the release build command, the one cd-release runs (spec §6.5).
+    with patch(_MOD + ".typescript_tools.run_pre_gate_checks", return_value=[]) as m_checks:
+        rc, ran = _run_typescript_validate(tmp_path, ["--check", "build"])
+    assert rc == 0
+    m_checks.assert_called_once_with(tmp_path)
+    assert ran == ["npm ci --ignore-scripts", "sh -c npm ci --ignore-scripts && npm run build"]
+    assert read_record(tmp_path).passed == ("install", "typescript-tools", "build")
+
+
+def test_check_build_fails_on_missing_build_script(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "package.json").write_text('{"name": "x", "scripts": {}}', encoding="utf-8")
+    with patch(_MOD + ".typescript_tools.check_dev_dependencies", return_value=[]):
+        rc, ran = _run_typescript_validate(tmp_path, ["--check", "build"])
+    assert rc == 1
+    # No build ran without a build script to run.
+    assert ran == ["npm ci --ignore-scripts"]
+    assert read_record(tmp_path).not_passed[0] == "typescript-tools"
+    assert 'add a "build" script to package.json' in capsys.readouterr().out

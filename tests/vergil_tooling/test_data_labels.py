@@ -45,3 +45,16 @@ def test_security_labels_registered() -> None:
     assert by_name["security-disclosed"]["description"] == (
         "Past issue that disclosed a security problem publicly; fixed, no private record"
     )
+
+
+def test_epic_size_labels_registered() -> None:
+    # The planning-queue size scale (epic vergil-project/.github#1191, spec 6.1-6.2).
+    by_name = {entry["name"]: entry for entry in _labels()}
+    bands = {"S": "1–9", "M": "10–19", "L": "20–39", "XL": "40+"}
+    colors = set()
+    for size, band in bands.items():
+        entry = by_name[f"epic-size:{size}"]
+        assert set(entry) == {"name", "color", "description"}
+        assert band in entry["description"]
+        colors.add(entry["color"])
+    assert len(colors) == len(bands), "each epic-size label needs its own shade"

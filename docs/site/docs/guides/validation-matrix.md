@@ -19,6 +19,7 @@ where it runs. No git hooks are installed: every check runs inside a
 | Versions resolve against the window; toolchain selection; language floor | `vrg-validate` (config check, before any stage) | Yes | Every `vrg-validate` job |
 | Markdown, shell, YAML, Dockerfile, workflow and Ansible lint | `vrg-validate` (common checks) | Yes | `quality / common` |
 | Lint and typecheck | `vrg-validate` | Yes (primary version) | `quality / lint / <version>`, `quality / typecheck / <version>` |
+| Release build | `vrg-validate` (build stage) | Yes (primary version), for a language that turns it on: Rust and TypeScript | `quality / build / <version>` (once, primary version), for the same languages |
 | Tests | `vrg-validate` | Yes (primary version; every version with `--all-versions`, Python only) | `test / unit / <version>` |
 | Dependency audit | `vrg-validate` | Yes (primary version) | `audit / dependencies / <version>` |
 | Custom validator | `vrg-validate` (custom stage) | Yes (primary version) | `quality / custom` (once, primary version) |
@@ -174,26 +175,50 @@ dev images come from
    pass with the canonical config bundled in vergil-tooling. See the
    [Markdown Validation](../reference/lint/markdown-standards.md)
    reference.
-3. shellcheck on shell scripts under `scripts/` and on every `*.sh`
+3. docs-links: a link to a mike-versioned Vergil docs site must carry a
+   version segment after the site name (`latest`, `dev` or a version
+   number such as `2.1`), since a deep link without one returns 404. A
+   bare site root is allowed, as mike redirects it. The check reads the
+   same markdown as markdownlint, less `epics/archive/`, against the
+   fixed list of versioned sites in vergil-tooling (no network), and
+   names each hit by path and line with its `/latest/` form. See
+   [Links to other Vergil docs sites](../reference/lint/markdown-standards.md#links-to-other-vergil-docs-sites).
+4. shellcheck on shell scripts under `scripts/` and on every `*.sh`
    file elsewhere in the repository.
-4. yamllint on YAML under `.github/` and `docs/`, with the bundled
+5. yamllint on YAML under `.github/` and `docs/`, with the bundled
    config.
-5. hadolint on `Dockerfile*` at the repository root.
-6. actionlint on `.github/workflows/`.
-7. runner-labels: no value in a `.github/workflows/*.yml` or `*.yaml`
+6. hadolint on `Dockerfile*` at the repository root.
+7. actionlint on `.github/workflows/`.
+8. runner-labels: no value in a `.github/workflows/*.yml` or `*.yaml`
    file (a `runs-on`, a matrix value, a `with:` input) may be
    `ubuntu-latest`. Pin GitHub-hosted runners to `ubuntu-24.04`; the
    check names each hit by path and line.
-8. ansible-lint, when the repository has Ansible content.
+9. ansible-lint, when the repository has Ansible content.
 
 The first failing check stops the run. In CI the common checks run once,
 as `quality / common`.
 
 ### Language checks
 
-`vrg-validate` then runs the lint, typecheck, test and audit commands
-for `[project].primary-language`. Pass `--check lint`, `typecheck`,
-`test` or `audit` to run one stage.
+`vrg-validate` then runs the lint, typecheck, build, test and audit
+commands for `[project].primary-language`. Pass `--check lint`,
+`typecheck`, `build`, `test` or `audit` to run one stage.
+
+The build stage runs the language's release build command, the same
+command the release job runs, so a build that would fail at release
+fails on the PR instead. It runs once, on the primary version, and only
+for a language that turns it on. Rust does, with
+`cargo build --release --locked --workspace` (epic
+vergil-project/.github#1165), and TypeScript does, with
+`npm ci --ignore-scripts && npm run build` (epic
+vergil-project/.github#1174). A TypeScript repository must define a
+`build` script in `package.json`; the `typescript-tools` stage checks
+for it before any gate runs. In CI the build stage runs as
+`quality / build / <version>`, once on the primary version, for the same
+languages. For a language with no build check,
+`--check build` prints `build: no build check for <language> — nothing
+to run` and exits 0. `vrg-ci-resolve` reports the same answer as its
+`build-enabled` field, the one CI reads.
 
 A repository with none of its language's manifests is not bootstrapped
 yet, such as a Rust repository that `vrg-github-repo-init` created with
@@ -202,20 +227,21 @@ no `Cargo.toml`. The manifests are the ones the dev image's warmup needs:
 | Language | Manifests |
 |---|---|
 | Python | `pyproject.toml`, `uv.lock` |
-| Rust | `Cargo.toml` |
+| Rust | `Cargo.toml`, `Cargo.lock` |
 | Go | `go.mod` |
 | C++ | `conanfile.txt` or `conanfile.py`, `CMakeLists.txt`, `conan.lock` |
 | TypeScript | `package.json`, `package-lock.json` |
 
-For such a repository the install, lint, typecheck, test and audit
-stages do not run. Each is recorded as a warning (⚠) whose reason names
-the missing manifests, for example `skipped: no Cargo.toml (rust repo
+For such a repository the install, lint, typecheck, build, test and
+audit stages do not run. Each is recorded as a warning (⚠) whose reason names
+the missing manifests, for example `skipped: no Cargo.toml, Cargo.lock (rust repo
 not bootstrapped yet)`, on its row and in the run summary. The common
 checks and the custom validator still run. A warning counts as passed,
 so the run can reach merge review. The skip applies only when every
 manifest is missing: a repository with some of them, such as a
 `pyproject.toml` with no `uv.lock`, runs the stages and fails on the
-gap, as does a `Cargo.toml` that `cargo fetch` cannot resolve.
+gap, as does a `Cargo.toml` with no `Cargo.lock`, or one that
+`cargo fetch --locked` cannot resolve.
 
 The skip also needs the repository to hold no source files of its
 language (`.rs` for Rust, `.py` for Python, and so on), tracked or

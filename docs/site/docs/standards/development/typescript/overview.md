@@ -31,22 +31,28 @@ matrix:
   majors, so the test-and-coverage stage runs once per resolved Node major. See
   [Testing and Coverage](testing-and-coverage.md).
 
-Node majors are `[ci].versions` entries with a family prefix (`node-24`), so a
-TypeScript repo must pin `[ci].versions`. Fanning out over several majors is a
-property of a **library**: a `library` may pin any subset of the window (today
-`node-22` and `node-24`), and each pinned major is a hard CI leg. Every other
-repository type resolves as an app and builds exactly one version, so an app
-that pins more than one major fails resolution (see
+Node majors are `[ci].versions` entries with a family prefix (`node-24`). The
+window has one family, so a TypeScript repo needs no pin and follows the window
+as Python and Rust do: an unpinned **library** builds every window major (today
+`node-24` and `node-22`), each a hard CI leg, and an unpinned app builds the
+newest. A `library` may pin any subset of the window. Every other repository
+type resolves as an app and builds exactly one version, so an app that pins
+more than one major fails resolution (see
 [Version resolution](../../../guides/ci-architecture.md#version-resolution)).
 
 ## npm + ESM Layout
 
 Package management is **npm**, chosen for universality at zero adoption barrier:
 
-- **INSTALL is `npm ci`** — a clean, lockfile-pinned install from
-  `package-lock.json`. The lockfile is the pinned dependency graph; `npm ci`
+- **INSTALL is `npm ci --ignore-scripts`** — a clean install from
+  `package-lock.json`. The lockfile records the dependency graph; `npm ci`
   installs exactly what it records and fails if `package.json` and the lockfile
   disagree.
+- **Install scripts never run.** Every `npm ci` Vergil runs for TypeScript
+  passes `--ignore-scripts`. Repositories Vergil manages do not rely on install
+  scripts; one that genuinely needs one declares it as an exception, under
+  exception management
+  ([vergil-project/.github#375](https://github.com/vergil-project/.github/issues/375)).
 - **Modules are ESM.** The shipped base tsconfig sets `module` and
   `moduleResolution` to `nodenext` and targets `es2022`, so repositories are
   native ES modules resolved the way modern Node resolves them. A repository's
@@ -77,6 +83,50 @@ library consumed through `import` needs a different mechanism (a repo-local
 full contract and the runtime details are in
 [Container Config Reference → `build-command`](../../../reference/container-config.md#build-command).
 
+## Tool Ownership
+
+Where each tool lives follows the
+[Tool Ownership Guideline](../tool-ownership.md). For TypeScript:
+
+- The repository declares typescript, eslint, typescript-eslint, `@eslint/js`,
+  vitest and `@vitest/coverage-v8` as devDependencies. Its tests import
+  vitest, and Vitest loads `@vitest/coverage-v8` from the repository for the
+  coverage run. Its ESLint config imports typescript-eslint and `@eslint/js`,
+  and typescript-eslint declares typescript and eslint as peer dependencies.
+- The image owns prettier and license-checker.
+
+### Required devDependencies and their accepted majors
+
+The gates run the repository's own tools by path, from `node_modules/.bin`:
+LINT's ESLint step, TYPECHECK (`node_modules/.bin/tsc`) and TEST
+(`node_modules/.bin/vitest`). A tool missing from the repository fails the
+gate; nothing falls back to a global binary or downloads one.
+
+Before the gates run, `vrg-validate`'s `typescript-tools` stage (right after
+INSTALL, in the full run and in every single `--check` of a language gate)
+checks each required devDependency against the major Vergil accepts for it:
+
+| devDependency | Accepted major |
+|---|---|
+| `typescript` | 6 |
+| `typescript-eslint` | 8 |
+| `eslint` | 10 |
+| `@eslint/js` | 10 |
+| `vitest` | 5 |
+| `@vitest/coverage-v8` | 5 |
+
+A package fails when `devDependencies` does not declare it, when its declared
+range is not `^M…`, `~M…` or `M…` with `M` the accepted major (so
+`latest`, `*` and `>=5` all fail), when `npm ci` did not install it, or
+when the installed version has another major. The failure names every failing
+package and the one command that fixes them all, for example
+`npm install --save-dev typescript@^6 eslint@^10`.
+
+The majors live in one place,
+`src/vergil_tooling/configs/typescript/dev-dependencies.json`, which this
+table mirrors. Within its major, each tool's version floats through the
+repository's lockfile.
+
 ## Prebuilt Toolchains Only
 
 Node toolchains come **exclusively from prebuilt stable binary packages — never
@@ -85,32 +135,59 @@ slow, non-reproducible, and a supply-chain liability; the dev images pin
 prebuilt official stable Node binaries for each supported major instead
 (`prod-ts-node:<major>`).
 
-The analysis-tool layer pins a **stable TypeScript 5.x release** alongside
-`eslint` + `typescript-eslint`, `prettier`, and the Vitest runner, so every
-repository typechecks and lints against the same pinned tool versions rather
-than whatever floats in from a fresh install.
+The image does not pin the repository's TypeScript tools. TypeScript, ESLint,
+typescript-eslint and Vitest come from the repository's own devDependencies,
+held to their accepted majors (see
+[Required devDependencies](#required-devdependencies-and-their-accepted-majors)),
+and their exact versions float through the lockfile. Only the image's own
+tools, Prettier and license-checker, come with the image.
 
-## `tsc --noEmit`: Compile-Correctness Without a Bundler
+## Typecheck and the Release Build
 
-v1 mandates **no bundler and no emit step**. `tsc --noEmit` covers
-compile-correctness — it reads the consumer's `tsconfig.json` and reports type
-errors without writing any output — and there is no publish target. Bundling,
-emit, and published-artifact validation (tsup / esbuild / rollup) are
-deliberately deferred (spec §8, deferral ledger #6).
+TYPECHECK runs `tsc --noEmit`: it reads the consumer's `tsconfig.json` and
+reports type errors without writing any output.
 
-## Extending the Shareable Base tsconfig
+The artifact a release ships comes from the repository's own **`build`
+script**, which every TypeScript repository must define in `package.json`
+(for example `"build": "tsc -p tsconfig.json"`). The build command is
+`npm ci --ignore-scripts && npm run build`: it installs from the lockfile
+first, since the release job builds on a fresh checkout with no
+`node_modules`, and runs no install script. `vrg-validate`'s build stage runs
+the same command, so the build's own emit options (output directory,
+declaration files, a build-only tsconfig) are proven on the PR, not first at
+release. The `typescript-tools` stage fails, naming the fix, when
+`package.json` has no `build` script.
 
-The curated strict set is delivered as a **shareable strict base tsconfig
-shipped by Vergil** that consumers `extends` — the direct analog to C++
-enforcing a concrete `-Wall -Wextra -Werror -Wpedantic`-plus-extras warning set
-through a shared flag list.
+There is no publish target: a TypeScript release publishes nothing to npm.
 
-A consuming repository authors a minimal `tsconfig.json` that extends the
-Vergil-shipped base and adds only repo-local paths:
+## Extending the Shareable Base
+
+The curated strict set, Vergil's ESLint rules and its Prettier settings are
+delivered as **three managed files** that the fleet sync writes whole into
+every TypeScript repository's root, each a byte-for-byte copy of a master in
+vergil-tooling (see the
+[managed-file list](../../../reference/config-audit.md#_check_language_files-per-language-managed-files)):
+
+| File | What it carries |
+|---|---|
+| `tsconfig.vergil.json` | The strict base tsconfig |
+| `eslint.vergil.config.mjs` | Vergil's ESLint flat config |
+| `.prettierrc.json` | Vergil's Prettier config |
+
+A repository never edits these files: the sync rewrites them. It owns its
+**entry points**, `tsconfig.json` and `eslint.config.mjs`, and each one builds
+on Vergil's base. This is the direct analog to C++ enforcing a concrete
+`-Wall -Wextra -Werror -Wpedantic`-plus-extras warning set through a shared
+flag list.
+
+### `tsconfig.json`
+
+A consuming repository's `tsconfig.json` extends the managed base and adds only
+repo-local paths:
 
 ```json
 {
-  "extends": "<vergil>/typescript/tsconfig.base.json",
+  "extends": "./tsconfig.vergil.json",
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist"
@@ -119,12 +196,73 @@ Vergil-shipped base and adds only repo-local paths:
 }
 ```
 
+The `./` matters: without it, `tsc` looks the name up as a package in
+`node_modules`. The base may also be one entry of an `extends` array, beside a
+preset such as `@tsconfig/node24/tsconfig.json`; comments and trailing commas
+are allowed, as `tsc` allows them.
+
 The strict set lives in the base and is inherited through `extends`, so
-TYPECHECK is a bare `tsc --noEmit` that reads the consumer's own
-`tsconfig.json`. A repository never re-declares the strict flags — it inherits
-them, exactly as a C++ repository inherits the warning set threaded onto every
-compile line. The concrete set the base carries is documented in
+TYPECHECK is a bare `tsc --noEmit`, run as the repository's own
+`node_modules/.bin/tsc`, that reads the consumer's own `tsconfig.json`. A
+repository never re-declares the strict flags — it inherits them, exactly as
+a C++ repository inherits the warning set threaded onto every compile line.
+The concrete set the base carries is documented in
 [Toolchain and Strictness](toolchain-and-strictness.md).
+
+### `eslint.config.mjs`
+
+The repository's `eslint.config.mjs` imports Vergil's config and spreads it. It
+may add ignores (generated code, for example) and rules of its own:
+
+```js
+import vergil from "./eslint.vergil.config.mjs";
+
+export default [
+  { ignores: ["src/generated/"] },
+  ...vergil,
+];
+```
+
+Passing the imported config to `defineConfig(…)` (from `eslint/config`) or to
+`tseslint.config(…)` works too. LINT runs `node_modules/.bin/eslint .`, which
+reads `eslint.config.mjs` itself. The managed config sits in the repository
+root, so its imports (`@eslint/js`, `typescript-eslint`) resolve from the
+repository's `node_modules`. No other `eslint.config.*` may sit beside
+`eslint.config.mjs`, since ESLint would read `eslint.config.js` first.
+
+### One Prettier config
+
+LINT runs `prettier --check . --config .prettierrc.json`, and an editor finds
+the same `.prettierrc.json` on its own, so both format by the same config. A
+second config source fails `vrg-validate`: a `"prettier"` key in
+`package.json`, or any `.prettierrc`, `.prettierrc.*` or `prettier.config.*`
+other than the root `.prettierrc.json`.
+
+The same config does not mean the same Prettier **version**. Prettier is an
+image tool, so the version the gate runs is guaranteed only inside the
+container: format with `vrg-container-run -- prettier --write .`. An editor's
+own Prettier may be a different version and format some code differently.
+
+### What `vrg-validate` checks
+
+The `typescript-tools` stage (see
+[Required devDependencies](#required-devdependencies-and-their-accepted-majors))
+also checks the entry points and the Prettier config, and fails with the fix:
+
+- `tsconfig.json` exists and its `extends` is `"./tsconfig.vergil.json"`, or
+  an array containing it;
+- `eslint.config.mjs` exists, imports a binding from
+  `"./eslint.vergil.config.mjs"`, and includes it in its default export:
+  spread into an array, or passed to `defineConfig(…)` or `tseslint.config(…)`;
+- Prettier has no config source but `.prettierrc.json`.
+
+**Weakening a rule is an exception, not a failure.** A repository that turns
+off or weakens a rule from Vergil's ESLint config, or a strict flag from the
+base tsconfig, has made a repository-level exception under exception management
+([vergil-project/.github#375](https://github.com/vergil-project/.github/issues/375)),
+as a Python repository that disables a ruff rule in its `pyproject.toml` has.
+These checks do not block it. Leaving out Vergil's base altogether is not an
+exception: the checks above fail it.
 
 ## Testing: Vitest Runner, V8 Coverage Default
 
@@ -132,7 +270,11 @@ compile line. The concrete set the base carries is documented in
 held to a **100% line threshold per Node version**:
 
 ```bash
-vitest run --coverage --coverage.provider=v8 --coverage.thresholds.lines=100
+node_modules/.bin/vitest run --coverage --coverage.provider=v8 \
+  --coverage.thresholds.lines=100 --coverage.reportOnFailure \
+  --coverage.reportsDirectory=coverage \
+  --coverage.reporter=text --coverage.reporter=cobertura \
+  --reporter=default --reporter=junit --outputFile.junit=junit.xml
 ```
 
 The gate is a forcing function for explicitness, not a claim that every line was
@@ -148,17 +290,25 @@ version a repo resolves from the version window is a hard CI leg (see the
 
 TypeScript hard gates:
 
-- **TYPECHECK** (once) — `tsc --noEmit` with the curated strict set inherited
-  from the base tsconfig (see
-  [Toolchain and Strictness](toolchain-and-strictness.md)).
+- **TYPECHECK** (once) — `node_modules/.bin/tsc --noEmit` with the curated
+  strict set inherited from the base tsconfig (see
+  [Toolchain and Strictness](toolchain-and-strictness.md)). The run writes
+  its diagnostics and closing statistics (`--pretty false --diagnostics`) to
+  `quality-tsc.txt`, the typecheck gate's evidence, and prints them to the log.
 - **LINT** (once) — Prettier `--check` for format, then ESLint's flat config
   with type-aware typescript-eslint rules, carrying the no-standing-suppression
-  rule (`@typescript-eslint/ban-ts-comment`).
+  rule (`@typescript-eslint/ban-ts-comment`). The ESLint run writes its JSON
+  report to `quality-eslint.json`, the lint gate's evidence, and prints each
+  finding to the log.
+- **BUILD** (once) — `npm ci --ignore-scripts && npm run build`, the release
+  build (see [Typecheck and the Release Build](#typecheck-and-the-release-build)).
 - **TEST** (per Node version) — Vitest with the V8 coverage provider, held to
   100% line coverage per Node major (see
-  [Testing and Coverage](testing-and-coverage.md)).
-- **AUDIT** (once) — `npm audit --audit-level=high`, plus a best-effort
-  license summary. The vulnerability audit covers every package in
+  [Testing and Coverage](testing-and-coverage.md)). The run writes
+  `junit.xml` and Cobertura `coverage.xml`, even when a test fails.
+- **AUDIT** (once) — `npm audit --audit-level=high --json`, plus a best-effort
+  license summary. The audit run writes its JSON to `npm-audit.json`, the
+  audit gate's evidence, and exits with its own status. The vulnerability audit covers every package in
   `package-lock.json`, devDependencies included, so a vulnerable docs or test
   tool fails the audit just as a runtime dependency does. The license summary
   still covers production dependencies only.

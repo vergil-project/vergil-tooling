@@ -14,14 +14,27 @@ everything you could, and positively acknowledged the things you could not.
 ## Test Runner and Coverage Provider
 
 Tests run through **Vitest**, the mandated runner, with the **V8 coverage
-provider**:
+provider**. Both are the repository's own devDependencies, `vitest` and
+`@vitest/coverage-v8`, held to accepted major 5 (see
+[Required devDependencies](overview.md#required-devdependencies-and-their-accepted-majors)),
+and TEST runs the repository's copy by path:
 
 ```bash
-vitest run --coverage --coverage.provider=v8 --coverage.thresholds.lines=100
+node_modules/.bin/vitest run --coverage --coverage.provider=v8 \
+  --coverage.thresholds.lines=100 --coverage.reportOnFailure \
+  --coverage.reportsDirectory=coverage \
+  --coverage.reporter=text --coverage.reporter=cobertura \
+  --reporter=default --reporter=junit --outputFile.junit=junit.xml
 ```
 
 The `--coverage.thresholds.lines=100` flag is the gate: Vitest exits non-zero
 when line coverage drops below 100%, so anything under the bar fails the stage.
+
+The same run writes the test gate's evidence: a JUnit report to `junit.xml` and
+a Cobertura coverage report under `coverage/`, which the gate copies to
+`coverage.xml`. `--coverage.reportOnFailure` makes Vitest write the coverage
+report when a test fails too, so both files are written whether the gate
+passes or fails. The console keeps Vitest's own test output and coverage table.
 
 ## The 100%-Per-Node-Version Gate
 

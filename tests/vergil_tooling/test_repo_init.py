@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from vergil_tooling.lib import dependabot, github, gitignore, repo_init
+from vergil_tooling.lib import dependabot, github, gitignore, repo_config, repo_init
 from vergil_tooling.lib.config import _ENUMS, CiConfig, ProjectConfig, _parse_raw_config
 from vergil_tooling.lib.github_config import ClassicProtectionReport
 from vergil_tooling.lib.repo_init import (
@@ -1093,7 +1093,7 @@ class TestResolveVersions:
         assert exc.value.code == 1
         err = capsys.readouterr().err
         assert err.startswith("ERROR: ")
-        assert "cpp must pin" in err
+        assert "cpp must pin [ci].versions: its window has more than one family" in err
 
     _APP_MULTI_PIN = (
         "[project]\n"
@@ -2003,6 +2003,42 @@ class TestStepScaffoldConfigFiles:
         written = (tmp_path / ".github" / "dependabot.yml").read_text(encoding="utf-8")
         assert written == dependabot.render(lang or None)
         assert dependabot.check(written, lang or None) == []
+
+    def test_fresh_typescript_init_passes_audit(self, tmp_path: Path) -> None:
+        """A new TypeScript repo is born with its managed files, without drift (.github#1174)."""
+        ctx = _committed_answers()
+        ctx.primary_language = "typescript"
+        ctx.ci_versions = []
+        ctx.work_dir = tmp_path
+        ctx.description = "Test"
+        ctx.license_type = "none"
+        # Step 3 writes vergil.toml; the audit reads the language from it.
+        (tmp_path / "vergil.toml").write_text(render_vergil_toml(ctx))
+
+        with patch("vergil_tooling.lib.repo_init.git.run"):
+            step_scaffold_config_files(ctx)
+
+        for entry in repo_config.LANGUAGE_MANAGED_FILES["typescript"]:
+            written = (tmp_path / entry.repo_path).read_bytes()
+            assert written == repo_config.read_language_master(entry)
+        items = repo_config.audit_local_config(tmp_path).items
+        assert [i for i in items if i.field == "local.language_files"] == []
+
+    @pytest.mark.parametrize("lang", ["python", ""])
+    def test_config_files_writes_no_language_files_for_other_languages(
+        self, tmp_path: Path, lang: str
+    ) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = tmp_path
+        ctx.description = "Test"
+        ctx.license_type = "none"
+        ctx.primary_language = lang
+
+        with patch("vergil_tooling.lib.repo_init.git.run"):
+            step_scaffold_config_files(ctx)
+
+        for name in ("tsconfig.vergil.json", "eslint.vergil.config.mjs", ".prettierrc.json"):
+            assert not (tmp_path / name).exists()
 
     def test_no_githooks_created(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")

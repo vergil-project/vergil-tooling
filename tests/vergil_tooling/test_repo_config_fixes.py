@@ -24,6 +24,7 @@ from vergil_tooling.lib.repo_config_fixes import (
     fix_dependabot_yml,
     fix_gitignore,
     fix_hook_guard_shim,
+    fix_language_files,
     fix_workflow_refs,
 )
 
@@ -40,6 +41,15 @@ DEPENDABOT = dependabot.DEPENDABOT_PATH
 VERGIL_TOML = Path("vergil.toml")
 CI_YML = Path(".github/workflows/ci.yml")
 OPS_YML = Path(".github/workflows/ops.yml")
+TSCONFIG_VERGIL = Path("tsconfig.vergil.json")
+ESLINT_VERGIL = Path("eslint.vergil.config.mjs")
+PRETTIERRC = Path(".prettierrc.json")
+
+#: Each TypeScript managed file and its packaged master's bytes.
+_TS_MASTERS: dict[Path, bytes] = {
+    Path(entry.repo_path): repo_config.read_language_master(entry)
+    for entry in repo_config.LANGUAGE_MANAGED_FILES["typescript"]
+}
 
 _VERGIL_TOML = """\
 [project]
@@ -395,6 +405,41 @@ def test_dependabot_unloadable_config_raises_cannot_fix(tmp_path: Path) -> None:
     assert not (tmp_path / DEPENDABOT).exists()
 
 
+# --- per-language managed files --------------------------------------------
+
+
+def test_fixer_writes_master_bytes(tmp_path: Path) -> None:
+    """Missing files are written 0644; an edited one is replaced whole, keeping its mode."""
+    _write_toml(tmp_path, lang="typescript")
+    edited = _write(tmp_path, ESLINT_VERGIL, "export default [];\n", 0o600)
+    assert fix_language_files(tmp_path) is True
+    for path, master in _TS_MASTERS.items():
+        assert (tmp_path / path).read_bytes() == master
+    assert _mode(edited) == 0o600
+    assert _mode(tmp_path / TSCONFIG_VERGIL) == 0o644
+    assert _mode(tmp_path / PRETTIERRC) == 0o644
+    assert fix_language_files(tmp_path) is False
+
+
+def test_same_named_file_in_python_repo_untouched(tmp_path: Path) -> None:
+    """A file of a managed name in a repo of another language is the repo's own."""
+    _write_toml(tmp_path, lang="python")
+    path = _write(tmp_path, PRETTIERRC, '{"semi": false}\n')
+    assert fix_language_files(tmp_path) is False
+    assert path.read_text(encoding="utf-8") == '{"semi": false}\n'
+    assert not (tmp_path / TSCONFIG_VERGIL).exists()
+
+
+def test_unloadable_vergil_toml_cannot_fix(tmp_path: Path) -> None:
+    """A vergil.toml that fails to load leaves the language unknown: nothing is written."""
+    _write(tmp_path, VERGIL_TOML, "[project]\n")
+    with pytest.raises(CannotFix) as caught:
+        fix_language_files(tmp_path)
+    assert caught.value.check == "local.language_files"
+    assert caught.value.reason.startswith("cannot resolve the managed-file language: ")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["vergil.toml"]
+
+
 # --- workflow ref pins -----------------------------------------------------
 
 
@@ -465,6 +510,7 @@ def test_fixers_registry() -> None:
         fix_claude_settings,
         fix_gitignore,
         fix_dependabot_yml,
+        fix_language_files,
         fix_workflow_refs,
     ] == FIXERS
 
@@ -484,6 +530,7 @@ _CHECKS: dict[Callable[[Path], bool], Callable[[Path, list[DiffItem]], None]] = 
     fix_claude_settings: repo_config._check_claude_settings,
     fix_gitignore: repo_config._check_gitignore,
     fix_dependabot_yml: repo_config._check_dependabot_yml,
+    fix_language_files: repo_config._check_language_files,
     fix_workflow_refs: repo_config._check_workflow_refs,
 }
 
@@ -576,6 +623,24 @@ _FIXTURES: dict[Callable[[Path], bool], dict[str, Callable[[Path], object]]] = {
             root, DEPENDABOT, dependabot.render(None) + "# local\n"
         ),
         "empty": lambda root: _write(root, DEPENDABOT, ""),
+        "unloadable-config": lambda root: _write(root, VERGIL_TOML, "[project]\n"),
+    },
+    fix_language_files: {
+        "no-vergil-toml": lambda root: None,
+        "typescript-missing": lambda root: _write_toml(root, lang="typescript"),
+        "in-sync": lambda root: (
+            _write_toml(root, lang="typescript"),
+            [_write(root, path, data) for path, data in _TS_MASTERS.items()],
+        ),
+        "one-edited": lambda root: (
+            _write_toml(root, lang="typescript"),
+            [_write(root, path, data) for path, data in _TS_MASTERS.items()],
+            _write(root, TSCONFIG_VERGIL, "{}\n", 0o640),
+        ),
+        "python-same-named": lambda root: (
+            _write_toml(root, lang="python"),
+            _write(root, PRETTIERRC, "{}\n"),
+        ),
         "unloadable-config": lambda root: _write(root, VERGIL_TOML, "[project]\n"),
     },
     fix_workflow_refs: {

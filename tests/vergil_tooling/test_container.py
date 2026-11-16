@@ -13,6 +13,7 @@ from vergil_tooling.lib.container import (
     NEVER_FORWARDED,
     PYCACHE_PREFIX,
     VERSION_WINDOW_MOUNT,
+    PackageJsonError,
     assert_docker_available,
     build_container_args,
     build_docker_args,
@@ -21,7 +22,9 @@ from vergil_tooling.lib.container import (
     detect_language,
     detect_runtime,
     docker_platform,
+    read_package_json,
     repo_resolution,
+    report_package_json_error,
     resolve_language,
     version_window_override,
     workspace_mount_args,
@@ -113,9 +116,9 @@ def test_detect_typescript_package_json_dev_dep(tmp_path: Path) -> None:
     assert detect_language(tmp_path) == "typescript"
 
 
-def test_detect_typescript_package_json_without_ts_dep_not_detected(tmp_path: Path) -> None:
-    # A plain (JS-only) package.json with no `typescript` devDependency must NOT
-    # misdetect as TypeScript.
+def test_package_json_without_typescript_is_not_typescript(tmp_path: Path) -> None:
+    # A plain (JS-only) package.json with no `typescript` devDependency and no
+    # tsconfig.json is a real "not TypeScript" answer, not a failure.
     (tmp_path / "package.json").write_text('{"devDependencies": {"eslint": "^9.0.0"}}')
     assert detect_language(tmp_path) == ""
 
@@ -126,17 +129,73 @@ def test_detect_typescript_bare_package_json_not_detected(tmp_path: Path) -> Non
     assert detect_language(tmp_path) == ""
 
 
-def test_detect_typescript_malformed_package_json_not_detected(tmp_path: Path) -> None:
-    # A malformed package.json must not crash detection nor claim TypeScript.
+def test_detect_typescript_package_json_without_ts_dep_and_tsconfig(tmp_path: Path) -> None:
+    # A parsed package.json without the dep does not undo the tsconfig.json marker.
+    (tmp_path / "package.json").write_text('{"name": "example"}')
+    (tmp_path / "tsconfig.json").write_text("{}")
+    assert detect_language(tmp_path) == "typescript"
+
+
+def test_malformed_package_json_errors(tmp_path: Path) -> None:
+    # A package.json that is not JSON is an error naming the file and the fix,
+    # never "not TypeScript" (epic vergil-project/.github#1174 §6.7).
+    path = tmp_path / "package.json"
+    path.write_text("{not json")
+    with pytest.raises(PackageJsonError) as excinfo:
+        detect_language(tmp_path)
+    msg = str(excinfo.value)
+    assert msg.startswith(f"package.json at {path} cannot be parsed: ")
+    assert msg.endswith(". Fix: correct the JSON")
+
+
+def test_malformed_package_json_with_tsconfig_errors(tmp_path: Path) -> None:
+    # A tsconfig.json does not hide a broken package.json.
     (tmp_path / "package.json").write_text("{not json")
-    assert detect_language(tmp_path) == ""
+    (tmp_path / "tsconfig.json").write_text("{}")
+    with pytest.raises(PackageJsonError, match="cannot be parsed"):
+        detect_language(tmp_path)
 
 
-def test_detect_typescript_non_object_package_json_not_detected(tmp_path: Path) -> None:
-    # A package.json that is valid JSON but not an object (e.g. an array) is not
-    # a TypeScript marker and must not crash detection.
+def test_package_json_array_errors(tmp_path: Path) -> None:
+    # Valid JSON that is not an object is not a package.json.
     (tmp_path / "package.json").write_text('["typescript"]')
-    assert detect_language(tmp_path) == ""
+    with pytest.raises(PackageJsonError, match="the top level is a JSON list, not an object"):
+        detect_language(tmp_path)
+
+
+def test_read_package_json_returns_object(tmp_path: Path) -> None:
+    path = tmp_path / "package.json"
+    path.write_text('{"name": "example", "devDependencies": {"typescript": "^6.0.0"}}')
+    assert read_package_json(path) == {
+        "name": "example",
+        "devDependencies": {"typescript": "^6.0.0"},
+    }
+
+
+def test_read_package_json_unreadable_errors(tmp_path: Path) -> None:
+    # A path that cannot be read (here a directory) names the OS failure.
+    path = tmp_path / "package.json"
+    path.mkdir()
+    with pytest.raises(PackageJsonError, match=r"cannot be parsed: Is a directory\. Fix"):
+        read_package_json(path)
+
+
+def test_read_package_json_not_utf8_errors(tmp_path: Path) -> None:
+    path = tmp_path / "package.json"
+    path.write_bytes(b'{"name": "\xff"}')
+    with pytest.raises(PackageJsonError, match="cannot be parsed: not UTF-8"):
+        read_package_json(path)
+
+
+def test_report_package_json_error_prints_and_exits(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        report_package_json_error(PackageJsonError("package.json at /r cannot be parsed: x"))
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.err == "ERROR: package.json at /r cannot be parsed: x\n"
+    assert captured.out == ""
 
 
 # -- resolve_language ---------------------------------------------------------
@@ -199,6 +258,20 @@ def test_resolve_language_falls_back_when_language_unset(tmp_path: Path) -> None
     (tmp_path / "vergil.toml").write_text(toml)
     (tmp_path / "go.mod").write_text("module example\n")
     assert resolve_language(tmp_path) == "go"
+
+
+def test_declared_language_skips_detection(tmp_path: Path) -> None:
+    # A declared primary-language never reads package.json, so a broken one does
+    # not change the answer (the fixtures declare theirs).
+    _write_vergil(tmp_path, lang="typescript", version="node-24")
+    (tmp_path / "package.json").write_text("{not json")
+    assert resolve_language(tmp_path) == "typescript"
+
+
+def test_resolve_language_detection_reports_broken_package_json(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text("{not json")
+    with pytest.raises(PackageJsonError):
+        resolve_language(tmp_path)
 
 
 def test_resolve_language_empty_when_neither_asserted_nor_detected(tmp_path: Path) -> None:

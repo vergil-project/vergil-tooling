@@ -1,2 +1,4 @@
 target/
 cargo-deny.json
+quality-clippy.json
+quality-cargo-check.json

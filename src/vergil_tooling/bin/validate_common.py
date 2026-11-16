@@ -4,17 +4,20 @@ Runs inside the dev container via ``vrg-container-run``:
   1. Repository profile validation (includes README structural checks)
   2. markdownlint on docs/site/, README.md and epics/, in one pass against
      the bundled config, which disables MD013 line-length (issue #4103)
-  3. shellcheck on all shell scripts under ``scripts/`` and every ``*.sh``
+  3. docs-links: links to a mike-versioned Vergil docs site carry a version
+     segment (``latest``, ``dev`` or a version number), over the same
+     markdown scope less ``epics/archive/`` (issue #3831)
+  4. shellcheck on all shell scripts under ``scripts/`` and every ``*.sh``
      file elsewhere in the repository (issue #3830)
-  4. yamllint on YAML files under ``.github/`` and ``docs/`` using
+  5. yamllint on YAML files under ``.github/`` and ``docs/`` using
      the bundled canonical config (issue #302, #590)
-  5. dependabot-limit: every ``.github/dependabot.yml`` ``updates`` entry
+  6. dependabot-limit: every ``.github/dependabot.yml`` ``updates`` entry
      must carry ``open-pull-requests-limit: 0`` (epic .github#420)
-  6. hadolint on Dockerfile* files at the repo root
-  7. actionlint on ``.github/workflows/``
-  8. runner-labels: no workflow value may be ``ubuntu-latest``; runners are
+  7. hadolint on Dockerfile* files at the repo root
+  8. actionlint on ``.github/workflows/``
+  9. runner-labels: no workflow value may be ``ubuntu-latest``; runners are
      pinned to ``ubuntu-24.04`` (epic .github#649)
-  9. ansible-lint when the repo carries Ansible content, using the
+  10. ansible-lint when the repo carries Ansible content, using the
      bundled canonical config as the rule baseline while honoring the
      repo's local ``skip_list`` / ``exclude_paths`` (issues #1667, #1952)
 
@@ -32,7 +35,7 @@ from pathlib import Path
 import yaml
 
 from vergil_tooling.bin import repo_profile
-from vergil_tooling.lib import dependabot, git
+from vergil_tooling.lib import dependabot, doc_links, git
 from vergil_tooling.lib.config import read_config
 
 
@@ -64,6 +67,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         )
         if result.returncode != 0:
             return result.returncode
+
+    rc = _check_docs_links(repo_root)
+    if rc != 0:
+        return rc
 
     shell_files = _drop_gitignored(repo_root, _find_shell_files(repo_root))
     if shell_files:
@@ -172,6 +179,45 @@ def _check_dependabot_limit(repo_root: Path) -> int:
     for reason in violations:
         print(f"dependabot.yml: {reason}", file=sys.stderr)
     return 1 if violations else 0
+
+
+def _check_docs_links(repo_root: Path) -> int:
+    """Refuse links to a mike-versioned Vergil docs site that lack a version
+    segment (issue #3831).
+
+    A deep link such as ``https://vergil-project.github.io/<site>/guides/x/``
+    returns 404 on a mike-versioned site; it needs ``latest/``, ``dev/`` or a
+    version number after the site name. A bare site root is allowed. The scope
+    is markdownlint's (``docs/site/**/*.md``, ``README.md``, ``epics/**/*.md``)
+    less ``epics/archive/``, and independent of ``[markdownlint].ignore``: a
+    file left out of the lint still publishes its links. The sites are the
+    fixed list in :mod:`vergil_tooling.lib.doc_links`, so no network is used.
+    Each hit is named by path and line.
+    """
+    archive = repo_root / "epics" / "archive"
+    markdown_files = [
+        path
+        for path in _drop_gitignored(repo_root, _find_markdown_files(repo_root))
+        if not Path(path).is_relative_to(archive)
+    ]
+    if not markdown_files:
+        return 0
+    print(
+        f"Running: docs-links ({len(markdown_files)} files in docs/site/, README.md, "
+        "epics/ less epics/archive/)"
+    )
+    failed = False
+    for markdown in markdown_files:
+        path = Path(markdown)
+        rel = path.relative_to(repo_root).as_posix()
+        for line, url in doc_links.unversioned_links(path.read_text(encoding="utf-8")):
+            print(
+                f"{rel}:{line}: {url} has no version segment and returns 404; "
+                f"use {doc_links.versioned_form(url)}",
+                file=sys.stderr,
+            )
+            failed = True
+    return 1 if failed else 0
 
 
 _FLOATING_RUNNER_LABEL = "ubuntu-latest"

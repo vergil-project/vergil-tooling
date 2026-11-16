@@ -21,6 +21,11 @@ class CheckKind(Enum):
     TYPECHECK = "typecheck"
     TEST = "test"
     AUDIT = "audit"
+    # The language's release build, run before release (epic
+    # vergil-project/.github#1174). It has no entry in ``Language.checks``: its
+    # command is ``EcosystemInfo.build_cmd``, the one the release job runs, and
+    # it runs only for a language whose ``validate_build`` is set.
+    BUILD = "build"
 
 
 class Cardinality(Enum):
@@ -43,6 +48,10 @@ class EcosystemInfo:
     build_cmd: list[str] | None
     publish_cmd: list[str] | None
     publish_env_var: str | None
+    # Run ``build_cmd`` as the BUILD check in ``vrg-validate`` and in CI, so the
+    # release build is proven on the PR rather than first in the release job.
+    # Off by default: each language turns it on with a fixture run behind it.
+    validate_build: bool = False
 
 
 @dataclass(frozen=True)
@@ -105,14 +114,43 @@ PYTHON_REPORT_FILES = (
 # output-file flag, so the AUDIT command redirects its stderr here.
 CARGO_DENY_REPORT = "cargo-deny.json"
 
-# The workspace-root report files the Rust gate commands emit: the TEST gate's
-# Cobertura coverage and cargo-nextest JUnit report
-# (vergil-project/vergil-tooling#4394, #4395) and the AUDIT gate's cargo-deny
-# diagnostics.
+# The rust ``quality`` gate's evidence (epic vergil-project/.github#1165, spec
+# §6.5): clippy's and ``cargo check``'s ``--message-format=json`` output, from
+# the LINT and TYPECHECK gates' own runs. The names are the contract with
+# vergil-actions' ``reports.sh`` (its ``rust/lint`` and ``rust/typecheck``
+# entries), beside RUFF_REPORT and MYPY_REPORT, so keep them exact.
+CLIPPY_REPORT = "quality-clippy.json"
+CARGO_CHECK_REPORT = "quality-cargo-check.json"
+
+# The workspace-root report files the Rust gate commands emit: the LINT and
+# TYPECHECK gates' cargo JSON messages, the TEST gate's Cobertura coverage and
+# cargo-nextest JUnit report (vergil-project/vergil-tooling#4394, #4395) and the
+# AUDIT gate's cargo-deny diagnostics.
 RUST_REPORT_FILES = (
+    CLIPPY_REPORT,
+    CARGO_CHECK_REPORT,
     COVERAGE_REPORT,
     JUNIT_REPORT,
     CARGO_DENY_REPORT,
+)
+
+# The TypeScript gates' evidence (epic vergil-project/.github#1174, spec §6.6),
+# each from the gate's own run: ESLint's JSON formatter output from LINT, the
+# diagnostics of ``tsc`` from TYPECHECK and ``npm audit --json`` from AUDIT.
+# TEST writes COVERAGE_REPORT and JUNIT_REPORT, as for Python and Rust. The
+# names are the contract with vergil-actions' ``reports.sh`` (its
+# ``typescript/*`` entries), so keep them exact.
+ESLINT_REPORT = "quality-eslint.json"
+TSC_REPORT = "quality-tsc.txt"
+NPM_AUDIT_REPORT = "npm-audit.json"
+
+# The workspace-root report files the TypeScript gate commands emit.
+TYPESCRIPT_REPORT_FILES = (
+    COVERAGE_REPORT,
+    JUNIT_REPORT,
+    NPM_AUDIT_REPORT,
+    ESLINT_REPORT,
+    TSC_REPORT,
 )
 
 # The pip-audit input: every package pinned in ``uv.lock`` — all dependency
@@ -140,6 +178,9 @@ _PIP_LICENSES_ALLOWLIST = ";".join(
         "GPL-3.0-or-later",
         "ISC License (ISCL)",
         "MIT",
+        # MIT without its attribution clause, more permissive than MIT
+        # (cffi 2.x, which cryptography needs on Python 3.14+; #4494).
+        "MIT-0",
         "MIT License",
         "Mozilla Public License 2.0 (MPL 2.0)",
         "MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later",
@@ -190,13 +231,71 @@ _RUST_LICENSES_ALLOWLIST = [
 # report back to stderr for the log, and exits with cargo-deny's own status.
 # ``2>`` is plain POSIX ``sh``: ``tee`` would need ``pipefail`` to keep that
 # status, which the image's ``sh`` (dash) lacks. ``cat`` failing fails the gate.
+# ``--locked`` is a root option too: the audit reads the committed ``Cargo.lock``
+# as it is (epic vergil-project/.github#1165, spec §6.1). So is ``--workspace``,
+# which makes every workspace member a root of the crate graph, so the audit
+# covers each member's dependencies, not only the root package's (spec §6.4).
 _RUST_AUDIT_SCRIPT = (
-    'cargo deny --format json --config "{configs}/rust/deny.toml" check --show-stats '
+    'cargo deny --format json --config "{configs}/rust/deny.toml" --locked --workspace '
+    "check --show-stats "
     f"2>{CARGO_DENY_REPORT}; "
     "rc=$?; "
     f"cat {CARGO_DENY_REPORT} >&2 || exit 1; "
     'exit "$rc"'
 )
+
+# The rust LINT clippy and TYPECHECK commands (epic vergil-project/.github#1165,
+# spec §6.5). One cargo run both gates and writes the report:
+# ``--message-format=json`` sends cargo's JSON messages (one object per line) to
+# stdout, which the shell writes to the report. The compiler's diagnostics are
+# then only in that JSON, so once cargo exits ``jq`` prints each
+# ``compiler-message``'s ``message.rendered`` text, the diagnostic as cargo
+# would have shown it, to stderr for the log; cargo's own status lines stay on
+# its stderr, so they come first. The JSON holds a diagnostic once per target
+# that hit it (``--all-targets`` builds the lib and the lib's tests from the
+# same source), where cargo's human output prints identical diagnostics once,
+# so the filter prints each distinct rendered text once, in first-seen order.
+# The command exits with cargo's status, so a failing lint or check still
+# writes its report. ``jq`` failing (missing, or the report unreadable) fails
+# the gate; jq is in every vergil-containers image (its ``base`` layer). The
+# ``>`` redirect replaces any stale report before cargo runs. Plain POSIX
+# ``sh`` (dash).
+_CARGO_RENDER_FILTER = (
+    '[inputs | select(.reason == "compiler-message") | .message.rendered // empty] '
+    "| reduce .[] as $r ([]; if any(.[]; . == $r) then . else . + [$r] end) "
+    "| .[]"
+)
+
+
+def _rust_json_report_script(cargo_args: str, report: str) -> str:
+    """The ``sh -c`` script that runs *cargo_args* and writes its JSON to *report*."""
+    return (
+        f"{cargo_args} >{report}; "
+        "rc=$?; "
+        f"jq -j -n '{_CARGO_RENDER_FILTER}' {report} >&2 || exit 1; "
+        'exit "$rc"'
+    )
+
+
+# ``--all-targets`` is ``--lib --bins --tests --benches --examples``; with no
+# target flag clippy checks only the lib and bins, so ``tests/`` and
+# ``#[cfg(test)]`` code went unlinted (vergil-project/vergil-tooling#4379).
+# ``--message-format`` is cargo's option, so it goes before the ``--`` that
+# starts clippy's own.
+_RUST_CLIPPY_SCRIPT = _rust_json_report_script(
+    "cargo clippy --all-targets --locked --workspace --message-format=json -- -D warnings",
+    CLIPPY_REPORT,
+)
+_RUST_CHECK_SCRIPT = _rust_json_report_script(
+    "cargo check --locked --workspace --message-format=json",
+    CARGO_CHECK_REPORT,
+)
+
+# The rust doctest command, over every workspace member (spec §6.4).
+# vrg-validate drops exactly this command from the TEST stage when no workspace
+# member has a library target (``_skip_rust_doctests_without_lib``). Both sides
+# use this one list, so a flag added here can never make the skip stop matching.
+RUST_DOCTEST_CMD = ["cargo", "test", "--doc", "--locked", "--workspace"]
 
 # The rust TEST coverage command (issue #4395). One cargo-nextest run under
 # cargo-llvm-cov, then one report from that run's profiles; it gates and writes
@@ -217,9 +316,23 @@ _RUST_AUDIT_SCRIPT = (
 #   [OPTIONS] [NEXTEST_OPTIONS]``). The profile is named by nextest's own
 #   ``NEXTEST_PROFILE`` (https://nexte.st/docs/running/), not ``--profile``,
 #   which cargo-llvm-cov documents as cargo's build profile.
-# * ``report --fail-under-lines 100`` is the gate on llvm-cov's own line
-#   summary; ``--cobertura --output-path`` writes ``coverage.xml`` and
-#   ``--show-missing-lines`` names the uncovered lines.
+# * ``--locked`` on the test run and on the report, which both read
+#   ``Cargo.lock``, so a stale lockfile fails the gate instead of being
+#   re-resolved.
+# * ``--workspace`` on the test run and on the report, so every workspace
+#   member's tests run and every member's sources are gated (spec §6.4). A
+#   report without it covers only the root package's sources, even when the
+#   test run had ``--workspace``: a live run of cargo-llvm-cov 0.9.1 on a
+#   workspace with a binary root and a library member reported only
+#   ``src/main.rs``. ``report --help`` does not list the flag, but the report
+#   accepts it.
+# * ``report --fail-under-lines 100 --fail-under-regions 100`` is the gate on
+#   llvm-cov's own line and region summary (epic vergil-project/.github#1165,
+#   spec §6.2); ``--cobertura --output-path`` writes ``coverage.xml`` and
+#   ``--show-missing-lines`` names the uncovered lines. A missed region on a
+#   line that ran is not among them, so when this command fails vrg-validate
+#   runs :func:`rust_coverage_export_cmd` and lists every uncovered region
+#   (:mod:`vergil_tooling.lib.rust_coverage`).
 # * Nextest writes the JUnit report under its store directory,
 #   ``target/nextest/<profile>/`` (https://nexte.st/docs/machine-readable/junit/,
 #   ``store.dir`` in https://nexte.st/docs/configuration/reference/); the
@@ -235,10 +348,11 @@ _NEXTEST_JUNIT = f"target/nextest/{_NEXTEST_PROFILE}/{JUNIT_REPORT}"
 _RUST_TEST_SCRIPT = (
     f"rm -f {COVERAGE_REPORT} {JUNIT_REPORT} {_NEXTEST_JUNIT}; "
     "cargo llvm-cov clean --workspace || exit 1; "
-    f"NEXTEST_PROFILE={_NEXTEST_PROFILE} cargo llvm-cov nextest --no-report "
-    '--tool-config-file "vergil:{configs}/rust/nextest.toml"; '
+    f"NEXTEST_PROFILE={_NEXTEST_PROFILE} cargo llvm-cov nextest --locked --workspace "
+    '--no-report --tool-config-file "vergil:{configs}/rust/nextest.toml"; '
     "test_rc=$?; "
-    "cargo llvm-cov report --fail-under-lines 100 --show-missing-lines "
+    "cargo llvm-cov report --locked --workspace --fail-under-lines 100 --fail-under-regions 100 "
+    "--show-missing-lines "
     f"--cobertura --output-path {COVERAGE_REPORT}; "
     "cov_rc=$?; "
     f"if [ -f {_NEXTEST_JUNIT} ]; then cp {_NEXTEST_JUNIT} {JUNIT_REPORT} || exit 1; "
@@ -248,6 +362,25 @@ _RUST_TEST_SCRIPT = (
     '[ "$test_rc" -ne 0 ] && exit "$test_rc"; '
     'exit "$cov_rc"'
 )
+
+
+def rust_coverage_export_cmd(output_path: str) -> list[str]:
+    """The JSON export of the Rust TEST gate's coverage report, to *output_path*.
+
+    It reads the profiles the gate's nextest run left, with the gate's own
+    ``--locked --workspace``, so it covers the sources the gate judged.
+    """
+    return [
+        "cargo",
+        "llvm-cov",
+        "report",
+        "--locked",
+        "--workspace",
+        "--json",
+        "--output-path",
+        output_path,
+    ]
+
 
 # C++ license allowlist (epic vergil-project/.github#207 §4). C++/Conan has no
 # turnkey allowlist-enforcing gate the way pip-licenses / go-licenses do, so v1
@@ -293,6 +426,93 @@ _TYPESCRIPT_LICENSES_ALLOWLIST = ";".join(
         "Python-2.0",
         "Unlicense",
     ]
+)
+
+# The TypeScript LINT ESLint, TYPECHECK, TEST and AUDIT commands (epic
+# vergil-project/.github#1174, spec §6.6). Each runs its tool once, and that
+# one run both gates and writes the report, so the evidence is the gate's own
+# result. Each exits with the tool's status, so a failing gate still writes its
+# report, and each prints the tool's findings to the log. Plain POSIX ``sh``
+# (the image's ``sh`` is dash, with no ``pipefail``, so no ``tee``).
+#
+# ESLint takes one formatter per run, so ``--format json --output-file`` writes
+# the report and prints nothing; once ESLint exits, ``jq`` prints each message
+# from the report as ``path:line:column: severity message [rule]``, the path
+# relative to the repo root. A stale report is removed first. An ESLint run that
+# fails before linting (a broken config) writes no report and has printed its
+# own error, so the gate exits with ESLint's status; one that passes with no
+# report fails the gate. ``jq`` failing fails the gate; jq is in every
+# vergil-containers image (its ``base`` layer).
+_ESLINT_RENDER_FILTER = (
+    ".[] | (.filePath | ltrimstr($root)) as $f | .messages[] "
+    '| "\\($f):\\(.line // 0):\\(.column // 0): '
+    '\\(if .severity == 2 then "error" else "warning" end) '
+    '\\(.message) [\\(.ruleId // "fatal")]"'
+)
+_TYPESCRIPT_ESLINT_SCRIPT = (
+    f"rm -f {ESLINT_REPORT}; "
+    f"node_modules/.bin/eslint . --format json --output-file {ESLINT_REPORT}; "
+    "rc=$?; "
+    f"if [ -f {ESLINT_REPORT} ]; then "
+    f"jq -r --arg root \"$PWD/\" '{_ESLINT_RENDER_FILTER}' {ESLINT_REPORT} || exit 1; "
+    'elif [ "$rc" -eq 0 ]; then '
+    f'echo "error: ESLint wrote no report at {ESLINT_REPORT}" >&2; exit 1; '
+    "fi; "
+    'exit "$rc"'
+)
+
+# ``tsc`` writes its diagnostics to stdout, one per line with
+# ``--pretty false`` (``file(line,col): error TSnnnn: message``), so the shell
+# writes stdout to the report and prints the report back for the log.
+# ``--diagnostics`` adds the compiler's closing statistics (files and lines
+# checked, timings) after the diagnostics, so a clean typecheck still writes a
+# report with real data, as cargo-deny's ``--show-stats`` does for rust AUDIT.
+# Neither flag changes what is checked. ``cat`` failing fails the gate.
+_TYPESCRIPT_TSC_SCRIPT = (
+    f"node_modules/.bin/tsc --noEmit --pretty false --diagnostics >{TSC_REPORT}; "
+    "rc=$?; "
+    f"cat {TSC_REPORT} || exit 1; "
+    'exit "$rc"'
+)
+
+# Vitest writes ``junit.xml`` through its JUnit reporter, beside the default
+# console reporter, and the Cobertura coverage report beside the ``text``
+# table. Istanbul's Cobertura reporter names its file
+# ``cobertura-coverage.xml`` under the reports directory, which the command
+# fixes as ``coverage/`` (Vitest empties the reports directory before each
+# run, so it must never be the repo root), then copies it to ``coverage.xml``.
+# Vitest writes no coverage when a test fails unless
+# ``--coverage.reportOnFailure`` is set. The two root
+# reports and the Cobertura file are removed first, so a stale one is never
+# staged; a run that passes but leaves either report missing fails the gate.
+_VITEST_COBERTURA = "coverage/cobertura-coverage.xml"
+_TYPESCRIPT_TEST_SCRIPT = (
+    f"rm -f {COVERAGE_REPORT} {JUNIT_REPORT} {_VITEST_COBERTURA}; "
+    "node_modules/.bin/vitest run --coverage --coverage.provider=v8 "
+    "--coverage.thresholds.lines=100 --coverage.reportOnFailure "
+    "--coverage.reportsDirectory=coverage "
+    "--coverage.reporter=text --coverage.reporter=cobertura "
+    f"--reporter=default --reporter=junit --outputFile.junit={JUNIT_REPORT}; "
+    "rc=$?; "
+    f"if [ -f {_VITEST_COBERTURA} ]; then cp {_VITEST_COBERTURA} {COVERAGE_REPORT} || exit 1; "
+    'elif [ "$rc" -eq 0 ]; then '
+    f'echo "error: Vitest wrote no Cobertura report at {_VITEST_COBERTURA}" >&2; exit 1; '
+    "fi; "
+    f'if [ "$rc" -eq 0 ] && [ ! -f {JUNIT_REPORT} ]; then '
+    f'echo "error: Vitest wrote no JUnit report at {JUNIT_REPORT}" >&2; exit 1; '
+    "fi; "
+    'exit "$rc"'
+)
+
+# ``npm audit --json`` writes the report to stdout and keeps the
+# ``--audit-level`` exit status, so the shell writes it to the report, prints
+# it back for the log, and exits with npm's status. ``cat`` failing fails the
+# gate.
+_TYPESCRIPT_AUDIT_SCRIPT = (
+    f"npm audit --audit-level=high --json >{NPM_AUDIT_REPORT}; "
+    "rc=$?; "
+    f"cat {NPM_AUDIT_REPORT} || exit 1; "
+    'exit "$rc"'
 )
 
 # -- C++ warning set (epic vergil-project/.github#207 §3.2, owned by T5) -------
@@ -520,33 +740,42 @@ _REGISTRY: dict[str, Language] = {
     ),
     "rust": Language(
         name="rust",
+        # ``--locked`` on every command that reads ``Cargo.lock``, so the
+        # committed lockfile is used as it is and a stale one fails rather
+        # than being re-resolved (epic vergil-project/.github#1165, spec §6.1).
+        # ``cargo fmt`` reads no lockfile and takes none. vrg-validate fails a
+        # missing ``Cargo.lock`` before the install stage runs. ``--workspace``
+        # on clippy, check, the coverage run, the doctests and the audit, so a
+        # workspace whose root is a package validates its member crates too,
+        # not only the root (spec §6.4). ``cargo fmt --all`` already formats
+        # every member, and ``cargo fetch`` resolves the whole lockfile.
         checks={
-            CheckKind.INSTALL: [["cargo", "fetch"]],
+            CheckKind.INSTALL: [["cargo", "fetch", "--locked"]],
             CheckKind.LINT: [
                 ["cargo", "fmt", "--all", "--", "--check"],
-                # ``--all-targets`` is ``--lib --bins --tests --benches
-                # --examples``; with no target flag clippy checks only the lib
-                # and bins, so ``tests/`` and ``#[cfg(test)]`` code went unlinted
-                # (vergil-project/vergil-tooling#4379).
-                ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
+                # clippy writes ``quality-clippy.json``; see
+                # ``_RUST_CLIPPY_SCRIPT``.
+                ["sh", "-c", _RUST_CLIPPY_SCRIPT],
             ],
-            CheckKind.TYPECHECK: [["cargo", "check"]],
+            # ``cargo check`` writes ``quality-cargo-check.json``; see
+            # ``_RUST_CHECK_SCRIPT``.
+            CheckKind.TYPECHECK: [["sh", "-c", _RUST_CHECK_SCRIPT]],
             # The coverage run is cargo-nextest under cargo-llvm-cov, gating
-            # on 100% lines and writing ``coverage.xml`` and ``junit.xml``
+            # on 100% lines and regions and writing ``coverage.xml`` and ``junit.xml``
             # (issues #4394, #4395); see ``_RUST_TEST_SCRIPT``. Nextest runs
             # no doctests (https://nexte.st/docs/running/), so ``cargo test
             # --doc`` runs them as a second command. ``cargo llvm-cov
             # --doctests`` is not used: it passes rustdoc ``-Z
             # unstable-options --persist-doctests``, which stable rustc
             # refuses, and the dev image ships stable only. Doctests
-            # therefore count toward no coverage; the 100% line gate is met
+            # therefore count toward no coverage; the 100% gate is met
             # by the unit and integration tests alone (issue #4378). ``cargo
             # test --doc`` refuses a crate with no library target, so
-            # vrg-validate drops it when no default-member package has one
+            # vrg-validate drops it when no workspace member has one
             # (``_skip_rust_doctests_without_lib``).
             CheckKind.TEST: [
                 ["sh", "-c", _RUST_TEST_SCRIPT],
-                ["cargo", "test", "--doc"],
+                list(RUST_DOCTEST_CMD),
             ],
             # The packaged fleet policy (epic vergil-project/.github#1091). An
             # explicit ``--config`` replaces cargo-deny's search for a repo's
@@ -556,9 +785,15 @@ _REGISTRY: dict[str, Language] = {
             CheckKind.AUDIT: [["sh", "-c", _RUST_AUDIT_SCRIPT]],
         },
         ecosystem=EcosystemInfo(
-            build_cmd=["cargo", "build", "--release"],
-            publish_cmd=["cargo", "publish"],
+            # The release build, run by the release job and, as the BUILD
+            # check, by vrg-validate, so the --release profile (its
+            # optimisation and its cfg(debug_assertions) code) is built
+            # before the release PR merges (spec §6.9). --workspace builds
+            # every member, as every other Rust gate does (spec §6.4).
+            build_cmd=["cargo", "build", "--release", "--locked", "--workspace"],
+            publish_cmd=["cargo", "publish", "--locked"],
             publish_env_var="CARGO_REGISTRY_TOKEN",
+            validate_build=True,
         ),
     ),
     # C++ (epic vergil-project/.github#207, T5). CMake + Conan 2; two co-equal
@@ -835,8 +1070,10 @@ _REGISTRY: dict[str, Language] = {
     # ``noImplicitReturns``, ``noFallthroughCasesInSwitch``,
     # ``noPropertyAccessFromIndexSignature``, ``noUnusedLocals``,
     # ``noUnusedParameters`` (spec §3.2) — is authored and tested in the
-    # packaged ``{configs}/typescript/tsconfig.base.json`` that consumers
-    # ``extends``. TYPECHECK is therefore a bare ``tsc --noEmit`` that reads the
+    # packaged ``{configs}/typescript/tsconfig.base.json``, which the fleet
+    # sync writes into each repo as the managed ``tsconfig.vergil.json`` that
+    # the repo's ``tsconfig.json`` extends (checked by the pre-gate stage).
+    # TYPECHECK is therefore a bare ``tsc --noEmit`` that reads the
     # consumer's own ``tsconfig.json`` (which extends the base); the strict set
     # is enforced through that inheritance, the direct analog of C++ threading
     # ``-Wall -Wextra -Werror -Wpedantic``-plus-extras onto every compile line.
@@ -844,58 +1081,45 @@ _REGISTRY: dict[str, Language] = {
     "typescript": Language(
         name="typescript",
         checks={
-            # Clean, lockfile-pinned install from ``package-lock.json``.
-            CheckKind.INSTALL: [["npm", "ci"]],
-            # LINT runs *once* (§3.6): Prettier for format, then ESLint's flat
-            # config with type-aware typescript-eslint rules. Both point at the
-            # packaged configs; the ESLint flat config carries
-            # ``@typescript-eslint/ban-ts-comment`` (the no-standing-suppression
-            # rule, §3.2). Prettier and ESLint ignore ``node_modules`` by
-            # default.
+            # Clean install from ``package-lock.json``. Install scripts never
+            # run (epic vergil-project/.github#1174, spec §6.3): a repo that
+            # needs one declares it as an exception.
             #
-            # **ESLint config staging (#2771).** The flat config is ESM, and
-            # Node resolves its bare imports (``@eslint/js``,
-            # ``typescript-eslint``) **relative to the config file's own
-            # directory**, not the repo cwd. The packaged config lives inside
-            # the vergil-tooling Python package, which has no adjacent
-            # ``node_modules`` — so, referenced by its packaged path, those
-            # imports fail with ``ERR_MODULE_NOT_FOUND`` for every consumer
-            # (and ``NODE_PATH`` does not help: ESM ignores it). Option 1 fix:
-            # stage the packaged config into the repo root at lint time so ESM
-            # resolution walks up to the consumer's repo-local ``node_modules``
-            # (populated by ``npm ci``), then remove it. The ``EXIT`` trap
-            # fires on success, failure, or signal and preserves eslint's exit
-            # code; the ``.mjs`` extension forces ESM loading regardless of the
-            # consumer's ``package.json`` ``"type"``; and the dot-prefixed name
-            # is matched by no config entry, so eslint never lints the staged
-            # file itself. This is the ``sh -c`` wrapper idiom already used by
-            # the C++ clang-format LINT command (commands exec directly, with
-            # no shell). Shipping the config's deps in the image globals
-            # (rejected here) would not work anyway given the ESM/``NODE_PATH``
-            # fact; a real ``@vergil/eslint-config`` npm package is the
-            # follow-on (deferred, vergil-project/.github#286).
+            # **The repo's own tools.** ESLint, ``tsc`` and Vitest are the
+            # repo's devDependencies, run by path from ``node_modules/.bin``,
+            # so a tool missing from the repo fails instead of falling back to
+            # a global binary (``npx`` falls back to the global ``bin`` even
+            # with ``--no-install``). ``vrg-validate``'s pre-gate stage checks
+            # them against the accepted majors in
+            # ``{configs}/typescript/dev-dependencies.json`` first. Prettier
+            # and license-checker stay image tools.
+            CheckKind.INSTALL: [["npm", "ci", "--ignore-scripts"]],
+            # LINT runs *once* (§3.6): Prettier for format, then ESLint's flat
+            # config with type-aware typescript-eslint rules. Both read the
+            # repo's own configs, with no staging (epic
+            # vergil-project/.github#1174, spec §6.4): Prettier the managed
+            # ``.prettierrc.json``, the one Prettier config an editor finds
+            # too, and ESLint the repo's ``eslint.config.mjs``, which builds
+            # on the managed ``eslint.vergil.config.mjs`` beside it. Its bare
+            # imports (``@eslint/js``, ``typescript-eslint``) resolve from
+            # the repo's ``node_modules``. The pre-gate stage has already
+            # checked that the entry points build on the managed configs and
+            # that Prettier has no second config source. Vergil's ESLint config
+            # carries ``@typescript-eslint/ban-ts-comment`` (the
+            # no-standing-suppression rule, §3.2). Prettier and ESLint ignore
+            # ``node_modules`` by default. The ESLint run writes
+            # ``quality-eslint.json``; see ``_TYPESCRIPT_ESLINT_SCRIPT``.
             CheckKind.LINT: [
-                [
-                    "prettier",
-                    "--check",
-                    ".",
-                    "--config",
-                    "{configs}/typescript/prettier.config.json",
-                ],
-                [
-                    "sh",
-                    "-c",
-                    "cfg=./.vergil-eslint.config.mjs; "
-                    "trap 'rm -f \"$cfg\"' EXIT; "
-                    'cp "{configs}/typescript/eslint.config.mjs" "$cfg"; '
-                    'eslint . --config "$cfg"',
-                ],
+                ["prettier", "--check", ".", "--config", ".prettierrc.json"],
+                ["sh", "-c", _TYPESCRIPT_ESLINT_SCRIPT],
             ],
             # TYPECHECK runs *once* (§3.6) — one canonical type engine. The
             # curated "warnings to 11" set lives in the packaged base tsconfig
             # the consumer extends (see the class comment above); this command
-            # reads the consumer's ``tsconfig.json`` and never emits output.
-            CheckKind.TYPECHECK: [["tsc", "--noEmit"]],
+            # reads the consumer's ``tsconfig.json`` and never emits JavaScript.
+            # Its diagnostics go to ``quality-tsc.txt``; see
+            # ``_TYPESCRIPT_TSC_SCRIPT``.
+            CheckKind.TYPECHECK: [["sh", "-c", _TYPESCRIPT_TSC_SCRIPT]],
             # TEST runs *per Node version* (§3.6) — the only fan-out stage,
             # because runtime behavior differs across Node majors. Vitest with
             # the V8 coverage provider, held to a **100% line** threshold so the
@@ -903,15 +1127,9 @@ _REGISTRY: dict[str, Language] = {
             # V8's byte-range→TS-source-map mapping proves imprecise at the 100%
             # bar, switch the provider to ``@vitest/coverage-istanbul`` (which
             # instruments source directly). Decided against the real gate in T10.
-            CheckKind.TEST: [
-                [
-                    "vitest",
-                    "run",
-                    "--coverage",
-                    "--coverage.provider=v8",
-                    "--coverage.thresholds.lines=100",
-                ],
-            ],
+            # The run writes ``junit.xml`` and ``coverage.xml``, even when a
+            # test fails; see ``_TYPESCRIPT_TEST_SCRIPT``.
+            CheckKind.TEST: [["sh", "-c", _TYPESCRIPT_TEST_SCRIPT]],
             # AUDIT runs *once* (§3.6). ``npm audit`` is the CVE scan over the
             # whole locked dependency set, devDependencies included — no
             # ``--omit=dev``, so a vulnerable docs or test tool fails the gate
@@ -924,18 +1142,27 @@ _REGISTRY: dict[str, Language] = {
             # checking stays best-effort surfacing in v1 (``license-checker
             # --summary``, non-gating — npm license metadata is inconsistent);
             # hardened gating against ``_TYPESCRIPT_LICENSES_ALLOWLIST`` is
-            # deferred (spec §9 ledger #7).
+            # deferred (spec §9 ledger #7). The ``npm audit`` run writes
+            # ``npm-audit.json``; see ``_TYPESCRIPT_AUDIT_SCRIPT``.
             CheckKind.AUDIT: [
-                ["npm", "audit", "--audit-level=high"],
+                ["sh", "-c", _TYPESCRIPT_AUDIT_SCRIPT],
                 ["license-checker", "--production", "--summary"],
             ],
         },
         ecosystem=EcosystemInfo(
-            # v1 mandates no bundler/emit step — ``tsc --noEmit`` covers
-            # compile-correctness — and no publish target (spec §8, ledger #6).
-            build_cmd=None,
+            # The release build, run by the release job and, as the BUILD
+            # check, by vrg-validate (epic vergil-project/.github#1174, spec
+            # §6.5). It installs from the lockfile first, since the release
+            # job's Build step runs on a fresh checkout with no node_modules,
+            # and, as every npm ci Vergil runs, with no install script. In
+            # vrg-validate this reinstalls what INSTALL already installed: the
+            # cost is accepted so validate and release run one command. The
+            # repo's ``build`` script is required by the typescript-tools
+            # pre-gate stage. No npm publishing: publish_cmd stays None.
+            build_cmd=["sh", "-c", "npm ci --ignore-scripts && npm run build"],
             publish_cmd=None,
             publish_env_var=None,
+            validate_build=True,
         ),
         # TYPECHECK/LINT/AUDIT are runtime-agnostic → one gate each (§3.6). Only
         # TEST is per Node version, which is the PER_VERSION default, so it is
@@ -975,6 +1202,10 @@ def language_commands(
 
     Returns an empty list if the language is not in the registry or
     has no entry for the given check kind.
+
+    ``BUILD`` is not looked up in the language's checks: it is the ecosystem's
+    ``build_cmd``, the command the release job runs, and only when the
+    ecosystem sets ``validate_build``; otherwise it is empty.
 
     Placeholder expansion applied to every argument:
 
@@ -1018,7 +1249,12 @@ def language_commands(
             arg = arg.replace(token, value)
         return arg
 
-    return [[_expand(arg) for arg in cmd] for cmd in entry.checks.get(kind, [])]
+    if kind is CheckKind.BUILD:
+        build_cmd = entry.ecosystem.build_cmd
+        cmds = [build_cmd] if entry.ecosystem.validate_build and build_cmd else []
+    else:
+        cmds = entry.checks.get(kind, [])
+    return [[_expand(arg) for arg in cmd] for cmd in cmds]
 
 
 def language_lock_command(language: str | None) -> list[str] | None:
@@ -1048,7 +1284,12 @@ def check_cardinality(language: str | None, kind: CheckKind) -> Cardinality:
     Defaults to :attr:`Cardinality.PER_VERSION` when the language is unknown,
     ``None``, or declares no explicit cardinality for the kind — preserving the
     historical one-gate-per-version behavior for every existing language.
+
+    ``BUILD`` is :attr:`Cardinality.ONCE` for every language: the release build
+    runs once, on the primary version, as the release job does.
     """
+    if kind is CheckKind.BUILD:
+        return Cardinality.ONCE
     if language is None:
         return Cardinality.PER_VERSION
     entry = _REGISTRY.get(language)

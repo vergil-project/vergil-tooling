@@ -7,11 +7,13 @@ gcc 14, ...), set through ``VRG_VERSION_WINDOW``.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
 
 from vergil_tooling.bin.vrg_ci_resolve import main
+from vergil_tooling.lib import languages
 from vergil_tooling.lib.versions.window import WINDOW_ENV
 
 if TYPE_CHECKING:
@@ -47,14 +49,16 @@ def test_cli_json_is_the_default(tmp_path: Path, capsys: pytest.CaptureFixture[s
         "primary-container-tag": "3.14",
         "container-tags": {"3.14": "3.14", "3.13": "3.13", "3.12": "3.12"},
         "container-suffixes": {"3.14": "python", "3.13": "python", "3.12": "python"},
+        "build-enabled": "false",
     }
 
 
 def test_cli_github_output_matches_derive_contract(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Exactly the three keys derive.sh writes to $GITHUB_OUTPUT, with the same
-    # meanings: a compact JSON array, the primary, and its family-free tag.
+    # Exactly the keys derive.sh writes to $GITHUB_OUTPUT, with the same
+    # meanings: a compact JSON array, the primary, its family-free tag, and
+    # whether the BUILD check runs.
     _write_config(tmp_path, language="cpp", ci='versions = ["gcc-14", "clang-20"]\n')
     assert main(["--format", "github-output", "--repo-root", str(tmp_path)]) == 0
     out = capsys.readouterr().out
@@ -62,6 +66,7 @@ def test_cli_github_output_matches_derive_contract(
         "versions": '["clang-20","gcc-14"]',
         "primary-version": "clang-20",
         "primary-container-tag": "20",
+        "build-enabled": "false",
     }
 
 
@@ -85,7 +90,42 @@ def test_cli_no_language_emits_latest(
         "versions": '["latest"]',
         "primary-version": "latest",
         "primary-container-tag": "latest",
+        "build-enabled": "false",
     }
+
+
+def _python_with_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    entry = languages._REGISTRY["python"]
+    ecosystem = replace(entry.ecosystem, validate_build=True)
+    monkeypatch.setitem(languages._REGISTRY, "python", replace(entry, ecosystem=ecosystem))
+
+
+@pytest.mark.parametrize("fmt", ["json", "github-output"])
+def test_ci_resolve_build_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], fmt: str
+) -> None:
+    # The field is read from the registry, the one source CI's build job uses:
+    # "false" while Python's BUILD is off, "true" once a spec turns it on.
+    _write_config(tmp_path, language="python")
+
+    def build_enabled() -> str:
+        assert main(["--format", fmt, "--repo-root", str(tmp_path)]) == 0
+        out = capsys.readouterr().out
+        parsed = json.loads(out) if fmt == "json" else _lines(out)
+        return str(parsed["build-enabled"])
+
+    assert build_enabled() == "false"
+    _python_with_build(monkeypatch)
+    assert build_enabled() == "true"
+
+
+def test_ci_resolve_build_enabled_for_typescript(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # TypeScript turns BUILD on, so CI's build job runs for it (spec §6.5).
+    _write_config(tmp_path, language="typescript")
+    assert main(["--format", "github-output", "--repo-root", str(tmp_path)]) == 0
+    assert _lines(capsys.readouterr().out)["build-enabled"] == "true"
 
 
 def test_cli_error_exits_1_with_message(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

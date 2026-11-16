@@ -87,13 +87,16 @@ one of the two fails the build. The build log names the path it took.
 [repo-profile](../reference/lint/repo-profile.md) check, markdownlint,
 shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the
 repository has Ansible content. It then runs the language's lint,
-typecheck, test and audit commands, the semgrep scan of the
+typecheck, build, test and audit commands, the semgrep scan of the
 `security / semgrep` gate, the Trivy vulnerability scan of the
 `security / trivy` gate, the strict mkdocs build of the
 `docs / docs` gate when the repository has `docs/site/mkdocs.yml`,
-and last the repository's custom validator when it has one. To run
-one stage, pass `--check common`, `lint`, `typecheck`, `test`,
-`audit`, `semgrep`, `trivy`, `docs` or `custom`. The
+and last the repository's custom validator when it has one. The build
+stage runs the language's release build command, for a language that
+turns it on (Rust and TypeScript); `vrg-ci-resolve`'s `build-enabled` field says
+whether it does. To run one stage, pass `--check common`, `lint`,
+`typecheck`, `build`, `test`, `audit`, `semgrep`, `trivy`, `docs` or
+`custom`. The
 [Validation Matrix](validation-matrix.md) lists every check and where
 it runs.
 
@@ -407,8 +410,11 @@ the required-check computation and the CI setup step (through
   version, the newest in the window.
 - `[ci].versions` is an optional pin. Every pinned version must be in the
   window, and an app pin must name exactly one version; either violation is an
-  error. C++ and TypeScript versions carry a family (`clang-20`, `node-24`), so
-  those repos must pin.
+  error. A pin is an exception: only a language whose window has more than one
+  family must pin, since there is no single default. Today that is C++, whose
+  versions carry a compiler family (`clang-20`, `gcc-14`). A family prefix alone
+  does not need a pin, so an unpinned TypeScript repo follows the window
+  (`node-24`, `node-22`) as Python and Rust do.
 - The **primary version** is `[ci].primary-version` when it is set (it must name
   a resolved version), otherwise the newest resolved version.
 
@@ -576,8 +582,9 @@ chosen, and why.
 C++ is the one language with a compiler-family axis: it ships **two**
 image families (`dev-cpp-clang` / `dev-cpp-gcc`, and matching `prod-`
 images) so TYPECHECK and TEST run per compiler and per version. The
-family rides the `[ci].versions` tag prefix (`clang-20`, `gcc-14`), so a
-C++ repo must pin `[ci].versions`. Only a `library` can pin more than one
+family rides the `[ci].versions` tag prefix (`clang-20`, `gcc-14`), and
+with two families there is no single default, so a C++ repo must pin
+`[ci].versions`. Only a `library` can pin more than one
 entry; an app builds exactly one.
 
 ### Building locally

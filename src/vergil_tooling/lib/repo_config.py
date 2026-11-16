@@ -1,8 +1,8 @@
 """Local repository configuration audit checks.
 
 Checks files on disk — vergil.toml, CLAUDE.md, .claude/settings.json,
-.claude/hooks/guard.sh, .gitignore, .github/dependabot.yml and
-.github/workflows/ops.yml — without making any API calls.
+.claude/hooks/guard.sh, .gitignore, .github/dependabot.yml, the
+per-language managed files and .github/workflows/ops.yml — without making any API calls.
 
 A managed file that ``vrg-github-repo-config update`` can fix has one
 ``<name>_drift`` function here, which both its ``_check_*`` and its fixer in
@@ -280,6 +280,91 @@ def dependabot_yml_drift(repo_root: Path) -> ManagedFileDrift | None:
     return ManagedFileDrift(items=items, fixes=(fix,))
 
 
+@dataclass(frozen=True)
+class LanguageManagedFile:
+    """A whole file managed for repos of one primary language.
+
+    ``repo_path`` is where the file lives in a repo, relative to its root.
+    ``master`` is its master copy, relative to the packaged
+    ``vergil_tooling.configs`` directory, where the gates already read it,
+    so there is one copy of each.
+    """
+
+    repo_path: str
+    master: str
+
+
+#: The whole files managed per ``[project].primary-language``, each a
+#: byte-for-byte copy of its master (epic vergil-project/.github#1174, spec
+#: §6.4). Another language adds managed files with an entry here.
+LANGUAGE_MANAGED_FILES: dict[str, tuple[LanguageManagedFile, ...]] = {
+    "typescript": (
+        LanguageManagedFile("tsconfig.vergil.json", "typescript/tsconfig.base.json"),
+        LanguageManagedFile("eslint.vergil.config.mjs", "typescript/eslint.config.mjs"),
+        LanguageManagedFile(".prettierrc.json", "typescript/prettier.config.json"),
+    ),
+}
+
+
+def read_language_master(entry: LanguageManagedFile) -> bytes:
+    """Return the bytes of ``entry``'s packaged master copy.
+
+    A missing master raises; it is never treated as an empty file.
+    """
+    return importlib.resources.files("vergil_tooling.configs").joinpath(entry.master).read_bytes()
+
+
+def language_managed_files(language: str | None) -> tuple[LanguageManagedFile, ...]:
+    """Return the managed files for ``language``; none for an unmanaged or absent one."""
+    if language is None:
+        return ()
+    return LANGUAGE_MANAGED_FILES.get(language, ())
+
+
+def _check_language_files(repo_root: Path, items: list[DiffItem]) -> None:
+    """Assert the per-language managed files match their masters (.github#1174)."""
+    _report(language_files_drift(repo_root), items)
+
+
+def language_files_drift(repo_root: Path) -> ManagedFileDrift | None:
+    """Return how the repo's per-language managed files drift, or ``None`` when they match.
+
+    The files are those :data:`LANGUAGE_MANAGED_FILES` lists for the repo's
+    ``[project].primary-language``; a repo of any other language, or with no
+    ``vergil.toml``, has none, so a file of the same name there is left
+    alone. Each file is fully managed: a missing file, or one whose bytes
+    differ from its master, is one audit item, and its fix writes the master
+    whole, keeping the file's mode, or 0644 for a new file. A ``vergil.toml``
+    that fails to load is drift with no fix: the language is unknown (#3451).
+    """
+    try:
+        lang = declared_primary_language(repo_root)
+    except ConfigError as exc:
+        item = DiffItem(
+            field="local.language_files",
+            expected="resolvable [project].primary-language",
+            actual=f"cannot resolve the managed-file language: {exc}",
+        )
+        return ManagedFileDrift.single(item, None)
+    items: list[DiffItem] = []
+    fixes: list[FileFix] = []
+    for entry in language_managed_files(lang):
+        path = repo_root / entry.repo_path
+        master = read_language_master(entry)
+        expected = f"{entry.repo_path}: matches the master (configs/{entry.master})"
+        if not path.is_file():
+            actual = f"{entry.repo_path}: missing"
+        elif path.read_bytes() != master:
+            actual = f"{entry.repo_path}: differs from the master (stale or locally edited)"
+        else:
+            continue
+        items.append(DiffItem(field="local.language_files", expected=expected, actual=actual))
+        fixes.append(FileFix(path=entry.repo_path, data=master, mode=_file_mode(path)))
+    if not items:
+        return None
+    return ManagedFileDrift(items=tuple(items), fixes=tuple(fixes))
+
+
 def _check_required_workflows(repo_root: Path, items: list[DiffItem]) -> None:
     """Assert .github/workflows/ops.yml exists, wires the audit, and is scheduled.
 
@@ -335,6 +420,7 @@ def audit_local_config(repo_root: Path) -> ConfigDiff:
     _check_workflow_refs(repo_root, items)
     _check_gitignore(repo_root, items)
     _check_dependabot_yml(repo_root, items)
+    _check_language_files(repo_root, items)
     _check_required_workflows(repo_root, items)
     return ConfigDiff(items=items)
 
