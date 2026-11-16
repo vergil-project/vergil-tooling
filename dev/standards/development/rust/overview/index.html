@@ -17849,10 +17849,24 @@ maintainability, and long-term survivability across repositories.</p>
 </ul>
 <h2 id="tooling-expectations">Tooling Expectations<a class="headerlink" href="#tooling-expectations" title="Permanent link">&para;</a></h2>
 <ul>
+<li>Lockfile: <code>Cargo.lock</code> is committed and enforced, for libraries as well as
+  applications, following Cargo's guidance since 2023. Every gate command that
+  reads it (fetch, clippy, check, the coverage run, the doctests and the audit,
+  and the release build and publish) runs with <code>--locked</code>, so it is used as it
+  is and never re-resolved. <code>vrg-validate</code> fails a repository with no
+  <code>Cargo.lock</code> at install, naming the file and how to create it
+  (<code>cargo generate-lockfile</code> in the container, then commit it). A
+  <code>Cargo.lock</code> that no longer matches <code>Cargo.toml</code> fails the install with
+  cargo's own <code>--locked</code> error. The dev image's dependency warmup also runs
+  with <code>--locked</code> and never writes <code>Cargo.lock</code>: with no lockfile it is
+  skipped, and with a stale one it prints
+  <code>warmup skipped: Cargo.lock does not match Cargo.toml</code> and the image builds
+  unwarmed, so the lockfile can still be created or refreshed in the
+  container.</li>
 <li>Formatting: rustfmt (canonical; any formatting configuration goes in
   <code>rustfmt.toml</code>).</li>
 <li>Linting: clippy (official Rust linter, 800+ lint rules), run on all targets
-  (<code>cargo clippy --all-targets -- -D warnings</code>), so the library, binaries,
+  (<code>cargo clippy --all-targets --locked -- -D warnings</code>), so the library, binaries,
   tests, examples and benches are linted and any warning fails the gate.</li>
 <li>Type checking: <code>cargo check</code> (inherent in the Rust compiler).</li>
 <li>Dependency audit and license compliance: cargo-deny (advisories, licenses,

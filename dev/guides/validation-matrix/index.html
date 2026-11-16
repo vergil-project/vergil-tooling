@@ -18428,7 +18428,7 @@ no <code>Cargo.toml</code>. The manifests are the ones the dev image's warmup ne
 </tr>
 <tr>
 <td>Rust</td>
-<td><code>Cargo.toml</code></td>
+<td><code>Cargo.toml</code>, <code>Cargo.lock</code></td>
 </tr>
 <tr>
 <td>Go</td>
@@ -18446,13 +18446,14 @@ no <code>Cargo.toml</code>. The manifests are the ones the dev image's warmup ne
 </table>
 <p>For such a repository the install, lint, typecheck, test and audit
 stages do not run. Each is recorded as a warning (⚠) whose reason names
-the missing manifests, for example <code>skipped: no Cargo.toml (rust repo
+the missing manifests, for example <code>skipped: no Cargo.toml, Cargo.lock (rust repo
 not bootstrapped yet)</code>, on its row and in the run summary. The common
 checks and the custom validator still run. A warning counts as passed,
 so the run can reach merge review. The skip applies only when every
 manifest is missing: a repository with some of them, such as a
 <code>pyproject.toml</code> with no <code>uv.lock</code>, runs the stages and fails on the
-gap, as does a <code>Cargo.toml</code> that <code>cargo fetch</code> cannot resolve.</p>
+gap, as does a <code>Cargo.toml</code> with no <code>Cargo.lock</code>, or one that
+<code>cargo fetch --locked</code> cannot resolve.</p>
 <p>The skip also needs the repository to hold no source files of its
 language (<code>.rs</code> for Rust, <code>.py</code> for Python, and so on), tracked or
 untracked, ignored files left out. A repository with sources but none of
