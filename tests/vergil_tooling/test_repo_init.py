@@ -1876,9 +1876,7 @@ class TestStepGenerateConfig:
             "ERROR: Refusing to adopt vergil-project/dormant: "
             "the adopted vergil.toml sets integration tests on."
         )
-        assert err.rstrip().endswith(
-            "Nothing has been pushed and no GitHub settings were applied."
-        )
+        assert err.rstrip().endswith("Nothing has been pushed and no GitHub settings were applied.")
         assert "test / integration / <version>" in err
         # The adopted file is left as it was.
         assert (tmp_path / "vergil.toml").read_text() == existing
