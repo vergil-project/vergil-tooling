@@ -17863,11 +17863,18 @@ maintainability, and long-term survivability across repositories.</p>
   <code>warmup skipped: Cargo.lock does not match Cargo.toml</code> and the image builds
   unwarmed, so the lockfile can still be created or refreshed in the
   container.</li>
+<li>Workspaces: every workspace member is validated, not only the root
+  package. Clippy, check, the coverage run (the tests and the coverage
+  report), the doctests and the audit all run with <code>--workspace</code>, and
+  <code>cargo fmt --all</code> formats every member. The doctests are skipped, with a
+  notice, only when no workspace member has a library target. A
+  single-crate repository is validated exactly as before.</li>
 <li>Formatting: rustfmt (canonical; any formatting configuration goes in
   <code>rustfmt.toml</code>).</li>
 <li>Linting: clippy (official Rust linter, 800+ lint rules), run on all targets
-  (<code>cargo clippy --all-targets --locked -- -D warnings</code>), so the library, binaries,
-  tests, examples and benches are linted and any warning fails the gate.</li>
+  (<code>cargo clippy --all-targets --locked --workspace -- -D warnings</code>), so the
+  library, binaries, tests, examples and benches are linted and any warning
+  fails the gate.</li>
 <li>Type checking: <code>cargo check</code> (inherent in the Rust compiler).</li>
 <li>Dependency audit and license compliance: cargo-deny (advisories, licenses,
   bans, and sources in a single tool), run against the fleet policy that
