@@ -87,13 +87,19 @@ def read_toml(path: Path) -> dict[str, Any]:
 def _lock_packages(lock: dict[str, Any], *, where: str) -> list[dict[str, Any]]:
     packages = lock.get("package", [])
     if not isinstance(packages, list) or not all(
-        isinstance(p, dict) and isinstance(p.get("name"), str) and isinstance(p.get("version"), str)
+        isinstance(p, dict)
+        and isinstance(p.get("name"), str)
+        and isinstance(p.get("version"), str)
+        and isinstance(p.get("source", ""), str)
         for p in packages
     ):
         raise UpdateDepsError(
             phase="update",
             command=where,
-            message=f"{where}: every [[package]] entry needs a string name and version.",
+            message=(
+                f"{where}: every [[package]] entry needs a string name and version, "
+                "and a source, when it has one, must be a string."
+            ),
         )
     return packages
 
@@ -112,11 +118,13 @@ def _locked_with_sources(lock: dict[str, Any]) -> dict[str, list[tuple[str, str 
     """Crate name to every ``(version, source)`` locked for it; a path crate has no source."""
     found: dict[str, list[tuple[str, str | None]]] = {}
     for p in _lock_packages(lock, where="Cargo.lock"):
-        source = p.get("source")
-        found.setdefault(p["name"], []).append(
-            (p["version"], source if isinstance(source, str) else None)
-        )
+        found.setdefault(p["name"], []).append((p["version"], p.get("source")))
     return found
+
+
+def _path_or_git(source: str | None) -> bool:
+    """Whether *source* names a path crate (no source) or a git crate."""
+    return source is None or source.startswith("git+")
 
 
 def _move(change: PackageChange) -> str:
@@ -201,13 +209,25 @@ def _locked_version(
     ``None`` when the dependency is declared from crates.io but locked only
     from a path or git crate, as a ``[patch.crates-io]`` or ``[replace]``
     override does: like a path or git dependency, the crate it resolves to has
-    no index entry to compare against, so it is skipped. A dependency with no
-    matching lock entry at all fails loud.
+    no index entry to compare against, so it is skipped. A dependency locked
+    only from another registry (patched to it) fails loud, as a dependency
+    declared from another registry does, and so does one with no matching
+    lock entry at all.
     """
     matching = [(v, s) for v, s in locked.get(name, []) if _matches(req, v, name=name)]
     candidates = [v for v, s in matching if s in CRATES_IO_SOURCES]
     if not candidates and matching:
-        return None
+        other = sorted({s for _, s in matching if not _path_or_git(s)}, key=str)
+        if not other:
+            return None
+        raise UpdateDepsError(
+            phase="update",
+            command="Cargo.lock",
+            message=(
+                f"{member}: dependency {name} {req!r} is locked from {other[0]!r}, not "
+                "crates.io; its held-back status cannot be checked."
+            ),
+        )
     if not candidates:
         raise UpdateDepsError(
             phase="update",
@@ -264,7 +284,7 @@ def _direct_dependencies(member: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(dep, dict) or not isinstance(dep.get("name"), str):
             raise _metadata_error(f"{member_name}: malformed dependency entry {dep!r}.")
         source = dep.get("source")
-        if source is None or (isinstance(source, str) and source.startswith("git+")):
+        if source is None or (isinstance(source, str) and _path_or_git(source)):
             continue
         if source not in CRATES_IO_SOURCES:
             raise _metadata_error(

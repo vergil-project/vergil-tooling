@@ -355,6 +355,17 @@ def test_patched_crates_io_dependency_skipped(
     assert fetched == ["https://index.crates.io/to/ki/tokio"]
 
 
+def test_crates_io_dependency_patched_to_other_registry_fails_loud(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A crates.io dependency locked only from another registry is never skipped silently."""
+    other = "sparse+https://registry.example.com/"
+    _project(tmp_path, _lock(("serde", "1.0.200", other)))
+    _install(monkeypatch, _Runner(_metadata(_member("app", [_dep("serde", "^1")]))))
+    with pytest.raises(UpdateDepsError, match=r"locked from .*registry\.example\.com.*not crates"):
+        cargo.held_back(_ctx(tmp_path), _index({}))
+
+
 def test_other_registry_dependency_fails_loud(tmp_path: Path, monkeypatch) -> None:
     _project(tmp_path, _lock())
     deps = [_dep("internal", "^1", source="sparse+https://registry.example.com/")]
@@ -601,7 +612,12 @@ def test_unreadable_lockfile_raises(tmp_path: Path, monkeypatch) -> None:
 
 @pytest.mark.parametrize(
     "lock",
-    ['package = "x"\n', '[[package]]\nname = "x"\n', '[[package]]\nname = 1\nversion = "1.0.0"\n'],
+    [
+        'package = "x"\n',
+        '[[package]]\nname = "x"\n',
+        '[[package]]\nname = 1\nversion = "1.0.0"\n',
+        '[[package]]\nname = "x"\nversion = "1.0.0"\nsource = 1\n',
+    ],
 )
 def test_malformed_lock_packages_raise(tmp_path: Path, lock: str) -> None:
     _project(tmp_path, lock)

@@ -97,7 +97,7 @@ neither applies, `held by the resolver: another requirement in the
 dependency graph`. A workspace-inherited dependency is checked against
 the workspace's requirement. Path and git dependencies, and crates.io
 dependencies patched to a path or git crate, are never reported; a
-dependency from another registry is an error. See
+dependency from another registry, or patched to one, is an error. See
 [the Cargo updater](dev/update-deps.md#the-cargo-updater).
 
 ### `vergil`
