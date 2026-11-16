@@ -6,12 +6,13 @@ import json
 import os
 import subprocess
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, mock_open, patch
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Callable, Generator, Iterator, Sequence
 
 import pytest
 
@@ -49,6 +50,7 @@ from vergil_tooling.bin.vrg_validate import (
     check_rust_lockfile,
     main,
 )
+from vergil_tooling.lib import languages
 from vergil_tooling.lib.config import ConfigError, TestConfig
 from vergil_tooling.lib.container_cache import unbootstrapped_manifests
 from vergil_tooling.lib.languages import RUST_DOCTEST_CMD, CheckKind, language_commands
@@ -117,6 +119,7 @@ def test_build_stages_full_run_order() -> None:
         "install",
         "lint",
         "typecheck",
+        "build",
         "test",
         "audit",
         "semgrep",
@@ -324,7 +327,7 @@ def test_run_all_executes_stages_in_order(tmp_path: Path) -> None:
     ):
         result = main([])
     assert result == 0
-    assert order == ["common", "install", "lint", "typecheck", "test", "audit"]
+    assert order == ["common", "install", "lint", "typecheck", "build", "test", "audit"]
 
 
 def test_run_all_common_failure_reported(tmp_path: Path) -> None:
@@ -1508,6 +1511,7 @@ def test_build_stages_version_stages_follow_test_before_audit() -> None:
         "install",
         "lint",
         "typecheck",
+        "build",
         "test",
         "test (python 3.14)",
         "test (python 3.13)",
@@ -1676,6 +1680,70 @@ def test_default_test_version_without_pytest_is_loud() -> None:
         pytest.raises(ValidationError, match="cannot read the test interpreter version"),
     ):
         _default_test_version()
+
+
+# -- BUILD stage (epic vergil-project/.github#1174) ----------------------------
+
+
+def _python_with_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turn BUILD on for Python, which leaves it off, with ``uv build``."""
+    entry = languages._REGISTRY["python"]
+    ecosystem = replace(entry.ecosystem, build_cmd=["uv", "build"], validate_build=True)
+    monkeypatch.setitem(languages._REGISTRY, "python", replace(entry, ecosystem=ecosystem))
+
+
+def test_check_build_nothing_to_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _write_config(tmp_path, "python")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline") as m_pipeline,
+    ):
+        assert main(["--check", "build"]) == 0
+    m_pipeline.assert_not_called()
+    assert "build: no build check for python — nothing to run" in capsys.readouterr().out
+
+
+def test_full_validate_runs_build_after_typecheck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _python_with_build(monkeypatch)
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages(None, "python", tmp_path)
+    names = [s.name for s in stages]
+    assert names[names.index("typecheck") + 1] == "build"
+    assert names[names.index("build") + 1] == "test"
+    assert next(s for s in stages if s.name == "build").mode == "fail_defer"
+
+
+def test_check_build_runs_install_then_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _python_with_build(monkeypatch)
+    _write_config(tmp_path, "python")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main(["--check", "build"]) == 0
+    assert [s.name for s in m_pipeline.call_args.args[1]] == ["install", "build"]
+
+
+def test_build_stage_runs_the_build_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _python_with_build(monkeypatch)
+    ran: list[tuple[str, ...]] = []
+
+    def mock_run(cmd: Sequence[str], *, check: bool = True) -> int:
+        ran.append(tuple(cmd))
+        return 0
+
+    with patch(_MOD + "._find_custom_validator", return_value=None):
+        stages = _build_stages("build", "python", tmp_path)
+    build = next(s for s in stages if s.name == "build")
+    with patch(_MOD + ".progress.run", side_effect=mock_run):
+        build.fn(None)
+    assert ran == [("uv", "build")]
 
 
 # -- --check custom (issue #3650) ----------------------------------------------

@@ -1977,7 +1977,8 @@ markdownlint, yamllint) are available on PATH.
 
 The unified validation driver. It reads `[project].primary-language`
 from `vergil.toml` and runs the stages in order: common checks, the
-language's install, lint, typecheck, test and audit commands, the
+language's install, lint, typecheck, build, test and audit commands
+(build only for a language that turns it on, none yet), the
 semgrep scan of PR CI's `security / semgrep` gate, the Trivy
 vulnerability scan of its `security / trivy` gate, the strict mkdocs
 build of its `docs / docs` gate (a notice and a pass when there is no
@@ -1986,7 +1987,9 @@ build of its `docs / docs` gate (a notice and a pass when there is no
 stage. `--check custom` runs the install stage (when the language has
 one) and then the custom stage; with no custom validator it prints one
 "no custom validator" line and exits 0, and a validator that is present
-but not an executable regular file fails. PR CI runs each stage through
+but not an executable regular file fails. `--check build` for a
+language with no build check prints one "nothing to run" line and exits
+0. PR CI runs each stage through
 the `vergil-actions` reusable workflows, the custom stage as
 `quality / custom`. See the [Validation Matrix](../guides/validation-matrix.md)
 for every check and where it runs. Every pipeline run, pass or fail,
@@ -1997,7 +2000,7 @@ start, and each stage's status. `vrg-merge-review-request` reads it.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_validate` |
-| Args | `--check {common,lint,typecheck,test,audit,semgrep,trivy,docs,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
+| Args | `--check {common,lint,typecheck,build,test,audit,semgrep,trivy,docs,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
 | Preconditions | Inside a dev container (run it as `vrg-container-run -- vrg-validate`) |
 | Failure mode | Runs every stage after install and reports all failures in one run; install fails fast |
 | Exit codes | 0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example `--check custom --all-versions`) |
@@ -2044,10 +2047,14 @@ A repo with no language resolves to `latest`. See
 [Version resolution](../guides/ci-architecture.md#version-resolution).
 
 - `--format json` (default) — one JSON object with `versions`,
-  `primary-version`, `primary-container-tag`, `container-tags` and
-  `container-suffixes`.
-- `--format github-output` — `versions`, `primary-version` and
-  `primary-container-tag` as `key=value` lines for `$GITHUB_OUTPUT`.
+  `primary-version`, `primary-container-tag`, `container-tags`,
+  `container-suffixes` and `build-enabled`.
+- `--format github-output` — `versions`, `primary-version`,
+  `primary-container-tag` and `build-enabled` as `key=value` lines for
+  `$GITHUB_OUTPUT`.
+- `build-enabled` is `"true"` when the repo's language has a build
+  check (`vrg-validate --check build` has a command to run), else
+  `"false"`. CI reads it to decide whether to run its build job.
 - `--repo-root PATH` — the directory holding `vergil.toml` (default:
   the current directory).
 

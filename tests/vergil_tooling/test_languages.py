@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import tomllib
+from dataclasses import replace
 from importlib.resources import files
 from pathlib import Path
 
@@ -1158,10 +1159,13 @@ def test_single_image_languages_default_to_per_version_cardinality() -> None:
     This backward-compatibility guarantee is what keeps their generated CI
     gates byte-identical after the cardinality concept was introduced. C++ and
     TypeScript are the matrix languages that legitimately declare ONCE kinds, so
-    they are excluded here and covered by their own cardinality tests.
+    they are excluded here and covered by their own cardinality tests. BUILD,
+    the newer kind, runs once for every language (its own test below).
     """
     for lang in supported_languages() - {"cpp", "typescript"}:
         for kind in CheckKind:
+            if kind is CheckKind.BUILD:
+                continue
             assert check_cardinality(lang, kind) is Cardinality.PER_VERSION
 
 
@@ -1171,6 +1175,52 @@ def test_check_cardinality_unknown_language_defaults_per_version() -> None:
 
 def test_check_cardinality_none_language_defaults_per_version() -> None:
     assert check_cardinality(None, CheckKind.LINT) is Cardinality.PER_VERSION
+
+
+# -- BUILD check kind (epic vergil-project/.github#1174) ----------------------
+
+
+def test_build_kind_value() -> None:
+    assert CheckKind.BUILD.value == "build"
+
+
+def test_build_kind_off_for_every_language() -> None:
+    # On for no language yet: each turns it on in its own task, with a fixture run.
+    for lang in ("python", "go", "rust", "cpp", "typescript"):
+        assert ecosystem_metadata(lang).validate_build is False
+        assert language_commands(lang, CheckKind.BUILD) == []
+    assert language_commands(None, CheckKind.BUILD) == []
+    assert language_commands("unknown", CheckKind.BUILD) == []
+
+
+def _with_ecosystem(
+    monkeypatch: pytest.MonkeyPatch, lang: str, *, build_cmd: list[str] | None
+) -> None:
+    entry = languages._REGISTRY[lang]
+    ecosystem = replace(entry.ecosystem, build_cmd=build_cmd, validate_build=True)
+    monkeypatch.setitem(languages._REGISTRY, lang, replace(entry, ecosystem=ecosystem))
+
+
+def test_build_commands_come_from_build_cmd(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The BUILD command is the release job's build_cmd: one source for both.
+    _with_ecosystem(monkeypatch, "go", build_cmd=["go", "build", "./..."])
+    assert language_commands("go", CheckKind.BUILD) == [["go", "build", "./..."]]
+
+
+def test_build_commands_are_a_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    _with_ecosystem(monkeypatch, "go", build_cmd=["go", "build", "./..."])
+    language_commands("go", CheckKind.BUILD)[0].append("-x")
+    assert ecosystem_metadata("go").build_cmd == ["go", "build", "./..."]
+
+
+def test_build_on_with_no_build_cmd_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    _with_ecosystem(monkeypatch, "typescript", build_cmd=None)
+    assert language_commands("typescript", CheckKind.BUILD) == []
+
+
+def test_build_cardinality_is_once() -> None:
+    for lang in sorted(supported_languages()):
+        assert check_cardinality(lang, CheckKind.BUILD) is Cardinality.ONCE
 
 
 def test_language_cardinality_defaults_to_empty_mapping() -> None:

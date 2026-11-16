@@ -87,13 +87,16 @@ one of the two fails the build. The build log names the path it took.
 [repo-profile](../reference/lint/repo-profile.md) check, markdownlint,
 shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the
 repository has Ansible content. It then runs the language's lint,
-typecheck, test and audit commands, the semgrep scan of the
+typecheck, build, test and audit commands, the semgrep scan of the
 `security / semgrep` gate, the Trivy vulnerability scan of the
 `security / trivy` gate, the strict mkdocs build of the
 `docs / docs` gate when the repository has `docs/site/mkdocs.yml`,
-and last the repository's custom validator when it has one. To run
-one stage, pass `--check common`, `lint`, `typecheck`, `test`,
-`audit`, `semgrep`, `trivy`, `docs` or `custom`. The
+and last the repository's custom validator when it has one. The build
+stage runs the language's release build command, for a language that
+turns it on (none yet); `vrg-ci-resolve`'s `build-enabled` field says
+whether it does. To run one stage, pass `--check common`, `lint`,
+`typecheck`, `build`, `test`, `audit`, `semgrep`, `trivy`, `docs` or
+`custom`. The
 [Validation Matrix](validation-matrix.md) lists every check and where
 it runs.
 

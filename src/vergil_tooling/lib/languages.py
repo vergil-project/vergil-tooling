@@ -21,6 +21,11 @@ class CheckKind(Enum):
     TYPECHECK = "typecheck"
     TEST = "test"
     AUDIT = "audit"
+    # The language's release build, run before release (epic
+    # vergil-project/.github#1174). It has no entry in ``Language.checks``: its
+    # command is ``EcosystemInfo.build_cmd``, the one the release job runs, and
+    # it runs only for a language whose ``validate_build`` is set.
+    BUILD = "build"
 
 
 class Cardinality(Enum):
@@ -43,6 +48,10 @@ class EcosystemInfo:
     build_cmd: list[str] | None
     publish_cmd: list[str] | None
     publish_env_var: str | None
+    # Run ``build_cmd`` as the BUILD check in ``vrg-validate`` and in CI, so the
+    # release build is proven on the PR rather than first in the release job.
+    # Off by default: each language turns it on with a fixture run behind it.
+    validate_build: bool = False
 
 
 @dataclass(frozen=True)
@@ -1039,6 +1048,10 @@ def language_commands(
     Returns an empty list if the language is not in the registry or
     has no entry for the given check kind.
 
+    ``BUILD`` is not looked up in the language's checks: it is the ecosystem's
+    ``build_cmd``, the command the release job runs, and only when the
+    ecosystem sets ``validate_build``; otherwise it is empty.
+
     Placeholder expansion applied to every argument:
 
     - ``{configs}`` → the resolved ``vergil_tooling.configs`` package dir.
@@ -1081,7 +1094,12 @@ def language_commands(
             arg = arg.replace(token, value)
         return arg
 
-    return [[_expand(arg) for arg in cmd] for cmd in entry.checks.get(kind, [])]
+    if kind is CheckKind.BUILD:
+        build_cmd = entry.ecosystem.build_cmd
+        cmds = [build_cmd] if entry.ecosystem.validate_build and build_cmd else []
+    else:
+        cmds = entry.checks.get(kind, [])
+    return [[_expand(arg) for arg in cmd] for cmd in cmds]
 
 
 def language_lock_command(language: str | None) -> list[str] | None:
@@ -1111,7 +1129,12 @@ def check_cardinality(language: str | None, kind: CheckKind) -> Cardinality:
     Defaults to :attr:`Cardinality.PER_VERSION` when the language is unknown,
     ``None``, or declares no explicit cardinality for the kind — preserving the
     historical one-gate-per-version behavior for every existing language.
+
+    ``BUILD`` is :attr:`Cardinality.ONCE` for every language: the release build
+    runs once, on the primary version, as the release job does.
     """
+    if kind is CheckKind.BUILD:
+        return Cardinality.ONCE
     if language is None:
         return Cardinality.PER_VERSION
     entry = _REGISTRY.get(language)
