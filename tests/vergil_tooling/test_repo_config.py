@@ -954,7 +954,7 @@ class TestLanguageFiles:
         _write_ts_files(tmp_path)
         path = tmp_path / "tsconfig.vergil.json"
         path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
-        assert [i.actual.split(":")[0] for i in _language_items(tmp_path)] == [
+        assert [str(i.actual).split(":")[0] for i in _language_items(tmp_path)] == [
             "tsconfig.vergil.json"
         ]
 
@@ -980,11 +980,12 @@ class TestLanguageFiles:
         assert drift.fixes is None
         [item] = drift.items
         assert item.field == "local.language_files"
-        assert item.actual.startswith("cannot resolve the managed-file language: ")
+        assert str(item.actual).startswith("cannot resolve the managed-file language: ")
 
     def test_language_managed_files_lookup(self) -> None:
         assert repo_config.language_managed_files(None) == ()
         assert repo_config.language_managed_files("python") == ()
-        assert repo_config.language_managed_files("typescript") == (
-            repo_config.LANGUAGE_MANAGED_FILES["typescript"]
+        assert (
+            repo_config.language_managed_files("typescript")
+            == (repo_config.LANGUAGE_MANAGED_FILES["typescript"])
         )
