@@ -20,6 +20,18 @@ and long-term survivability across repositories.
 - Invoke Python as `python3` and use a project-specific environment for all
   Python commands. See `docs/development/environment-and-tooling.md`.
 
+## Tool Ownership
+
+Where each tool lives follows the
+[Tool Ownership Guideline](../tool-ownership.md). For Python:
+
+- The repository declares pytest, pytest-cov and any pytest plugins, because
+  its tests import them.
+- The image owns ruff, mypy, pip-audit and pip-licenses. This migration is
+  pending
+  ([vergil-project/.github#1210](https://github.com/vergil-project/.github/issues/1210)):
+  repositories still declare these tools until it lands.
+
 ## CI Gates
 
 See [Source Control Guidelines](../../source-control-guidelines.md#ci-gates)
