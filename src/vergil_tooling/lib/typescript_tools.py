@@ -19,6 +19,7 @@ import re
 from importlib.resources import files
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib import version
 from vergil_tooling.lib.container import PackageJsonError, read_package_json
 
 if TYPE_CHECKING:
@@ -115,7 +116,25 @@ def check_dev_dependencies(repo_root: Path) -> list[str]:
     return problems
 
 
-PRE_GATE_CHECKS: tuple[Callable[[Path], list[str]], ...] = (check_dev_dependencies,)
+def check_version_matches(repo_root: Path) -> list[str]:
+    """Return the problem with the repo's versions, empty when they agree.
+
+    The same cross-check ``vrg-version show`` makes, so a ``package.json``
+    version that is missing or differs from ``VERSION`` fails on the PR, not
+    first at ``vrg-release`` preflight (spec §6.5). A missing ``VERSION`` is
+    the problem too.
+    """
+    try:
+        version.show(repo_root)
+    except (version.VersionSyncError, FileNotFoundError) as exc:
+        return [str(exc)]
+    return []
+
+
+PRE_GATE_CHECKS: tuple[Callable[[Path], list[str]], ...] = (
+    check_dev_dependencies,
+    check_version_matches,
+)
 """The TypeScript pre-gate checks, run in order; every problem is reported."""
 
 
