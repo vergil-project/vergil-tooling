@@ -810,15 +810,6 @@ def _python_version_test_stage(
     return Stage(f"test (python {version})", fn, mode="fail_defer")
 
 
-# The rulesets ci-security.yml's semgrep job adds through ``extra-config`` for
-# the languages whose ruleset vrg-semgrep-scan does not resolve from the
-# language name alone (vergil-actions .github/workflows/ci-security.yml). Kept
-# in step with that job so the local scan runs the rules the gate runs.
-_SEMGREP_CI_EXTRA_CONFIG: dict[str, list[str]] = {
-    "cpp": ["p/c"],
-    "typescript": ["p/typescript"],
-}
-
 _DOCKERFILE_PREFIX = "Dockerfile"
 _WORKFLOWS_DIR = ".github/workflows/"
 
@@ -840,7 +831,6 @@ def _semgrep_rulesets(language: str | None, repo_root: Path) -> list[str]:
         language or "",
         has_dockerfiles=has_dockerfiles,
         has_workflows=has_workflows,
-        extra_config=_SEMGREP_CI_EXTRA_CONFIG.get(language or ""),
     )
 
 

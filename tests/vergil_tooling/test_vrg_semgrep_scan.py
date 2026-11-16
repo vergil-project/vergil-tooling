@@ -7,13 +7,13 @@ import os
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
+
 from vergil_tooling.bin.vrg_semgrep_scan import main
 from vergil_tooling.lib.semgrep import ScanResult
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 _MOD = "vergil_tooling.bin.vrg_semgrep_scan"
 
@@ -224,6 +224,36 @@ def test_extra_config(tmp_path: Path) -> None:
 
     rulesets = mock_scan.call_args[0][0]
     assert "p/custom" in rulesets
+
+
+@pytest.mark.parametrize(
+    ("language", "ruleset", "extra"),
+    [
+        ("cpp", "p/c", []),
+        ("cpp", "p/c", ["--extra-config", "p/c"]),
+        ("typescript", "p/typescript", []),
+        ("typescript", "p/typescript", ["--extra-config", "p/typescript"]),
+    ],
+)
+def test_language_ruleset_resolved_with_or_without_ci_extra_config(
+    tmp_path: Path, language: str, ruleset: str, extra: list[str]
+) -> None:
+    # Today's ci-security.yml passes the ruleset through --extra-config; a
+    # caller that drops it gets the same scan.
+    output = tmp_path / "results.sarif"
+
+    def _fake_scan(rulesets: list, target: object, out: object, **_kwargs: object) -> ScanResult:
+        output.write_text(json.dumps(_CLEAN_SARIF))
+        return ScanResult(returncode=0, sarif_produced=True)
+
+    with (
+        patch(f"{_MOD}.run_scan", side_effect=_fake_scan) as mock_scan,
+        patch(f"{_MOD}.write_output"),
+    ):
+        rc = main(["--language", language, "--output", str(output), *extra])
+
+    assert rc == 0
+    assert mock_scan.call_args[0][0] == [ruleset]
 
 
 def test_exclude_rule_threads_through(tmp_path: Path) -> None:

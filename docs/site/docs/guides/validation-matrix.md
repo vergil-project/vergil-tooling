@@ -81,9 +81,11 @@ shell suites (vergil-actions#1108).
 | Non-primary versions of lint, typecheck, tests and audit | CI-only | Locally only the primary version runs, plus every version's tests with `--all-versions` (Python only). Lint and typecheck rarely differ between versions. |
 
 Two follow-ups came out of the same review and change no gate's
-decision. The semgrep stage repeats the `p/c` and `p/typescript`
-rulesets that `ci-security.yml` adds; #4447 makes `vrg-semgrep-scan`
-the one source of that mapping. The CI gates require
+decision. The `p/c` and `p/typescript` rulesets were defined both in
+the semgrep stage and in `ci-security.yml`; since #4447
+`vrg-semgrep-scan` is the one source of that mapping, and
+`ci-security.yml`'s copy is redundant until vergil-actions drops it.
+The CI gates require
 `test / integration / <version>` when `[ci].integration-tests` is on,
 but no reusable workflow runs an integration job yet, so such a repo
 could not merge. The job stays deferred (#2721); since #4448
@@ -230,10 +232,8 @@ After the language checks, `vrg-validate` runs the scan of PR CI's
 is opened. `--check semgrep` runs only this stage. It resolves the
 rulesets the CI job does: the language's registry ruleset (see
 [Shared security workflow](ci-architecture.md#shared-security-workflow)), `p/dockerfile`
-when the repository has a `Dockerfile*` anywhere, `p/github-actions`
-when `.github/workflows/` holds a `*.yml` or `*.yaml`, and the
-`p/c` (C++) or `p/typescript` (TypeScript) ruleset that
-`ci-security.yml` adds. The files it looks at are the tracked and
+when the repository has a `Dockerfile*` anywhere, and `p/github-actions`
+when `.github/workflows/` holds a `*.yml` or `*.yaml`. The files it looks at are the tracked and
 untracked ones that `.gitignore` does not exclude. The
 fleet-excluded rules stay excluded, and a finding with an in-source
 `nosemgrep` suppression is listed but does not fail the stage, as in

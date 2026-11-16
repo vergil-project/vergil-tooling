@@ -10,10 +10,24 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
+# The registry ruleset each language scans with: the one source of this mapping
+# for CI's semgrep job and vrg-validate's semgrep stage (issue #4447).
+#
+# cpp: semgrep gives no C++ coverage here, and the community registry cannot
+# make it: `p/cpp` was never published and the registry's `cpp` namespace holds
+# no rules. `p/c` is real and correct, but it applies to `.c` files only. Do not
+# add `p/security-audit` or `p/default` hoping to cover C++: they reach `.cpp`
+# only through generic or regex rules, which is not C++ analysis. C++ static
+# analysis comes from the quality stage instead (clang-format, run-clang-tidy,
+# cppcheck and the -Werror typecheck build). See vergil-project/vergil-actions#853.
+#
+# typescript: `p/typescript` is the registry's JS/TS ruleset.
 _LANGUAGE_RULESETS: dict[str, str] = {
     "python": "p/python",
     "go": "p/golang",
     "rust": "p/rust",
+    "cpp": "p/c",
+    "typescript": "p/typescript",
 }
 
 # Rules excluded from every fleet scan, by full semgrep rule id.
@@ -43,7 +57,12 @@ def resolve_rulesets(
     has_workflows: bool = False,
     extra_config: list[str] | None = None,
 ) -> list[str]:
-    """Resolve semgrep rulesets for the given language and repo context."""
+    """Resolve semgrep rulesets for the given language and repo context.
+
+    Each ruleset appears once, in first-seen order: an *extra_config* entry
+    already resolved (a caller still passing a language's own ruleset
+    explicitly, say) is not repeated.
+    """
     rulesets: list[str] = []
 
     base = _LANGUAGE_RULESETS.get(language)
@@ -56,8 +75,9 @@ def resolve_rulesets(
     if has_workflows:
         rulesets.append("p/github-actions")
 
-    if extra_config:
-        rulesets.extend(extra_config)
+    for ruleset in extra_config or []:
+        if ruleset not in rulesets:
+            rulesets.append(ruleset)
 
     return rulesets
 
