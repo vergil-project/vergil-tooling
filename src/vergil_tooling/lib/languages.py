@@ -159,6 +159,9 @@ _PIP_LICENSES_ALLOWLIST = ";".join(
         "GPL-3.0-or-later",
         "ISC License (ISCL)",
         "MIT",
+        # MIT without its attribution clause, more permissive than MIT
+        # (cffi 2.x, which cryptography needs on Python 3.14+; #4494).
+        "MIT-0",
         "MIT License",
         "Mozilla Public License 2.0 (MPL 2.0)",
         "MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later",

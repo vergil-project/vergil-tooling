@@ -298,6 +298,15 @@ def test_python_audit_pip_licenses_allowlist_accepts_public_domain() -> None:
     assert "Public Domain" in allowed
 
 
+def test_python_audit_pip_licenses_allowlist_accepts_mit_0() -> None:
+    """MIT-0 is allowed fleet-wide (issue #4494; cffi 2.x, under cryptography)."""
+    cmds = language_commands("python", CheckKind.AUDIT)
+    pip_licenses_cmd = [c for c in cmds if c[0] == "pip-licenses"][0]
+    allow_only = next(a for a in pip_licenses_cmd if a.startswith("--allow-only="))
+    allowed = allow_only.removeprefix("--allow-only=").split(";")
+    assert "MIT-0" in allowed
+
+
 def test_python_audit_pip_licenses_emits_json_report() -> None:
     cmds = language_commands("python", CheckKind.AUDIT)
     pip_licenses_cmd = [c for c in cmds if c[0] == "pip-licenses"][0]
