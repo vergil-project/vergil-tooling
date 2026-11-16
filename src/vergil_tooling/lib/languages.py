@@ -226,14 +226,23 @@ _RUST_AUDIT_SCRIPT = (
 # spec §6.5). One cargo run both gates and writes the report:
 # ``--message-format=json`` sends cargo's JSON messages (one object per line) to
 # stdout, which the shell writes to the report. The compiler's diagnostics are
-# then only in that JSON, so ``jq`` prints each ``compiler-message``'s
-# ``message.rendered`` text, the diagnostic as cargo would have shown it, to
-# stderr for the log; cargo's own status lines stay on its stderr. The command
-# exits with cargo's status, so a failing lint or check still writes its
-# report. ``jq`` failing (missing, or the report unreadable) fails the gate; jq
-# is in every vergil-containers image (its ``base`` layer). The ``>`` redirect
-# replaces any stale report before cargo runs. Plain POSIX ``sh`` (dash).
-_CARGO_RENDER_FILTER = 'select(.reason == "compiler-message") | .message.rendered // empty'
+# then only in that JSON, so once cargo exits ``jq`` prints each
+# ``compiler-message``'s ``message.rendered`` text, the diagnostic as cargo
+# would have shown it, to stderr for the log; cargo's own status lines stay on
+# its stderr, so they come first. The JSON holds a diagnostic once per target
+# that hit it (``--all-targets`` builds the lib and the lib's tests from the
+# same source), where cargo's human output prints identical diagnostics once,
+# so the filter prints each distinct rendered text once, in first-seen order.
+# The command exits with cargo's status, so a failing lint or check still
+# writes its report. ``jq`` failing (missing, or the report unreadable) fails
+# the gate; jq is in every vergil-containers image (its ``base`` layer). The
+# ``>`` redirect replaces any stale report before cargo runs. Plain POSIX
+# ``sh`` (dash).
+_CARGO_RENDER_FILTER = (
+    '[inputs | select(.reason == "compiler-message") | .message.rendered // empty] '
+    "| reduce .[] as $r ([]; if any(.[]; . == $r) then . else . + [$r] end) "
+    "| .[]"
+)
 
 
 def _rust_json_report_script(cargo_args: str, report: str) -> str:
@@ -241,7 +250,7 @@ def _rust_json_report_script(cargo_args: str, report: str) -> str:
     return (
         f"{cargo_args} >{report}; "
         "rc=$?; "
-        f"jq -j '{_CARGO_RENDER_FILTER}' {report} >&2 || exit 1; "
+        f"jq -j -n '{_CARGO_RENDER_FILTER}' {report} >&2 || exit 1; "
         'exit "$rc"'
     )
 

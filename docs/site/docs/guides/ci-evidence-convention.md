@@ -247,9 +247,9 @@ Rustdoc examples run in a separate `cargo test --doc` step, which writes no
 report, because nextest does not run doctests.
 
 The lint and typecheck gates each run cargo once. Its JSON messages go to the
-report, and the readable diagnostics in them (each compiler message's
-`rendered` text) are printed to the gate's log, so the log reads as it did
-before. Both reports are written whether the gate passes or fails, and the
+report. When cargo exits, the readable diagnostics in them (each distinct
+compiler message's `rendered` text, once, as cargo's own output shows it) are
+printed to the gate's log, after cargo's status lines. Both reports are written whether the gate passes or fails, and the
 gate exits with cargo's status.
 
 `ci-quality.yml`, `ci-test.yml` and `ci-audit.yml` stage each leg's reports

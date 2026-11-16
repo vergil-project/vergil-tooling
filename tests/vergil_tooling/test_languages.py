@@ -374,7 +374,14 @@ def test_rust_install_commands() -> None:
     assert cmds == [["cargo", "fetch", "--locked"]]
 
 
-_RUST_RENDER = "jq -j 'select(.reason == \"compiler-message\") | .message.rendered // empty' "
+# Each distinct rendered diagnostic once, in first-seen order (cargo's human
+# output dedupes the copies ``--all-targets`` gives the lib and its tests).
+_RUST_RENDER = (
+    "jq -j -n "
+    "'[inputs | select(.reason == \"compiler-message\") | .message.rendered // empty] "
+    "| reduce .[] as $r ([]; if any(.[]; . == $r) then . else . + [$r] end) "
+    "| .[]' "
+)
 
 
 def test_rust_lint_commands() -> None:

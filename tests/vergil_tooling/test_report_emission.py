@@ -234,11 +234,16 @@ def test_rust_audit_fails_when_report_cannot_be_written(tmp_path: Path) -> None:
 # is proven by the live check against vergil-fixture-rust-lib.
 
 _RENDERED = "warning: unused variable: `x`\n --> src/lib.rs:2:9\n"
+_RENDERED_2 = "warning: missing documentation for a function\n --> src/lib.rs:1:1\n"
 
+# The lib and the lib's tests (``--all-targets``) each report the same
+# diagnostic; the log prints it once, as cargo's human output does.
 _CARGO_JSON_MESSAGES = [
     {"reason": "compiler-artifact", "target": {"name": "dep"}},
     {"reason": "compiler-message", "message": {"rendered": _RENDERED, "level": "warning"}},
+    {"reason": "compiler-message", "message": {"rendered": _RENDERED_2, "level": "warning"}},
     {"reason": "compiler-message", "message": {"rendered": None, "level": "note"}},
+    {"reason": "compiler-message", "message": {"rendered": _RENDERED, "level": "warning"}},
     {"reason": "build-finished", "success": False},
 ]
 
@@ -299,7 +304,7 @@ def test_failing_lint_still_writes_report(
     lines = (tmp_path / "work" / report).read_text().splitlines()
     assert [json.loads(line) for line in lines] == _CARGO_JSON_MESSAGES
     # The log shows the rendered diagnostic and cargo's own status line.
-    assert result.stderr == "    Finished dev profile\n" + _RENDERED
+    assert result.stderr == "    Finished dev profile\n" + _RENDERED + _RENDERED_2
     assert result.stdout == ""
     args = (tmp_path / "args.txt").read_text().splitlines()
     assert args[0] == subcommand
