@@ -20181,6 +20181,15 @@ For a Python or Rust repo, <code>bump</code> then refreshes the lockfile (<code>
 <code>cargo update --workspace</code>) in the dev container, through
 <code>vrg-container-run</code>, so no host toolchain is needed. Used by the CD
 workflows to read the release version.</p>
+<p>In a Rust repo the version is read from <code>[package].version</code> when it is a
+string, and from <code>[workspace.package].version</code> in a virtual workspace or
+when <code>[package]</code> inherits it (<code>version.workspace = true</code>). <code>bump</code> rewrites
+the key in that table only, never a <code>[workspace.dependencies]</code> entry, and
+members that inherit the version follow it. A <code>Cargo.toml</code> with neither
+version fails, naming both tables. Before writing any file, <code>bump</code> also
+fails, naming each entry, when the new version would not satisfy a
+versioned path dependency on a bumped workspace member (for example <code>0.1.3</code>
+to <code>0.2.0</code> under <code>^0.1.3</code>).</p>
 <table>
 <thead>
 <tr>
