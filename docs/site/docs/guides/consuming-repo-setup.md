@@ -281,8 +281,10 @@ Leave two keys out:
 
 The config audit checks only that `vergil.toml` loads; it does not
 rewrite the file. A profile repo whose `vergil.toml` has drifted from
-this shape is brought back by `vrg-github-repo-init --adopt` or by a
-change of its own.
+this shape is corrected by a change of its own. `vrg-github-repo-init
+--adopt` does not restore the shape by itself: it re-renders the file
+starting from its current values, so it keeps any drift whose answer
+is not overridden.
 
 `vrg-validate` validates `vergil.toml` (required keys and enum
 values) and the `README.md` structure with its repo-profile check,
