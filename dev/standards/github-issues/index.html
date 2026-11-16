@@ -15675,6 +15675,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Planning">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#epic-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic size
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -18499,6 +18516,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Planning">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#epic-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic size
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -19293,7 +19327,7 @@ path.</p>
 <p>It defaults to the current org's <code>.github</code> queues; <code>--repo &lt;owner&gt;/&lt;repo&gt;</code>
 selects that repo's queue home (a self-homed private repo's own queues), and
 <code>--json</code> emits machine-readable output. It is read-only.</p>
-<p>Planning and deferred items show their epic size (<code>M/14</code>, <code>?</code> unsized, <code>!</code> in
+<p>Planning and deferred items show their <a href="#epic-size">epic size</a> (<code>M/14</code>, <code>?</code> unsized, <code>!</code> in
 error). <code>vrg-queue planning --sort size</code> (or <code>tasks</code>) puts the small end of the
 planning queue first, and <code>--size S,unsized</code> filters it; an item in error is
 always listed. The run exits 2 when every queue was read but an item's sizing
@@ -19348,8 +19382,8 @@ planning and deferred reviews' decisions. From intake:</p>
 </tr>
 <tr>
 <td>To planning</td>
-<td><code>vrg-intake-route &lt;ref&gt; planning</code></td>
-<td>Reparent from the intake epic to the planning epic of the same queue home.</td>
+<td><code>vrg-intake-route &lt;ref&gt; planning [--tasks N [--confidence high\|med\|low] --reason TEXT]</code></td>
+<td>Reparent from the intake epic to the planning epic of the same queue home, and with <code>--tasks</code> and <code>--reason</code> record its <a href="#epic-size">epic size</a> in the same step.</td>
 </tr>
 </tbody>
 </table>
@@ -19432,7 +19466,7 @@ conditions against their real sources, and recommends one outcome:</p>
 </tr>
 <tr>
 <td>Revive to planning</td>
-<td><code>vrg-intake-route &lt;ref&gt; planning</code> (or <code>epic-create &lt;ref&gt;</code>, which does this first)</td>
+<td><code>vrg-intake-route &lt;ref&gt; planning [--tasks N [--confidence high\|med\|low] --reason TEXT]</code> (or <code>epic-create &lt;ref&gt;</code>, which does this first); a sized item keeps its <a href="#epic-size">epic size</a>, and <code>--tasks</code> re-sizes it</td>
 </tr>
 <tr>
 <td>Revive as a one-off</td>
@@ -19492,6 +19526,57 @@ it is small enough for a repo's ad-hoc epic. Items that <code>epic-create</code>
 expanding or has finished are only shown, never resumed. Which item to expand
 next is the human's choice, made by running <code>epic-create</code> on it; pick only what
 will be implemented soon, since a plan left sitting goes stale.</p>
+<h4 id="epic-size">Epic size<a class="headerlink" href="#epic-size" title="Permanent link">&para;</a></h4>
+<p>Every planning and deferred item can carry an <strong>estimated epic size</strong>: how big
+its epic would be once <code>epic-create</code> expands it, counted in tasks (bookends and
+operational tasks included). It is a reading aid for choosing what to plan
+next, so the small end of the queue can be found and planned in a sitting. The
+task count is the estimate, and the size is derived from it:</p>
+<table>
+<thead>
+<tr>
+<th>Label</th>
+<th>Estimated tasks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>epic-size:S</code></td>
+<td>1–9</td>
+</tr>
+<tr>
+<td><code>epic-size:M</code></td>
+<td>10–19</td>
+</tr>
+<tr>
+<td><code>epic-size:L</code></td>
+<td>20–39</td>
+</tr>
+<tr>
+<td><code>epic-size:XL</code></td>
+<td>40+</td>
+</tr>
+</tbody>
+</table>
+<p>The size is recorded twice, by one command: the <code>epic-size:&lt;X&gt;</code> label, which
+issue lists and filters read, and a dated sizing comment with the task count,
+a confidence and a one-line reason. The latest sizing comment is the current
+estimate and the earlier ones are its history.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vrg-intake-route<span class="w"> </span>&lt;ref&gt;<span class="w"> </span>size<span class="w"> </span>--tasks<span class="w"> </span>N<span class="w"> </span><span class="o">[</span>--confidence<span class="w"> </span>high<span class="p">|</span>med<span class="p">|</span>low<span class="o">]</span><span class="w"> </span>--reason<span class="w"> </span>TEXT
+</code></pre></div>
+<p><code>size</code> is allowed from planning and deferred only, and neither moves nor
+closes the item; the planning route takes the same options to size an item on
+its way in. Only sizing comments by
+<a href="../../guides/account-setup/#trusted-authors">trusted authors</a> count. When the
+label and the latest sizing comment disagree, one is missing, the item has
+several size labels, or the comment is malformed, the item's sizing is in
+error: <code>vrg-queue</code> shows it as <code>!</code> and names the problem, and re-running <code>size</code>
+with the right estimate repairs it. A one-off ends the estimate: the route
+removes the size labels and posts a <code>Size cleared &lt;YYYY-MM-DD&gt;: …</code> marker,
+after which earlier sizing comments no longer count. <code>epic-review</code> sizes the
+items it routes to planning and the unsized ones it reviews there; see
+<a href="../../reference/cli-tools-overview/#vrg-intake-route"><code>vrg-intake-route</code></a> for
+the comment format and the failure handling.</p>
 <h3 id="queue-items-are-not-buildable">Queue items are not buildable<a class="headerlink" href="#queue-items-are-not-buildable" title="Permanent link">&para;</a></h3>
 <p>An item parented under an intake, planning or deferred epic is not
 PR-workable: <code>vrg-pr-workflow report-ready</code> and <code>vrg-submit-pr</code> (and, upstream,
@@ -19596,6 +19681,10 @@ up to date (see
 <td>Planning item whose <code>epic-create</code> session is underway</td>
 </tr>
 <tr>
+<td><code>epic-size:S</code>, <code>epic-size:M</code>, <code>epic-size:L</code>, <code>epic-size:XL</code></td>
+<td>Planning or deferred item's estimated epic size: 1–9, 10–19, 20–39 or 40+ tasks (see <a href="#epic-size">Epic size</a>)</td>
+</tr>
+<tr>
 <td><code>archive</code></td>
 <td>Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred); historical record</td>
 </tr>
@@ -19628,8 +19717,9 @@ up to date (see
 <p>The parent epic carries an issue's state, so no label restates it. <code>intake</code>,
 <code>planning</code> and <code>deferred</code> label only the standing epics (and their archives),
 the way <code>ad-hoc</code>
-does, and <code>in-progress</code> is the single per-item label, used only on planning
-items. The former intake kind labels <code>triage</code>, <code>idea</code>, and <code>research</code> are
+does. The per-item queue labels are <code>in-progress</code>, used only on planning
+items, and the <code>epic-size:*</code> family, used only on planning and deferred items
+and written only through <code>vrg-intake-route</code>. The former intake kind labels <code>triage</code>, <code>idea</code>, and <code>research</code> are
 <strong>retired</strong>: no tool or skill applies them, and the daily orphan pass strips
 them from every open issue. They are no longer in the registry, and a label
 sync (<code>vrg-ensure-label --sync</code>) deletes them from any repo that still has
@@ -19701,8 +19791,8 @@ validate</strong>, each <code>Blocked-by</code> the last.</p>
   dependency closed) is machine-derivable, not inferred from plan prose.</li>
 </ul>
 <p>Create one with the sanctioned path — never hand-roll the body:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>--kind<span class="w"> </span><span class="o">{</span>validation<span class="p">|</span>deployment<span class="o">}</span><span class="w"> </span>--title<span class="w"> </span><span class="s2">"&lt;what&gt;"</span><span class="w"> </span>--blocked-by<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span>--kind<span class="w"> </span><span class="o">{</span>validation<span class="p">|</span>deployment<span class="o">}</span><span class="w"> </span>--title<span class="w"> </span><span class="s2">"&lt;what&gt;"</span><span class="w"> </span>--blocked-by<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
 </code></pre></div>
 <p>This stamps the kind's label and an executable scaffold: an author-defined
 <strong>precondition self-check</strong> (a machine probe or a human-attested statement — no
