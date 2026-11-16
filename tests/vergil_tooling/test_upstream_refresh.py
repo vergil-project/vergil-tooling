@@ -908,6 +908,151 @@ def test_fence_non_numeric_version_refused() -> None:
     ]
 
 
+# -- the fence: the hash rule ------------------------------------------------------
+
+_HASHED_FRAGMENT = PathRule(
+    glob="docker/common/*",
+    lines=(
+        r"^ARG [A-Z0-9_]+_(VERSION=(?P<version>\d+(\.\d+)*)"
+        r"|SHA256_(AMD64|ARM64)=(?P<hash>[0-9a-f]{64}))$"
+    ),
+)
+_ONE_TOOL = f"ARG NEXTEST_VERSION=0.9.80\nARG NEXTEST_SHA256_AMD64={_H1}\n"
+_HASHED_RUNTIME = PathRule(
+    glob="runtime.toml",
+    lines=(
+        r"^(\[\[series\]\]|\[series\.sha256\]|series = \"(?P<anchor>\d+\.\d+)\""
+        r"|cpython = \"(?P<version>\d+\.\d+\.\d+)\"|pbs_tag = \"(?P<version_pbs>\d{8})\""
+        r"|x86_64 = \"(?P<hash>[0-9a-f]{64})\"|aarch64 = \"(?P<hash_arm>[0-9a-f]{64})\"|)$"
+    ),
+)
+
+
+def _hashed_frag_fence(tmp_path: Path, before: str, after: str) -> list[str]:
+    return _fence(tmp_path, _rules(_HASHED_FRAGMENT), {_FRAG: before}, {_FRAG: after})
+
+
+def _hashed_runtime_fence(tmp_path: Path, before: str, after: str) -> list[str]:
+    return _fence(
+        tmp_path, _rules(_HASHED_RUNTIME), {"runtime.toml": before}, {"runtime.toml": after}
+    )
+
+
+def test_fence_hash_changed_with_its_version_allowed(tmp_path: Path) -> None:
+    after = _ONE_TOOL.replace("0.9.80", "0.9.81").replace(_H1, _H2)
+    assert _hashed_frag_fence(tmp_path, _ONE_TOOL, after) == []
+
+
+def test_fence_hash_changed_without_a_version_change_refused(tmp_path: Path) -> None:
+    after = _ONE_TOOL.replace(_H1, _H2)
+    assert _hashed_frag_fence(tmp_path, _ONE_TOOL, after) == [
+        f"{_FRAG}: refused, hash line 'ARG NEXTEST_SHA256_AMD64={_H2}' changes while no "
+        "version in its block changes (a hash changes only with its block's version)"
+    ]
+
+
+def test_fence_hash_rule_without_anchor_counts_any_version_in_the_file(tmp_path: Path) -> None:
+    # With no anchor group the whole file is one block, so another key's
+    # version change carries the hash change.
+    after = _DOCKERFILE.replace("TRIVY_VERSION=0.60.0", "TRIVY_VERSION=0.61.0").replace(
+        f"AMD64={_H1}", f"AMD64={_H2}"
+    )
+    assert _hashed_frag_fence(tmp_path, _DOCKERFILE, after) == []
+
+
+def test_fence_new_hash_pin_allowed(tmp_path: Path) -> None:
+    after = _ONE_TOOL + f"ARG NEXTEST_SHA256_ARM64={_H2}\n"
+    assert _hashed_frag_fence(tmp_path, _ONE_TOOL, after) == []
+
+
+def test_fence_dropped_hash_pin_allowed_without_anchor(tmp_path: Path) -> None:
+    after = _ONE_TOOL.replace(f"ARG NEXTEST_SHA256_AMD64={_H1}\n", "")
+    assert _hashed_frag_fence(tmp_path, _ONE_TOOL, after) == []
+
+
+def test_fence_hash_rule_absent_keeps_hash_changes_free(tmp_path: Path) -> None:
+    # A rule with no hash group behaves as before: a lone digest change passes.
+    after = _DOCKERFILE.replace(f"AMD64={_H1}", f"AMD64={_H2}")
+    assert _frag_fence(tmp_path, after) == []
+
+
+def test_fence_hash_changed_with_a_version_downgrade_reports_only_the_downgrade(
+    tmp_path: Path,
+) -> None:
+    after = _ONE_TOOL.replace("0.9.80", "0.9.79").replace(_H1, _H2)
+    assert _hashed_frag_fence(tmp_path, _ONE_TOOL, after) == [
+        f"{_FRAG}: refused, 'ARG NEXTEST_VERSION=' lowers its version from 0.9.80 to 0.9.79 "
+        "(a refresh never lowers a pinned version)"
+    ]
+
+
+def test_fence_hash_changed_in_runtime_toml_with_its_series_allowed(tmp_path: Path) -> None:
+    before = _series("3.13", "3.13.9", "20261001") + "\n" + _series("3.14", "3.14.10")
+    after = (
+        _series("3.13", "3.13.9", "20261001") + "\n" + _series("3.14", "3.14.10", "20261102", _H2)
+    )
+    assert _hashed_runtime_fence(tmp_path, before, after) == []
+
+
+def test_fence_hash_changed_in_a_block_whose_version_stays_refused(tmp_path: Path) -> None:
+    # 3.14 moves forward, but 3.13's hashes change with no 3.13 version change.
+    before = _series("3.13", "3.13.9", "20261001") + "\n" + _series("3.14", "3.14.10")
+    after = (
+        _series("3.13", "3.13.9", "20261001", _H2)
+        + "\n"
+        + _series("3.14", "3.14.11", "20261102", _H2)
+    )
+    assert _hashed_runtime_fence(tmp_path, before, after) == [
+        f"runtime.toml: refused, hash line 'aarch64 = \"{_H2}\"' (anchor '3.13') changes "
+        "while no version in its block changes (a hash changes only with its block's version)",
+        f"runtime.toml: refused, hash line 'x86_64 = \"{_H2}\"' (anchor '3.13') changes "
+        "while no version in its block changes (a hash changes only with its block's version)",
+    ]
+
+
+def test_fence_hash_in_a_new_series_block_allowed(tmp_path: Path) -> None:
+    before = _series("3.14", "3.14.10")
+    after = before + "\n" + _series("3.15", "3.15.0", "20261102", _H2)
+    assert _hashed_runtime_fence(tmp_path, before, after) == []
+
+
+def test_fence_new_hash_key_in_an_existing_block_allowed(tmp_path: Path) -> None:
+    before = _series("3.14", "3.14.10").replace(f'aarch64 = "{_H1}"\n', "")
+    after = _series("3.14", "3.14.10")
+    assert _hashed_runtime_fence(tmp_path, before, after) == []
+
+
+def test_fence_hash_moved_above_its_anchor_refused(tmp_path: Path) -> None:
+    # Moving a hash above its block's series line would give it a new
+    # identity; it must not pass as a first pin.
+    before = _series("3.14", "3.14.10")
+    after = before.replace(f'x86_64 = "{_H1}"\n', "").replace(
+        "[[series]]\n", f'x86_64 = "{_H2}"\n[[series]]\n'
+    )
+    assert _hashed_runtime_fence(tmp_path, before, after) == [
+        f"runtime.toml: refused, hash line 'x86_64 = \"{_H1}\"' (anchor '3.14') is removed "
+        "from a block that stays, so the hash rule cannot pair it"
+    ]
+
+
+def test_fence_hash_rule_without_version_group_refuses_any_hash_change() -> None:
+    rule = PathRule(glob="f", lines=r"^SUM=(?P<hash>[0-9a-f]+)$")
+    lines = ["diff --git a/f b/f", "@@ -1 +1 @@", "-SUM=aa", "+SUM=bb"]
+    assert fence_violations(_rules(rule), ["f"], {"f": lines}, None, None) == [
+        "f: refused, hash line 'SUM=bb' changes while no version in its block changes "
+        "(a hash changes only with its block's version)"
+    ]
+
+
+def test_fence_partial_diff_refused_under_a_hash_rule() -> None:
+    rule = PathRule(glob="f", lines=r"^SUM=(?P<hash>[0-9a-f]+)$")
+    lines = ["diff --git a/f b/f", "@@ -1 +0,0 @@", "-SUM=aa", "@@ -3,0 +3 @@", "+SUM=bb"]
+    assert fence_violations(_rules(rule), ["f"], {"f": lines}, None, None) == [
+        "f: refused by the line rule of paths entry 'f': the diff does not show the whole "
+        "file, so the hash rule cannot place its lines"
+    ]
+
+
 # -- the fence: vergil.toml ----------------------------------------------------------
 
 _PY_TOML = """\

@@ -307,7 +307,11 @@ class PathRule:
     names each block with a ``(?P<anchor>…)`` group, such as its ``series``
     value; without one, a change to a repeated key is refused. A refresh
     never removes an existing anchored block: dropping a series is a human
-    change.
+    change. A ``(?P<hash>…)`` group (or ``(?P<hash_<suffix>>…)`` for a further
+    one) marks a hash or digest line: an existing hash line may change only
+    when a version of the same block (the same anchor, or the same file under
+    a rule with no anchor group) changes in the same patch. A hash pinned for
+    the first time is allowed. A rule with no hash group checks no hashes.
     """
 
     glob: str

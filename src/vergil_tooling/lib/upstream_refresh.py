@@ -790,8 +790,10 @@ def fence_violations(
     - under a rule with ``lines``, every removed and added line must match the
       regex in full, an added, deleted, binary or mode-changed file is
       refused, and a ``(?P<version>…)`` group may not go down, compared
-      per line identity across the whole file, and an existing
-      ``(?P<anchor>…)`` block may not be removed (:func:`_downgrades`);
+      per line identity across the whole file, an existing
+      ``(?P<anchor>…)`` block may not be removed (:func:`_downgrades`), and a
+      ``(?P<hash>…)`` line may change only when a version of its block
+      changes too (:func:`_hash_violations`);
     - ``vergil.toml`` follows its own rules (:func:`_vergil_toml_violations`).
     """
     violations: list[str] = []
@@ -863,16 +865,22 @@ def _line_rule_violations(path: str, glob: str, regex: str, diff: _FileDiff) -> 
         # The file is refused already; a line outside the rule is not versioned,
         # so pairing would only repeat that refusal as an unpaired line.
         return violations
-    if not groups and _ANCHOR_GROUP not in pattern.groupindex:
-        # With no version group and no anchor, nothing is versioned and no block
-        # can be removed, so there is nothing to compare.
+    hashes = _hash_groups(pattern)
+    if not groups and not hashes and _ANCHOR_GROUP not in pattern.groupindex:
+        # With no version group, no hash group and no anchor, nothing is versioned
+        # or hashed and no block can be removed, so there is nothing to compare.
         return []
     if not diff.whole_file:
+        rule_name = "the hash rule" if hashes and not groups else "the no-downgrade rule"
+        what = "lines" if hashes else "versioned lines"
         return [
-            f"{where}: the diff does not show the whole file, so the no-downgrade rule "
-            "cannot place its versioned lines"
+            f"{where}: the diff does not show the whole file, so {rule_name} "
+            f"cannot place its {what}"
         ]
-    return _downgrades(path, pattern, groups, diff.before, diff.after)
+    violations = _downgrades(path, pattern, groups, diff.before, diff.after)
+    if hashes:
+        violations.extend(_hash_violations(path, pattern, groups, hashes, diff.before, diff.after))
+    return violations
 
 
 def _quote(line: str) -> str:
@@ -892,6 +900,16 @@ def _version_groups(pattern: re.Pattern[str]) -> list[str]:
     return sorted(names, key=lambda name: pattern.groupindex[name])
 
 
+def _hash_groups(pattern: re.Pattern[str]) -> list[str]:
+    """The regex's hash groups, in order: ``hash``, or ``hash_<suffix>``.
+
+    As for :func:`_version_groups`, a regex that marks hashes in two
+    alternatives (``x86_64`` and ``aarch64``) names the second ``hash_<suffix>``.
+    """
+    names = [name for name in pattern.groupindex if name == "hash" or name.startswith("hash_")]
+    return sorted(names, key=lambda name: pattern.groupindex[name])
+
+
 #: A versioned line's identity: the anchor value in force (None before any
 #: anchor line, or with no anchor group) and the text before the version group.
 _Identity = tuple[str | None, str]
@@ -908,10 +926,23 @@ def _versioned(
     its anchor value names every versioned line after it, up to the next
     anchor line.
     """
+    marked, anchors = _marked(pattern, groups, lines)
+    return {ident: [value for value, _ in found] for ident, found in marked.items()}, anchors
+
+
+def _marked(
+    pattern: re.Pattern[str], groups: Sequence[str], lines: Sequence[str]
+) -> tuple[dict[_Identity, list[tuple[str, str]]], set[str]]:
+    """The lines one of *groups* marks, as ``(value, line)`` by identity in file order.
+
+    The block walk behind :func:`_versioned`, shared by the hash rule
+    (:func:`_hash_violations`): the identity is the anchor value in force and
+    the text before the first of *groups* that took part.
+    """
     has_anchor = _ANCHOR_GROUP in pattern.groupindex
     anchor: str | None = None
     anchors: set[str] = set()
-    by_identity: dict[_Identity, list[str]] = {}
+    by_identity: dict[_Identity, list[tuple[str, str]]] = {}
     for line in lines:
         match = pattern.fullmatch(line)
         if match is None:
@@ -923,7 +954,7 @@ def _versioned(
         if group is None:
             continue
         identity = (anchor, line[: match.start(group)])
-        by_identity.setdefault(identity, []).append(match.group(group))
+        by_identity.setdefault(identity, []).append((match.group(group), line))
     return by_identity, anchors
 
 
@@ -1014,6 +1045,83 @@ def _downgrades(
             continue
         violations.extend(_compare_versions(path, identity, olds[0], news[0]))
     return violations
+
+
+def _hash_violations(  # noqa: PLR0913 - the rule's whole input, as _downgrades takes it
+    path: str,
+    pattern: re.Pattern[str],
+    groups: Sequence[str],
+    hashes: Sequence[str],
+    before: Sequence[str],
+    after: Sequence[str],
+) -> list[str]:
+    """The hash rule over one whole file: a hash changes only with its block's version.
+
+    A hash line is a line a ``(?P<hash>…)`` or ``(?P<hash_<suffix>>…)`` group
+    marks. Its identity is its block's anchor value and the text before the
+    group, as for a versioned line (:func:`_marked`), and its block is the one
+    that anchor value names (under a rule with no anchor group, the whole file).
+    Per identity:
+
+    - on both sides, with the same hashes: nothing to check;
+    - on both sides, with a hash changed: allowed only when a version of the
+      same block also changes (some versioned identity with that anchor value
+      has different versions before and after); otherwise refused, naming
+      the line;
+    - after only: a hash pinned for the first time (a new block, or a new key
+      in an existing block), allowed;
+    - before only: allowed when its whole block goes, or under a rule with no
+      anchor group (a dropped pin). Under a rule with one, a hash line that
+      disappears from a block that stays is refused: moving it above its
+      block's anchor line would otherwise give it a new identity and let it
+      pass as a first pin.
+
+    A rule with hash groups and no version group has no version to change
+    with, so any change to an existing hash is refused.
+    """
+    old_hashes, old_anchors = _marked(pattern, hashes, before)
+    new_hashes, new_anchors = _marked(pattern, hashes, after)
+    old_versions, _ = _versioned(pattern, groups, before)
+    new_versions, _ = _versioned(pattern, groups, after)
+    bumped_blocks = {
+        identity[0]
+        for identity in old_versions.keys() | new_versions.keys()
+        if old_versions.get(identity, []) != new_versions.get(identity, [])
+    }
+    anchored = _ANCHOR_GROUP in pattern.groupindex
+    identities = sorted(
+        old_hashes.keys() | new_hashes.keys(),
+        key=lambda ident: (ident[0] is not None, ident[0] or "", ident[1]),
+    )
+    violations: list[str] = []
+    for identity in identities:
+        olds, news = old_hashes.get(identity, []), new_hashes.get(identity, [])
+        old_values, new_values = [v for v, _ in olds], [v for v, _ in news]
+        if old_values == new_values or not olds:
+            continue
+        anchor = identity[0]
+        if not news:
+            whole_block = not anchored or (
+                anchor is not None and (anchor in old_anchors) != (anchor in new_anchors)
+            )
+            if not whole_block:
+                violations.append(
+                    f"{path}: refused, hash line {_quote(olds[0][1])}{_block(anchor)} is removed "
+                    "from a block that stays, so the hash rule cannot pair it"
+                )
+            continue
+        if anchor in bumped_blocks:
+            continue
+        line = next((ln for v, ln in news if v not in old_values), news[0][1])
+        violations.append(
+            f"{path}: refused, hash line {_quote(line)}{_block(anchor)} changes while no version "
+            "in its block changes (a hash changes only with its block's version)"
+        )
+    return violations
+
+
+def _block(anchor: str | None) -> str:
+    return "" if anchor is None else f" (anchor {anchor!r})"
 
 
 def _compare_versions(path: str, identity: _Identity, old: str, new: str) -> list[str]:
