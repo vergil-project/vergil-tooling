@@ -1637,6 +1637,26 @@ def _checks_terminal(checks: list[dict[str, str]], required: Collection[str]) ->
     )
 
 
+def _failure_decided_names(checks: list[dict[str, str]], required: Collection[str]) -> list[str]:
+    """The failed checks that already decide *checks* while required ones are unregistered.
+
+    Non-empty only when no registered check is pending, at least one
+    *required* check is not registered, and some registered check is in a
+    failed bucket (#4294). A required check that a job's upload creates
+    (``Semgrep OSS``, made by the GitHub Advanced Security app once
+    ``security / semgrep`` uploads its SARIF) never registers when that job
+    fails first, so waiting for it only runs out the deadline, and the failure
+    refuses the merge whatever registers later. The names come from the
+    bucket alone: the caller confirms them with :func:`failed_check_names`,
+    which leaves out check-runs of superseded runs (#2897).
+    """
+    if not checks or any(c.get("bucket") == _PENDING_BUCKET for c in checks):
+        return []
+    if not outstanding_required_checks(checks, required):
+        return []
+    return [str(c.get("name")) for c in checks if c.get("bucket") in _FAILED_BUCKETS]
+
+
 def all_checks_terminal(pr: str, required: Collection[str] = ()) -> bool:
     """True when *pr* has a check, none is ``pending``, and every *required* check is in.
 
@@ -1952,7 +1972,12 @@ def wait_for_checks(
     stale check-run GitHub has already concluded, #3170) until every check is
     terminal **and** every required status check of the base branch is
     registered and non-pending (#3061), then returns — leaving ``pr_merge``'s
-    ``failed_check_names`` gate to catch any failure. Zero registered checks is
+    ``failed_check_names`` gate to catch any failure. It also returns at once
+    when every registered check has finished, a live one (per
+    :func:`failed_check_names`) has failed, and the only required checks still
+    outstanding are unregistered: a check the failed job would have uploaded
+    (``Semgrep OSS``) can then never arrive, and the failure already refuses
+    the merge (#4294). Zero registered checks is
     not terminal (#2623), and the head is re-read on every poll, so a moved head
     is followed rather than pinned. *required* is the caller's
     :func:`required_check_names` result, passed through unchanged — a
@@ -2004,6 +2029,9 @@ def wait_for_checks(
     reported: tuple[tuple[str, str], ...] = ()
     last_report = 0.0
     stale = _StaleCheckProbe(required, grace)
+    # The failed-bucket names last found to live only on superseded runs, so
+    # the rollup is not re-read on every poll for the same set (#4294).
+    dismissed: tuple[str, ...] = ()
     while True:
         checks = pr_checks(pr)
         if _checks_terminal(checks, gate):
@@ -2013,6 +2041,17 @@ def wait_for_checks(
         if now < deadline and stale.apply(checks, now) and _checks_terminal(checks, gate):
             return  # every still-pending check was stale over a successful job
         outstanding = outstanding_required_checks(checks, gate)
+        decided = tuple(_failure_decided_names(checks, gate))
+        if decided and decided != dismissed:
+            failed = failed_check_names(pr)
+            if failed:
+                print(
+                    f"Required checks not registered: {', '.join(outstanding)}; every "
+                    f"registered check has finished and {', '.join(failed)} failed, so the "
+                    "merge is already refused. Not waiting for them."
+                )
+                return  # pr_merge's failed-checks gate reports the failure
+            dismissed = decided
         if outstanding and outstanding != announced:
             print(f"Awaiting required checks: {describe_outstanding(outstanding)}")
         announced = outstanding

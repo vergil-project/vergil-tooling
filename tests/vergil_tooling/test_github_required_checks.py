@@ -127,6 +127,90 @@ def test_wait_for_checks_waits_for_unregistered_required_checks(
     ]
 
 
+_SEMGREP = frozenset({"security / semgrep", "Semgrep OSS"})
+
+
+def test_wait_for_checks_returns_at_once_when_a_failure_leaves_a_required_check_unregistered(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #4294: security / semgrep failed before uploading, so Semgrep OSS never
+    # registers; the wait must end now, not at the deadline.
+    monkeypatch.setattr(
+        github,
+        "pr_checks",
+        lambda pr: [_check("security / semgrep", "fail"), _check("quality / evidence", "pass")],
+    )
+    monkeypatch.setattr(github, "failed_check_names", lambda pr: ["security / semgrep"])
+    monkeypatch.setattr(github.time, "sleep", lambda s: pytest.fail("must not wait"))
+    github.wait_for_checks("1", poll_interval=3, poll_timeout=1000, required=_SEMGREP)
+    out = capsys.readouterr().out
+    assert (
+        "Required checks not registered: Semgrep OSS; every registered check has finished "
+        "and security / semgrep failed, so the merge is already refused. Not waiting for them."
+    ) in out
+
+
+def test_wait_for_checks_keeps_waiting_while_a_registered_check_is_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    batches = iter(
+        [
+            [_check("security / semgrep", "fail"), _check("unit", "pending")],
+            [_check("security / semgrep", "fail"), _check("unit", "pass")],
+        ]
+    )
+    monkeypatch.setattr(github, "pr_checks", lambda pr: next(batches))
+    calls: list[str] = []
+    monkeypatch.setattr(
+        github, "failed_check_names", lambda pr: calls.append(pr) or ["security / semgrep"]
+    )
+    sleeps: list[int] = []
+    monkeypatch.setattr(github.time, "sleep", sleeps.append)
+    github.wait_for_checks("1", poll_interval=3, poll_timeout=1000, required=_SEMGREP)
+    assert sleeps == [3]  # the pending check was waited on before deciding
+    assert calls == ["1"]
+
+
+def test_wait_for_checks_waits_when_the_failures_are_superseded_runs_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A cancelled check left by a superseded run is not a live failure (#2897):
+    # keep waiting for the required check, reading the rollup once per failure set.
+    stale = _check("security / ${{ matrix.x }}", "cancel")
+    batches = iter(
+        [
+            [stale],
+            [stale],
+            [stale, _check("security / semgrep", "pass"), _check("Semgrep OSS", "pass")],
+        ]
+    )
+    monkeypatch.setattr(github, "pr_checks", lambda pr: next(batches))
+    calls: list[str] = []
+    monkeypatch.setattr(github, "failed_check_names", lambda pr: calls.append(pr) or [])
+    sleeps: list[int] = []
+    monkeypatch.setattr(github.time, "sleep", sleeps.append)
+    github.wait_for_checks("1", poll_interval=3, poll_timeout=1000, required=_SEMGREP)
+    assert sleeps == [3, 3]
+    assert calls == ["1"]
+
+
+def test_wait_for_checks_unregistered_required_check_without_failure_keeps_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(github, "pr_checks", lambda pr: [_check("security / semgrep", "pass")])
+    monkeypatch.setattr(github, "failed_check_names", lambda pr: pytest.fail("no failure"))
+    monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
+    with pytest.raises(github.ChecksTimeoutError, match=r"Semgrep OSS \(not registered\)"):
+        github.wait_for_checks("1", poll_interval=0, poll_timeout=0, required=_SEMGREP)
+
+
+def test_failure_decided_names_needs_an_unregistered_required_check() -> None:
+    checks = [_check("security / semgrep", "fail"), _check("Semgrep OSS", "pass")]
+    assert github._failure_decided_names(checks, _SEMGREP) == []
+    assert github._failure_decided_names([], _SEMGREP) == []
+    assert github._failure_decided_names(checks[:1], _SEMGREP) == ["security / semgrep"]
+
+
 def test_wait_for_checks_timeout_names_outstanding_required_checks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -41,7 +41,11 @@ is surfaced at once. When the check wait itself expires with checks still pendin
 the engine aborts naming each pending check and its link (issue #3170). A check
 whose own Actions job is in progress is reported as likely slow, not stuck, with the
 run's URL and the advice to wait for it and then resume; any other pending check
-keeps the re-run / close-and-reopen advice (issue #4200).
+keeps the re-run / close-and-reopen advice (issue #4200). A required check that a
+job's upload creates (``Semgrep OSS``) never registers when that job fails first, so
+once every registered check has finished with a failure the wait ends at once and
+the abort names the unregistered check and the failed job behind it, instead of
+waiting out the deadline (issue #4294).
 """
 
 from __future__ import annotations
@@ -200,7 +204,36 @@ def _is_behind(pr: str) -> bool:
     return github.merge_state_status(pr) == "BEHIND"
 
 
-def _failed_checks_are_stale(pr: str) -> bool:
+# Required checks that a workflow job's SARIF upload creates (through the GitHub
+# Advanced Security app, so with no ``<job> /`` prefix), mapped to the job name
+# that uploads each one (``security / semgrep`` uploads ``Semgrep OSS``). When
+# that job fails before its upload, the check is never registered (#4294).
+_UPLOADED_CHECK_JOBS = {"Semgrep OSS": "semgrep", "Trivy": "trivy", "CodeQL": "codeql"}
+
+
+def _unregistered_detail(unregistered: list[str], failed: list[str]) -> str:
+    """Name each unregistered required check and, where known, the failed job behind it."""
+    parts: list[str] = []
+    unknown: list[str] = []
+    for check in unregistered:
+        job = _UPLOADED_CHECK_JOBS.get(check)
+        producers = [f for f in failed if job is not None and f.endswith(f" / {job}")]
+        if producers:
+            parts.append(
+                f"Required check {check} was never registered: it is uploaded by "
+                f"{', '.join(producers)}, which failed first, so it will not arrive."
+            )
+        else:
+            unknown.append(check)
+    if unknown:
+        parts.append(
+            f"Required checks never registered: {', '.join(unknown)}; with every "
+            "registered check finished, a failed job above most likely produces them."
+        )
+    return " ".join(parts)
+
+
+def _failed_checks_are_stale(pr: str, required: frozenset[str]) -> bool:
     """Judge *pr*'s failed checks after a wait: stale (update the branch) or real (raise).
 
     Returns False when no check failed, and True when some did but the branch is
@@ -209,7 +242,10 @@ def _failed_checks_are_stale(pr: str) -> bool:
     terminal, so those may be stale failures from before the base advanced: the
     caller updates the branch (which cancels them and starts a fresh run) rather
     than going back through the precheck that just missed (issue #2914). A
-    failure on a branch that is not behind is real and raises.
+    failure on a branch that is not behind is real and raises. The waiter also
+    returns once a failure leaves a *required* check unregistered for good
+    (#4294), so the abort names each such check and, for one a job's upload
+    creates, the failed job that never uploaded it.
     """
     failed = github.failed_check_names(pr)
     if not failed:
@@ -217,6 +253,10 @@ def _failed_checks_are_stale(pr: str) -> bool:
     if _is_behind(pr):
         return True
     msg = f"Checks failed on PR {pr}: {', '.join(failed)}"
+    outstanding = github.required_checks_outstanding(pr, required)
+    unregistered = [name for name, why in outstanding.items() if why == "not registered"]
+    if unregistered:
+        msg = f"{msg}. {_unregistered_detail(unregistered, failed)}"
     raise MergeAbortError(msg)
 
 
@@ -429,7 +469,7 @@ def wait_and_merge(
         except (OrphanedCheckError, ChecksTimeoutError) as exc:
             raise _checks_wait_abort(pr, exc) from exc
 
-        if _failed_checks_are_stale(pr):
+        if _failed_checks_are_stale(pr, required):
             updater.update()
             continue
 
@@ -562,7 +602,7 @@ def wait_until_merged(pr: str, *, strategy: str, deadline_secs: int) -> None:
 
         if _merged_or_refuse_closed(pr):
             return  # auto-merge finished it during the wait
-        if _failed_checks_are_stale(pr):
+        if _failed_checks_are_stale(pr, required):
             updater.update()
             continue
         outstanding = github.required_checks_outstanding(pr, required)

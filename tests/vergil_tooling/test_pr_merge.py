@@ -112,6 +112,69 @@ def test_check_failure_aborts_with_names() -> None:
     gh.merge.assert_not_called()
 
 
+def test_failure_naming_an_unregistered_uploaded_check_names_its_job() -> None:
+    # #4294: the waiter returned at once because security / semgrep failed
+    # before uploading, so Semgrep OSS never registered.
+    gh = _gh(
+        failed=["security / semgrep"],
+        required=frozenset({"security / semgrep", "Semgrep OSS"}),
+        outstanding=[{"Semgrep OSS": "not registered"}],
+    )
+    with (
+        patch(_MOD + ".github", gh),
+        pytest.raises(MergeAbortError) as err,
+    ):
+        wait_and_merge("99", strategy="squash")
+    assert str(err.value) == (
+        "Checks failed on PR 99: security / semgrep. Required check Semgrep OSS was "
+        "never registered: it is uploaded by security / semgrep, which failed first, "
+        "so it will not arrive."
+    )
+    gh.wait_for_checks.assert_called_once()
+    gh.merge.assert_not_called()
+
+
+def test_failure_naming_an_unregistered_check_with_no_known_job() -> None:
+    gh = _gh(
+        failed=["test / unit / 3.14"],
+        required=frozenset({"test / evidence", "Semgrep OSS"}),
+        outstanding=[{"Semgrep OSS": "not registered", "test / evidence": "not registered"}],
+    )
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError) as err:
+        wait_and_merge("99", strategy="squash")
+    assert str(err.value) == (
+        "Checks failed on PR 99: test / unit / 3.14. Required checks never registered: "
+        "Semgrep OSS, test / evidence; with every registered check finished, a failed "
+        "job above most likely produces them."
+    )
+    gh.merge.assert_not_called()
+
+
+def test_failure_with_pending_required_check_names_failures_only() -> None:
+    gh = _gh(
+        failed=["ci / test"],
+        required=frozenset({"test / evidence"}),
+        outstanding=[{"test / evidence": "pending"}],
+    )
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError) as err:
+        wait_and_merge("99", strategy="squash")
+    assert str(err.value) == "Checks failed on PR 99: ci / test"
+
+
+def test_watch_failure_naming_an_unregistered_uploaded_check_names_its_job() -> None:
+    gh = _gh(
+        failed=["security / semgrep"],
+        required=frozenset({"Semgrep OSS"}),
+        outstanding=[{"Semgrep OSS": "not registered"}],
+    )
+    with (
+        patch(_MOD + ".github", gh),
+        pytest.raises(MergeAbortError, match="uploaded by security / semgrep, which failed"),
+    ):
+        wait_until_merged("99", strategy="squash", deadline_secs=600)
+    gh.merge.assert_not_called()
+
+
 def test_wait_and_merge_aborts_on_orphaned_check() -> None:
     gh = _gh()
     gh.wait_for_checks.side_effect = OrphanedCheckError("docs / docs")
