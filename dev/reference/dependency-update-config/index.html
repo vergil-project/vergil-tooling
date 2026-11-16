@@ -14273,6 +14273,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#cargo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cargo
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vergil" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17831,6 +17842,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#cargo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cargo
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vergil" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17998,6 +18020,11 @@ what it updates, and each one's changes become a separate commit on the
 <td><code>chore(deps): uv lock --upgrade</code></td>
 </tr>
 <tr>
+<td><code>cargo</code></td>
+<td><code>Cargo.toml</code> and <code>Cargo.lock</code> exist</td>
+<td><code>chore(deps): cargo update</code>, listing the crates moved, or <code>chore(deps): refresh Cargo.lock</code></td>
+</tr>
+<tr>
 <td><code>vergil</code></td>
 <td><code>vergil.toml</code> exists</td>
 <td><code>chore(deps): …</code> naming what changed</td>
@@ -18029,6 +18056,23 @@ requires</code> and <code>[tool.uv] constraint-dependencies</code>. A requiremen
 latest release falls outside its own specifier is reported as held
 back. Requirements without a specifier, URL requirements and transitive
 packages are never reported.</p>
+<h3 id="cargo"><code>cargo</code><a class="headerlink" href="#cargo" title="Permanent link">&para;</a></h3>
+<p>Runs <code>cargo update</code> in the dev container, which moves every crate in
+<code>Cargo.lock</code> to the newest version its <code>Cargo.toml</code> requirement allows.
+It never edits a <code>Cargo.toml</code>.</p>
+<p>It then reads every workspace member's normal, dev and build
+dependencies from <code>cargo metadata</code>, also run in the dev container, and
+compares each one's locked version with the newest version in Cargo's
+sparse index (<code>https://index.crates.io</code>) that is neither yanked nor a
+pre-release. A dependency locked below that version is reported as held
+back, with a note giving the reason: <code>outside the Cargo.toml
+requirement</code>, <code>needs a newer Rust than rust-version</code>, both, or, when
+neither applies, <code>held by the resolver: another requirement in the
+dependency graph</code>. A workspace-inherited dependency is checked against
+the workspace's requirement. Path and git dependencies, and crates.io
+dependencies patched to a path or git crate, are never reported; a
+dependency from another registry, or patched to one, is an error. See
+<a href="../dev/update-deps/#the-cargo-updater">the Cargo updater</a>.</p>
 <h3 id="vergil"><code>vergil</code><a class="headerlink" href="#vergil" title="Permanent link">&para;</a></h3>
 <p>Keeps the vergil ecosystem references consistent with
 <code>[dependencies].vergil</code> in <code>vergil.toml</code>:</p>
@@ -18183,6 +18227,9 @@ count, and every package it moved is a row in one table:</p>
 <li><code>python</code> diffs the package versions in the parsed <code>uv.lock</code> before and
   after <code>uv lock --upgrade</code>, transitive packages included. A package
   added or dropped shows <code>(new)</code> or <code>(removed)</code>.</li>
+<li><code>cargo</code> diffs the crate versions in the parsed <code>Cargo.lock</code> before and
+  after <code>cargo update</code> the same way. A crate locked at several versions
+  shows them comma-joined.</li>
 <li><code>vergil</code> lists the <code>vergil</code> version it bumped and the
   <code>vergil-python&lt;x.y&gt;</code> runtime pin it moved. Normalizing workflow refs to
   the declared version moves no package.</li>
@@ -18213,6 +18260,13 @@ at the end of every <code>vrg-update-deps</code> run, as a table:</p>
 <td>1.4.2</td>
 <td>2.0.0</td>
 <td>project.dependencies: example-lib&lt;2</td>
+</tr>
+<tr>
+<td>cargo</td>
+<td>serde</td>
+<td>1.0.200</td>
+<td>2.0.0</td>
+<td>outside the Cargo.toml requirement</td>
 </tr>
 </tbody>
 </table>
