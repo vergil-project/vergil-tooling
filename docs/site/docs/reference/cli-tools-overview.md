@@ -443,6 +443,17 @@ For a Python or Rust repo, `bump` then refreshes the lockfile (`uv lock`,
 `vrg-container-run`, so no host toolchain is needed. Used by the CD
 workflows to read the release version.
 
+In a TypeScript repo the version is also kept in `package.json`. `show`
+fails, naming the fix, when `package.json` is missing, has no `version`, or
+holds another version than `VERSION`; `vrg-validate`'s TypeScript pre-gate
+makes the same check on the PR. `bump` rewrites only the top-level `version`
+of `package.json` and the two root version fields of `package-lock.json`
+(its top-level `version` and `packages[""].version`), keeping every other
+byte. It runs no npm, so no script runs and no dependency moves. Before
+writing any file, `bump` fails, naming the file and the fix, when either
+file is missing, `package.json` does not hold the current version, or the
+lockfile lacks a root version field; a file it cannot write fails the bump.
+
 In a Rust repo the version is read from `[package].version` when it is a
 string, and from `[workspace.package].version` in a virtual workspace or
 when `[package]` inherits it (`version.workspace = true`). `bump` rewrites
@@ -457,8 +468,8 @@ to `0.2.0` under `^0.1.3`).
 |---|---|
 | Source | `vergil_tooling.bin.vrg_version` |
 | Args | `show [--major-minor] [--ref REF]`, `bump [{patch,minor,major}]` |
-| Preconditions | Run from the repo root; `bump` in a Python or Rust repo needs a running container runtime |
-| Failure mode | An unreadable version raises an uncaught error |
+| Preconditions | Run from the repo root; `bump` in a Python or Rust repo needs a running container runtime (a TypeScript repo does not) |
+| Failure mode | An unreadable version raises an uncaught error; for a TypeScript repo's `package.json` or `package-lock.json`, its message names the fix |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 

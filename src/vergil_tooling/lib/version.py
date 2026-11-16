@@ -38,10 +38,13 @@ _LOCKFILE_COMMANDS: dict[str, list[str]] = {
     "rust": ["cargo", "update", "--workspace"],
 }
 
-# The lockfile each _LOCKFILE_COMMANDS entry rewrites, relative to the repo root.
+# The lockfile a bump rewrites, relative to the repo root: by the language's
+# _LOCKFILE_COMMANDS entry or, for TypeScript, by a direct edit of its root
+# version fields (_write_package_lock_version), which runs no npm.
 _LOCKFILES: dict[str, str] = {
     "python": "uv.lock",
     "rust": "Cargo.lock",
+    "typescript": "package-lock.json",
 }
 
 # Runs a command in the repo's dev container: the language image, the
@@ -51,6 +54,7 @@ _CONTAINER_RUN = ("vrg-container-run", "--")
 _DEFAULT_VERSION_FILES: dict[str, str] = {
     "python": "pyproject.toml",
     "rust": "Cargo.toml",
+    "typescript": "package.json",
 }
 
 VERSION_FILE = "VERSION"
@@ -60,6 +64,7 @@ _LANGUAGES_WITH_SEPARATE_VERSION = frozenset(
         "python",
         "rust",
         "go",
+        "typescript",
     }
 )
 
@@ -303,6 +308,173 @@ def _check_cargo_bump(repo_root: Path, cargo_toml: Path, old: str, new: str) -> 
     _check_member_requirements(repo_root, tomllib.loads(text), new)
 
 
+_JSON_DECODER = json.JSONDecoder()
+
+_PACKAGE_JSON = "package.json"
+
+# The two root version fields of an npm lockfile (lockfileVersion 2 and 3).
+_PACKAGE_LOCK_VERSION_PATHS: tuple[tuple[str, ...], ...] = (
+    ("version",),
+    ("packages", "", "version"),
+)
+
+
+def _skip_json_whitespace(text: str, pos: int) -> int:
+    while pos < len(text) and text[pos] in " \t\n\r":
+        pos += 1
+    return pos
+
+
+def _json_member_span(text: str, start: int, key: str) -> tuple[int, int] | None:
+    """The ``(start, end)`` span of member *key*'s value in the JSON object at *start*.
+
+    *text* is valid JSON and *start* the index of an object's ``{``. The
+    members are walked by the JSON grammar, so any spacing works and a nested
+    member of the same name is never taken. With a duplicate key the last one
+    wins, as in :func:`json.loads`. ``None`` when the object has no such member.
+    """
+    found: tuple[int, int] | None = None
+    pos = _skip_json_whitespace(text, start + 1)
+    while text[pos] != "}":
+        name, pos = _JSON_DECODER.raw_decode(text, pos)
+        pos = _skip_json_whitespace(text, pos) + 1  # past the ':'
+        value_start = _skip_json_whitespace(text, pos)
+        _value, value_end = _JSON_DECODER.raw_decode(text, value_start)
+        if name == key:
+            found = (value_start, value_end)
+        pos = _skip_json_whitespace(text, value_end)
+        if text[pos] == ",":
+            pos = _skip_json_whitespace(text, pos + 1)
+    return found
+
+
+def _json_path_label(path: tuple[str, ...]) -> str:
+    return "".join(f"[{json.dumps(key)}]" for key in path)
+
+
+def _parse_json_object(text: str, name: str) -> dict[str, Any]:
+    """The JSON object *text*; :class:`VersionSyncError` naming *name* otherwise."""
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        msg = f"{name} cannot be parsed: {exc}. Fix: correct the JSON"
+        raise VersionSyncError(msg) from exc
+    if not isinstance(data, dict):
+        msg = f"{name} cannot be parsed: the top level is not a JSON object. Fix: correct the JSON"
+        raise VersionSyncError(msg)
+    return data
+
+
+def _rewrite_json_string(text: str, path: tuple[str, ...], new: str, name: str) -> str:
+    """*text* with the string at member *path* set to *new*, every other byte kept.
+
+    The value's exact span is found by walking the parsed structure, never by
+    a text replace, so ``"version":"0.1.0"`` with no space is rewritten too.
+    Raises :class:`VersionSyncError` naming *name* when *text* is not a JSON
+    object or the value at *path* is not a string.
+    """
+    value: Any = _parse_json_object(text, name)
+    span = (_skip_json_whitespace(text, 0), len(text))
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            msg = f"{name} has no {_json_path_label(path)}"
+            raise VersionSyncError(msg)
+        value = value[key]
+        member = _json_member_span(text, span[0], key)
+        if member is None:  # pragma: no cover - the parse above found the key
+            msg = f"cannot locate {_json_path_label(path)} in {name}"
+            raise VersionSyncError(msg)
+        span = member
+    if not isinstance(value, str):
+        msg = f"{name} {_json_path_label(path)} is not a string"
+        raise VersionSyncError(msg)
+    return text[: span[0]] + json.dumps(new) + text[span[1] :]
+
+
+def _package_json_version(text: str, canonical: str) -> str:
+    """The top-level ``version`` of the ``package.json`` *text*.
+
+    Raises :class:`VersionSyncError` naming the fix, setting it to the
+    VERSION file's *canonical*, when it is missing or not a string.
+    """
+    version = _parse_json_object(text, _PACKAGE_JSON).get("version")
+    if not isinstance(version, str):
+        what = "no" if version is None else "a non-string"
+        msg = (
+            f'{_PACKAGE_JSON} has {what} "version". Fix: set it to the VERSION file\'s {canonical}'
+        )
+        raise VersionSyncError(msg)
+    return version
+
+
+def _version_mismatch(rel: str, canonical: str, found: str, language: str | None) -> str:
+    msg = f"VERSION contains {canonical} but {rel} contains {found}"
+    if language == "typescript":
+        msg += f". Fix: set it to the VERSION file's {canonical}"
+    return msg
+
+
+def _read_typescript_file(path: Path, fix: str) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        msg = f"{path.name} not found at {path.parent}. Fix: {fix}"
+        raise VersionSyncError(msg) from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        msg = f"cannot read {path.name}: {exc}"
+        raise VersionSyncError(msg) from exc
+
+
+def _write_typescript_file(path: Path, text: str) -> None:
+    try:
+        path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        msg = f"cannot write {path.name}: {exc}. Fix: make it writable, then bump again"
+        raise VersionSyncError(msg) from exc
+
+
+def _rewrite_package_json_version(text: str, old: str, new: str) -> str:
+    """``package.json`` *text* with its ``version`` moved from *old* to *new*."""
+    current = _package_json_version(text, old)
+    if current != old:
+        raise VersionSyncError(_version_mismatch(_PACKAGE_JSON, old, current, "typescript"))
+    return _rewrite_json_string(text, ("version",), new, _PACKAGE_JSON)
+
+
+def _rewrite_package_lock_version(text: str, new: str, name: str) -> str:
+    for path in _PACKAGE_LOCK_VERSION_PATHS:
+        text = _rewrite_json_string(text, path, new, name)
+    return text
+
+
+def _write_package_lock_version(lockfile: Path, new: str) -> None:
+    """Set ``package-lock.json``'s top-level ``version`` and ``packages[""].version``.
+
+    A direct edit of those two values in place: it runs no npm, so no script
+    runs and no dependency is re-resolved, and every other byte is kept
+    (epic vergil-project/.github#1174, spec §6.5). Raises
+    :class:`VersionSyncError` naming the file when it is missing, cannot be
+    parsed, lacks either field, or cannot be written.
+    """
+    text = _read_typescript_file(lockfile, "run npm install to create it, then commit it")
+    _write_typescript_file(lockfile, _rewrite_package_lock_version(text, new, lockfile.name))
+
+
+def _check_typescript_bump(repo_root: Path, old: str, new: str) -> None:
+    """Everything a TypeScript bump checks before it writes any file.
+
+    ``package.json`` must exist and hold the version *old*, and both root
+    version fields of ``package-lock.json`` must be present. Raises
+    :class:`VersionSyncError` naming the file and the fix otherwise.
+    """
+    package_json = repo_root / _PACKAGE_JSON
+    text = _read_typescript_file(package_json, f'create it with "version": "{old}"')
+    _rewrite_package_json_version(text, old, new)
+    lockfile = repo_root / _LOCKFILES["typescript"]
+    lock_text = _read_typescript_file(lockfile, "run npm install to create it, then commit it")
+    _rewrite_package_lock_version(lock_text, new, lockfile.name)
+
+
 def _discover_version_file(repo_root: Path, language: str) -> Path:
     if language in _DEFAULT_VERSION_FILES:
         return repo_root / _DEFAULT_VERSION_FILES[language]
@@ -330,6 +502,14 @@ def _cross_check_language_file(
                 file=sys.stderr,
             )
         else:
+            if language == "typescript" and not lang_file.is_file():
+                # A TypeScript repo's version lives in package.json too: a
+                # missing one is an error to fix, never a skipped check.
+                msg = (
+                    f"{_PACKAGE_JSON} not found at {repo_root}. "
+                    f'Fix: create it with "version": "{canonical_version}"'
+                )
+                raise VersionSyncError(msg)
             if not lang_file.is_file():
                 rel = lang_file.relative_to(repo_root)
                 print(
@@ -337,10 +517,14 @@ def _cross_check_language_file(
                     file=sys.stderr,
                 )
             else:
-                lang_version = _read_version(lang_file.read_text(), language)
+                text = lang_file.read_text()
+                if language == "typescript":
+                    lang_version = _package_json_version(text, canonical_version)
+                else:
+                    lang_version = _read_version(text, language)
                 if lang_version != canonical_version:
-                    rel = lang_file.relative_to(repo_root)
-                    msg = f"VERSION contains {canonical_version} but {rel} contains {lang_version}"
+                    lang_rel = lang_file.relative_to(repo_root).as_posix()
+                    msg = _version_mismatch(lang_rel, canonical_version, lang_version, language)
                     raise VersionSyncError(msg)
 
     for rel_path, fmt in _SECONDARY_VERSION_FILES.items():
@@ -433,6 +617,11 @@ def _increment_version(version: str, part: str) -> str:
 
 
 def _write_version(version_file: Path, language: str, old: str, new: str) -> None:
+    if language == "typescript":
+        text = _read_typescript_file(version_file, f'create it with "version": "{old}"')
+        _write_typescript_file(version_file, _rewrite_package_json_version(text, old, new))
+        return
+
     text = version_file.read_text()
 
     if language == "rust":
@@ -457,7 +646,15 @@ def _run_lockfile_maintenance(repo_root: Path, language: str) -> None:
     ``uv`` or ``cargo`` that validation checks it with (#4407). A missing or
     stopped container runtime, or a failing lock command, raises
     :class:`subprocess.CalledProcessError` after its output is shown.
+
+    TypeScript runs no command: its lockfile's root version fields are set
+    to the VERSION file's version, which :func:`bump` has just written, by
+    :func:`_write_package_lock_version`.
     """
+    if language == "typescript":
+        new = (repo_root / VERSION_FILE).read_text().strip()
+        _write_package_lock_version(repo_root / _LOCKFILES[language], new)
+        return
     cmd = _LOCKFILE_COMMANDS.get(language)
     if cmd is None:
         return
@@ -504,9 +701,18 @@ def bump(repo_root: Path, part: str = "patch") -> str:
         if cargo_toml.is_file():
             _check_cargo_bump(repo_root, cargo_toml, old_version, new_version)
 
+    # Likewise for TypeScript: a missing package.json or lockfile, a missing
+    # or mismatched version, or a lockfile with no root version fields fails
+    # before VERSION is written. It never reaches the handler below, which
+    # other languages keep (#1165 Task 5).
+    if language == "typescript":
+        _check_typescript_bump(repo_root, old_version, new_version)
+
     version_file.write_text(new_version + "\n")
 
-    if language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
+    if language == "typescript":
+        _write_version(repo_root / _PACKAGE_JSON, language, old_version, new_version)
+    elif language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
         try:
             lang_file = _discover_version_file(repo_root, language)
             if lang_file.is_file():

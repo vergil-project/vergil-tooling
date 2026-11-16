@@ -13,6 +13,7 @@ from vergil_tooling.lib import typescript_tools
 from vergil_tooling.lib.typescript_tools import (
     PRE_GATE_CHECKS,
     check_dev_dependencies,
+    check_version_matches,
     load_required,
     run_pre_gate_checks,
 )
@@ -208,6 +209,45 @@ def test_fix_line_lists_every_problem_package(tmp_path: Path) -> None:
 
 def test_pre_gate_checks_include_dev_dependencies() -> None:
     assert check_dev_dependencies in PRE_GATE_CHECKS
+
+
+def test_pre_gate_checks_include_version_matches() -> None:
+    assert check_version_matches in PRE_GATE_CHECKS
+
+
+def _versioned_repo(tmp_path: Path, version: str, package_version: str) -> Path:
+    (tmp_path / "vergil.toml").write_text(
+        '[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
+        'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
+        'primary-language = "typescript"\n\n[dependencies]\nvergil = "v2.0"\n'
+        '\n[ci]\nversions = ["node-24"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "VERSION").write_text(f"{version}\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        json.dumps({"name": "x", "version": package_version}), encoding="utf-8"
+    )
+    return tmp_path
+
+
+def test_pre_gate_passes_on_matching_version(tmp_path: Path) -> None:
+    assert check_version_matches(_versioned_repo(tmp_path, "0.1.0", "0.1.0")) == []
+
+
+def test_pre_gate_fails_on_version_mismatch(tmp_path: Path) -> None:
+    repo = _versioned_repo(tmp_path, "0.1.0", "1.0.0")
+    assert check_version_matches(repo) == [
+        "VERSION contains 0.1.0 but package.json contains 1.0.0. "
+        "Fix: set it to the VERSION file's 0.1.0"
+    ]
+
+
+def test_pre_gate_fails_on_missing_version_file(tmp_path: Path) -> None:
+    repo = _versioned_repo(tmp_path, "0.1.0", "0.1.0")
+    (repo / "VERSION").unlink()
+    problems = check_version_matches(repo)
+    assert len(problems) == 1
+    assert "VERSION file not found" in problems[0]
 
 
 def test_run_pre_gate_checks_reports_every_check(tmp_path: Path) -> None:
