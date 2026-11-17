@@ -1436,6 +1436,8 @@
       
         
       
+        
+      
     
     
     
@@ -1488,6 +1490,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.320/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.320
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18583,8 +18613,9 @@ logins of your agent identities (the Apps' bot accounts).</p>
 </ul>
 <p>The stanza is used first by <code>issue-implement</code>, which starts work on an issue
 only when a trusted author opened it, and by <code>epic-create</code>'s design-review
-rounds. <code>vrg-queue planning</code> and <code>vrg-queue deferred</code> need it too: only
-trusted authors' sizing comments set an item's
+rounds. <code>vrg-queue planning</code>, <code>vrg-queue deferred</code> and a bare <code>vrg-queue</code>,
+which reads both of those queues, need it too: only trusted authors' sizing
+comments set an item's
 <a href="../../standards/github-issues/#epic-size">epic size</a>, and with no stanza
 those views fail rather than guess.
 It seeds the system-wide rule for every tool and skill that reads issues,

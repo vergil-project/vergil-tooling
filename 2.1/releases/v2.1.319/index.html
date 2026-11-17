@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.320/">
       
       
         <link rel="next" href="../v2.1.318/">
@@ -1443,6 +1443,8 @@
       
         
       
+        
+      
     
     
     
@@ -1498,6 +1500,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.320/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.320
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18089,6 +18119,7 @@ vrg-version reads package.json's version and, on bump, rewrites only package.jso
 vrg-upstream-refresh gains its publish half and its prepare, publish and combined modes. Publish holds the automation App's key, mints repo-scoped tokens through the token source, applies prepare's patch on the recorded develop commit in its own clone, computes the touched set from that clone, checks the path fence with rules from the develop tip, commits as the App's bot and waits through open_sync_pr with a 7200-second deadline from its own start. The combined mode is a human's local run and is refused under Actions; --dry-run (with --rules-from) is the one mode agents may run. Exit codes 0, 1 and 2, with usage errors mapped to 1. open_sync_pr takes a caller deadline and logs what it closed, opened and how the wait ended. The upstream-refresh, dependency-update and CLI overview pages, the reference index and the README now describe the new flow.</p>
 </li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.319/v2.1.319-ci-evidence.tar.gz">Download →</a></p>
 
 
 

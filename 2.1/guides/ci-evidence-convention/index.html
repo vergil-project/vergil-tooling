@@ -1436,6 +1436,8 @@
       
         
       
+        
+      
     
     
     
@@ -1488,6 +1490,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.320/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.320
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18208,18 +18238,15 @@ show the <strong>intended shape</strong>, not what every bundle carries today:</
 <li><code>metrics</code> currently ships <strong>empty</strong> (<code>{}</code>) for <strong>every</strong> gate; the
   <code>findings_by_severity</code> / <code>coverage_pct</code> / <code>tests</code> summaries are the target
   shape, not yet populated.</li>
-<li>The <code>quality</code> gate's <code>tools</code> always names Python's tools (ruff and mypy),
-  and on a non-Python repository it holds no lint or typecheck report. A
-  Rust repository's <code>quality</code> gate therefore carries only its common and
-  custom transcripts. The fix is part of the single source of truth for the
-  report files
-  (<a href="https://github.com/vergil-project/vergil-tooling/issues/4416">vergil-tooling#4416</a>).</li>
-<li>The <code>test</code> and <code>audit</code> gates name their tools and hold their reports only
-  for a language with an entry in vergil-actions' report table
+<li>The <code>test</code> and <code>audit</code> gates, and the <code>quality</code> gate's lint and typecheck
+  legs, name their tools and hold their reports only for a language with an
+  entry in vergil-actions' report table
   (<a href="https://vergil-project.github.io/vergil-actions/latest/actions/ci-evidence-reports/"><code>ci/evidence/reports</code></a>),
-  today Python and Rust. For any other language (today go, cpp and
-  typescript) those two gates ship an empty <code>tools</code> array and no report,
-  with a warning on each leg.</li>
+  today Python, Rust and TypeScript (the lint and typecheck entries since
+  vergil-actions v2.1.78). For any other language (today go and cpp) those
+  legs ship an empty <code>tools</code> array and no report, with a warning on each
+  leg, so that language's <code>quality</code> gate carries only its common and custom
+  transcripts.</li>
 <li>Since vergil-actions v2.1.75 the <code>security</code> gate names its scanners
   (<code>trivy</code> and <code>semgrep</code>, plus <code>codeql</code> when its job ran and passed), where
   it used to ship an empty <code>tools</code> array.</li>
@@ -18275,7 +18302,7 @@ prefix:</p>
 <td>Yes</td>
 </tr>
 <tr>
-<td><code>quality / …</code> (common, custom, lint, typecheck)</td>
+<td><code>quality / …</code> (common, custom, lint, typecheck, build)</td>
 <td><code>quality</code></td>
 <td>Yes</td>
 </tr>
@@ -18302,8 +18329,8 @@ prefix:</p>
 </tbody>
 </table>
 <p>The guiding principle: <strong>any gate that can block the build is evidence worth
-keeping.</strong> Quality (common checks, custom validator, lint and typecheck)
-sits alongside security, test, and audit as first-class evidence, and
+keeping.</strong> Quality (common checks, custom validator, lint, typecheck and,
+for a language that turns it on, the release build) sits alongside security, test, and audit as first-class evidence, and
 every repo requires the <code>quality / evidence</code> gate, whatever its language.
 A repo whose <code>vergil.toml</code> has a <code>[package]</code> section also requires the
 <code>package / evidence</code> gate (the <code>ci-package.yml</code> aggregate over its whole

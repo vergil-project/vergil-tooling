@@ -1438,6 +1438,8 @@
       
         
       
+        
+      
     
     
     
@@ -1490,6 +1492,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.320/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.320
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18007,7 +18037,11 @@ maintainability, and long-term survivability across repositories.</p>
 <ul>
 <li>The repository declares no gate tool.</li>
 <li>rustfmt and clippy ship with the toolchain, and cargo-deny, cargo-llvm-cov
-  and cargo-nextest come from the image.</li>
+  and cargo-nextest come from the image. Each image tool is pinned to a
+  version, so an upstream release cannot change a gate's verdict unreviewed:
+  cargo-deny and cargo-nextest are checked against a per-architecture SHA-256
+  pinned beside the version, and cargo-llvm-cov is built from crates.io with
+  <code>--locked</code>.</li>
 </ul>
 <h2 id="toolchain-selection">Toolchain Selection<a class="headerlink" href="#toolchain-selection" title="Permanent link">&para;</a></h2>
 <p>Vergil selects the Rust toolchain, never the repository. Each Vergil Rust
@@ -18045,7 +18079,8 @@ a hard CI leg. See the
 rules):</p>
 <ul>
 <li><code>quality / evidence</code>: the common checks, the custom validator, rustfmt,
-  clippy and <code>cargo check</code></li>
+  clippy, <code>cargo check</code> and the release build (<code>quality / build / &lt;version&gt;</code>,
+  once on the primary version)</li>
 <li><code>test / evidence</code>: the nextest run under cargo-llvm-cov at 100% line and
   region coverage, and the doctests</li>
 <li><code>audit / evidence</code>: <code>cargo deny</code> against the fleet policy</li>

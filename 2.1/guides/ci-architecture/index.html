@@ -1436,6 +1436,8 @@
       
         
       
+        
+      
     
     
     
@@ -1488,6 +1490,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.320/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.320
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18401,9 +18431,12 @@ for the measured evidence.</p>
 <li><code>quality</code> (<code>ci-quality.yml</code>): the common checks once (<code>vrg-validate
   --check common</code>), the repository's custom validator once
   (<code>vrg-validate --check custom</code>, as <code>quality / custom</code>), then lint and
-  typecheck across the full version matrix. The custom job's transcript
-  is <code>quality-custom.log</code>, and <code>quality / evidence</code> needs the job, so a
-  failing custom validator fails that gate</li>
+  typecheck across the full version matrix, and, for a language that turns
+  it on (Rust and TypeScript), the release build once on the primary
+  version (<code>vrg-validate --check build</code>, as <code>quality / build / &lt;version&gt;</code>).
+  The custom job's transcript is <code>quality-custom.log</code>, and
+  <code>quality / evidence</code> needs the job, so a failing custom validator fails
+  that gate</li>
 <li><code>security</code> (<code>ci-security.yml</code>): CodeQL, Trivy and Semgrep</li>
 <li><code>test</code> (<code>ci-test.yml</code>): the language's test command across the full
   version matrix</li>
@@ -18777,7 +18810,11 @@ permanently blocked with no <code>--admin</code> escape (epic
 fails if any of them did not succeed. That holds in every repo, whatever its
 language, so <code>quality / evidence</code> is required everywhere and <code>quality / common</code>,
 which still runs, is not required on its own. A failing custom validator
-therefore blocks the merge even in a repo with no primary language. The other
+therefore blocks the merge even in a repo with no primary language.
+<code>quality / evidence</code> also needs the <code>build</code> job, which runs only when
+<code>vrg-ci-resolve</code> reports <code>build-enabled</code> (Rust and TypeScript), and checks
+its result against that flag: a build skipped with the flag off passes, and
+a failed build, or one skipped with the flag on, fails the gate. The other
 non-matrixed checks (the security scanners, the version-bump gate,
 <code>docs / docs</code>) keep their fixed, version-free names. A repo whose
 <code>vergil.toml</code> has a <code>[package]</code> section also requires <code>package / evidence</code>, the
@@ -18822,7 +18859,13 @@ chosen, and why.</p>
     installed by a pinned <code>rustup-init</code>, and <code>gcc</code>/<code>libc6-dev</code> from Ubuntu
     as the C linker. The image pins rustup to that release
     (<code>RUSTUP_TOOLCHAIN</code>, with auto-install off), so a repo's
-    <code>rust-toolchain.toml</code> cannot select or download another toolchain.</p>
+    <code>rust-toolchain.toml</code> cannot select or download another toolchain.
+    Includes rustfmt, clippy and llvm-tools from the toolchain, and the
+    validation tools cargo-nextest, cargo-deny and cargo-llvm-cov, each
+    pinned to a version the daily upstream refresh moves. cargo-nextest
+    and cargo-deny come from their prebuilt releases, verified against a
+    per-architecture SHA-256 pinned in source; cargo-llvm-cov is built from
+    crates.io with <code>--locked</code>.</p>
 <p><strong><code>dev-cpp-clang</code></strong>
 :   Base: <code>base</code> (Ubuntu 24.04), with Clang from apt.llvm.org's noble
     packages (<code>llvm-toolchain-noble-&lt;major&gt;</code>). Includes clang,
