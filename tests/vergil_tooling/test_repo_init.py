@@ -14,6 +14,7 @@ import pytest
 import yaml
 
 from vergil_tooling.lib import (
+    changelog,
     dependabot,
     github,
     gitignore,
@@ -2319,10 +2320,15 @@ class TestTypescriptPrettierScope:
         assert {"CLAUDE.md", ".claude/settings.json", ".github/workflows/ops.yml"} <= set(audited)
         assert [rel for rel in audited if rel not in excluded] == []
 
-    def test_lint_prettier_command_excludes_the_managed_files(self) -> None:
+    def test_lint_prettier_command_excludes_the_managed_and_release_files(self) -> None:
+        """The managed files (#4541), then the files the release writes (#4553)."""
         prettier = language_commands("typescript", CheckKind.LINT)[0]
         negated = [arg.removeprefix("!") for arg in prettier if arg.startswith("!")]
-        assert negated == list(repo_config.managed_paths("typescript"))
+        assert negated == [
+            *repo_config.managed_paths("typescript"),
+            *changelog.release_output_paths(),
+        ]
+        assert changelog.release_output_paths() == ("CHANGELOG.md", "releases/*.md")
 
     @pytest.mark.skipif(shutil.which("prettier") is None, reason="prettier is not installed")
     def test_lint_prettier_passes_on_a_new_repo(self, tmp_path: Path) -> None:
@@ -2331,6 +2337,25 @@ class TestTypescriptPrettierScope:
         prettier = language_commands("typescript", CheckKind.LINT)[0]
         result = subprocess.run(prettier, cwd=tmp_path, capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
+
+    @pytest.mark.skipif(shutil.which("prettier") is None, reason="prettier is not installed")
+    def test_lint_prettier_leaves_out_only_the_root_release_files(self, tmp_path: Path) -> None:
+        """``!releases/*.md`` drops every root release note, and nothing else (#4553)."""
+        _scaffold_typescript(tmp_path)
+        unformatted = "\n# Release\n- **item**\ndescription\n"
+        (tmp_path / "CHANGELOG.md").write_text(unformatted, encoding="utf-8")
+        (tmp_path / "releases").mkdir()
+        for name in ("v0.1.0.md", "v0.2.0.md"):
+            (tmp_path / "releases" / name).write_text(unformatted, encoding="utf-8")
+        prettier = language_commands("typescript", CheckKind.LINT)[0]
+        result = subprocess.run(prettier, cwd=tmp_path, capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+        # A note of the same shape elsewhere in the tree is still checked.
+        (tmp_path / "docs" / "releases").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "docs" / "releases" / "v0.1.0.md").write_text(unformatted, encoding="utf-8")
+        result = subprocess.run(prettier, cwd=tmp_path, capture_output=True, text=True, check=False)
+        assert result.returncode != 0
+        assert "docs/releases/v0.1.0.md" in result.stdout + result.stderr
 
 
 class TestStepBranchStructure:
