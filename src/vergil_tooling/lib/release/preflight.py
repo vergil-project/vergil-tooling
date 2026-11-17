@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import shutil
 import subprocess
+import sys
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import config, git, github, version
+from vergil_tooling.lib import cd_runs, config, git, github, progress, version
 from vergil_tooling.lib.managed_worktree import (
     ManagedWorktreeError,
     adopt_worktree,
@@ -26,6 +29,7 @@ from vergil_tooling.lib.update_deps.context import DEPS_LABEL
 from vergil_tooling.lib.update_deps.pr import FIX_TASK_PREFIX
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 _VERSION_OVERRIDE_FIELDS = ("minor", "major")
@@ -96,6 +100,12 @@ def preflight(
     landed through the fix PR) and recorded as cleared (#3286); the bypass
     applies only to what still blocks after that. A resume skips the gate —
     the release it adopts already passed it.
+
+    A fresh start last requires a green develop CD run for the develop head it
+    releases (:func:`check_develop_cd`, spec §6.6 of epic
+    vergil-project/.github#1218). It runs after every other check, since it
+    may wait on a CD run in progress. A resume skips it too: the release it
+    adopts already passed it.
     """
     _check_host_prerequisites()
     repo = check_gh_auth()
@@ -126,6 +136,7 @@ def preflight(
         _check_no_existing_tracking_issue(repo, release_version)
         _check_packages_unpublished(repo, repo_root, release_version)
         deps_gate = _check_pending_deps(repo, allow=allow_pending_deps)
+        _develop_cd_gate(repo)
 
     branch = f"release/{release_version}"
     worktree = _acquire_release_worktree(repo_root, branch, resume=resume)
@@ -776,3 +787,189 @@ def _check_no_existing_tracking_issue(repo: str, ver: str) -> None:
                 f"Close the stale issue or investigate before re-running."
             ),
         )
+
+
+# -- the develop-CD gate (epic vergil-project/.github#1218, spec §6.6) ---------
+
+_DEVELOP = "develop"
+_CD_RUNS_COMMAND = f"gh run list --workflow {cd_runs._CD_WORKFLOW_NAME} --branch {_DEVELOP}"
+# How many supersedes in a row the gate follows before it gives up: each one
+# means a newer run took the place of the one it was judging.
+_MAX_SUPERSEDES = 10
+
+
+def _develop_cd_gate(repo: str) -> None:
+    """Run :func:`check_develop_cd` on the local develop head preflight checked."""
+    check_develop_cd(repo, git.read_output("rev-parse", "HEAD"))
+
+
+def check_develop_cd(repo: str, head_sha: str) -> None:
+    """Refuse a release unless develop's CD run for *head_sha* is green.
+
+    The run is found by its commit, as finalize finds it (:mod:`cd_runs`).
+    A run queued, pending or in progress is waited on, bounded by
+    ``$VRG_CD_TIMEOUT``. A run that failed, timed out, or was cancelled other
+    than by a concurrency supersede raises :class:`ReleaseError` with its URL.
+    A failure only of a docs job (one ``confirm-develop`` defers) prints a
+    loud warning instead. A superseded run is skipped in favour of the run
+    created next on develop, which is judged the same way; with no such run
+    the gate refuses, since nothing green covers *head_sha*.
+
+    Only when no run registers for *head_sha* within the dispatch window does
+    the gate fall back to the latest completed develop CD run whose head is an
+    ancestor of *head_sha*, which must be green. A listing or lookup that
+    fails refuses: an unknown answer never reads as green.
+    """
+    try:
+        timeout = cd_runs.cd_timeout_secs()
+    except ValueError as exc:
+        raise ReleaseError(
+            phase="preflight", command=cd_runs.CD_TIMEOUT_ENV, message=str(exc)
+        ) from exc
+    deadline = time.monotonic() + timeout
+    print(f"Checking develop CD for {head_sha[:12]}...")
+    run = _cd_lookup(
+        lambda: cd_runs.find_run(
+            repo, _DEVELOP, head_sha, dispatch_timeout=cd_runs._CD_DISPATCH_TIMEOUT_SECS
+        )
+    )
+    if run is None:
+        _judge_ancestor_run(repo, head_sha)
+        return
+    for _ in range(_MAX_SUPERSEDES + 1):
+        url = _run_url(repo, run)
+        print(f"  Develop CD run: {url}")
+        state = _watch(run, timeout=max(0.0, deadline - time.monotonic()))
+        if state != "superseded":
+            _judge_run(repo, run, state, timeout=timeout)
+            return
+        newer = _next_run(repo, run)
+        if newer is None:
+            raise ReleaseError(
+                phase="preflight",
+                command=_CD_RUNS_COMMAND,
+                message=(
+                    f"The develop CD run for {head_sha[:12]} was superseded by a concurrency "
+                    "group, and no newer develop CD run took its place, so nothing green "
+                    f"covers this commit. Re-run it (gh run rerun {run.get('databaseId')} "
+                    f"--repo {repo}), then re-run vrg-release. Run: {url}"
+                ),
+            )
+        print(f"  Superseded; following the newer develop CD run {newer.get('databaseId')}.")
+        run = newer
+    raise ReleaseError(
+        phase="preflight",
+        command=_CD_RUNS_COMMAND,
+        message=(
+            f"Develop CD runs were superseded {_MAX_SUPERSEDES + 1} times in a row; "
+            f"refusing to release until one completes. Last run: {_run_url(repo, run)}"
+        ),
+    )
+
+
+def _cd_lookup[T](call: Callable[[], T]) -> T:
+    """Run a CD-run lookup, turning its failure into a preflight refusal."""
+    try:
+        return call()
+    except (cd_runs.CDRunLookupError, subprocess.CalledProcessError, ValueError) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=_CD_RUNS_COMMAND,
+            message="Could not read develop's CD runs; refusing to release without them.",
+            detail=error_text(exc),
+        ) from exc
+
+
+def _run_url(repo: str, run: dict[str, object]) -> str:
+    return str(run.get("url") or f"https://github.com/{repo}/actions/runs/{run.get('databaseId')}")
+
+
+def _watch(run: dict[str, object], *, timeout: float) -> cd_runs.RunState:
+    return _cd_lookup(lambda: cd_runs.watch_run(str(run.get("databaseId")), timeout=timeout))
+
+
+def _next_run(repo: str, run: dict[str, object]) -> dict[str, object] | None:
+    """The develop CD run created right after *run*, or ``None``."""
+    created = str(run.get("createdAt") or "")
+    runs = _cd_lookup(lambda: cd_runs._list_cd_runs(_DEVELOP, repo=repo))
+    newer = [r for r in runs if str(r.get("createdAt") or "") > created]
+    return min(newer, key=lambda r: str(r.get("createdAt"))) if newer else None
+
+
+def _judge_ancestor_run(repo: str, head_sha: str) -> None:
+    """With no run for *head_sha*, require the latest completed ancestor run green."""
+    runs = _cd_lookup(lambda: cd_runs._list_cd_runs(_DEVELOP, repo=repo))
+    for run in runs:
+        sha = str(run.get("headSha") or "")
+        if run.get("status") != "completed" or not sha:
+            continue
+        # Every ancestor of the local head is in the local object store, so a
+        # commit missing from it is not an ancestor.
+        if not git.ref_exists(f"{sha}^{{commit}}"):
+            continue
+        if not _cd_lookup(functools.partial(git.is_ancestor, sha, head_sha)):
+            continue
+        print(
+            f"  No develop CD run registered for {head_sha[:12]}; judging the latest "
+            f"completed run on an ancestor ({sha[:12]}): {_run_url(repo, run)}"
+        )
+        state = _watch(run, timeout=0)
+        _judge_run(repo, run, state, timeout=0)
+        return
+    raise ReleaseError(
+        phase="preflight",
+        command=_CD_RUNS_COMMAND,
+        message=(
+            f"No develop CD run registered for {head_sha[:12]}, and none of the recent "
+            "completed develop CD runs is on an ancestor of it; refusing to release "
+            "without a green develop CD run."
+        ),
+    )
+
+
+def _judge_run(repo: str, run: dict[str, object], state: cd_runs.RunState, *, timeout: int) -> None:
+    """Pass a green run, warn on a docs-only failure, refuse anything else."""
+    run_id = str(run.get("databaseId"))
+    url = _run_url(repo, run)
+    if state == "success":
+        print("  Develop CD is green.")
+        return
+    if state == "failed":
+        data = _cd_lookup(
+            lambda: github.read_json("run", "view", run_id, "--repo", repo, "--json", "jobs")
+        )
+        jobs = data.get("jobs") if isinstance(data, dict) else None
+        if not isinstance(jobs, list):
+            raise ReleaseError(
+                phase="preflight",
+                command=f"gh run view {run_id} --json jobs",
+                message=f"The develop CD run failed and its jobs could not be read. Run: {url}",
+            )
+        blocking, deferred = cd_runs.classify_jobs(jobs)
+        if deferred and not blocking:
+            print(
+                f"WARNING: develop CD run {run_id} failed only in deferred publish "
+                f"job(s): {', '.join(deferred)}. Releasing anyway; fix them before the "
+                f"next release. Run: {url}",
+                file=sys.stderr,
+            )
+            progress.mark_warn(f"develop CD publish deferred: {', '.join(deferred)}")
+            return
+        failed = ", ".join(blocking) or "no failed job identified"
+        message = f"The develop CD run failed ({failed}). Run: {url}"
+    elif state == "timed_out":
+        message = (
+            f"The develop CD run is still not complete after {timeout}s; result unknown. "
+            f"Re-run vrg-release once it finishes, or raise {cd_runs.CD_TIMEOUT_ENV}. Run: {url}"
+        )
+    else:
+        how = {
+            "superseded": "was superseded by a concurrency group, so it published nothing",
+            "cancelled": "was cancelled (not by a concurrency supersede)",
+        }.get(state, f"ended in state {state!r}")
+        message = f"The develop CD run {how}. Run: {url}"
+    raise ReleaseError(
+        phase="preflight",
+        command=f"gh run view {run_id}",
+        message=f"{message}\nRefusing to release from a develop whose CD is not green.",
+    )
