@@ -228,10 +228,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.check == "custom":
             print(_NO_CUSTOM_VALIDATOR)
             return 0
+        # With no language, name the repo root resolved: a run against the
+        # wrong repo (say, from a directory with no .git of its own) then
+        # shows in its own output, not only as a quiet pass (#4594).
+        where = "" if language else f" (repo root: {repo_root})"
         if args.check == "build":
-            print(f"build: no build check for {language or '<not set>'} — nothing to run")
+            print(f"build: no build check for {language or '<not set>'} — nothing to run{where}")
             return 0
-        print(f"No {args.check} commands for language '{language or '<not set>'}'")
+        print(f"No {args.check} commands for language '{language or '<not set>'}'{where}")
         return 0
 
     # The record of this run (for merge-review) describes the commit and tree
