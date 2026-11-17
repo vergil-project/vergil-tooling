@@ -233,7 +233,7 @@ Every step of a batch PR's run adds three fields:
 | `batch_commits` | list of objects | Every commit of `<base_sha>..<head_sha>`, oldest first, each `{"sha", "subject", "issue": "owner/name#N"}`. |
 | `batch_commits_path` | string | Absolute path of `commits-<step>.patch`. |
 
-A commit belongs to the issue its subject's trailing ` (#N)` names, a
+A commit belongs to the issue its subject's trailing `(#N)` names, a
 `fixup!` of an issue's commit included. The builder refuses a merge
 commit, a commit whose subject names no issue of the PR, and an issue of the
 PR with no commit, since that work could not be judged against its own

@@ -1282,7 +1282,7 @@ When its body has more than one `Closes` line it is a batch PR: the
 `batch_issues` (each other issue's ref, body and human comments, read as
 for the `--issue`), `batch_commits` (every commit under review as
 `{"sha", "subject", "issue"}`, its issue the one its subject's trailing
-` (#N)` names) and `batch_commits_path` (`commits-<step>.patch`, each
+`(#N)` names) and `batch_commits_path` (`commits-<step>.patch`, each
 commit with its own patch), and leaves the batch's issues out of
 `epic_open_tasks`. It refuses a merge commit, a commit naming no issue of the
 PR, an issue with no commit, and a check whose batch issues differ from its

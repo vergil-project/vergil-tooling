@@ -1480,6 +1480,71 @@ def test_request_refuses_a_failed_pr_read(
     assert "cannot read PR acme/widget#7: GraphQL errors: [boom]" in err
 
 
+@pytest.mark.parametrize("failing_kind", ["pr", "other-issue"])
+def test_open_pr_reports_a_missing_github_token(
+    repo: Path,
+    capsys: Cap,
+    monkeypatch: pytest.MonkeyPatch,
+    pr_pages: dict[str, Any],
+    failing_kind: str,
+) -> None:
+    _batch_branch(repo)
+    pr_pages["pr"] = _open_pr()
+    fake = github.graphql
+
+    def failing(query: str, **variables: object) -> Any:
+        is_pr = "pullRequest" in query
+        is_other = "parent" in query and variables["number"] == 43
+        if (failing_kind == "pr" and is_pr) or (failing_kind == "other-issue" and is_other):
+            raise MissingGitHubTokenError(4, ("gh", "api", "graphql"), None, "no token")
+        return fake(query, **variables)
+
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", failing)
+    with pytest.raises(SystemExit) as exc:
+        vrg_merge_review_request.main(_argv(repo, "review", "--pr", "7"))
+    assert exc.value.code == 1
+    assert capsys.readouterr().err.startswith("vrg-merge-review-request:")
+
+
+def test_batch_pr_refuses_an_unreadable_other_issue(
+    repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch, pr_pages: dict[str, Any]
+) -> None:
+    _batch_branch(repo)
+    pr_pages["pr"] = _open_pr()
+    fake = github.graphql
+
+    def failing(query: str, **variables: object) -> Any:
+        if "parent" in query and variables["number"] == 43:
+            raise RuntimeError("GraphQL errors: [gone]")
+        return fake(query, **variables)
+
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", failing)
+    code, _out, err = _run(_argv(repo, "review", "--pr", "7"), capsys)
+    assert code == 1
+    assert "cannot read the issue or its epic: GraphQL errors: [gone]" in err
+
+
+@pytest.mark.parametrize(
+    ("output", "message"),
+    [
+        (subprocess.CalledProcessError(128, ["git", "rev-list"]), "cannot read the commits"),
+        ("not one record", "cannot parse the git rev-list line"),
+    ],
+)
+def test_batch_commits_refuses_an_unreadable_history(
+    monkeypatch: pytest.MonkeyPatch, output: object, message: str
+) -> None:
+    def read_output(*args: str) -> str:
+        if isinstance(output, Exception):
+            raise output
+        return str(output)
+
+    monkeypatch.setattr("vergil_tooling.lib.git.read_output", read_output)
+    with pytest.raises(req.RequestError) as exc:
+        open_pr.batch_commits("a" * 40, "b" * 40, [req.parse_task_issue(ISSUE)])
+    assert message in str(exc.value)
+
+
 def _batch_reviewed(repo: Path, capsys: Cap, pr_pages: dict[str, Any]) -> tuple[str, str]:
     """A batch PR's review with one defect, and its fix: ``(review head, result path)``."""
     _batch_branch(repo)
