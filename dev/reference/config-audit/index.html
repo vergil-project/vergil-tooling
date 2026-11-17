@@ -19154,6 +19154,15 @@ version-agnostic CI model (epic
   evidence ruleset now owns; every other classic setting (review requirements,
   push restrictions) is <strong>reported, not touched</strong>. The blast radius is minimal
   and intentional protections are preserved.</li>
+<li><strong>Classic up-to-date flag on <code>develop</code>.</strong> The audit always reads
+  <code>develop</code>'s classic protection, and a <code>required_status_checks.strict</code> of
+  <code>true</code> there is drift, reported as <code>branch_protection.develop.strict</code>.
+  Otherwise a repo with classic protection would still require branches to be
+  up to date on <code>develop</code>, which the <code>CI gates (develop)</code> ruleset no longer
+  does. <code>update</code> and <code>apply</code> set <code>strict</code> to <code>false</code> and change no other
+  classic setting. <code>main</code>'s classic <code>strict</code> is never read as drift and never
+  written
+  (<a href="https://github.com/vergil-project/.github/issues/1218">epic vergil-project/.github#1218</a>).</li>
 </ul>
 <h2 id="github-checks-undeclared-ruleset-parameters">GitHub checks — undeclared ruleset parameters<a class="headerlink" href="#github-checks-undeclared-ruleset-parameters" title="Permanent link">&para;</a></h2>
 <p>GitHub sometimes adds a new ruleset rule parameter and sets a default for
