@@ -435,9 +435,7 @@ def _unchanged(text: str) -> str:
     return text
 
 
-def _run_gh(
-    argv: list[str], owner: str | None, *, clean: Callable[[str], str] = _unchanged
-) -> int:
+def _run_gh(argv: list[str], owner: str | None, *, clean: Callable[[str], str] = _unchanged) -> int:
     """Execute ``gh`` with *owner*'s installation token (cwd detection when None).
 
     *clean* is applied to gh's output before it is replayed.
