@@ -72,24 +72,26 @@ class PostStep:
     run: Callable[[], None]
 
 
-def finalize_post_checks_step(cwd: Path) -> PostStep:
+def finalize_post_checks_step(cwd: Path, *, wait_cd: bool = False) -> PostStep:
     """The shared end-of-batch post-step: one ``vrg-finalize-pr --cleanup-only``.
 
     Used by every batch that finalizes PRs (``vrg-finalize-pr`` and
     ``vrg-submit-pr --finalize``, including the relay cascade) so the failure
-    label is defined once (issue #3316).
+    label is defined once (issue #3316). With *wait_cd* the step passes
+    ``--wait-cd``, so it blocks on develop's CD run instead of reporting it.
     """
+    cmd = ("vrg-finalize-pr", "--cleanup-only", *(("--wait-cd",) if wait_cd else ()))
 
     def _run() -> None:
         result = subprocess.run(  # noqa: S603
-            ("vrg-finalize-pr", "--cleanup-only"),  # noqa: S607
+            cmd,
             cwd=cwd,
             check=False,
         )
         if result.returncode != 0:
             msg = (
                 "end-of-batch post-checks (validation + CD check) exited "
-                f"{result.returncode} — the vrg-finalize-pr --cleanup-only "
+                f"{result.returncode} — the {' '.join(cmd)} "
                 "stage summary above names which stage failed"
             )
             raise BatchAbortError(msg)

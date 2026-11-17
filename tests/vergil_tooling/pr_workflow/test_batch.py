@@ -234,6 +234,14 @@ def test_finalize_post_checks_step_runs_cleanup_only_in_cwd() -> None:
     )
 
 
+def test_finalize_post_checks_step_passes_wait_cd() -> None:
+    with patch(_MOD + ".subprocess.run", return_value=MagicMock(returncode=0)) as run:
+        finalize_post_checks_step(Path("/repo"), wait_cd=True).run()
+    run.assert_called_once_with(
+        ("vrg-finalize-pr", "--cleanup-only", "--wait-cd"), cwd=Path("/repo"), check=False
+    )
+
+
 def test_finalize_post_checks_failure_names_both_stages_not_just_validation() -> None:
     """``--cleanup-only`` runs validation *and* the CD check, and its exit code
     cannot say which failed — so the label must never blame validation alone

@@ -33,16 +33,18 @@ plain renderer. ``vrg-release`` passes ``--output-format plain``
 explicitly because two live displays cannot nest (issue #1470).
 
 After cleanup succeeds, validation runs in the dev container, then
-finalize blocks on the CD workflow run its merge triggered — identified
-by the merge commit SHA, not "latest run on branch" — and fails if that
-run does not succeed (issue #2753; supersedes the non-blocking #303
-check). The watch is bounded by ``$VRG_CD_TIMEOUT`` (default 5400s); a run
-still in progress at the deadline is reported as "result unknown", never as a
-failed run, and still fails the stage (issue #3316). A run cancelled because a
-concurrency group gave its place to a higher-priority run is reported as
-"superseded", a loud non-fatal warning, never as a failure; any other
-cancellation still fails (issue #3834). ``--no-wait-cd`` is the
-conscious opt-out from blocking.
+finalize reports the CD workflow run for the synced head — identified by
+the merge commit SHA, not "latest run on branch" (issue #2753) — as
+``CD: <state> <url>``, without waiting on it (spec §6.5 of epic
+vergil-project/.github#1218). ``--wait-cd`` blocks on that run instead and
+fails if it does not succeed, judging its failed jobs as the release's
+develop-CD gate does (a docs-only failure is a warning). The watch is bounded
+by ``$VRG_CD_TIMEOUT`` (default 5400s); a run still in progress at the
+deadline is reported as "result unknown", never as a failed run, and still
+fails the stage (issue #3316). A run cancelled because a concurrency group
+gave its place to a higher-priority run is reported as "superseded", a loud
+non-fatal warning, never as a failure; any other cancellation still fails
+(issue #3834). ``--no-wait-cd`` was removed and is refused by name.
 
 ``--release`` chains straight into ``vrg-release`` after the finalize
 pipeline completes **successfully** (issue #1634) — the fast-turnaround
@@ -86,6 +88,7 @@ from vergil_tooling.lib.cd_runs import (
     _poll_for_run,
     _supersede_group,
     cd_timeout_secs,
+    classify_jobs,
     wait_completed,
 )
 from vergil_tooling.lib.checkout_lock import checkout_lock
@@ -112,9 +115,22 @@ _ETERNAL_BY_MODEL: dict[str, list[str]] = {
 }
 
 
+NO_WAIT_CD_REMOVED = (
+    "vrg-finalize-pr: --no-wait-cd was removed; not waiting on CD is now the "
+    "default (use --wait-cd to wait)"
+)
+
+
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    # --no-wait-cd was removed when reporting CD became the default (epic
+    # vergil-project/.github#1218, spec §6.10): a caller still passing it is
+    # told so, before any side effect, rather than having it silently accepted.
+    if args.no_wait_cd:
+        print(NO_WAIT_CD_REMOVED, file=sys.stderr)
+        return 1
 
     # --install extends the cascade one step past --release; normalize once so
     # the release-chain logic below sees release on (issue #1643).
@@ -151,12 +167,22 @@ def main(argv: list[str] | None = None) -> int:
             print("vrg-finalize-pr --all: no open PRs found in worktrees.")
             return 0
         return _run_finalize_batch(
-            prs, root=root, release=args.release, install=args.install, assume_yes=args.yes
+            prs,
+            root=root,
+            release=args.release,
+            install=args.install,
+            assume_yes=args.yes,
+            wait_cd=args.wait_cd,
         )
     if args.pr is not None and "," in args.pr:
         prs = _parse_pr_list(args.pr)
         return _run_finalize_batch(
-            prs, root=root, release=args.release, install=args.install, assume_yes=args.yes
+            prs,
+            root=root,
+            release=args.release,
+            install=args.install,
+            assume_yes=args.yes,
+            wait_cd=args.wait_cd,
         )
 
     # --cleanup-only is the scriptable release path: no inference, no
@@ -178,8 +204,8 @@ def main(argv: list[str] | None = None) -> int:
         # --cleanup-only syncs and cleans up the main clone with no merge of its
         # own, so it holds the checkout lock (spec §6.4) from cleanup through
         # validation. Taken before the pipeline starts, so a wait for another
-        # run is reported on real stdout; cd-check lets go of it before it
-        # waits on CD.
+        # run is reported on real stdout; cd-check lets go of it before it looks
+        # up (or waits on) CD.
         if args.cleanup_only:
             ctx.lock_stack.enter_context(
                 checkout_lock(root, purpose="vrg-finalize-pr --cleanup-only")
@@ -296,13 +322,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "once at the end of the batch (issue #1673).",
     )
     parser.add_argument(
-        "--no-wait-cd",
+        "--wait-cd",
         action="store_true",
-        help="Do not block on the CD workflow run the merge triggers. By "
-        "default finalize waits for that run to complete and fails if it does "
-        "not succeed (issue #2753); this is the conscious opt-out for the rare "
-        "case where blocking on the post-merge publish is not wanted.",
+        help="Block on the CD workflow run for the synced head and fail if it "
+        "does not succeed. By default finalize reports that run's link and "
+        "state without waiting.",
     )
+    # Removed: not waiting on CD is now the default. Kept hidden so main can
+    # refuse it by name, rather than argparse rejecting it as unknown.
+    parser.add_argument("--no-wait-cd", action="store_true", help=argparse.SUPPRESS)
     add_yes_argument(parser)
     progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
@@ -336,14 +364,15 @@ def _run_finalize_batch(
     release: bool,
     install: bool,
     assume_yes: bool,
+    wait_cd: bool = False,
 ) -> int:
     """Finalize *prs* serially, fail-fast, then validate + release once.
 
     Each item shells out to ``vrg-finalize-pr <pr> --skip-post-checks`` (merge
     + cleanup, no validation). On full success, one end-of-batch
-    ``vrg-finalize-pr --cleanup-only`` runs validation + the CD check, then a
-    single ``vrg-release`` if requested (issue #1673), built by
-    ``_release_cmd``.
+    ``vrg-finalize-pr --cleanup-only`` runs validation + the CD check (with
+    ``--wait-cd`` when *wait_cd*), then a single ``vrg-release`` if requested
+    (issue #1673), built by ``_release_cmd``.
     """
 
     def _finalize_item(pr: str) -> None:
@@ -362,7 +391,7 @@ def _run_finalize_batch(
         if result.returncode != 0:
             raise batch.BatchAbortError(f"{shlex.join(cmd)} exited {result.returncode}")
 
-    post_steps = [batch.finalize_post_checks_step(root)]
+    post_steps = [batch.finalize_post_checks_step(root, wait_cd=wait_cd)]
     if release:
         post_steps.append(batch.PostStep("release", _release))
 
@@ -399,7 +428,7 @@ class FinalizeContext:
     merged_branch: str | None = None
     # SHA of the commit this merge produced on the target branch (mergeCommit
     # oid). The CD workflow the merge triggers runs on this SHA, so the cd-check
-    # stage waits on exactly that run rather than "latest run on branch"
+    # stage checks exactly that run rather than "latest run on branch"
     # (issue #2753). None until _stage_merge records it (and on dry-run).
     merge_commit_sha: str | None = None
     deleted: list[str] = field(default_factory=list)
@@ -870,6 +899,83 @@ def _wait_for_cd_run(
     )
 
 
+def _classify_failed_jobs(run_id: object) -> tuple[list[str], list[str]]:
+    """Split failed CD run *run_id*'s jobs into ``(blocking, deferred)`` failures.
+
+    The split is :func:`classify_jobs`'s, the one the release's develop-CD gate
+    uses. A ``gh`` failure (``subprocess.CalledProcessError``) or a payload of
+    the wrong shape (``ValueError``) propagates.
+    """
+    data = github.read_json("run", "view", str(run_id), "--json", "jobs")
+    jobs = data.get("jobs") if isinstance(data, dict) else None
+    if not isinstance(jobs, list):
+        msg = f"gh run view {run_id} returned no jobs list"
+        raise ValueError(msg)
+    return classify_jobs(jobs)
+
+
+def _report_cd_run(
+    target_branch: str,
+    head_sha: str,
+    *,
+    dispatch_timeout: float = _CD_DISPATCH_TIMEOUT_SECS,
+    poll_interval: float = _CD_POLL_INTERVAL_SECS,
+) -> None:
+    """Print the CD run for *head_sha* and its state now, without waiting on it.
+
+    The default CD check (spec §6.5 of epic vergil-project/.github#1218). The
+    run is found by its commit, polling up to *dispatch_timeout* for it to
+    register, and reported as one line, ``CD: <state> <url>``, the state being
+    queued, in progress, succeeded, failed, cancelled or superseded. No run
+    registered in time is ``CD: no CD run for this head``. A state that is not
+    green, and a lookup that fails, marks the stage ⚠ and never fails it: the
+    release's develop-CD gate is what refuses a develop whose CD is not green.
+    """
+    try:
+        run = _poll_for_run(
+            target_branch,
+            head_sha,
+            repo=None,
+            dispatch_timeout=dispatch_timeout,
+            poll_interval=poll_interval,
+        )
+    except CDRunLookupError as exc:
+        print(f"  CD: unknown (the CD runs could not be listed: {exc})", file=sys.stderr)
+        progress.mark_warn(f"CD state of {head_sha[:7]} unknown: the CD runs could not be listed")
+        return
+    if run is None:
+        print("  CD: no CD run for this head")
+        return
+
+    url = str(run.get("url") or "")
+    status = str(run.get("status") or "")
+    conclusion = str(run.get("conclusion") or "")
+    note = ""
+    if status != "completed":
+        # Every status short of in_progress (queued, pending, waiting,
+        # requested) reads as queued.
+        state = "in progress" if status == "in_progress" else "queued"
+    elif conclusion in _CD_PASSING_CONCLUSIONS:
+        state = "succeeded"
+    elif conclusion == "cancelled":
+        try:
+            group = _supersede_group(run.get("databaseId"), url)
+        except (subprocess.CalledProcessError, ValueError) as exc:
+            group = None
+            note = (
+                "finalize could not tell whether a concurrency supersede "
+                f"cancelled it: {error_text(exc)}"
+            )
+        state = "cancelled" if group is None else "superseded"
+    else:
+        state = "failed"
+    print(f"  CD: {state} {url}".rstrip())
+    if note:
+        print(f"  {note}", file=sys.stderr)
+    if state in ("failed", "cancelled", "superseded"):
+        progress.mark_warn(f"CD run {run.get('databaseId')} {state} for {head_sha[:7]}")
+
+
 def _stage_provenance(ctx: FinalizeContext) -> None:
     """Pre-merge provenance check (issue #1289)."""
     args = ctx.args
@@ -1144,7 +1250,7 @@ def _stage_merge(ctx: FinalizeContext) -> None:
         except pr_merge.MergeAbortError as exc:
             raise FinalizeError(str(exc)) from exc
     ctx.merged_branch = branch
-    # Record the merge commit SHA so the cd-check stage waits on exactly the
+    # Record the merge commit SHA so the cd-check stage checks exactly the
     # CD run this merge triggered (issue #2753). Skipped on dry-run, where no
     # merge commit exists.
     if not args.dry_run:
@@ -1548,14 +1654,19 @@ def _stage_validation(ctx: FinalizeContext) -> None:
 
 
 def _stage_cd_check(ctx: FinalizeContext) -> None:
-    """Block on the CD workflow run this merge triggered (issue #2753).
+    """Report the CD workflow run for the synced head; with ``--wait-cd``, block on it.
 
     The base-branch push a merge produces dispatches CD asynchronously
     (docker build/publish, docs, release). Rather than glance at the latest
     run — which may be a stale or unrelated one — this identifies the run by
-    the merge commit SHA, waits for it to complete, and fails finalize if it
-    concludes non-success so a post-merge publish failure is caught here
-    rather than discovered later. ``--no-wait-cd`` is the conscious opt-out.
+    the merge commit SHA (issue #2753).
+
+    By default it prints the run's link and its state at that moment and does
+    not wait (spec §6.5 of epic vergil-project/.github#1218): the release's
+    develop-CD gate is what refuses to cut from a develop whose CD is not
+    green. With ``--wait-cd`` it waits for the run to complete and fails
+    finalize if it concludes non-success, judging the failed jobs with
+    :func:`classify_jobs` as the release gate does.
 
     It first lets go of the checkout lock, if the entry point took it: the lock
     covers local checkout work only, never a wait on CD (spec §6.4).
@@ -1563,10 +1674,8 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
     ctx.lock_stack.close()
     args = ctx.args
     if args.dry_run:
-        print("  [dry-run] wait on the CD workflow run triggered by the merge")
-        return
-    if args.no_wait_cd:
-        print("  Skipping CD wait (--no-wait-cd).")
+        verb = "wait on" if args.wait_cd else "report"
+        print(f"  [dry-run] {verb} the CD workflow run for the synced head")
         return
 
     # In the PR path the merge stage recorded the exact merge commit. In the
@@ -1582,12 +1691,16 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
     if not head_sha:
         # Could not resolve the SHA to associate a CD run with — cleanup has
         # already succeeded, so warn loudly rather than fail finalize over the
-        # post-merge wait, and do not silently pretend CD passed.
+        # CD check, and do not silently pretend CD passed.
         print(
             f"  WARNING: could not resolve the tip of {args.target_branch} to "
-            "wait on its CD run — skipping the post-merge CD wait.",
+            "find its CD run — skipping the CD check.",
             file=sys.stderr,
         )
+        return
+
+    if not args.wait_cd:
+        _report_cd_run(args.target_branch, head_sha)
         return
 
     problem = _wait_for_cd_run(args.target_branch, head_sha)
@@ -1628,18 +1741,45 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
             "a CD failure.\n"
             f"  Re-check the run with: gh run view {problem.run_id}  (or open the "
             "URL above).\n"
-            "  Once it has succeeded, re-run: vrg-finalize-pr --cleanup-only\n"
+            "  Once it has succeeded, re-run: vrg-finalize-pr --cleanup-only --wait-cd\n"
             f"  If this CD is legitimately slower, raise the watch limit with "
             f"{CD_TIMEOUT_ENV}=<seconds> (currently {secs}s).",
             file=sys.stderr,
         )
         msg = f"CD run still in progress after {secs}s; result unknown"
         raise FinalizeError(msg)
+    blocking: list[str] = []
+    if problem.conclusion != "cancelled":
+        # Judge the failed jobs as the release's develop-CD gate does: a
+        # failure only of a deferred (docs) job is a loud warning, not a stop.
+        try:
+            blocking, deferred = _classify_failed_jobs(problem.run_id)
+        except (subprocess.CalledProcessError, ValueError) as exc:
+            # The run failed either way; say why its jobs could not be judged.
+            print(
+                f"  Could not read the jobs of CD run {problem.run_id} to classify "
+                f"the failure: {error_text(exc)}",
+                file=sys.stderr,
+            )
+        else:
+            if deferred and not blocking:
+                print(
+                    f"WARNING: CD run {problem.run_id} failed only in deferred publish "
+                    f"job(s): {', '.join(deferred)}.",
+                    file=sys.stderr,
+                )
+                print(f"  {problem.describe()}", file=sys.stderr)
+                progress.mark_warn(
+                    f"CD run {problem.run_id} failed only in deferred job(s): {', '.join(deferred)}"
+                )
+                return
     print(
         "ERROR: the CD workflow run triggered by this merge did not succeed.",
         file=sys.stderr,
     )
     print(f"  {problem.describe()}", file=sys.stderr)
+    if blocking:
+        print(f"  Failed job(s): {', '.join(blocking)}", file=sys.stderr)
     print(
         "  The post-merge publish did not complete — investigate the run above.",
         file=sys.stderr,
@@ -1655,9 +1795,9 @@ def build_stages(*, include_pr: bool, include_post_checks: bool = True) -> tuple
     is False (the batch path defers them to one end-of-batch run, issue #1673).
     provision warms the target-branch image (fail_fast, before it is used);
     validation is fail_defer so a validation failure still lets cd-check run and
-    surface the CD status. cd-check is fail_fast: a post-merge CD run that did
-    not succeed is a hard finalize failure (issue #2753), and it is the last
-    stage so nothing is lost by stopping there.
+    surface the CD status. cd-check is fail_fast: with ``--wait-cd``, a
+    post-merge CD run that did not succeed is a hard finalize failure (issue
+    #2753), and it is the last stage so nothing is lost by stopping there.
     """
     stages: list[Stage] = []
     if include_pr:
