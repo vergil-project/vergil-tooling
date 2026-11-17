@@ -66,6 +66,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import yaml
+
 from vergil_tooling.lib import (
     branch_names,
     config,
@@ -81,6 +83,7 @@ from vergil_tooling.lib.cd_runs import (
     _CD_DISPATCH_TIMEOUT_SECS,
     _CD_PASSING_CONCLUSIONS,
     _CD_POLL_INTERVAL_SECS,
+    _CD_WORKFLOW_NAME,
     CD_TIMEOUT_ENV,
     CDRunLookupError,
     CDRunProblem,
@@ -812,10 +815,40 @@ def _infer_pr(root: Path, target_branch: str, *, assume_yes: bool = False) -> st
     return pr["url"]
 
 
+NO_CD_WORKFLOW_LINE = "  CD: no CD workflow in this repo"
+
+
+def _declares_cd_workflow(root: Path) -> bool | None:
+    """Whether a workflow under *root*'s ``.github/workflows`` is named ``CD``.
+
+    ``True`` when a ``*.yml`` or ``*.yaml`` there declares ``name: CD``, the
+    workflow ``gh run list --workflow CD`` looks up; ``False`` when none does
+    (no such directory included). ``None`` when a workflow file cannot be read
+    or parsed and none read declares it, so the answer is not known: the
+    caller then reports the failed lookup as it is rather than reading it as
+    a repo with no CD.
+    """
+    workflows = root / ".github" / "workflows"
+    if not workflows.is_dir():
+        return False
+    files = sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")])
+    unknown = False
+    for path in files:
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            unknown = True
+            continue
+        if isinstance(data, dict) and data.get("name") == _CD_WORKFLOW_NAME:
+            return True
+    return None if unknown else False
+
+
 def _wait_for_cd_run(
     target_branch: str,
     head_sha: str,
     *,
+    root: Path,
     dispatch_timeout: float = _CD_DISPATCH_TIMEOUT_SECS,
     watch_timeout: float | None = None,
     poll_interval: float = _CD_POLL_INTERVAL_SECS,
@@ -837,7 +870,10 @@ def _wait_for_cd_run(
     any other cancel, or one that cannot be checked, is a
     :class:`CDRunProblem` (issue #3834). Returns ``None`` — do not fail
     finalize — when:
-      - the CD workflow does not exist / cannot be queried,
+      - the CD runs cannot be listed: a repo with no CD workflow
+        (:func:`_declares_cd_workflow` on *root*) is reported as
+        ``CD: no CD workflow in this repo``, any other failure as
+        ``CD: unknown`` and marked ⚠ (:func:`_report_cd_lookup_failure`),
       - no run was dispatched for this SHA within ``dispatch_timeout``
         (a change CD legitimately skips, e.g. path filters), or
       - the run concluded success / skipped / neutral.
@@ -853,9 +889,10 @@ def _wait_for_cd_run(
             dispatch_timeout=dispatch_timeout,
             poll_interval=poll_interval,
         )
-    except CDRunLookupError:
-        # No CD workflow in this repo, or it cannot be queried — nothing
-        # to block on. Preserves graceful behavior for repos without CD.
+    except CDRunLookupError as exc:
+        # Nothing to block on: a repo with no CD workflow passes quietly, as
+        # it always has; any other failed lookup is said, not hidden.
+        _report_cd_lookup_failure(exc, head_sha, root=root)
         return None
     if run is None:
         print(
@@ -914,10 +951,25 @@ def _classify_failed_jobs(run_id: object) -> tuple[list[str], list[str]]:
     return classify_jobs(jobs)
 
 
+def _report_cd_lookup_failure(exc: CDRunLookupError, head_sha: str, *, root: Path) -> None:
+    """Report a CD runs listing that failed.
+
+    A repo whose workflows declare no CD (:func:`_declares_cd_workflow`) has
+    no CD to report: one plain line, no warning. Any other failure is
+    ``CD: unknown`` with the reason, and marks the stage ⚠.
+    """
+    if _declares_cd_workflow(root) is False:
+        print(NO_CD_WORKFLOW_LINE)
+        return
+    print(f"  CD: unknown (the CD runs could not be listed: {exc})", file=sys.stderr)
+    progress.mark_warn(f"CD state of {head_sha[:7]} unknown: the CD runs could not be listed")
+
+
 def _report_cd_run(
     target_branch: str,
     head_sha: str,
     *,
+    root: Path,
     dispatch_timeout: float = _CD_DISPATCH_TIMEOUT_SECS,
     poll_interval: float = _CD_POLL_INTERVAL_SECS,
 ) -> None:
@@ -927,9 +979,11 @@ def _report_cd_run(
     run is found by its commit, polling up to *dispatch_timeout* for it to
     register, and reported as one line, ``CD: <state> <url>``, the state being
     queued, in progress, succeeded, failed, cancelled or superseded. No run
-    registered in time is ``CD: no CD run for this head``. A state that is not
-    green, and a lookup that fails, marks the stage ⚠ and never fails it: the
-    release's develop-CD gate is what refuses a develop whose CD is not green.
+    registered in time is ``CD: no CD run for this head``, and a repo with no
+    CD workflow (*root* declares none) is ``CD: no CD workflow in this repo``.
+    A state that is not green, and any other lookup that fails, marks the
+    stage ⚠ and never fails it: the release's develop-CD gate is what
+    refuses a develop whose CD is not green.
     """
     try:
         run = _poll_for_run(
@@ -940,8 +994,7 @@ def _report_cd_run(
             poll_interval=poll_interval,
         )
     except CDRunLookupError as exc:
-        print(f"  CD: unknown (the CD runs could not be listed: {exc})", file=sys.stderr)
-        progress.mark_warn(f"CD state of {head_sha[:7]} unknown: the CD runs could not be listed")
+        _report_cd_lookup_failure(exc, head_sha, root=root)
         return
     if run is None:
         print("  CD: no CD run for this head")
@@ -1700,10 +1753,10 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
         return
 
     if not args.wait_cd:
-        _report_cd_run(args.target_branch, head_sha)
+        _report_cd_run(args.target_branch, head_sha, root=ctx.root)
         return
 
-    problem = _wait_for_cd_run(args.target_branch, head_sha)
+    problem = _wait_for_cd_run(args.target_branch, head_sha, root=ctx.root)
     if problem is None:
         return
     if isinstance(problem, CDRunSuperseded):

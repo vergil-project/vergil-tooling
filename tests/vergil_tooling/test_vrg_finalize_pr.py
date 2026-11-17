@@ -18,6 +18,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     _classify_failed_jobs,
     _clean_branch_images,
     _conflict_resolution_msg,
+    _declares_cd_workflow,
     _delete_branch_and_worktree,
     _dirt_is_untracked_only,
     _parse_pr_list,
@@ -489,6 +490,21 @@ def test_main_failed_rebuild_fails_finalize_and_still_reports(
 
 _HEAD_SHA = "abc123def456"
 
+# A root with no .github/workflows: it declares no CD workflow.
+_NO_WORKFLOWS_ROOT = Path("/nonexistent/vergil-finalize-test-root")
+
+
+def _write_workflow(root: Path, filename: str, text: str) -> None:
+    workflows = root / ".github" / "workflows"
+    workflows.mkdir(parents=True, exist_ok=True)
+    (workflows / filename).write_text(text, encoding="utf-8")
+
+
+def _cd_root(root: Path) -> Path:
+    """*root* with a workflow that declares ``name: CD``."""
+    _write_workflow(root, "cd.yml", "name: CD\non: push\njobs: {}\n")
+    return root
+
 
 def _cd_list_resp(runs: list[dict]) -> CompletedProcess:
     """A ``gh run list`` response carrying *runs*."""
@@ -524,7 +540,7 @@ def test_wait_returns_none_when_gh_list_fails() -> None:
         _MOD + ".subprocess.run",
         return_value=CompletedProcess(args=(), returncode=1, stdout="", stderr="oops"),
     ):
-        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
+        assert _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT) is None
 
 
 def test_wait_returns_none_on_malformed_list_json() -> None:
@@ -532,7 +548,7 @@ def test_wait_returns_none_on_malformed_list_json() -> None:
         _MOD + ".subprocess.run",
         return_value=CompletedProcess(args=(), returncode=0, stdout="not json"),
     ):
-        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
+        assert _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT) is None
 
 
 def test_wait_returns_none_when_no_run_dispatched(
@@ -544,7 +560,10 @@ def test_wait_returns_none_when_no_run_dispatched(
         patch(_MOD + ".time.sleep"),
         patch(_MOD + ".subprocess.run", return_value=_cd_list_resp([])),
     ):
-        assert _wait_for_cd_run("develop", _HEAD_SHA, dispatch_timeout=0.0) is None
+        assert (
+            _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT, dispatch_timeout=0.0)
+            is None
+        )
     assert "No CD workflow run registered" in capsys.readouterr().err
 
 
@@ -563,7 +582,7 @@ def test_wait_matches_run_by_sha_not_latest() -> None:
             ],
         ),
     ):
-        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
+        assert _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT) is None
 
 
 def test_wait_fails_on_non_success_conclusion() -> None:
@@ -581,7 +600,7 @@ def test_wait_fails_on_non_success_conclusion() -> None:
             ],
         ),
     ):
-        problem = _wait_for_cd_run("develop", _HEAD_SHA)
+        problem = _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT)
     assert isinstance(problem, CDRunProblem)
     assert problem.timed_out is False
     assert problem.conclusion == "failure"
@@ -604,7 +623,7 @@ def test_wait_treats_skipped_as_pass() -> None:
             ],
         ),
     ):
-        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
+        assert _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT) is None
 
 
 def test_wait_polls_until_run_registers() -> None:
@@ -619,7 +638,7 @@ def test_wait_polls_until_run_registers() -> None:
         patch(_MOD + ".time.sleep"),
         patch(_MOD + ".subprocess.run", side_effect=calls) as run,
     ):
-        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
+        assert _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT) is None
     assert run.call_count == 3
 
 
@@ -636,7 +655,7 @@ def test_wait_polls_run_until_completed() -> None:
             ],
         ),
     ):
-        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
+        assert _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT) is None
 
 
 def test_wait_times_out_watching_run() -> None:
@@ -651,7 +670,7 @@ def test_wait_times_out_watching_run() -> None:
             ],
         ),
     ):
-        problem = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
+        problem = _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT, watch_timeout=0.0)
     assert isinstance(problem, CDRunProblem)
     assert problem.timed_out is True
     assert problem.conclusion is None
@@ -676,7 +695,7 @@ def test_wait_tolerates_view_errors_until_timeout() -> None:
             ],
         ),
     ):
-        problem = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
+        problem = _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT, watch_timeout=0.0)
     assert isinstance(problem, CDRunProblem)
     assert problem.timed_out is True
 
@@ -693,7 +712,7 @@ def test_wait_tolerates_malformed_view_json() -> None:
             ],
         ),
     ):
-        problem = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
+        problem = _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT, watch_timeout=0.0)
     assert isinstance(problem, CDRunProblem)
     assert problem.timed_out is True
 
@@ -715,7 +734,7 @@ def test_wait_handles_run_without_url() -> None:
             ],
         ),
     ):
-        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
+        assert _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT) is None
 
 
 # -- cancelled CD runs: concurrency supersede vs. any other cancel (issue #3834) --
@@ -862,7 +881,7 @@ def _wait_with_conclusion(conclusion: str, *, group: object = None) -> object:
         ),
         lookup as supersede,
     ):
-        result = _wait_for_cd_run("develop", _HEAD_SHA)
+        result = _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT)
     if conclusion == "cancelled":
         supersede.assert_called_once_with(12345, _RUN_URL)
     else:
@@ -1626,7 +1645,7 @@ def test_cleanup_only_takes_lock(tmp_path: Path) -> None:
         patch(_MOD + ".git.read_output", return_value="tip1234sha\n"),
         patch(
             _MOD + "._report_cd_run",
-            side_effect=lambda *_a: held.__setitem__("cd-check", _lock_held(tmp_path)),
+            side_effect=lambda *_a, **_k: held.__setitem__("cd-check", _lock_held(tmp_path)),
         ),
     ):
         rc = main(["--cleanup-only"])
@@ -2975,7 +2994,7 @@ def test_cd_reported_not_awaited_by_default(tmp_path: Path) -> None:
         patch(_MOD + "._wait_for_cd_run") as wait,
     ):
         _stage_cd_check(ctx)  # must not raise
-    report.assert_called_once_with("develop", _HEAD_SHA)
+    report.assert_called_once_with("develop", _HEAD_SHA, root=tmp_path)
     wait.assert_not_called()
 
 
@@ -2988,7 +3007,7 @@ def test_wait_cd_blocks(tmp_path: Path) -> None:
         patch(_MOD + "._wait_for_cd_run", return_value=None) as wait,
     ):
         _stage_cd_check(ctx)  # must not raise
-    wait.assert_called_once_with("develop", _HEAD_SHA)
+    wait.assert_called_once_with("develop", _HEAD_SHA, root=tmp_path)
     report.assert_not_called()
 
 
@@ -3167,7 +3186,7 @@ def test_wait_uses_cd_timeout_override(monkeypatch: pytest.MonkeyPatch) -> None:
             ],
         ),
     ):
-        problem = _wait_for_cd_run("develop", _HEAD_SHA)
+        problem = _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT)
     assert isinstance(problem, CDRunProblem)
     assert problem.timed_out is True
     assert problem.waited_secs == 1
@@ -3179,7 +3198,7 @@ def test_wait_invalid_cd_timeout_fails_before_waiting(monkeypatch: pytest.Monkey
         patch(_MOD + ".subprocess.run") as run,
         pytest.raises(ValueError, match="VRG_CD_TIMEOUT"),
     ):
-        _wait_for_cd_run("develop", _HEAD_SHA)
+        _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT)
     run.assert_not_called()
 
 
@@ -3222,7 +3241,7 @@ def _report(runs: list[dict], *, supersede: object = None) -> tuple[MagicMock, M
         patch(_MOD + "._supersede_group", side_effect=group),
         patch(_MOD + ".progress.mark_warn") as mark_warn,
     ):
-        _report_cd_run("develop", _HEAD_SHA, dispatch_timeout=0.0)
+        _report_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT, dispatch_timeout=0.0)
     return run, mark_warn
 
 
@@ -3285,20 +3304,105 @@ def test_no_cd_run_reported(capsys: pytest.CaptureFixture[str]) -> None:
     mark_warn.assert_not_called()
 
 
+def _failed_listing() -> CompletedProcess:
+    return CompletedProcess(args=(), returncode=1, stdout="", stderr="oops")
+
+
 def test_cd_report_lookup_failure_is_unknown_not_hidden(
-    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # The repo declares a CD workflow, so a failed listing is a real failure.
     with (
-        patch(
-            _MOD + ".subprocess.run",
-            return_value=CompletedProcess(args=(), returncode=1, stdout="", stderr="oops"),
-        ),
+        patch(_MOD + ".subprocess.run", return_value=_failed_listing()),
         patch(_MOD + ".progress.mark_warn") as mark_warn,
     ):
-        _report_cd_run("develop", _HEAD_SHA, dispatch_timeout=0.0)
-    err = capsys.readouterr().err
-    assert "CD: unknown (the CD runs could not be listed:" in err
-    assert "oops" in err
+        _report_cd_run("develop", _HEAD_SHA, root=_cd_root(tmp_path), dispatch_timeout=0.0)
+    captured = capsys.readouterr()
+    assert "CD: unknown (the CD runs could not be listed:" in captured.err
+    assert "oops" in captured.err
+    assert "no CD workflow" not in captured.out
+    mark_warn.assert_called_once()
+
+
+def test_cd_report_no_cd_workflow_passes_quietly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A repo whose workflows declare no CD (vergil-project/.github, say):
+    # one plain line, no warning, as before the default became a report.
+    _write_workflow(tmp_path, "ci.yml", "name: CI\non: push\njobs: {}\n")
+    with (
+        patch(_MOD + ".subprocess.run", return_value=_failed_listing()),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        _report_cd_run("develop", _HEAD_SHA, root=tmp_path, dispatch_timeout=0.0)
+    captured = capsys.readouterr()
+    assert captured.out == "  CD: no CD workflow in this repo\n"
+    assert captured.err == ""
+    mark_warn.assert_not_called()
+
+
+def test_wait_cd_no_cd_workflow_reports_and_does_not_fail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _stage_ctx(["--wait-cd"], root=tmp_path)
+    ctx.merge_commit_sha = _HEAD_SHA
+    with (
+        patch(_MOD + ".subprocess.run", return_value=_failed_listing()),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        _stage_cd_check(ctx)  # must not raise
+    captured = capsys.readouterr()
+    assert captured.out == "  CD: no CD workflow in this repo\n"
+    assert captured.err == ""
+    mark_warn.assert_not_called()
+
+
+def test_wait_cd_lookup_failure_with_cd_workflow_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        patch(_MOD + ".subprocess.run", return_value=_failed_listing()),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        assert _wait_for_cd_run("develop", _HEAD_SHA, root=_cd_root(tmp_path)) is None
+    assert "CD: unknown (the CD runs could not be listed:" in capsys.readouterr().err
+    mark_warn.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        ({}, False),
+        ({"ci.yml": "name: CI\n"}, False),
+        ({"ci.yml": "name: CI\n", "release.yaml": "name: CD\non: push\n"}, True),
+        ({"cd.yml": "name: 'CD'\n"}, True),
+        ({"notes.txt": "name: CD\n"}, False),
+        ({"broken.yml": "name: [unclosed\n"}, None),
+        ({"broken.yml": "name: [unclosed\n", "cd.yml": "name: CD\n"}, True),
+    ],
+)
+def test_declares_cd_workflow(tmp_path: Path, files: dict[str, str], expected: bool | None) -> None:
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    for name, text in files.items():
+        _write_workflow(tmp_path, name, text)
+    assert _declares_cd_workflow(tmp_path) is expected
+
+
+def test_declares_cd_workflow_without_workflows_dir(tmp_path: Path) -> None:
+    assert _declares_cd_workflow(tmp_path) is False
+
+
+def test_cd_report_unparsable_workflow_keeps_the_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A workflow that cannot be parsed might be the CD one: not known, so warn.
+    _write_workflow(tmp_path, "broken.yml", "name: [unclosed\n")
+    with (
+        patch(_MOD + ".subprocess.run", return_value=_failed_listing()),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        _report_cd_run("develop", _HEAD_SHA, root=tmp_path, dispatch_timeout=0.0)
+    assert "CD: unknown" in capsys.readouterr().err
     mark_warn.assert_called_once()
 
 
@@ -3312,7 +3416,7 @@ def test_stage_cd_check_falls_back_to_target_tip(tmp_path: Path) -> None:
     ):
         _stage_cd_check(ctx)
     read.assert_called_once_with("rev-parse", "develop")
-    wait.assert_called_once_with("develop", "tip1234sha")
+    wait.assert_called_once_with("develop", "tip1234sha", root=tmp_path)
 
 
 def test_stage_cd_check_warns_when_tip_unresolvable(
