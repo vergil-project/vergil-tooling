@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.320] - 2026-11-17
+
+### Bug fixes
+
+- keep Vergil-managed files out of LINT's Prettier check (#4544)
+- name both rules in the whole-file diff refusal of a version and hash line rule (#4545)
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- name the unknown size label and bare vrg-queue in the sizing docs (#4537)
+- bring the CI, evidence and Rust standards pages up to date with the Rust parity epic (#4538)
+
+### Features
+
+- let a line rule mark hash lines that change only with their block's version (#4540)
+
 ## [2.1.319] - 2026-11-16
 
 ### Bug fixes
