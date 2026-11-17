@@ -13,6 +13,7 @@ import pytest
 from vergil_tooling.bin import vrg_merge_review_request
 from vergil_tooling.lib import github
 from vergil_tooling.lib.github import GitHubAPIError, MissingGitHubTokenError
+from vergil_tooling.lib.merge_review import open_pr
 from vergil_tooling.lib.merge_review import request as req
 from vergil_tooling.lib.merge_review.result import parse_result
 from vergil_tooling.lib.progress import StageResult
@@ -157,29 +158,55 @@ def task_pages() -> dict[str, Any]:
 
 
 @pytest.fixture
+def pr_pages() -> dict[str, Any]:
+    """The PR query's response, under ``pr``, and the variables of every PR query."""
+    return {"pr": None, "calls": []}
+
+
+@pytest.fixture
+def other_comments() -> dict[int, list[Any]]:
+    """Comment pages of issues other than the task, by issue number, served in turn."""
+    return {}
+
+
+@pytest.fixture
 def comment_pages(
     monkeypatch: pytest.MonkeyPatch,
     graphql_calls: list[dict[str, object]],
     task_calls: list[tuple[str, dict[str, object]]],
     task_pages: dict[str, Any],
+    pr_pages: dict[str, Any],
+    other_comments: dict[int, list[Any]],
 ) -> list[Any]:
     """The issue's comment pages, served in turn; an empty page once they run out.
 
-    The fake also serves the task and sub-issues queries from *task_pages*,
-    and configures the trusted authors with one human login, ``HUMAN``.
+    The fake also serves the task and sub-issues queries from *task_pages*
+    (an issue numbered in its ``bodies`` gets that body), the PR query from
+    *pr_pages*, and another issue's comments from *other_comments*, and
+    configures the trusted authors with one human login, ``HUMAN``.
     """
     pages: list[Any] = []
     served = 0
 
     def graphql(query: str, **variables: object) -> Any:
         nonlocal served
+        if "pullRequest" in query:
+            pr_pages["calls"].append(variables)
+            return pr_pages["pr"]
         if "createdAt" in query:
             graphql_calls.append(variables)
+            number = variables["number"]
+            if isinstance(number, int) and number in other_comments:
+                queue = other_comments[number]
+                return queue.pop(0) if queue else _page([])
             return pages.pop(0) if pages else _page([])
         kind = "subs" if "subIssues" in query else "task"
         assert kind == "subs" or "parent" in query
         task_calls.append((kind, variables))
         if kind == "task":
+            bodies = task_pages.get("bodies", {})
+            if variables["number"] in bodies:
+                return _task(body=bodies[variables["number"]])
             return task_pages["task"]
         # The pages repeat, so every build in a test reads the same sub-issues.
         page = task_pages["subs"][served % len(task_pages["subs"])]
@@ -1253,3 +1280,318 @@ def test_file_names() -> None:
     assert req.request_file("check-2") == "request-check-2.json"
     assert req.diff_file("review") == "diff-review.patch"
     assert req.fix_file("check") == "fix-check.patch"
+    assert req.commits_file("check") == "commits-check.patch"
+
+
+# -- a fix to an open PR -------------------------------------------------------------
+
+BATCH_BODY = "Summary.\n\nCloses #42\nCloses #43\n"
+
+
+def _open_pr(body: str = BATCH_BODY, state: str = "OPEN", head: str = "feature") -> dict[str, Any]:
+    return {"repository": {"pullRequest": {"state": state, "headRefName": head, "body": body}}}
+
+
+def _batch_branch(repo: Path) -> tuple[str, str]:
+    """Rebuild ``feature`` as a two-issue batch, ``(#42)`` then ``(#43)``, validated."""
+    _git(repo, "reset", "-q", "--hard", "develop")
+    _write(repo, "src/x.py", "x = 2\n")
+    first = _commit(repo, "the task's change (#42)")
+    _write(repo, "src/y.py", "y = 1\n")
+    second = _commit(repo, "the other issue's change (#43)")
+    _record(repo)
+    return first, second
+
+
+def test_batch_pr_request_carries_every_issues_scope(
+    repo: Path,
+    capsys: Cap,
+    pr_pages: dict[str, Any],
+    task_pages: dict[str, Any],
+    other_comments: dict[int, list[Any]],
+) -> None:
+    first, second = _batch_branch(repo)
+    pr_pages["pr"] = _open_pr()
+    task_pages["bodies"] = {43: "Do the other thing.\n"}
+    other_comments[43] = [
+        _page(
+            [
+                _node(1, body="Only half of it."),
+                _node(2, login=AGENT, body="Agent note."),
+                _node(3, body="Edited.", edited=True),
+            ]
+        )
+    ]
+    request = _built(_argv(repo, "review", "--pr", "7"), capsys)
+    directory = _merge_review_dir(repo)
+    assert pr_pages["calls"] == [{"owner": "acme", "name": "widget", "number": 7}]
+    assert request["issue_body"] == "Do the thing.\n"
+    assert request["batch_issues"] == [
+        {
+            "issue": "acme/widget#43",
+            "issue_body": "Do the other thing.\n",
+            "issue_comments": [
+                {"author": HUMAN, "created_at": _CREATED, "body": "Only half of it."}
+            ],
+            "issue_comments_excluded_edited": 1,
+        }
+    ]
+    assert request["batch_commits"] == [
+        {"sha": first, "subject": "the task's change (#42)", "issue": ISSUE},
+        {"sha": second, "subject": "the other issue's change (#43)", "issue": "acme/widget#43"},
+    ]
+    assert request["batch_commits_path"] == str(directory / "commits-review.patch")
+    # The batch's other issue is in the request's scope, not an open task of the epic.
+    assert request["epic_open_tasks"] == []
+    patch = (directory / "commits-review.patch").read_text()
+    assert patch.index(f"commit {first}") < patch.index(f"commit {second}")
+    assert "Subject: the task's change (#42)" in patch
+    assert "+y = 1" in patch.split(f"commit {second}")[1]
+    assert "+y = 1" not in patch.split(f"commit {second}")[0]
+
+
+def test_batch_pr_request_maps_a_fixup_to_its_issue(
+    repo: Path, capsys: Cap, pr_pages: dict[str, Any]
+) -> None:
+    _batch_branch(repo)
+    _write(repo, "src/x.py", "x = 3\n")
+    fixup = _commit(repo, "fixup! the task's change (#42)")
+    _record(repo)
+    pr_pages["pr"] = _open_pr()
+    request = _built(_argv(repo, "review", "--pr", "https://github.com/Acme/Widget/pull/7"), capsys)
+    assert request["batch_commits"][-1] == {
+        "sha": fixup,
+        "subject": "fixup! the task's change (#42)",
+        "issue": ISSUE,
+    }
+
+
+@pytest.mark.parametrize("body", ["Ref #42\n", "Closes #42\n", "Closes acme/widget#42\n"])
+def test_single_issue_pr_request_is_unchanged(
+    repo: Path, capsys: Cap, pr_pages: dict[str, Any], body: str
+) -> None:
+    pr_pages["pr"] = _open_pr(body=body)
+    plain = _built(_argv(repo), capsys)
+    with_pr = _built(_argv(repo, "review", "--pr", "7"), capsys)
+    assert set(with_pr) == set(plain)
+    assert with_pr["epic_open_tasks"] == plain["epic_open_tasks"]
+    assert not (_merge_review_dir(repo) / "commits-review.patch").exists()
+
+
+@pytest.mark.parametrize(
+    ("pr", "message"),
+    [
+        (_open_pr(state="MERGED"), "PR acme/widget#7 is merged, not open"),
+        (_open_pr(head="other"), "is the head of branch 'other', not of the current branch"),
+        (_open_pr(body="Ref #41\n"), "PR acme/widget#7 does not link acme/widget#42"),
+        (_open_pr(body="No linkage.\n"), "PR acme/widget#7 does not link acme/widget#42"),
+        (
+            _open_pr(body="Closes #43\nCloses #44\n"),
+            "batch PR acme/widget#7 does not close acme/widget#42",
+        ),
+        (
+            _open_pr(body="Closes #42\nCloses acme/other#43\n"),
+            "closes acme/other#43, an issue outside acme/widget",
+        ),
+        (_open_pr(body="Closes #42\nCloses #42\n"), "lists Closes #42 more than once"),
+        ({"repository": {"pullRequest": None}}, "cannot read PR acme/widget#7: no such pull"),
+        ({"repository": None}, "cannot read PR acme/widget#7: no such pull"),
+        (
+            {"repository": {"pullRequest": {"state": "OPEN", "headRefName": "feature"}}},
+            "it has no state, head branch or body",
+        ),
+    ],
+)
+def test_open_pr_refusals(
+    repo: Path, capsys: Cap, pr_pages: dict[str, Any], pr: Any, message: str
+) -> None:
+    pr_pages["pr"] = pr
+    code, out, err = _run(_argv(repo, "review", "--pr", "7"), capsys)
+    assert code == 1
+    assert out == ""
+    assert message in err
+    assert not (_merge_review_dir(repo) / "request-review.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("pr", "message"),
+    [
+        ("seven", "--pr must be a PR number or"),
+        ("0", "--pr must be a PR number or"),
+        ("https://github.com/acme/widget/issues/7", "--pr must be a PR number or"),
+        ("https://github.com/acme/other/pull/7", "--pr names a PR in acme/other"),
+    ],
+)
+def test_pr_argument_refusals(repo: Path, capsys: Cap, pr: str, message: str) -> None:
+    code, _out, err = _run(_argv(repo, "review", "--pr", pr), capsys)
+    assert code == 1
+    assert message in err
+
+
+@pytest.mark.parametrize(
+    ("subjects", "message"),
+    [
+        (["the task (#42)", "no ref"], "names no issue of the batch PR"),
+        (["the task (#42)", "another issue (#44)"], "names no issue of the batch PR"),
+        (["the task (#42)"], "has no commit for acme/widget#43"),
+    ],
+)
+def test_batch_pr_refuses_commits_it_cannot_map(
+    repo: Path, capsys: Cap, pr_pages: dict[str, Any], subjects: list[str], message: str
+) -> None:
+    _git(repo, "reset", "-q", "--hard", "develop")
+    for n, subject in enumerate(subjects):
+        _write(repo, f"src/f{n}.py", f"f = {n}\n")
+        _commit(repo, subject)
+    _record(repo)
+    pr_pages["pr"] = _open_pr()
+    code, _out, err = _run(_argv(repo, "review", "--pr", "7"), capsys)
+    assert code == 1
+    assert message in err
+
+
+def test_batch_pr_refuses_a_merge_commit(repo: Path, capsys: Cap, pr_pages: dict[str, Any]) -> None:
+    _batch_branch(repo)
+    _git(repo, "checkout", "-q", "-b", "side", "develop")
+    _write(repo, "src/z.py", "z = 1\n")
+    _commit(repo, "side (#43)")
+    _git(repo, "checkout", "-q", "feature")
+    _git(repo, "merge", "-q", "--no-ff", "-m", "merge (#42)", "side")
+    _record(repo)
+    pr_pages["pr"] = _open_pr()
+    code, _out, err = _run(_argv(repo, "review", "--pr", "7"), capsys)
+    assert code == 1
+    assert "is a merge commit" in err
+
+
+def test_request_refuses_a_failed_pr_read(
+    repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = github.graphql
+
+    def failing(query: str, **variables: object) -> Any:
+        if "pullRequest" in query:
+            raise RuntimeError("GraphQL errors: [boom]")
+        return fake(query, **variables)
+
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", failing)
+    code, _out, err = _run(_argv(repo, "review", "--pr", "7"), capsys)
+    assert code == 1
+    assert "cannot read PR acme/widget#7: GraphQL errors: [boom]" in err
+
+
+@pytest.mark.parametrize("failing_kind", ["pr", "other-issue"])
+def test_open_pr_reports_a_missing_github_token(
+    repo: Path,
+    capsys: Cap,
+    monkeypatch: pytest.MonkeyPatch,
+    pr_pages: dict[str, Any],
+    failing_kind: str,
+) -> None:
+    _batch_branch(repo)
+    pr_pages["pr"] = _open_pr()
+    fake = github.graphql
+
+    def failing(query: str, **variables: object) -> Any:
+        is_pr = "pullRequest" in query
+        is_other = "parent" in query and variables["number"] == 43
+        if (failing_kind == "pr" and is_pr) or (failing_kind == "other-issue" and is_other):
+            raise MissingGitHubTokenError(4, ("gh", "api", "graphql"), None, "no token")
+        return fake(query, **variables)
+
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", failing)
+    with pytest.raises(SystemExit) as exc:
+        vrg_merge_review_request.main(_argv(repo, "review", "--pr", "7"))
+    assert exc.value.code == 1
+    assert capsys.readouterr().err.startswith("vrg-merge-review-request:")
+
+
+def test_batch_pr_refuses_an_unreadable_other_issue(
+    repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch, pr_pages: dict[str, Any]
+) -> None:
+    _batch_branch(repo)
+    pr_pages["pr"] = _open_pr()
+    fake = github.graphql
+
+    def failing(query: str, **variables: object) -> Any:
+        if "parent" in query and variables["number"] == 43:
+            raise RuntimeError("GraphQL errors: [gone]")
+        return fake(query, **variables)
+
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", failing)
+    code, _out, err = _run(_argv(repo, "review", "--pr", "7"), capsys)
+    assert code == 1
+    assert "cannot read the issue or its epic: GraphQL errors: [gone]" in err
+
+
+@pytest.mark.parametrize(
+    ("output", "message"),
+    [
+        (subprocess.CalledProcessError(128, ["git", "rev-list"]), "cannot read the commits"),
+        ("not one record", "cannot parse the git rev-list line"),
+    ],
+)
+def test_batch_commits_refuses_an_unreadable_history(
+    monkeypatch: pytest.MonkeyPatch, output: object, message: str
+) -> None:
+    def read_output(*args: str) -> str:
+        if isinstance(output, Exception):
+            raise output
+        return str(output)
+
+    monkeypatch.setattr("vergil_tooling.lib.git.read_output", read_output)
+    with pytest.raises(req.RequestError) as exc:
+        open_pr.batch_commits("a" * 40, "b" * 40, [req.parse_task_issue(ISSUE)])
+    assert message in str(exc.value)
+
+
+def _batch_reviewed(repo: Path, capsys: Cap, pr_pages: dict[str, Any]) -> tuple[str, str]:
+    """A batch PR's review with one defect, and its fix: ``(review head, result path)``."""
+    _batch_branch(repo)
+    pr_pages["pr"] = _open_pr()
+    review = _built(_argv(repo, "review", "--pr", "7"), capsys)
+    result = _store_result(repo, "review", [_finding("R1")])
+    _write(repo, "src/x.py", "x = 3\n")
+    _commit(repo, "fixup! the task's change (#42)")
+    _record(repo)
+    return review["head_sha"], result
+
+
+def test_batch_pr_check_carries_the_batch(
+    repo: Path, capsys: Cap, pr_pages: dict[str, Any]
+) -> None:
+    review_head, result = _batch_reviewed(repo, capsys, pr_pages)
+    argv = [*_check_argv(repo, review_head, [result], fix=("R1",)), "--pr", "7"]
+    request = _built(argv, capsys)
+    assert [entry["issue"] for entry in request["batch_issues"]] == ["acme/widget#43"]
+    assert [c["issue"] for c in request["batch_commits"]] == [ISSUE, "acme/widget#43", ISSUE]
+    assert request["batch_commits_path"].endswith("commits-check.patch")
+
+
+def test_batch_pr_check_refuses_a_dropped_batch(
+    repo: Path, capsys: Cap, pr_pages: dict[str, Any]
+) -> None:
+    review_head, result = _batch_reviewed(repo, capsys, pr_pages)
+    code, _out, err = _run(_check_argv(repo, review_head, [result], fix=("R1",)), capsys)
+    assert code == 1
+    assert "the review request carried the batch issues acme/widget#43, this check none" in err
+
+
+@pytest.mark.parametrize("content", [None, "{", '{"batch_issues": [1]}', '{"batch_issues": {}}'])
+def test_check_same_batch_refuses_an_unreadable_stored_request(
+    tmp_path: Path, content: str | None
+) -> None:
+    if content is not None:
+        (tmp_path / "request-review.json").write_text(content)
+    with pytest.raises(req.RequestError) as exc:
+        open_pr.check_same_batch(tmp_path, "check", [])
+    if content is None or content == "{":
+        assert "cannot read the review request" in str(exc.value)
+    else:
+        assert "has a malformed batch_issues" in str(exc.value)
+
+
+def test_ensure_dir_refuses_pr(capsys: Cap) -> None:
+    with pytest.raises(SystemExit) as exc:
+        vrg_merge_review_request.main(["--issue", ISSUE, "--ensure-dir", "--pr", "7"])
+    assert exc.value.code == 2

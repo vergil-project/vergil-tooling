@@ -654,7 +654,34 @@ def diff_patch(base: str, head: str) -> bytes:
     git would read as an option.
     """
     _check_revs(base, head)
-    args = ("diff", "--no-ext-diff", "--no-textconv", "--no-color", base, head)
+    return _patch_bytes("diff", "--no-ext-diff", "--no-textconv", "--no-color", base, head)
+
+
+def log_patch(base: str, head: str) -> bytes:
+    """Return each commit of ``base..head``, oldest first, with its own patch.
+
+    Every commit opens with a ``commit <full SHA>`` line and a
+    ``Subject: <subject>`` line, then its diff against its parent, so a reader
+    that cannot run git can tell which change each commit made. The diff
+    options are :func:`diff_patch`'s. Raises ``CalledProcessError`` when git
+    fails, and ``ValueError`` for a revision git would read as an option.
+    """
+    _check_revs(base, head)
+    return _patch_bytes(
+        "log",
+        "--reverse",
+        "--patch",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--format=commit %H%nSubject: %s%n",
+        f"{base}..{head}",
+        "--",
+    )
+
+
+def _patch_bytes(*args: str) -> bytes:
+    """Run a git command that prints a patch; return its stdout exactly as printed."""
     result = subprocess.run(  # noqa: S603
         ("git", *args),  # noqa: S607
         check=False,
