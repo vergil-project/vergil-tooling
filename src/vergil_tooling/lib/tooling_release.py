@@ -104,8 +104,9 @@ def resolve_tooling_tag(
     An exact release or a dev ref is returned unchanged, without a lookup. A
     line is resolved to the newest release on it that the index of every
     Ubuntu suite (:func:`deb_suites`) lists for *arch* (``amd64``, ``arm64``).
-    *fetch* (default: an HTTPS GET) reads one index. Raises :class:`ToolingResolveError` when an index cannot be read, or no
-    release on the line is listed in all of them.
+    *fetch* (default: an HTTPS GET) reads one index. Raises
+    :class:`ToolingResolveError` when an index cannot be read, or no release
+    on the line is listed in all of them.
     """
     if vm_packages.classify_ref(tag) != "line":
         return tag

@@ -456,6 +456,20 @@ def test_status_current_names_the_resolved_release(
     assert "Status:       current" in out
 
 
+def test_status_for_the_self_repo_names_no_release(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], _cached_tooling: MagicMock
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "vergil-tooling"\n')
+    _cached_tooling.return_value = None
+    h = _go_hash(tmp_path, "")
+    assert _status(tmp_path, (f"ghcr.io/r/dev-go:1.26--feature-42--my-repo.{h}", h)) == 0
+    out = capsys.readouterr().out
+    assert "Tooling:      none installed (self-repo uses its local dev version)" in out
+    assert "Cached with" not in out
+    assert "Status:       current" in out
+
+
 def test_status_stale_when_the_pinned_line_has_a_newer_release(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], _cached_tooling: MagicMock
 ) -> None:

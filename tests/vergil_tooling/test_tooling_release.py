@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import urllib.error
+from email.message import Message
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from tests.vergil_tooling.conftest import fixture_package_index
 from vergil_tooling.lib.tooling_release import (
     ToolingResolveError,
+    _http_fetch,
     deb_suites,
     index_url,
     releases_on_line,
@@ -94,7 +97,7 @@ def test_an_unreadable_index_is_an_error_naming_it() -> None:
 
 def test_a_404_is_an_error() -> None:
     def missing(url: str) -> bytes:
-        raise urllib.error.HTTPError(url, 404, "Not Found", None, None)  # type: ignore[arg-type]
+        raise urllib.error.HTTPError(url, 404, "Not Found", Message(), None)
 
     with pytest.raises(ToolingResolveError, match="404"):
         resolve_tooling_tag("v2.1", arch="arm64", fetch=missing)
@@ -117,3 +120,13 @@ def test_an_exact_release_or_dev_ref_needs_no_lookup(tag: str) -> None:
 def test_the_default_fetch_is_the_hermetic_index() -> None:
     # conftest replaces the HTTPS GET; the real one is never reached in tests.
     assert resolve_tooling_tag("v2.0", arch="amd64") == "v2.0.7"
+
+
+def test_http_fetch_reads_the_url_with_a_timeout() -> None:
+    # _http_fetch was imported before conftest replaced the module attribute.
+    resp = MagicMock()
+    resp.__enter__.return_value.read.return_value = b"index"
+    url = index_url("noble", "amd64")
+    with patch("urllib.request.urlopen", return_value=resp) as urlopen:
+        assert _http_fetch(url) == b"index"
+    urlopen.assert_called_once_with(url, timeout=30)
