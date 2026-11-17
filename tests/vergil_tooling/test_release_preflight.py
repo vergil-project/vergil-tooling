@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib.cd_runs import CDRunLookupError
+from vergil_tooling.lib.managed_worktree import ManagedWorktreeError
 from vergil_tooling.lib.release import preflight as preflight_module
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.preflight import (
@@ -666,6 +667,89 @@ def test_acquire_release_worktree_wraps_worktree_error() -> None:
         pytest.raises(ReleaseError, match="path already exists"),
     ):
         _acquire_release_worktree(Path("/tmp/repo"), "release/2.1.0", resume=False)  # noqa: S108
+
+
+_ELSEWHERE = ManagedWorktreeError(
+    "Could not attach the worktree /tmp/repo/.worktrees/release-2.1.0 to branch "
+    "'release/2.1.0'. If the branch is checked out in another worktree (see `git "
+    "worktree list`), remove that worktree or switch it to another branch, then re-run.",
+    detail="stderr: fatal: 'release/2.1.0' is already used by worktree at '/tmp/other'",
+)
+
+
+def test_acquire_release_worktree_names_a_branch_checked_out_elsewhere_on_resume() -> None:
+    # #4442: the resume path's adopt fails because the branch is checked out
+    # in another worktree; the human gets a ReleaseError, not a traceback.
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
+
+    with (
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".adopt_worktree", side_effect=_ELSEWHERE),
+        pytest.raises(ReleaseError, match="checked out in another worktree") as info,
+    ):
+        _acquire_release_worktree(Path("/tmp/repo"), "release/2.1.0", resume=True)  # noqa: S108
+    assert info.value.phase == "preflight"
+    assert info.value.detail == _ELSEWHERE.detail
+
+
+def test_acquire_release_worktree_names_a_branch_checked_out_elsewhere_on_fresh_run(
+    tmp_path: Path,
+) -> None:
+    # #4442: the fresh path adopting an unrecorded branch hits the same refusal.
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
+
+    leftover = _Leftover()
+    with (
+        patch(_MOD + ".git.ref_exists", side_effect=lambda ref: ref == "release/2.1.0"),
+        patch(_MOD + ".git.read_output", side_effect=leftover.read_output),
+        patch(_MOD + ".git.commits_ahead", return_value=0),
+        patch(_MOD + ".git.run", side_effect=leftover.run),
+        patch(_MOD + ".adopt_worktree", side_effect=_ELSEWHERE),
+        pytest.raises(ReleaseError, match="checked out in another worktree") as info,
+    ):
+        _acquire_release_worktree(tmp_path, "release/2.1.0", resume=False)
+    assert info.value.detail == _ELSEWHERE.detail
+    assert leftover.runs == []
+
+
+@pytest.mark.parametrize(
+    ("resume", "failing", "rerun"),
+    [
+        (True, ("branch", "release/2.1.0", "origin/release/2.1.0"), "vrg-release --resume"),
+        (False, ("merge", "--ff-only", "develop"), "vrg-release`"),
+    ],
+)
+def test_acquire_release_worktree_wraps_a_raw_git_failure(
+    tmp_path: Path, resume: bool, failing: tuple[str, ...], rerun: str
+) -> None:
+    # #4442: a git call outside the managed-worktree helpers (the resume
+    # path's local branch, the fresh path's fast-forward) fails: the
+    # CalledProcessError is translated, with the branch, worktree and recovery.
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
+
+    def _run(*args: str) -> None:
+        raise subprocess.CalledProcessError(128, ("git", *args), stderr="fatal: boom")
+
+    wt = tmp_path / ".worktrees" / "release-2.1.0"
+    leftover = _Leftover()
+    with (
+        patch(
+            _MOD + ".git.ref_exists",
+            side_effect=lambda ref: ref.startswith("origin/") if resume else ref == "release/2.1.0",
+        ),
+        patch(_MOD + ".git.read_output", side_effect=leftover.read_output),
+        patch(_MOD + ".git.commits_ahead", return_value=0),
+        patch(_MOD + ".git.run", side_effect=_run),
+        patch(_MOD + ".adopt_worktree", return_value=wt),
+        pytest.raises(ReleaseError, match="release branch 'release/2.1.0'") as info,
+    ):
+        _acquire_release_worktree(tmp_path, "release/2.1.0", resume=resume)
+    message = str(info.value)
+    assert str(wt) in message
+    assert rerun in message
+    assert info.value.command.endswith(" ".join(failing))
+    assert info.value.detail is not None
+    assert "stderr: fatal: boom" in info.value.detail
 
 
 def test_run_audit_resolves_repo_and_audits(tmp_path: Path) -> None:

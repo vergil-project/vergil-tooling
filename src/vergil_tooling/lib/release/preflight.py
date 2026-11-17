@@ -21,7 +21,7 @@ from vergil_tooling.lib.managed_worktree import (
 )
 from vergil_tooling.lib.package import PackageError
 from vergil_tooling.lib.package.index import published
-from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import find_existing_tracking_issue
 from vergil_tooling.lib.self_repo import is_self_repo
@@ -425,6 +425,10 @@ def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> 
     that recorded nothing, which it adopts (#4367, :func:`_adopt_unrecorded_branch`);
     a resume adopts it — creating the local branch from origin if needed, then
     attaching a worktree (#1612).
+
+    Every git failure on the way, on the fresh path as on the resume path,
+    surfaces as a :class:`ReleaseError` naming the branch, the worktree and
+    the recovery step, never as a raw ``CalledProcessError`` (#4442).
     """
     exists = git.ref_exists(branch) or git.ref_exists(f"origin/{branch}")
     try:
@@ -440,6 +444,19 @@ def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> 
             phase="preflight",
             command=f"git worktree add {branch}",
             message=str(exc),
+            detail=exc.detail,
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        rerun = "`vrg-release --resume`" if resume else "`vrg-release`"
+        raise ReleaseError(
+            phase="preflight",
+            command=command_text(exc.cmd),
+            message=(
+                f"A git command failed while setting up release branch '{branch}' "
+                f"in its worktree {worktree_path(repo_root, branch)}. Fix the cause "
+                f"git reports below, then re-run {rerun}."
+            ),
+            detail=error_text(exc),
         ) from exc
 
 
