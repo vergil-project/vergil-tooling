@@ -20,6 +20,8 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     _declares_cd_workflow,
     _delete_branch_and_worktree,
     _dirt_is_untracked_only,
+    _head_of,
+    _merged_branches,
     _parse_pr_list,
     _prune_orphan_branch_images,
     _prune_orphan_relay_refs,
@@ -29,6 +31,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     _stage_close_refs,
     _stage_provision,
     _stage_validation,
+    _synced_commits,
     _wait_for_cd_run,
     _worktree_is_dirty,
     build_stages,
@@ -3641,6 +3644,81 @@ def test_no_merge_call_anywhere() -> None:
     assert "wait_and_merge" not in source
     assert "enable_auto_merge" not in source
     assert not hasattr(fin, "pr_merge")
+
+
+def test_empty_pr_list_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(_MOD + ".finalize_watch.watch") as watch:
+        assert main([" , "]) == 1
+    watch.assert_not_called()
+    assert "vrg-finalize-pr: no PR in ' , '" in capsys.readouterr().err
+
+
+def test_dry_run_skip_post_checks_settles_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[str] = []
+    with _settle_env(tmp_path, calls), patch(_MOD + ".finalize_watch.watch") as watch:
+        assert main([_PR_A, "--skip-post-checks", "--dry-run"]) == 0
+    watch.assert_not_called()
+    assert calls == []
+    assert "[dry-run] --skip-post-checks: no settle phase" in capsys.readouterr().out
+
+
+def test_interrupted_settle_keeps_its_exit_code(tmp_path: Path) -> None:
+    with (
+        _settle_env(tmp_path, []),
+        patch(_MOD + "._stage_cleanup", side_effect=KeyboardInterrupt),
+        patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged),
+    ):
+        assert main([_PR_A]) == 130
+    assert not _lock_held(tmp_path)
+
+
+def test_synced_commits_that_cannot_be_listed_say_why() -> None:
+    ctx = _stage_ctx([])
+    ctx.synced_from, ctx.synced_to = "aaa", "bbb"
+    err = subprocess.CalledProcessError(128, ("git", "log"), stderr="bad revision")
+    with patch(_MOD + ".git.read_output", side_effect=err):
+        (line,) = _synced_commits(ctx)
+    assert line.startswith("(could not list them: ")
+    assert "bad revision" in line
+
+
+def test_synced_commits_unknown_without_a_range() -> None:
+    assert _synced_commits(_stage_ctx([])) == ["(unknown: the sync did not record its range)"]
+
+
+def test_head_of_reads_the_branch() -> None:
+    with patch(_MOD + ".git.read_output", return_value="abc123\n") as read:
+        assert _head_of("develop") == "abc123"
+    read.assert_called_once_with("rev-parse", "develop")
+
+
+def test_head_of_failure_fails_the_stage() -> None:
+    err = subprocess.CalledProcessError(128, ("git", "rev-parse"), stderr="unknown revision")
+    with (
+        patch(_MOD + ".git.read_output", side_effect=err),
+        pytest.raises(
+            FinalizeError, match=r"(?s)could not read the head of develop:.*unknown revision"
+        ),
+    ):
+        _head_of("develop")
+
+
+def test_merged_branch_read_failure_fails_the_stage() -> None:
+    ctx = _stage_ctx([_PR_A])
+    err = subprocess.CalledProcessError(1, ("gh", "pr", "view"), stderr="HTTP 502")
+    with (
+        patch(_MOD + ".github.head_ref", side_effect=err),
+        pytest.raises(FinalizeError, match=rf"(?s)head branch of merged PR {_PR_A}:.*HTTP 502"),
+    ):
+        _merged_branches(ctx)
+
+
+def test_merged_branches_reads_each_merged_pr() -> None:
+    ctx = _stage_ctx([f"{_PR_A},{_PR_B}"])
+    with patch(_MOD + ".github.head_ref", side_effect=["feature/1-a\n", "feature/2-b"]):
+        assert _merged_branches(ctx) == ["feature/1-a", "feature/2-b"]
 
 
 # -- refuse a release cascade on a repo that is not released (issue #4175) --
