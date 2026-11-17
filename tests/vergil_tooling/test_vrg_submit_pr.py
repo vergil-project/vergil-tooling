@@ -1634,7 +1634,74 @@ def test_submit_batch_rebases_submits_then_finalizes_each_and_releases_once() ->
     assert ("vrg-finalize-pr", "https://x/pull/1", "--skip-post-checks") in finalize_calls
     assert ("vrg-finalize-pr", "https://x/pull/2", "--skip-post-checks") in finalize_calls
     assert ("vrg-finalize-pr", "--cleanup-only") in finalize_calls
-    assert ("vrg-release",) in finalize_calls
+    assert ("vrg-release", "--no-install") in finalize_calls
+
+
+def _batch_release_calls(*, install: bool) -> list[tuple[str, ...]]:
+    """Run a one-worktree release cascade; return the vrg-release commands run."""
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(tuple(cmd))
+        return MagicMock(returncode=0)
+
+    with (
+        patch(_MOD + ".worktrees.rebase_onto"),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one", return_value="https://x/pull/1"),
+        patch(_MOD + ".subprocess.run", side_effect=fake_run),
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [_batch_wt("issue-1-a")],
+            base="develop",
+            finalize=True,
+            release=True,
+            install=install,
+            assume_yes=True,
+        )
+    assert rc == 0
+    return [cmd for cmd in calls if cmd[0] == "vrg-release"]
+
+
+def test_release_cascade_passes_no_install() -> None:
+    """--release without --install skips the install that vrg-release now
+    runs by default (#1184)."""
+    assert _batch_release_calls(install=False) == [("vrg-release", "--no-install")]
+
+
+def test_install_cascade_runs_plain_release() -> None:
+    """--install runs plain vrg-release, which installs by default (#1184)."""
+    assert _batch_release_calls(install=True) == [("vrg-release",)]
+
+
+def test_release_failure_names_the_command_that_ran(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The batch report names the same command that ran."""
+
+    def fake_run(cmd, **_kwargs):
+        return MagicMock(returncode=7 if tuple(cmd)[0] == "vrg-release" else 0)
+
+    with (
+        patch(_MOD + ".worktrees.rebase_onto"),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one", return_value="https://x/pull/1"),
+        patch(_MOD + ".subprocess.run", side_effect=fake_run),
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [_batch_wt("issue-1-a")],
+            base="develop",
+            finalize=True,
+            release=True,
+            install=False,
+            assume_yes=True,
+        )
+    assert rc == 1
+    assert "Post-step failed: release: vrg-release --no-install exited 7" in capsys.readouterr().out
 
 
 def test_submit_batch_summary_labels_by_branch_not_dir(
@@ -2745,7 +2812,7 @@ class TestRelayBranchPath:
         assert ("vrg-finalize-pr", "https://x/pull/2", "--skip-post-checks") in calls
         assert ("vrg-finalize-pr", "--cleanup-only") in calls
         # Released once for the whole batch, never per-branch.
-        assert calls.count(("vrg-release",)) == 1
+        assert calls.count(("vrg-release", "--no-install")) == 1
 
     def test_relay_cascade_finalize_only_skips_release(self) -> None:
         """--finalize (no --release) finalizes each PR and validates once, but
@@ -2775,8 +2842,9 @@ class TestRelayBranchPath:
         assert ("vrg-finalize-pr", "--cleanup-only") in calls
         assert not any(cmd and cmd[0] == "vrg-release" for cmd in calls)
 
-    def test_relay_cascade_install_passes_through(self) -> None:
-        """--install runs the release step as `vrg-release --install`."""
+    def test_relay_cascade_install_runs_plain_release(self) -> None:
+        """--install runs the release step as plain `vrg-release`, which
+        installs by default (#1184)."""
         state = _ready_state(branch="feature/x", head_sha="abc123")
         transport = MagicMock()
         transport.read.return_value = state
@@ -2798,8 +2866,7 @@ class TestRelayBranchPath:
         ):
             rc = main(["feature/x", "--install", "--yes"])
         assert rc == 0
-        assert ("vrg-release", "--install") in calls
-        assert ("vrg-release",) not in calls
+        assert [cmd for cmd in calls if cmd and cmd[0] == "vrg-release"] == [("vrg-release",)]
 
     def test_relay_cascade_already_submitted_branch_aborts(
         self, capsys: pytest.CaptureFixture[str]

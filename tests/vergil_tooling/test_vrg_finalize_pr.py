@@ -3401,8 +3401,9 @@ def test_parse_args_release_flag() -> None:
     assert parse_args(["--release"]).release is True
 
 
-def test_release_chains_into_vrg_release_on_success(tmp_path: Path) -> None:
-    """A clean finalize hands off to vrg-release from the repo root."""
+def test_release_cascade_passes_no_install(tmp_path: Path) -> None:
+    """A clean finalize hands off to vrg-release from the repo root; --release
+    alone skips the install vrg-release now runs by default (#1184)."""
     _make_profile(tmp_path, "library-release")
     with (
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
@@ -3419,7 +3420,7 @@ def test_release_chains_into_vrg_release_on_success(tmp_path: Path) -> None:
     assert result == 0
     mock_run.assert_called_once()
     call = mock_run.call_args
-    assert call.args[0] == ("vrg-release",)
+    assert call.args[0] == ("vrg-release", "--no-install")
     assert call.kwargs["cwd"] == tmp_path
 
 
@@ -3544,7 +3545,9 @@ def test_finalize_without_release_ignores_unreleased_repo(tmp_path: Path) -> Non
     m_gate.assert_not_called()
 
 
-# -- --install: extend the cascade through vrg-release --install (issue #1643) --
+# -- --install: extend the cascade through vrg-release's install (issue #1643) --
+# vrg-release installs by default (#1184): --install runs it plain, and
+# --release alone passes --no-install.
 
 
 def test_parse_args_install_defaults_false() -> None:
@@ -3555,8 +3558,8 @@ def test_parse_args_install_flag() -> None:
     assert parse_args(["--install"]).install is True
 
 
-def test_install_chains_into_vrg_release_install_on_success(tmp_path: Path) -> None:
-    """--install implies --release and hands off to `vrg-release --install`."""
+def test_install_cascade_runs_plain_release(tmp_path: Path) -> None:
+    """--install implies --release and hands off to plain `vrg-release`."""
     _make_profile(tmp_path, "library-release")
     with (
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
@@ -3572,13 +3575,18 @@ def test_install_chains_into_vrg_release_install_on_success(tmp_path: Path) -> N
     assert result == 0
     mock_run.assert_called_once()
     call = mock_run.call_args
-    assert call.args[0] == ("vrg-release", "--install")
+    assert call.args[0] == ("vrg-release",)
     assert call.kwargs["cwd"] == tmp_path
 
 
-def test_install_dry_run_notes_release_install_without_running(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("flag", "expected"),
+    [("--release", "vrg-release --no-install"), ("--install", "vrg-release")],
+)
+def test_dry_run_hint_matches_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str, expected: str
 ) -> None:
+    """The dry-run line names exactly the command a real run would chain into."""
     _make_profile(tmp_path, "library-release")
     with (
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
@@ -3588,15 +3596,17 @@ def test_install_dry_run_notes_release_install_without_running(
         patch(_MOD + "._wait_for_cd_run", return_value=None),
         patch(_MOD + ".subprocess.run") as mock_run,
     ):
-        result = main(["--install", "--dry-run"])
+        result = main([flag, "--dry-run"])
     assert result == 0
     mock_run.assert_not_called()
-    assert "vrg-release --install" in capsys.readouterr().out
+    assert f"[dry-run] would chain into: {expected}\n" in capsys.readouterr().out
 
 
-def test_install_failure_points_at_release_install_rerun(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("flag", ["--release", "--install"])
+def test_rerun_hint_matches_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str
 ) -> None:
+    """A failed release's rerun hint names exactly the command that ran."""
     _make_profile(tmp_path, "library-release")
     with (
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
@@ -3607,9 +3617,10 @@ def test_install_failure_points_at_release_install_rerun(
         patch(_MOD + ".subprocess.run") as mock_run,
     ):
         mock_run.return_value.returncode = 2
-        result = main(["--install"])
+        result = main([flag])
     assert result == 2
-    assert "vrg-release --install" in capsys.readouterr().err
+    ran = " ".join(mock_run.call_args.args[0])
+    assert f"  Re-run the release alone with: {ran}\n" in capsys.readouterr().err
 
 
 def test_skip_post_checks_drops_validation_and_cd() -> None:
@@ -3658,7 +3669,7 @@ def test_finalize_batch_runs_each_item_then_release_once() -> None:
     assert ("vrg-finalize-pr", "123", "--skip-post-checks") in runs
     assert ("vrg-finalize-pr", "124", "--skip-post-checks") in runs
     assert ("vrg-finalize-pr", "--cleanup-only") in runs
-    assert ("vrg-release",) in runs
+    assert ("vrg-release", "--no-install") in runs
 
 
 def test_finalize_batch_stops_on_item_failure_no_release() -> None:

@@ -13,6 +13,11 @@ from vergil_tooling.lib.release.handoff import run_consumer_refresh
 from vergil_tooling.lib.release.orchestrator import ReleaseState, build_stages
 from vergil_tooling.lib.release.resume import find_resume_target
 
+INSTALL_REMOVED = (
+    "vrg-release: --install was removed; installing is now the default "
+    "(use --no-install to skip it)"
+)
+
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
@@ -28,6 +33,13 @@ def main(argv: list[str] | None = None) -> int:
             "vrg-release: releasing is a human maintainer action. Agents cannot run vrg-release.",
             file=sys.stderr,
         )
+        return 1
+
+    # --install was removed when installing became the default (#1184): a
+    # caller still passing it is told so loudly, before any side effect,
+    # rather than having the flag silently accepted.
+    if args.install:
+        print(INSTALL_REMOVED, file=sys.stderr)
         return 1
 
     repo_root = git.repo_root()
@@ -98,22 +110,21 @@ def main(argv: list[str] | None = None) -> int:
         print()
         print(state.ctx.consumer_refresh_message)
 
-    # --install: run the consumer-refresh commands rather than leaving them
-    # for the human to copy/paste (issue #1643). Only on a clean release —
-    # a failed pipeline must not trigger an install — and only after the
-    # message above has been printed, so the human sees what is about to run.
-    if args.install and rc == 0:
-        ctx = state.ctx
-        commands = ctx.consumer_refresh_commands if ctx is not None else None
-        if ctx is None or not commands:
-            print(
-                "vrg-release: --install was given but no [publish].consumer-refresh "
-                "is configured; nothing to run.",
-                file=sys.stderr,
-            )
-            return 1
-        return run_consumer_refresh(commands, ctx.version)
-    return rc
+    # Install by default: run the consumer-refresh commands rather than
+    # leaving them for the human to copy/paste (issues #1643, #1184). Only on
+    # a clean release — a failed pipeline must not trigger an install — and
+    # only after the message above has been printed, so the human sees what
+    # is about to run. --no-install skips it. A repo with no
+    # [publish].consumer-refresh has nothing to run, which is not an error.
+    # A clean pipeline always builds ctx in preflight; with none there is
+    # nothing to install from.
+    ctx = state.ctx
+    if args.no_install or rc != 0 or ctx is None:
+        return rc
+    if not ctx.consumer_refresh_commands:
+        print("vrg-release: no [publish].consumer-refresh is configured; nothing to run.")
+        return rc
+    return run_consumer_refresh(ctx.consumer_refresh_commands, ctx.version)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -150,15 +161,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--install",
+        "--no-install",
         action="store_true",
         default=False,
         help=(
-            "After a successful release, execute the [publish].consumer-refresh "
-            "commands (the install/refresh step of the cascade) instead of only "
-            "printing them."
+            "Skip the install step. By default, after a clean release, the "
+            "[publish].consumer-refresh commands are run instead of only printed."
         ),
     )
+    # Removed (#1184): still parsed, and hidden from --help, only so that
+    # passing it is the clear fatal error main() prints rather than
+    # argparse's generic "unrecognized arguments".
+    parser.add_argument("--install", action="store_true", default=False, help=argparse.SUPPRESS)
     parser.add_argument(
         "--resume",
         nargs="?",
