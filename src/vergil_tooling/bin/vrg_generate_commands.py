@@ -90,7 +90,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--mapping-pages-dir",
         type=Path,
         default=None,
-        help="Directory containing Sphinx mapping .md files (Python only).",
+        help=(
+            "Directory of the MkDocs site's attribute-mapping pages, one <qualifier>.md "
+            "each (Python only)."
+        ),
     )
     parser.add_argument(
         "--check",
