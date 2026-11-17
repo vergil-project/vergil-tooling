@@ -79,16 +79,17 @@ def main(argv: list[str] | None = None) -> int:
     except github.NoInstallationError as exc:
         print(f"vrg-pr-await: {github.no_installation_message(exc)}", file=sys.stderr)
         return EXIT_ERROR
-    except github.MissingGitHubTokenError:
-        print(github.missing_token_message("vrg-pr-await"), file=sys.stderr)
-        return EXIT_ERROR
     except github.GitHubAPIError as exc:
-        if is_permission_error(exc):
-            print(f"vrg-pr-await: {permission_error_message(args.pr, exc)}", file=sys.stderr)
-        else:
-            print(f"vrg-pr-await: GitHub API error: {exc}", file=sys.stderr)
+        print(api_error_message(args.pr, exc), file=sys.stderr)
         return EXIT_ERROR
-    except (finalize_watch.FinalizeWatchError, pr_await.PrAwaitError, ValueError) as exc:
+    except finalize_watch.FinalizeWatchError as exc:
+        # The PR read wraps gh's failure; a missing token or a 403 keeps its guidance.
+        cause = exc.__cause__
+        if isinstance(cause, github.GitHubAPIError):
+            print(api_error_message(args.pr, cause), file=sys.stderr)
+        print(f"vrg-pr-await: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except (pr_await.PrAwaitError, ValueError) as exc:
         print(f"vrg-pr-await: {exc}", file=sys.stderr)
         return EXIT_ERROR
     except Exception:  # noqa: BLE001 -- exit 1 is reserved for "cannot merge"
@@ -138,6 +139,15 @@ def pr_repo(pr: str) -> str | None:
     """The ``owner/repo`` of *pr* when it is a PR URL, else ``None``."""
     match = _PR_URL_REPO_RE.search(pr)
     return match.group(1) if match else None
+
+
+def api_error_message(pr: str, exc: github.GitHubAPIError) -> str:
+    """The stderr message for a failed GitHub call: missing token, 403 or plain."""
+    if isinstance(exc, github.MissingGitHubTokenError):
+        return github.missing_token_message("vrg-pr-await")
+    if is_permission_error(exc):
+        return f"vrg-pr-await: {permission_error_message(pr, exc)}"
+    return f"vrg-pr-await: GitHub API error: {exc}"
 
 
 def is_permission_error(exc: github.GitHubAPIError) -> bool:

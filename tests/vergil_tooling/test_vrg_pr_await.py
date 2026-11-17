@@ -129,6 +129,14 @@ def test_errors_exit_2_with_no_json(exc: Exception, capsys: pytest.CaptureFixtur
     assert captured.err == f"vrg-pr-await: {exc}\n"
 
 
+def test_wrapped_non_github_cause_is_reported_alone(capsys: pytest.CaptureFixture[str]) -> None:
+    exc = finalize_watch.FinalizeWatchError("https://github.com/o/r/pull/1: bad")
+    exc.__cause__ = OSError("disk")
+    with patch(_WAIT, side_effect=exc):
+        assert main([_PR]) == EXIT_ERROR
+    assert capsys.readouterr().err == f"vrg-pr-await: {exc}\n"
+
+
 def test_unexpected_error_exits_2_with_traceback(capsys: pytest.CaptureFixture[str]) -> None:
     with patch(_WAIT, side_effect=KeyError("boom")):
         assert main([_PR]) == EXIT_ERROR
@@ -270,3 +278,53 @@ def test_main_reports_missing_token(capsys: pytest.CaptureFixture[str]) -> None:
     assert result == EXIT_ERROR
     err = capsys.readouterr().err
     assert err.startswith("vrg-pr-await: no GitHub token available")
+
+
+_VIEW_CMD = ("gh", "pr", "view", "https://github.com/other-org/repo/pull/7")
+
+
+def _run_real_read(exc: github.GitHubAPIError) -> int:
+    """Run main through the real PR read, which fails with *exc*."""
+    with (
+        patch("vergil_tooling.lib.github.get_installation_token", return_value="t"),
+        patch("vergil_tooling.lib.github.read_json", side_effect=exc),
+    ):
+        return main(["https://github.com/other-org/repo/pull/7"])
+
+
+def test_real_pr_read_403_keeps_the_permission_guidance(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(finalize_watch.DEADLINE_ENV, raising=False)
+    monkeypatch.delenv(github.ORPHAN_GRACE_ENV, raising=False)
+    assert _run_real_read(github.GitHubAPIError(1, _VIEW_CMD, stderr=_GRAPHQL_403)) == EXIT_ERROR
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    expected = "vrg-pr-await: GitHub App permissions problem for other-org/repo"
+    assert captured.err.startswith(expected)
+    assert "reading the PR failed" in captured.err
+
+
+def test_real_pr_read_missing_token_keeps_its_message(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(finalize_watch.DEADLINE_ENV, raising=False)
+    monkeypatch.delenv(github.ORPHAN_GRACE_ENV, raising=False)
+    stderr = "gh: In a GitHub Actions workflow, set the GH_TOKEN environment variable."
+    exc = github.MissingGitHubTokenError(4, _VIEW_CMD, stderr=stderr)
+    assert _run_real_read(exc) == EXIT_ERROR
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("vrg-pr-await: no GitHub token available")
+
+
+def test_real_pr_read_other_failure_is_reported_plainly(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(finalize_watch.DEADLINE_ENV, raising=False)
+    monkeypatch.delenv(github.ORPHAN_GRACE_ENV, raising=False)
+    exc = github.GitHubAPIError(1, _VIEW_CMD, stderr="HTTP 502: Bad Gateway")
+    assert _run_real_read(exc) == EXIT_ERROR
+    err = capsys.readouterr().err
+    assert err.startswith("vrg-pr-await: GitHub API error: ")
+    assert "reading the PR failed" in err
