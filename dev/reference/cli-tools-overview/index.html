@@ -20333,8 +20333,11 @@ as done.</p>
 increments <code>patch</code> (default), <code>minor</code> or <code>major</code> and prints the new version.
 For a Python or Rust repo, <code>bump</code> then refreshes the lockfile (<code>uv lock</code>,
 <code>cargo update --workspace</code>) in the dev container, through
-<code>vrg-container-run</code>, so no host toolchain is needed. Used by the CD
-workflows to read the release version.</p>
+<code>vrg-container-run</code>, so no host toolchain is needed. A bump is all or
+nothing: when any step fails, the lockfile refresh included, <code>bump</code> puts
+<code>VERSION</code>, the language manifest, the secondary version files and the
+lockfile back as they were, says so on stderr and exits non-zero. Used by
+the CD workflows to read the release version.</p>
 <p>In a TypeScript repo the version is also kept in <code>package.json</code>. <code>show</code>
 fails, naming the fix, when <code>package.json</code> is missing, has no <code>version</code>, or
 holds another version than <code>VERSION</code>; <code>vrg-validate</code>'s TypeScript pre-gate
