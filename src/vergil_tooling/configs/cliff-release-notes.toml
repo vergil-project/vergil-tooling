@@ -9,7 +9,7 @@ header = ""
 # (vergil-project/vergil-tooling#4553). A body of several paragraphs makes its
 # item loose, so a blank line follows it unless it ends the list, as Prettier
 # writes it.
-body ="""{% if version -%}
+body = """{% if version -%}
     # Release {{ version | trim_start_matches(pat="develop-v") }} ({{ timestamp | date(format="%Y-%m-%d") }})
 {% else -%}
     # Unreleased
