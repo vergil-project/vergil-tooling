@@ -12,7 +12,10 @@ Three modes:
   skip inference and merge entirely, never read stdin, and run only the
   cleanup: switch to the target branch, fast-forward sync, delete
   merged local branches, and prune stale remote-tracking references.
-  This is what ``vrg-release`` invokes (issue #1448).
+  This is what ``vrg-release`` invokes (issue #1448). It holds the
+  checkout lock (``lib/checkout_lock.py``) from the cleanup through the
+  validation, waiting for another run that holds it, and lets go before the
+  CD check (epic vergil-project/.github#1218).
 
 A PR whose body has more than one ``Closes`` line is a *batch PR*, one
 commit per issue (epic vergil-project/.github#1019). Finalize cross-checks
@@ -53,6 +56,7 @@ regains control to report how far the cascade got.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import shlex
 import subprocess
 import sys
@@ -85,6 +89,7 @@ from vergil_tooling.lib.cd_runs import (
     cd_timeout_secs,
     wait_completed,
 )
+from vergil_tooling.lib.checkout_lock import checkout_lock
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container import PackageJsonError, resolve_language
@@ -170,17 +175,27 @@ def main(argv: list[str] | None = None) -> int:
     # below runs under the progress pipeline, which owns stdout/stderr
     # (issue #1479).
     ctx = FinalizeContext(args=args, root=root)
-    rc = progress.run_pipeline(
-        ctx,
-        build_stages(
-            include_pr=args.pr is not None,
-            include_post_checks=not args.skip_post_checks,
-        ),
-        command="vrg-finalize-pr",
-        label="vrg-finalize-pr",
-        args=args,
-        repo_root=root,
-    )
+    with ctx.lock_stack:
+        # --cleanup-only syncs and cleans up the main clone with no merge of its
+        # own, so it holds the checkout lock (spec §6.4) from cleanup through
+        # validation. Taken before the pipeline starts, so a wait for another
+        # run is reported on real stdout; cd-check lets go of it before it
+        # waits on CD.
+        if args.cleanup_only:
+            ctx.lock_stack.enter_context(
+                checkout_lock(root, purpose="vrg-finalize-pr --cleanup-only")
+            )
+        rc = progress.run_pipeline(
+            ctx,
+            build_stages(
+                include_pr=args.pr is not None,
+                include_post_checks=not args.skip_post_checks,
+            ),
+            command="vrg-finalize-pr",
+            label="vrg-finalize-pr",
+            args=args,
+            repo_root=root,
+        )
 
     # Surface — and, with --clean-dirty, guardedly clear — any merged/closed
     # worktrees the sweep could not remove (issue #2348). Runs after the
@@ -395,6 +410,10 @@ class FinalizeContext:
     # tears down its live display, so the skip reason is impossible to miss
     # instead of buried in the collapsed stage log (issue #2348).
     stuck: list[worktrees.WorktreeStatus] = field(default_factory=list)
+    # The checkout lock, when the entry point took it (--cleanup-only). main
+    # closes it after the pipeline; cd-check closes it first, so the lock
+    # never covers a wait on CD (spec §6.4).
+    lock_stack: contextlib.ExitStack = field(default_factory=contextlib.ExitStack)
 
 
 def _run(args: list[str], *, dry_run: bool) -> None:
@@ -1229,7 +1248,12 @@ def _stage_close_refs(ctx: FinalizeContext) -> None:
 
 def _stage_cleanup(ctx: FinalizeContext) -> None:
     """Switch to the target branch, sync, and prune merged branches,
-    worktrees, and remote-tracking references."""
+    worktrees, and remote-tracking references.
+
+    The caller holds the checkout lock (``lib/checkout_lock.py``) around
+    this stage; the stage never takes it itself. Only the ``--cleanup-only``
+    entry point takes it today.
+    """
     args = ctx.args
     root = ctx.root
 
@@ -1385,6 +1409,10 @@ def _stage_provision(ctx: FinalizeContext) -> None:
     of triggering a cold rebuild *inside* an operation. That lazy just-in-time
     rebuild — late, and possibly under parallel load — is what let a build-time
     glitch masquerade as "validation failed after a clean merge" (issue #2462).
+
+    The caller holds the checkout lock (``lib/checkout_lock.py``) around
+    this stage; the stage never takes it itself. Only the ``--cleanup-only``
+    entry point takes it today.
     """
     args = ctx.args
     if args.dry_run:
@@ -1512,6 +1540,10 @@ def _stage_validation(ctx: FinalizeContext) -> None:
     concluding anything about the branch (issue #3016). If that rebuild itself
     fails, validation did not run and its result is unknown, so the stage fails
     without a pointless retry (issues #3316, #3605).
+
+    The caller holds the checkout lock (``lib/checkout_lock.py``) around
+    this stage; the stage never takes it itself. Only the ``--cleanup-only``
+    entry point takes it today.
     """
     args = ctx.args
     if args.dry_run:
@@ -1555,7 +1587,11 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
     the merge commit SHA, waits for it to complete, and fails finalize if it
     concludes non-success so a post-merge publish failure is caught here
     rather than discovered later. ``--no-wait-cd`` is the conscious opt-out.
+
+    It first lets go of the checkout lock, if the entry point took it: the lock
+    covers local checkout work only, never a wait on CD (spec §6.4).
     """
+    ctx.lock_stack.close()
     args = ctx.args
     if args.dry_run:
         print("  [dry-run] wait on the CD workflow run triggered by the merge")

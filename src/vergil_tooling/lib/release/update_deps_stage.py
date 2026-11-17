@@ -11,6 +11,7 @@ import os
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.checkout_lock import checkout_lock
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.update_deps import report
 from vergil_tooling.lib.update_deps.failure import failure_markdown, failure_summary
@@ -35,19 +36,23 @@ def update_deps(ctx: ReleaseContext) -> None:
     # sync with origin; the back-merge just moved origin/develop. A failed sync
     # raises and the stage fails (deferred) with nothing updated.
     os.chdir(ctx.repo_root)
-    branch = git.current_branch()
-    if branch != "develop":
-        # A fast-forward merge would otherwise move whatever branch is checked out.
-        raise ReleaseError(
-            phase="update-deps",
-            command="git rev-parse --abbrev-ref HEAD",
-            message=(
-                "The root checkout must be on develop to sync it for the dependency "
-                f"update (currently on '{branch}')."
-            ),
-        )
-    git.run("fetch", "origin", "develop")
-    git.run("merge", "--ff-only", "origin/develop")
+    # The sync holds the checkout lock (spec §6.4), so it never races another
+    # run's sync or cleanup of the same clone. It is released before
+    # run_update: the lock is not re-entrant, and nothing nests under it.
+    with checkout_lock(ctx.repo_root, purpose="vrg-release update-deps"):
+        branch = git.current_branch()
+        if branch != "develop":
+            # A fast-forward merge would otherwise move whatever branch is checked out.
+            raise ReleaseError(
+                phase="update-deps",
+                command="git rev-parse --abbrev-ref HEAD",
+                message=(
+                    "The root checkout must be on develop to sync it for the dependency "
+                    f"update (currently on '{branch}')."
+                ),
+            )
+        git.run("fetch", "origin", "develop")
+        git.run("merge", "--ff-only", "origin/develop")
     deps = run_update(repo_root=ctx.repo_root)
     if deps.landed_pr_url is not None:
         # A re-run (e.g. --resume) after the update for this develop version
