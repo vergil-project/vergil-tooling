@@ -10,7 +10,8 @@ turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
    (``$VRG_FINALIZE_DEADLINE`` seconds, default 7200) passes and it is
    ``timed out``. A PR that merged before the run started counts as merged.
    The watch runs the provenance check on each PR, and turns auto-merge off
-   on an open PR with a violation unless ``--allow-provenance-violation``.
+   on an open PR with a violation unless ``--allow-provenance-violation``,
+   which leaves it on so the PR may merge.
 2. **Settles** develop once, only if at least one PR merged. ``close-refs``
    closes any issue a merged PR closes that GitHub left open (issue #4002),
    before the lock is taken, since it touches only GitHub. Then, under the
@@ -38,8 +39,10 @@ turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
 
 **Full success** means every PR merged, the validate passed and, with
 ``--wait-cd``, CD is green. A PR that merged with a provenance violation is
-reported loudly and blocks full success, unless the run was given
-``--allow-provenance-violation``.
+reported loudly and blocks full success, so no chained release runs, with or
+without ``--allow-provenance-violation``: the override covers only an open
+PR's auto-merge, never a violation that has already merged, which a human
+must look at before any release.
 
 **Selecting the PRs.** ``vrg-finalize-pr <pr>[,<pr>…]`` takes a comma list of
 PR numbers or URLs (one PR is a list of one); ``--all`` takes every open PR
@@ -291,7 +294,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--allow-provenance-violation",
         action="store_true",
-        help="Proceed despite provenance violations (conscious human override)",
+        help="Leave auto-merge on for an open PR with a provenance violation "
+        "(conscious human override). It does not cover a violation that has "
+        "already merged: that run is still not a full success (exit 3, or 4), "
+        "and no chained release runs.",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be done without making changes"
@@ -364,7 +370,6 @@ def _resolve_open_prs(root: Path) -> list[str]:
 
 def _run_watched(args: argparse.Namespace, root: Path, prs: list[str]) -> int:
     """Watch *prs*, settle develop once if any merged, report, then maybe release."""
-    allow = args.allow_provenance_violation
     if args.dry_run:
         print(f"[dry-run] would watch until each merges or fails: {', '.join(prs)}")
         if args.skip_post_checks:
@@ -374,25 +379,27 @@ def _run_watched(args: argparse.Namespace, root: Path, prs: list[str]) -> int:
         settle = _settle(args, root, merged_prs=list(prs))
         return _maybe_release(args, root, _settle_exit(settle))
     try:
-        results = finalize_watch.watch(prs, allow_provenance_violation=allow)
+        results = finalize_watch.watch(
+            prs, allow_provenance_violation=args.allow_provenance_violation
+        )
     except (finalize_watch.FinalizeWatchError, ValueError) as exc:
         print(f"vrg-finalize-pr: the watch stopped: {exc}", file=sys.stderr)
         return EXIT_ERROR
     merged = [r.pr for r in results if r.outcome == "merged"]
     if args.skip_post_checks:
-        _print_pr_report(results, allow=allow)
+        _print_pr_report(results)
         print("\n--skip-post-checks: the settle phase was skipped.")
-        return _watch_exit(results, allow=allow)
+        return _watch_exit(results)
     if not merged:
-        _print_pr_report(results, allow=allow)
+        _print_pr_report(results)
         print("\nNo PR merged: the settle phase was skipped.")
-        return _maybe_release(args, root, _watch_exit(results, allow=allow))
+        return _maybe_release(args, root, _watch_exit(results))
     settle = _settle(args, root, merged_prs=merged)
-    _print_pr_report(results, allow=allow)
+    _print_pr_report(results)
     _print_settle_report(settle)
     rc = _settle_exit(settle)
     if rc == EXIT_OK:
-        rc = _watch_exit(results, allow=allow)
+        rc = _watch_exit(results)
     return _maybe_release(args, root, rc)
 
 
@@ -403,19 +410,24 @@ def _run_settle_only(args: argparse.Namespace, root: Path) -> int:
     return _maybe_release(args, root, _settle_exit(settle))
 
 
-def _blocking_violation(result: PRResult, *, allow: bool) -> bool:
-    """Whether *result* merged with a provenance violation that blocks full success."""
-    return result.outcome == "merged" and result.provenance_violation and not allow
+def _blocking_violation(result: PRResult) -> bool:
+    """Whether *result* merged with a provenance violation, which blocks full success.
+
+    ``--allow-provenance-violation`` does not change this: it covers only an
+    open PR's auto-merge, never a violation that has already merged
+    (vergil-tooling#4662).
+    """
+    return result.outcome == "merged" and result.provenance_violation
 
 
-def _watch_exit(results: Sequence[PRResult], *, allow: bool) -> int:
-    """0 when every PR merged with no blocking provenance violation, else 3."""
-    if all(r.outcome == "merged" and not _blocking_violation(r, allow=allow) for r in results):
+def _watch_exit(results: Sequence[PRResult]) -> int:
+    """0 when every PR merged with no provenance violation, else 3."""
+    if all(r.outcome == "merged" and not _blocking_violation(r) for r in results):
         return EXIT_OK
     return EXIT_NOT_ALL_MERGED
 
 
-def _print_pr_report(results: Sequence[PRResult], *, allow: bool) -> None:
+def _print_pr_report(results: Sequence[PRResult]) -> None:
     """List every watched PR under *merged* or *not merged (reason)*, with next steps."""
     merged = [r for r in results if r.outcome == "merged"]
     unmerged = [r for r in results if r.outcome != "merged"]
@@ -423,12 +435,11 @@ def _print_pr_report(results: Sequence[PRResult], *, allow: bool) -> None:
     print(f"  Merged ({len(merged)}):")
     for r in merged:
         if r.provenance_violation:
-            verdict = (
-                "allowed by --allow-provenance-violation"
-                if allow
-                else "this run is not a full success; investigate before any release"
+            print(
+                f"    {r.pr}  PROVENANCE VIOLATION ({r.detail}): this run is not a full "
+                "success; --allow-provenance-violation does not cover a violation that "
+                "has already merged, so a human must look before any release"
             )
-            print(f"    {r.pr}  PROVENANCE VIOLATION ({r.detail}): {verdict}")
         else:
             print(f"    {r.pr}")
     if not merged:

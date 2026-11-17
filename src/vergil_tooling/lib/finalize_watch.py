@@ -20,14 +20,16 @@ judge it in this order:
    started included. Provenance (:func:`vergil_tooling.lib.pr_provenance.check_pr`)
    runs on it first: a violation cannot be undone, so nothing is disabled,
    and the result carries ``provenance_violation=True``, printed loudly. The
-   caller treats such a run as not a full success.
+   caller treats such a run as not a full success, whatever
+   ``allow_provenance_violation`` says: the override covers only an open PR.
 3. **Closed** without merging: ``failed: closed``.
 4. **Provenance** runs at start-up and again each time the PR's head
    changes. A violation turns auto-merge off (GraphQL
    ``disablePullRequestAutoMerge``, confirmed by reading it back) and ends the
    PR as ``failed: provenance``, unless ``allow_provenance_violation``: then
    the violation is printed loudly, flagged on the result, and the PR is
-   watched on.
+   watched on with its auto-merge left on. If it then merges, it is a merged
+   PR with a violation, as in step 2.
 5. **Auto-merge off:** ``failed: auto-merge off``.
 6. **A required check concluded in failure:** ``failed: CI``, naming the
    check. A failure in the snapshot's check rollup is confirmed with
@@ -337,7 +339,8 @@ def _judge(snap: Snapshot, watched: _Watched, *, allow: bool) -> PRResult | None
             return _result(snap, "failed: provenance", watched.violation, watched)
         print(
             f"PROVENANCE VIOLATION: {snap.url}: {watched.violation}. "
-            "Watching it on, per --allow-provenance-violation.",
+            "Watching it on, per --allow-provenance-violation; if it merges, "
+            "this run is still not a full success.",
             file=sys.stderr,
         )
     if not snap.auto_merge_on:
