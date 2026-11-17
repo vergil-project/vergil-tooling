@@ -5,13 +5,13 @@
     "url": "https://api.github.com/repos/vergil-project/vergil-fixture-python-lib/git/commits/5b55fee6b34da222aae4b7543bd953fd9cc05ccc",
     "html_url": "https://github.com/vergil-project/vergil-fixture-python-lib/commit/5b55fee6b34da222aae4b7543bd953fd9cc05ccc",
     "author": {
-      "name": "Phillip Moore",
-      "email": "w.phillip.moore@gmail.com",
+      "name": "Fixture Author",
+      "email": "fixture-author@example.invalid",
       "date": "2026-11-17T15:38:03Z"
     },
     "committer": {
-      "name": "Phillip Moore",
-      "email": "w.phillip.moore@gmail.com",
+      "name": "Fixture Author",
+      "email": "fixture-author@example.invalid",
       "date": "2026-11-17T15:38:03Z"
     },
     "tree": {
