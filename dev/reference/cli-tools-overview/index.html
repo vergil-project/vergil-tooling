@@ -21742,6 +21742,20 @@ that step's stored request, <code>--fix-id</code> for each earlier ID asked to c
 the human excused (not sent to the reviewer). It refuses an ID no earlier
 result raised, an ID given to both, a check with no <code>--fix-id</code>, and an
 earlier defect named by neither unless a later result marks it <code>fixed</code>.</p>
+<p>For a fix to an open PR, <code>--pr</code> names the PR by number or URL. The PR must
+be in the <code>--issue</code> repository, open, and headed by the current branch.
+When its body has more than one <code>Closes</code> line it is a batch PR: the
+<code>--issue</code> must be one of them, and every step's request adds
+<code>batch_issues</code> (each other issue's ref, body and human comments, read as
+for the <code>--issue</code>), <code>batch_commits</code> (every commit under review as
+<code>{"sha", "subject", "issue"}</code>, its issue the one its subject's trailing
+<code>(#N)</code> names) and <code>batch_commits_path</code> (<code>commits-&lt;step&gt;.patch</code>, each
+commit with its own patch), and leaves the batch's issues out of
+<code>epic_open_tasks</code>. It refuses a merge commit, a commit naming no issue of the
+PR, an issue with no commit, and a check whose batch issues differ from its
+previous step's. A single-issue PR must link the <code>--issue</code>, and its request
+is the one built without <code>--pr</code>. See the protocol's
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md#a-batch-pr">A batch PR</a>.</p>
 <p>Before writing, and on its own with <code>--ensure-dir</code>, it checks the private
 directory level by level: <code>build</code> must be a real directory (it is created
 when absent), and each level from <code>.vergil-state</code> down to <code>merge-review</code>
@@ -21758,15 +21772,15 @@ makes there, and writes only to the path it prints.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.vrg_merge_review_request</code> (library: <code>lib/merge_review/request.py</code>, <code>lib/merge_review/state.py</code>, <code>lib/build_dir.py</code>, <code>lib/validate_record.py</code>, <code>lib/rulings/comments.py</code>, <code>lib/rulings/identity.py</code>)</td>
+<td><code>vergil_tooling.bin.vrg_merge_review_request</code> (library: <code>lib/merge_review/request.py</code>, <code>lib/merge_review/open_pr.py</code>, <code>lib/merge_review/state.py</code>, <code>lib/build_dir.py</code>, <code>lib/validate_record.py</code>, <code>lib/rulings/comments.py</code>, <code>lib/rulings/identity.py</code>)</td>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--issue OWNER/NAME#N --base REF --step {review,check,check-&lt;k&gt;} [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]</code>, or <code>--issue OWNER/NAME#N --ensure-dir</code></td>
+<td><code>--issue OWNER/NAME#N --base REF --step {review,check,check-&lt;k&gt;} [--design-source FILE]... [--pr N\|URL] [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]</code>, or <code>--issue OWNER/NAME#N --ensure-dir</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run inside the task's worktree after <code>vrg-container-run -- vrg-validate</code> passed at <code>HEAD</code>; trusted authors are configured with exactly one human login, and GitHub is reachable to read the issue, its comments and its epic's sub-issues</td>
+<td>Run inside the task's worktree after <code>vrg-container-run -- vrg-validate</code> passed at <code>HEAD</code>; trusted authors are configured with exactly one human login, and GitHub is reachable to read the issue, its comments and its epic's sub-issues (and, with <code>--pr</code>, the PR and each of its issues)</td>
 </tr>
 <tr>
 <td>Failure mode</td>

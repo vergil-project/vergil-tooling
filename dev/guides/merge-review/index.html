@@ -18125,6 +18125,12 @@ first issue), never <code>origin/develop</code>. A fix is committed as
 and <code>issue-implement</code> folds the issue to one commit once its review has
 closed. <code>report-ready</code>'s notes carry each issue's eligibility line, prefixed
 with its ref.</p>
+<p>A fix to an open batch PR is reviewed as the whole branch against
+<code>origin/develop</code>, so its diff holds every issue's commits. The skill then
+passes <code>--pr</code>, and the request builder reads the PR's <code>Closes</code> lines itself
+and carries each issue's scope and the issue each commit belongs to, so the
+reviewer judges each commit against its own issue (the protocol's
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md#a-batch-pr">A batch PR</a>).</p>
 <h3 id="what-a-reviewer-can-raise">What a reviewer can raise<a class="headerlink" href="#what-a-reviewer-can-raise" title="Permanent link">&para;</a></h3>
 <p>Each finding answers one of two questions: <strong>production-safety</strong> (can this
 break production, including input that crosses a trust boundary) or
