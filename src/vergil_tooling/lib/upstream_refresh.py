@@ -871,12 +871,13 @@ def _line_rule_violations(path: str, glob: str, regex: str, diff: _FileDiff) -> 
         # or hashed and no block can be removed, so there is nothing to compare.
         return []
     if not diff.whole_file:
-        rule_name = "the hash rule" if hashes and not groups else "the no-downgrade rule"
-        what = "lines" if hashes else "versioned lines"
-        return [
-            f"{where}: the diff does not show the whole file, so {rule_name} "
-            f"cannot place its {what}"
-        ]
+        if hashes and groups:
+            needs = "the no-downgrade rule and the hash rule cannot place their lines"
+        elif hashes:
+            needs = "the hash rule cannot place its lines"
+        else:
+            needs = "the no-downgrade rule cannot place its versioned lines"
+        return [f"{where}: the diff does not show the whole file, so {needs}"]
     violations = _downgrades(path, pattern, groups, diff.before, diff.after)
     if hashes:
         violations.extend(_hash_violations(path, pattern, groups, hashes, diff.before, diff.after))
