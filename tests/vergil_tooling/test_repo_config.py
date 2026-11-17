@@ -944,7 +944,8 @@ class TestManagedPaths:
         _write_lang_toml(tmp_path, "typescript")
         # A CLAUDE.md with an empty template region, so its fixer has one to fill.
         (tmp_path / "CLAUDE.md").write_text(
-            f"{repo_config.CLAUDE_MD_MARKER_BEGIN}\n{repo_config.CLAUDE_MD_MARKER_END}\n", encoding="utf-8"
+            f"{repo_config.CLAUDE_MD_MARKER_BEGIN}\n{repo_config.CLAUDE_MD_MARKER_END}\n",
+            encoding="utf-8",
         )
         for fixer in FIXERS:
             fixer(tmp_path)
