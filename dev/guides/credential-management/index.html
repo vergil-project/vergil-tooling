@@ -17262,6 +17262,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="How a token is minted">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#token-sources-mechanized-jobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token sources (mechanized jobs)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -18021,6 +18038,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="How a token is minted">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#token-sources-mechanized-jobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token sources (mechanized jobs)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -18293,6 +18327,20 @@ Client ID during setup so the eventual switch needs no return
 trip to the GitHub UI, but the App ID is what the tooling uses
 until the migration lands.</p>
 </div>
+<h3 id="token-sources-mechanized-jobs">Token sources (mechanized jobs)<a class="headerlink" href="#token-sources-mechanized-jobs" title="Permanent link">&para;</a></h3>
+<p>A mechanized job that outlives one token's hour registers a <strong>token
+source</strong> instead (<code>github.set_token_source</code>, epic
+vergil-project/.github#1168). While one is registered, every <code>gh</code> and
+<code>git</code> call takes its token from the source, and the retrying callers
+rebuild their environment for every attempt, so a renewed token
+reaches the next call even in the middle of a long wait. The one
+source today is <code>lib/app_token.py</code>'s <code>AppTokenSource</code>, which
+<code>vrg-upstream-refresh publish</code> uses: it mints repo-scoped automation
+App tokens, renews them and revokes them (see
+<a href="../../reference/upstream-refresh-config/#identity-and-credentials">Upstream Refresh</a>).
+A token source refuses to run while the agent App mode is configured
+(<code>VRG_APP_ID</code> or <code>VRG_PRIVATE_KEY_PATH</code> set), so the two kinds of
+token never mix.</p>
 <h2 id="credential-selection">Credential selection<a class="headerlink" href="#credential-selection" title="Permanent link">&para;</a></h2>
 <h3 id="the-tool-selects-the-credential-not-the-caller">The tool selects the credential, not the caller<a class="headerlink" href="#the-tool-selects-the-credential-not-the-caller" title="Permanent link">&para;</a></h3>
 <p>There is no flag, no env var override, no way for the caller to
@@ -18351,9 +18399,10 @@ in priority order:</p>
 <li><strong>App permission shape</strong> — the installation token can only
    perform what the App declares. This is the primary, server-side
    boundary. A user-App token physically cannot merge a PR.</li>
-<li><strong>Branch protection</strong> — rulesets prevent merging without review,
-   prevent direct pushes to protected branches, and require CI to
-   pass.</li>
+<li><strong>Branch protection</strong> — rulesets require a pull request (no direct
+   pushes to protected branches) and require CI to pass. They
+   require no approving review: the mechanized <code>automation/</code> PRs
+   merge on CI alone, and the human merges every development PR.</li>
 <li><strong><code>vrg-gh</code> / <code>vrg-git</code> wrappers</strong> — gate which operations an agent
    may attempt and surface clear errors. A soft ergonomic layer,
    bypassable by root, not the security boundary.</li>
@@ -18585,6 +18634,9 @@ CI reaches an org's App through the <code>APP_CLIENT_ID</code> and
 <code>APP_PRIVATE_KEY</code> Actions secrets. The nightly <code>ops</code> workflow uses them
 for the <code>github-config</code> job (<code>vrg-github-repo-config update</code>, the
 automatic fleet sync), the branch sweep and the <code>dependabot-audit</code> job.
+The <code>publish</code> job of <code>ops-upstream-refresh.yml</code> passes them to
+<code>vrg-upstream-refresh publish</code>, which mints its own repo-scoped tokens
+(see <a href="../../reference/upstream-refresh-config/#identity-and-credentials">Upstream Refresh</a>).
 The <code>epic-rollup</code> and epic-sweep workflows use them to close epics and
 tasks. The <code>cd-release</code> workflow uses them to dispatch to the org's
 <code>packages</code> repository (see
@@ -18611,7 +18663,8 @@ the draft advisories in the org's <code>.github</code> (see
 delete the key, suspend the installation if access must stop at once,
 and generate a new key. Then update the <code>APP_PRIVATE_KEY</code> secret
 wherever it is stored. Until you do, the workflows that depend on it
-(ops, epic roll-up and sweep, package-index dispatch) will fail.</p>
+(ops, upstream refresh, epic roll-up and sweep, package-index
+dispatch) will fail.</p>
 <h3 id="ci-publishing-secrets">CI publishing secrets<a class="headerlink" href="#ci-publishing-secrets" title="Permanent link">&para;</a></h3>
 <p>The release workflow forwards per-ecosystem secrets to <code>cd-release</code>
 (see <a href="../ci-architecture/#cd-release-publishing-secrets">CI Architecture</a>):</p>

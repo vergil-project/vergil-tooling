@@ -18224,7 +18224,7 @@ user account:</p>
 </tr>
 <tr>
 <td><code>&lt;org&gt;-automation</code></td>
-<td>CI automation: nightly ops (including the automatic fleet sync), epic roll-up, package-index dispatch</td>
+<td>CI automation: nightly ops (including the automatic fleet sync), the scheduled upstream refresh, epic roll-up, package-index dispatch</td>
 <td>GitHub App owned by the org, one per org</td>
 </tr>
 </tbody>
@@ -18275,15 +18275,17 @@ not a control: the credential the process holds is the boundary.</p>
 <td><code>automation</code></td>
 <td>The org automation App, <code>&lt;org&gt;-automation</code></td>
 <td>Only when <code>VRG_AUTOMATION_APP</code> is set and the token verifies as that App's installation token; no mode signal selects it</td>
-<td>A subset of the human's: <code>vrg-github-repo-config update</code>, which converges a repo and merges its own sync PR</td>
+<td>A subset of the human's: <code>vrg-github-repo-config update</code>, which converges a repo and merges its own sync PR, and <code>vrg-upstream-refresh publish</code>, which opens a refresh PR on <code>automation/upstream-refresh/&lt;run-id&gt;</code> and merges it once CI passes</td>
 </tr>
 </tbody>
 </table>
 <p><strong>The automation invariant.</strong> The <code>automation</code> mode is used only for
 mechanized work, with no AI agent involved. Any work an AI agent does,
 automated or not, runs under the agent identities. In the fleet today
-only the nightly <code>github-config</code> ops job sets <code>VRG_AUTOMATION_APP</code>
-(epic vergil-project/.github#1064); every other job that mints an
+two jobs set <code>VRG_AUTOMATION_APP</code>: the nightly <code>github-config</code> ops job
+(epic vergil-project/.github#1064) and the <code>publish</code> job of the
+scheduled upstream refresh (epic vergil-project/.github#1168). Every
+other job that mints an
 automation App token still resolves to <code>human</code>. A
 <code>VRG_AUTOMATION_APP</code> whose token does not verify, or an agent signal
 alongside a verified automation token, is an error, never a guess.</p>
@@ -18485,10 +18487,18 @@ and mint a short-lived installation token with
 workflows use it for:</p>
 <ul>
 <li><strong>Nightly ops</strong> (<code>ops-github-config.yml</code>): the <code>github-config</code> job's
-  <code>vrg-github-repo-config update</code> (the automatic fleet sync, the one
-  job that runs in the <code>automation</code> mode), the branch sweep, and the
+  <code>vrg-github-repo-config update</code> (the automatic fleet sync, which
+  runs in the <code>automation</code> mode), the branch sweep, and the
   <code>vrg-dependabot-audit</code> open-alert gate. Each of these jobs mints a
   token scoped to the calling repo and to the permissions it needs.</li>
+<li><strong>Upstream refresh</strong> (<code>ops-upstream-refresh.yml</code>): the <code>publish</code>
+  job's <code>vrg-upstream-refresh publish</code>, which runs in the <code>automation</code>
+  mode. It does not use <code>actions/create-github-app-token</code>: the
+  workflow passes the two secrets to the tool, which mints its own
+  tokens in-process, limited to the one repo, renewed and revoked by
+  the tool (see
+  <a href="../../reference/upstream-refresh-config/#identity-and-credentials">Upstream Refresh</a>).
+  The <code>prepare</code> job holds no secrets.</li>
 <li><strong>Epic roll-up and sweep</strong> (<code>ops-epic-rollup.yml</code>,
   <code>ops-epic-sweep.yml</code>): closing epics and tasks across the org.</li>
 <li><strong>Package-index dispatch</strong> (<code>cd-release.yml</code>): sending
@@ -18512,7 +18522,9 @@ Four of the App's permissions matter to the tooling in this repo:</p>
   Administration write, and the job runs only from <code>develop</code>.</li>
 <li><strong>Workflows: Read and write.</strong> A sync PR from <code>update</code> can change
   files under <code>.github/workflows/</code> (the <code>vergil-*</code> workflow pins), and
-  GitHub refuses such a push without it.</li>
+  GitHub refuses such a push without it. Upstream refresh's <code>publish</code>
+  token also requests it, for the wait's branch update when <code>develop</code>
+  has changed a workflow file; its patch never touches <code>.github/**</code>.</li>
 <li><strong>Repository security advisories: not needed.</strong> The scheduled
   sweep (<code>vrg-epic-audit --close</code> in <code>ops-epic-sweep.yml</code>) makes no
   security-advisory call. Syncing advisory states to their issues is

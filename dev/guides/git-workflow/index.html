@@ -18299,9 +18299,10 @@ see <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/
 <li><code>vrg-submit-pr</code> creates the PR with issue linkage. <strong>Raw
   <code>gh pr create</code> is blocked.</strong></li>
 <li>Merging is <strong>manual</strong>. Every repo allows auto-merge
-  (<code>allow_auto_merge</code>) so that the mechanized sync PRs
-  <code>vrg-github-repo-config update</code> opens on <code>automation/</code> branches merge
-  on CI alone (epic vergil-project/.github#1064). Agents cannot turn
+  (<code>allow_auto_merge</code>) so that the mechanized PRs that
+  <code>vrg-github-repo-config update</code> and <code>vrg-upstream-refresh publish</code>
+  open on <code>automation/</code> branches merge on CI alone (epics
+  vergil-project/.github#1064 and #1168). Agents cannot turn
   auto-merge on for a PR, and the human merges every development PR.</li>
 <li>After merge, <code>vrg-finalize-pr</code> pulls develop, deletes the merged
   branch and its worktree, and prunes remote refs.</li>
