@@ -8,6 +8,7 @@ a stand-in, so each test sees what the CLI decides and in what order.
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import signal
@@ -494,6 +495,39 @@ def test_log_lines(
     assert positions == sorted(positions)
     assert _TOKEN not in captured.out + captured.err
     assert not logging.getLogger(app_token.__name__).handlers
+
+
+def test_poll_lines_reach_a_piped_stdout_as_they_are_printed(
+    automation: list[_FakeSource], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #4596: under Actions stdout is a pipe, which Python block-buffers. A
+    # poll line must reach it when printed, not when the step ends.
+    raw = io.BytesIO()
+    piped = io.TextIOWrapper(raw, encoding="utf-8")
+    assert not piped.line_buffering
+    monkeypatch.setattr("sys.stdout", piped)
+    seen: list[bytes] = []
+
+    def publish(*_a: object, **_k: object) -> SyncResult:
+        print("Pending checks: ci (12s)")
+        seen.append(raw.getvalue())
+        return _MERGED
+
+    monkeypatch.setattr(cli, "publish", publish)
+    assert cli.main(["publish", "--from", "d"]) == 0
+    (written,) = seen
+    assert b"Pending checks: ci (12s)\n" in written
+    assert piped.line_buffering
+
+
+def test_a_stdout_that_is_not_a_text_stream_is_left_alone(
+    automation: list[_FakeSource], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = io.StringIO()
+    monkeypatch.setattr("sys.stdout", out)
+    monkeypatch.setattr(cli, "publish", lambda *_a, **_k: _MERGED)
+    assert cli.main(["publish", "--from", "d"]) == 0
+    assert "the refresh PR https://github.com/o/r/pull/9 merged" in out.getvalue()
 
 
 # -- identity ---------------------------------------------------------------------

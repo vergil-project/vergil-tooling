@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import io
 import logging
 import os
 import signal
@@ -101,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         if exc.code in (0, None):
             raise
         return 1  # a usage error; argparse has printed why
+    _line_buffer_stdout()
     try:
         return _run(args, creds, started)
     except PRNotMergedError as exc:
@@ -119,6 +121,19 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(str(exc))
     except subprocess.CalledProcessError as exc:
         return _fail(f"command failed: {error_text(exc)}")
+
+
+def _line_buffer_stdout() -> None:
+    """Write each stdout line as it is printed, not when the buffer fills (#4596).
+
+    Under Actions stdout is a pipe, so Python block-buffers it: the PR
+    poller's lines would reach the log only when the step ends, stamped with
+    its end time, below token events that are flushed as they happen. Line
+    buffering keeps the log in the real order with the real times. A stdout
+    that is not a text stream (a caller's own replacement) is left as it is.
+    """
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
 
 
 def _fail(message: str) -> int:
