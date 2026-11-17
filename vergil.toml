@@ -1,5 +1,13 @@
 [project]
-repository-type = "library"
+# "tooling", not "library": since epic vergil-project/.github#1256 every install
+# path runs vergil-tooling on its own Python 3.15 interpreter (the package on
+# vergil-python 3.15, git installs with --python 3.15 or on the core Python, the
+# self-repo sync on 3.15), so no consumer runs it on a window version it builds.
+# That removes the reason epic vergil-project/.github#407 made it a library. It
+# resolves as an app and builds the newest window version with a published
+# runtime; when a newer series gets one, CI moves to it (fail forward), and a
+# pin back to 3.15 would be a deliberate, tracked exception.
+repository-type = "tooling"
 versioning-scheme = "semver"
 branching-model = "library-release"
 release-model = "tagged-release"
@@ -16,11 +24,6 @@ vrg-vm update --all
 
 [ci]
 integration-tests = false
-# Pinned to the requires-python floor: the version resolver does not yet drop
-# window series that requires-python excludes, so without the pin the CI matrix
-# and `vrg-validate --all-versions` would run 3.12-3.14, which cannot install.
-# Remove once vergil-project/vergil-tooling#4639 ships.
-versions = ["3.15"]
 
 [dependencies]
 vergil = "v2.1"

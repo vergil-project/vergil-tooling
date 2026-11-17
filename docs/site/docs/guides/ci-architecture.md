@@ -174,13 +174,14 @@ The workflow file is `.github/workflows/ci.yml`. It runs on
     3.15, the newest window version), so its `--cov-fail-under=100` gate proves 100% coverage on that
     one interpreter only. PR-CI re-runs the test-and-coverage gate
     **independently in a separate container per resolved matrix version**
-    (currently 3.12, 3.13, 3.14 and 3.15: this repo is a `library` with no
-    `[ci].versions` pin, so it tests the whole version window). Because
+    (a `library` tests the whole version window; this repo is a `tooling`
+    repo with no `[ci].versions` pin, so it resolves as an app and tests
+    only 3.15 today). Because
     branch coverage (`--cov-branch`) can
     legitimately differ across CPython versions — a branch reachable on one
     version may be dead on another, or a version-guarded code path may only
     execute on some interpreters — code that measures 100% locally can still
-    fall below 100% on a 3.12, 3.13 or 3.14 leg and fail CI. The default
+    fall below 100% on another version's leg and fail CI. The default
     local validate covers a single interpreter, trading the matrix away for
     speed. For Python, `vrg-container-run -- vrg-validate --all-versions`
     closes the gap on demand: inside the same one container it runs the
