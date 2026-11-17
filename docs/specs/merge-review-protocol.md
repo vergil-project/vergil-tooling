@@ -23,7 +23,8 @@ alone (`vrg-merge-review-request` and `vrg-merge-review-check`).
 ### Roles
 
 - **The caller owns all of the data.** It writes the request, dispatches
-  the reviewer, stores the reviewer's reply as the result file and runs the
+  the reviewer, has the reviewer's reply stored unchanged as the result file
+  (in the merge-review profile, by the plugin's capture hook) and runs the
   result check on that file. Every file of a run lives in the caller's
   private directory.
 - **The reviewer reads and reports.** It returns its result as its reply
@@ -124,10 +125,37 @@ The refusal names both repositories.
 | `diff-<step>.patch` | `vrg-merge-review-request` | `git diff <base_sha> <head_sha>`: the whole branch. |
 | `fix-<step>.patch` | `vrg-merge-review-request` | A check only: `git diff <fix_base_sha> <head_sha>`, the fix alone. |
 | `commits-<step>.patch` | `vrg-merge-review-request` | A batch PR only: each commit of `<base_sha>..<head_sha>`, oldest first, with its own patch ([A batch PR](#a-batch-pr)). |
-| `result-<step>.md` | The caller | The reviewer's reply, stored unchanged. |
+| `result-<step>.md` | The plugin's capture hook | The reviewer's reply, stored byte for byte. |
+| `reply-<step>.md` | The plugin's capture hook | The same bytes inside a fenced block in a collapsed `<details>` section: the publishable copy. |
+| `capture-<step>.json` | The plugin's capture hook | The capture record: what the hook stored ([below](#the-capture-record)). |
 | `security-<ID>.md` | The caller | One per security finding: its details, taken from the prose. |
 
-`<step>` is the step name: `review`, `check` or `check-<k>`. The directory
+`<step>` is the step name: `review`, `check` or `check-<k>`.
+
+#### The capture record
+
+The plugin's `capture-merge-review-result` SubagentStop hook stores the
+`vergil:merge-reviewer` agent's last message as `result-<step>.md`, next to
+the `request-<step>.json` its prompt names, so the caller never retypes it.
+It writes the capture record last, once the other files are in place:
+
+```json
+{
+  "schema": "merge-review-capture/1",
+  "step": "<step>",
+  "request_id": "<the request's request_id>",
+  "result_sha256": "<lowercase hex SHA-256 of result-<step>.md>",
+  "agent_id": "<the reviewer subagent's ID>"
+}
+```
+
+Every field is a non-empty string, and the record has no other field. A
+plugin PreToolUse guard denies Write, Edit and NotebookEdit on the result
+and the record. The result check's rule 10 refuses a result that does not
+match its record, so a result changed after the capture by any other means
+is refused too. The digest guards against a caller retyping or tidying the
+result; it is no defence against a deliberately adversarial agent running
+as the same Unix user, which could rewrite both files. The directory
 is working storage, deleted when the task is handed off, except that the
 details of a security item still awaiting its record are kept.
 
@@ -366,6 +394,15 @@ with `ERROR: <rule>` on stderr, naming the rule broken. The rules:
    `fix_status` has exactly one entry for each ID in the request's
    `earlier_finding_ids`, and no entry for any other ID. A review has no
    `fix_status`.
+10. **Capture.** The [capture record](#the-capture-record)
+    `capture-<step>.json`, in the result file's directory with `<step>`
+    taken from the request, exists, is UTF-8 JSON, and is an object of
+    exactly its five fields, each a non-empty string. Its `schema` is
+    `merge-review-capture/1`; its `step` and `request_id` equal the
+    request's; its `result_sha256` is 64 lowercase hex characters and is
+    the SHA-256 of the result file's bytes as read. This rule is checked
+    first, after the request's own fields and before rule 1, so a result
+    changed after the capture is refused as such.
 
 A refusal never echoes a refused value: it names the rule, the finding by ID
 (or by position when the ID itself is bad), and for a character, its code

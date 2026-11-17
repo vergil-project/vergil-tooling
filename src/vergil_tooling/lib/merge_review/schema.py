@@ -46,6 +46,19 @@ FINDING_OPTIONAL_FIELDS = frozenset({"summary"})
 #: A ``fix_status`` entry's fields.
 FIX_STATUS_FIELDS = frozenset({"id", "status"})
 
+#: The capture record the plugin's capture hook writes beside each result.
+CAPTURE_SCHEMA = "merge-review-capture/1"
+CAPTURE_FIELDS = frozenset({"schema", "step", "request_id", "result_sha256", "agent_id"})
+
+#: A SHA-256 digest as the capture record holds it: 64 lowercase hex characters.
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def capture_file(step: str) -> str:
+    """The capture record's file name for ``step``: ``capture-<step>.json``."""
+    step_id_prefix(step)  # refuses a non-step
+    return f"capture-{step}.json"
+
 
 def is_check(step: str) -> bool:
     """Whether ``step`` is a check (``check`` or ``check-<k>``), not the review."""

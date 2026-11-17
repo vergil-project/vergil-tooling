@@ -99,7 +99,7 @@ class Result:
 
 
 @dataclass(frozen=True)
-class _Request:
+class Request:
     """The request fields the check reads, checked."""
 
     step: str
@@ -114,7 +114,7 @@ def parse_result(text: str, request: dict[str, object]) -> Result:
     Raises :class:`ResultError` naming the rule broken; nothing is returned
     for a result that fails any rule.
     """
-    req = _check_request(request)
+    req = check_request(request)
     block = _extract_block(text)
     step = req.step
     if not is_check(step) and "fix_status" in block:
@@ -128,7 +128,12 @@ def parse_result(text: str, request: dict[str, object]) -> Result:
     return Result(step, req.request_id, findings, fix_status)
 
 
-def _check_request(request: dict[str, object]) -> _Request:
+def check_request(request: dict[str, object]) -> Request:
+    """Check the request fields the result check reads, and return them.
+
+    Raises :class:`ResultError` for a malformed request, which is refused
+    rather than trusted.
+    """
     if request.get("schema") != REQUEST_SCHEMA:
         msg = f"the request: schema must be {REQUEST_SCHEMA}"
         raise ResultError(msg)
@@ -147,7 +152,7 @@ def _check_request(request: dict[str, object]) -> _Request:
     earlier: tuple[str, ...] = ()
     if is_check(step):
         earlier = _check_earlier_ids(request.get("earlier_finding_ids"), step)
-    return _Request(step, request_id, change_class, earlier)
+    return Request(step, request_id, change_class, earlier)
 
 
 def _check_earlier_ids(raw: object, step: str) -> tuple[str, ...]:
@@ -233,7 +238,7 @@ def _check_keys(
         raise ResultError(msg)
 
 
-def _check_identity(block: dict[str, Any], req: _Request) -> None:
+def _check_identity(block: dict[str, Any], req: Request) -> None:
     """Rules 2 and 3 for the top level: types, then schema, step and request ID."""
     for key in ("schema", "step", "request_id"):
         if not isinstance(block[key], str):
@@ -256,7 +261,7 @@ def _check_identity(block: dict[str, Any], req: _Request) -> None:
         raise ResultError(msg)
 
 
-def _check_findings(raw_findings: list[Any], req: _Request) -> tuple[Finding, ...]:
+def _check_findings(raw_findings: list[Any], req: Request) -> tuple[Finding, ...]:
     findings: list[Finding] = []
     seen: set[str] = set()
     id_re = finding_id_re(req.step)
@@ -270,7 +275,7 @@ def _check_findings(raw_findings: list[Any], req: _Request) -> tuple[Finding, ..
     return tuple(findings)
 
 
-def _check_finding(raw: Any, position: int, req: _Request, id_re: re.Pattern[str]) -> Finding:
+def _check_finding(raw: Any, position: int, req: Request, id_re: re.Pattern[str]) -> Finding:
     where = f"finding {position}"
     if not isinstance(raw, dict):
         msg = f"{_RULE_FIELDS}: {where} is not a JSON object"
@@ -358,7 +363,7 @@ def _check_line(value: str, *, rule: str, what: str) -> None:
         raise ResultError(msg)
 
 
-def _check_fix_status(raw_entries: list[Any], req: _Request) -> dict[str, str]:
+def _check_fix_status(raw_entries: list[Any], req: Request) -> dict[str, str]:
     """Rule 9: exactly one status for each listed ID, and none for any other."""
     statuses: dict[str, str] = {}
     for position, raw in enumerate(raw_entries, start=1):

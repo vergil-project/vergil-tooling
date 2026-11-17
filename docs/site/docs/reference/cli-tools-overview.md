@@ -1171,6 +1171,11 @@ prints the comment ID and deletes the draft ref. See the
 The merge-review result check (epic vergil-project/.github#881): it checks
 a reviewer's stored reply against the request it answers, by the rules of
 the [merge-review protocol](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md).
+It first reads the capture record the plugin's capture hook wrote beside the
+result, `capture-<step>.json` in the result's directory (`<step>` from the
+request), and refuses a result with no record, a malformed record, one for
+another step or request, or one whose `result_sha256` is not the SHA-256 of
+the result file's bytes, so a result edited after the capture is refused.
 The reply must open, after optional whitespace, with exactly one
 `merge-review-result` fenced block holding one JSON object, with no second
 such block anywhere. The block must carry exactly the schema's fields at
@@ -1185,13 +1190,14 @@ prefix is refused too, so it can go into a `vrg-ruling` item unchanged. On
 success it prints `{"step", "counts", "security", "fix_status"}` as JSON on
 stdout. A refusal names the rule, the finding by ID (or by position when
 the ID is bad) and, for a bad character, its code point and offset; it
-never repeats the refused value. It reads the two files and writes nothing.
+never repeats the refused value. It reads the two files and the capture
+record, and writes nothing.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_merge_review_check` (library: `lib/merge_review/`) |
 | Args | `--request FILE --result FILE` |
-| Preconditions | None: no identity mode, network or git access |
+| Preconditions | The capture record `capture-<step>.json` beside the result; no identity mode, network or git access |
 | Failure mode | `ERROR: <rule>` on stderr and exit 1, with nothing on stdout |
 | Exit codes | 0 the result passed, 1 it failed or a file could not be read, 2 bad arguments |
 | Status | Active |

@@ -8,6 +8,8 @@ for every schema and rule here. The modules:
   step's finding ID prefix;
 - :mod:`.result` parses a reviewer's reply and runs the result check on it,
   against the request it answers (``vrg-merge-review-check``);
+- :mod:`.capture` checks a stored result against the capture record the
+  plugin's capture hook wrote beside it (the result check's rule 10);
 - :mod:`.change_class` classifies a change as ``docs-only`` or ``code`` from
   its changed files (``vrg-change-class``);
 - :mod:`.state` checks the private directory every file of a run lives in;
