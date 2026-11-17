@@ -21914,8 +21914,9 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </table>
 <h3 id="vrg-repo-status">vrg-repo-status<a class="headerlink" href="#vrg-repo-status" title="Permanent link">&para;</a></h3>
 <p>Show every worktree git knows about in the current repo, grouped by
-kind, so nothing with code on disk goes unseen (issue #3386), then what
-the integration branch holds that <code>main</code> does not. Read-only — it never
+kind, so nothing with code on disk goes unseen (issue #3386), then the
+open PRs on <code>origin</code> that no worktree shows (issue #4581), then what the
+integration branch holds that <code>main</code> does not. Read-only — it never
 fetches or writes a ref, cleanup stays <code>vrg-finalize-pr</code>'s job, and
 finalize and sweep still act only on development worktrees. Local
 branches with no worktree are not shown. The sections, in order:</p>
@@ -21938,6 +21939,8 @@ branches with no worktree are not shown. The sections, in order:</p>
    each row shows age, PR state and dirty state and a leftover stands out.</li>
 <li><strong>Other / unknown</strong> — any other branch, a detached HEAD, or a
    worktree outside <code>.worktrees/</code> (shown by its full path).</li>
+<li><strong>Open PRs on origin with no local worktree</strong> — every open PR whose
+   head branch no linked worktree holds, described below. Always shown.</li>
 <li><strong>Pending release</strong> — every change on the integration branch that is
    not yet on <code>main</code>, described below. Shown only in a repo that
    publishes.</li>
@@ -21980,7 +21983,44 @@ keeps its LAST COMMIT.</p>
 <a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
 <a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
 </code></pre></div>
-<p><strong>Pending release.</strong> The section follows the worktree sections and comes
+<p><strong>Open PRs on origin with no local worktree.</strong> The section follows the
+worktree sections. Many PRs never touch the local checkout: those that
+automation jobs open (lifecycle, repo-config sync, dependency updates) and
+those prepared on another machine, such as a cloud VM. They are read from
+GitHub in one query per 100 open PRs. A PR is left out when a linked
+worktree already shows it: its PR number is in a worktree row, or its
+head branch is a linked worktree's branch. A PR from a fork is never
+matched by branch name, since a fork's branch can share a local name; its
+BRANCH shows as <code>&lt;owner&gt;:&lt;branch&gt;</code>. A VM that shares the file system
+already shows its PRs through its worktrees.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Open PRs on origin with no local worktree
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>PR    BRANCH                    BASE     TYPE       AUTHOR                     CI       OPENED  TITLE
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>#935  lifecycle/rust-add-1.100  develop  lifecycle  vergil-project-automation  success  6h ago  feat(versions): add rust 1.100
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>#936  lifecycle/rust-drop-1.98  develop  lifecycle  vergil-project-automation  pending  6h ago  feat(versions): drop rust 1.98 (EOL 2026-10-01)
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>2 open PRs with no local worktree: 0 automation PRs, 2 lifecycle PRs, 0 dependency updates, 0 release PRs, 0 other PRs.
+</code></pre></div>
+<ul>
+<li><strong>Rows</strong> come in PR-number order. TYPE is as in Pending release
+  below, except that a <code>lifecycle/*</code> head branch (a language version
+  added or dropped) shows <code>lifecycle</code> first. AUTHOR is the PR author's
+  login (<code>ghost</code> for a deleted account). CI is the head commit's
+  combined check state (<code>success</code>, <code>failure</code>, <code>pending</code>, <code>error</code>,
+  <code>expected</code>), or <code>none</code> when it has no checks. OPENED is the PR's age.
+  A draft's TITLE starts with <code>[draft]</code>; a TITLE over 72 characters is
+  cut, ending in <code>…</code>.</li>
+<li><strong>The summary line</strong> counts the rows: automation PRs, lifecycle PRs,
+  dependency updates, release PRs and other PRs, every bucket listed.</li>
+<li><strong>None left</strong> prints <code>None: &lt;n&gt; open PRs on origin, each with a local
+  worktree.</code>, or <code>None: origin has no open PRs.</code>, in place of the table.</li>
+<li><strong>A lookup that fails or is incomplete</strong> (an API error, a missing
+  token, a non-GitHub <code>origin</code>, a list that changed between pages, a
+  truncated label list) is an error, never "no open PRs" and never a
+  partial list: the section prints its heading and
+  <code>ERROR: open PRs: &lt;reason&gt;</code> alone. The rest of the output still
+  prints, then the command exits 1. The reason never carries URL
+  credentials.</li>
+</ul>
+<p><strong>Pending release.</strong> The section follows the open-PR section and comes
 before the summary lines. It is shown only when <code>vergil.toml</code> sets
 <code>[publish].release = true</code>; with the flag false or absent, nothing is
 printed for it, and without a <code>vergil.toml</code> a note says it was skipped.
@@ -21990,12 +22030,12 @@ read from the remote without fetching: the current refs and tags, the
 first-parent commits from the GitHub compare API, and each commit's
 merged PR into the integration branch, by commit SHA (so a batch PR
 rebase-merged as several commits is one row).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Pending release (develop → main): latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>PR     BRANCH                      TYPE     MERGED  TITLE
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 1 other PR.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Pending release (develop → main): latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>PR     BRANCH                      TYPE     MERGED  TITLE
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 1 other PR.
 </code></pre></div>
 <ul>
 <li><strong>Release line.</strong> It follows the section heading on the same line,
@@ -22042,7 +22082,7 @@ rebase-merged as several commits is one row).</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.vrg_repo_status</code> (pending release: <code>lib/pending_release.py</code>)</td>
+<td><code>vergil_tooling.bin.vrg_repo_status</code> (open PRs: <code>lib/open_prs.py</code>; pending release: <code>lib/pending_release.py</code>)</td>
 </tr>
 <tr>
 <td>Args</td>
@@ -22050,15 +22090,15 @@ rebase-merged as several commits is one row).</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Git repo; <code>gh</code> CLI on PATH for PR state; for the Pending release section, a github.com <code>origin</code> and GitHub credentials</td>
+<td>Git repo; <code>gh</code> CLI on PATH for PR state; for the open-PR and Pending release sections, a github.com <code>origin</code> and GitHub credentials</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>None for classification — a failed PR lookup is reported as an <code>unknown</code> row and a failed branch-gone check as a note, never a crash. A malformed <code>vergil.toml</code> exits 1 with the reason. A failed or incomplete pending-release lookup prints <code>ERROR:</code> in its section and exits 1 after the rest of the output</td>
+<td>None for classification — a failed PR lookup is reported as an <code>unknown</code> row and a failed branch-gone check as a note, never a crash. A malformed <code>vergil.toml</code> exits 1 with the reason. A failed or incomplete open-PR or pending-release lookup prints <code>ERROR:</code> in its section and exits 1 after the rest of the output</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success, 1 malformed <code>vergil.toml</code> or a pending-release lookup error</td>
+<td>0 success, 1 malformed <code>vergil.toml</code>, or an open-PR or pending-release lookup error</td>
 </tr>
 <tr>
 <td>Status</td>
