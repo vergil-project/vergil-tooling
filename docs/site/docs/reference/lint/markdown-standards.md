@@ -87,10 +87,17 @@ the default version. Each hit is named by path and line, with its
 The versioned sites are a fixed list in vergil-tooling
 (`vergil_tooling.lib.doc_links.VERSIONED_SITES`), so the check needs
 no network: vergil-actions, vergil-claude-plugin, vergil-containers,
-vergil-tooling, vergil-vm and the four vergil-fixture-* sites. The
-org's `docs` and `packages` sites are not versioned, and links to them
-are not checked. A repository that starts publishing versioned docs is
-added to the list.
+vergil-tooling, vergil-vm and the six vergil-fixture-* sites. The
+org's `docs` and `packages` sites are published but not versioned, so
+any path on them passes.
+
+A link to any other site name on `https://vergil-project.github.io/`,
+such as a retired site, fails too: the org does not publish it, so the
+link returns 404 whatever its path. Each such hit is named by path and
+line with the site name. The site name is compared exactly, and a
+trailing dot that ends a sentence right after the site name is not part
+of it. A repository that starts publishing versioned docs is added to
+the list; until then the check flags links to its site.
 
 ## Exit Codes
 

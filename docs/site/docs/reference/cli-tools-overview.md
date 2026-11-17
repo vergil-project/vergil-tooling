@@ -2098,7 +2098,8 @@ stage. Shared validation checks for all repos: the
 (`docs/site/**/*.md`, `README.md` and `epics/**/*.md`) using the bundled canonical config,
 the docs-links guard (over the same markdown less `epics/archive/`, a link
 to a mike-versioned Vergil docs site must carry a `latest`, `dev` or
-version-number segment after the site name), shellcheck on
+version-number segment after the site name, and a link to a site the org
+does not publish fails), shellcheck on
 `scripts/` and every `*.sh` file in the repository, yamllint on `.github/`
 and `docs/` YAML files, the
 dependabot-limit guard (when `.github/dependabot.yml` exists, every
