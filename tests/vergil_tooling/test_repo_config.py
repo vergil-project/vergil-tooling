@@ -917,6 +917,45 @@ def _language_items(root: Path) -> list[DiffItem]:
     return [i for i in audit_local_config(root).items if i.field == "local.language_files"]
 
 
+class TestManagedPaths:
+    """The files the audit holds to Vergil's content (#4541)."""
+
+    def test_shared_files_then_the_language_files(self) -> None:
+        shared = [
+            "CLAUDE.md",
+            ".claude/settings.json",
+            ".claude/hooks/guard.sh",
+            ".gitignore",
+            ".github/dependabot.yml",
+            ".github/workflows/ops.yml",
+        ]
+        assert list(repo_config.managed_paths(None)) == shared
+        assert list(repo_config.managed_paths("python")) == shared
+        assert list(repo_config.managed_paths("typescript")) == [*shared, *_TS_FILES]
+
+    def test_every_fixer_writes_only_managed_paths(self, tmp_path: Path) -> None:
+        """What the fleet sync writes in a bare TypeScript repo is all listed.
+
+        A fixer added for a new managed file fails here until its file is in
+        ``managed_paths``, and so left out of TypeScript's Prettier check.
+        """
+        from vergil_tooling.lib.repo_config_fixes import FIXERS
+
+        _write_lang_toml(tmp_path, "typescript")
+        # A CLAUDE.md with an empty template region, so its fixer has one to fill.
+        (tmp_path / "CLAUDE.md").write_text(
+            f"{repo_config.CLAUDE_MD_MARKER_BEGIN}\n{repo_config.CLAUDE_MD_MARKER_END}\n", encoding="utf-8"
+        )
+        for fixer in FIXERS:
+            fixer(tmp_path)
+        written = sorted(
+            p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file()
+        )
+        listed = set(repo_config.managed_paths("typescript"))
+        assert [rel for rel in written if rel != "vergil.toml" and rel not in listed] == []
+        assert ".prettierrc.json" in written
+
+
 class TestLanguageFiles:
     def test_typescript_table(self) -> None:
         """TypeScript manages its three base configs, each from its packaged master."""

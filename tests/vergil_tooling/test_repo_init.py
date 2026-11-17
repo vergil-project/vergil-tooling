@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import shutil
 import subprocess
 import tomllib
 from pathlib import Path
@@ -15,6 +16,7 @@ import yaml
 from vergil_tooling.lib import dependabot, github, gitignore, repo_config, repo_init
 from vergil_tooling.lib.config import _ENUMS, CiConfig, ProjectConfig, _parse_raw_config
 from vergil_tooling.lib.github_config import ClassicProtectionReport
+from vergil_tooling.lib.languages import CheckKind, language_commands
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
     _assert_ci_gates_producible,
@@ -2206,6 +2208,72 @@ class TestStepDocsSite:
             step_docs_site(ctx)
 
         assert not (tmp_path / "docs" / "site" / "mkdocs.yml").exists()
+
+
+#: The suffixes of the files repo-init writes that Prettier parses with no plugin.
+_PRETTIER_SUFFIXES = (".json", ".md", ".yml", ".yaml", ".js", ".mjs", ".cjs", ".ts")
+
+
+def _scaffold_typescript(tmp_path: Path) -> list[str]:
+    """Run repo-init's file-writing steps for a TypeScript repo; return what they wrote.
+
+    The paths are relative to ``tmp_path``, in sorted order.
+    """
+    ctx = _committed_answers()
+    ctx.primary_language = "typescript"
+    ctx.ci_versions = []
+    ctx.publish_docs = True
+    ctx.work_dir = tmp_path
+    ctx.description = "Test"
+    ctx.license_type = "MIT"
+    (tmp_path / "vergil.toml").write_text(render_vergil_toml(ctx))
+    with patch("vergil_tooling.lib.repo_init.git.run"):
+        step_scaffold_config_files(ctx)
+        step_ci_cd_workflows(ctx)
+        step_docs_site(ctx)
+    return sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file())
+
+
+class TestTypescriptPrettierScope:
+    """TypeScript LINT's Prettier check leaves out the Vergil-managed files (#4541)."""
+
+    def test_every_audited_file_repo_init_writes_is_excluded(self, tmp_path: Path) -> None:
+        """A written file whose blanking the audit reports is one Prettier leaves out.
+
+        The repo cannot reformat such a file, so a Prettier finding in it would
+        be one the repo cannot fix. The test finds them through the audit
+        itself, so a managed file added later is held to the same rule.
+        """
+        written = _scaffold_typescript(tmp_path)
+        excluded = set(repo_config.managed_paths("typescript"))
+        baseline = {(i.field, i.actual) for i in repo_config.audit_local_config(tmp_path).items}
+        audited = []
+        for rel in written:
+            if not rel.endswith(_PRETTIER_SUFFIXES):
+                continue
+            path = tmp_path / rel
+            original = path.read_bytes()
+            path.write_text("", encoding="utf-8")
+            items = {(i.field, i.actual) for i in repo_config.audit_local_config(tmp_path).items}
+            path.write_bytes(original)
+            if items != baseline:
+                audited.append(rel)
+        # The three files the fixture programs found (#4541) are among them.
+        assert {"CLAUDE.md", ".claude/settings.json", ".github/workflows/ops.yml"} <= set(audited)
+        assert [rel for rel in audited if rel not in excluded] == []
+
+    def test_lint_prettier_command_excludes_the_managed_files(self) -> None:
+        prettier = language_commands("typescript", CheckKind.LINT)[0]
+        negated = [arg.removeprefix("!") for arg in prettier if arg.startswith("!")]
+        assert negated == list(repo_config.managed_paths("typescript"))
+
+    @pytest.mark.skipif(shutil.which("prettier") is None, reason="prettier is not installed")
+    def test_lint_prettier_passes_on_a_new_repo(self, tmp_path: Path) -> None:
+        """Run the real command over what repo-init writes: it finds nothing."""
+        _scaffold_typescript(tmp_path)
+        prettier = language_commands("typescript", CheckKind.LINT)[0]
+        result = subprocess.run(prettier, cwd=tmp_path, capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
 
 
 class TestStepBranchStructure:

@@ -461,6 +461,14 @@ _TYPESCRIPT_ESLINT_SCRIPT = (
     'exit "$rc"'
 )
 
+# An argument of its own that :func:`language_commands` replaces with one
+# ``!<path>`` argument per Vergil-managed file of the language
+# (``repo_config.managed_paths``), the negated patterns by which Prettier
+# leaves a file out of its run (vergil-project/vergil-tooling#4541). Each
+# pattern is anchored at the repo root, so a repo's own file of the same name
+# elsewhere in the tree is still checked.
+_MANAGED_EXCLUDES = "{managed-excludes}"
+
 # ``tsc`` writes its diagnostics to stdout, one per line with
 # ``--pretty false`` (``file(line,col): error TSnnnn: message``), so the shell
 # writes stdout to the report and prints the report back for the log.
@@ -1109,8 +1117,22 @@ _REGISTRY: dict[str, Language] = {
             # no-standing-suppression rule, §3.2). Prettier and ESLint ignore
             # ``node_modules`` by default. The ESLint run writes
             # ``quality-eslint.json``; see ``_TYPESCRIPT_ESLINT_SCRIPT``.
+            #
+            # Prettier checks every file it can parse but the Vergil-managed
+            # ones (vergil-project/vergil-tooling#4541): ``{managed-excludes}``
+            # expands to one ``!<path>`` pattern per file in
+            # ``repo_config.managed_paths``. A repo cannot reformat those
+            # files, since the fleet sync writes them, so they are no
+            # finding of the repo's.
             CheckKind.LINT: [
-                ["prettier", "--check", ".", "--config", ".prettierrc.json"],
+                [
+                    "prettier",
+                    "--check",
+                    ".",
+                    _MANAGED_EXCLUDES,
+                    "--config",
+                    ".prettierrc.json",
+                ],
                 ["sh", "-c", _TYPESCRIPT_ESLINT_SCRIPT],
             ],
             # TYPECHECK runs *once* (§3.6) — one canonical type engine. The
@@ -1214,6 +1236,9 @@ def language_commands(
       threaded into the CMake cache vars. ``cpp_std`` / ``cpp_stdlib`` default to
       the v1 pins (``config.DEFAULT_CPP_STD`` / ``DEFAULT_CPP_STDLIB``) when not
       supplied, so the two-argument call still yields fully-resolved argv.
+    - ``{managed-excludes}``, an argument of its own → one ``!<path>``
+      argument per file :func:`repo_config.managed_paths` returns for the
+      language (TypeScript's Prettier check, issue #4541).
 
     The Python ``TEST`` command is **computed**, not looked up: it is delegated
     to :func:`build_python_test_argv`, which appends xdist work-stealing when
@@ -1244,17 +1269,21 @@ def language_commands(
         "{stdlib}": cpp_stdlib if cpp_stdlib is not None else DEFAULT_CPP_STDLIB,
     }
 
-    def _expand(arg: str) -> str:
+    def _expand(arg: str) -> list[str]:
+        if arg == _MANAGED_EXCLUDES:
+            from vergil_tooling.lib.repo_config import managed_paths
+
+            return [f"!{path}" for path in managed_paths(language)]
         for token, value in replacements.items():
             arg = arg.replace(token, value)
-        return arg
+        return [arg]
 
     if kind is CheckKind.BUILD:
         build_cmd = entry.ecosystem.build_cmd
         cmds = [build_cmd] if entry.ecosystem.validate_build and build_cmd else []
     else:
         cmds = entry.checks.get(kind, [])
-    return [[_expand(arg) for arg in cmd] for cmd in cmds]
+    return [[out for arg in cmd for out in _expand(arg)] for cmd in cmds]
 
 
 def language_lock_command(language: str | None) -> list[str] | None:
