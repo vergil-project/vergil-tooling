@@ -21599,6 +21599,11 @@ prints the comment ID and deletes the draft ref. See the
 <p>The merge-review result check (epic vergil-project/.github#881): it checks
 a reviewer's stored reply against the request it answers, by the rules of
 the <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md">merge-review protocol</a>.
+It first reads the capture record the plugin's capture hook wrote beside the
+result, <code>capture-&lt;step&gt;.json</code> in the result's directory (<code>&lt;step&gt;</code> from the
+request), and refuses a result with no record, a malformed record, one for
+another step or request, or one whose <code>result_sha256</code> is not the SHA-256 of
+the result file's bytes, so a result edited after the capture is refused.
 The reply must open, after optional whitespace, with exactly one
 <code>merge-review-result</code> fenced block holding one JSON object, with no second
 such block anywhere. The block must carry exactly the schema's fields at
@@ -21613,7 +21618,8 @@ prefix is refused too, so it can go into a <code>vrg-ruling</code> item unchange
 success it prints <code>{"step", "counts", "security", "fix_status"}</code> as JSON on
 stdout. A refusal names the rule, the finding by ID (or by position when
 the ID is bad) and, for a bad character, its code point and offset; it
-never repeats the refused value. It reads the two files and writes nothing.</p>
+never repeats the refused value. It reads the two files and the capture
+record, and writes nothing.</p>
 <table>
 <thead>
 <tr>
@@ -21632,7 +21638,7 @@ never repeats the refused value. It reads the two files and writes nothing.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>None: no identity mode, network or git access</td>
+<td>The capture record <code>capture-&lt;step&gt;.json</code> beside the result; no identity mode, network or git access</td>
 </tr>
 <tr>
 <td>Failure mode</td>
