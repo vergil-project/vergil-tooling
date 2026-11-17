@@ -119,6 +119,9 @@ so an interrupted run resumes where it stopped:
 3. Generate `vergil.toml` from your answers (see Step 4).
 4. Scaffold `VERSION`, `CLAUDE.md`, `.claude/settings.json`,
    `.claude/hooks/guard.sh`, `README.md`, `.gitignore` and `LICENSE`.
+   A TypeScript repo also gets its three managed files and a minimal
+   `package.json` (see the
+   [TypeScript standards](../standards/development/typescript/overview.md#a-new-repositorys-packagejson)).
 5. Scaffold the language skeleton, where the language has one.
 6. Generate the workflows under `.github/workflows/` (see Step 6).
 7. Scaffold the MkDocs site under `docs/site/` (when docs publishing
