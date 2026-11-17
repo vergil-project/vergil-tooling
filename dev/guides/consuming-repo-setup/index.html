@@ -19064,8 +19064,10 @@ pin it with <code>vrg-host pin</code> rather than skipping upgrades — see the
 <a href="../../reference/dev/host/#pinning-host-dependencies">vrg-host reference</a>.</p>
 <p><code>vrg-container-run</code> pulls the base dev image on every run and rebuilds
 its per-branch cached image when the base image, the language
-lockfile or <code>vergil.toml</code> changes, so there is nothing to refresh by
-hand.
+lockfile or <code>vergil.toml</code> changes, or when a new vergil-tooling release
+lands on the line <code>vergil.toml</code> pins, so there is nothing to refresh by
+hand. See
+<a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>.
 <code>vrg-container-cache status</code> shows the cache state for the current
 branch.</p>
 <p>After a plugin release, refresh the host and every agent VM with
