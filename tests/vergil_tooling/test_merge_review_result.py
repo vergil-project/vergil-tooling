@@ -812,7 +812,8 @@ def test_capture_record_field_not_a_string_is_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], field: str, value: object
 ) -> None:
     args = _files(tmp_path, _result())
-    record = _capture_record((tmp_path / "result-review.md").read_bytes(), **{field: value})
+    record = _capture_record((tmp_path / "result-review.md").read_bytes())
+    record[field] = value
     _write_capture(tmp_path, record)
     err = _capture_refused(capsys, args)
     assert f"the capture record's {field} must be a non-empty string" in err
