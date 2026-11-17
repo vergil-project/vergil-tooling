@@ -463,11 +463,13 @@ _TYPESCRIPT_ESLINT_SCRIPT = (
 
 # An argument of its own that :func:`language_commands` replaces with one
 # ``!<path>`` argument per Vergil-managed file of the language
-# (``repo_config.managed_paths``), the negated patterns by which Prettier
-# leaves a file out of its run (vergil-project/vergil-tooling#4541). Each
-# pattern is anchored at the repo root, so a repo's own file of the same name
-# elsewhere in the tree is still checked.
-_MANAGED_EXCLUDES = "{managed-excludes}"
+# (``repo_config.managed_paths``, vergil-project/vergil-tooling#4541), then
+# one per file the release writes (``changelog.release_output_paths``:
+# ``CHANGELOG.md`` and ``releases/*.md``, #4553): the negated patterns by
+# which Prettier leaves a file out of its run. Each pattern is anchored at the
+# repo root, so a repo's own file of the same name elsewhere in the tree is
+# still checked.
+_PRETTIER_EXCLUDES = "{prettier-excludes}"
 
 # ``tsc`` writes its diagnostics to stdout, one per line with
 # ``--pretty false`` (``file(line,col): error TSnnnn: message``), so the shell
@@ -1119,17 +1121,19 @@ _REGISTRY: dict[str, Language] = {
             # ``quality-eslint.json``; see ``_TYPESCRIPT_ESLINT_SCRIPT``.
             #
             # Prettier checks every file it can parse but the Vergil-managed
-            # ones (vergil-project/vergil-tooling#4541): ``{managed-excludes}``
-            # expands to one ``!<path>`` pattern per file in
-            # ``repo_config.managed_paths``. A repo cannot reformat those
-            # files, since the fleet sync writes them, so they are no
+            # ones (vergil-project/vergil-tooling#4541) and the release's
+            # output (#4553): ``{prettier-excludes}`` expands to one
+            # ``!<path>`` pattern per file in ``repo_config.managed_paths``,
+            # then per pattern in ``changelog.release_output_paths``. A repo
+            # cannot reformat the managed files, since the fleet sync writes
+            # them, and git-cliff writes the release's, so they are no
             # finding of the repo's.
             CheckKind.LINT: [
                 [
                     "prettier",
                     "--check",
                     ".",
-                    _MANAGED_EXCLUDES,
+                    _PRETTIER_EXCLUDES,
                     "--config",
                     ".prettierrc.json",
                 ],
@@ -1236,9 +1240,11 @@ def language_commands(
       threaded into the CMake cache vars. ``cpp_std`` / ``cpp_stdlib`` default to
       the v1 pins (``config.DEFAULT_CPP_STD`` / ``DEFAULT_CPP_STDLIB``) when not
       supplied, so the two-argument call still yields fully-resolved argv.
-    - ``{managed-excludes}``, an argument of its own → one ``!<path>``
+    - ``{prettier-excludes}``, an argument of its own → one ``!<path>``
       argument per file :func:`repo_config.managed_paths` returns for the
-      language (TypeScript's Prettier check, issue #4541).
+      language (issue #4541), then per pattern
+      :func:`changelog.release_output_paths` returns (issue #4553), for
+      TypeScript's Prettier check.
 
     The Python ``TEST`` command is **computed**, not looked up: it is delegated
     to :func:`build_python_test_argv`, which appends xdist work-stealing when
@@ -1270,10 +1276,12 @@ def language_commands(
     }
 
     def _expand(arg: str) -> list[str]:
-        if arg == _MANAGED_EXCLUDES:
+        if arg == _PRETTIER_EXCLUDES:
+            from vergil_tooling.lib.changelog import release_output_paths
             from vergil_tooling.lib.repo_config import managed_paths
 
-            return [f"!{path}" for path in managed_paths(language)]
+            excluded = (*managed_paths(language), *release_output_paths())
+            return [f"!{path}" for path in excluded]
         for token, value in replacements.items():
             arg = arg.replace(token, value)
         return [arg]

@@ -1018,6 +1018,8 @@ def test_typescript_lint_commands() -> None:
         "!tsconfig.vergil.json",
         "!eslint.vergil.config.mjs",
         "!.prettierrc.json",
+        "!CHANGELOG.md",
+        "!releases/*.md",
         "--config",
         ".prettierrc.json",
     ]

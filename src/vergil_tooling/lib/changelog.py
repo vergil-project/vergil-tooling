@@ -174,7 +174,7 @@ def generate_changelog(repo_root: Path, version: str) -> None:
     else:
         mode = ("-o", CHANGELOG_FILE)
     _run_cliff(repo_root, "cliff.toml", (*_tag_args(version), *mode, *_range(base)))
-    _normalize_trailing_newline(output)
+    _normalize_ends(output)
 
 
 def generate_release_notes(repo_root: Path, version: str) -> Path:
@@ -185,9 +185,25 @@ def generate_release_notes(repo_root: Path, version: str) -> Path:
     base = release_boundary(repo_root, version)
     args = (*_tag_args(version), "-o", f"{RELEASE_NOTES_DIR}/{output.name}", *_range(base))
     _run_cliff(repo_root, "cliff-release-notes.toml", args)
-    _normalize_trailing_newline(output)
+    _normalize_ends(output)
     return output
 
 
-def _normalize_trailing_newline(path: Path) -> None:
-    path.write_text(path.read_text(encoding="utf-8").rstrip() + "\n", encoding="utf-8")
+def release_output_paths() -> tuple[str, ...]:
+    """Return the files the release's prepare stage writes, as repo-root patterns.
+
+    They are ``CHANGELOG.md`` and every release note, ``releases/*.md``.
+    TypeScript's Prettier check leaves them out (vergil-project/vergil-tooling#4553):
+    git-cliff writes them, and the release PR's LINT must not depend on how a
+    given Prettier version formats them.
+    """
+    return (CHANGELOG_FILE, f"{RELEASE_NOTES_DIR}/*.md")
+
+
+def _normalize_ends(path: Path) -> None:
+    """Strip the blank lines git-cliff leaves at either end, and end with one newline.
+
+    With an empty header, git-cliff starts a release note with a blank line,
+    which Prettier and markdownlint read as a formatting fault (#4553).
+    """
+    path.write_text(path.read_text(encoding="utf-8").strip() + "\n", encoding="utf-8")
