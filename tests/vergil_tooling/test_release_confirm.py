@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -1056,3 +1057,239 @@ def test_resume_while_rerun_still_fails_keeps_failing_loudly() -> None:
     for _ in range(2):
         err = _confirm_failed_release(ctx, return_value={"id": 111})
         assert "(5) `vrg-release --resume 2.1.0`" in str(err)
+
+
+# -- a superseded CD run (epic vergil-project/.github#1218, Task 7) ----------
+
+_RUN1 = "https://github.com/owner/repo/actions/runs/100"
+_RUN2 = "https://github.com/owner/repo/actions/runs/200"
+_RUN3 = "https://github.com/owner/repo/actions/runs/300"
+_SUPERSEDED_MAIN_JOBS = [
+    _job("docs / docs", conclusion="cancelled"),
+    _job("release / release", conclusion="cancelled"),
+]
+_DOCS_SUPERSEDED_MAIN_JOBS = [
+    _job("docs / docs", conclusion="cancelled"),
+    _job("release / release"),
+]
+_CANCELLED_DOCS = [_job("docs / docs", conclusion="cancelled")]
+
+
+def _listed(*runs: tuple[int, str, str]) -> str:
+    """A ``gh run list`` JSON payload of ``(id, event, createdAt)`` runs on _SHA."""
+    return json.dumps(
+        [
+            {"databaseId": run_id, "headSha": _SHA, "event": event, "createdAt": created}
+            for run_id, event, created in runs
+        ]
+    )
+
+
+_DISPATCHED = (200, "workflow_dispatch", "2099-01-01T00:00:00Z")
+_CANCELLED_PUSH = (100, "push", "2020-01-01T00:00:00Z")
+
+
+def test_confirm_main_redispatches_superseded_once(capsys: pytest.CaptureFixture[str]) -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(
+            _MOD + "._settled_run_jobs", side_effect=[_SUPERSEDED_MAIN_JOBS, _MAIN_JOBS_OK]
+        ) as settle,
+        patch(_MOD + "._supersede_group", return_value="cd") as group,
+        patch(_MOD + ".github.read_output", side_effect=[_SHA, _listed(_DISPATCHED)]),
+        patch(_MOD + ".github.run") as dispatch,
+        patch(_MOD + "._watch_run", return_value=_RUN2) as watch,
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)
+    dispatch.assert_called_once_with(
+        "workflow", "run", "cd.yml", "--repo", "owner/repo", "--ref", "main"
+    )
+    group.assert_called_once_with("100", _RUN1)
+    watch.assert_called_once_with(ctx, "200")
+    assert [c.args[1] for c in settle.call_args_list] == ["100", "200"]
+    assert ctx.cd_run_id == "200"
+    assert ctx.cd_run_url == _RUN2
+    assert ctx.deferred_publish_failures == []
+    out = capsys.readouterr().out
+    assert "superseded" in out
+    assert "CD run 100" in out
+
+
+def test_docs_only_supersede_no_redispatch() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", return_value=_DOCS_SUPERSEDED_MAIN_JOBS),
+        patch(_MOD + "._supersede_group", return_value="cd-docs") as group,
+        patch(_MOD + ".github.run") as dispatch,
+        patch(_MOD + "._verify_artifacts") as verify,
+    ):
+        confirm_main(ctx)
+    group.assert_not_called()
+    dispatch.assert_not_called()
+    verify.assert_called_once_with(ctx)
+    assert ctx.cd_run_id == "100"
+    assert ctx.deferred_publish_failures == ["docs"]
+
+
+def test_redispatch_ignores_cancelled_run() -> None:
+    """Until the dispatched run registers, the only runs on the SHA are the
+    cancelled one and an older dispatch: confirm keeps polling for the new run
+    and never watches or re-judges either."""
+    ctx = _ctx()
+    old_dispatch = (90, "workflow_dispatch", "2020-01-01T00:00:00Z")
+    listings = [
+        _listed(_CANCELLED_PUSH),
+        _listed(_CANCELLED_PUSH, old_dispatch),
+        _listed(_DISPATCHED, _CANCELLED_PUSH, old_dispatch),
+    ]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", side_effect=[_SUPERSEDED_MAIN_JOBS, _MAIN_JOBS_OK]),
+        patch(_MOD + "._supersede_group", return_value="cd") as group,
+        patch(_MOD + ".github.read_output", side_effect=[_SHA, *listings]),
+        patch(_MOD + ".github.run"),
+        patch(_MOD + "._watch_run", return_value=_RUN2) as watch,
+        patch(_MOD + ".time.sleep") as sleep,
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)
+    assert sleep.call_count == 2
+    group.assert_called_once_with("100", _RUN1)
+    watch.assert_called_once_with(ctx, "200")
+    assert ctx.cd_run_id == "200"
+
+
+def test_redispatched_run_that_never_registers_fails() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", return_value=_SUPERSEDED_MAIN_JOBS),
+        patch(_MOD + "._supersede_group", return_value="cd"),
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=[_SHA, *[_listed(_CANCELLED_PUSH)] * _CD_POLL_ATTEMPTS],
+        ),
+        patch(_MOD + ".github.run"),
+        patch(_MOD + "._watch_run") as watch,
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(ReleaseError, match=r"vrg-release --resume 2\.1\.0") as exc,
+    ):
+        confirm_main(ctx)
+    watch.assert_not_called()
+    assert "re-dispatched" in str(exc.value)
+
+
+def test_confirm_main_second_supersede_fails() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", return_value=_SUPERSEDED_MAIN_JOBS),
+        patch(_MOD + "._supersede_group", return_value="cd"),
+        patch(_MOD + ".github.read_output", side_effect=[_SHA, _listed(_DISPATCHED)]),
+        patch(_MOD + ".github.run") as dispatch,
+        patch(_MOD + "._watch_run", return_value=_RUN2),
+        patch(_MOD + "._verify_artifacts") as verify,
+        pytest.raises(ReleaseError) as exc,
+    ):
+        confirm_main(ctx)
+    dispatch.assert_called_once()
+    verify.assert_not_called()
+    message = str(exc.value)
+    assert "superseded again" in message
+    assert _RUN2 in message
+    assert "vrg-release --resume 2.1.0" in message
+
+
+def test_confirm_main_other_cancel_fails() -> None:
+    """A cancel that is not a concurrency supersede is never re-dispatched: the
+    release job's cancel fails the gate."""
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", return_value=_SUPERSEDED_MAIN_JOBS),
+        patch(_MOD + "._supersede_group", return_value=None),
+        patch(_MOD + ".github.run") as dispatch,
+        patch(_MOD + "._failed_release_recovery", return_value="(recovery)"),
+        patch(_MOD + "._verify_artifacts") as verify,
+        pytest.raises(ReleaseError, match="conclusion: 'cancelled'"),
+    ):
+        confirm_main(ctx)
+    dispatch.assert_not_called()
+    verify.assert_not_called()
+
+
+def test_confirm_main_unreadable_supersede_fails_loudly() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", return_value=_SUPERSEDED_MAIN_JOBS),
+        patch(_MOD + "._supersede_group", side_effect=ValueError("no jobs list")),
+        patch(_MOD + ".github.run") as dispatch,
+        pytest.raises(ReleaseError, match="no jobs list"),
+    ):
+        confirm_main(ctx)
+    dispatch.assert_not_called()
+
+
+def test_confirm_main_all_jobs_superseded_without_release_job_redispatches() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", side_effect=[_CANCELLED_DOCS, _MAIN_JOBS_OK]),
+        patch(_MOD + "._supersede_group", return_value="cd"),
+        patch(_MOD + ".github.read_output", side_effect=[_SHA, _listed(_DISPATCHED)]),
+        patch(_MOD + ".github.run") as dispatch,
+        patch(_MOD + "._watch_run", return_value=_RUN2),
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)
+    dispatch.assert_called_once()
+    assert ctx.cd_run_id == "200"
+
+
+def test_confirm_develop_supersede_warns(capsys: pytest.CaptureFixture[str]) -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("300", _RUN3)),
+        patch(_MOD + "._settled_run_jobs", return_value=_CANCELLED_DOCS),
+        patch(_MOD + "._supersede_group", return_value="cd-docs"),
+        patch(_MOD + ".github.run") as dispatch,
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        confirm_develop(ctx)  # must NOT raise
+    dispatch.assert_not_called()
+    assert ctx.develop_cd_run_id == "300"
+    assert ctx.deferred_publish_failures == []
+    mark_warn.assert_called_once()
+    assert "superseded" in mark_warn.call_args.args[0]
+    out = capsys.readouterr().out
+    assert "superseded, not failed" in out
+    assert "cd-docs" in out
+
+
+def test_confirm_develop_other_cancel_still_defers() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("300", _RUN3)),
+        patch(_MOD + "._settled_run_jobs", return_value=_CANCELLED_DOCS),
+        patch(_MOD + "._supersede_group", return_value=None),
+    ):
+        confirm_develop(ctx)
+    assert ctx.deferred_publish_failures == ["docs"]
+
+
+def test_confirm_develop_unreadable_supersede_defers_and_says_why(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("300", _RUN3)),
+        patch(_MOD + "._settled_run_jobs", return_value=_CANCELLED_DOCS),
+        patch(_MOD + "._supersede_group", side_effect=ValueError("no jobs list")),
+    ):
+        confirm_develop(ctx)
+    assert ctx.deferred_publish_failures == ["docs"]
+    assert "no jobs list" in capsys.readouterr().out

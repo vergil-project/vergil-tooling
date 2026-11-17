@@ -13,10 +13,16 @@ import json
 import subprocess
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import ci_evidence, git, github, progress, retry
-from vergil_tooling.lib.cd_runs import failed_job_labels, is_docs_job, is_release_job
+from vergil_tooling.lib.cd_runs import (
+    _supersede_group,
+    failed_job_labels,
+    is_docs_job,
+    is_release_job,
+)
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.subprocess import watch_workflow
 
@@ -33,12 +39,38 @@ _JOB_SETTLE_ATTEMPTS = 12
 
 
 def confirm_main(ctx: ReleaseContext) -> None:
-    """Watch CD on main: hard-verify the release, defer other publish jobs."""
+    """Watch CD on main: hard-verify the release, defer other publish jobs.
+
+    A run whose release job a concurrency supersede cancelled published
+    nothing, so it is dispatched again, once (:func:`_redispatch_main_cd`). A
+    supersede that cancelled only other jobs (the docs job, whose ``cd-docs``
+    group develop shares) is not: the release job is verified as usual and the
+    cancelled job is deferred.
+    """
     run_id, run_url = _watch_cd(ctx, branch="main")
+    jobs = _settled_run_jobs(ctx, run_id, (is_release_job,))
+    group = _release_supersede_group(run_id, run_url, jobs)
+    if group is not None:
+        superseded_id = run_id
+        run_id, run_url = _redispatch_main_cd(ctx, superseded_id, run_url, group)
+        jobs = _settled_run_jobs(ctx, run_id, (is_release_job,))
+        group = _release_supersede_group(run_id, run_url, jobs)
+        if group is not None:
+            raise ReleaseError(
+                phase="confirm-main",
+                command=f"gh workflow run {_CD_WORKFLOW} --ref main",
+                message=(
+                    f"CD run {run_id} on main, dispatched again after CD run "
+                    f"{superseded_id} was superseded, was superseded again: GitHub "
+                    f"cancelled it for a higher-priority run waiting on concurrency "
+                    f"group '{group}'. {run_url}. Once main's CD queue has cleared, "
+                    f"resume with `vrg-release --resume {ctx.version}`, which "
+                    "dispatches it again."
+                ),
+            )
     ctx.cd_run_id = run_id
     ctx.cd_run_url = run_url
 
-    jobs = _settled_run_jobs(ctx, run_id, (is_release_job,))
     _verify_release_job(jobs, recovery=lambda: _failed_release_recovery(ctx, run_id))
 
     if not _record_publish_state(
@@ -51,14 +83,161 @@ def confirm_main(ctx: ReleaseContext) -> None:
 
 
 def confirm_develop(ctx: ReleaseContext) -> None:
-    """Watch CD on develop; defer a docs publish failure rather than raise."""
+    """Watch CD on develop; defer a docs publish failure rather than raise.
+
+    A run a concurrency supersede cancelled is a loud warning, never a failure
+    or a deferred publish, as ``vrg-finalize-pr`` reports one: the run that
+    took its place publishes instead.
+    """
     run_id, run_url = _watch_cd(ctx, branch="develop")
     ctx.develop_cd_run_id = run_id
     ctx.develop_cd_run_url = run_url
 
     jobs = _settled_run_jobs(ctx, run_id, (is_docs_job,))
+    if _warn_develop_superseded(run_id, run_url, jobs):
+        return
     if not _record_publish_state(ctx, run_id, jobs, deferred_label="Publish deferred on develop"):
         print("Develop CD verified.")
+
+
+def _cancelled(job: dict[str, Any]) -> bool:
+    return job.get("conclusion") == "cancelled"
+
+
+def _release_supersede_group(run_id: str, run_url: str, jobs: list[dict[str, Any]]) -> str | None:
+    """The concurrency group that superseded main CD run *run_id*'s release, or ``None``.
+
+    Only a supersede that cancelled the release job, or every job, counts: one
+    that cancelled only other jobs leaves a release that ran. Any other cancel
+    returns ``None`` and is judged by the release-job gate. A cancel that
+    cannot be checked for a supersede fails loudly, naming the lookup's error.
+    """
+    release = _find_job(jobs, is_release_job)
+    release_cancelled = release is not None and _cancelled(release)
+    if not (release_cancelled or (jobs and all(_cancelled(job) for job in jobs))):
+        return None
+    try:
+        return _supersede_group(run_id, run_url)
+    except (subprocess.CalledProcessError, ValueError) as exc:
+        raise ReleaseError(
+            phase="confirm-main",
+            command=f"gh run view {run_id} --json jobs",
+            message=(
+                f"CD run {run_id} on main was cancelled, and whether a concurrency "
+                f"supersede cancelled it could not be checked: {exc}. {run_url}"
+            ),
+        ) from exc
+
+
+def _redispatch_main_cd(
+    ctx: ReleaseContext, superseded_id: str, superseded_url: str, group: str
+) -> tuple[str, str]:
+    """Dispatch main's CD again for superseded run *superseded_id*; watch the new run.
+
+    The superseded run's ID and the dispatch time are recorded before the
+    dispatch, and the new run is the one on the same head SHA with another ID,
+    event ``workflow_dispatch`` and created at or after that time: the
+    cancelled run is never watched again. Returns the new run's ID and URL.
+    """
+    head_sha = retry.retry_known_resource(
+        lambda: github.read_output(
+            "run",
+            "view",
+            "--repo",
+            ctx.repo,
+            superseded_id,
+            "--json",
+            "headSha",
+            "--jq",
+            ".headSha",
+        ),
+        resource=_run_resource(superseded_id),
+    )
+    # createdAt has whole-second resolution, so the dispatch time does too.
+    dispatched_at = datetime.now(UTC).replace(microsecond=0)
+    print(
+        f"  CD run {superseded_id} was superseded before its release ran: GitHub "
+        f"cancelled it for a higher-priority run waiting on concurrency group "
+        f"'{group}'. {superseded_url}"
+    )
+    print(
+        f"  Dispatching {_CD_WORKFLOW} on main again at {dispatched_at.isoformat()} "
+        f"(superseded run: {superseded_id})..."
+    )
+    github.run("workflow", "run", _CD_WORKFLOW, "--repo", ctx.repo, "--ref", "main")
+    run_id = _poll_for_dispatched_run(
+        ctx, head_sha, superseded_id=superseded_id, dispatched_at=dispatched_at
+    )
+    run_url = _watch_run(ctx, run_id)
+    return run_id, run_url
+
+
+def _poll_for_dispatched_run(
+    ctx: ReleaseContext, head_sha: str, *, superseded_id: str, dispatched_at: datetime
+) -> str:
+    """The ID of the CD run that confirm's dispatch on main started."""
+    for _ in range(_CD_POLL_ATTEMPTS):
+        runs = json.loads(
+            github.read_output(
+                "run",
+                "list",
+                "--repo",
+                ctx.repo,
+                "--workflow",
+                _CD_WORKFLOW,
+                "--branch",
+                "main",
+                "--limit",
+                "10",
+                "--json",
+                "databaseId,headSha,event,createdAt",
+            )
+            or "[]"
+        )
+        for run in runs:
+            if (
+                run.get("headSha") == head_sha
+                and str(run.get("databaseId")) != superseded_id
+                and run.get("event") == "workflow_dispatch"
+                and datetime.fromisoformat(run["createdAt"]) >= dispatched_at
+            ):
+                return str(run["databaseId"])
+        time.sleep(_CD_POLL_INTERVAL)
+
+    raise ReleaseError(
+        phase="confirm-main",
+        command=f"gh run list --workflow {_CD_WORKFLOW} --branch main",
+        message=(
+            f"CD on main was re-dispatched at {dispatched_at.isoformat()} after CD run "
+            f"{superseded_id} was superseded, but no dispatched run for commit "
+            f"{head_sha[:12]} registered. Check main's runs in the Actions tab, then "
+            f"resume with `vrg-release --resume {ctx.version}`."
+        ),
+    )
+
+
+def _warn_develop_superseded(run_id: str, run_url: str, jobs: list[dict[str, Any]]) -> bool:
+    """Warn and return True when a concurrency supersede cancelled develop run *run_id*.
+
+    A cancel that cannot be checked is said so, and the run is then judged as
+    any other cancel (its cancelled jobs deferred).
+    """
+    if not any(_cancelled(job) for job in jobs):
+        return False
+    try:
+        group = _supersede_group(run_id, run_url)
+    except (subprocess.CalledProcessError, ValueError) as exc:
+        print(f"  Could not check whether a concurrency supersede cancelled CD run {run_id}: {exc}")
+        return False
+    if group is None:
+        return False
+    print("  WARNING: the develop CD run was superseded, not failed.")
+    print(
+        f"  GitHub cancelled CD run {run_id} for a higher-priority run waiting on "
+        f"concurrency group '{group}'; that run publishes in its place. {run_url}"
+    )
+    progress.mark_warn(f"CD run {run_id} superseded (concurrency group '{group}')")
+    return True
 
 
 def _record_publish_state(
@@ -110,6 +289,11 @@ def _watch_cd(
     head_sha = _cd_head_sha(ctx, branch)
 
     run_id = _poll_for_run(ctx.repo, branch, head_sha)
+    return run_id, _watch_run(ctx, run_id)
+
+
+def _watch_run(ctx: ReleaseContext, run_id: str) -> str:
+    """Print CD run *run_id*'s URL, watch it to completion, and return the URL."""
     resource = _run_resource(run_id)
 
     run_url = retry.retry_known_resource(
@@ -134,7 +318,7 @@ def _watch_cd(
     )
 
     print(f"  CD workflow completed: {run_url}")
-    return run_id, run_url
+    return run_url
 
 
 def _cd_head_sha(ctx: ReleaseContext, branch: str) -> str:
