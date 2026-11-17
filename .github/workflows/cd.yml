@@ -19,7 +19,8 @@ jobs:
       contents: write
 
   release:
-    if: github.ref == 'refs/heads/main'
+    # Skips the push that creates `main`, which no release PR produced (#4580).
+    if: github.ref == 'refs/heads/main' && !github.event.created
     uses: vergil-project/vergil-actions/.github/workflows/cd-release.yml@v2.1
     with:
       language: python
