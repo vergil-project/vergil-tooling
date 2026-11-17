@@ -19,8 +19,9 @@ A lookup that fails or cannot give a complete answer raises
 :class:`PendingReleaseError`; there is never a partial list. Every error
 reason passes through :func:`redact_userinfo`, which strips URL userinfo, so
 no credential reaches the message; :func:`lookup_failure_reason` turns any
-lookup failure into such a reason (``lib/open_prs.py`` shares both). Retrying transient failures is the
-``lib/git.py`` and ``lib/github.py`` wrappers' job; this module adds none.
+lookup failure into such a reason (``lib/open_prs.py`` shares both). Retrying
+transient failures is the ``lib/git.py`` and ``lib/github.py`` wrappers' job;
+this module adds none.
 
 Epic vergil-project/.github#1049 (spec §5.2-§5.4).
 """

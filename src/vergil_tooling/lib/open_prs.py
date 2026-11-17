@@ -153,7 +153,9 @@ def _bool(value: object, what: str) -> bool:
 
 
 def _ci_state(node: dict[str, object], number: int) -> str:
-    commits = _list(_obj(node["commits"], f"commits of #{number}")["nodes"], f"commits of #{number}")
+    commits = _list(
+        _obj(node["commits"], f"commits of #{number}")["nodes"], f"commits of #{number}"
+    )
     if not commits:
         return "none"
     commit = _obj(_obj(commits[0], f"commit of #{number}")["commit"], f"commit of #{number}")

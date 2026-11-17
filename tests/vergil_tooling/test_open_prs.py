@@ -211,6 +211,8 @@ def test_missing_token_uses_standard_message() -> None:
         ({"repository": None}, "repository is not an object"),
         (_page([{**_node(1), "isDraft": "no"}]), "isDraft of #1 is not a boolean"),
         (_page([{**_node(1), "number": True}]), "PR number is not an integer"),
+        (_page([{**_node(1), "title": None}]), "title of #1 is not a string"),
+        (_page([{**_node(1), "commits": {"nodes": {}}}]), "commits of #1 is not a list"),
         ({"repository": {}}, "KeyError"),
     ],
 )
