@@ -440,8 +440,11 @@ Print or bump the repo's version. `show` prints the current version
 increments `patch` (default), `minor` or `major` and prints the new version.
 For a Python or Rust repo, `bump` then refreshes the lockfile (`uv lock`,
 `cargo update --workspace`) in the dev container, through
-`vrg-container-run`, so no host toolchain is needed. Used by the CD
-workflows to read the release version.
+`vrg-container-run`, so no host toolchain is needed. A bump is all or
+nothing: when any step fails, the lockfile refresh included, `bump` puts
+`VERSION`, the language manifest, the secondary version files and the
+lockfile back as they were, says so on stderr and exits non-zero. Used by
+the CD workflows to read the release version.
 
 In a TypeScript repo the version is also kept in `package.json`. `show`
 fails, naming the fix, when `package.json` is missing, has no `version`, or
