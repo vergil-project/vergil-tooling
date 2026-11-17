@@ -20021,6 +20021,17 @@ takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/rep
   state included. It refuses while a <code>security-*.md</code> details file is under
   that directory.</li>
 </ul>
+<p><code>batch-check --pr &lt;url&gt; [--head &lt;sha&gt;]</code> checks a submitted batch PR before a
+push to it, from a clone of the PR's repo (pr-watch runs it on the head it is
+about to push). It reads the PR's body and base. A PR whose body has one
+<code>Closes</code> line or none is not a batch PR and passes. A batch PR's <code>Closes</code> refs
+must be exactly the issues GitHub lists as its closing references, and its
+branch must hold one commit per issue, in the body's order, from the base as
+fetched now to <code>--head</code> (default: the PR's head, fetched by its SHA so the
+branch's remote-tracking ref never moves). The hard rules are not run. It
+writes nothing and makes no freeze check, so it runs on a frozen branch. It
+exits 0 when the PR passes or is not a batch PR, and 1 with the rule's message
+otherwise.</p>
 <table>
 <thead>
 <tr>
@@ -20035,7 +20046,7 @@ takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/rep
 </tr>
 <tr>
 <td>Args</td>
-<td><code>report-ready</code> (<code>--issue</code>, repeatable for a batch, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref), <code>unfreeze</code>, <code>status</code>, <code>batch-start</code>, <code>batch-extract</code>, <code>batch-show</code>; global <code>--base</code> (default: origin/develop)</td>
+<td><code>report-ready</code> (<code>--issue</code>, repeatable for a batch, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref), <code>unfreeze</code>, <code>status</code>, <code>batch-start</code>, <code>batch-extract</code>, <code>batch-show</code>, <code>batch-check</code> (<code>--pr</code> required, <code>--head</code>); global <code>--base</code> (default: origin/develop)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
