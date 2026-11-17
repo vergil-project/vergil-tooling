@@ -29,7 +29,7 @@ version a repo resolves from the version window is a hard CI leg (see the
 [Runtime Version Support Policy](../runtime-version-support-policy.md)).
 
 Required checks for Go repositories are maintained in the
-[standard-actions CI gates documentation](https://vergil-project.github.io/standard-actions/ci-gates/required-checks/).
+[vergil-actions CI gates documentation](https://vergil-project.github.io/vergil-actions/latest/ci-gates/required-checks/).
 
 ## Document Map
 
