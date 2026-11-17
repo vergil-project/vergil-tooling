@@ -832,7 +832,9 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
   authors configured. If a step fails after the move, the command fails
   loudly, naming the moved item and the by-hand fix for each step not done.
 - `planning` — reparent the item onto the planning epic of the same queue
-  home. It also takes a **follow-on brainstorm** out of a development epic: a
+  home. From an ad-hoc epic it takes a task found too big for one PR straight
+  to planning, with no stop in the deferred queue; like `defer`, it is
+  refused while an open PR would close the item. It also takes a **follow-on brainstorm** out of a development epic: a
   task titled `Follow-on brainstorm: …` whose native parent is a development
   epic. A brainstorm never gates its epic's work, so moving it suspends
   nothing. The parent is replaced in one step, then the hand-off is recorded
@@ -881,7 +883,7 @@ Which routes an item allows depends on the container epic it is in:
 |---|---|
 | intake | `drop`, `defer`, `one-off`, `planning`, `split` |
 | planning | `defer`, `drop`, `one-off` — each refused while any development epic of the item is open; `size` |
-| ad hoc | `defer` — refused while an open PR would close the item |
+| ad hoc | `defer`, `planning` — each refused while an open PR would close the item |
 | deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split`, `size` |
 | no parent | `planning` (the `epic-create` free-text path) |
 | a development epic | `planning` for a follow-on brainstorm only; any other task is refused, naming the parent |
