@@ -1053,6 +1053,16 @@ def test_fence_partial_diff_refused_under_a_hash_rule() -> None:
     ]
 
 
+def test_fence_partial_diff_refused_under_a_version_and_hash_rule() -> None:
+    # A rule with both groups needs the whole file for both rules, so it names both.
+    rule = PathRule(glob="f", lines=r"^(?P<version>[0-9.]+) (?P<hash>[0-9a-f]+)$")
+    lines = ["diff --git a/f b/f", "@@ -1 +0,0 @@", "-1.0 aa", "@@ -3,0 +3 @@", "+1.1 bb"]
+    assert fence_violations(_rules(rule), ["f"], {"f": lines}, None, None) == [
+        "f: refused by the line rule of paths entry 'f': the diff does not show the whole "
+        "file, so the no-downgrade rule and the hash rule cannot place their lines"
+    ]
+
+
 # -- the fence: vergil.toml ----------------------------------------------------------
 
 _PY_TOML = """\
