@@ -60,6 +60,17 @@ branch delete is reported, not fatal. `--allow-pending-deps` lets the
 release past whatever still blocks. Lookup failures refuse the release.
 See [The dependency-update gate](../../guides/releasing.md#the-dependency-update-gate).
 
+## The develop-CD gate
+
+On a fresh start (not on `--resume`), preflight last requires the
+develop CD run for the local `develop` head to be green. It waits on a
+run still queued or in progress, up to `$VRG_CD_TIMEOUT` seconds, and
+refuses on a failed, timed-out or cancelled run, with the run's link. A
+failure only in a docs job is a warning. A superseded run is replaced by
+the next develop CD run. With no run for the head, the latest completed
+run on an ancestor must be green. Lookup failures refuse the release.
+See [The develop-CD gate](../../guides/releasing.md#the-develop-cd-gate).
+
 ## Exit codes
 
 | Code | Meaning |

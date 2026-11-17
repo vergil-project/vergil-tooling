@@ -251,23 +251,21 @@ def test_fetch_run_jobs_empty_output_returns_empty() -> None:
 
 
 def test_find_job_substring_matches_reusable_leaf() -> None:
-    from vergil_tooling.lib.release.confirm import _find_job, _name_contains
+    from vergil_tooling.lib.cd_runs import is_docs_job
+    from vergil_tooling.lib.release.confirm import _find_job
 
     jobs = [_job("docs / docs"), _job("release / release")]
-    matched = _find_job(jobs, _name_contains("docs"))
+    matched = _find_job(jobs, is_docs_job)
     assert matched is not None
     assert matched["name"] == "docs / docs"
-    assert _find_job(jobs, _name_contains("missing")) is None
+    assert _find_job(jobs, lambda name: "missing" in name) is None
 
 
 def test_settled_run_jobs_polls_until_leaf_conclusion_settles() -> None:
     """Regression #1611: a reusable-workflow leaf whose conclusion lags the
     run-level status is polled until it settles, not read once."""
-    from vergil_tooling.lib.release.confirm import (
-        _is_release_job,
-        _name_contains,
-        _settled_run_jobs,
-    )
+    from vergil_tooling.lib.cd_runs import is_docs_job, is_release_job
+    from vergil_tooling.lib.release.confirm import _settled_run_jobs
 
     ctx = _ctx()
     lagging = [
@@ -279,7 +277,7 @@ def test_settled_run_jobs_polls_until_leaf_conclusion_settles() -> None:
         patch(_MOD + "._fetch_run_jobs", side_effect=[lagging, settled]),
         patch(_MOD + ".time.sleep") as sleep,
     ):
-        jobs = _settled_run_jobs(ctx, "12345", (_name_contains("docs"), _is_release_job))
+        jobs = _settled_run_jobs(ctx, "12345", (is_docs_job, is_release_job))
     assert jobs == settled
     sleep.assert_called_once()
 
@@ -380,52 +378,6 @@ def test_verify_release_job_accepts_inline_release_job() -> None:
     # than the reusable leaf "release / release" (#2001). The leaf segment is
     # still "release", so the hard gate must accept it.
     _verify_release_job([_job("cd / release")])  # no raise
-
-
-def test_is_release_job_matches_leaf_not_caller() -> None:
-    from vergil_tooling.lib.release.confirm import _is_release_job
-
-    # Both the reusable leaf and vergil-actions' inline job share the leaf.
-    assert _is_release_job("release / release")
-    assert _is_release_job("cd / release")
-    # Decoys whose leaf is not exactly "release" must NOT match (#1853 guard).
-    assert not _is_release_job("release-notes / build")
-    assert not _is_release_job("docs / docs")
-    assert not _is_release_job("docker-publish / publish: prod-base:latest")
-
-
-def test_collect_deferred_publish_excludes_inline_release_job() -> None:
-    from vergil_tooling.lib.release.confirm import _collect_deferred_publish
-
-    # The "cd / release" release job must not be collected as a publish family.
-    jobs = [
-        _job("cd / release"),
-        _job("docs / docs", conclusion="failure"),
-    ]
-    assert _collect_deferred_publish(jobs) == ["docs"]
-
-
-def test_collect_deferred_publish_collapses_families() -> None:
-    from vergil_tooling.lib.release.confirm import _collect_deferred_publish
-
-    jobs = [
-        _job("release / release"),
-        _job("docker-publish / publish: prod-base:latest", conclusion="failure"),
-        _job("docker-publish / publish: prod-python:3.14", conclusion="failure"),
-        _job("docs / docs", conclusion="failure"),
-    ]
-    assert _collect_deferred_publish(jobs) == ["docker-publish", "docs"]
-
-
-def test_collect_deferred_publish_ignores_success_and_skipped() -> None:
-    from vergil_tooling.lib.release.confirm import _collect_deferred_publish
-
-    jobs = [
-        _job("release / release"),
-        _job("docs / docs"),  # success
-        _job("codeql / analyze", conclusion="skipped"),
-    ]
-    assert _collect_deferred_publish(jobs) == []
 
 
 def test_release_job_name_constant() -> None:
@@ -560,9 +512,9 @@ def test_confirm_develop_clean_run_does_not_mark_warn() -> None:
 def test_settled_run_jobs_exhaust_returns_last_snapshot() -> None:
     """When no expected job ever settles, _settled_run_jobs exhausts all
     attempts and returns the final (unsettled) jobs snapshot."""
+    from vergil_tooling.lib.cd_runs import is_release_job
     from vergil_tooling.lib.release.confirm import (
         _JOB_SETTLE_ATTEMPTS,
-        _is_release_job,
         _settled_run_jobs,
     )
 
@@ -576,7 +528,7 @@ def test_settled_run_jobs_exhaust_returns_last_snapshot() -> None:
         ) as mock_fetch,
         patch(_MOD + ".time.sleep") as mock_sleep,
     ):
-        result = _settled_run_jobs(ctx, "runid", (_is_release_job,))
+        result = _settled_run_jobs(ctx, "runid", (is_release_job,))
 
     assert result == unsettled
     assert mock_fetch.call_count == _JOB_SETTLE_ATTEMPTS
@@ -918,23 +870,11 @@ def test_confirm_main_settles_lagging_non_release_job() -> None:
     assert ctx.deferred_publish_failures == []
 
 
-def test_collect_deferred_publish_names_release_family_job_in_full() -> None:
-    """A failed job in the release job's own family is reported by full name,
-    so the message cannot read as the (successful) release itself failing."""
-    from vergil_tooling.lib.release.confirm import _collect_deferred_publish
+def test_failed_job_labels_skips_unsettled_jobs() -> None:
+    from vergil_tooling.lib.cd_runs import failed_job_labels
+    from vergil_tooling.lib.release.confirm import _unsettled_jobs
 
-    jobs = [
-        _job("release / release"),
-        _job("release / package-matrix", conclusion="failure"),
-        _job("docker-publish / publish: prod-base:latest", conclusion="failure"),
-    ]
-    assert _collect_deferred_publish(jobs) == ["release / package-matrix", "docker-publish"]
-
-
-def test_collect_deferred_publish_skips_unsettled_jobs() -> None:
-    from vergil_tooling.lib.release.confirm import _collect_deferred_publish, _unsettled_jobs
-
-    assert _collect_deferred_publish(_STALE_MAIN_JOBS) == []
+    assert failed_job_labels(_STALE_MAIN_JOBS) == []
     assert _unsettled_jobs(_STALE_MAIN_JOBS) == ["release / package-matrix"]
 
 

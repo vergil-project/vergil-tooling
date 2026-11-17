@@ -13,8 +13,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_finalize_pr import (
-    CDRunProblem,
-    CDRunSuperseded,
     FinalizeContext,
     FinalizeError,
     _clean_branch_images,
@@ -34,15 +32,19 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     _stage_provenance,
     _stage_provision,
     _stage_validation,
-    _supersede_group,
     _wait_for_cd_run,
     _worktree_is_dirty,
     build_stages,
-    cd_timeout_secs,
     main,
     parse_args,
 )
 from vergil_tooling.lib.cache_space import CacheSpaceError
+from vergil_tooling.lib.cd_runs import (
+    CDRunProblem,
+    CDRunSuperseded,
+    _supersede_group,
+    cd_timeout_secs,
+)
 from vergil_tooling.lib.github import ClosingIssue, GitHubAPIError, PRClosingReferences
 from vergil_tooling.lib.live_branches import RepoSetError
 from vergil_tooling.lib.pr_merge import MergeAbortError, MergeConflictError

@@ -53,9 +53,6 @@ regains control to report how far the cascade got.
 from __future__ import annotations
 
 import argparse
-import json
-import os
-import re
 import subprocess
 import sys
 import time
@@ -74,6 +71,19 @@ from vergil_tooling.lib import (
     worktrees,
 )
 from vergil_tooling.lib.cache_prune import clean_branch_images, prune_orphan_branch_images
+from vergil_tooling.lib.cd_runs import (
+    _CD_DISPATCH_TIMEOUT_SECS,
+    _CD_PASSING_CONCLUSIONS,
+    _CD_POLL_INTERVAL_SECS,
+    CD_TIMEOUT_ENV,
+    CDRunLookupError,
+    CDRunProblem,
+    CDRunSuperseded,
+    _poll_for_run,
+    _supersede_group,
+    cd_timeout_secs,
+    wait_completed,
+)
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container import PackageJsonError, resolve_language
@@ -89,28 +99,6 @@ from vergil_tooling.lib.versions import VersionsError
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
-
-_CD_WORKFLOW_NAME = "CD"
-
-# CD is dispatched asynchronously by the base-branch push the merge produces,
-# so the run may not be registered the instant finalize looks. Poll up to
-# _CD_DISPATCH_TIMEOUT_SECS for the run whose headSha matches the merge commit
-# to appear; if none has by then, treat it as "this change triggered no CD run"
-# (path filters / skip) and move on without failing. Once found, watch it up to
-# cd_timeout_secs() before bailing with a timeout so finalize never hangs
-# indefinitely. _CD_POLL_INTERVAL_SECS paces both loops.
-_CD_DISPATCH_TIMEOUT_SECS = 120
-# Default CD watch ceiling: 90 minutes. The longest known CD is vergil-containers'
-# (rust image jobs alone take ~40 min); run 38973347564 took 43m31s and was
-# misreported as a failure under the old fixed 1800s (issue #3316). 90 min is
-# roughly 2x that run — headroom for a slow-runner day without letting a truly
-# hung run block finalize for hours. A timeout is "result unknown", not a CD
-# failure, and is cheap to recover from (re-check the run, then re-run
-# ``vrg-finalize-pr --cleanup-only``); override per invocation with
-# $VRG_CD_TIMEOUT, mirroring $VRG_CHECKS_TIMEOUT for the merge-gate wait.
-_CD_WATCH_TIMEOUT_SECS = 5400
-CD_TIMEOUT_ENV = "VRG_CD_TIMEOUT"
-_CD_POLL_INTERVAL_SECS = 10
 
 _ETERNAL_BY_MODEL: dict[str, list[str]] = {
     "docs-single-branch": ["develop"],
@@ -776,235 +764,6 @@ def _infer_pr(root: Path, target_branch: str, *, assume_yes: bool = False) -> st
     return pr["url"]
 
 
-_CD_PASSING_CONCLUSIONS = ("success", "skipped", "neutral")
-
-
-def _list_cd_runs(target_branch: str) -> list[dict[str, object]] | None:
-    """List recent CD workflow runs on ``target_branch``.
-
-    Returns a list of run dicts (possibly empty when the workflow exists but
-    has not run yet), or ``None`` when the runs cannot be determined — the CD
-    workflow does not exist in the repo, ``gh`` errored, or the response was
-    malformed. ``None`` means "do not block"; an empty list means "keep
-    polling, the run may not have registered yet."
-    """
-    result = subprocess.run(  # noqa: S603
-        [  # noqa: S607
-            "gh",
-            "run",
-            "list",
-            "--workflow",
-            _CD_WORKFLOW_NAME,
-            "--branch",
-            target_branch,
-            "--limit",
-            "30",
-            "--json",
-            "conclusion,databaseId,headSha,status,createdAt,url",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return None
-    stdout = result.stdout or ""
-    try:
-        runs = json.loads(stdout) if stdout.strip() else []
-    except json.JSONDecodeError:
-        return None
-    return runs if isinstance(runs, list) else None
-
-
-def _match_cd_run(runs: list[dict[str, object]], head_sha: str) -> dict[str, object] | None:
-    """Return the run in ``runs`` whose ``headSha`` equals ``head_sha``."""
-    for run in runs:
-        if isinstance(run, dict) and (run.get("headSha") or "") == head_sha:
-            return run
-    return None
-
-
-def _view_cd_run(run_id: object) -> dict[str, object] | None:
-    """Fetch a CD run's current status/conclusion/url, or ``None`` on error."""
-    result = subprocess.run(  # noqa: S603
-        [  # noqa: S607
-            "gh",
-            "run",
-            "view",
-            str(run_id),
-            "--json",
-            "status,conclusion,url",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return None
-    stdout = result.stdout or ""
-    try:
-        data = json.loads(stdout) if stdout.strip() else None
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def cd_timeout_secs() -> int:
-    """The CD watch deadline in seconds: ``$VRG_CD_TIMEOUT`` or 5400.
-
-    Mirrors :func:`vergil_tooling.lib.github.checks_timeout_secs`: a malformed
-    or non-positive override is a configuration error and raises rather than
-    silently falling back — the deadline is what keeps a hung CD run from
-    blocking finalize forever, so it cannot be disabled (issue #3316).
-    """
-    raw = os.environ.get(CD_TIMEOUT_ENV, "").strip()
-    if not raw:
-        return _CD_WATCH_TIMEOUT_SECS
-    try:
-        secs = int(raw)
-    except ValueError:
-        secs = 0
-    if secs <= 0:
-        msg = f"{CD_TIMEOUT_ENV} must be a positive whole number of seconds, got {raw!r}"
-        raise ValueError(msg)
-    return secs
-
-
-@dataclass(frozen=True)
-class CDRunProblem:
-    """Why the CD run this merge triggered did not confirm a pass.
-
-    Either the run *concluded* non-success (``conclusion`` set — a real CD
-    failure) or the watch deadline elapsed while it was still running
-    (``conclusion`` is ``None`` — result unknown, never reported as a failed
-    run; issue #3316).
-    """
-
-    run_id: object
-    target_branch: str
-    head_sha: str
-    url: str
-    conclusion: str | None
-    waited_secs: int
-    # Why a cancelled run could not be cleared as a concurrency supersede, when
-    # the lookup itself failed (issue #3834); shown with the failure.
-    note: str = ""
-
-    @property
-    def timed_out(self) -> bool:
-        return self.conclusion is None
-
-    @property
-    def run_ref(self) -> str:
-        return f"CD workflow run {self.run_id} on {self.target_branch} ({self.head_sha[:7]})"
-
-    def describe(self) -> str:
-        if self.timed_out:
-            detail = f"is still in progress after {self.waited_secs}s; result unknown."
-        else:
-            detail = f"ended with conclusion '{self.conclusion}'."
-        text = f"{self.run_ref} {detail}\n  {self.url}"
-        if self.note:
-            text += f"\n  {self.note}"
-        return text
-
-
-@dataclass(frozen=True)
-class CDRunSuperseded:
-    """The CD run this merge triggered was cancelled by a concurrency supersede.
-
-    GitHub cancelled its jobs because a higher-priority run was waiting on the
-    same concurrency group (issue #3834). That is not a CD failure, but it is
-    not a pass either: this run published nothing, and whichever run took its
-    place is not checked here. GitHub records only the group, never the run
-    that superseded it, and that run may be another workflow (a scheduled
-    rebuild sharing the group) or a newer commit's CD, so it cannot be
-    followed without guessing.
-    """
-
-    run_id: object
-    target_branch: str
-    head_sha: str
-    url: str
-    group: str
-
-    @property
-    def run_ref(self) -> str:
-        return f"CD workflow run {self.run_id} on {self.target_branch} ({self.head_sha[:7]})"
-
-    def describe(self) -> str:
-        return (
-            f"{self.run_ref} was superseded: GitHub cancelled it because a "
-            f"higher-priority run was waiting on concurrency group '{self.group}'.\n"
-            f"  {self.url}"
-        )
-
-
-# The check-run annotation GitHub writes on each job a concurrency group
-# cancels to make way for a higher-priority waiting run. The group is quoted
-# for a workflow-level group and bare for a job-level one.
-_SUPERSEDE_ANNOTATION_RE = re.compile(
-    r"^Canceling since a higher priority waiting request for '?(?P<group>.+?)'? exists$"
-)
-_RUN_URL_REPO_RE = re.compile(r"github\.com/([^/]+/[^/]+)/actions/runs/\d+")
-
-
-def _supersede_group(run_id: object, url: str) -> str | None:
-    """The concurrency group that superseded cancelled CD run *run_id*, or ``None``.
-
-    A cancelled run is a supersede only when every job ended passing or
-    cancelled, at least one was cancelled, and every cancelled job carries
-    GitHub's supersede annotation. Any other cancel (by a human, or a run with
-    no job to carry the annotation) returns ``None``, and so does a run where
-    a job really failed. The annotations are read from the check-runs API (a
-    job's id is its check-run id); the job logs do not carry the message.
-
-    *url* is the run's URL, which names the repo the run belongs to. A ``gh``
-    or API failure propagates, as does a payload of the wrong shape
-    (``ValueError``): the caller reports the run as failed and says why.
-    """
-    match = _RUN_URL_REPO_RE.search(url)
-    if match is None:
-        msg = f"cannot read the repository of CD run URL {url!r}"
-        raise ValueError(msg)
-    repo = match.group(1)
-    data = github.read_json("run", "view", str(run_id), "--repo", repo, "--json", "jobs")
-    jobs = data.get("jobs") if isinstance(data, dict) else None
-    if not isinstance(jobs, list):
-        msg = f"gh run view {run_id} returned no jobs list"
-        raise ValueError(msg)
-    cancelled: list[object] = []
-    for job in jobs:
-        if not isinstance(job, dict):
-            msg = f"gh run view {run_id} returned a job that is not an object: {job!r}"
-            raise ValueError(msg)
-        conclusion = job.get("conclusion")
-        if conclusion == "cancelled":
-            cancelled.append(job.get("databaseId"))
-        elif conclusion not in _CD_PASSING_CONCLUSIONS:
-            return None
-    if not cancelled:
-        return None
-    groups: set[str] = set()
-    for job_id in cancelled:
-        endpoint = f"repos/{repo}/check-runs/{job_id}/annotations"
-        annotations = github.read_json("api", endpoint)
-        if not isinstance(annotations, list):
-            msg = f"{endpoint} returned no annotations list"
-            raise ValueError(msg)
-        found = None
-        for annotation in annotations:
-            message = annotation.get("message") if isinstance(annotation, dict) else None
-            hit = _SUPERSEDE_ANNOTATION_RE.match(str(message or "").strip())
-            if hit is not None:
-                found = hit.group("group")
-                break
-        if found is None:
-            return None
-        groups.add(found)
-    return ", ".join(sorted(groups))
-
-
 def _wait_for_cd_run(
     target_branch: str,
     head_sha: str,
@@ -1038,26 +797,26 @@ def _wait_for_cd_run(
     if watch_timeout is None:
         watch_timeout = cd_timeout_secs()
     # Phase 1: wait for the run this merge triggered to register.
-    dispatch_deadline = time.monotonic() + dispatch_timeout
-    run: dict[str, object] | None = None
-    while True:
-        runs = _list_cd_runs(target_branch)
-        if runs is None:
-            # No CD workflow in this repo, or it cannot be queried — nothing
-            # to block on. Preserves graceful behavior for repos without CD.
-            return None
-        run = _match_cd_run(runs, head_sha)
-        if run is not None:
-            break
-        if time.monotonic() >= dispatch_deadline:
-            print(
-                f"  No CD workflow run registered for {head_sha[:7]} within "
-                f"{int(dispatch_timeout)}s — assuming this change triggers no "
-                "CD run and not blocking.",
-                file=sys.stderr,
-            )
-            return None
-        time.sleep(poll_interval)
+    try:
+        run = _poll_for_run(
+            target_branch,
+            head_sha,
+            repo=None,
+            dispatch_timeout=dispatch_timeout,
+            poll_interval=poll_interval,
+        )
+    except CDRunLookupError:
+        # No CD workflow in this repo, or it cannot be queried — nothing
+        # to block on. Preserves graceful behavior for repos without CD.
+        return None
+    if run is None:
+        print(
+            f"  No CD workflow run registered for {head_sha[:7]} within "
+            f"{int(dispatch_timeout)}s — assuming this change triggers no "
+            "CD run and not blocking.",
+            file=sys.stderr,
+        )
+        return None
 
     run_id = run.get("databaseId")
     url = str(run.get("url") or "")
@@ -1066,41 +825,30 @@ def _wait_for_cd_run(
         print(f"  {url}")
 
     # Phase 2: watch the registered run to completion.
-    watch_deadline = time.monotonic() + watch_timeout
-    while True:
-        view = _view_cd_run(run_id)
-        if view is not None:
-            url = str(view.get("url") or url)
-            if view.get("status") == "completed":
-                conclusion = str(view.get("conclusion") or "")
-                if conclusion in _CD_PASSING_CONCLUSIONS:
-                    return None
-                note = ""
-                if conclusion == "cancelled":
-                    try:
-                        group = _supersede_group(run_id, url)
-                    except (subprocess.CalledProcessError, ValueError) as exc:
-                        # JSONDecodeError is a ValueError. The cancel stays a
-                        # failure, with the reason it could not be cleared.
-                        group = None
-                        note = (
-                            "finalize could not tell whether a concurrency supersede "
-                            f"cancelled it: {error_text(exc)}"
-                        )
-                    if group is not None:
-                        return CDRunSuperseded(run_id, target_branch, head_sha, url, group)
-                return CDRunProblem(
-                    run_id,
-                    target_branch,
-                    head_sha,
-                    url,
-                    conclusion or "unknown",
-                    int(watch_timeout),
-                    note,
-                )
-        if time.monotonic() >= watch_deadline:
-            return CDRunProblem(run_id, target_branch, head_sha, url, None, int(watch_timeout))
-        time.sleep(poll_interval)
+    view = wait_completed(run_id, timeout=watch_timeout, poll_interval=poll_interval)
+    if view is None:
+        return CDRunProblem(run_id, target_branch, head_sha, url, None, int(watch_timeout))
+    url = str(view.get("url") or url)
+    conclusion = str(view.get("conclusion") or "")
+    if conclusion in _CD_PASSING_CONCLUSIONS:
+        return None
+    note = ""
+    if conclusion == "cancelled":
+        try:
+            group = _supersede_group(run_id, url)
+        except (subprocess.CalledProcessError, ValueError) as exc:
+            # JSONDecodeError is a ValueError. The cancel stays a failure,
+            # with the reason it could not be cleared.
+            group = None
+            note = (
+                "finalize could not tell whether a concurrency supersede "
+                f"cancelled it: {error_text(exc)}"
+            )
+        if group is not None:
+            return CDRunSuperseded(run_id, target_branch, head_sha, url, group)
+    return CDRunProblem(
+        run_id, target_branch, head_sha, url, conclusion or "unknown", int(watch_timeout), note
+    )
 
 
 def _stage_provenance(ctx: FinalizeContext) -> None:

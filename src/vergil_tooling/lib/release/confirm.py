@@ -16,6 +16,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import ci_evidence, git, github, progress, retry
+from vergil_tooling.lib.cd_runs import failed_job_labels, is_docs_job, is_release_job
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.subprocess import watch_workflow
 
@@ -37,7 +38,7 @@ def confirm_main(ctx: ReleaseContext) -> None:
     ctx.cd_run_id = run_id
     ctx.cd_run_url = run_url
 
-    jobs = _settled_run_jobs(ctx, run_id, (_is_release_job,))
+    jobs = _settled_run_jobs(ctx, run_id, (is_release_job,))
     _verify_release_job(jobs, recovery=lambda: _failed_release_recovery(ctx, run_id))
 
     if not _record_publish_state(
@@ -55,7 +56,7 @@ def confirm_develop(ctx: ReleaseContext) -> None:
     ctx.develop_cd_run_id = run_id
     ctx.develop_cd_run_url = run_url
 
-    jobs = _settled_run_jobs(ctx, run_id, (_name_contains("docs"),))
+    jobs = _settled_run_jobs(ctx, run_id, (is_docs_job,))
     if not _record_publish_state(ctx, run_id, jobs, deferred_label="Publish deferred on develop"):
         print("Develop CD verified.")
 
@@ -72,7 +73,7 @@ def _record_publish_state(
     publish. Under any other run conclusion it may genuinely have failed, so it
     is deferred as ``<job> (never settled)``.
     """
-    deferred = _collect_deferred_publish(jobs)
+    deferred = failed_job_labels(jobs)
     stale: list[str] = []
     unsettled = _unsettled_jobs(jobs)
     if unsettled:
@@ -224,15 +225,6 @@ def _run_conclusion(ctx: ReleaseContext, run_id: str) -> str:
 JobMatcher = Callable[[str], bool]
 
 
-def _name_contains(fragment: str) -> JobMatcher:
-    """Matcher for a job whose name *contains* ``fragment``.
-
-    Reusable-workflow leaf jobs are surfaced as ``<caller> / <job>`` (e.g.
-    ``docs / docs``), so this substring-matches rather than compares exactly.
-    """
-    return lambda name: fragment in name
-
-
 def _find_job(jobs: list[dict[str, Any]], matches: JobMatcher) -> dict[str, Any] | None:
     """First job whose name satisfies ``matches``."""
     for job in jobs:
@@ -254,7 +246,7 @@ def _settled_run_jobs(
     the caller report it as not found.
 
     Each matcher must identify the exact job the caller then verifies: the
-    release settle uses ``_is_release_job`` (the leaf segment), because
+    release settle uses ``is_release_job`` (the leaf segment), because
     cd-release also runs ``release / package-*`` jobs that finish first and
     would end the wait early under a substring match (#3102).
 
@@ -277,22 +269,6 @@ def _settled_run_jobs(
 
 
 _RELEASE_JOB_NAME = "release / release"
-_RELEASE_JOB_LEAF = "release"
-
-
-def _is_release_job(name: str) -> bool:
-    """True when *name* is the CD release job, identified by its leaf segment.
-
-    Consumer repos call the reusable ``cd-release`` workflow, so their release
-    job surfaces as the reusable leaf ``release / release``. vergil-actions
-    *defines* that reusable workflow and cannot call itself, so its CD runs an
-    inline job it names ``cd / release`` (#2001). Both share the leaf segment
-    ``release`` — match on the leaf (the part after the last `` / ``), not the
-    full name, so vergil-actions' own release verifies while a decoy like
-    ``release-notes / build`` (leaf ``build``) still fails the #1853 guard.
-    Matching the leaf exactly keeps that guard against loose substrings intact.
-    """
-    return name.rsplit(" / ", 1)[-1] == _RELEASE_JOB_LEAF
 
 
 def _verify_release_job(
@@ -300,7 +276,7 @@ def _verify_release_job(
 ) -> None:
     """Hard gate: the release job must exist and have concluded ``success``.
 
-    Identified by its leaf segment ``release`` (see ``_is_release_job``), which
+    Identified by its leaf segment ``release`` (see ``is_release_job``), which
     matches both the reusable leaf ``release / release`` and vergil-actions'
     inline ``cd / release`` while still rejecting a ``release``-prefixed decoy —
     the release job is the single load-bearing assertion. A renamed/absent
@@ -312,7 +288,7 @@ def _verify_release_job(
     anything but a raise.
     """
     for job in jobs:
-        if _is_release_job(job.get("name", "")):
+        if is_release_job(job.get("name", "")):
             conclusion = job.get("conclusion")
             if conclusion != "success":
                 message = f"Release job did not succeed (conclusion: '{conclusion}')."
@@ -398,40 +374,9 @@ def _ci_rerun_steps(ctx: ReleaseContext) -> list[str]:
     ]
 
 
-def _job_family(name: str) -> str:
-    return name.split(" / ", 1)[0]
-
-
 def _unsettled_jobs(jobs: list[dict[str, Any]]) -> list[str]:
     """Full names of jobs whose ``status`` is not yet ``completed``."""
     return [job.get("name", "") for job in jobs if job.get("status") != "completed"]
-
-
-def _collect_deferred_publish(jobs: list[dict[str, Any]]) -> list[str]:
-    """Ordered-unique families of completed non-release jobs that did not succeed.
-
-    A job "did not succeed" when it completed with a conclusion that is neither
-    ``success`` nor ``skipped`` (a skipped job — e.g. codeql — is not a
-    failure). A job that has not completed is not judged here — see
-    ``_unsettled_jobs`` (#3352). Reusable leaves are ``<family> / <job>``;
-    collapse to the family so a matrix of failed ``docker-publish`` leaves
-    reports once as ``docker-publish`` — except when the family is the release
-    job's own (``release / package-sign``), where the bare family would read as
-    the release itself failing, so the full job name is reported.
-    """
-    release_families = {_job_family(n) for j in jobs if _is_release_job(n := j.get("name", ""))}
-    failed: list[str] = []
-    for job in jobs:
-        name = job.get("name", "")
-        if _is_release_job(name) or job.get("status") != "completed":
-            continue
-        if job.get("conclusion") in ("success", "skipped"):
-            continue
-        family = _job_family(name)
-        label = name if family in release_families else family
-        if label and label not in failed:
-            failed.append(label)
-    return failed
 
 
 def _verify_artifacts(ctx: ReleaseContext) -> None:

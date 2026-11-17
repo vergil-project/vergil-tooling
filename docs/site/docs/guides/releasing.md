@@ -155,7 +155,7 @@ issue and ticks its box in the issue's stage checklist.
 | Stage | Mode | What it does |
 |---|---|---|
 | `audit` | fail-fast | Runs `vrg-github-repo-config audit` on the repo. Releasing vergil-tooling itself adds `--in-tree-templates`, so its managed files are checked against the templates being released, not the installed release's (see the [config audit reference](../reference/config-audit.md#auditing-vergil-tooling-against-its-own-templates)). `--skip-audit` skips it |
-| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), and runs the [dependency-update gate](#the-dependency-update-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it |
+| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it |
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
@@ -741,6 +741,35 @@ any other fresh-start check, when `origin/main` has commits not on
 
 If preflight cannot fetch `main` or compare the branches, it refuses
 rather than skipping.
+
+### The develop-CD gate
+
+A fresh start (not `--resume`) refuses to cut a release from a
+`develop` whose CD is not green. It is the last preflight check, because
+it may wait. It finds the develop CD run for the local `develop` head,
+by its commit, the way `vrg-finalize-pr` finds a merge's run:
+
+- **Queued, pending or in progress.** The gate waits for it, up to
+  `$VRG_CD_TIMEOUT` seconds (default 5400). A run still not complete at
+  the deadline refuses, as "result unknown": re-run `vrg-release` once
+  it finishes.
+- **Succeeded.** The release goes ahead.
+- **Failed.** The release refuses, naming the failed jobs and linking the
+  run. A failure only in a docs job is the exception: `confirm-develop`
+  defers a develop docs publish, and so does the gate. It prints a loud
+  warning and the release goes ahead.
+- **Superseded.** GitHub cancelled it to make way for a higher-priority
+  run in the same concurrency group. The gate judges the develop CD run
+  created next instead. With none, it refuses: nothing green covers the
+  head. Re-run the superseded run, then re-run `vrg-release`.
+- **Cancelled any other way.** The release refuses.
+- **No run registered** for the head within 120 seconds. The gate judges
+  the latest completed develop CD run whose head is an ancestor of the
+  release head instead, and requires it to be green.
+
+If the gate cannot list the runs or read a run's jobs, it refuses
+rather than skipping. A resume skips the gate: the release it adopts
+already passed it.
 
 ## Documentation publication
 
