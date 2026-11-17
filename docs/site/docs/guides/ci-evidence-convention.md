@@ -212,8 +212,8 @@ Producers must therefore emit real report files at the workspace-root paths the
 producer composite globs for:
 
 The test and audit report files and the quality lint and typecheck reports
-are emitted **once per resolved version** (`<ver>` ∈ `3.12` / `3.13` /
-`3.14` / `3.15` for this repo today). The quality transcripts and the
+are emitted **once per resolved version** (`<ver>` is `3.15`, the one
+version this repo resolves today). The quality transcripts and the
 security SARIF are **not** per-version:
 
 | Gate      | Required report file(s)                                             |

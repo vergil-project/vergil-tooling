@@ -67,7 +67,12 @@ page applies it to Python.
 vergil-tooling itself is a `tooling` repo with no pin: every install path runs
 it on its own Python 3.15 interpreter, so no consumer runs it on a version it
 builds. It resolves as an app, so its CI and local validation run on the newest
-window version with a published runtime, 3.15 today.
+window version with a published runtime, 3.15 today. Its `requires-python`
+floor is 3.15, but the floor does not choose the versions it builds: only the
+repository type does. When a newer series joins the window with a published
+runtime, its CI moves to that series on the next build, while its install paths
+still name `--python 3.15`. Moving the install paths to the new series, and
+raising the floor with them, is a deliberate change of its own.
 
 ## Toolchain selection in the repo
 
