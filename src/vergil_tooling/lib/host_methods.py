@@ -128,7 +128,7 @@ def _run(cmd: list[str]) -> str | None:
             check=True,
             stdin=subprocess.DEVNULL,
         )
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return None
     return out.stdout.strip()
 

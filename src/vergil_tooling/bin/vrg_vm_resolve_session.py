@@ -260,7 +260,7 @@ def read_roster(sessions_dir: Path) -> list[dict[str, object]]:
     for path in sorted(sessions_dir.glob("*.json")):
         try:
             data = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
+        except OSError, json.JSONDecodeError:
             continue
         if isinstance(data, dict):
             entries.append(data)

@@ -64,8 +64,10 @@ page applies it to Python.
   the version single-container CI jobs use). Without it, the primary is the
   newest resolved version.
 
-vergil-tooling itself is a `library` with no pin: its CI covers 3.12 to 3.15
-and local validation runs on 3.15.
+vergil-tooling itself is a `tooling` repo with no pin: every install path runs
+it on its own Python 3.15 interpreter, so no consumer runs it on a version it
+builds. It resolves as an app, so its CI and local validation run on the newest
+window version with a published runtime, 3.15 today.
 
 ## Toolchain selection in the repo
 

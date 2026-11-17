@@ -184,7 +184,7 @@ class ScrapeStore:
         for path in sorted(reservations.glob("*.json")):
             try:
                 data = json.loads(path.read_text())
-            except (OSError, json.JSONDecodeError):
+            except OSError, json.JSONDecodeError:
                 continue
             if not isinstance(data, dict):
                 continue
@@ -218,7 +218,7 @@ class ScrapeStore:
         for path in reservations.glob("*.json"):
             try:
                 data = json.loads(path.read_text())
-            except (OSError, json.JSONDecodeError):
+            except OSError, json.JSONDecodeError:
                 path.unlink(missing_ok=True)
                 continue
             sid = data.get("sessionId") if isinstance(data, dict) else None

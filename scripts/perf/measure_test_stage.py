@@ -34,7 +34,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import median
 
@@ -242,7 +242,7 @@ def render_evidence(
     warmup: int,
 ) -> str:
     """Render the baseline evidence markdown (prose-scope, MD013 relaxed)."""
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     baseline_median = results[0].median_seconds if results else 0.0
 
     lines: list[str] = []

@@ -221,7 +221,7 @@ def _package_json_declares_no_dependencies(path: Path) -> bool:
     """
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    except OSError, UnicodeDecodeError, json.JSONDecodeError:
         return False
     if not isinstance(manifest, dict):
         return False

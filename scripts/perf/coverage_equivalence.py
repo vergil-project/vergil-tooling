@@ -55,7 +55,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 # defusedxml hardens XML parsing against entity-expansion / external-entity
 # attacks (the Semgrep security gate rejects stdlib xml.etree). Its parse()
@@ -192,7 +192,7 @@ def render_evidence(
     test_count: int,
 ) -> str:
     """Render the coverage-equivalence evidence markdown (MD013 relaxed prose)."""
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     parallel_ok = not parallel_diff
     sysmon_ok = not sysmon_diff
 

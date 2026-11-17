@@ -40,7 +40,7 @@ def _read_host_git_config(key: str) -> str | None:
             check=True,
         )
         return result.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.CalledProcessError, FileNotFoundError:
         return None
 
 

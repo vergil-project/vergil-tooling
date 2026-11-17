@@ -806,7 +806,7 @@ def workflow_refs_drift(repo_root: Path) -> ManagedFileDrift | None:
     """
     try:
         expected = read_source_version(repo_root)
-    except (UpdateDepsError, OSError, ValueError):
+    except UpdateDepsError, OSError, ValueError:
         return None  # vergil.toml problems are reported by _check_vergil_toml
     items: list[DiffItem] = []
     stale: dict[Path, None] = {}  # the files to rewrite, in order

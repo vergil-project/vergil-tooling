@@ -77,12 +77,12 @@ def test_require_ctx_raises_when_missing() -> None:
 
 
 def test_preflight_stage_populates_ctx_and_bump(monkeypatch) -> None:
-    sentinel = UpdateDepsContext(repo="o/r", repo_root=Path("/tmp/r"))  # noqa: S108
-    monkeypatch.setattr(_MOD + ".preflight", lambda *, repo_root: sentinel)  # noqa: ARG005
+    fake_ctx = UpdateDepsContext(repo="o/r", repo_root=Path("/tmp/r"))  # noqa: S108
+    monkeypatch.setattr(_MOD + ".preflight", lambda *, repo_root: fake_ctx)  # noqa: ARG005
     state = UpdateDepsState(repo_root=Path("/tmp/r"), vergil_bump="v2.2")  # noqa: S108
     preflight_stage(state)
-    assert state.ctx is sentinel
-    assert sentinel.vergil_bump == "v2.2"
+    assert state.ctx is fake_ctx
+    assert fake_ctx.vergil_bump == "v2.2"
 
 
 def test_run_updaters_commits_changed_only(monkeypatch) -> None:

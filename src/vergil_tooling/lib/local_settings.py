@@ -138,7 +138,7 @@ def find_violations(paths: list[Path]) -> list[Path]:
             continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        except OSError, UnicodeDecodeError, json.JSONDecodeError:
             violations.append(path)
             continue
         if data != {}:

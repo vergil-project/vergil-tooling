@@ -55,7 +55,7 @@ def confirm(prompt: str, *, assume_yes: bool, default: bool = False) -> bool:
     while True:
         try:
             raw = input(f"{prompt} {hint} ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             print()
             return False
         if not raw:

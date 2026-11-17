@@ -302,7 +302,7 @@ def detect_org(*, cwd: str | Path | None = None) -> str | None:
             check=True,
             cwd=cwd,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.CalledProcessError, FileNotFoundError:
         return None
     repo = github_remote_repo(result.stdout)
     if repo is None:

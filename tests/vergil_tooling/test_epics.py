@@ -3228,7 +3228,7 @@ def test_epic_sentinels_are_the_standing_kinds_sentinels() -> None:
 
 
 @pytest.mark.parametrize(
-    ("sentinel", "ensure"),
+    ("epic_sentinel", "ensure"),
     [
         ("adhoc", "ensure_adhoc_epic"),
         ("intake", "ensure_intake_epic"),
@@ -3236,17 +3236,17 @@ def test_epic_sentinels_are_the_standing_kinds_sentinels() -> None:
         ("deferred", "ensure_deferred_epic"),
     ],
 )
-def test_resolve_epic_ref_handles_every_sentinel(sentinel: str, ensure: str) -> None:
+def test_resolve_epic_ref_handles_every_sentinel(epic_sentinel: str, ensure: str) -> None:
     """Every EPIC_SENTINELS entry is resolved by its ensure_* helper, never parsed."""
     epic = IssueRef("org", ".github", 9)
     with (
         patch(f"vergil_tooling.lib.epics.{ensure}", return_value=epic) as mock_ensure,
         patch("vergil_tooling.lib.epics.qualify_epic_ref") as mock_qualify,
     ):
-        assert epics.resolve_epic_ref(sentinel, repo="org/tool") == epic
+        assert epics.resolve_epic_ref(epic_sentinel, repo="org/tool") == epic
     mock_ensure.assert_called_once_with("org/tool")
     mock_qualify.assert_not_called()
-    assert sentinel in epics.EPIC_SENTINELS
+    assert epic_sentinel in epics.EPIC_SENTINELS
 
 
 # -- DEFERRED standing queue kind (epic .github#508) ---------------------------
