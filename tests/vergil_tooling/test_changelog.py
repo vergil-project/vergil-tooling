@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess as _sp
+from importlib.resources import as_file, files
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -426,7 +428,7 @@ def test_pasted_subjects_and_bodies_carry_no_line_start_snippet_marker(repo: Pat
     assert '\t&#45;--8<--- "docs/other.md"' in notes
     assert 'inline text --8<-- "docs/other.md" stays as written' in notes
     assert '- &#45;-8<-- "docs/other.md"' in changelog
-    assert 'after a carriage return\n&#45;-8<-- "docs/other.md"' in notes
+    assert 'after a carriage return\n  &#45;-8<-- "docs/other.md"' in notes
 
 
 def test_regenerating_the_changelog_is_idempotent(repo: Path) -> None:
@@ -479,3 +481,91 @@ def test_release_boundary_is_the_merge_base_with_the_previous_release(repo: Path
 def test_release_boundary_is_none_for_a_first_release(repo: Path) -> None:
     _commit(repo, "feat: base")
     assert release_boundary(repo, "1.0.0") is None
+
+
+# --- the release note's Markdown shape (#4553) ----------------------------------
+
+
+def _shaped_release(repo: Path) -> str:
+    """Prepare a release whose commits have no body, a one-paragraph and a two-paragraph one."""
+    _commit(repo, "chore: initial setup")
+    _git(repo, "branch", "main")
+    _commit(repo, "chore: step two")
+    _commit(repo, "feat: add the program (#5)\n\nA greet and sum program.\nRef org/repo#1.")
+    _commit(repo, "feat: add max (#6)")
+    _commit(repo, "feat: add min (#7)\n\nFirst paragraph.\n\nRef org/repo#2.")
+    _commit(repo, "feat: add mean (#8)\n\nThe mean.")
+    _commit(repo, "fix: last item (#9)\n\nOne.\n\nTwo.")
+    _cut_release(repo, "1.0.0")
+    return _prepare(repo, "1.0.0")[1]
+
+
+def test_release_note_indents_each_description_under_its_item(repo: Path) -> None:
+    """No leading blank line, and each body is its list item's indented description.
+
+    A one-paragraph body keeps the list tight; a body of several paragraphs is
+    followed by a blank line, unless its item ends the list (#4553).
+    """
+    notes = _shaped_release(repo)
+    date = _git(repo, "log", "-1", "--format=%cs")
+    assert notes == (
+        f"# Release 1.0.0 ({date})\n"
+        "\n"
+        "## Bug fixes\n"
+        "\n"
+        "- **last item (#9)**\n"
+        "  One.\n"
+        "\n"
+        "  Two.\n"
+        "\n"
+        "## Chores\n"
+        "\n"
+        "- **initial setup**\n"
+        "- **step two**\n"
+        "\n"
+        "## Features\n"
+        "\n"
+        "- **add the program (#5)**\n"
+        "  A greet and sum program.\n"
+        "  Ref org/repo#1.\n"
+        "- **add max (#6)**\n"
+        "- **add min (#7)**\n"
+        "  First paragraph.\n"
+        "\n"
+        "  Ref org/repo#2.\n"
+        "\n"
+        "- **add mean (#8)**\n"
+        "  The mean.\n"
+    )
+
+
+@pytest.mark.skipif(shutil.which("prettier") is None, reason="prettier is not installed")
+def test_release_note_is_prettier_clean(repo: Path) -> None:
+    """Prettier, with Vergil's TypeScript config, finds nothing to change in the note."""
+    notes = repo / RELEASE_NOTES_DIR / "v1.0.0.md"
+    _shaped_release(repo)
+    config = files("vergil_tooling.configs") / "typescript" / "prettier.config.json"
+    with as_file(config) as config_path:
+        result = _sp.run(  # noqa: S603
+            ["prettier", "--check", "--config", str(config_path), str(notes)],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("markdownlint") is None, reason="markdownlint is not installed")
+def test_release_note_passes_markdownlint(repo: Path) -> None:
+    """The bundled markdownlint config, which every language's docs use, passes the note."""
+    notes = repo / RELEASE_NOTES_DIR / "v1.0.0.md"
+    _shaped_release(repo)
+    config = files("vergil_tooling.configs") / "markdownlint.yaml"
+    with as_file(config) as config_path:
+        result = _sp.run(  # noqa: S603
+            ["markdownlint", "--config", str(config_path), str(notes)],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    assert result.returncode == 0, result.stdout + result.stderr

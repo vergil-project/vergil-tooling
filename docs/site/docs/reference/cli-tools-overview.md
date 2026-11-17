@@ -1655,6 +1655,15 @@ GitHub config, and Pages. The scaffolded `base + <language>`
 `ops.yml` make a new repo pass the config audit's checks for those
 files from day one.
 
+For a TypeScript repo, the config-files step also writes the language's
+managed files (`tsconfig.vergil.json`, `eslint.vergil.config.mjs`,
+`.prettierrc.json`) and a minimal `package.json` holding only `name`
+(the repo name), `version` (the `VERSION` it writes) and
+`"private": true`, so the new repo passes the `package.json` version
+cross-check from its first commit. It never overwrites an existing
+`package.json`, which is the repo's, not a managed file (see
+[A new repository's `package.json`](../standards/development/typescript/overview.md#a-new-repositorys-packagejson)).
+
 The vergil series a new repo uses comes from the installed
 vergil-tooling: `[dependencies].vergil` defaults to its `vX.Y`, and the
 generated workflows pin the vergil-actions reusable workflows to that
@@ -1829,12 +1838,42 @@ A cached image is named
 `ghcr.io/vergil-project/prod-base:latest--develop--vergil-tooling.2fb5421a`.
 The branch is sanitized (`/` becomes `-`). The repository is the directory
 name of the repository's clone, the same from each of its worktrees. The hash
-is the cache key: the cache-sensitive files, the base image's digest and the
-build environment. Naming the repository gives each repository its own cached
-image, so two repositories on the same base image and branch no longer
-replace each other's. `build`, `clean`, `status` and `vrg-container-run` only
-ever find or remove the current repository's image, and so does
-`vrg-finalize-pr` when it cleans a branch's images (issue #4162).
+is the cache key: the cache-sensitive files, the base image's digest, the
+build environment and the vergil-tooling release the image installs. Naming
+the repository gives each repository its own cached image, so two
+repositories on the same base image and branch no longer replace each
+other's. `build`, `clean`, `status` and `vrg-container-run` only ever find
+or remove the current repository's image, and so does `vrg-finalize-pr` when
+it cleans a branch's images (issue #4162).
+
+#### How the cache tracks vergil-tooling releases
+
+The base images carry no vergil-tooling: the cache build installs the
+release that `vergil.toml`'s `[dependencies].vergil` pin names (or
+`VRG_DOCKER_INSTALL_TAG`, when set). A line pin such as `v2.1` floats, so
+every `build`, `status` and `vrg-container-run` resolves it to the newest
+release on the line before it looks at the cache. It reads the vergil
+package index (`https://vergil-project.github.io/packages/deb/dists/<suite>/main/binary-<arch>/Packages`,
+for the host's architecture) and takes the newest release that every Ubuntu
+suite lists. That release, such as `v2.1.320`, is part of the cache key, the
+build installs exactly it, and the image records it. So when a release lands
+on the line, the next run rebuilds each branch's cache with it, and `status`
+reports the old cache `stale`, naming the release it holds and the one the
+pin installs now (issue #4550).
+
+An exact pin (`v2.1.320`) is its own release and needs no lookup. A dev
+ref (`develop`, a branch) is installed from git and is not resolved: a cache
+built from a dev ref is not rebuilt when that ref moves.
+
+The index is read on every run, never cached, like the base image pull and
+the version window. When it cannot be read (offline, or the index is down),
+or the line has no release in it, `build`, `status` and `vrg-container-run`
+fail with the cause and exit 1. They never fall back to the release the
+cached image holds. To work without the index, pin an exact release with
+`VRG_DOCKER_INSTALL_TAG`: the error names the release this branch's cached
+image holds, and pinning that release reuses the image as it is.
+`VRG_ALLOW_STALE_BASE`, which lets a run use the local base image when its
+pull fails, does not cover this lookup.
 
 Images from earlier vergil-tooling releases are named
 `<base image>:<base tag>--<branch>--<hash>`, with no repository. No command

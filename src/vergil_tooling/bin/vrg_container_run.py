@@ -39,6 +39,7 @@ from vergil_tooling.lib.container import (
 )
 from vergil_tooling.lib.container_cache import ensure_cached_image
 from vergil_tooling.lib.process import exec_replace
+from vergil_tooling.lib.tooling_release import ToolingResolveError
 from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.versions.extensions import container_env
 
@@ -71,6 +72,7 @@ environment variables:
   DOCKER_DEV_IMAGE        override the auto-detected container image
   DOCKER_NETWORK          join a Docker network (e.g. for integration tests)
   VRG_DOCKER_INSTALL_TAG   override the vergil-tooling version tag from vergil.toml
+                          (an exact vX.Y.Z needs no package-index lookup)
   PYTHONPYCACHEPREFIX     container bytecode cache root (default: /tmp/pycache,
                           keeping __pycache__ off the bind-mounted repo)
   CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER
@@ -187,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
             image = ensure_cached_image(
                 repo_root, lang, base, runtime=runtime, build_env=container_env(resolution)
             )
-        except CacheSpaceError as exc:
+        except (CacheSpaceError, ToolingResolveError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
         image_source = "cached" if image != base else "default"

@@ -58,6 +58,27 @@ Package management is **npm**, chosen for universality at zero adoption barrier:
   native ES modules resolved the way modern Node resolves them. A repository's
   `package.json` declares `"type": "module"` to match.
 
+### A new repository's `package.json`
+
+`vrg-github-repo-init --language typescript` writes a minimal `package.json`
+in its config-files step, beside the three managed files:
+
+```json
+{
+  "name": "<repo name>",
+  "version": "0.1.0",
+  "private": true
+}
+```
+
+Its `version` is the `VERSION` repo-init writes, so the new repository passes
+the version cross-check (`vrg-version show` and the `typescript-tools` stage)
+from its first commit. It has no devDependencies and no scripts: those, and
+`"type": "module"`, are the repository's to add, and the `typescript-tools`
+stage names what is missing. Repo-init never overwrites an existing
+`package.json`. It is not a managed file, so the fleet sync does not keep it,
+and Prettier checks it like any other file the repository owns.
+
 ### Baking a non-npm dependency into the dev image
 
 A repo occasionally needs a JS library present in the dev image itself — for
@@ -240,8 +261,8 @@ other than the root `.prettierrc.json`.
 
 **What Prettier checks.** Every file in the repository that Prettier can
 parse (TypeScript, JavaScript, JSON, Markdown and YAML among them), except what
-`.gitignore` or a `.prettierignore` excludes and the files Vergil manages.
-Those are the files the config audit holds to Vergil's content, so the
+`.gitignore` or a `.prettierignore` excludes, the files Vergil manages and
+the files a release writes. The managed files are the files the config audit holds to Vergil's content, so the
 repository cannot reformat them: the fleet sync writes them, and a reformatted
 copy is drift. The check leaves them out with one `!<path>` pattern each,
 anchored at the repository root:
@@ -252,9 +273,17 @@ anchored at the repository root:
 - `tsconfig.vergil.json`, `eslint.vergil.config.mjs` and `.prettierrc.json`.
 
 The list is the audit's own (`managed_paths` in `repo_config.py`), so a file
-Vergil starts to manage is left out with it. Everything else repo-init writes,
-`ci.yml`, `cd.yml` and `epic-rollup.yml` among them, is the repository's to
-format and is checked.
+Vergil starts to manage is left out with it.
+
+The release files are those `vrg-release` writes: `CHANGELOG.md` and the
+release notes, `releases/*.md`. git-cliff generates them, so the release PR's
+LINT does not depend on how a given Prettier version formats them. The check
+leaves them out with `!CHANGELOG.md` and `!releases/*.md`, also anchored at
+the root, from where the release defines them (`release_output_paths` in
+`changelog.py`).
+
+Everything else repo-init writes, `ci.yml`, `cd.yml` and `epic-rollup.yml`
+among them, is the repository's to format and is checked.
 
 The same config does not mean the same Prettier **version**. Prettier is an
 image tool, so the version the gate runs is guaranteed only inside the
@@ -318,7 +347,8 @@ TypeScript hard gates:
   its diagnostics and closing statistics (`--pretty false --diagnostics`) to
   `quality-tsc.txt`, the typecheck gate's evidence, and prints them to the log.
 - **LINT** (once) — Prettier `--check` for format (every file but the
-  Vergil-managed ones, see [One Prettier config](#one-prettier-config)), then ESLint's flat config
+  Vergil-managed ones and the release's, see
+  [One Prettier config](#one-prettier-config)), then ESLint's flat config
   with type-aware typescript-eslint rules, carrying the no-standing-suppression
   rule (`@typescript-eslint/ban-ts-comment`). The ESLint run writes its JSON
   report to `quality-eslint.json`, the lint gate's evidence, and prints each

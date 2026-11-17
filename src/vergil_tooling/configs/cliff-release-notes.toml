@@ -4,6 +4,11 @@ header = ""
 # MkDocs snippets marker (dashes, `8<`, dashes) has its first dash written as
 # the HTML entity &#45;, so it renders as the same text and is never expanded.
 # The R flag makes a lone carriage return start a line too, as Markdown reads it.
+# A commit body is its list item's description: each of its non-blank lines is
+# indented two spaces, so it belongs to the item, and the list stays tight
+# (vergil-project/vergil-tooling#4553). A body of several paragraphs makes its
+# item loose, so a blank line follows it unless it ends the list, as Prettier
+# writes it.
 body = """{% if version -%}
     # Release {{ version | trim_start_matches(pat="develop-v") }} ({{ timestamp | date(format="%Y-%m-%d") }})
 {% else -%}
@@ -13,7 +18,10 @@ body = """{% if version -%}
     {% for commit in commits %}
         - **{{ commit.message | split(pat="\n") | first | trim | replace_regex(from="(?mR)^([ \t]*;*)-(-*8<)", to="${1}&#45;${2}") }}**\
           {% if commit.body %}
-          {{ commit.body | trim | replace_regex(from="(?mR)^([ \t]*;*)-(-*8<)", to="${1}&#45;${2}") }}
+          {% set body = commit.body | trim | replace_regex(from="(?mR)^([ \t]*;*)-(-*8<)", to="${1}&#45;${2}") -%}
+          {{ body | replace_regex(from="(?mR)^([ \t]*[^ \t\r\n])", to="  ${1}") }}\
+          {% if not loop.last and body is matching("\\n[ \\t]*\\n") %}
+          {% endif %}\
           {% endif -%}
     {% endfor %}
 {% endfor %}

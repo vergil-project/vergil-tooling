@@ -119,6 +119,9 @@ so an interrupted run resumes where it stopped:
 3. Generate `vergil.toml` from your answers (see Step 4).
 4. Scaffold `VERSION`, `CLAUDE.md`, `.claude/settings.json`,
    `.claude/hooks/guard.sh`, `README.md`, `.gitignore` and `LICENSE`.
+   A TypeScript repo also gets its three managed files and a minimal
+   `package.json` (see the
+   [TypeScript standards](../standards/development/typescript/overview.md#a-new-repositorys-packagejson)).
 5. Scaffold the language skeleton, where the language has one.
 6. Generate the workflows under `.github/workflows/` (see Step 6).
 7. Scaffold the MkDocs site under `docs/site/` (when docs publishing
@@ -703,8 +706,10 @@ pin it with `vrg-host pin` rather than skipping upgrades — see the
 
 `vrg-container-run` pulls the base dev image on every run and rebuilds
 its per-branch cached image when the base image, the language
-lockfile or `vergil.toml` changes, so there is nothing to refresh by
-hand.
+lockfile or `vergil.toml` changes, or when a new vergil-tooling release
+lands on the line `vergil.toml` pins, so there is nothing to refresh by
+hand. See
+[How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases).
 `vrg-container-cache status` shows the cache state for the current
 branch.
 

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.321] - 2026-11-17
+
+### Bug fixes
+
+- rebuild a branch cache when its pinned vergil-tooling line has a newer release (#4551)
+- write a minimal package.json for a new TypeScript repo (#4554)
+- write Prettier-clean release notes and keep release output out of LINT's Prettier check (#4555)
+
+### Chores
+
+- uv lock --upgrade
+
 ## [2.1.320] - 2026-11-17
 
 ### Bug fixes

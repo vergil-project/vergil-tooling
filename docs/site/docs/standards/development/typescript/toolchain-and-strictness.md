@@ -130,7 +130,8 @@ and **ESLint** (type-aware typescript-eslint rules) once:
 - **Prettier** runs `prettier --check` against the managed `.prettierrc.json`
   (`semi: true`, `singleQuote: false`, `trailingComma: "all"`,
   `printWidth: 100`) — formatting only, no logic judgments. It checks every
-  file it can parse but the Vergil-managed ones (see
+  file it can parse but the Vergil-managed ones and the files a release
+  writes, `CHANGELOG.md` and `releases/*.md` (see
   [One Prettier config](overview.md#one-prettier-config)).
 - **ESLint** runs the repository's `eslint.config.mjs`, which spreads Vergil's
   managed `eslint.vergil.config.mjs`: its flat config with
