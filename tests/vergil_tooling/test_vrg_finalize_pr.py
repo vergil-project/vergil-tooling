@@ -3211,16 +3211,15 @@ def test_no_wait_cd_fatal(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def _report(runs: list[dict], *, supersede: object = None) -> tuple[MagicMock, MagicMock]:
-    """Run :func:`_report_cd_run` against a ``gh run list`` of *runs*."""
-    group = (
-        {"side_effect": supersede}
-        if isinstance(supersede, Exception)
-        else {"return_value": supersede}
-    )
+    """Run :func:`_report_cd_run` against a ``gh run list`` of *runs*.
+
+    *supersede* is what the supersede lookup returns, or raises if an exception.
+    """
+    group = supersede if isinstance(supersede, Exception) else (lambda *_a: supersede)
     with (
         patch(_MOD + ".time.sleep"),
         patch(_MOD + ".subprocess.run", return_value=_cd_list_resp(runs)) as run,
-        patch(_MOD + "._supersede_group", **group),
+        patch(_MOD + "._supersede_group", side_effect=group),
         patch(_MOD + ".progress.mark_warn") as mark_warn,
     ):
         _report_cd_run("develop", _HEAD_SHA, dispatch_timeout=0.0)
