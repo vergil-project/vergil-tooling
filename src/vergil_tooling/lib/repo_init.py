@@ -684,6 +684,11 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
     return "".join(lines)
 
 
+# The `if:` of the generated cd.yml's release job: a push to `main`, except the
+# push that creates the branch (issue #4580; see render_cd_workflow).
+CD_RELEASE_CONDITION = "github.ref == 'refs/heads/main' && !github.event.created"
+
+
 def render_cd_workflow(ctx: RepoInitContext) -> str:
     """Render .github/workflows/cd.yml."""
     permissions = ["  contents: write\n"]
@@ -731,11 +736,20 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
         # No ``container-tag:``: cd-release derives the release image tag from
         # the resolver's primary, exactly as ci.yml's thin caller does (issue
         # #3484, vergil-project/vergil-actions#1017).
+        #
+        # The push that creates `main` (the wizard's step 8) is not a release:
+        # no release PR produced it, so cd-release's CI-evidence gate could
+        # only fail on it ("cannot resolve release PR") and every new repo
+        # would start with a red CD run (issue #4580). GitHub sets `created` on
+        # the push event that creates a ref, so that one push skips the job. A
+        # push to an existing `main` with no release PR still runs it, and
+        # still fails the gate.
         lines.append("\n")
         lines.extend(
             [
                 "  release:\n",
-                "    if: github.ref == 'refs/heads/main'\n",
+                "    # Skips the push that creates `main`, which no release PR produced.\n",
+                f"    if: {CD_RELEASE_CONDITION}\n",
                 _uses_line("cd-release", ctx.vergil_version),
                 "    with:\n",
                 f"      language: {suffix}\n",
@@ -1779,10 +1793,11 @@ def check_workflows_registered(ctx: RepoInitContext) -> None:
 
 
 def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState, *, ghas: bool) -> None:
-    """Fail loudly when the CI-gates ruleset requires a check ci.yml never emits.
+    """Fail loudly when a CI-gates ruleset requires a check ci.yml never emits.
 
-    Cross-checks the required status-check contexts of the derived ``CI gates``
-    ruleset against the contexts the generated ``.github/workflows/ci.yml``
+    Cross-checks the required status-check contexts of every derived CI-gates
+    ruleset (``CI gates (develop)`` and, with a ``main`` branch,
+    ``CI gates (main)``) against the contexts the generated ``.github/workflows/ci.yml``
     actually produces on a ``pull_request``. A mismatch means the repository
     cannot merge any PR — every check that runs is green while the merge stays
     blocked on a context that never reports (issue #2720). The check itself is
@@ -1844,11 +1859,7 @@ def step_github_config(ctx: RepoInitContext) -> None:
     )
     cleanup_reports = apply_desired_state(ctx.repo, desired)
     for report in cleanup_reports:
-        preserved = ", ".join(report.preserved_settings) or "none"
-        print(
-            f"  Classic protection on {report.branch}: removed stale CI contexts "
-            f"[{', '.join(report.removed_contexts)}]; preserved [{preserved}]"
-        )
+        print(f"  Classic protection on {report.branch}: {report.summary()}")
     print("  GitHub config applied.")
 
     # The same sync as ``vrg-ensure-label --sync``: create the registry labels

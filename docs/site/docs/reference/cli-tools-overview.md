@@ -104,7 +104,11 @@ only after enforcing a per-identity subcommand allowlist, injecting the GitHub
 App installation token for the target owner. Raw `gh issue create`, `gh auth`,
 `pr close`, `repo edit/create/delete` and `workflow run` are denied outright;
 `gh api` is full for a human, read-only `GET` for the audit identity, and
-denied for the user identity. `vrg-gh --help` lists the allowlist.
+denied for the user identity. Its own `run job-log --repo <owner>/<repo> --job
+<job-id>` prints one Actions job's log from the read-only per-job log endpoint,
+for every identity, with terminal control sequences stripped (see
+[`run job-log`](../guides/permission-model.md#run-job-log)). `vrg-gh --help`
+lists the allowlist.
 
 | Attribute | Value |
 |---|---|
@@ -112,7 +116,7 @@ denied for the user identity. `vrg-gh --help` lists the allowlist.
 | Args | `<subcommand> <action> [args...]`, forwarded to `gh` |
 | Preconditions | `gh` on PATH; identity resolved via `vrg-whoami` |
 | Failure mode | A refused command prints the reason on stderr |
-| Exit codes | 0 success; 1 refusal; 2 no subcommand; otherwise gh's exit code |
+| Exit codes | 0 success; 1 refusal; 2 no subcommand or bad `run job-log` arguments; otherwise gh's exit code |
 | Status | Active |
 
 ### vrg-submit-pr
@@ -353,7 +357,7 @@ and the [Releasing guide](../guides/releasing.md).
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_release` |
-| Args | `minor`/`major` (optional positional), `--no-promote`, `--without-deps`, `--allow-pending-deps`, `--install`, `--resume [X.Y.Z]`, `--skip-audit`, `--output-window`, `--output-format` |
+| Args | `minor`/`major` (optional positional), `--no-promote`, `--without-deps`, `--allow-pending-deps`, `--no-install`, `--resume [X.Y.Z]`, `--skip-audit`, `--output-window`, `--output-format` |
 | Preconditions | Human identity; on `develop`, clean working tree, local develop matches `origin/develop`; `gh` authenticated and a reachable container runtime (docker or nerdctl) for `vrg-container-run`, which runs `git-cliff` |
 | Failure mode | Fail-fast stages stop the run; deferred stages (including `update-deps`) record the failure, let later stages run, and are summarized at the end |
 | Exit codes | 0 success, 1 any failure or refusal, 130 interrupted |
@@ -440,8 +444,11 @@ Print or bump the repo's version. `show` prints the current version
 increments `patch` (default), `minor` or `major` and prints the new version.
 For a Python or Rust repo, `bump` then refreshes the lockfile (`uv lock`,
 `cargo update --workspace`) in the dev container, through
-`vrg-container-run`, so no host toolchain is needed. Used by the CD
-workflows to read the release version.
+`vrg-container-run`, so no host toolchain is needed. A bump is all or
+nothing: when any step fails, the lockfile refresh included, `bump` puts
+`VERSION`, the language manifest, the secondary version files and the
+lockfile back as they were, says so on stderr and exits non-zero. Used by
+the CD workflows to read the release version.
 
 In a TypeScript repo the version is also kept in `package.json`. `show`
 fails, naming the fix, when `package.json` is missing, has no `version`, or
@@ -825,7 +832,9 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
   authors configured. If a step fails after the move, the command fails
   loudly, naming the moved item and the by-hand fix for each step not done.
 - `planning` — reparent the item onto the planning epic of the same queue
-  home. It also takes a **follow-on brainstorm** out of a development epic: a
+  home. From an ad-hoc epic it takes a task found too big for one PR straight
+  to planning, with no stop in the deferred queue; like `defer`, it is
+  refused while an open PR would close the item. It also takes a **follow-on brainstorm** out of a development epic: a
   task titled `Follow-on brainstorm: …` whose native parent is a development
   epic. A brainstorm never gates its epic's work, so moving it suspends
   nothing. The parent is replaced in one step, then the hand-off is recorded
@@ -874,7 +883,7 @@ Which routes an item allows depends on the container epic it is in:
 |---|---|
 | intake | `drop`, `defer`, `one-off`, `planning`, `split` |
 | planning | `defer`, `drop`, `one-off` — each refused while any development epic of the item is open; `size` |
-| ad hoc | `defer` — refused while an open PR would close the item |
+| ad hoc | `defer`, `planning` — each refused while an open PR would close the item |
 | deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split`, `size` |
 | no parent | `planning` (the `epic-create` free-text path) |
 | a development epic | `planning` for a follow-on brainstorm only; any other task is refused, naming the parent |
@@ -1168,6 +1177,11 @@ prints the comment ID and deletes the draft ref. See the
 The merge-review result check (epic vergil-project/.github#881): it checks
 a reviewer's stored reply against the request it answers, by the rules of
 the [merge-review protocol](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md).
+It first reads the capture record the plugin's capture hook wrote beside the
+result, `capture-<step>.json` in the result's directory (`<step>` from the
+request), and refuses a result with no record, a malformed record, one for
+another step or request, or one whose `result_sha256` is not the SHA-256 of
+the result file's bytes, so a result edited after the capture is refused.
 The reply must open, after optional whitespace, with exactly one
 `merge-review-result` fenced block holding one JSON object, with no second
 such block anywhere. The block must carry exactly the schema's fields at
@@ -1182,13 +1196,14 @@ prefix is refused too, so it can go into a `vrg-ruling` item unchanged. On
 success it prints `{"step", "counts", "security", "fix_status"}` as JSON on
 stdout. A refusal names the rule, the finding by ID (or by position when
 the ID is bad) and, for a bad character, its code point and offset; it
-never repeats the refused value. It reads the two files and writes nothing.
+never repeats the refused value. It reads the two files and the capture
+record, and writes nothing.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_merge_review_check` (library: `lib/merge_review/`) |
 | Args | `--request FILE --result FILE` |
-| Preconditions | None: no identity mode, network or git access |
+| Preconditions | The capture record `capture-<step>.json` beside the result; no identity mode, network or git access |
 | Failure mode | `ERROR: <rule>` on stderr and exit 1, with nothing on stdout |
 | Exit codes | 0 the result passed, 1 it failed or a file could not be read, 2 bad arguments |
 | Status | Active |
@@ -1275,6 +1290,21 @@ the human excused (not sent to the reviewer). It refuses an ID no earlier
 result raised, an ID given to both, a check with no `--fix-id`, and an
 earlier defect named by neither unless a later result marks it `fixed`.
 
+For a fix to an open PR, `--pr` names the PR by number or URL. The PR must
+be in the `--issue` repository, open, and headed by the current branch.
+When its body has more than one `Closes` line it is a batch PR: the
+`--issue` must be one of them, and every step's request adds
+`batch_issues` (each other issue's ref, body and human comments, read as
+for the `--issue`), `batch_commits` (every commit under review as
+`{"sha", "subject", "issue"}`, its issue the one its subject's trailing
+`(#N)` names) and `batch_commits_path` (`commits-<step>.patch`, each
+commit with its own patch), and leaves the batch's issues out of
+`epic_open_tasks`. It refuses a merge commit, a commit naming no issue of the
+PR, an issue with no commit, and a check whose batch issues differ from its
+previous step's. A single-issue PR must link the `--issue`, and its request
+is the one built without `--pr`. See the protocol's
+[A batch PR](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md#a-batch-pr).
+
 Before writing, and on its own with `--ensure-dir`, it checks the private
 directory level by level: `build` must be a real directory (it is created
 when absent), and each level from `.vergil-state` down to `merge-review`
@@ -1284,9 +1314,9 @@ makes there, and writes only to the path it prints.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_merge_review_request` (library: `lib/merge_review/request.py`, `lib/merge_review/state.py`, `lib/build_dir.py`, `lib/validate_record.py`, `lib/rulings/comments.py`, `lib/rulings/identity.py`) |
-| Args | `--issue OWNER/NAME#N --base REF --step {review,check,check-<k>} [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]`, or `--issue OWNER/NAME#N --ensure-dir` |
-| Preconditions | Run inside the task's worktree after `vrg-container-run -- vrg-validate` passed at `HEAD`; trusted authors are configured with exactly one human login, and GitHub is reachable to read the issue, its comments and its epic's sub-issues |
+| Source | `vergil_tooling.bin.vrg_merge_review_request` (library: `lib/merge_review/request.py`, `lib/merge_review/open_pr.py`, `lib/merge_review/state.py`, `lib/build_dir.py`, `lib/validate_record.py`, `lib/rulings/comments.py`, `lib/rulings/identity.py`) |
+| Args | `--issue OWNER/NAME#N --base REF --step {review,check,check-<k>} [--design-source FILE]... [--pr N\|URL] [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]`, or `--issue OWNER/NAME#N --ensure-dir` |
+| Preconditions | Run inside the task's worktree after `vrg-container-run -- vrg-validate` passed at `HEAD`; trusted authors are configured with exactly one human login, and GitHub is reachable to read the issue, its comments and its epic's sub-issues (and, with `--pr`, the PR and each of its issues) |
 | Failure mode | `ERROR: <reason>` on stderr, nothing on stdout |
 | Exit codes | 0 the path was printed, 1 a refusal or error, 2 bad arguments, 3 a check's `--fix-base` is not an ancestor of `HEAD` (the branch was rebased) |
 | Status | Active |
@@ -1379,8 +1409,9 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 ### vrg-repo-status
 
 Show every worktree git knows about in the current repo, grouped by
-kind, so nothing with code on disk goes unseen (issue #3386), then what
-the integration branch holds that `main` does not. Read-only — it never
+kind, so nothing with code on disk goes unseen (issue #3386), then the
+open PRs on `origin` that no worktree shows (issue #4581), then what the
+integration branch holds that `main` does not. Read-only — it never
 fetches or writes a ref, cleanup stays `vrg-finalize-pr`'s job, and
 finalize and sweep still act only on development worktrees. Local
 branches with no worktree are not shown. The sections, in order:
@@ -1403,7 +1434,9 @@ branches with no worktree are not shown. The sections, in order:
    each row shows age, PR state and dirty state and a leftover stands out.
 4. **Other / unknown** — any other branch, a detached HEAD, or a
    worktree outside `.worktrees/` (shown by its full path).
-5. **Pending release** — every change on the integration branch that is
+5. **Open PRs on origin with no local worktree** — every open PR whose
+   head branch no linked worktree holds, described below. Always shown.
+6. **Pending release** — every change on the integration branch that is
    not yet on `main`, described below. Shown only in a repo that
    publishes.
 
@@ -1450,7 +1483,46 @@ tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      
 Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
 ```
 
-**Pending release.** The section follows the worktree sections and comes
+**Open PRs on origin with no local worktree.** The section follows the
+worktree sections. Many PRs never touch the local checkout: those that
+automation jobs open (lifecycle, repo-config sync, dependency updates) and
+those prepared on another machine, such as a cloud VM. They are read from
+GitHub in one query per 100 open PRs. A PR is left out when a linked
+worktree already shows it: its PR number is in a worktree row, or its
+head branch is a linked worktree's branch. A PR from a fork is never
+matched by branch name, since a fork's branch can share a local name; its
+BRANCH shows as `<owner>:<branch>`. A VM that shares the file system
+already shows its PRs through its worktrees.
+
+```text
+Open PRs on origin with no local worktree
+PR    BRANCH                    BASE     TYPE       AUTHOR                     CI       OPENED  TITLE
+#935  lifecycle/rust-add-1.100  develop  lifecycle  vergil-project-automation  success  6h ago  feat(versions): add rust 1.100
+#936  lifecycle/rust-drop-1.98  develop  lifecycle  vergil-project-automation  pending  6h ago  feat(versions): drop rust 1.98 (EOL 2026-10-01)
+2 open PRs with no local worktree: 0 automation PRs, 2 lifecycle PRs, 0 dependency updates, 0 release PRs, 0 other PRs.
+```
+
+- **Rows** come in PR-number order. TYPE is as in Pending release
+  below, except that a `lifecycle/*` head branch (a language version
+  added or dropped) shows `lifecycle` first. AUTHOR is the PR author's
+  login (`ghost` for a deleted account). CI is the head commit's
+  combined check state (`success`, `failure`, `pending`, `error`,
+  `expected`), or `none` when it has no checks. OPENED is the PR's age.
+  A draft's TITLE starts with `[draft]`; a TITLE over 72 characters is
+  cut, ending in `…`.
+- **The summary line** counts the rows: automation PRs, lifecycle PRs,
+  dependency updates, release PRs and other PRs, every bucket listed.
+- **None left** prints `None: <n> open PRs on origin, each with a local
+  worktree.`, or `None: origin has no open PRs.`, in place of the table.
+- **A lookup that fails or is incomplete** (an API error, a missing
+  token, a non-GitHub `origin`, a list that changed between pages, a
+  truncated label list) is an error, never "no open PRs" and never a
+  partial list: the section prints its heading and
+  `ERROR: open PRs: <reason>` alone. The rest of the output still
+  prints, then the command exits 1. The reason never carries URL
+  credentials.
+
+**Pending release.** The section follows the open-PR section and comes
 before the summary lines. It is shown only when `vergil.toml` sets
 `[publish].release = true`; with the flag false or absent, nothing is
 printed for it, and without a `vergil.toml` a note says it was skipped.
@@ -1506,11 +1578,11 @@ PR     BRANCH                      TYPE     MERGED  TITLE
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_repo_status` (pending release: `lib/pending_release.py`) |
+| Source | `vergil_tooling.bin.vrg_repo_status` (open PRs: `lib/open_prs.py`; pending release: `lib/pending_release.py`) |
 | Args | `--target-branch` (default: develop) — the branch AHEAD is measured against |
-| Preconditions | Git repo; `gh` CLI on PATH for PR state; for the Pending release section, a github.com `origin` and GitHub credentials |
-| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason. A failed or incomplete pending-release lookup prints `ERROR:` in its section and exits 1 after the rest of the output |
-| Exit codes | 0 success, 1 malformed `vergil.toml` or a pending-release lookup error |
+| Preconditions | Git repo; `gh` CLI on PATH for PR state; for the open-PR and Pending release sections, a github.com `origin` and GitHub credentials |
+| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason. A failed or incomplete open-PR or pending-release lookup prints `ERROR:` in its section and exits 1 after the rest of the output |
+| Exit codes | 0 success, 1 malformed `vergil.toml`, or an open-PR or pending-release lookup error |
 | Status | Active |
 
 ### vrg-whoami
@@ -1691,7 +1763,7 @@ later build once the lock is committed
 ([epic vergil-project/.github#342](https://github.com/vergil-project/.github/issues/342)).
 
 **Integration tests are refused.** `[ci].integration-tests = true` would
-make the `CI gates` ruleset require `test / integration / <version>`,
+make the CI-gates rulesets require `test / integration / <version>`,
 which no vergil-actions CI job produces yet
 ([#2721](https://github.com/vergil-project/vergil-tooling/issues/2721)),
 so the repo could never merge a PR. The wizard refuses the setting as
@@ -1721,6 +1793,10 @@ project language to select the Docker image; falls back to
 Local-settings guard: on the host, before any container starts, it refuses an
 agent (warns a human) while a loadable `.claude/settings.local.json` is not
 absent or `{}` (epic vergil-project/.github#558).
+The container mounts and runs in the root of the repo `git` resolves from the
+current directory, not the current directory itself. When the two differ (a
+subdirectory, or a copied tree with no `.git` of its own inside another repo),
+it prints a warning on stderr naming both paths and carries on (issue #4594).
 Every launch bind-mounts the per-user `~/.cache/vergil/trivy` directory
 (under `$XDG_CACHE_HOME` when set), creating it if missing, where
 `vrg-validate`'s trivy stage caches the vulnerability database (see
@@ -2054,7 +2130,10 @@ one) and then the custom stage; with no custom validator it prints one
 "no custom validator" line and exits 0, and a validator that is present
 but not an executable regular file fails. `--check build` for a
 language with no build check prints one "nothing to run" line and exits
-0. PR CI runs each stage through
+0. A `--check` of a language stage in a repo with no language declared
+also exits 0, with a line naming the repo root it resolved, since PR CI
+runs `--check lint` and `--check typecheck` in such repos too.
+PR CI runs each stage through
 the `vergil-actions` reusable workflows, the custom stage as
 `quality / custom`. See the [Validation Matrix](../guides/validation-matrix.md)
 for every check and where it runs. Every pipeline run, pass or fail,
@@ -2080,7 +2159,8 @@ stage. Shared validation checks for all repos: the
 (`docs/site/**/*.md`, `README.md` and `epics/**/*.md`) using the bundled canonical config,
 the docs-links guard (over the same markdown less `epics/archive/`, a link
 to a mike-versioned Vergil docs site must carry a `latest`, `dev` or
-version-number segment after the site name), shellcheck on
+version-number segment after the site name, and a link to a site the org
+does not publish fails), shellcheck on
 `scripts/` and every `*.sh` file in the repository, yamllint on `.github/`
 and `docs/` YAML files, the
 dependabot-limit guard (when `.github/dependabot.yml` exists, every

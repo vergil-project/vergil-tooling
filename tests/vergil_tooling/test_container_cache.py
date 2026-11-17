@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import shlex
 import shutil
@@ -2014,6 +2015,57 @@ def test_unbootstrapped_other_languages(tmp_path: Path, lang: str, manifest: str
     assert unbootstrapped_manifests(lang, tmp_path) == []
 
 
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        '{\n  "name": "demo",\n  "version": "0.1.0",\n  "private": true\n}\n',
+        '{"name": "demo", "dependencies": {}, "devDependencies": {}, '
+        '"optionalDependencies": {}, "peerDependencies": {}}',
+    ],
+    ids=["repo-init", "empty-fields"],
+)
+def test_unbootstrapped_typescript_dependency_free_package_json(
+    tmp_path: Path, manifest: str
+) -> None:
+    # The package.json repo-init writes declares no dependencies; with no
+    # lockfile the repo is not bootstrapped yet (issue #4624).
+    (tmp_path / "package.json").write_text(manifest, encoding="utf-8")
+    assert unbootstrapped_manifests("typescript", tmp_path) == ["package-lock.json"]
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"],
+)
+def test_unbootstrapped_typescript_dependencies_without_lockfile_is_bootstrapped(
+    tmp_path: Path, field: str
+) -> None:
+    # Declared dependencies with no lockfile is a real error: validation runs and fails.
+    (tmp_path / "package.json").write_text(
+        json.dumps({"name": "demo", field: {"typescript": "^6.0.3"}}), encoding="utf-8"
+    )
+    assert unbootstrapped_manifests("typescript", tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    ["", "[]", '{"name": "demo", "dependencies": []}', "\xff"],
+    ids=["empty", "not-an-object", "field-not-an-object", "not-utf8"],
+)
+def test_unbootstrapped_typescript_unreadable_package_json_is_bootstrapped(
+    tmp_path: Path, manifest: str
+) -> None:
+    # A package.json that is not a readable object never passes as unstarted.
+    (tmp_path / "package.json").write_bytes(manifest.encode("latin-1"))
+    assert unbootstrapped_manifests("typescript", tmp_path) == []
+
+
+def test_unbootstrapped_typescript_with_lockfile_is_bootstrapped(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name": "demo"}', encoding="utf-8")
+    (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
+    assert unbootstrapped_manifests("typescript", tmp_path) == []
+
+
 def test_unbootstrapped_unknown_language_is_never_unbootstrapped(tmp_path: Path) -> None:
     assert unbootstrapped_manifests("cobol", tmp_path) == []
 
@@ -2698,7 +2750,7 @@ class _Env:
         return self.log.read_text().splitlines()
 
 
-_TODAYS_INSTALL = "uv tool install --quiet vergil-tooling @ git+{url}@{tag}"
+_TODAYS_INSTALL = "uv tool install --quiet --python 3.15 vergil-tooling @ git+{url}@{tag}"
 
 
 def test_setup_dev_ref_without_core_is_todays_install(tmp_path: Path) -> None:

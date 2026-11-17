@@ -178,10 +178,12 @@ dev images come from
 3. docs-links: a link to a mike-versioned Vergil docs site must carry a
    version segment after the site name (`latest`, `dev` or a version
    number such as `2.1`), since a deep link without one returns 404. A
-   bare site root is allowed, as mike redirects it. The check reads the
+   bare site root is allowed, as mike redirects it. A link to a site
+   name the org does not publish (anything but the versioned sites and
+   the unversioned `docs` and `packages`) fails too. The check reads the
    same markdown as markdownlint, less `epics/archive/`, against the
-   fixed list of versioned sites in vergil-tooling (no network), and
-   names each hit by path and line with its `/latest/` form. See
+   fixed lists of sites in vergil-tooling (no network), and names each
+   hit by path and line, with its `/latest/` form or its site name. See
    [Links to other Vergil docs sites](../reference/lint/markdown-standards.md#links-to-other-vergil-docs-sites).
 4. shellcheck on shell scripts under `scripts/` and on every `*.sh`
    file elsewhere in the repository.
@@ -242,6 +244,18 @@ manifest is missing: a repository with some of them, such as a
 `pyproject.toml` with no `uv.lock`, runs the stages and fails on the
 gap, as does a `Cargo.toml` with no `Cargo.lock`, or one that
 `cargo fetch --locked` cannot resolve.
+
+TypeScript has one exception. A `package.json` that declares no
+dependencies, with no `package-lock.json`, is not bootstrapped either:
+that is the minimal `package.json` `vrg-github-repo-init --language
+typescript` writes (`name`, `version` and `private` only). A
+`package.json` declares no dependencies when it has no `dependencies`,
+`devDependencies`, `optionalDependencies` or `peerDependencies`, or each
+is empty. Such a repository skips the install, `typescript-tools` and
+language stages with the reason `skipped: no package-lock.json
+(typescript repo not bootstrapped yet)`. A `package.json` that declares
+any dependency but has no `package-lock.json` runs the stages, and its
+install fails.
 
 The skip also needs the repository to hold no source files of its
 language (`.rs` for Rust, `.py` for Python, and so on), tracked or

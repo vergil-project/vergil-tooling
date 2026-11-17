@@ -187,7 +187,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     planning = routes.add_parser(
         "planning",
-        help="Reparent the item onto the planning epic (intake, deferred or unparented item, "
+        help="Reparent the item onto the planning epic (intake, deferred, ad-hoc or unparented "
+        "item, "
         "or a follow-on brainstorm under a development epic), optionally sizing it",
     )
     _add_sizing_args(planning, required=False)

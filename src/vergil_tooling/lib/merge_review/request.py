@@ -78,6 +78,11 @@ def fix_file(step: str) -> str:
     return f"fix-{step}.patch"
 
 
+def commits_file(step: str) -> str:
+    """A batch PR's per-commit patch file name for *step*."""
+    return f"commits-{step}.patch"
+
+
 def parse_task_issue(ref: str) -> IssueRef:
     """Parse ``--issue``: exactly ``owner/name#N`` with ``N`` at least 1."""
     try:
@@ -132,27 +137,41 @@ class TaskContext:
     epic_open_tasks: list[dict[str, str]]
 
 
-def fetch_task_context(issue: IssueRef) -> TaskContext:
+def fetch_task_context(issue: IssueRef, batch: Sequence[IssueRef] = ()) -> TaskContext:
     """Read *issue*'s body and derive its epic's open tasks, both from GitHub.
 
     The task is **under an epic** when its native parent carries the ``epic``
     label and not ``ad-hoc``; its open tasks are then the parent's open
     sub-issues, every page, as ``{"ref": "owner/name#N", "title": "..."}``,
-    leaving out the task itself. A task with no native parent, or whose parent
-    is not such an epic, has none. Nothing is taken from a file the agent
-    wrote. A read failure or an unexpected shape is a refusal, never an empty
-    body or an empty list; a missing GitHub token propagates to the CLI's
-    auth-error boundary.
+    leaving out the task itself and every issue of its *batch* PR, whose
+    scopes the request carries. A task with no native parent, or whose
+    parent is not such an epic, has none. Nothing is taken from a file the
+    agent wrote. A read failure or an unexpected shape is a refusal, never an
+    empty body or an empty list; a missing GitHub token propagates to the
+    CLI's auth-error boundary.
     """
+    left_out = {ref.slug.lower() for ref in (issue, *batch)}
     try:
         with github.target_org(issue.owner):
             body, parent = _fetch_task(issue)
-            tasks = [] if parent is None else _open_sub_issues(parent, issue)
+            tasks = [] if parent is None else _open_sub_issues(parent, left_out)
     except github.MissingGitHubTokenError:
         raise
     except (github.GitHubAPIError, RuntimeError) as exc:  # RuntimeError: a GraphQL error
         _unreadable(str(exc))
     return TaskContext(issue_body=body, epic_open_tasks=tasks)
+
+
+def fetch_issue_body(issue: IssueRef) -> str:
+    """Read *issue*'s body from GitHub, refusing as :func:`fetch_task_context` does."""
+    try:
+        with github.target_org(issue.owner):
+            body, _parent = _fetch_task(issue)
+    except github.MissingGitHubTokenError:
+        raise
+    except (github.GitHubAPIError, RuntimeError) as exc:  # RuntimeError: a GraphQL error
+        _unreadable(str(exc))
+    return body
 
 
 _TASK_QUERY = """
@@ -233,8 +252,11 @@ def _fetch_task(issue: IssueRef) -> tuple[str, IssueRef | None]:
     return body, parent_ref if under_epic else None
 
 
-def _open_sub_issues(epic: IssueRef, task: IssueRef) -> list[dict[str, str]]:
-    """*epic*'s open sub-issues, every page, as ``{ref, title}``, without *task*."""
+def _open_sub_issues(epic: IssueRef, left_out: set[str]) -> list[dict[str, str]]:
+    """*epic*'s open sub-issues, every page, as ``{ref, title}``, without *left_out*.
+
+    *left_out* holds lowercased ``owner/name#N`` slugs.
+    """
     where = epic.slug
     tasks: list[dict[str, str]] = []
     after: str | None = None
@@ -258,7 +280,7 @@ def _open_sub_issues(epic: IssueRef, task: IssueRef) -> list[dict[str, str]]:
             state, title = node.get("state"), node.get("title")
             if not isinstance(state, str) or not isinstance(title, str):
                 _unreadable(f"{ref.slug} has no state or title")
-            if state.upper() == "OPEN" and ref.slug.lower() != task.slug.lower():
+            if state.upper() == "OPEN" and ref.slug.lower() not in left_out:
                 tasks.append({"ref": ref.slug, "title": title})
         if not info.get("hasNextPage"):
             return tasks
@@ -452,8 +474,23 @@ class CheckFields:
 
 
 @dataclass(frozen=True)
+class BatchFields:
+    """The fields a request for a fix to an open batch PR adds.
+
+    ``issues`` is ``batch_issues``: every other issue the PR closes, each
+    with its own scope. ``commits`` is ``batch_commits``: every commit under
+    review, with the issue it belongs to. ``commits_path`` is
+    ``batch_commits_path``, the patch of each commit on its own.
+    """
+
+    issues: list[dict[str, object]]
+    commits: list[dict[str, str]]
+    commits_path: str
+
+
+@dataclass(frozen=True)
 class RequestFields:
-    """Every field a review's request carries."""
+    """Every field a review's request carries; ``batch`` only on a batch PR."""
 
     request_id: str
     step: str
@@ -468,10 +505,11 @@ class RequestFields:
     design_sources: list[str]
     validate_stages: list[str]
     epic_open_tasks: list[dict[str, str]]
+    batch: BatchFields | None = None
 
 
 def build_request(fields: RequestFields, check: CheckFields | None) -> dict[str, object]:
-    """The request object, a check's fields added when *check* is given."""
+    """The request object, a batch PR's and a check's fields added when given."""
     request: dict[str, object] = {
         "schema": REQUEST_SCHEMA,
         "request_id": fields.request_id,
@@ -490,6 +528,10 @@ def build_request(fields: RequestFields, check: CheckFields | None) -> dict[str,
         "validate_stages": fields.validate_stages,
         "epic_open_tasks": fields.epic_open_tasks,
     }
+    if fields.batch is not None:
+        request["batch_issues"] = fields.batch.issues
+        request["batch_commits"] = fields.batch.commits
+        request["batch_commits_path"] = fields.batch.commits_path
     if check is not None:
         request["fix_base_sha"] = check.fix_base_sha
         request["fix_diff_path"] = check.fix_diff_path

@@ -5,24 +5,39 @@ import json
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vergil_tooling.lib.cd_runs import CDRunLookupError
+from vergil_tooling.lib.managed_worktree import ManagedWorktreeError
 from vergil_tooling.lib.release import preflight as preflight_module
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.preflight import (
     PendingDepsPr,
     _compute_release_version,
+    check_develop_cd,
     fix_task_status,
     pending_deps_prs,
     preflight,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Generator, Iterator
+
     from vergil_tooling.lib.release.context import ReleaseContext
 
 _MOD = "vergil_tooling.lib.release.preflight"
+
+
+@pytest.fixture(autouse=True)
+def develop_cd_gate() -> Iterator[MagicMock]:
+    """Stub the develop-CD gate, which reads GitHub, out of every preflight run.
+
+    The gate's own tests call :func:`check_develop_cd` directly.
+    """
+    with patch(_MOD + "._develop_cd_gate") as gate:
+        yield gate
 
 
 def test_preflight_success() -> None:
@@ -652,6 +667,89 @@ def test_acquire_release_worktree_wraps_worktree_error() -> None:
         pytest.raises(ReleaseError, match="path already exists"),
     ):
         _acquire_release_worktree(Path("/tmp/repo"), "release/2.1.0", resume=False)  # noqa: S108
+
+
+_ELSEWHERE = ManagedWorktreeError(
+    "Could not attach the worktree /tmp/repo/.worktrees/release-2.1.0 to branch "
+    "'release/2.1.0'. If the branch is checked out in another worktree (see `git "
+    "worktree list`), remove that worktree or switch it to another branch, then re-run.",
+    detail="stderr: fatal: 'release/2.1.0' is already used by worktree at '/tmp/other'",
+)
+
+
+def test_acquire_release_worktree_names_a_branch_checked_out_elsewhere_on_resume() -> None:
+    # #4442: the resume path's adopt fails because the branch is checked out
+    # in another worktree; the human gets a ReleaseError, not a traceback.
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
+
+    with (
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".adopt_worktree", side_effect=_ELSEWHERE),
+        pytest.raises(ReleaseError, match="checked out in another worktree") as info,
+    ):
+        _acquire_release_worktree(Path("/tmp/repo"), "release/2.1.0", resume=True)  # noqa: S108
+    assert info.value.phase == "preflight"
+    assert info.value.detail == _ELSEWHERE.detail
+
+
+def test_acquire_release_worktree_names_a_branch_checked_out_elsewhere_on_fresh_run(
+    tmp_path: Path,
+) -> None:
+    # #4442: the fresh path adopting an unrecorded branch hits the same refusal.
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
+
+    leftover = _Leftover()
+    with (
+        patch(_MOD + ".git.ref_exists", side_effect=lambda ref: ref == "release/2.1.0"),
+        patch(_MOD + ".git.read_output", side_effect=leftover.read_output),
+        patch(_MOD + ".git.commits_ahead", return_value=0),
+        patch(_MOD + ".git.run", side_effect=leftover.run),
+        patch(_MOD + ".adopt_worktree", side_effect=_ELSEWHERE),
+        pytest.raises(ReleaseError, match="checked out in another worktree") as info,
+    ):
+        _acquire_release_worktree(tmp_path, "release/2.1.0", resume=False)
+    assert info.value.detail == _ELSEWHERE.detail
+    assert leftover.runs == []
+
+
+@pytest.mark.parametrize(
+    ("resume", "failing", "rerun"),
+    [
+        (True, ("branch", "release/2.1.0", "origin/release/2.1.0"), "vrg-release --resume"),
+        (False, ("merge", "--ff-only", "develop"), "vrg-release`"),
+    ],
+)
+def test_acquire_release_worktree_wraps_a_raw_git_failure(
+    tmp_path: Path, resume: bool, failing: tuple[str, ...], rerun: str
+) -> None:
+    # #4442: a git call outside the managed-worktree helpers (the resume
+    # path's local branch, the fresh path's fast-forward) fails: the
+    # CalledProcessError is translated, with the branch, worktree and recovery.
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
+
+    def _run(*args: str) -> None:
+        raise subprocess.CalledProcessError(128, ("git", *args), stderr="fatal: boom")
+
+    wt = tmp_path / ".worktrees" / "release-2.1.0"
+    leftover = _Leftover()
+    with (
+        patch(
+            _MOD + ".git.ref_exists",
+            side_effect=lambda ref: ref.startswith("origin/") if resume else ref == "release/2.1.0",
+        ),
+        patch(_MOD + ".git.read_output", side_effect=leftover.read_output),
+        patch(_MOD + ".git.commits_ahead", return_value=0),
+        patch(_MOD + ".git.run", side_effect=_run),
+        patch(_MOD + ".adopt_worktree", return_value=wt),
+        pytest.raises(ReleaseError, match="release branch 'release/2.1.0'") as info,
+    ):
+        _acquire_release_worktree(tmp_path, "release/2.1.0", resume=resume)
+    message = str(info.value)
+    assert str(wt) in message
+    assert rerun in message
+    assert info.value.command.endswith(" ".join(failing))
+    assert info.value.detail is not None
+    assert "stderr: fatal: boom" in info.value.detail
 
 
 def test_run_audit_resolves_repo_and_audits(tmp_path: Path) -> None:
@@ -1556,3 +1654,278 @@ def test_divergence_check_real_git_passes_after_the_back_merge(
     _commit(other, "next-feature")
     _git(other, "push", "-q", "origin", "develop")
     _check(root)
+
+
+# -- the develop-CD gate (epic vergil-project/.github#1218, spec §6.6) ---------
+
+_CD = _MOD + ".cd_runs"
+_CD_HEAD = "abc123def4567890"
+_REPO = "owner/repo"
+# The real gate wrapper, kept before the autouse fixture stubs it.
+_real_develop_cd_gate = preflight_module._develop_cd_gate
+
+
+def _cd_run(run_id: int, *, sha: str = _CD_HEAD, created: str = "2026-11-17T10:00:00Z") -> dict:
+    return {
+        "databaseId": run_id,
+        "headSha": sha,
+        "status": "completed",
+        "conclusion": None,
+        "createdAt": created,
+        "url": f"https://github.com/{_REPO}/actions/runs/{run_id}",
+    }
+
+
+def _jobs(*failed: str) -> dict:
+    jobs = [{"name": "lint / lint", "status": "completed", "conclusion": "success"}]
+    jobs += [{"name": name, "status": "completed", "conclusion": "failure"} for name in failed]
+    return {"jobs": jobs}
+
+
+@contextlib.contextmanager
+def _gate(
+    *,
+    run: dict | None,
+    states: list[str] | None = None,
+    runs: list[dict] | None = None,
+    jobs: dict | None = None,
+) -> Generator[MagicMock]:
+    """Fake the CD lookups the gate makes; yields the ``watch_run`` mock."""
+    with (
+        patch(_CD + ".find_run", return_value=run) as find,
+        patch(_CD + ".watch_run", side_effect=states or []) as watch,
+        patch(_CD + "._list_cd_runs", return_value=runs or []),
+        patch(_MOD + ".github.read_json", return_value=jobs),
+    ):
+        yield watch
+    if find.called:
+        find.assert_called_once_with(_REPO, "develop", _CD_HEAD, dispatch_timeout=120)
+
+
+def test_develop_cd_gate_green_run_passes() -> None:
+    with _gate(run=_cd_run(1), states=["success"]) as watch:
+        check_develop_cd(_REPO, _CD_HEAD)
+    watch.assert_called_once()
+    assert watch.call_args.args == ("1",)
+
+
+def test_develop_cd_gate_failed_run_refuses() -> None:
+    with (
+        _gate(run=_cd_run(7), states=["failed"], jobs=_jobs("docker-publish / publish: dev-x")),
+        pytest.raises(ReleaseError) as exc,
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+    assert exc.value.phase == "preflight"
+    assert "https://github.com/owner/repo/actions/runs/7" in str(exc.value)
+    assert "docker-publish" in str(exc.value)
+
+
+def test_develop_cd_gate_queued_run_waits() -> None:
+    # The real watch: queued, then pending, then in progress, then green.
+    views = [
+        {"status": "queued", "conclusion": None, "url": ""},
+        {"status": "pending", "conclusion": None, "url": ""},
+        {"status": "in_progress", "conclusion": None, "url": ""},
+        {"status": "completed", "conclusion": "success", "url": ""},
+    ]
+    with (
+        patch(_CD + ".find_run", return_value=_cd_run(3)),
+        patch(_CD + "._view_cd_run", side_effect=views) as view,
+        patch(_CD + ".time.sleep") as sleep,
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+    assert view.call_count == 4
+    assert sleep.call_count == 3
+
+
+def test_develop_cd_gate_timed_out_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VRG_CD_TIMEOUT", "60")
+    with _gate(run=_cd_run(3), states=["timed_out"]), pytest.raises(ReleaseError) as exc:
+        check_develop_cd(_REPO, _CD_HEAD)
+    assert "still not complete after 60s" in str(exc.value)
+    assert "actions/runs/3" in str(exc.value)
+
+
+def test_develop_cd_gate_no_run_uses_green_ancestor() -> None:
+    runs = [
+        {**_cd_run(9, sha="f" * 40), "status": "in_progress"},
+        _cd_run(8, sha="e" * 40),
+        _cd_run(5, sha="d" * 40),
+    ]
+    with (
+        _gate(run=None, states=["success"], runs=runs) as watch,
+        patch(_MOD + ".git.ref_exists", side_effect=lambda ref: not ref.startswith("e")),
+        patch(_MOD + ".git.is_ancestor", return_value=True) as ancestor,
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+    # The in-progress run is skipped and the run whose commit is not local is
+    # not an ancestor; the next completed run is judged, with no wait.
+    ancestor.assert_called_once_with("d" * 40, _CD_HEAD)
+    watch.assert_called_once_with("5", timeout=0)
+
+
+def test_develop_cd_gate_no_run_red_ancestor_refuses() -> None:
+    with (
+        _gate(
+            run=None,
+            states=["failed"],
+            runs=[_cd_run(5, sha="d" * 40)],
+            jobs=_jobs("build / build"),
+        ),
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".git.is_ancestor", return_value=True),
+        pytest.raises(ReleaseError) as exc,
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+    assert "build" in str(exc.value)
+    assert "actions/runs/5" in str(exc.value)
+
+
+def test_develop_cd_gate_no_run_and_no_ancestor_refuses() -> None:
+    with (
+        _gate(run=None, runs=[_cd_run(5, sha="d" * 40)]),
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".git.is_ancestor", return_value=False),
+        pytest.raises(ReleaseError, match="none of the recent"),
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+
+
+def test_develop_cd_gate_deferred_failure_warns(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        _gate(run=_cd_run(4), states=["failed"], jobs=_jobs("docs / docs")),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "docs" in err
+    assert "actions/runs/4" in err
+    mark_warn.assert_called_once()
+
+
+def test_develop_cd_gate_superseded_uses_newer() -> None:
+    mine = _cd_run(1, created="2026-11-17T10:00:00Z")
+    runs = [
+        _cd_run(3, sha="c" * 40, created="2026-11-17T10:20:00Z"),
+        _cd_run(2, sha="b" * 40, created="2026-11-17T10:10:00Z"),
+        mine,
+    ]
+    with _gate(run=mine, states=["superseded", "success"], runs=runs) as watch:
+        check_develop_cd(_REPO, _CD_HEAD)
+    assert [call.args for call in watch.call_args_list] == [("1",), ("2",)]
+
+
+def test_develop_cd_gate_superseded_with_no_newer_run_refuses() -> None:
+    mine = _cd_run(1)
+    with (
+        _gate(run=mine, states=["superseded"], runs=[mine]),
+        pytest.raises(ReleaseError, match="no newer develop CD run"),
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+
+
+def test_develop_cd_gate_other_cancel_refuses() -> None:
+    with _gate(run=_cd_run(6), states=["cancelled"]), pytest.raises(ReleaseError) as exc:
+        check_develop_cd(_REPO, _CD_HEAD)
+    assert "cancelled (not by a concurrency supersede)" in str(exc.value)
+    assert "actions/runs/6" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        CDRunLookupError("gh run list failed: HTTP 502"),
+        subprocess.CalledProcessError(1, ["gh", "api"], stderr="HTTP 502"),
+    ],
+)
+def test_develop_cd_gate_lookup_failure_refuses(error: Exception) -> None:
+    with (
+        patch(_CD + ".find_run", side_effect=error),
+        pytest.raises(ReleaseError, match="Could not read develop's CD runs") as exc,
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+    assert "HTTP 502" in (exc.value.detail or "")
+
+
+def test_develop_cd_gate_malformed_timeout_refuses_before_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VRG_CD_TIMEOUT", "soon")
+    with (
+        patch(_CD + ".find_run") as find,
+        pytest.raises(ReleaseError, match="VRG_CD_TIMEOUT"),
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+    find.assert_not_called()
+
+
+def _preflight_patches(stack: contextlib.ExitStack) -> None:
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+    for name in (
+        "_check_host_prerequisites",
+        "_read_and_validate_config",
+        "_check_branch_and_tree",
+        "_check_version_not_tagged",
+        "_check_main_not_ahead_of_develop",
+        "_check_no_existing_tracking_issue",
+        "_check_packages_unpublished",
+        "os.chdir",
+    ):
+        stack.enter_context(patch(f"{_MOD}.{name}"))
+    stack.enter_context(patch(_MOD + ".check_gh_auth", return_value=_REPO))
+    stack.enter_context(patch(_MOD + ".version.show", return_value="2.1.0"))
+    stack.enter_context(patch(_MOD + ".pending_deps_prs", return_value=[]))
+    stack.enter_context(patch(_MOD + "._acquire_release_worktree", return_value=wt))
+
+
+def test_develop_cd_gate_runs_on_a_fresh_start(develop_cd_gate: MagicMock) -> None:
+    with contextlib.ExitStack() as stack:
+        _preflight_patches(stack)
+        preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    develop_cd_gate.assert_called_once_with(_REPO)
+
+
+def test_develop_cd_gate_skipped_on_resume(develop_cd_gate: MagicMock) -> None:
+    with contextlib.ExitStack() as stack:
+        _preflight_patches(stack)
+        preflight(version_override=None, repo_root=Path("/tmp/repo"), resume=True)  # noqa: S108
+    develop_cd_gate.assert_not_called()
+
+
+def test_develop_cd_gate_checks_the_local_head() -> None:
+    with (
+        patch(_MOD + ".git.read_output", return_value=_CD_HEAD) as read,
+        patch(_MOD + ".check_develop_cd") as check,
+    ):
+        _real_develop_cd_gate(_REPO)
+    read.assert_called_once_with("rev-parse", "HEAD")
+    check.assert_called_once_with(_REPO, _CD_HEAD)
+
+
+def test_develop_cd_gate_superseded_ancestor_refuses() -> None:
+    with (
+        _gate(run=None, states=["superseded"], runs=[_cd_run(5, sha="d" * 40)]),
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".git.is_ancestor", return_value=True),
+        pytest.raises(ReleaseError, match="superseded by a concurrency group"),
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+
+
+def test_develop_cd_gate_gives_up_after_repeated_supersedes() -> None:
+    runs = [_cd_run(i, created=f"2026-11-17T10:{i:02d}:00Z") for i in range(20)]
+    with (
+        _gate(run=runs[0], states=["superseded"] * 11, runs=runs) as watch,
+        pytest.raises(ReleaseError, match="superseded 11 times in a row"),
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+    assert watch.call_count == 11
+
+
+def test_develop_cd_gate_unreadable_jobs_refuse() -> None:
+    with (
+        _gate(run=_cd_run(7), states=["failed"], jobs={"jobs": "nope"}),
+        pytest.raises(ReleaseError, match="jobs could not be read"),
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)

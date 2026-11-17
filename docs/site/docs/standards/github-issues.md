@@ -679,7 +679,15 @@ re-running the same one-off on the moved issue, with its own repo as `--repo`,
 links it under the target epic first and only then removes the stale queue
 listing. The re-run looks only at the queue epics of the moved issue's queue
 home and of its org's `.github`; for a stale listing anywhere else, the
-failure names the epic to remove it from in the GitHub UI. A route is refused when the item's container epic does not allow
+failure names the epic to remove it from in the GitHub UI.
+
+An ad-hoc task can also leave its ad-hoc epic. One found too big for one PR
+goes straight to planning with `vrg-intake-route <ref> planning`, which takes
+the same optional sizing as from intake; one that cannot move yet is
+deferred. Either route is refused while an open PR would close the item, since
+that PR could no longer be submitted.
+
+A route is refused when the item's container epic does not allow
 it (see [`vrg-intake-route`](../reference/cli-tools-overview.md#vrg-intake-route)
 for the route table), for a cross-org target, and for a private item headed to a
 public repo or epic.

@@ -37,7 +37,10 @@ build on the managed configs; and that Prettier has one config source.
 A repo with none of its language's manifests (a Rust repo with no
 ``Cargo.toml`` yet) is not bootstrapped: the image warmup skips it, and so
 do the install and language stages here, each recorded as a warning that
-names the missing manifests (issue #4384). See
+names the missing manifests (issue #4384). A TypeScript repo whose
+``package.json`` declares no dependencies and that has no
+``package-lock.json``, as ``vrg-github-repo-init`` writes it, is not
+bootstrapped either (issue #4624). See
 :func:`~vergil_tooling.lib.container_cache.unbootstrapped_manifests`. A repo
 with none of its manifests but with sources of its language (a branch that
 deletes ``Cargo.toml``, say) is not unstarted: its install stage fails.
@@ -228,10 +231,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.check == "custom":
             print(_NO_CUSTOM_VALIDATOR)
             return 0
+        # With no language, name the repo root resolved: a run against the
+        # wrong repo (say, from a directory with no .git of its own) then
+        # shows in its own output, not only as a quiet pass (#4594).
+        where = "" if language else f" (repo root: {repo_root})"
         if args.check == "build":
-            print(f"build: no build check for {language or '<not set>'} — nothing to run")
+            print(f"build: no build check for {language or '<not set>'} — nothing to run{where}")
             return 0
-        print(f"No {args.check} commands for language '{language or '<not set>'}'")
+        print(f"No {args.check} commands for language '{language or '<not set>'}'{where}")
         return 0
 
     # The record of this run (for merge-review) describes the commit and tree
@@ -759,7 +766,8 @@ def _bootstrap_state(language: str, repo_root: Path) -> tuple[list[str], list[st
     """Return *language*'s missing manifests and its sources in the repo.
 
     Both are empty for a bootstrapped repo. The manifests are non-empty only
-    when every one is missing
+    when every one is missing, or for TypeScript when only the lockfile is and
+    ``package.json`` declares no dependencies
     (:func:`~vergil_tooling.lib.container_cache.unbootstrapped_manifests`);
     the repo's files are listed only then.
     """

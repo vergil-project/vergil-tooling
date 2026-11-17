@@ -145,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
 
     runtime = detect_runtime()
     repo_root = git.repo_root()
+    _warn_if_not_repo_root(Path.cwd(), repo_root)
     try:
         lang = resolve_language(repo_root)
     except PackageJsonError as exc:
@@ -239,6 +240,28 @@ def main(argv: list[str] | None = None) -> int:
     else:
         exec_replace("docker", container_args)
     return 0  # pragma: no cover
+
+
+def _warn_if_not_repo_root(cwd: Path, repo_root: Path) -> None:
+    """Warn on stderr when *cwd* is not the root of the repo the run resolved.
+
+    The container mounts the resolved repo root and runs there, whatever the
+    current directory. Run from a directory with no ``.git`` of its own (a
+    copied fixture, say), the command checks the enclosing repo instead, and
+    its result can read as a pass for the wrong tree (issue #4594). This warns
+    and carries on: a run from a subdirectory of the intended repo is fine.
+    """
+    if cwd.resolve() == repo_root.resolve():
+        return
+    print(
+        "WARNING: the current directory is not the root of the repo this run resolved.\n"
+        f"  current directory: {cwd}\n"
+        f"  repo root:         {repo_root}\n"
+        "  The container mounts and runs in the repo root, so the command runs\n"
+        "  against that repo, not the current directory. If that is not the repo\n"
+        "  you meant, run from the intended repo's root.",
+        file=sys.stderr,
+    )
 
 
 def _trivy_cache_mount() -> str:

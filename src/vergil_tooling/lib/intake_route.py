@@ -53,10 +53,12 @@ routes each container allows:
   does not list or a queue epic of its own or its org's queue home still
   lists, links it under the target (if missing), only then removes the stale
   queue listing, and reads it back twice, instead of being refused (#4291).
-- **planning** — reparent onto the planning epic of the same queue home. It
-  also takes a **follow-on brainstorm** out of a development epic (#4296): an
-  item whose title starts ``Follow-on brainstorm:`` and whose native parent is
-  a development epic. A brainstorm never gates its epic's work, so moving it
+- **planning** — reparent onto the planning epic of the same queue home,
+  from intake, deferred or ad hoc (an ad-hoc task found too big for one PR,
+  #4598, refused while an open PR would close it), or an unparented issue.
+  It also takes a **follow-on brainstorm** out of a development epic
+  (#4296): an item whose title starts ``Follow-on brainstorm:`` and whose
+  native parent is a development epic. A brainstorm never gates its epic's work, so moving it
   suspends nothing. The parent is replaced in one call, then the hand-off is
   recorded on the epic (for the retrospective's §5) and on the item; a record
   that fails after the move raises with every comment still to post. With a
@@ -90,7 +92,7 @@ path, and a follow-on brainstorm under a development epic), the refusal naming
 the parent. A planning item refuses drop, defer and
 one-off while any of its development epics is open (one an ``Epic:`` marker names, or
 one whose body carries a ``Planning:`` line for it; #4001, #4170). An
-ad-hoc item refuses defer while an open PR would close it. A private repo's item
+ad-hoc item refuses defer and planning while an open PR would close it. A private repo's item
 is never routed to a public repo or epic. The whole route runs under the item
 owner's App token (:func:`github.target_org`).
 """
@@ -216,7 +218,7 @@ RouteAction = Drop | Defer | OneOff | ToPlanning | ToIntake | Split | SizeItem
 ROUTES: dict[str | None, frozenset[type]] = {
     "intake": frozenset({Drop, Defer, OneOff, ToPlanning, Split}),
     "planning": frozenset({Defer, Drop, OneOff, SizeItem}),
-    "ad-hoc": frozenset({Defer}),
+    "ad-hoc": frozenset({Defer, ToPlanning}),
     "deferred": frozenset({Defer, ToIntake, ToPlanning, OneOff, Drop, Split, SizeItem}),
     None: frozenset({ToPlanning}),
 }
@@ -300,6 +302,8 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         _apply_sizing(ref, action.sizing, today)
         return RouteResult(final=ref, moved_by="none")
     if isinstance(action, ToPlanning):
+        if kind == epics.ADHOC.key:
+            _guard_open_closing_pr(ref, "routing to planning")
         planning = epics.ensure_planning_epic(_repo_of(ref))
         _guard_visibility(ref, _repo_of(planning))
         _link(planning, ref)
@@ -537,8 +541,12 @@ def _guard_open_planning_epics(ref: IssueRef, view: dict[str, Any], doing: str) 
         )
 
 
-def _guard_open_closing_pr(ref: IssueRef) -> None:
-    """Refuse deferring an ad-hoc item that an open PR would close (it would strand the PR)."""
+def _guard_open_closing_pr(ref: IssueRef, doing: str) -> None:
+    """Refuse *doing* an ad-hoc item that an open PR would close (it would strand the PR).
+
+    *doing* is the route: deferring or routing to planning. Either takes the
+    item out of the ad-hoc epic, and the PR tooling refuses a queued item.
+    """
     view = _view(ref, "closedByPullRequestsReferences")
     for pr in view.get("closedByPullRequestsReferences") or []:
         url = str(pr.get("url") or "")
@@ -547,7 +555,7 @@ def _guard_open_closing_pr(ref: IssueRef) -> None:
         state = github.read_output("pr", "view", url, "--json", "state", "--jq", ".state")
         if state.strip().upper() == "OPEN":
             raise RouteRefusedError(
-                f"{ref.slug} has an open PR that would close it ({url}); deferring it would "
+                f"{ref.slug} has an open PR that would close it ({url}); {doing} it would "
                 "strand that work — finish or close the PR first"
             )
 
@@ -564,7 +572,7 @@ def _defer(ref: IssueRef, action: Defer, kind: str | None, parent: IssueRef, day
     if kind == epics.PLANNING.key:
         _guard_open_planning_epics(ref, view, "deferring")
     if kind == epics.ADHOC.key:
-        _guard_open_closing_pr(ref)
+        _guard_open_closing_pr(ref, "deferring")
     deferred = epics.ensure_deferred_epic(_repo_of(ref))
     _guard_visibility(ref, _repo_of(deferred))
     body = f"{record}\n{DEFERRED_FROM_LINE.format(epic=parent.slug)}"

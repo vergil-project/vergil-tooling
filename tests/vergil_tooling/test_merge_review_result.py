@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -587,11 +588,33 @@ def test_check_2_request_may_list_check_ids() -> None:
 # --- the CLI --------------------------------------------------------------
 
 
+def _capture_record(data: bytes, step: str = "review", **over: Any) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "schema": "merge-review-capture/1",
+        "step": step,
+        "request_id": REQUEST_ID,
+        "result_sha256": hashlib.sha256(data).hexdigest(),
+        "agent_id": "a1b2c3d4e5f60718",
+    }
+    record.update(over)
+    return record
+
+
+def _write_capture(tmp_path: Path, record: object, step: str = "review") -> Path:
+    path = tmp_path / f"capture-{step}.json"
+    path.write_text(json.dumps(record))
+    return path
+
+
 def _files(tmp_path: Path, result: str, request: dict[str, object] | None = None) -> list[str]:
+    """Write the request, the result and the capture record the hook would write."""
+    request = request if request is not None else _request()
     request_path = tmp_path / "request-review.json"
-    request_path.write_text(json.dumps(request if request is not None else _request()))
+    request_path.write_text(json.dumps(request))
     result_path = tmp_path / "result-review.md"
     result_path.write_text(result)
+    step = str(request["step"])
+    _write_capture(tmp_path, _capture_record(result_path.read_bytes(), step), step)
     return ["--request", str(request_path), "--result", str(result_path)]
 
 
@@ -638,7 +661,9 @@ def test_cli_missing_result_file(tmp_path: Path, capsys: pytest.CaptureFixture[s
 
 def test_cli_result_not_utf8(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     args = _files(tmp_path, "")
-    (tmp_path / "result-review.md").write_bytes(b"```merge-review-result\n\xff\n```\n")
+    data = b"```merge-review-result\n\xff\n```\n"
+    (tmp_path / "result-review.md").write_bytes(data)
+    _write_capture(tmp_path, _capture_record(data))
     assert vrg_merge_review_check.main(args) == 1
     assert "is not UTF-8 at byte offset 23" in capsys.readouterr().err
 
@@ -662,3 +687,220 @@ def test_cli_requires_both_paths(capsys: pytest.CaptureFixture[str]) -> None:
         vrg_merge_review_check.main(["--request", "x"])
     assert excinfo.value.code == 2
     assert "--result" in capsys.readouterr().err
+
+
+# --- rule 10: the capture record ------------------------------------------
+
+
+def _capture_refused(capsys: pytest.CaptureFixture[str], args: list[str]) -> str:
+    assert vrg_merge_review_check.main(args) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("ERROR: rule 10 (capture): ")
+    assert SECRET not in captured.err
+    return captured.err
+
+
+def test_capture_passes_with_its_record(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert vrg_merge_review_check.main(_files(tmp_path, _result())) == 0
+    assert json.loads(capsys.readouterr().out)["step"] == "review"
+
+
+def test_capture_is_read_from_the_result_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The request lives elsewhere; the record is found beside the result.
+    private = tmp_path / "private"
+    private.mkdir()
+    args = _files(private, _result())
+    elsewhere = tmp_path / "request-review.json"
+    (private / "request-review.json").rename(elsewhere)
+    args[1] = str(elsewhere)
+    assert vrg_merge_review_check.main(args) == 0
+    assert json.loads(capsys.readouterr().out)["step"] == "review"
+
+
+def test_capture_one_byte_changed_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _result())
+    result_path = tmp_path / "result-review.md"
+    result_path.write_bytes(result_path.read_bytes() + b" ")
+    err = _capture_refused(capsys, args)
+    assert "the result was changed after the capture" in err
+
+
+def test_capture_tidied_result_still_valid_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A retyped result that would pass every other rule is still refused.
+    args = _files(tmp_path, _result())
+    (tmp_path / "result-review.md").write_text(
+        _result(findings=[_finding(summary="A tidier summary.")])
+    )
+    _capture_refused(capsys, args)
+
+
+def test_capture_missing_record_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _result())
+    (tmp_path / "capture-review.json").unlink()
+    assert "the result has no capture record" in _capture_refused(capsys, args)
+
+
+def test_capture_unreadable_record_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _result())
+    record = tmp_path / "capture-review.json"
+    record.unlink()
+    record.mkdir()
+    assert "cannot read the capture record" in _capture_refused(capsys, args)
+
+
+def test_capture_record_not_utf8_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _result())
+    (tmp_path / "capture-review.json").write_bytes(b'{"schema": "\xff"}')
+    assert "is not UTF-8 at byte offset 12" in _capture_refused(capsys, args)
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("{oops", "is not valid JSON"),
+        ('{"schema": NaN}', "uses NaN or Infinity"),
+        ('{"schema": "a", "schema": "b"}', "has an object with a duplicate key"),
+        ("[]", "must hold one JSON object"),
+        ('"merge-review-capture/1"', "must hold one JSON object"),
+    ],
+)
+def test_capture_record_not_a_json_object_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], content: str, expected: str
+) -> None:
+    args = _files(tmp_path, _result())
+    (tmp_path / "capture-review.json").write_text(content)
+    assert expected in _capture_refused(capsys, args)
+
+
+def test_capture_record_extra_key_is_refused_unnamed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _result())
+    record = _capture_record((tmp_path / "result-review.md").read_bytes())
+    record[SECRET] = "x"
+    _write_capture(tmp_path, record)
+    assert "it has 1 other key(s)" in _capture_refused(capsys, args)
+
+
+@pytest.mark.parametrize("field", ["schema", "step", "request_id", "result_sha256", "agent_id"])
+def test_capture_record_missing_field_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], field: str
+) -> None:
+    args = _files(tmp_path, _result())
+    record = _capture_record((tmp_path / "result-review.md").read_bytes())
+    del record[field]
+    _write_capture(tmp_path, record)
+    assert f"the capture record is missing {field}" in _capture_refused(capsys, args)
+
+
+@pytest.mark.parametrize("field", ["schema", "step", "request_id", "result_sha256", "agent_id"])
+@pytest.mark.parametrize("value", [None, 1, [], {}, ""])
+def test_capture_record_field_not_a_string_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], field: str, value: object
+) -> None:
+    args = _files(tmp_path, _result())
+    record = _capture_record((tmp_path / "result-review.md").read_bytes())
+    record[field] = value
+    _write_capture(tmp_path, record)
+    err = _capture_refused(capsys, args)
+    assert f"the capture record's {field} must be a non-empty string" in err
+
+
+def test_capture_record_other_schema_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _result())
+    data = (tmp_path / "result-review.md").read_bytes()
+    _write_capture(tmp_path, _capture_record(data, schema="merge-review-capture/2"))
+    err = _capture_refused(capsys, args)
+    assert "schema must be merge-review-capture/1" in err
+    assert "capture/2" not in err
+
+
+def test_capture_record_other_step_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _result())
+    data = (tmp_path / "result-review.md").read_bytes()
+    _write_capture(tmp_path, _capture_record(data, step="check"))
+    err = _capture_refused(capsys, args)
+    assert "step is not the request's step (review)" in err
+
+
+def test_capture_record_of_another_steps_file_is_not_used(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A check's request is answered by capture-check.json, never capture-review.json.
+    args = _files(tmp_path, _render(_check_block()), _request("check"))
+    record = tmp_path / "capture-check.json"
+    record.rename(tmp_path / "capture-review.json")
+    assert "the result has no capture record" in _capture_refused(capsys, args)
+
+
+def test_capture_record_other_request_id_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _result())
+    data = (tmp_path / "result-review.md").read_bytes()
+    other = "0" * 32
+    _write_capture(tmp_path, _capture_record(data, request_id=other))
+    err = _capture_refused(capsys, args)
+    assert "request_id is not the request's" in err
+    assert other not in err
+    assert REQUEST_ID not in err
+
+
+@pytest.mark.parametrize(
+    "digest",
+    ["A" * 64, "a" * 63, "a" * 65, "g" * 64, "a" * 64 + "\n", "sha256:" + "a" * 57],
+)
+def test_capture_record_malformed_digest_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], digest: str
+) -> None:
+    args = _files(tmp_path, _result())
+    data = (tmp_path / "result-review.md").read_bytes()
+    _write_capture(tmp_path, _capture_record(data, result_sha256=digest))
+    err = _capture_refused(capsys, args)
+    assert "result_sha256 must be 64 lowercase hex characters" in err
+
+
+def test_capture_record_uppercase_of_the_right_digest_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _result())
+    data = (tmp_path / "result-review.md").read_bytes()
+    digest = hashlib.sha256(data).hexdigest().upper()
+    _write_capture(tmp_path, _capture_record(data, result_sha256=digest))
+    _capture_refused(capsys, args)
+
+
+def test_capture_is_checked_before_the_result_rules(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A result broken after the capture is named as a capture failure.
+    args = _files(tmp_path, _result())
+    (tmp_path / "result-review.md").write_text("not a result at all")
+    _capture_refused(capsys, args)
+
+
+def test_capture_bad_request_is_refused_before_the_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A malformed request step never names a capture file.
+    args = _files(tmp_path, _result())
+    (tmp_path / "request-review.json").write_text(json.dumps(_request(step="../x")))
+    assert vrg_merge_review_check.main(args) == 1
+    assert capsys.readouterr().err.startswith("ERROR: the request: step must be")

@@ -83,7 +83,7 @@ vrg-container-run --help   # should print usage
     If you are developing vergil-tooling itself and want to test
     unreleased code on the host, use the single-`.venv` dev-tree
     override described in the vergil-tooling `CLAUDE.md` (`uv sync
-    --group dev`, then prepend `.venv/bin` to `PATH`). A single
+    --python 3.15 --group dev`, then prepend `.venv/bin` to `PATH`). A single
     `.venv` is safe because the dev container masks the host `.venv`
     with an anonymous volume, so host and container never clobber
     each other's environment. This does not apply to consuming repos.
@@ -535,7 +535,11 @@ Alongside it:
 - **`epic-rollup.yml`** — on any issue close, closes the parent epic
   once all of its tasks are closed.
 - **`cd.yml`** — the release and docs publishing workflow, generated
-  when `[publish]` enables either.
+  when `[publish]` enables either. Its `release` job runs on every push to
+  `main` except the one that creates the branch: the wizard creates `main`
+  by a direct push, which no release PR produced, so there is nothing to
+  release. A later push to `main` with no release PR still fails the
+  release's CI-evidence gate.
 
 To regenerate them after a `vergil.toml` change, re-run
 `vrg-github-repo-init --adopt`. See the

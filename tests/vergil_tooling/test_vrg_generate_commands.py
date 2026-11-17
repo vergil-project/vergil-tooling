@@ -265,6 +265,10 @@ def test_python_mapping_pages(mapping_data_file: Path, tmp_path: Path) -> None:
     specs = load_commands(mapping_data_file)
     output = generate("python", specs, mapping_pages=mapping_pages)
     assert "queue attribute mappings" in output
+    assert (
+        "<https://mq-rest-admin-project.github.io/mq-rest-admin-python/latest/mappings/queue/>"
+        in output
+    )
     # Index should not appear
     assert "index attribute mappings" not in output
 

@@ -1651,6 +1651,45 @@ def test_docs_links_ignores_markdownlint_ignore(tmp_path: Path) -> None:
     assert _check_docs_links(tmp_path) == 1
 
 
+def test_docs_links_unpublished_site_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A link to a site the org does not publish fails the check (issue #4599)."""
+    gone = "https://vergil-project.github.io/standard-actions/latest/guides/"
+    _md(tmp_path, "README.md", f"# R\n\n[old]({gone})\n")
+    assert _check_docs_links(tmp_path) == 1
+    err = capsys.readouterr().err
+    assert (
+        f"README.md:3: {gone} links to standard-actions, which is not a published Vergil docs site"
+    ) in err
+
+
+def test_docs_links_published_unversioned_sites_pass(tmp_path: Path) -> None:
+    text = (
+        "# R\n"
+        "<https://vergil-project.github.io/docs/guides/x/>\n"
+        "<https://vergil-project.github.io/packages/simple/>\n"
+    )
+    _md(tmp_path, "README.md", text)
+    assert _check_docs_links(tmp_path) == 0
+
+
+def test_docs_links_hits_reported_in_line_order(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gone = "https://vergil-project.github.io/gone/x/"
+    _md(tmp_path, "README.md", f"# R\n<{gone}>\n<{_DEEP}>\n<{gone}>\n")
+    assert _check_docs_links(tmp_path) == 1
+    lines = capsys.readouterr().err.splitlines()
+    assert [line.split(": ", 1)[0] for line in lines] == [
+        "README.md:2",
+        "README.md:3",
+        "README.md:4",
+    ]
+    assert "not a published Vergil docs site" in lines[0]
+    assert "has no version segment" in lines[1]
+
+
 def test_docs_links_skips_gitignored(tmp_path: Path) -> None:
     repo = _git_repo(tmp_path / "repo", "docs/site/docs/changelog.md\n")
     _md(repo, "docs/site/docs/changelog.md", f"<{_DEEP}>\n")

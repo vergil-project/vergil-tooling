@@ -77,8 +77,11 @@ image.
 The image chooses how vergil-tooling is installed, by two checks: the
 vergil apt source (`/etc/apt/sources.list.d/vergil.sources`) and a core
 vergil-python (`/opt/vergil/python/*/bin/python3`). With both, a release
-version (`vX.Y` or `vX.Y.Z`) installs the vergil-tooling package, pinned
-to that version, and the build checks that `vrg-*` runs from `/usr/bin`
+version installs the vergil-tooling package at that release, and a `vX.Y`
+line resolves first to the newest release on the line, so a new release
+rebuilds the cached image (see
+[How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)).
+The build checks that `vrg-*` runs from `/usr/bin`
 on vergil-python; a branch is `uv tool install` from git on the core
 Python. With neither, it is `uv tool install` from git. An image with only
 one of the two fails the build. The build log names the path it took.
@@ -441,12 +444,14 @@ generates it, for a new repository or for an existing one with
   `[ci].integration-tests` is on, `docs` only when `[publish].docs` is
   on, `version` only when `[project].release-model` is not `none`, and
   `package` only when `vergil.toml` has `[package]`.
-- **The `CI gates` ruleset** is applied to `main` and `develop` with
-  the required checks listed in [CI gates](#ci-gates). Before it is
-  applied, the tool checks that the generated `ci.yml` produces every
-  required check and fails if it does not. `vrg-github-repo-config`
-  runs the same check against the committed `ci.yml` before it writes
-  the ruleset. `[ci].integration-tests = true` always fails it, since no
+- **The CI-gates rulesets**, `CI gates (develop)` and `CI gates (main)`,
+  are applied to `develop` and `main` with the required checks listed in
+  [CI gates](#ci-gates). Only `main`'s requires a branch to be up to
+  date before it merges. A `docs-single-branch` repo gets `develop`'s
+  only. Before they are applied, the tool checks that the generated
+  `ci.yml` produces every required check and fails if it does not.
+  `vrg-github-repo-config` runs the same check against the committed
+  `ci.yml` before it writes the rulesets. `[ci].integration-tests = true` always fails it, since no
   reusable workflow runs an integration job yet
   ([#2721](https://github.com/vergil-project/vergil-tooling/issues/2721)):
   the error names the setting as the cause, and `vrg-github-repo-init`
@@ -461,7 +466,8 @@ is the local command. Nothing else needs to be added to the repository.
 
 ## CI gates
 
-The `CI gates` ruleset requires these checks. The list is computed from
+The CI-gates rulesets, `CI gates (develop)` and `CI gates (main)`, both
+require these checks. The list is computed from
 `vergil.toml`:
 
 | Check | Required when |
@@ -585,9 +591,13 @@ chosen, and why.
 **`dev-ts-node`**
 :   Base: `base` (Ubuntu 24.04), with the major's pinned nodejs.org
     prebuilt tarball at `/opt/node/<major>` (never built from
-    source). Includes Node.js, npm, TypeScript (`tsc`),
-    ESLint + typescript-eslint, Prettier, Vitest, `@vitest/coverage-v8`,
-    and license-checker. The runtime family rides the `ts-node` image
+    source). Includes Node.js, npm, Prettier and license-checker.
+    TypeScript, ESLint, typescript-eslint, `@eslint/js`, Vitest and
+    `@vitest/coverage-v8` are not in the image: each repository declares
+    them as devDependencies, and the gates run them from its
+    `node_modules/.bin` (see the
+    [Tool Ownership Guideline](../standards/development/tool-ownership.md)).
+    The runtime family rides the `ts-node` image
     suffix and the Node major is the tag (`node-24` → `prod-ts-node:24`);
     `node-24` is the primary, `node-22` the second (epic
     [vergil-project/.github#284](https://github.com/vergil-project/.github/issues/284)).

@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -15,6 +15,9 @@ from vergil_tooling.lib import host_deps, host_status
 from vergil_tooling.lib import host_methods as hm
 from vergil_tooling.lib import host_versions as hv
 from vergil_tooling.lib.host_deps import HostDependency, ManifestError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # Probe-output fixtures. Most were captured on a live macOS host (#3261); the
 # few that could not be are CONSTRUCTED and labelled so. See
@@ -60,10 +63,22 @@ class _FakeRun:
         return self.responses[tuple(cmd)]
 
 
+_BREW_UPDATE: tuple[str, ...] = ("brew", "update")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_brew_refresh() -> Iterator[None]:
+    """Forget any cached ``brew update`` result, before and after each test."""
+    hm.refresh_brew_metadata.cache_clear()
+    yield
+    hm.refresh_brew_metadata.cache_clear()
+
+
 def _stub(
     monkeypatch: pytest.MonkeyPatch, responses: dict[tuple[str, ...], str | None]
 ) -> _FakeRun:
-    fake = _FakeRun(responses)
+    """Stub ``hm._run``; ``brew update`` succeeds unless *responses* says otherwise."""
+    fake = _FakeRun({_BREW_UPDATE: "Already up-to-date.", **responses})
     monkeypatch.setattr(hm, "_run", fake)
     return fake
 
@@ -187,6 +202,87 @@ def test_brew_cask_latest(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_brew_latest_unknown_when_probe_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     _stub(monkeypatch, {("brew", "info", "--json=v2", "--formula", "gh"): None})
     assert hm.latest_version(_dep()) is None
+
+
+# -- stale Homebrew metadata (#4582) ---------------------------------------------
+
+
+def test_brew_latest_refreshes_metadata_before_brew_info(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `brew info` reads Homebrew's cache and never refreshes it, so the latest
+    # is read only after `brew update` has run.
+    info = json.dumps({"formulae": [{"versions": {"stable": "2.104.0"}}], "casks": []})
+    fake = _stub(monkeypatch, {("brew", "info", "--json=v2", "--formula", "gh"): info})
+    assert hm.latest_version(_dep()) == "2.104.0"
+    assert fake.calls == [["brew", "update"], ["brew", "info", "--json=v2", "--formula", "gh"]]
+
+
+def test_brew_refresh_runs_once_per_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    formula = json.dumps({"formulae": [{"versions": {"stable": "2.0"}}], "casks": []})
+    cask = json.dumps({"formulae": [], "casks": [{"version": "4.2"}]})
+    fake = _stub(
+        monkeypatch,
+        {
+            ("brew", "info", "--json=v2", "--formula", "gh"): formula,
+            ("brew", "info", "--json=v2", "--formula", "uv"): formula,
+            ("brew", "info", "--json=v2", "--cask", "app"): cask,
+        },
+    )
+    hm.latest_version(_dep())
+    hm.latest_version(_dep(name="uv"))
+    hm.latest_version(_dep(name="app", method="brew-cask"))
+    assert fake.calls.count(["brew", "update"]) == 1
+
+
+@pytest.mark.parametrize("method", ["brew-formula", "brew-cask"])
+def test_brew_latest_unknown_when_refresh_fails(
+    monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    # A stale cache would answer with an old version that reads as `current`:
+    # when the refresh fails, the latest is unknown and `brew info` is not read.
+    fake = _stub(monkeypatch, {_BREW_UPDATE: None})
+    dep = _dep(name="app", method=method)
+    assert hm.latest_version(dep) is None
+    assert fake.calls == [["brew", "update"]]
+    state, severity = host_status.classify(dep, "2.103.3", hm.latest_version(dep), [])
+    assert (state, severity) == ("latest-unknown", host_status.WARN)
+
+
+def test_brew_refresh_failure_is_cached_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _stub(monkeypatch, {_BREW_UPDATE: None})
+    assert hm.latest_version(_dep()) is None
+    assert hm.latest_version(_dep(name="uv")) is None
+    assert fake.calls == [["brew", "update"]]
+
+
+def test_brew_refresh_not_run_for_unmanaged_or_non_brew(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _stub(
+        monkeypatch,
+        {("uv", "tool", "list", "--outdated"): "", ("uv", "tool", "list"): "ruff v0.1.0"},
+    )
+    assert hm.latest_version(_dep(latest="unmanaged")) is hm.UNMANAGED
+    assert hm.latest_version(_dep(name="ruff", method="uv-tool")) == "0.1.0"
+    assert ["brew", "update"] not in fake.calls
+
+
+def test_reads_brew_latest() -> None:
+    assert hm.reads_brew_latest(_dep())
+    assert hm.reads_brew_latest(_dep(method="brew-cask"))
+    assert not hm.reads_brew_latest(_dep(latest="unmanaged"))
+    assert not hm.reads_brew_latest(_dep(method="uv-tool"))
+    assert not hm.reads_brew_latest(_dep(method="custom"))
+
+
+def test_brew_installed_and_upgrade_do_not_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _stub(
+        monkeypatch,
+        {
+            ("brew", "list", "--formula", "--versions", "gh"): "gh 2.103.3",
+            ("brew", "upgrade", "gh"): "",
+        },
+    )
+    hm.installed_version(_dep())
+    hm.upgrade(_dep())
+    assert ["brew", "update"] not in fake.calls
 
 
 @pytest.mark.parametrize(

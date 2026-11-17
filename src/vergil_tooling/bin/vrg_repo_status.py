@@ -1,9 +1,9 @@
 """Show the state of the repository clone: its worktrees, grouped by kind,
-and what is pending release.
+the open PRs no worktree backs, and what is pending release.
 
 Read-only observability for worktree hygiene. Everything with code on disk in
-this repo is shown, in four worktree sections (issue #3386), then the Pending
-release section:
+this repo is shown, in four worktree sections (issue #3386), then the open PRs
+on ``origin`` that no linked worktree shows, then the Pending release section:
 
 1. **Main checkout** — always shown; flagged when it is not on the repo's
    integration branch, is dirty, or is mid-rebase.
@@ -15,7 +15,14 @@ release section:
    worktrees, which are meant to be single-run, so a leftover stands out.
 4. **Other / unknown** — any other branch, a detached HEAD, or a worktree
    outside ``.worktrees/``.
-5. **Pending release** — every change the integration branch holds that
+5. **Open PRs with no local worktree** — every open PR on ``origin`` whose
+   head branch no linked worktree holds (a PR from a fork never counts as
+   backed): automation, lifecycle and dependency-update PRs, and PRs
+   prepared on another machine, with their type, author and CI state
+   (issue #4581). Always shown; a failed lookup prints ``ERROR:``, never
+   "no open PRs", and the command exits non-zero after the rest of the
+   output.
+6. **Pending release** — every change the integration branch holds that
    ``main`` does not, mapped to its PR by commit SHA, in merge order, with
    the latest release and rolling tags (epic vergil-project/.github#1049).
    Shown only when ``vergil.toml`` sets ``[publish].release``. Read from the
@@ -39,6 +46,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, worktrees
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.open_prs import OpenPR, OpenPRKind, OpenPRsError, gather_open_prs
 from vergil_tooling.lib.pending_release import (
     RELEASE_BRANCH,
     ChangeKind,
@@ -99,6 +107,10 @@ _SECTION_TITLES = {
 _DETACHED = "(detached)"
 
 _PENDING_COLUMNS = ("PR", "BRANCH", "TYPE", "MERGED", "TITLE")
+
+_OPEN_COLUMNS = ("PR", "BRANCH", "BASE", "TYPE", "AUTHOR", "CI", "OPENED", "TITLE")
+
+_OPEN_HEADING = "Open PRs on origin with no local worktree"
 
 # A longer TITLE is cut to this width, its last character an ellipsis, to
 # keep each pending-release row on one line.
@@ -182,8 +194,10 @@ def main(argv: list[str] | None = None) -> int:
         print(_render_table(_COLUMNS, rows))
         _print_notes(statuses, labels)
 
-    # A failed pending-release lookup still lets the rest print, then the
-    # command exits non-zero: it could not say what is pending (spec §5.4).
+    # A failed open-PR or pending-release lookup still lets the rest print,
+    # then the command exits non-zero: it could not say what is open or
+    # pending (spec §5.4 of epic vergil-project/.github#1049, issue #4581).
+    open_ok = _print_open_prs(sections, now)
     pending_ok = _print_pending(integration, now) if show_pending else True
 
     print()
@@ -192,14 +206,15 @@ def main(argv: list[str] | None = None) -> int:
     if gone_error is not None:
         print(f"  note: branch-gone check failed: {gone_error}")
     _print_vanished(vanished)
-    return 0 if pending_ok else 1
+    return 0 if open_ok and pending_ok else 1
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Show the state of the repository clone: its worktrees, grouped by kind, "
-            "and what is pending release."
+            "the open PRs on origin that no local worktree backs, and what is "
+            "pending release."
         ),
     )
     parser.add_argument(
@@ -434,6 +449,76 @@ def _print_pending(integration: str, now: float) -> bool:
             sha7 = change.shas[0][:_SHORT_SHA]
             print(f"  PROBLEM: {sha7} reached {integration} without a PR")
     print(_pending_summary(pending.changes))
+    return True
+
+
+def _backed(pr: OpenPR, branches: set[str], numbers: set[int]) -> bool:
+    """Whether a linked worktree already shows *pr*: its PR number, or its
+    head branch for a PR from this repository (a fork's branch name can
+    collide with a local one, so it never counts)."""
+    if pr.number in numbers:
+        return True
+    return not pr.cross_repository and pr.branch in branches
+
+
+def _open_branch_cell(pr: OpenPR) -> str:
+    return f"{pr.head_owner}:{pr.branch}" if pr.head_owner is not None else pr.branch
+
+
+def _open_rows(prs: Sequence[OpenPR], now: float) -> list[tuple[str, ...]]:
+    return [
+        (
+            f"#{pr.number}",
+            _open_branch_cell(pr),
+            pr.base,
+            pr.type_label,
+            pr.author,
+            pr.ci,
+            _format_age(pr.created_ts, now),
+            _title_cell(f"[draft] {pr.title}" if pr.draft else pr.title),
+        )
+        for pr in prs
+    ]
+
+
+def _open_summary(prs: Sequence[OpenPR]) -> str:
+    """The section's count of open PRs, every bucket listed."""
+    kinds = [pr.kind for pr in prs]
+    return (
+        f"{_count(len(prs), 'open PR')} with no local worktree: "
+        f"{_count(kinds.count(OpenPRKind.AUTOMATION), 'automation PR')}, "
+        f"{_count(kinds.count(OpenPRKind.LIFECYCLE), 'lifecycle PR')}, "
+        f"{_count(kinds.count(OpenPRKind.DEPS), 'dependency update')}, "
+        f"{_count(kinds.count(OpenPRKind.RELEASE), 'release PR')}, "
+        f"{_count(kinds.count(OpenPRKind.OTHER), 'other PR')}."
+    )
+
+
+def _print_open_prs(sections: dict[WorktreeKind, list[WorktreeStatus]], now: float) -> bool:
+    """Print the open PRs no linked worktree shows; return False only on an error.
+
+    A failed lookup prints the heading and the ``ERROR:`` line alone, never a
+    partial table and never a count of zero.
+    """
+    statuses = [s for kind_statuses in sections.values() for s in kind_statuses]
+    branches = {s.worktree.branch for s in statuses}
+    numbers = {s.pr_number for s in statuses if s.pr_number is not None}
+    print()
+    print(_OPEN_HEADING)
+    try:
+        prs = gather_open_prs()
+    except OpenPRsError as exc:
+        print(f"ERROR: open PRs: {exc}")
+        return False
+    unbacked = [pr for pr in prs if not _backed(pr, branches, numbers)]
+    if not unbacked:
+        if prs:
+            print(f"None: {_count(len(prs), 'open PR')} on origin, each with a local worktree.")
+        else:
+            print("None: origin has no open PRs.")
+        return True
+    print(_render_table(_OPEN_COLUMNS, _open_rows(unbacked, now)))
+    print(_open_summary(unbacked))
     return True
 
 

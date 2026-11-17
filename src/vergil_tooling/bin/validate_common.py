@@ -183,16 +183,19 @@ def _check_dependabot_limit(repo_root: Path) -> int:
 
 def _check_docs_links(repo_root: Path) -> int:
     """Refuse links to a mike-versioned Vergil docs site that lack a version
-    segment (issue #3831).
+    segment (issue #3831), and links to a site on the org's Pages host that
+    is not published at all (issue #4599).
 
     A deep link such as ``https://vergil-project.github.io/<site>/guides/x/``
     returns 404 on a mike-versioned site; it needs ``latest/``, ``dev/`` or a
-    version number after the site name. A bare site root is allowed. The scope
-    is markdownlint's (``docs/site/**/*.md``, ``README.md``, ``epics/**/*.md``)
-    less ``epics/archive/``, and independent of ``[markdownlint].ignore``: a
-    file left out of the lint still publishes its links. The sites are the
-    fixed list in :mod:`vergil_tooling.lib.doc_links`, so no network is used.
-    Each hit is named by path and line.
+    version number after the site name. A bare site root is allowed. A link to
+    a site that is neither a versioned site nor the unversioned ``docs`` or
+    ``packages`` site returns 404 whatever its path, so it is refused too. The
+    scope is markdownlint's (``docs/site/**/*.md``, ``README.md``,
+    ``epics/**/*.md``) less ``epics/archive/``, and independent of
+    ``[markdownlint].ignore``: a file left out of the lint still publishes its
+    links. The sites are the fixed lists in :mod:`vergil_tooling.lib.doc_links`,
+    so no network is used. Each hit is named by path and line, in line order.
     """
     archive = repo_root / "epics" / "archive"
     markdown_files = [
@@ -210,12 +213,22 @@ def _check_docs_links(repo_root: Path) -> int:
     for markdown in markdown_files:
         path = Path(markdown)
         rel = path.relative_to(repo_root).as_posix()
-        for line, url in doc_links.unversioned_links(path.read_text(encoding="utf-8")):
-            print(
-                f"{rel}:{line}: {url} has no version segment and returns 404; "
+        text = path.read_text(encoding="utf-8")
+        hits = [
+            (
+                line,
+                f"{url} has no version segment and returns 404; "
                 f"use {doc_links.versioned_form(url)}",
-                file=sys.stderr,
             )
+            for line, url in doc_links.unversioned_links(text)
+        ]
+        hits += [
+            (line, f"{url} links to {site}, which is not a published Vergil docs site")
+            for line, site, url in doc_links.unpublished_links(text)
+        ]
+        # Stable sort: two hits on one line keep each kind's text order.
+        for line, message in sorted(hits, key=lambda hit: hit[0]):
+            print(f"{rel}:{line}: {message}", file=sys.stderr)
             failed = True
     return 1 if failed else 0
 

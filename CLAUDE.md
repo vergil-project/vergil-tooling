@@ -106,7 +106,7 @@ Host-side `vrg-*` tools come from `uv tool install` (see
 To test unreleased code on the host, use the dev-tree override:
 
 ```bash
-uv sync --group dev
+uv sync --python 3.15 --group dev
 export PATH="$(pwd)/.venv/bin:$PATH"
 ```
 

@@ -36,7 +36,7 @@ vrg-release [minor|major] [options]
 | `--no-promote` | No | Skip moving the rolling `vX.Y` tag |
 | `--without-deps` | No | Skip the `update-deps` stage |
 | `--allow-pending-deps` | No | Release even though an open `dependency-update` PR blocks it. For urgent fixes only; the bypassed PRs are listed on the tracking issue |
-| `--install` | No | After a clean release, run the `[publish].consumer-refresh` commands instead of only printing them. Fails if none are configured |
+| `--no-install` | No | Skip the install step. By default, after a clean release, `vrg-release` runs the `[publish].consumer-refresh` commands instead of only printing them; with none configured it says there is nothing to run, which is not an error. `--install` was removed: passing it exits 1 and names this default |
 | `--resume [X.Y.Z]` | No | Resume an interrupted release from its open tracking issue. Name the version when more than one release is in flight. Cannot be combined with `minor`/`major` |
 | `--skip-audit` | No | Skip the `audit` stage |
 | `--output-window N` | No | Rolling output window for the terminal renderer (`0` streams everything) |
@@ -59,6 +59,17 @@ update landed through the fix PR), and deletes its head branch. A failed
 branch delete is reported, not fatal. `--allow-pending-deps` lets the
 release past whatever still blocks. Lookup failures refuse the release.
 See [The dependency-update gate](../../guides/releasing.md#the-dependency-update-gate).
+
+## The develop-CD gate
+
+On a fresh start (not on `--resume`), preflight last requires the
+develop CD run for the local `develop` head to be green. It waits on a
+run still queued or in progress, up to `$VRG_CD_TIMEOUT` seconds, and
+refuses on a failed, timed-out or cancelled run, with the run's link. A
+failure only in a docs job is a warning. A superseded run is replaced by
+the next develop CD run. With no run for the head, the latest completed
+run on an ancestor must be green. Lookup failures refuse the release.
+See [The develop-CD gate](../../guides/releasing.md#the-develop-cd-gate).
 
 ## Exit codes
 

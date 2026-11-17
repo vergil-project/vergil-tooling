@@ -17,9 +17,11 @@ commit subjects carry issue numbers, not the PR number) all map the same way.
 
 A lookup that fails or cannot give a complete answer raises
 :class:`PendingReleaseError`; there is never a partial list. Every error
-reason passes through :func:`_reason`, which strips URL userinfo, so no
-credential reaches the message. Retrying transient failures is the
-``lib/git.py`` and ``lib/github.py`` wrappers' job; this module adds none.
+reason passes through :func:`redact_userinfo`, which strips URL userinfo, so
+no credential reaches the message; :func:`lookup_failure_reason` turns any
+lookup failure into such a reason (``lib/open_prs.py`` shares both). Retrying
+transient failures is the ``lib/git.py`` and ``lib/github.py`` wrappers' job;
+this module adds none.
 
 Epic vergil-project/.github#1049 (spec §5.2-§5.4).
 """
@@ -87,7 +89,7 @@ class PendingReleaseError(RuntimeError):
     """The pending release could not be determined completely.
 
     The message is the human-readable reason, already stripped of URL
-    userinfo by :func:`_reason`.
+    userinfo by :func:`redact_userinfo`.
     """
 
 
@@ -153,13 +155,13 @@ class _PullRequest:
     labels: tuple[str, ...]
 
 
-def _reason(text: str) -> str:
+def redact_userinfo(text: str) -> str:
     """The one builder of error reasons: *text* with URL userinfo removed."""
     return _URL_USERINFO_RE.sub(r"\1", text)
 
 
 def _error(text: str) -> PendingReleaseError:
-    return PendingReleaseError(_reason(text))
+    return PendingReleaseError(redact_userinfo(text))
 
 
 def _version(match: re.Match[str]) -> tuple[int, ...]:
@@ -484,6 +486,41 @@ def _process_reason(exc: subprocess.CalledProcessError) -> str:
     return failure_message(exc)
 
 
+# Every exception a remote lookup can raise that :func:`lookup_failure_reason`
+# names. Anything else is a bug and propagates.
+LOOKUP_ERRORS = (
+    github.AppAuthError,
+    github.NoInstallationError,
+    subprocess.CalledProcessError,
+    RuntimeError,
+    KeyError,
+    TypeError,
+    ValueError,
+)
+
+
+def lookup_failure_reason(exc: Exception) -> str:
+    """The human-readable reason a remote lookup failed with *exc*, userinfo removed.
+
+    A missing token or an App authentication failure gives the standard
+    guidance; a failed process its stderr, else its command; a malformed
+    response says so. *exc* is one of :data:`LOOKUP_ERRORS`.
+    """
+    if isinstance(exc, github.MissingGitHubTokenError):
+        text = github.missing_token_message(_TOOL)
+    elif isinstance(exc, github.AppAuthError):
+        text = github.app_auth_message(exc)
+    elif isinstance(exc, github.NoInstallationError):
+        text = github.no_installation_message(exc)
+    elif isinstance(exc, subprocess.CalledProcessError):
+        text = _process_reason(exc)
+    elif isinstance(exc, (KeyError, TypeError, ValueError)):
+        text = f"unexpected GitHub response: {type(exc).__name__}: {exc}"
+    else:
+        text = str(exc)
+    return redact_userinfo(text)
+
+
 def gather_pending_release(*, integration: str, remote: str = "origin") -> PendingRelease:
     """What *integration* on *remote* holds that ``main`` does not.
 
@@ -495,15 +532,5 @@ def gather_pending_release(*, integration: str, remote: str = "origin") -> Pendi
         return _gather(integration, remote)
     except PendingReleaseError:
         raise
-    except github.MissingGitHubTokenError as exc:
-        raise _error(github.missing_token_message(_TOOL)) from exc
-    except github.AppAuthError as exc:
-        raise _error(github.app_auth_message(exc)) from exc
-    except github.NoInstallationError as exc:
-        raise _error(github.no_installation_message(exc)) from exc
-    except subprocess.CalledProcessError as exc:
-        raise _error(_process_reason(exc)) from exc
-    except RuntimeError as exc:
-        raise _error(str(exc)) from exc
-    except (KeyError, TypeError, ValueError) as exc:
-        raise _error(f"unexpected GitHub response: {type(exc).__name__}: {exc}") from exc
+    except LOOKUP_ERRORS as exc:
+        raise PendingReleaseError(lookup_failure_reason(exc)) from exc

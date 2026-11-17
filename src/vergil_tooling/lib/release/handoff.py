@@ -20,8 +20,8 @@ def consumer_refresh(ctx: ReleaseContext) -> None:
     ``vrg-release`` can re-print it after the progress renderer collapses
     this stage's output (the commands are for the human to act on). The
     version-expanded command block is stored separately on
-    ``ctx.consumer_refresh_commands`` so ``vrg-release --install`` can
-    execute exactly what the message shows (issue #1643).
+    ``ctx.consumer_refresh_commands`` so ``vrg-release`` can install by
+    executing exactly what the message shows (issues #1643, #1184).
     """
     if ctx.deferred_publish_failures:
         remedy = publish_deferred_remedy(ctx, ctx.deferred_publish_failures)
@@ -61,7 +61,7 @@ def run_consumer_refresh(commands: str, version: str) -> int:
     *version* is the released version (``ctx.version``); the header names
     its tag so the human sees which release is being installed (#3753).
 
-    Drives the ``--install`` step of the release cascade (issue #1643): the
+    Drives the install step of the release (issues #1643, #1184): the
     same command block the human would otherwise copy/paste is run through a
     single ``bash`` invocation under ``set -e`` so the first failing command
     stops the block and surfaces a non-zero exit. The block runs *after* the

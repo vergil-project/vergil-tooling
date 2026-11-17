@@ -23,6 +23,7 @@ from vergil_tooling.bin.vrg_repo_status import (
     main,
 )
 from vergil_tooling.lib.config import ConfigError
+from vergil_tooling.lib.open_prs import OpenPR, OpenPRKind, OpenPRsError
 from vergil_tooling.lib.pending_release import (
     ChangeKind,
     PendingChange,
@@ -118,6 +119,7 @@ def _run(
     integration: str | Exception | None = "develop",
     publish: bool = False,
     pending: PendingRelease | Exception | None = None,
+    open_prs: tuple[OpenPR, ...] | Exception = (),
     gone: set[str] | Exception | None = None,
     still_present: bool | None = None,
     argv: list[str] | None = None,
@@ -125,7 +127,7 @@ def _run(
     """Run main() against a mocked repo: main checkout at /repo plus *linked*.
 
     ``gather`` / ``detached`` are ``side_effect`` values (a list of results or
-    an exception); ``integration`` / ``gone`` / ``pending`` are raised when
+    an exception); ``integration`` / ``gone`` / ``pending`` / ``open_prs`` are raised when
     they are exceptions and returned otherwise. ``integration=None`` means no
     ``vergil.toml``; a string is the integration branch of a stub branching
     model, whose ``[publish].release`` is ``publish``.
@@ -153,6 +155,10 @@ def _run(
             _patch("gather_pending_release", side_effect=pending)
         else:
             _patch("gather_pending_release", return_value=pending)
+        if isinstance(open_prs, Exception):
+            _patch("gather_open_prs", side_effect=open_prs)
+        else:
+            _patch("gather_open_prs", return_value=open_prs)
         _patch(
             "worktrees.gather_main_checkout_status",
             return_value=main_status or _main_status(),
@@ -972,3 +978,176 @@ def test_title_at_width_is_kept() -> None:
     title = "y" * 72
     change = _change(7, "feature/7-y", title, ChangeKind.OTHER, "-", _NOW)
     assert _pending_rows([change], _NOW)[0][-1] == title
+
+
+# -- open PRs with no local worktree (issue #4581) -------------------------------
+
+
+def _open(
+    number: int,
+    branch: str,
+    title: str = "feat(x): a thing",
+    *,
+    kind: OpenPRKind = OpenPRKind.OTHER,
+    type_label: str = "feat",
+    author: str = "someone",
+    head_owner: str | None = None,
+    base: str = "develop",
+    draft: bool = False,
+    ci: str = "success",
+    created_ts: float | None = None,
+) -> OpenPR:
+    return OpenPR(
+        number=number,
+        title=title,
+        branch=branch,
+        head_owner=head_owner,
+        base=base,
+        kind=kind,
+        type_label=type_label,
+        author=author,
+        draft=draft,
+        ci=ci,
+        created_ts=created_ts if created_ts is not None else _ago(2),
+    )
+
+
+def _open_section(out: str) -> list[str]:
+    """The open-PR section's lines, heading first, up to the blank line."""
+    lines = out.splitlines()
+    start = lines.index("Open PRs on origin with no local worktree")
+    end = lines.index("", start)
+    return lines[start:end]
+
+
+def test_open_prs_without_worktree_are_listed(capsys: pytest.CaptureFixture[str]) -> None:
+    statuses = [_status("feature/1-a", WorktreeState.OPEN_PR, pr=5, ahead=1)]
+    prs = (
+        _open(5, "feature/1-a"),
+        _open(
+            875,
+            "lifecycle/rust-add-1.99",
+            "feat(versions): add rust 1.99",
+            kind=OpenPRKind.LIFECYCLE,
+            type_label="lifecycle",
+            author="vergil-project-automation",
+            ci="pending",
+        ),
+        _open(
+            880,
+            "automation/sync/123",
+            "chore: sync repo config",
+            kind=OpenPRKind.AUTOMATION,
+            type_label="automation",
+            author="vergil-project-automation",
+            ci="failure",
+        ),
+        _open(881, "feature/9-cloud", "fix: from a cloud VM", type_label="fix", draft=True),
+    )
+    rc, mocks = _run(_raws(statuses), gather=statuses, open_prs=prs)
+    out = capsys.readouterr().out
+    assert rc == 0
+    mocks["gather_open_prs"].assert_called_once_with()
+    section = _open_section(out)
+    assert section[1].split() == [
+        "PR",
+        "BRANCH",
+        "BASE",
+        "TYPE",
+        "AUTHOR",
+        "CI",
+        "OPENED",
+        "TITLE",
+    ]
+    rows = [line.split()[:7] for line in section[2:5]]
+    assert rows == [
+        [
+            "#875",
+            "lifecycle/rust-add-1.99",
+            "develop",
+            "lifecycle",
+            "vergil-project-automation",
+            "pending",
+            "2h",
+        ],
+        [
+            "#880",
+            "automation/sync/123",
+            "develop",
+            "automation",
+            "vergil-project-automation",
+            "failure",
+            "2h",
+        ],
+        ["#881", "feature/9-cloud", "develop", "fix", "someone", "success", "2h"],
+    ]
+    assert section[4].endswith("[draft] fix: from a cloud VM")
+    assert section[5] == (
+        "3 open PRs with no local worktree: 1 automation PR, 1 lifecycle PR, "
+        "0 dependency updates, 0 release PRs, 1 other PR."
+    )
+    assert len(section) == 6
+    # After the worktree sections, before the summary lines.
+    assert out.index("Development") < out.index(section[0]) < out.index("2 worktrees:")
+
+
+def test_open_prs_section_precedes_pending_release(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, _ = _run([], publish=True, pending=_pending(), open_prs=(_open(3, "deps/update-1"),))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out.index("Open PRs on origin") < out.index("Pending release (")
+
+
+def test_open_pr_backed_by_worktree_branch_without_pr_number(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The worktree's own PR lookup failed (no number), but its branch matches.
+    statuses = [_status("feature/1-a", WorktreeState.UNKNOWN, detail="lookup failed")]
+    rc, _ = _run(_raws(statuses), gather=statuses, open_prs=(_open(5, "feature/1-a"),))
+    assert rc == 0
+    assert _open_section(capsys.readouterr().out)[1:] == [
+        "None: 1 open PR on origin, each with a local worktree."
+    ]
+
+
+def test_fork_pr_is_never_backed_by_a_same_named_branch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    statuses = [_status("feature/1-a", WorktreeState.NO_PR)]
+    fork = _open(6, "feature/1-a", head_owner="stranger", author="stranger")
+    rc, _ = _run(_raws(statuses), gather=statuses, open_prs=(fork,))
+    assert rc == 0
+    section = _open_section(capsys.readouterr().out)
+    assert section[2].split()[:2] == ["#6", "stranger:feature/1-a"]
+
+
+def test_no_open_prs(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, _ = _run([])
+    assert rc == 0
+    assert _open_section(capsys.readouterr().out) == [
+        "Open PRs on origin with no local worktree",
+        "None: origin has no open PRs.",
+    ]
+
+
+def test_open_prs_error_is_shown_and_exits_nonzero(capsys: pytest.CaptureFixture[str]) -> None:
+    statuses = [_status("feature/1-a", WorktreeState.OPEN_PR, pr=5, ahead=1)]
+    rc, _ = _run(
+        _raws(statuses),
+        gather=statuses,
+        publish=True,
+        pending=_pending(),
+        open_prs=OpenPRsError("HTTP 502"),
+    )
+    out = capsys.readouterr().out
+    assert rc == 1
+    # A failed lookup is an error, never "no open PRs".
+    assert _open_section(out) == [
+        "Open PRs on origin with no local worktree",
+        "ERROR: open PRs: HTTP 502",
+    ]
+    assert "None:" not in out
+    assert "open PRs with no local worktree:" not in out
+    # The rest still prints.
+    assert "Nothing pending release" in out
+    assert "Development: 1 active" in out

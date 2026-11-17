@@ -142,7 +142,7 @@ evidence, so it does not satisfy the gate.
 
 The set of gates that MUST emit evidence is **not a hand-maintained list.** It
 is **derived from the same source of truth that drives branch protection**:
-`lib/github_config.py:desired_ci_gates_ruleset()` computes a repo's required
+`lib/github_config.py:desired_ci_gates_rulesets()` computes a repo's required
 status checks from its `VergilConfig` (language, resolved versions, GHAS
 availability, and whether a `[package]` section is present). The evidence
 layer consumes that *same* computation, so the gates that are **enforced to
@@ -280,8 +280,15 @@ console output and coverage table; `--coverage.reportOnFailure` makes Vitest
 write the coverage report when a test fails. `TYPESCRIPT_REPORT_FILES` in
 vergil-tooling's `languages.py` names all five, and a TypeScript repository's
 managed `.gitignore` block ignores them, with Vitest's `coverage/` directory, so a
-second local `vrg-validate` never lints the first run's reports. vergil-actions
-stages them once its report table has a TypeScript entry.
+second local `vrg-validate` never lints the first run's reports.
+
+`ci-quality.yml`, `ci-test.yml` and `ci-audit.yml` stage each leg's reports
+with version-suffixed names, as for Python and Rust:
+`quality-eslint-<ver>.json`, `quality-tsc-<ver>.txt`, `coverage-<ver>.xml`,
+`junit-<ver>.xml` and `npm-audit-<ver>.json`. The TypeScript entries of
+vergil-actions' report table require these reports from vergil-actions
+v2.1.78, so a TypeScript repository needs a vergil-tooling release whose
+gates write them (2.1.319 or later).
 
 `quality-common.log` is the transcript of `vrg-validate --check common` and
 `quality-custom.log` the transcript of `vrg-validate --check custom`, each

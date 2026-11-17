@@ -7,7 +7,7 @@ import os
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -15,6 +15,29 @@ from vergil_tooling.bin import vrg_host
 from vergil_tooling.lib import host_methods as hm
 from vergil_tooling.lib import host_pins
 from vergil_tooling.lib.host_deps import AuxCheck, HostDependency, HostPin, ManifestError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
+_REAL_REFRESH = hm.refresh_brew_metadata
+
+
+@pytest.fixture(autouse=True)
+def brew_refresh_calls(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Make ``brew update`` succeed without a shell-out; return a call counter.
+
+    The tests below stub the version probes (or ``_run`` with argv tables that
+    know nothing of ``brew update``), so the refresh is stubbed separately and
+    the refresh tests override it.
+    """
+    calls: list[int] = []
+
+    def ok() -> bool:
+        calls.append(1)
+        return True
+
+    monkeypatch.setattr(vrg_host.host_methods, "refresh_brew_metadata", ok)
+    return calls
 
 
 def _dep(**kw: Any) -> HostDependency:
@@ -1373,6 +1396,143 @@ def test_plugins_exits_2_naming_earlier_failures_when_a_listing_fails(
     err = capsys.readouterr().err
     assert "vrg-host plugins: MarketplaceError: CalledProcessError: " in err
     assert "failed before it: paad@paad (user)" in err
+
+
+# -- stale Homebrew metadata (#4582) ---------------------------------------------
+
+_STALE_GH = json.dumps({"formulae": [{"versions": {"stable": "2.103.3"}}], "casks": []})
+_FRESH_GH = json.dumps({"formulae": [{"versions": {"stable": "2.104.0"}}], "casks": []})
+
+
+class _Brew:
+    """A fake Homebrew behind the real ``host_methods`` handlers.
+
+    ``brew info`` answers from its cache, which only a successful ``brew
+    update`` refreshes, as Homebrew's does. gh 2.103.3 is installed, the cache
+    says 2.103.3 is the latest, and 2.104.0 is really out (the case #4582
+    observed).
+    """
+
+    def __init__(self, *, update_ok: bool) -> None:
+        self.update_ok = update_ok
+        self.info = _STALE_GH
+        self.installed = "gh 2.103.3"
+        self.calls: list[list[str]] = []
+
+    def run(self, cmd: list[str]) -> str | None:
+        self.calls.append(cmd)
+        if cmd == ["brew", "update"]:
+            if not self.update_ok:
+                return None
+            self.info = _FRESH_GH
+            return "Updated 1 tap (homebrew/core)."
+        if cmd == ["brew", "info", "--json=v2", "--formula", "gh"]:
+            return self.info
+        if cmd == ["brew", "list", "--formula", "--versions", "gh"]:
+            return self.installed
+        if cmd == ["brew", "upgrade", "gh"]:
+            self.installed = "gh 2.104.0"
+            return ""
+        raise AssertionError(f"unexpected command {cmd}")
+
+
+@pytest.fixture
+def real_brew(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., _Brew]]:
+    """Undo the autouse refresh stub: run the real, cached ``refresh_brew_metadata``."""
+    monkeypatch.setattr(vrg_host.host_methods, "refresh_brew_metadata", _REAL_REFRESH)
+    _REAL_REFRESH.cache_clear()
+
+    def install(*, update_ok: bool) -> _Brew:
+        brew = _Brew(update_ok=update_ok)
+        monkeypatch.setattr(vrg_host.host_deps, "load_manifest", lambda: (_dep(),))
+        monkeypatch.setattr(vrg_host.host_methods, "_run", brew.run)
+        return brew
+
+    yield install
+    _REAL_REFRESH.cache_clear()
+
+
+def test_status_refreshes_so_a_stale_cache_shows_drift(
+    real_brew: Callable[..., _Brew], capsys: pytest.CaptureFixture[str]
+) -> None:
+    brew = real_brew(update_ok=True)
+    assert vrg_host.main(["status"]) == 1
+    out = capsys.readouterr().out
+    assert "2.103.3 -> 2.104.0" in out
+    assert "behind" in out
+    assert brew.calls.count(["brew", "update"]) == 1
+
+
+def test_status_failed_refresh_is_latest_unknown_never_current(
+    real_brew: Callable[..., _Brew], capsys: pytest.CaptureFixture[str]
+) -> None:
+    brew = real_brew(update_ok=False)
+    assert vrg_host.main(["status"]) == 1
+    captured = capsys.readouterr()
+    assert "latest-unknown" in captured.out
+    assert "current" not in captured.out
+    assert "vrg-host: warning: 'brew update' failed" in captured.err
+    # The stale cache is never read once the refresh has failed.
+    assert ["brew", "info", "--json=v2", "--formula", "gh"] not in brew.calls
+
+
+def test_upgrade_refreshes_so_a_stale_cache_upgrades(
+    real_brew: Callable[..., _Brew], capsys: pytest.CaptureFixture[str]
+) -> None:
+    brew = real_brew(update_ok=True)
+    assert vrg_host.main(["upgrade", "--all"]) == 0
+    out = capsys.readouterr().out
+    assert "upgraded gh: 2.103.3 -> 2.104.0" in out
+    assert "skipped" not in out
+    assert brew.calls.count(["brew", "update"]) == 1
+
+
+def test_upgrade_failed_refresh_never_skips_as_current(
+    real_brew: Callable[..., _Brew], capsys: pytest.CaptureFixture[str]
+) -> None:
+    real_brew(update_ok=False)
+    assert vrg_host.main(["upgrade", "gh"]) == 1
+    captured = capsys.readouterr()
+    assert "skipped" not in captured.out
+    assert "latest unknown" in captured.out
+    assert "vrg-host: warning: 'brew update' failed" in captured.err
+
+
+def test_no_refresh_without_a_brew_latest(
+    monkeypatch: pytest.MonkeyPatch, brew_refresh_calls: list[int]
+) -> None:
+    deps = (
+        _dep(name="ruff", method="uv-tool"),
+        _dep(name="vergil-tooling", method="uv-tool", latest="unmanaged"),
+        _dep(name="docker", method="brew-cask", latest="unmanaged"),
+        _dep(name="macos", method="custom", upgrade="manual"),
+    )
+    _stub(
+        monkeypatch,
+        deps,
+        dict.fromkeys(("ruff", "vergil-tooling", "docker", "macos"), "1.0"),
+        {"ruff": "1.0", "vergil-tooling": hm.UNMANAGED, "docker": hm.UNMANAGED, "macos": "1.0"},
+    )
+    vrg_host.main(["status"])
+    assert brew_refresh_calls == []
+
+
+def test_upgrade_skips_refresh_for_manual_only_targets(
+    monkeypatch: pytest.MonkeyPatch, brew_refresh_calls: list[int]
+) -> None:
+    _stub_upgrade(monkeypatch, (_dep(name="docker-desktop", method="brew-cask", upgrade="manual"),))
+    assert vrg_host.main(["upgrade", "docker-desktop"]) == 1
+    assert brew_refresh_calls == []
+
+
+def test_status_and_upgrade_refresh_when_a_brew_latest_is_read(
+    monkeypatch: pytest.MonkeyPatch, brew_refresh_calls: list[int]
+) -> None:
+    _stub_upgrade(monkeypatch, (_dep(),))
+    vrg_host.main(["upgrade", "gh"])
+    assert brew_refresh_calls == [1]
+    vrg_host.main(["status"])
+    assert brew_refresh_calls == [1, 1]
 
 
 def test_host_settings_path_is_the_user_settings() -> None:

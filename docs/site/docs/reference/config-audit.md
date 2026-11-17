@@ -75,7 +75,13 @@ order:
    the AI agent modes, `user` and `audit`, by name, and exits 2. It also
    exits 2 when the identity cannot be resolved, for example when
    `VRG_AUTOMATION_APP` is set but the token belongs to another App.
-2. **The GitHub side.** The same audit and convergence as `apply`. A
+   A run that passes logs the mode it resolved, such as
+   `identity: human` or `identity: automation (<slug>[bot])`.
+2. **The GitHub side.** The same audit and convergence as `apply`. For
+   each managed ruleset, `update` logs the bypass actors it read back,
+   one `<actor_type> <actor_id> <bypass_mode>` per actor (`none` for an
+   empty list), or why the list was not read: skipped, not checked, or
+   the ruleset absent. A
    setting that is [not checked](#settings-the-identity-cannot-read),
    such as an empty `bypass_actors` read under the automation identity,
    stops the run with exit 2 before anything is written or cloned. So
@@ -568,7 +574,20 @@ order:
 | `Tag protection` | tag | `refs/tags/v*.*.*`, `refs/tags/v*.*` | `deletion`, `non_fast_forward`, `update` | repository Admin role (`RepositoryRole`, `actor_id` 5) |
 | `Rolling tag branch names` | branch | `refs/heads/v[0-9]*` | `creation`, `update`, `non_fast_forward` | none |
 | `Automation branches` | branch | `refs/heads/automation/**` | `creation`, `update`, `non_fast_forward` | the org automation App (`Integration`, its App ID) and the repository Admin role (`RepositoryRole`, `actor_id` 5) |
-| `CI gates` | branch | `refs/heads/main`, `refs/heads/develop` | `required_status_checks` (see below) | none |
+| `CI gates (develop)` | branch | `refs/heads/develop` | `required_status_checks` (see below), not strict | none |
+| `CI gates (main)` | branch | `refs/heads/main` | `required_status_checks` (see below), strict | none |
+
+- **CI gates** is one ruleset per branch, both requiring the same checks.
+  `develop`'s does not require a branch to be up to date before it merges
+  (`strict_required_status_checks_policy` is `false`), so ready PRs into
+  `develop` can merge in parallel; `main`'s does (`true`). A
+  `docs-single-branch` repo has no `main`, so it gets `CI gates (develop)`
+  only
+  ([epic vergil-project/.github#1218](https://github.com/vergil-project/.github/issues/1218)).
+  A repo still carrying the older shared `CI gates` ruleset reports it as
+  drift, replaced by the pair, and `update` writes the pair before it
+  deletes the old ruleset, so neither branch is ever left without required
+  checks.
 
 - **Tag protection** covers both the `vX.Y.Z` release tags and the rolling
   `vX.Y` tags consumers follow as their deploy ref, so only the human release
@@ -624,8 +643,8 @@ order:
 ## GitHub checks — the required-status-check set
 
 The GitHub half compares the repo's live branch-protection configuration
-against the canonical CI-gates ruleset that
-[`desired_ci_gates_ruleset()`](../guides/ci-evidence-convention.md#the-evidence-producing-gate-set)
+against the canonical CI-gates rulesets that
+[`desired_ci_gates_rulesets()`](../guides/ci-evidence-convention.md#the-evidence-producing-gate-set)
 computes from `vergil.toml`. Three properties matter for the dynamic,
 version-agnostic CI model (epic
 [vergil-project/.github#338](https://github.com/vergil-project/.github/issues/338)):
@@ -641,10 +660,12 @@ version-agnostic CI model (epic
   one the repo's workflows can actually produce. A leftover required leg that no
   workflow emits — for example a stale per-version check surviving a matrix
   reduction — is reported as drift rather than silently sitting "expected, never
-  reported" and blocking every PR.
+  reported" and blocking every PR. Each CI-gates ruleset is checked on its
+  own, and one that is desired but not live, or live but not desired, is
+  reported as `rulesets.<name>.missing_ci_gates_ruleset`, never skipped.
 - **Apply-time producibility guard.** Before `update` or `apply` writes
   anything, it fetches the repo's committed `.github/workflows/ci.yml` from
-  `develop` and refuses (exit 2 for `update`, 1 for `apply`) if the desired `CI gates` ruleset requires a context no
+  `develop` and refuses (exit 2 for `update`, 1 for `apply`) if a desired CI-gates ruleset requires a context no
   `pull_request` job in that file emits — the same guard repo-init runs
   against the ci.yml it generates. A missing `ci.yml` is also a refusal, never
   a skip: with no workflow, no required check could ever report.
@@ -654,6 +675,15 @@ version-agnostic CI model (epic
   evidence ruleset now owns; every other classic setting (review requirements,
   push restrictions) is **reported, not touched**. The blast radius is minimal
   and intentional protections are preserved.
+- **Classic up-to-date flag on `develop`.** The audit always reads
+  `develop`'s classic protection, and a `required_status_checks.strict` of
+  `true` there is drift, reported as `branch_protection.develop.strict`.
+  Otherwise a repo with classic protection would still require branches to be
+  up to date on `develop`, which the `CI gates (develop)` ruleset no longer
+  does. `update` and `apply` set `strict` to `false` and change no other
+  classic setting. `main`'s classic `strict` is never read as drift and never
+  written
+  ([epic vergil-project/.github#1218](https://github.com/vergil-project/.github/issues/1218)).
 
 ## GitHub checks — undeclared ruleset parameters
 

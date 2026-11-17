@@ -1000,3 +1000,244 @@ class TestApiAccess:
             mock_run.return_value = _completed()
             rc = main(["api", "repos/o/r/pulls/1/merge", "-X", "PUT"])
         assert rc == 0
+
+
+class TestRunJobLog:
+    """`run job-log` reads one job's log from the per-job endpoint only (#4597)."""
+
+    _ENDPOINT = "repos/vergil-project/vergil-containers/actions/jobs/44088128201/logs"
+
+    @pytest.mark.parametrize("mode", ["user", "audit", "human"])
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--repo", "vergil-project/vergil-containers", "--job", "44088128201"],
+            ["-R", "vergil-project/vergil-containers", "--job", "44088128201"],
+            ["--job=44088128201", "--repo=vergil-project/vergil-containers"],
+            ["-R=vergil-project/vergil-containers", "--job", "44088128201"],
+        ],
+    )
+    def test_calls_only_the_per_job_log_endpoint(
+        self,
+        mode: str,
+        args: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", mode)
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value="ghs_tok",
+            ) as mock_token,
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed(stdout="line 1\nline 2\n")
+            rc = main(["run", "job-log", *args])
+        assert rc == 0
+        mock_run.assert_called_once()
+        assert mock_run.call_args[0][0] == [
+            "gh",
+            "api",
+            "--method",
+            "GET",
+            "--allow-escape-sequences",
+            self._ENDPOINT,
+        ]
+        assert mock_run.call_args.kwargs["env"]["GH_TOKEN"] == "ghs_tok"
+        assert mock_token.call_args.kwargs == {
+            "org": "vergil-project",
+            "require_installation": True,
+        }
+        assert capsys.readouterr().out == "line 1\nline 2\n"
+
+    @pytest.mark.parametrize(
+        ("raw", "printed"),
+        [
+            ("\x1b[36;1mgit config\x1b[0m\n", "git config\n"),
+            ("a\x1b]0;title\x07b\n", "ab\n"),
+            ("a\x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\b\n", "alinkb\n"),
+            ("a\x1b]0;unterminated\nnext\n", "a\nnext\n"),
+            ("a\x1bcb\n", "ab\n"),
+            ("a\x1b", "a"),
+            ("a\x9b31mb\x9d0;t\x07c\n", "a31mb0;tc\n"),
+            ("crlf\r\nnul\x00bell\x07del\x7f\n", "crlf\nnulbelldel\n"),
+            ("﻿tab\there é✓\n", "﻿tab\there é✓\n"),
+        ],
+    )
+    def test_terminal_controls_stripped(
+        self, raw: str, printed: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed(stdout=raw, stderr="warn \x1b[31mred\x1b[0m\n")
+            rc = main(["run", "job-log", "--repo", "o/r", "--job", "1"])
+        assert rc == 0
+        out, err = capsys.readouterr()
+        assert out == printed
+        assert err == "warn red\n"
+
+    def test_terminal_controls_stripped_on_failure(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        err = subprocess.CalledProcessError(
+            1, ["gh"], output="\x1b[2Jout\n", stderr="\x1b]0;t\x07HTTP 404\n"
+        )
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
+        ):
+            rc = main(["run", "job-log", "--repo", "o/r", "--job", "1"])
+        assert rc == 1
+        assert capsys.readouterr() == ("out\n", "HTTP 404\n")
+
+    def test_other_commands_output_unchanged(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed(stdout="\x1b[1mbold\x1b[0m\r\n")
+            assert main(["run", "view", "1"]) == 0
+        assert capsys.readouterr().out == "\x1b[1mbold\x1b[0m\r\n"
+
+    def test_repo_name_with_dots_accepted(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["run", "job-log", "--repo", "vergil-project/.github", "--job", "7"])
+        assert rc == 0
+        assert mock_run.call_args[0][0][-1] == "repos/vergil-project/.github/actions/jobs/7/logs"
+
+    def test_no_installation_fails_loudly(self, capsys: pytest.CaptureFixture[str]) -> None:
+        err = github.NoInstallationError("elsewhere", ["vergil-project"])
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                side_effect=err,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            rc = main(["run", "job-log", "--repo", "elsewhere/r", "--job", "1"])
+        assert rc == 1
+        mock_run.assert_not_called()
+        assert "no installation for owner 'elsewhere'" in capsys.readouterr().err
+
+    def test_gh_failure_returns_its_exit_code(self, capsys: pytest.CaptureFixture[str]) -> None:
+        err = subprocess.CalledProcessError(1, ["gh"], output="", stderr="HTTP 404: Not Found\n")
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
+        ):
+            rc = main(["run", "job-log", "--repo", "o/r", "--job", "1"])
+        assert rc == 1
+        assert "HTTP 404" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        ("args", "message"),
+        [
+            ([], "missing --repo and --job"),
+            (["--repo", "o/r"], "missing --job"),
+            (["--job", "1"], "missing --repo"),
+            (["--repo"], "--repo requires a value"),
+            (["--repo", "o/r", "--job", "1", "--repo", "o/s"], "more than once"),
+            (["--repo", "o/r", "--job", "1", "-X", "POST"], "unexpected argument '-X'"),
+            (["--repo", "o/r", "--job", "1", "--method=DELETE"], "unexpected argument"),
+            (["--repo", "o/r", "--job", "1", "-f", "a=b"], "unexpected argument '-f'"),
+            (["--repo", "o/r", "--job", "1", "--input", "x"], "unexpected argument"),
+            (["--repo", "o/r", "--job", "1", "--hostname", "evil"], "unexpected argument"),
+            (["--repo", "o/r", "--job", "1", "extra"], "unexpected argument 'extra'"),
+            (["-Ro/r", "--job", "1"], "unexpected argument"),
+            (["--repo", "o", "--job", "1"], "--repo must be"),
+            (["--repo", "o/r/x", "--job", "1"], "--repo must be"),
+            (["--repo", "github.com/o/r", "--job", "1"], "--repo must be"),
+            (["--repo", "https://github.com/o/r", "--job", "1"], "--repo must be"),
+            (["--repo", "o/..", "--job", "1"], "--repo must be"),
+            (["--repo", "o/.", "--job", "1"], "--repo must be"),
+            (["--repo", "../r", "--job", "1"], "--repo must be"),
+            (["--repo", "-o/r", "--job", "1"], "--repo must be"),
+            (["--repo", "o/r?x=1", "--job", "1"], "--repo must be"),
+            (["--repo", "o/r#x", "--job", "1"], "--repo must be"),
+            (["--repo", "o/r%2F..", "--job", "1"], "--repo must be"),
+            (["--repo", "{owner}/{repo}", "--job", "1"], "--repo must be"),
+            (["--repo", "o /r", "--job", "1"], "--repo must be"),
+            (["--repo", "o/r\n", "--job", "1"], "--repo must be"),
+            (["--repo", "/r", "--job", "1"], "--repo must be"),
+            (["--repo", "o/", "--job", "1"], "--repo must be"),
+            (["--repo", "o/r", "--job", "0"], "--job must be"),
+            (["--repo", "o/r", "--job", "-1"], "--job must be"),
+            (["--repo", "o/r", "--job", "1/../../hooks"], "--job must be"),
+            (["--repo", "o/r", "--job", "1?per_page=1"], "--job must be"),
+            (["--repo", "o/r", "--job", "12\n"], "--job must be"),
+            (["--repo", "o/r", "--job", "1" * 21], "--job must be"),
+            (["--repo", "o/r", "--job", "abc"], "--job must be"),
+        ],
+    )
+    def test_invalid_arguments_refused_without_calling_gh(
+        self,
+        args: list[str],
+        message: str,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with (
+            patch("vergil_tooling.bin.vrg_gh.github.get_installation_token") as mock_token,
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            rc = main(["run", "job-log", *args])
+        assert rc == 2  # noqa: PLR2004
+        mock_run.assert_not_called()
+        mock_token.assert_not_called()
+        err = capsys.readouterr().err
+        assert message in err
+        assert "usage: vrg-gh run job-log" in err
+
+    @pytest.mark.parametrize("flag", ["-h", "--help"])
+    def test_help_does_not_call_gh(self, flag: str, capsys: pytest.CaptureFixture[str]) -> None:
+        with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+            assert main(["run", "job-log", flag]) == 0
+        mock_run.assert_not_called()
+        assert "per-job log endpoint" in capsys.readouterr().out
+
+    def test_user_api_still_denied(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The new command widens no other access: raw `gh api` on the same
+        # endpoint stays refused for the user identity.
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+            assert main(["api", self._ENDPOINT]) == 1
+        mock_run.assert_not_called()
+        assert "denied for the user identity" in capsys.readouterr().err
+
+    def test_audit_other_run_actions_still_denied(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "audit")
+        with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+            assert main(["run", "view", "1", "--log"]) != 0
+        mock_run.assert_not_called()
+        assert "run is not recognized" in capsys.readouterr().err
+
+    def test_listed_in_wrapper_help(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert main(["--help"]) == 0
+        assert "run job-log" in capsys.readouterr().out

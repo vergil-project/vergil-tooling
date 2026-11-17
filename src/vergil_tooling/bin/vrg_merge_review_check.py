@@ -2,8 +2,11 @@
 
 ``vrg-merge-review-check --request <path> --result <path>`` runs the result
 check of ``docs/specs/merge-review-protocol.md`` on the reviewer's reply,
-stored unchanged in the result file. On success it exits 0 and prints a JSON
-summary on stdout::
+stored unchanged in the result file by the plugin's capture hook. It first
+checks the hook's capture record, ``capture-<step>.json`` in the result's
+directory (``<step>`` from the request), and refuses a result whose bytes are
+not the ones the hook captured (rule 10). On success it exits 0 and prints a
+JSON summary on stdout::
 
     {"step": "review",
      "counts": {"defect": 1, "design-question": 0, "out-of-scope": 0, "pre-existing": 0},
@@ -14,7 +17,7 @@ summary on stdout::
 security findings and ``fix_status`` maps each ID the request listed to its
 status (empty in a review). On any violation it prints ``ERROR: <rule>`` on
 stderr, naming the rule broken but never the refused value, and exits 1.
-It reads only the two files, and writes nothing.
+It reads only the two files and the capture record, and writes nothing.
 
 Exit codes: ``0`` the result passed, ``1`` it failed or a file could not be
 read, ``2`` a usage error.
@@ -28,7 +31,13 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.merge_review.result import Result, ResultError, parse_result
+from vergil_tooling.lib.merge_review.capture import capture_path, check_capture
+from vergil_tooling.lib.merge_review.result import (
+    Result,
+    ResultError,
+    check_request,
+    parse_result,
+)
 from vergil_tooling.lib.merge_review.schema import KINDS
 
 EXIT_OK = 0
@@ -38,9 +47,18 @@ EXIT_ERROR = 1
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    result_path = Path(args.result)
     try:
         request = _load_request(Path(args.request))
-        result = parse_result(_read_text(Path(args.result), "result"), request)
+        checked = check_request(request)
+        result_bytes = _read_bytes(result_path, "result")
+        check_capture(
+            capture_path(result_path, checked.step),
+            result_bytes,
+            step=checked.step,
+            request_id=checked.request_id,
+        )
+        result = parse_result(_decode(result_bytes, result_path, "result"), request)
     except ResultError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return EXIT_ERROR
@@ -72,11 +90,18 @@ def summarize(result: Result) -> dict[str, object]:
 
 
 def _read_text(path: Path, what: str) -> str:
+    return _decode(_read_bytes(path, what), path, what)
+
+
+def _read_bytes(path: Path, what: str) -> bytes:
     try:
-        raw = path.read_bytes()
+        return path.read_bytes()
     except OSError as exc:
         msg = f"cannot read the {what} file {path}: {exc.strerror}"
         raise ResultError(msg) from exc
+
+
+def _decode(raw: bytes, path: Path, what: str) -> str:
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError as exc:

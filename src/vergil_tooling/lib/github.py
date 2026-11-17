@@ -872,7 +872,7 @@ _PROGRESS_INTERVAL_SECS = 60
 # (amd64 28.6, arm64 27.6), and run 43034784731 (PR vergil-containers#834,
 # same day) built amd64 in 35.7 min, the run 36.5 min, which timed out the
 # old 1800s deadline about 6 min before it passed (#4200). 75 min is roughly
-# 2x that run, as the CD watch is sized (vrg_finalize_pr.cd_timeout_secs /
+# 2x that run, as the CD watch is sized (cd_runs.cd_timeout_secs /
 # $VRG_CD_TIMEOUT, #3316), with room for a growing image tree and a
 # slow-runner day. A merely-pending check is waited out to this deadline; a
 # *failed* check (pr_merge.failed_check_names) or an *orphaned* one
@@ -1751,7 +1751,7 @@ def _checks_terminal(checks: list[dict[str, str]], required: Collection[str]) ->
 # vergil-actions' ci-security.yml: its ``semgrep``, ``trivy`` and ``codeql`` jobs
 # upload SARIF, and the GitHub Advanced Security app then registers ``Semgrep OSS``,
 # ``Trivy`` and ``CodeQL`` with no ``<job> /`` prefix (see
-# ``github_config.desired_ci_gates_ruleset``). A producing job that fails before
+# ``github_config.desired_ci_gates_rulesets``). A producing job that fails before
 # its upload leaves its check unregistered for good.
 UPLOADED_CHECK_JOBS: dict[str, str] = {
     "CodeQL": "codeql",

@@ -10,6 +10,11 @@ Subcommands (epic vergil-project/.github#167, spec §6):
   error, or an unreadable manifest or pins file). ``status --fix`` first runs
   the remediation of each installed dependency's unsatisfied auxiliary checks
   (spec §7.4); a failed remediation is reported and forces exit ``2``.
+  "Read-only" means it changes no installed tool: before reading any Homebrew
+  latest version, ``status`` (and ``upgrade``) runs ``brew update`` once, since
+  ``brew info`` never refreshes Homebrew's cache (issue #4582). A failed
+  refresh is warned on stderr and every brew dependency reads
+  ``latest-unknown``, never ``current``.
 - ``vrg-host upgrade [<dep>... | --all]`` — remediate. Upgrades only
   ``upgrade = "auto"`` dependencies via their method handler. A ``manual``
   dependency is refused with an actionable message (``--all`` lists every
@@ -78,7 +83,7 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.host_status import Report
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from vergil_tooling.lib.host_deps import AuxCheck, HostDependency
 
@@ -284,6 +289,27 @@ def _fix_checks(deps: tuple[HostDependency, ...]) -> bool:
     return all_ok
 
 
+def _refresh_brew(deps: Sequence[HostDependency]) -> None:
+    """Refresh Homebrew's metadata before any brew latest is read, warning if it fails.
+
+    ``brew info`` reads Homebrew's local cache, which it never refreshes, so a
+    stale cache would report an outdated tool as ``current`` (issue #4582).
+    :func:`host_methods.latest_version` refreshes once per process on its own;
+    this runs that refresh up front so a failure is explained once, on
+    stderr, rather than only showing as each brew entry's ``latest-unknown``.
+    Nothing runs when no dependency reads its latest from Homebrew.
+    """
+    if not any(host_methods.reads_brew_latest(dep) for dep in deps):
+        return
+    if not host_methods.refresh_brew_metadata():
+        print(
+            "vrg-host: warning: 'brew update' failed, so Homebrew's latest versions are "
+            "unknown and every brew dependency reports latest-unknown; run 'brew update' "
+            "to see why",
+            file=sys.stderr,
+        )
+
+
 def _report(dep: HostDependency) -> Report:
     """Probe and classify one dependency.
 
@@ -315,6 +341,7 @@ def _status(args: argparse.Namespace) -> int:
         return host_status.ERROR
     # A bare `vrg-host` never parses the status subparser, so `fix` may be absent.
     fixes_ok = _fix_checks(deps) if getattr(args, "fix", False) else True
+    _refresh_brew(deps)
     reports = [_report(dep) for dep in deps]
     print(host_status.render(reports))
     worst = host_status.worst_severity(reports)
@@ -507,6 +534,7 @@ def _upgrade(args: argparse.Namespace) -> int:
         )
         return host_status.ERROR
     targets = list(deps) if args.all else [by_name[name] for name in dict.fromkeys(args.deps)]
+    _refresh_brew([dep for dep in targets if dep.upgrade != "manual"])
     worst = host_status.OK
     skipped_manual: list[str] = []
     for dep in targets:

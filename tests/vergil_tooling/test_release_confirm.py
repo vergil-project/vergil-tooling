@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -251,23 +252,21 @@ def test_fetch_run_jobs_empty_output_returns_empty() -> None:
 
 
 def test_find_job_substring_matches_reusable_leaf() -> None:
-    from vergil_tooling.lib.release.confirm import _find_job, _name_contains
+    from vergil_tooling.lib.cd_runs import is_docs_job
+    from vergil_tooling.lib.release.confirm import _find_job
 
     jobs = [_job("docs / docs"), _job("release / release")]
-    matched = _find_job(jobs, _name_contains("docs"))
+    matched = _find_job(jobs, is_docs_job)
     assert matched is not None
     assert matched["name"] == "docs / docs"
-    assert _find_job(jobs, _name_contains("missing")) is None
+    assert _find_job(jobs, lambda name: "missing" in name) is None
 
 
 def test_settled_run_jobs_polls_until_leaf_conclusion_settles() -> None:
     """Regression #1611: a reusable-workflow leaf whose conclusion lags the
     run-level status is polled until it settles, not read once."""
-    from vergil_tooling.lib.release.confirm import (
-        _is_release_job,
-        _name_contains,
-        _settled_run_jobs,
-    )
+    from vergil_tooling.lib.cd_runs import is_docs_job, is_release_job
+    from vergil_tooling.lib.release.confirm import _settled_run_jobs
 
     ctx = _ctx()
     lagging = [
@@ -279,7 +278,7 @@ def test_settled_run_jobs_polls_until_leaf_conclusion_settles() -> None:
         patch(_MOD + "._fetch_run_jobs", side_effect=[lagging, settled]),
         patch(_MOD + ".time.sleep") as sleep,
     ):
-        jobs = _settled_run_jobs(ctx, "12345", (_name_contains("docs"), _is_release_job))
+        jobs = _settled_run_jobs(ctx, "12345", (is_docs_job, is_release_job))
     assert jobs == settled
     sleep.assert_called_once()
 
@@ -380,52 +379,6 @@ def test_verify_release_job_accepts_inline_release_job() -> None:
     # than the reusable leaf "release / release" (#2001). The leaf segment is
     # still "release", so the hard gate must accept it.
     _verify_release_job([_job("cd / release")])  # no raise
-
-
-def test_is_release_job_matches_leaf_not_caller() -> None:
-    from vergil_tooling.lib.release.confirm import _is_release_job
-
-    # Both the reusable leaf and vergil-actions' inline job share the leaf.
-    assert _is_release_job("release / release")
-    assert _is_release_job("cd / release")
-    # Decoys whose leaf is not exactly "release" must NOT match (#1853 guard).
-    assert not _is_release_job("release-notes / build")
-    assert not _is_release_job("docs / docs")
-    assert not _is_release_job("docker-publish / publish: prod-base:latest")
-
-
-def test_collect_deferred_publish_excludes_inline_release_job() -> None:
-    from vergil_tooling.lib.release.confirm import _collect_deferred_publish
-
-    # The "cd / release" release job must not be collected as a publish family.
-    jobs = [
-        _job("cd / release"),
-        _job("docs / docs", conclusion="failure"),
-    ]
-    assert _collect_deferred_publish(jobs) == ["docs"]
-
-
-def test_collect_deferred_publish_collapses_families() -> None:
-    from vergil_tooling.lib.release.confirm import _collect_deferred_publish
-
-    jobs = [
-        _job("release / release"),
-        _job("docker-publish / publish: prod-base:latest", conclusion="failure"),
-        _job("docker-publish / publish: prod-python:3.14", conclusion="failure"),
-        _job("docs / docs", conclusion="failure"),
-    ]
-    assert _collect_deferred_publish(jobs) == ["docker-publish", "docs"]
-
-
-def test_collect_deferred_publish_ignores_success_and_skipped() -> None:
-    from vergil_tooling.lib.release.confirm import _collect_deferred_publish
-
-    jobs = [
-        _job("release / release"),
-        _job("docs / docs"),  # success
-        _job("codeql / analyze", conclusion="skipped"),
-    ]
-    assert _collect_deferred_publish(jobs) == []
 
 
 def test_release_job_name_constant() -> None:
@@ -560,9 +513,9 @@ def test_confirm_develop_clean_run_does_not_mark_warn() -> None:
 def test_settled_run_jobs_exhaust_returns_last_snapshot() -> None:
     """When no expected job ever settles, _settled_run_jobs exhausts all
     attempts and returns the final (unsettled) jobs snapshot."""
+    from vergil_tooling.lib.cd_runs import is_release_job
     from vergil_tooling.lib.release.confirm import (
         _JOB_SETTLE_ATTEMPTS,
-        _is_release_job,
         _settled_run_jobs,
     )
 
@@ -576,7 +529,7 @@ def test_settled_run_jobs_exhaust_returns_last_snapshot() -> None:
         ) as mock_fetch,
         patch(_MOD + ".time.sleep") as mock_sleep,
     ):
-        result = _settled_run_jobs(ctx, "runid", (_is_release_job,))
+        result = _settled_run_jobs(ctx, "runid", (is_release_job,))
 
     assert result == unsettled
     assert mock_fetch.call_count == _JOB_SETTLE_ATTEMPTS
@@ -918,23 +871,11 @@ def test_confirm_main_settles_lagging_non_release_job() -> None:
     assert ctx.deferred_publish_failures == []
 
 
-def test_collect_deferred_publish_names_release_family_job_in_full() -> None:
-    """A failed job in the release job's own family is reported by full name,
-    so the message cannot read as the (successful) release itself failing."""
-    from vergil_tooling.lib.release.confirm import _collect_deferred_publish
+def test_failed_job_labels_skips_unsettled_jobs() -> None:
+    from vergil_tooling.lib.cd_runs import failed_job_labels
+    from vergil_tooling.lib.release.confirm import _unsettled_jobs
 
-    jobs = [
-        _job("release / release"),
-        _job("release / package-matrix", conclusion="failure"),
-        _job("docker-publish / publish: prod-base:latest", conclusion="failure"),
-    ]
-    assert _collect_deferred_publish(jobs) == ["release / package-matrix", "docker-publish"]
-
-
-def test_collect_deferred_publish_skips_unsettled_jobs() -> None:
-    from vergil_tooling.lib.release.confirm import _collect_deferred_publish, _unsettled_jobs
-
-    assert _collect_deferred_publish(_STALE_MAIN_JOBS) == []
+    assert failed_job_labels(_STALE_MAIN_JOBS) == []
     assert _unsettled_jobs(_STALE_MAIN_JOBS) == ["release / package-matrix"]
 
 
@@ -1116,3 +1057,239 @@ def test_resume_while_rerun_still_fails_keeps_failing_loudly() -> None:
     for _ in range(2):
         err = _confirm_failed_release(ctx, return_value={"id": 111})
         assert "(5) `vrg-release --resume 2.1.0`" in str(err)
+
+
+# -- a superseded CD run (epic vergil-project/.github#1218, Task 7) ----------
+
+_RUN1 = "https://github.com/owner/repo/actions/runs/100"
+_RUN2 = "https://github.com/owner/repo/actions/runs/200"
+_RUN3 = "https://github.com/owner/repo/actions/runs/300"
+_SUPERSEDED_MAIN_JOBS = [
+    _job("docs / docs", conclusion="cancelled"),
+    _job("release / release", conclusion="cancelled"),
+]
+_DOCS_SUPERSEDED_MAIN_JOBS = [
+    _job("docs / docs", conclusion="cancelled"),
+    _job("release / release"),
+]
+_CANCELLED_DOCS = [_job("docs / docs", conclusion="cancelled")]
+
+
+def _listed(*runs: tuple[int, str, str]) -> str:
+    """A ``gh run list`` JSON payload of ``(id, event, createdAt)`` runs on _SHA."""
+    return json.dumps(
+        [
+            {"databaseId": run_id, "headSha": _SHA, "event": event, "createdAt": created}
+            for run_id, event, created in runs
+        ]
+    )
+
+
+_DISPATCHED = (200, "workflow_dispatch", "2099-01-01T00:00:00Z")
+_CANCELLED_PUSH = (100, "push", "2020-01-01T00:00:00Z")
+
+
+def test_confirm_main_redispatches_superseded_once(capsys: pytest.CaptureFixture[str]) -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(
+            _MOD + "._settled_run_jobs", side_effect=[_SUPERSEDED_MAIN_JOBS, _MAIN_JOBS_OK]
+        ) as settle,
+        patch(_MOD + "._supersede_group", return_value="cd") as group,
+        patch(_MOD + ".github.read_output", side_effect=[_SHA, _listed(_DISPATCHED)]),
+        patch(_MOD + ".github.run") as dispatch,
+        patch(_MOD + "._watch_run", return_value=_RUN2) as watch,
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)
+    dispatch.assert_called_once_with(
+        "workflow", "run", "cd.yml", "--repo", "owner/repo", "--ref", "main"
+    )
+    group.assert_called_once_with("100", _RUN1)
+    watch.assert_called_once_with(ctx, "200")
+    assert [c.args[1] for c in settle.call_args_list] == ["100", "200"]
+    assert ctx.cd_run_id == "200"
+    assert ctx.cd_run_url == _RUN2
+    assert ctx.deferred_publish_failures == []
+    out = capsys.readouterr().out
+    assert "superseded" in out
+    assert "CD run 100" in out
+
+
+def test_docs_only_supersede_no_redispatch() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", return_value=_DOCS_SUPERSEDED_MAIN_JOBS),
+        patch(_MOD + "._supersede_group", return_value="cd-docs") as group,
+        patch(_MOD + ".github.run") as dispatch,
+        patch(_MOD + "._verify_artifacts") as verify,
+    ):
+        confirm_main(ctx)
+    group.assert_not_called()
+    dispatch.assert_not_called()
+    verify.assert_called_once_with(ctx)
+    assert ctx.cd_run_id == "100"
+    assert ctx.deferred_publish_failures == ["docs"]
+
+
+def test_redispatch_ignores_cancelled_run() -> None:
+    """Until the dispatched run registers, the only runs on the SHA are the
+    cancelled one and an older dispatch: confirm keeps polling for the new run
+    and never watches or re-judges either."""
+    ctx = _ctx()
+    old_dispatch = (90, "workflow_dispatch", "2020-01-01T00:00:00Z")
+    listings = [
+        _listed(_CANCELLED_PUSH),
+        _listed(_CANCELLED_PUSH, old_dispatch),
+        _listed(_DISPATCHED, _CANCELLED_PUSH, old_dispatch),
+    ]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", side_effect=[_SUPERSEDED_MAIN_JOBS, _MAIN_JOBS_OK]),
+        patch(_MOD + "._supersede_group", return_value="cd") as group,
+        patch(_MOD + ".github.read_output", side_effect=[_SHA, *listings]),
+        patch(_MOD + ".github.run"),
+        patch(_MOD + "._watch_run", return_value=_RUN2) as watch,
+        patch(_MOD + ".time.sleep") as sleep,
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)
+    assert sleep.call_count == 2
+    group.assert_called_once_with("100", _RUN1)
+    watch.assert_called_once_with(ctx, "200")
+    assert ctx.cd_run_id == "200"
+
+
+def test_redispatched_run_that_never_registers_fails() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", return_value=_SUPERSEDED_MAIN_JOBS),
+        patch(_MOD + "._supersede_group", return_value="cd"),
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=[_SHA, *[_listed(_CANCELLED_PUSH)] * _CD_POLL_ATTEMPTS],
+        ),
+        patch(_MOD + ".github.run"),
+        patch(_MOD + "._watch_run") as watch,
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(ReleaseError, match=r"vrg-release --resume 2\.1\.0") as exc,
+    ):
+        confirm_main(ctx)
+    watch.assert_not_called()
+    assert "re-dispatched" in str(exc.value)
+
+
+def test_confirm_main_second_supersede_fails() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", return_value=_SUPERSEDED_MAIN_JOBS),
+        patch(_MOD + "._supersede_group", return_value="cd"),
+        patch(_MOD + ".github.read_output", side_effect=[_SHA, _listed(_DISPATCHED)]),
+        patch(_MOD + ".github.run") as dispatch,
+        patch(_MOD + "._watch_run", return_value=_RUN2),
+        patch(_MOD + "._verify_artifacts") as verify,
+        pytest.raises(ReleaseError) as exc,
+    ):
+        confirm_main(ctx)
+    dispatch.assert_called_once()
+    verify.assert_not_called()
+    message = str(exc.value)
+    assert "superseded again" in message
+    assert _RUN2 in message
+    assert "vrg-release --resume 2.1.0" in message
+
+
+def test_confirm_main_other_cancel_fails() -> None:
+    """A cancel that is not a concurrency supersede is never re-dispatched: the
+    release job's cancel fails the gate."""
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", return_value=_SUPERSEDED_MAIN_JOBS),
+        patch(_MOD + "._supersede_group", return_value=None),
+        patch(_MOD + ".github.run") as dispatch,
+        patch(_MOD + "._failed_release_recovery", return_value="(recovery)"),
+        patch(_MOD + "._verify_artifacts") as verify,
+        pytest.raises(ReleaseError, match="conclusion: 'cancelled'"),
+    ):
+        confirm_main(ctx)
+    dispatch.assert_not_called()
+    verify.assert_not_called()
+
+
+def test_confirm_main_unreadable_supersede_fails_loudly() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", return_value=_SUPERSEDED_MAIN_JOBS),
+        patch(_MOD + "._supersede_group", side_effect=ValueError("no jobs list")),
+        patch(_MOD + ".github.run") as dispatch,
+        pytest.raises(ReleaseError, match="no jobs list"),
+    ):
+        confirm_main(ctx)
+    dispatch.assert_not_called()
+
+
+def test_confirm_main_all_jobs_superseded_without_release_job_redispatches() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("100", _RUN1)),
+        patch(_MOD + "._settled_run_jobs", side_effect=[_CANCELLED_DOCS, _MAIN_JOBS_OK]),
+        patch(_MOD + "._supersede_group", return_value="cd"),
+        patch(_MOD + ".github.read_output", side_effect=[_SHA, _listed(_DISPATCHED)]),
+        patch(_MOD + ".github.run") as dispatch,
+        patch(_MOD + "._watch_run", return_value=_RUN2),
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)
+    dispatch.assert_called_once()
+    assert ctx.cd_run_id == "200"
+
+
+def test_confirm_develop_supersede_warns(capsys: pytest.CaptureFixture[str]) -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("300", _RUN3)),
+        patch(_MOD + "._settled_run_jobs", return_value=_CANCELLED_DOCS),
+        patch(_MOD + "._supersede_group", return_value="cd-docs"),
+        patch(_MOD + ".github.run") as dispatch,
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        confirm_develop(ctx)  # must NOT raise
+    dispatch.assert_not_called()
+    assert ctx.develop_cd_run_id == "300"
+    assert ctx.deferred_publish_failures == []
+    mark_warn.assert_called_once()
+    assert "superseded" in mark_warn.call_args.args[0]
+    out = capsys.readouterr().out
+    assert "superseded, not failed" in out
+    assert "cd-docs" in out
+
+
+def test_confirm_develop_other_cancel_still_defers() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("300", _RUN3)),
+        patch(_MOD + "._settled_run_jobs", return_value=_CANCELLED_DOCS),
+        patch(_MOD + "._supersede_group", return_value=None),
+    ):
+        confirm_develop(ctx)
+    assert ctx.deferred_publish_failures == ["docs"]
+
+
+def test_confirm_develop_unreadable_supersede_defers_and_says_why(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("300", _RUN3)),
+        patch(_MOD + "._settled_run_jobs", return_value=_CANCELLED_DOCS),
+        patch(_MOD + "._supersede_group", side_effect=ValueError("no jobs list")),
+    ):
+        confirm_develop(ctx)
+    assert ctx.deferred_publish_failures == ["docs"]
+    assert "no jobs list" in capsys.readouterr().out

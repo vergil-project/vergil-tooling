@@ -136,9 +136,10 @@ def _resume_post_branch(ctx: ReleaseContext, branch: str, tip: str) -> str | Non
     Accepted states, from an earlier run that failed part-way:
 
     * at ``origin/main`` with no commit of its own: the bump still has to run.
-      A partial bump left uncommitted in the worktree (the bump failed in its
-      lockfile step, say) is discarded first, so the bump is not applied
-      twice; see :func:`_discard_partial_bump`.
+      A partial bump left uncommitted in the worktree (a bump killed before
+      it could restore its files, since a failing bump restores them
+      itself) is discarded first, so the bump is not applied twice; see
+      :func:`_discard_partial_bump`.
     * one commit on ``origin/main``, this stage's bump to the version after
       main's, with a clean worktree: the bump is done; its version is returned.
 

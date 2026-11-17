@@ -23,7 +23,8 @@ alone (`vrg-merge-review-request` and `vrg-merge-review-check`).
 ### Roles
 
 - **The caller owns all of the data.** It writes the request, dispatches
-  the reviewer, stores the reviewer's reply as the result file and runs the
+  the reviewer, has the reviewer's reply stored unchanged as the result file
+  (in the merge-review profile, by the plugin's capture hook) and runs the
   result check on that file. Every file of a run lives in the caller's
   private directory.
 - **The reviewer reads and reports.** It returns its result as its reply
@@ -123,12 +124,40 @@ The refusal names both repositories.
 | `request-<step>.json` | `vrg-merge-review-request` | The request. |
 | `diff-<step>.patch` | `vrg-merge-review-request` | `git diff <base_sha> <head_sha>`: the whole branch. |
 | `fix-<step>.patch` | `vrg-merge-review-request` | A check only: `git diff <fix_base_sha> <head_sha>`, the fix alone. |
-| `result-<step>.md` | The caller | The reviewer's reply, stored unchanged. |
+| `commits-<step>.patch` | `vrg-merge-review-request` | A batch PR only: each commit of `<base_sha>..<head_sha>`, oldest first, with its own patch ([A batch PR](#a-batch-pr)). |
+| `result-<step>.md` | The plugin's capture hook | The reviewer's reply, stored byte for byte. |
+| `reply-<step>.md` | The plugin's capture hook | The same bytes inside a fenced block in a collapsed `<details>` section: the publishable copy. |
+| `capture-<step>.json` | The plugin's capture hook | The capture record: what the hook stored ([below](#the-capture-record)). |
 | `security-<ID>.md` | The caller | One per security finding: its details, taken from the prose. |
 
 `<step>` is the step name: `review`, `check` or `check-<k>`. The directory
 is working storage, deleted when the task is handed off, except that the
 details of a security item still awaiting its record are kept.
+
+#### The capture record
+
+The plugin's `capture-merge-review-result` SubagentStop hook stores the
+`vergil:merge-reviewer` agent's last message as `result-<step>.md`, next to
+the `request-<step>.json` its prompt names, so the caller never retypes it.
+It writes the capture record last, once the other files are in place:
+
+```json
+{
+  "schema": "merge-review-capture/1",
+  "step": "<step>",
+  "request_id": "<the request's request_id>",
+  "result_sha256": "<lowercase hex SHA-256 of result-<step>.md>",
+  "agent_id": "<the reviewer subagent's ID>"
+}
+```
+
+Every field is a non-empty string, and the record has no other field. A
+plugin PreToolUse guard denies Write, Edit and NotebookEdit on the result
+and the record. The result check's rule 10 refuses a result that does not
+match its record, so a result changed after the capture by any other means
+is refused too. The digest guards against a caller retyping or tidying the
+result; it is no defence against a deliberately adversarial agent running
+as the same Unix user, which could rewrite both files.
 
 ### The request
 
@@ -151,7 +180,7 @@ The request is a JSON object, `request-<step>.json`. Every step carries:
 | `change_class` | string | `"docs-only"` or `"code"`. |
 | `design_sources` | list of strings | Absolute paths of the design documents the issue's epic lists, such as its spec and plan; empty when there are none. |
 | `validate_stages` | list of strings | The `vrg-validate` stages that passed at `head_sha`. |
-| `epic_open_tasks` | list of objects | The open tasks of the issue's epic, each `{"ref": "owner/name#N", "title": "..."}`, without the issue itself; empty outside an epic. The builder derives them itself. |
+| `epic_open_tasks` | list of objects | The open tasks of the issue's epic, each `{"ref": "owner/name#N", "title": "..."}`, without the issue itself (or, on a [batch PR](#a-batch-pr), any of its issues); empty outside an epic. The builder derives them itself. |
 
 A check (`check` or `check-<k>`) adds:
 
@@ -204,6 +233,50 @@ changed file is an addition or edit on the documentation allow-list, and
 `vergil.toml`, an empty change, or any doubt). The repository's own
 allow-list entries are read from `vergil.toml` as committed at `base_sha`,
 never from the working tree.
+
+### A batch PR
+
+A fix to an open, submitted PR is reviewed as the whole branch against
+`origin/develop` (epic vergil-project/.github#1218, spec §6.8). On a batch
+PR, one PR closing several issues with one commit each, that diff holds every
+issue's commits, while `issue_body` and `issue_comments` hold only the
+`--issue`'s scope. So the caller names the open PR with `--pr <N|URL>`, and
+the builder reads the PR itself:
+
+- The PR must be in the `--issue`'s repository, open, and headed by the
+  current branch; anything else is a refusal.
+- A PR whose body has more than one `Closes` line is a **batch PR**, as
+  `vrg-finalize-pr` reads it. Its issues are those `Closes` refs, in body
+  order: each must be in the PR's repository and listed once, and the
+  `--issue` must be one of them.
+- A PR with one `Closes` line or none is a single-issue PR. Its body must
+  link the `--issue` (`Ref` or `Closes`), and the request is exactly the
+  one built without `--pr`.
+
+Every step of a batch PR's run adds three fields:
+
+| Field | Type | Value |
+|---|---|---|
+| `batch_issues` | list of objects | Every other issue the PR closes, in body order, each `{"issue": "owner/name#N", "issue_body", "issue_comments", "issue_comments_excluded_edited"}`, read and filtered as the `--issue`'s own fields are. |
+| `batch_commits` | list of objects | Every commit of `<base_sha>..<head_sha>`, oldest first, each `{"sha", "subject", "issue": "owner/name#N"}`. |
+| `batch_commits_path` | string | Absolute path of `commits-<step>.patch`. |
+
+A commit belongs to the issue its subject's trailing `(#N)` names, a
+`fixup!` of an issue's commit included. The builder refuses a merge
+commit, a commit whose subject names no issue of the PR, and an issue of the
+PR with no commit, since that work could not be judged against its own
+issue. The PR's issues are left out of `epic_open_tasks`: their scopes are
+in the request, so none of them is another task's work. A check refuses
+`batch_issues` other than those its previous step's stored request carried,
+so a run cannot add or drop an issue's scope between its steps.
+
+The reviewer judges **each commit against its own issue's scope**: the
+`--issue`'s for a commit whose `issue` is the request's `issue`, and that
+batch issue's `issue_body` as amended by its `issue_comments` for any
+other. Work is `out-of-scope` only when the scope of the issue its commit
+belongs to did not ask for it; another batch issue's work, in that issue's
+own commits, is in scope. `commits-<step>.patch` shows which change each
+commit made, and `diff-<step>.patch` stays the whole branch.
 
 ### The result
 
@@ -321,6 +394,15 @@ with `ERROR: <rule>` on stderr, naming the rule broken. The rules:
    `fix_status` has exactly one entry for each ID in the request's
    `earlier_finding_ids`, and no entry for any other ID. A review has no
    `fix_status`.
+10. **Capture.** The [capture record](#the-capture-record)
+    `capture-<step>.json`, in the result file's directory with `<step>`
+    taken from the request, exists, is UTF-8 JSON, and is an object of
+    exactly its five fields, each a non-empty string. Its `schema` is
+    `merge-review-capture/1`; its `step` and `request_id` equal the
+    request's; its `result_sha256` is 64 lowercase hex characters and is
+    the SHA-256 of the result file's bytes as read. This rule is checked
+    first, after the request's own fields and before rule 1, so a result
+    changed after the capture is refused as such.
 
 A refusal never echoes a refused value: it names the rule, the finding by ID
 (or by position when the ID itself is bad), and for a character, its code

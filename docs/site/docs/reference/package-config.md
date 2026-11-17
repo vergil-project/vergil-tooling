@@ -451,7 +451,7 @@ fatal before tagging. The caller has two requirements:
 
 ```yaml
   release:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && !github.event.created
     uses: vergil-project/vergil-actions/.github/workflows/cd-release.yml@v2.1
     with:
       language: python

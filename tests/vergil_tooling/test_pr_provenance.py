@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 import json
+from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -294,3 +297,79 @@ def test_check_pr_fails_loud_without_the_prs_repo_and_number(pr_view: str) -> No
     ):
         pr_provenance.check_pr("https://github.com/acme/repo/pull/42")
     assert not [call for call in calls if call[0] == "api"]
+
+
+# Timeline payloads recorded by the human on a throwaway PR (issue #4569): the
+# ``gh api repos/<o>/<r>/issues/<n>/timeline --paginate`` output, merged into
+# one array. The human enabled auto-merge with SQUASH (``auto_squash_enabled``),
+# then disabled it (``auto_merge_disabled``) and enabled it with REBASE
+# (``auto_rebase_enabled``). The recordings carry the human as actor; the agent
+# variants below change only the actor of the event under test.
+_FIXTURES = Path(__file__).parent / "fixtures" / "pr_provenance"
+_AGENT = "a-vergil-user"
+
+
+def _recorded_timeline(name: str) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = json.loads((_FIXTURES / f"{name}.json").read_text("utf-8"))
+    return events
+
+
+def _as_agent(
+    timeline: list[dict[str, Any]], event_name: str, login: str = _AGENT
+) -> list[dict[str, Any]]:
+    """*timeline* with the actor of every *event_name* event replaced by *login*."""
+    events = copy.deepcopy(timeline)
+    matched = [event for event in events if event.get("event") == event_name]
+    assert matched, f"the recording has no {event_name} event"
+    for event in matched:
+        event["actor"] = {**event["actor"], "login": login}
+    return events
+
+
+def _check_timeline(timeline: list[dict[str, Any]]) -> pr_provenance.ProvenanceResult:
+    """Run ``check_pr`` against *timeline*, with a human author and no reviews."""
+    with patch(
+        "vergil_tooling.lib.pr_provenance.github.read_output",
+        side_effect=_paged_fake([[]], [timeline], []),
+    ):
+        return pr_provenance.check_pr("9")
+
+
+@pytest.mark.parametrize("login", ["a-vergil-user", "a-vergil-audit"])
+def test_recorded_squash_enable_is_violation_for_agent(login: str) -> None:
+    timeline = _as_agent(
+        _recorded_timeline("auto_merge_squash_enable"), "auto_squash_enabled", login
+    )
+    result = _check_timeline(timeline)
+    assert [(v.login, v.action) for v in result.violations] == [(login, "auto_merge_enabled")]
+
+
+def test_recorded_rebase_enable_is_violation_for_agent() -> None:
+    # Only the REBASE enable is the agent's: the earlier SQUASH enable and the
+    # disable stay the human's, so the violation comes from the rebase event.
+    timeline = _as_agent(_recorded_timeline("auto_merge_rebase_enable"), "auto_rebase_enabled")
+    result = _check_timeline(timeline)
+    assert [(v.login, v.action) for v in result.violations] == [(_AGENT, "auto_merge_enabled")]
+
+
+def test_disable_is_not_a_violation() -> None:
+    # The recorded disable, re-attributed to an agent, with every enable left
+    # the human's: an agent turning auto-merge off is not a violation.
+    timeline = _as_agent(_recorded_timeline("auto_merge_rebase_enable"), "auto_merge_disabled")
+    result = _check_timeline(timeline)
+    assert result.ok
+    assert not result.advisories
+
+
+def test_unknown_auto_enable_fails_closed() -> None:
+    # A renamed or new enable event by an agent is a violation, not ignored.
+    timeline = [{"event": "auto_frobnicate_enabled", "actor": {"login": _AGENT}}]
+    result = _check_timeline(timeline)
+    assert [(v.login, v.action) for v in result.violations] == [(_AGENT, "auto_merge_enabled")]
+
+
+@pytest.mark.parametrize("name", ["auto_merge_squash_enable", "auto_merge_rebase_enable"])
+def test_human_auto_merge_enabled_allowed(name: str) -> None:
+    result = _check_timeline(_recorded_timeline(name))
+    assert result.ok
+    assert not result.advisories

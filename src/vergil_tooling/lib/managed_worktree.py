@@ -10,16 +10,26 @@ the boundary.
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
 class ManagedWorktreeError(Exception):
-    """Raised when a managed worktree cannot be created or removed."""
+    """Raised when a managed worktree cannot be created or removed.
+
+    *detail* carries the failed command's own output, when there is one, for
+    the caller to show beneath the message.
+    """
+
+    def __init__(self, message: str, *, detail: str | None = None) -> None:
+        self.detail = detail
+        super().__init__(message)
 
 
 def worktree_path(repo_root: Path, branch: str) -> Path:
@@ -44,11 +54,24 @@ def adopt_worktree(repo_root: Path, *, branch: str) -> Path:
     already exists (a prior run left it), it is reused as-is; otherwise a
     worktree is created checked out on the existing *branch* rather than a new
     branch off a base.
+
+    A failed ``git worktree add`` (most often *branch* already checked out in
+    another worktree) raises :class:`ManagedWorktreeError` naming the branch,
+    the worktree and the recovery step, with git's own output as its detail
+    (#4442).
     """
     path = worktree_path(repo_root, branch)
     if path.exists():
         return path
-    git.run("worktree", "add", str(path), branch)
+    try:
+        git.run("worktree", "add", str(path), branch)
+    except subprocess.CalledProcessError as exc:
+        msg = (
+            f"Could not attach the worktree {path} to branch '{branch}'. If the "
+            "branch is checked out in another worktree (see `git worktree list`), "
+            "remove that worktree or switch it to another branch, then re-run."
+        )
+        raise ManagedWorktreeError(msg, detail=error_text(exc)) from exc
     return path
 
 

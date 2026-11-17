@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -1012,6 +1013,63 @@ def test_human_apply_converges_emptied_bypass_list() -> None:
     ]
 
 
+def _fetch_with_legacy_ci_gates() -> FetchResult:
+    """A repo in sync but still on the shared ``CI gates`` ruleset (pre-split)."""
+    state = compute_desired_state(
+        _make_config(),
+        visibility="public",
+        is_org=True,
+        skip_bypass=False,
+        automation_app_id=_APP_ID,
+    )
+    develop = next(rs for rs in state.rulesets if rs.name == "CI gates (develop)")
+    legacy = dataclasses.replace(
+        develop, name="CI gates", ref_include=["refs/heads/main", "refs/heads/develop"]
+    )
+    state.rulesets = [rs for rs in state.rulesets if not rs.name.startswith("CI gates")]
+    state.rulesets.append(legacy)
+    return FetchResult(state=state, visibility="public", owner_type="Organization")
+
+
+def test_repo_config_reports_both(capsys: pytest.CaptureFixture[str]) -> None:
+    """The audit of a repo still on the shared ruleset names it as replaced by
+    the develop and main pair, and reports both as missing (spec §6.1)."""
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._resolve_config", return_value=_make_config()),
+        patch(f"{_MODULE}.github.is_app_mode", return_value=False),
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_fetch_with_legacy_ci_gates()),
+    ):
+        main(["audit", "--repo", "o/r"])
+    output = capsys.readouterr().out
+    assert "o/r: NON-COMPLIANT" in output
+    assert (
+        "rulesets.CI gates: expected=\"absent (replaced by 'CI gates (develop)' and "
+        "'CI gates (main)')\", actual='present'" in output
+    )
+    for name in ("CI gates (develop)", "CI gates (main)"):
+        assert f"rulesets.{name}: expected='present', actual='missing'" in output
+        assert (
+            f"rulesets.{name}.missing_ci_gates_ruleset: expected='desired', actual='missing'"
+            in output
+        )
+
+
+def test_repo_config_apply_writes_both() -> None:
+    """``apply`` checks and writes both CI-gates rulesets, and not the legacy one."""
+    with (
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_actual_state()),
+        patch(f"{_MODULE}.github.read_json", return_value=_ci_contents(_ALL_CI_JOBS)),
+        patch(f"{_MODULE}.apply_desired_state", return_value=[]) as mock_apply,
+    ):
+        _apply_repo("o/r", _make_config())
+    desired = mock_apply.call_args.args[1]
+    gates = [rs.name for rs in desired.rulesets if rs.name.startswith("CI gates")]
+    assert gates == ["CI gates (develop)", "CI gates (main)"]
+
+
 # -- _apply_repo --------------------------------------------------------------
 
 
@@ -1340,7 +1398,7 @@ def test_print_diff_shows_delta_for_rules_mismatch(
     diff = ConfigDiff(
         items=[
             DiffItem(
-                field="rulesets.CI gates.rules",
+                field="rulesets.CI gates (develop).rules",
                 expected=expected_rules,
                 actual=actual_rules,
             )
@@ -1391,7 +1449,7 @@ def test_print_local_diff_shows_delta_for_rules_mismatch(
     diff = ConfigDiff(
         items=[
             DiffItem(
-                field="rulesets.CI gates.rules",
+                field="rulesets.CI gates (develop).rules",
                 expected=expected_rules,
                 actual=actual_rules,
             )
@@ -1461,7 +1519,7 @@ def test_audit_prints_skipped_bypass_actors(capsys: pytest.CaptureFixture[str]) 
         skipped=[
             "rulesets.Tag protection.bypass_actors",
             "rulesets.Branch protection.bypass_actors",
-            "rulesets.CI gates.bypass_actors",
+            "rulesets.CI gates (develop).bypass_actors",
         ],
     )
     with (
@@ -1488,7 +1546,7 @@ def test_token_minted_for_repo_owner(fake_app: FakeApp, cwd_org: str | None) -> 
     owners: list[str] = []
 
     def _record(result: object) -> Callable[..., object]:
-        def _call(*_args: object) -> object:
+        def _call(*_args: object, **_kwargs: object) -> object:
             owners.append(fake_app.token_owner())
             return result
 
@@ -1510,7 +1568,7 @@ def test_default_repo_mints_for_resolved_repo_owner(fake_app: FakeApp) -> None:
     fake_app.cwd_org = "cwd-org"
     owners: list[str] = []
 
-    def _audit(*_args: object) -> ConfigDiff:
+    def _audit(*_args: object, **_kwargs: object) -> ConfigDiff:
         owners.append(fake_app.token_owner())
         return _mock_github_compliant()
 
@@ -1857,6 +1915,7 @@ def _update_env(
     """
     stack = contextlib.ExitStack()
     stack.enter_context(patch(f"{_MODULE}.identity_mode.current_mode", return_value=mode))
+    stack.enter_context(patch(f"{_MODULE}.automation_identity.env_slug", return_value=_APP_SLUG))
     stack.enter_context(patch(f"{_MODULE}._resolve_config"))
     stack.enter_context(patch(f"{_MODULE}.FIXERS", [] if fixers is None else fixers))
     mocks = {
@@ -1886,8 +1945,11 @@ def test_update_refuses_agent_modes(mode: IdentityMode, capsys: pytest.CaptureFi
     mocks["apply"].assert_not_called()
     mocks["sync"].assert_not_called()
     mock_clone.assert_not_called()
-    err = capsys.readouterr().err
-    assert f"Refusing to update: the identity mode is {mode.value!r}, an AI agent mode" in err
+    captured = capsys.readouterr()
+    assert f"Refusing to update: the identity mode is {mode.value!r}, an AI agent mode" in (
+        captured.err
+    )
+    assert "identity:" not in captured.out
 
 
 def test_update_refuses_an_unverified_automation_identity(
@@ -1983,6 +2045,7 @@ def test_update_empty_bypass_read_under_automation_is_fatal(
     no PR, with the real desired state and diff."""
     with (
         patch(f"{_MODULE}.identity_mode.current_mode", return_value=IdentityMode.AUTOMATION),
+        patch(f"{_MODULE}.automation_identity.env_slug", return_value=_APP_SLUG),
         patch(f"{_MODULE}._resolve_config", return_value=_make_config()),
         patch(f"{_MODULE}.github.is_app_mode", return_value=True),
         patch(f"{_MODULE}.fetch_actual_state", return_value=_fetch_with_empty_bypass()),
@@ -2014,6 +2077,167 @@ def test_update_refuses_a_skipped_bypass_field(capsys: pytest.CaptureFixture[str
     mocks["sync"].assert_not_called()
     err = capsys.readouterr().err
     assert "Refusing to update: rulesets.Tag protection.bypass_actors of o/r" in err
+
+
+# -- update logs its identity and the bypass actors read (vergil-tooling#4433) --
+
+
+@pytest.mark.parametrize(
+    ("mode", "logged"),
+    [
+        (IdentityMode.HUMAN, "human"),
+        (IdentityMode.AUTOMATION, f"automation ({_APP_SLUG}[bot])"),
+    ],
+)
+def test_update_logs_its_identity_mode(
+    mode: IdentityMode, logged: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stack, _ = _update_env(mode=mode)
+    with stack:
+        assert main(["update", "--repo", "o/r"]) == 0
+    out = capsys.readouterr().out
+    assert f"  o/r: identity: {logged}\n" in out
+    assert out.index("o/r: identity:") < out.index("o/r: sync PR")
+
+
+def test_update_automation_mode_without_its_variable_is_an_error() -> None:
+    # AUTOMATION resolves only from $VRG_AUTOMATION_APP: its absence here is a
+    # broken invariant, never a mode logged without its App.
+    stack, mocks = _update_env(mode=IdentityMode.AUTOMATION)
+    with (
+        stack,
+        patch(f"{_MODULE}.automation_identity.env_slug", return_value=None),
+        pytest.raises(RuntimeError, match="without \\$VRG_AUTOMATION_APP set"),
+    ):
+        main(["update", "--repo", "o/r"])
+    mocks["audit"].assert_not_called()
+
+
+def _fetch_in_sync() -> FetchResult:
+    """A repo whose rulesets, bypass lists included, read back as desired."""
+    state = compute_desired_state(
+        _make_config(),
+        visibility="public",
+        is_org=True,
+        skip_bypass=False,
+        automation_app_id=_APP_ID,
+    )
+    return FetchResult(state=state, visibility="public", owner_type="Organization")
+
+
+def _desired_ruleset_names() -> list[str]:
+    return [rs.name for rs in _fetch_in_sync().state.rulesets]
+
+
+def _update_reading(
+    fetch: FetchResult,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    mode: IdentityMode,
+    app_mode: bool,
+) -> tuple[int, str, str]:
+    """Run ``update`` on the real audit of *fetch*; return its exit code, stdout, stderr."""
+    with (
+        patch(f"{_MODULE}.identity_mode.current_mode", return_value=mode),
+        patch(f"{_MODULE}.automation_identity.env_slug", return_value=_APP_SLUG),
+        patch(f"{_MODULE}._resolve_config", return_value=_make_config()),
+        patch(f"{_MODULE}.github.is_app_mode", return_value=app_mode),
+        patch(f"{_MODULE}.fetch_actual_state", return_value=fetch),
+        patch(f"{_MODULE}._fetch_ci_workflow", return_value="ci"),
+        patch(f"{_MODULE}.assert_ci_gates_producible"),
+        patch(f"{_MODULE}.apply_desired_state", return_value=[]),
+        patch(f"{_MODULE}.FIXERS", []),
+        patch(f"{_MODULE}.open_sync_pr", side_effect=_in_sync),
+    ):
+        code = main(["update", "--repo", "o/r"])
+    captured = capsys.readouterr()
+    return code, captured.out, captured.err
+
+
+def _read_back(out: str, ruleset: str) -> str:
+    """The logged read-back of *ruleset*'s bypass list."""
+    prefix = f"  o/r: rulesets.{ruleset}.bypass_actors read back: "
+    lines = [line for line in out.splitlines() if line.startswith(prefix)]
+    assert len(lines) == 1, out
+    return lines[0].removeprefix(prefix)
+
+
+def test_update_automation_logs_every_rulesets_bypass_actors_read(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code, out, _ = _update_reading(
+        _fetch_in_sync(), capsys, mode=IdentityMode.AUTOMATION, app_mode=True
+    )
+    assert code == 0
+    assert f"  o/r: identity: automation ({_APP_SLUG}[bot])" in out
+    names = _desired_ruleset_names()
+    assert {"Tag protection", "Automation branches", "Rolling tag branch names"} <= set(names)
+    for name in names:
+        _read_back(out, name)
+    assert _read_back(out, "Tag protection") == "RepositoryRole 5 always"
+    assert _read_back(out, "Automation branches") == (
+        f"Integration {_APP_ID} always, RepositoryRole 5 always"
+    )
+    assert _read_back(out, "Rolling tag branch names") == "none"
+    assert out.index("o/r: identity:") < out.index("bypass_actors read back:")
+
+
+def test_update_logs_an_unreadable_bypass_list_as_not_checked(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code, out, _ = _update_reading(
+        _fetch_with_empty_bypass(), capsys, mode=IdentityMode.AUTOMATION, app_mode=True
+    )
+    assert code == 2
+    assert _read_back(out, "Tag protection") == (
+        "not checked (read back empty under the automation identity, so unreadable)"
+    )
+    # The read-back of every other ruleset is still logged.
+    assert _read_back(out, "Automation branches") == (
+        f"Integration {_APP_ID} always, RepositoryRole 5 always"
+    )
+
+
+def test_update_logs_a_skipped_bypass_list(capsys: pytest.CaptureFixture[str]) -> None:
+    # A human run on an App token (not the automation App) cannot see the field.
+    code, out, err = _update_reading(
+        _fetch_in_sync(), capsys, mode=IdentityMode.HUMAN, app_mode=True
+    )
+    assert code == 2
+    assert "  o/r: identity: human" in out
+    for name in _desired_ruleset_names():
+        assert _read_back(out, name) == "skipped (not visible with GitHub App credentials)"
+    assert "Refusing to update: rulesets." in err
+
+
+def test_update_human_logs_the_bypass_actors_read(capsys: pytest.CaptureFixture[str]) -> None:
+    code, out, _ = _update_reading(
+        _fetch_with_empty_bypass(), capsys, mode=IdentityMode.HUMAN, app_mode=False
+    )
+    assert code == 0
+    assert "  o/r: identity: human" in out
+    # For a human an empty read is taken at its word: drift, which update converges.
+    assert _read_back(out, "Tag protection") == "none"
+    assert _read_back(out, "Automation branches") == (
+        f"Integration {_APP_ID} always, RepositoryRole 5 always"
+    )
+
+
+def test_update_logs_an_absent_ruleset_as_not_read(capsys: pytest.CaptureFixture[str]) -> None:
+    fetch = _fetch_in_sync()
+    fetch.state.rulesets = [rs for rs in fetch.state.rulesets if rs.name != "Tag protection"]
+    _, out, _ = _update_reading(fetch, capsys, mode=IdentityMode.AUTOMATION, app_mode=True)
+    assert _read_back(out, "Tag protection") == "not read (the ruleset does not exist on o/r)"
+
+
+def test_audit_repo_logs_no_bypass_read_outside_update(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MODULE}.github.is_app_mode", return_value=False),
+        patch(f"{_MODULE}.identity_mode.is_automation", return_value=False),
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_fetch_in_sync()),
+    ):
+        _audit_repo("o/r", _make_config())
+    assert "read back" not in capsys.readouterr().out
 
 
 def test_update_skipped_security_field_is_not_a_refusal() -> None:
@@ -2115,7 +2339,7 @@ def test_update_unmerged_pr_outranks_unfixable_drift() -> None:
 def test_update_missing_installation_exits_two(capsys: pytest.CaptureFixture[str]) -> None:
     stack, _ = _update_env()
     failure = github.NoInstallationError("o", ["acme"])
-    with stack, patch(f"{_MODULE}._update_identity_refusal", side_effect=failure):
+    with stack, patch(f"{_MODULE}._update_identity", side_effect=failure):
         assert main(["update", "--repo", "o/r"]) == 2
     assert "Could not audit o/r" in capsys.readouterr().err
 
@@ -2272,6 +2496,7 @@ def _real_update(
     sync = _RecordingSync()
     with (
         patch(f"{_MODULE}.identity_mode.current_mode", return_value=IdentityMode.AUTOMATION),
+        patch(f"{_MODULE}.automation_identity.env_slug", return_value=_APP_SLUG),
         patch(f"{_MODULE}._resolve_config"),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
         patch(f"{_MODULE}.clone_develop", side_effect=develop_clone.clone_develop),

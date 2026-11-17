@@ -167,6 +167,7 @@ rejected as not recognized.
 | `run view` | yes | yes | — | CI status |
 | `run watch` | yes | yes | — | Blocking wait for CI |
 | `run rerun` | yes | yes | — | Retry a failed CI job (`--failed` allowed) |
+| `run job-log` | yes | yes | yes | One job's log, read-only; see [`run job-log`](#run-job-log) |
 | `workflow list` | yes | yes | yes | Read-only CI configuration |
 | `workflow view` | yes | yes | yes | Read-only CI configuration |
 | `cache list` | yes | yes | yes | Read-only CI state |
@@ -181,7 +182,7 @@ rejected as not recognized.
 
 The `audit` identity is a read/review reviewer, so it gets the
 PR read and review actions plus the read-only `workflow list`,
-`workflow view` and `cache list`, which only read CI
+`workflow view`, `cache list` and `run job-log`, which only read CI
 configuration and state a reviewer may need to judge a PR's
 checks. Every write (`run rerun`, `pr update-branch`, the
 `issue` actions) stays off its allowlist.
@@ -231,6 +232,29 @@ review comments, goes through the dedicated read-only
 [`vrg-pr-review-comments`](../reference/cli-tools-overview.md#vrg-pr-review-comments)
 rather than an exception in this refusal.
 
+### `run job-log`
+
+`vrg-gh run job-log --repo <owner>/<repo> --job <job-id>` prints one
+GitHub Actions job's log. It is the wrapper's own command, not a `gh`
+subcommand: `gh run view --job <id> --log` downloads the whole run's
+log archive, which fails on a run with many jobs, and the per-job log
+endpoint is otherwise reachable only through `gh api`.
+
+It calls exactly one endpoint, a `GET` of
+`repos/<owner>/<repo>/actions/jobs/<job-id>/logs`, which it builds
+itself, so it reopens none of the `gh api` access above. It accepts
+only `--repo` (or `-R`) and `--job`, each once, and forwards no other
+argument. `--repo` must be a plain `<owner>/<repo>` made of the
+characters GitHub allows in those names, and `--job` a positive
+number. Anything else is refused before `gh` runs. The App
+installation is chosen by the `--repo` owner. Because it only reads,
+it is open to every identity, `audit` included.
+
+Job logs usually carry ANSI color codes, which `gh` refuses to print
+unless told to. The command lets `gh` return them and then strips every
+terminal escape sequence and control character except tab and newline
+before printing, so none reaches the terminal.
+
 ### Credential Selection
 
 `vrg-gh` is responsible for choosing which account's token to use
@@ -260,7 +284,13 @@ token `gh` runs with:
 `vrg-queue`, `vrg-release`, `vrg-repo-status`,
 `vrg-resolve-tracking-issue`, `vrg-roadmap`, `vrg-ruling`,
 `vrg-ruling-reply`, `vrg-scope-change`, `vrg-security-record`,
-`vrg-submit-pr`, `vrg-update-deps` and `vrg-upstream-refresh`.
+`vrg-submit-pr` and `vrg-update-deps`.
+
+`vrg-upstream-refresh` also clones, commits and pushes, in temporary
+clones. Under GitHub Actions its `publish` mode takes every `gh` and
+`git` token from an in-process automation App token source and runs as
+the `automation` identity; agents may run only its `--dry-run` (see
+[Upstream Refresh](../reference/upstream-refresh-config.md#identity-and-credentials)).
 
 `vrg-package` calls `gh` only: it lists and downloads releases, and
 verifies their attestations, when it builds the package index.
@@ -421,9 +451,13 @@ and branch protection rulesets.
   `contents: write`). Neither App holds Workflows access, so neither
   can push under `.github/workflows/`. GitHub rejects the API call
   regardless of what happens locally.
-- Branch protection rulesets require review approval from a
-  different identity before merging. No client-side manipulation
-  changes this.
+- Branch protection rulesets require a pull request to change
+  `develop` or `main`, with its required CI checks passing on an
+  up-to-date branch; they require no approving review. Who can merge
+  is set by the identity's permissions: the human, and the org
+  automation App for the mechanized `automation/` PRs that merge
+  once CI passes (the repo-config sync and the upstream refresh). No
+  client-side manipulation changes this.
 - An App can only act on accounts it is installed on and repos that
   installation covers.
 

@@ -78,6 +78,20 @@ def _lock_fails(root: Path) -> None:
     raise subprocess.CalledProcessError(127, ["vrg-container-run", "--", "cargo"], stderr="boom")
 
 
+def _leave_partial_bump(root: Path) -> None:
+    """A run killed outright mid-bump, before the bump could restore its files.
+
+    A bump that fails restores its files itself (#4587), so a partial bump is
+    left only by a kill no handler sees: the first run fails in its lockfile
+    step, then VERSION and Cargo.toml are bumped by hand, as the killed run
+    would have left them.
+    """
+    with pytest.raises(subprocess.CalledProcessError):
+        _run(root, lock=_lock_fails)
+    (root / "VERSION").write_text("0.1.1\n")
+    (root / "Cargo.toml").write_text('[package]\nname = "fixture"\nversion = "0.1.1"\n')
+
+
 @pytest.fixture
 def gh() -> Iterator[dict[str, MagicMock]]:
     """GitHub with no back-merge PR yet; creating and merging one succeeds."""
@@ -150,18 +164,34 @@ def test_first_run_creates_bumps_and_pushes(repo: Path, gh: dict[str, MagicMock]
 
 
 def test_resume_after_bump_failed_before_commit(repo: Path, gh: dict[str, MagicMock]) -> None:
-    """The Rust fixtures' state: the branch at origin/main, a partial bump uncommitted.
+    """The lockfile step failed: the branch is at origin/main and the worktree is clean.
 
-    The lockfile step failed after VERSION and Cargo.toml were bumped. The
-    re-run discards that partial bump and redoes it, so the version moves to
-    0.1.1 once, never to 0.1.2.
+    The failed bump restored VERSION and Cargo.toml itself (#4587), so the
+    re-run bumps once, to 0.1.1.
     """
     with pytest.raises(subprocess.CalledProcessError):
         _run(repo, lock=_lock_fails)
     assert git.current_branch() == _BRANCH
     assert _post_commits(repo) == []
-    assert sorted(_git(repo, "diff", "--name-only").splitlines()) == ["Cargo.toml", "VERSION"]
+    assert _git(repo, "status", "--porcelain") == ""
     assert _origin_tip(repo) == ""
+
+    ctx = _run(repo)
+
+    _assert_bumped_and_pushed(repo, ctx)
+    assert 'version = "0.1.1"' in _git(repo, "show", f"{_BRANCH}:Cargo.lock")
+    gh["create_pr"].assert_called_once()
+
+
+def test_resume_after_bump_killed_before_commit(repo: Path, gh: dict[str, MagicMock]) -> None:
+    """The branch at origin/main, a partial bump uncommitted by a killed run.
+
+    The re-run discards that partial bump and redoes it, so the version moves
+    to 0.1.1 once, never to 0.1.2.
+    """
+    _leave_partial_bump(repo)
+    assert git.current_branch() == _BRANCH
+    assert sorted(_git(repo, "diff", "--name-only").splitlines()) == ["Cargo.toml", "VERSION"]
 
     ctx = _run(repo)
 
@@ -296,16 +326,14 @@ def test_refuses_diverged_local_and_remote(repo: Path, gh: dict[str, MagicMock])
 def test_refuses_partial_bump_mixed_with_other_changes(
     repo: Path, gh: dict[str, MagicMock]
 ) -> None:
-    with pytest.raises(subprocess.CalledProcessError):
-        _run(repo, lock=_lock_fails)
+    _leave_partial_bump(repo)
     (repo / "README.md").write_text("local edit\n")
     _assert_refused(repo, gh, "not a partial bump")
     assert (repo / "VERSION").read_text() == "0.1.1\n"
 
 
 def test_refuses_untracked_file(repo: Path, gh: dict[str, MagicMock]) -> None:
-    with pytest.raises(subprocess.CalledProcessError):
-        _run(repo, lock=_lock_fails)
+    _leave_partial_bump(repo)
     (repo / "notes.txt").write_text("keep me\n")
     _assert_refused(repo, gh, "not a partial bump")
     assert (repo / "notes.txt").is_file()

@@ -111,8 +111,10 @@ _ANCHOR_GROUP = "anchor"
 #: The mechanized-PR job: its branches are ``automation/upstream-refresh/<run-id>``.
 JOB = "upstream-refresh"
 #: Publish's wait-until-merged deadline under a token source, counted from the
-#: tool's own start, so the clone, the patch and the push are inside it
-#: (spec §6.1, "The wait"). The publish job's ``timeout-minutes`` is 140.
+#: tool's own start: the clone and the patch come out of it, and the wait gets
+#: what is left. Closing an earlier run's PR, the push and opening the PR come
+#: after that is worked out and are not counted (spec §6.1, "The wait"). The
+#: publish job's ``timeout-minutes`` is 140.
 PUBLISH_DEADLINE_SECS = 7200
 #: The compare statuses that put the recorded base commit on ``develop``.
 _ON_DEVELOP = frozenset({"ahead", "identical"})
@@ -656,8 +658,9 @@ def diff_changed_lines(tree: Path, base_sha: str, paths: Sequence[str]) -> dict[
     """Each path's whole-file ``git diff <base_sha>`` in *tree*, for :func:`fence_violations`.
 
     Every unchanged line comes as context, so a changed file's diff is one
-    hunk over the whole file: the no-downgrade rule needs each versioned
-    line's place in the file, not only the changed lines.
+    hunk over the whole file: the no-downgrade rule and the hash rule need
+    each versioned or hashed line's place in the file (and so its block),
+    not only the changed lines.
     Each value is the path's whole diff section (its header, then its hunk),
     split on ``\\n`` only, so a ``\\r`` stays inside its line. A new file must
     be in the index (``git apply --index``), or it has no diff and the fence

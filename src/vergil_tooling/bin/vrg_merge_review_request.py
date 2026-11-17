@@ -2,9 +2,9 @@
 
 ``vrg-merge-review-request --issue <owner/name#N> --base <ref> --step
 review|check|check-<k> [--design-source <path>]...
-[--fix-base <sha> --earlier-result <path>... --fix-id <ID>... [--ruled-id <ID>]...]``
-writes ``request-<step>.json``, ``diff-<step>.patch`` and, for a check,
-``fix-<step>.patch`` into the task's
+[--pr <N|URL>] [--fix-base <sha> --earlier-result <path>... --fix-id <ID>...
+[--ruled-id <ID>]...]`` writes ``request-<step>.json``, ``diff-<step>.patch`` and, for a check,
+``fix-<step>.patch`` (and, for a batch PR, ``commits-<step>.patch``) into the task's
 private directory, ``build/.vergil-state/issue-implement/<N>/merge-review/``
 in the main clone, and prints the request's path. See
 ``docs/specs/merge-review-protocol.md``.
@@ -31,6 +31,20 @@ configuration, oldest first, as ``issue_comments`` (``{"author",
 "created_at", "body"}``). An edited human comment is left out and counted
 in ``issue_comments_excluded_edited``. It refuses when the configuration
 lists no human login or several, or the comments cannot be read.
+
+``--pr`` names the open PR of a fix to an open PR, by number or URL; the
+PR must be in the ``--issue`` repository, open, and headed by the current
+branch. When its body has more than one ``Closes`` line it is a batch PR:
+the ``--issue`` must be one of them, and the request adds
+``batch_issues`` (every other issue it closes, each with its body and the
+human's comments, read as for the ``--issue``), ``batch_commits`` (every
+commit under review, ``{"sha", "subject", "issue"}``, its issue the one
+its subject's trailing `` (#N)`` names) and ``batch_commits_path`` (each
+commit's own patch), and leaves the batch's issues out of
+``epic_open_tasks``. It refuses a merge commit, a commit that names no issue
+of the PR, and an issue with no commit. A single-issue PR must link the
+``--issue`` and adds nothing to the request. A check refuses batch issues
+other than those its previous step's request carried.
 
 A check (``check`` or ``check-<k>``) also takes ``--fix-base``, the ``HEAD``
 the previous step judged, refused unless it is the ``head_sha`` of that
@@ -65,6 +79,7 @@ from vergil_tooling.lib.await_file import atomic_write
 from vergil_tooling.lib.build_dir import BuildDirError
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import ConfigError
+from vergil_tooling.lib.merge_review import open_pr
 from vergil_tooling.lib.merge_review import request as req
 from vergil_tooling.lib.merge_review.change_class import classify_branch
 from vergil_tooling.lib.merge_review.schema import STEP_RE, is_check
@@ -130,6 +145,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--design-source", action="append", default=[], help="a design document (repeatable)"
     )
+    parser.add_argument(
+        "--pr", help="a fix to an open PR: the PR, by number or URL, in the --issue's repository"
+    )
     parser.add_argument("--fix-base", help="a check: the HEAD the previous step judged")
     parser.add_argument(
         "--earlier-result",
@@ -152,7 +170,7 @@ def _parser() -> argparse.ArgumentParser:
 def _check_usage(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     building = ("base", "step")
     if args.ensure_dir:
-        given = [name for name in (*building, *_CHECK_ONLY) if getattr(args, name)]
+        given = [name for name in (*building, "pr", *_CHECK_ONLY) if getattr(args, name)]
         if given or args.design_source:
             parser.error("--ensure-dir takes only --issue")
         return
@@ -177,10 +195,18 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
     record = read_record(worktree)
     req.check_validated(record, head, worktree_clean=git.working_tree_status() == "")
     base_sha, change_class = classify_branch(args.base, head)
-    task = req.fetch_task_context(issue)
+    batch = (
+        []
+        if args.pr is None
+        else open_pr.batch_issues(open_pr.parse_pr(args.pr, issue), issue, git.current_branch())
+    )
+    task = req.fetch_task_context(issue, batch)
     design_sources = req.design_source_paths(args.design_source)
     issue_comments = req.fetch_human_comments(issue)
     fix_base_sha = _fix_base(args.fix_base, head) if is_check(step) else None
+
+    others = [ref for ref in batch if ref.number != issue.number]
+    batch_fields = _batch_fields(others, batch, base_sha, head)
 
     private_dir = ensure_private_dir(git.main_worktree_root(), issue.number)
     check: req.CheckFields | None = None
@@ -188,6 +214,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
     if fix_base_sha is not None:
         earlier = req.read_earlier_results(private_dir, step, args.earlier_result)
         req.check_fix_base(private_dir, step, fix_base_sha)
+        open_pr.check_same_batch(private_dir, step, others)
         finding_ids = req.earlier_finding_ids(
             [result for _path, result in earlier], args.fix_id, args.ruled_id
         )
@@ -199,6 +226,14 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
             earlier_finding_ids=finding_ids,
         )
     diff_path = private_dir / req.diff_file(step)
+    commits_path = private_dir / req.commits_file(step)
+    batch_request = (
+        None
+        if batch_fields is None
+        else req.BatchFields(
+            issues=batch_fields[0], commits=batch_fields[1], commits_path=str(commits_path)
+        )
+    )
     request = req.build_request(
         req.RequestFields(
             request_id=secrets.token_hex(16),
@@ -214,16 +249,44 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
             design_sources=design_sources,
             validate_stages=list(record.passed),
             epic_open_tasks=task.epic_open_tasks,
+            batch=batch_request,
         ),
         check,
     )
     # The request names the diffs, so it is written last.
     atomic_write(diff_path, git.diff_patch(base_sha, head))
+    if batch_request is not None:
+        atomic_write(commits_path, git.log_patch(base_sha, head))
     if check is not None:
         atomic_write(Path(check.fix_diff_path), fix_patch)
     request_path = private_dir / req.request_file(step)
     atomic_write(request_path, json.dumps(request, indent=2) + "\n")
     return request_path
+
+
+def _batch_fields(
+    others: list[IssueRef], batch: list[IssueRef], base_sha: str, head: str
+) -> tuple[list[dict[str, object]], list[dict[str, str]]] | None:
+    """A batch PR's ``batch_issues`` and ``batch_commits``; ``None`` on any other PR.
+
+    Each of *others* (the batch's issues but the ``--issue``) has its body and
+    the human's comments read as the ``--issue``'s are.
+    """
+    if not batch:
+        return None
+    commits = open_pr.batch_commits(base_sha, head, batch)
+    issues: list[dict[str, object]] = []
+    for ref in others:
+        comments = req.fetch_human_comments(ref)
+        issues.append(
+            {
+                "issue": ref.slug,
+                "issue_body": req.fetch_issue_body(ref),
+                "issue_comments": comments.comments,
+                "issue_comments_excluded_edited": comments.excluded_edited,
+            }
+        )
+    return issues, commits
 
 
 def _fix_base(fix_base: str, head: str) -> str:

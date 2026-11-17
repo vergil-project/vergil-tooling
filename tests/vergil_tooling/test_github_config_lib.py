@@ -28,11 +28,18 @@ from vergil_tooling.lib.config import (
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
     _PRODUCIBLE_GATE_CATALOG,
+    CI_GATES_DEVELOP,
+    CI_GATES_MAIN,
+    CI_GATES_RULESET_NAMES,
+    LEGACY_CI_GATES_RULESET_NAME,
     MERGE_SETTINGS_READ,
     SETTING_RETURNED,
     BypassUnreadable,
+    ClassicProtectionReport,
+    ConfigDiff,
     DesiredRuleset,
     DesiredState,
+    DiffItem,
     EvidenceGate,
     FetchResult,
     NotChecked,
@@ -61,7 +68,7 @@ from vergil_tooling.lib.github_config import (
     desired_actions_permissions,
     desired_automation_branch_ruleset,
     desired_branch_protection_ruleset,
-    desired_ci_gates_ruleset,
+    desired_ci_gates_rulesets,
     desired_repo_settings,
     desired_rolling_tag_branch_ruleset,
     desired_security_settings,
@@ -199,13 +206,13 @@ def test_desired_actions_permissions_with_language_patterns() -> None:
 
 
 def test_desired_actions_permissions_python() -> None:
+    # Python adds no language patterns: its CI runs through Vergil's
+    # reusable workflows (vergil-tooling#4577).
     a = desired_actions_permissions("python")
     assert a.patterns_allowed == [
         "actions/*",
-        "astral-sh/*",
         "docker/*",
         "github/*",
-        "pypa/*",
         "vergil-project/*",
     ]
 
@@ -223,14 +230,13 @@ def test_desired_actions_permissions_extra_patterns() -> None:
 
 def test_desired_actions_permissions_extra_patterns_unioned_not_duplicated() -> None:
     # An extra pattern that overlaps a language default is unioned, not duplicated.
-    a = desired_actions_permissions("python", ["astral-sh/*", "dataaxiom/ghcr-cleanup-action@*"])
+    a = desired_actions_permissions("rust", ["swatinem/*", "dataaxiom/ghcr-cleanup-action@*"])
     assert a.patterns_allowed == [
         "actions/*",
-        "astral-sh/*",
         "dataaxiom/ghcr-cleanup-action@*",
         "docker/*",
         "github/*",
-        "pypa/*",
+        "swatinem/*",
         "vergil-project/*",
     ]
 
@@ -314,11 +320,12 @@ def _project(
     *,
     language: str | None = "python",
     release_model: str = "tagged-release",
+    branching_model: str = "library-release",
 ) -> ProjectConfig:
     return ProjectConfig(
         repository_type="library",
         versioning_scheme="semver",
-        branching_model="library-release",
+        branching_model=branching_model,
         release_model=release_model,
         primary_language=language,
     )
@@ -349,24 +356,58 @@ def _checks(ruleset: DesiredRuleset) -> list[dict[str, object]]:
     return params["required_status_checks"]
 
 
-def test_ci_gates_structure() -> None:
-    r = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
-    assert r.name == "CI gates"
-    assert r.target == "branch"
-    assert r.enforcement == "active"
-    assert r.ref_include == ["refs/heads/main", "refs/heads/develop"]
-    assert r.bypass_actors == []
+def _ci_gates_develop(project: ProjectConfig, ci: CiConfig, **kwargs: Any) -> DesiredRuleset:
+    """The develop CI-gates ruleset: the one every repo has, so the checks tests use it."""
+    develop = desired_ci_gates_rulesets(project, ci, **kwargs)[0]
+    assert develop.name == CI_GATES_DEVELOP
+    return develop
 
 
-def test_ci_gates_strict_policy() -> None:
-    r = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
-    status_rule = next(rule for rule in r.rules if rule["type"] == "required_status_checks")
+def _strict(ruleset: DesiredRuleset) -> object:
+    status_rule = next(rule for rule in ruleset.rules if rule["type"] == "required_status_checks")
     params = cast("dict[str, object]", status_rule["parameters"])
-    assert params["strict_required_status_checks_policy"] is True
+    return params["strict_required_status_checks_policy"]
+
+
+def test_ci_gates_split_develop_not_strict_main_strict() -> None:
+    """One ruleset per branch (epic .github#1218, spec §6.1): develop drops the
+    up-to-date rule and main keeps it, with the same required checks."""
+    develop, main = desired_ci_gates_rulesets(_project(), _ci(), ghas=True)
+    assert (develop.name, main.name) == (CI_GATES_DEVELOP, CI_GATES_MAIN)
+    assert CI_GATES_RULESET_NAMES == (CI_GATES_DEVELOP, CI_GATES_MAIN)
+    assert develop.ref_include == ["refs/heads/develop"]
+    assert main.ref_include == ["refs/heads/main"]
+    assert _strict(develop) is False
+    assert _strict(main) is True
+    for r in (develop, main):
+        assert r.target == "branch"
+        assert r.enforcement == "active"
+        assert r.bypass_actors == []
+    assert _checks(develop) == _checks(main)
+    # Each ruleset owns its check dicts: editing one never changes the other.
+    _checks(develop)[0]["context"] = "edited"
+    assert _checks(main)[0]["context"] != "edited"
+
+
+def test_docs_single_branch_gets_develop_only() -> None:
+    """A docs-single-branch repo has no main, so no main CI-gates ruleset."""
+    rulesets = desired_ci_gates_rulesets(
+        _project(branching_model="docs-single-branch"), _ci(), ghas=True
+    )
+    assert [r.name for r in rulesets] == [CI_GATES_DEVELOP]
+    assert _strict(rulesets[0]) is False
+
+
+@pytest.mark.parametrize("branching_model", ["library-release", "application-promotion"])
+def test_ci_gates_main_ruleset_for_models_with_main(branching_model: str) -> None:
+    rulesets = desired_ci_gates_rulesets(
+        _project(branching_model=branching_model), _ci(), ghas=True
+    )
+    assert [r.name for r in rulesets] == [CI_GATES_DEVELOP, CI_GATES_MAIN]
 
 
 def test_ci_gates_always_includes_quality_evidence_and_security() -> None:
-    r = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
+    r = _ci_gates_develop(_project(), _ci(), ghas=True)
     check_names = _check_names(r)
     assert "quality / evidence" in check_names
     assert "quality / common" not in check_names
@@ -381,7 +422,7 @@ def test_ci_gates_requires_docs_check_when_publishing_docs() -> None:
     """A docs-publishing repo (`[publish].docs = true`) emits `docs / docs` from
     the reusable CI, so it must be a required PR gate (present even without
     GHAS)."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False, docs=True)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=False, docs=True)
     assert "docs / docs" in _check_names(ruleset)
 
 
@@ -390,7 +431,7 @@ def test_ci_gates_omits_docs_check_when_not_publishing_docs() -> None:
     docs job in its CI, so `docs / docs` is never reported. Requiring it pins a
     status that never resolves and blocks every merge with "the base branch
     policy prohibits the merge" (vergil-project/vergil-tooling#2647)."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False, docs=False)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=False, docs=False)
     assert "docs / docs" not in _check_names(ruleset)
 
 
@@ -398,7 +439,7 @@ def test_ci_gates_requires_package_evidence_when_package_section_present() -> No
     """A repo whose `vergil.toml` has `[package]` calls `ci-package.yml`, which
     emits the stable `package / evidence` gate, so it is a required PR check
     (epic vergil-project/.github#356, spec section 8.1)."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False, package=True)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=False, package=True)
     assert "package / evidence" in _check_names(ruleset)
 
 
@@ -406,23 +447,23 @@ def test_ci_gates_requires_images_evidence_when_ci_images_on() -> None:
     """A repo with ``[ci].images = true`` calls the repo-local ``ci-images.yml``
     as its ``images`` job, whose ``evidence`` aggregate is then a required PR
     check (vergil-project/vergil-tooling#4132)."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(images=True), ghas=False)
+    ruleset = _ci_gates_develop(_project(), _ci(images=True), ghas=False)
     assert "images / evidence" in _check_names(ruleset)
 
 
 def test_ci_gates_omits_images_evidence_by_default() -> None:
     """A repo that never runs ``ci-images.yml`` must never require its gate: the
     status would never report and every merge would block."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True, package=True)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=True, docs=True, package=True)
     assert "images / evidence" not in _check_names(ruleset)
 
 
 def test_ci_gates_omits_package_evidence_without_package_section() -> None:
     """A repo without `[package]` never calls `ci-package.yml`; requiring
     `package / evidence` there would pin a never-reported status."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=False)
     assert "package / evidence" not in _check_names(ruleset)
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False, package=False)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=False, package=False)
     assert "package / evidence" not in _check_names(ruleset)
 
 
@@ -441,7 +482,7 @@ UNIVERSAL_REUSABLE_CI_CHECKS = frozenset(
 def test_universal_reusable_ci_checks_are_all_required() -> None:
     """Pins the vergil-actions reusable-CI universal checks. Update this set
     deliberately when the reusable CI adds/removes a universal PR job."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=False)
     contexts = {
         str(c["context"])
         for rule in ruleset.rules
@@ -454,7 +495,7 @@ def test_universal_reusable_ci_checks_are_all_required() -> None:
 
 
 def test_ci_gates_ghas_checks_use_ghas_integration_id() -> None:
-    r = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
+    r = _ci_gates_develop(_project(), _ci(), ghas=True)
     checks = _checks(r)
     ghas_names = ("Trivy", "Semgrep OSS", "CodeQL")
     ghas_checks = {c["context"]: c["integration_id"] for c in checks if c["context"] in ghas_names}
@@ -462,7 +503,7 @@ def test_ci_gates_ghas_checks_use_ghas_integration_id() -> None:
 
 
 def test_ci_gates_codeql_for_supported_language() -> None:
-    r = desired_ci_gates_ruleset(_project(language="python"), _ci(), ghas=True)
+    r = _ci_gates_develop(_project(language="python"), _ci(), ghas=True)
     names = _check_names(r)
     assert "security / codeql" in names
     assert "CodeQL" in names
@@ -470,7 +511,7 @@ def test_ci_gates_codeql_for_supported_language() -> None:
 
 def test_ci_gates_codeql_for_cpp() -> None:
     # cpp is CodeQL-supported (epic vergil-project/.github#207 T7).
-    r = desired_ci_gates_ruleset(_project(language="cpp"), _ci(versions=["clang-20"]), ghas=True)
+    r = _ci_gates_develop(_project(language="cpp"), _ci(versions=["clang-20"]), ghas=True)
     names = _check_names(r)
     assert "security / codeql" in names
     assert "CodeQL" in names
@@ -482,7 +523,7 @@ def test_ci_gates_codeql_for_typescript() -> None:
     # analysis identifier `javascript-typescript`: this set is tested against
     # `project.primary_language`, and the `typescript → javascript-typescript`
     # mapping belongs to the reusable CI Action (T7), not here.
-    r = desired_ci_gates_ruleset(
+    r = _ci_gates_develop(
         _project(language="typescript"), _ci(versions=["node-24", "node-22"]), ghas=True
     )
     names = _check_names(r)
@@ -493,7 +534,7 @@ def test_ci_gates_codeql_for_typescript() -> None:
 def test_ci_gates_codeql_for_rust() -> None:
     # CodeQL analyzes Rust, so a GHAS Rust repo requires both CodeQL checks;
     # repo-init's ci.yml runs CodeQL for it from the same set (issue #4381).
-    r = desired_ci_gates_ruleset(_project(language="rust"), _ci(), ghas=True)
+    r = _ci_gates_develop(_project(language="rust"), _ci(), ghas=True)
     names = _check_names(r)
     assert "security / codeql" in names
     assert "CodeQL" in names
@@ -509,14 +550,14 @@ def test_codeql_languages_are_primary_languages() -> None:
 
 
 def test_ci_gates_no_codeql_without_language() -> None:
-    r = desired_ci_gates_ruleset(_project(language=None), _ci(), ghas=True)
+    r = _ci_gates_develop(_project(language=None), _ci(), ghas=True)
     names = _check_names(r)
     assert "security / codeql" not in names
     assert "CodeQL" not in names
 
 
 def test_ci_gates_without_ghas_drops_alert_checks() -> None:
-    r = desired_ci_gates_ruleset(_project(), _ci(), ghas=False)
+    r = _ci_gates_develop(_project(), _ci(), ghas=False)
     names = _check_names(r)
     assert "Trivy" not in names
     assert "Semgrep OSS" not in names
@@ -530,7 +571,7 @@ def test_ci_gates_without_ghas_drops_alert_checks() -> None:
 
 
 def test_ci_gates_without_ghas_has_no_ghas_integration_checks() -> None:
-    r = desired_ci_gates_ruleset(_project(), _ci(), ghas=False)
+    r = _ci_gates_develop(_project(), _ci(), ghas=False)
     assert all(c["integration_id"] != 57789 for c in _checks(r))
 
 
@@ -542,7 +583,7 @@ def test_ci_gates_require_evidence_not_per_version() -> None:
     deadlocking on a per-version check the reduced matrix can never report
     (epic vergil-project/.github#338)."""
     cfg = _ci(versions=["3.12", "3.13", "3.14"])
-    ruleset = desired_ci_gates_ruleset(_project(), cfg, ghas=True)
+    ruleset = _ci_gates_develop(_project(), cfg, ghas=True)
     checks = {str(c["context"]) for c in _checks(ruleset)}
     assert {"audit / evidence", "quality / evidence", "test / evidence"} <= checks
     assert not any(re.search(r"/ 3\.\d+$", c) for c in checks)
@@ -558,7 +599,7 @@ def test_ci_gates_require_evidence_not_per_version() -> None:
 
 def test_ci_gates_integration_tests_when_enabled() -> None:
     ci = _ci(versions=["3.12", "3.13"], integration_tests=True)
-    r = desired_ci_gates_ruleset(_project(), ci, ghas=True, integration_versions=("3.12", "3.13"))
+    r = _ci_gates_develop(_project(), ci, ghas=True, integration_versions=("3.12", "3.13"))
     names = _check_names(r)
     assert "test / integration / 3.12" in names
     assert "test / integration / 3.13" in names
@@ -566,23 +607,23 @@ def test_ci_gates_integration_tests_when_enabled() -> None:
 
 def test_ci_gates_no_integration_tests_when_disabled() -> None:
     ci = _ci(versions=["3.12"], integration_tests=False)
-    r = desired_ci_gates_ruleset(_project(), ci, ghas=True)
+    r = _ci_gates_develop(_project(), ci, ghas=True)
     names = _check_names(r)
     assert not any("test / integration" in n for n in names)
 
 
 def test_ci_gates_release_version_bump_present() -> None:
-    r = desired_ci_gates_ruleset(_project(release_model="tagged-release"), _ci(), ghas=True)
+    r = _ci_gates_develop(_project(release_model="tagged-release"), _ci(), ghas=True)
     assert "version / version-bump" in _check_names(r)
 
 
 def test_ci_gates_no_release_when_none() -> None:
-    r = desired_ci_gates_ruleset(_project(release_model="none"), _ci(), ghas=True)
+    r = _ci_gates_develop(_project(release_model="none"), _ci(), ghas=True)
     assert "version / version-bump" not in _check_names(r)
 
 
 def test_ci_gates_no_language_has_no_versioned_checks() -> None:
-    r = desired_ci_gates_ruleset(_project(language=None), _ci(versions=["latest"]), ghas=True)
+    r = _ci_gates_develop(_project(language=None), _ci(versions=["latest"]), ghas=True)
     names = _check_names(r)
     assert "quality / evidence" in names
     assert not any("quality / lint" in n for n in names)
@@ -598,7 +639,7 @@ def test_ci_gates_require_quality_evidence_not_common(language: str | None) -> N
     merge) and for a Python repo alike, replacing ``quality / common`` outright
     (vergil-project/vergil-tooling#3660, epic vergil-project/.github#488)."""
     for ghas in (True, False):
-        ruleset = desired_ci_gates_ruleset(_project(language=language), _ci(), ghas=ghas)
+        ruleset = _ci_gates_develop(_project(language=language), _ci(), ghas=ghas)
         names = _check_names(ruleset)
         assert names.count("quality / evidence") == 1
         assert "quality / common" not in names
@@ -640,7 +681,7 @@ _PACKAGE_CI_JOBS = {**_FULL_CI_JOBS, "package": "ci-package.yml"}
 
 
 def test_required_status_contexts_extracts_names() -> None:
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=True)
     contexts = required_status_contexts(ruleset)
     assert "quality / evidence" in contexts
     assert "quality / common" not in contexts
@@ -652,7 +693,7 @@ def test_required_status_contexts_extracts_names() -> None:
 def test_producible_when_all_required_contexts_have_a_pr_job() -> None:
     """A docs-publishing python repo whose ci.yml emits every required context
     (including `docs / docs`) has nothing unproducible."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=True, docs=True)
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
     assert (
         unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
@@ -662,7 +703,7 @@ def test_producible_when_all_required_contexts_have_a_pr_job() -> None:
 def test_integration_context_is_flagged_unproducible() -> None:
     """`test / integration / <v>` is required when integration-tests=true, but
     ci-test.yml emits only `unit` — so the context can never report (#2720)."""
-    ruleset = desired_ci_gates_ruleset(
+    ruleset = _ci_gates_develop(
         _project(),
         _ci(integration_tests=True),
         ghas=True,
@@ -677,7 +718,7 @@ def test_integration_context_is_flagged_unproducible() -> None:
 def test_docs_context_flagged_when_ci_lacks_docs_job() -> None:
     """The pre-fix `publish-docs` defect: the ruleset requires `docs / docs`, but
     a ci.yml with no docs job never reports it on a PR (#2720)."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=True, docs=True)
     jobs_without_docs = {k: v for k, v in _FULL_CI_JOBS.items() if k != "docs"}
     ci_yaml = _ci_yaml(jobs=jobs_without_docs)
     missing = unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
@@ -690,7 +731,7 @@ def test_ghas_literal_contexts_producible_only_with_ghas() -> None:
     the ghas and non-ghas derivations must come out clean."""
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
     for ghas in (True, False):
-        ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=ghas, docs=True)
+        ruleset = _ci_gates_develop(_project(), _ci(), ghas=ghas, docs=True)
         assert (
             unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=ghas)
             == []
@@ -700,7 +741,7 @@ def test_ghas_literal_contexts_producible_only_with_ghas() -> None:
 def test_evidence_gates_are_producible() -> None:
     """The stable ``<kind> / evidence`` gates branch protection now requires are
     each emitted by their reusable workflow, so nothing is unproducible."""
-    ruleset = desired_ci_gates_ruleset(
+    ruleset = _ci_gates_develop(
         _project(), _ci(versions=["3.12", "3.13", "3.14"]), ghas=True, docs=True
     )
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
@@ -727,7 +768,7 @@ def test_package_evidence_producible_when_ci_calls_ci_package() -> None:
     """`ci-package.yml` under a caller job keyed `package` emits the
     `package / evidence` gate on a PR, so a `[package]` repo is fully
     producible (epic #356, task A1's interface)."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True, package=True)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=True, docs=True, package=True)
     ci_yaml = _ci_yaml(jobs=_PACKAGE_CI_JOBS)
     assert (
         unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
@@ -735,7 +776,7 @@ def test_package_evidence_producible_when_ci_calls_ci_package() -> None:
 
 
 def test_package_evidence_flagged_when_ci_lacks_package_job() -> None:
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True, package=True)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=True, docs=True, package=True)
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
     missing = unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
     assert missing == ["package / evidence"]
@@ -754,13 +795,13 @@ _IMAGES_CI_YAML = (
 def test_images_evidence_producible_when_ci_calls_local_ci_images() -> None:
     """The ``images`` caller job running the repo-local ``ci-images.yml`` emits
     ``images / evidence`` on ``pull_request`` (vergil-tooling#4132)."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(images=True), ghas=True, docs=True)
+    ruleset = _ci_gates_develop(_project(), _ci(images=True), ghas=True, docs=True)
     required = required_status_contexts(ruleset)
     assert unproducible_ci_yaml_contexts(_IMAGES_CI_YAML, required, ghas=True) == []
 
 
 def test_images_evidence_flagged_when_ci_lacks_images_job() -> None:
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(images=True), ghas=True, docs=True)
+    ruleset = _ci_gates_develop(_project(), _ci(images=True), ghas=True, docs=True)
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
     missing = unproducible_ci_yaml_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
     assert missing == ["images / evidence"]
@@ -769,7 +810,7 @@ def test_images_evidence_flagged_when_ci_lacks_images_job() -> None:
 def test_images_evidence_flagged_when_ci_images_runs_under_another_job_id() -> None:
     """The context is ``<caller job> / evidence``: ``ci-images.yml`` called as
     ``image-builds`` emits ``image-builds / evidence``, never ``images / evidence``."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(images=True), ghas=True, docs=True)
+    ruleset = _ci_gates_develop(_project(), _ci(images=True), ghas=True, docs=True)
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS) + (
         "  image-builds:\n    uses: ./.github/workflows/ci-images.yml\n"
     )
@@ -797,7 +838,7 @@ def _desired_with(rulesets: list[DesiredRuleset]) -> Any:
 
 
 def test_assert_ci_gates_producible_passes_when_every_context_is_emitted() -> None:
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=True, docs=True)
     assert_ci_gates_producible(
         _desired_with([ruleset]), _ci_yaml(jobs=_FULL_CI_JOBS), ghas=True, source="ci.yml"
     )
@@ -806,14 +847,14 @@ def test_assert_ci_gates_producible_passes_when_every_context_is_emitted() -> No
 def test_assert_ci_gates_producible_passes_for_images_repo() -> None:
     """``apply`` against a vergil-containers-shaped ci.yml with ``[ci].images``
     on is not refused (vergil-tooling#4132)."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(images=True), ghas=True, docs=True)
+    ruleset = _ci_gates_develop(_project(), _ci(images=True), ghas=True, docs=True)
     assert_ci_gates_producible(
         _desired_with([ruleset]), _IMAGES_CI_YAML, ghas=True, source="ci.yml"
     )
 
 
 def test_assert_ci_gates_producible_names_source_and_missing_context() -> None:
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=True, docs=True)
     jobs_without_docs = {k: v for k, v in _FULL_CI_JOBS.items() if k != "docs"}
     with pytest.raises(RuntimeError) as exc:
         assert_ci_gates_producible(
@@ -830,7 +871,7 @@ def test_assert_ci_gates_producible_names_source_and_missing_context() -> None:
 def test_assert_ci_gates_producible_names_integration_tests_as_the_cause() -> None:
     """The integration contexts are put down to ``[ci].integration-tests = true``
     directly, with the reason, not offered as one guess among several (#4448)."""
-    ruleset = desired_ci_gates_ruleset(
+    ruleset = _ci_gates_develop(
         _project(),
         _ci(integration_tests=True),
         ghas=True,
@@ -858,7 +899,7 @@ def test_assert_ci_gates_producible_names_integration_tests_as_the_cause() -> No
 
 
 def test_assert_ci_gates_producible_separates_integration_from_other_causes() -> None:
-    ruleset = desired_ci_gates_ruleset(
+    ruleset = _ci_gates_develop(
         _project(),
         _ci(integration_tests=True),
         ghas=True,
@@ -877,7 +918,7 @@ def test_assert_ci_gates_producible_separates_integration_from_other_causes() ->
 
 
 def test_assert_ci_gates_producible_other_cause_does_not_blame_integration_tests() -> None:
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
+    ruleset = _ci_gates_develop(_project(), _ci(), ghas=True, docs=True)
     jobs_without_docs = {k: v for k, v in _FULL_CI_JOBS.items() if k != "docs"}
     with pytest.raises(RuntimeError) as exc:
         assert_ci_gates_producible(
@@ -888,9 +929,29 @@ def test_assert_ci_gates_producible_other_cause_does_not_blame_integration_tests
     assert "Cause of docs / docs: " in message
 
 
-def test_assert_ci_gates_producible_no_ci_gates_ruleset_is_a_no_op() -> None:
-    """With no ``CI gates`` ruleset there is nothing required to cross-check."""
-    assert_ci_gates_producible(_desired_with([]), "", ghas=True, source="ci.yml")
+@pytest.mark.parametrize("name", ["", LEGACY_CI_GATES_RULESET_NAME, CI_GATES_MAIN])
+def test_assert_ci_gates_producible_without_develop_ruleset_is_an_error(name: str) -> None:
+    """With no ``CI gates (develop)`` ruleset (none at all, only the legacy name,
+    or main's alone) the guard refuses rather than checking nothing (spec §6.1)."""
+    rulesets = [dataclasses.replace(_ci_gates_develop(_project(), _ci(), ghas=True), name=name)]
+    with pytest.raises(RuntimeError, match=r"no 'CI gates \(develop\)' ruleset"):
+        assert_ci_gates_producible(
+            _desired_with(rulesets if name else []), "", ghas=True, source="ci.yml"
+        )
+
+
+def test_assert_ci_gates_producible_checks_the_main_ruleset() -> None:
+    """A context only main's ruleset requires is still checked."""
+    develop, main = desired_ci_gates_rulesets(_project(), _ci(), ghas=True, docs=False)
+    _checks(main).append({"context": "docs / docs", "integration_id": 15368})
+    jobs_without_docs = {k: v for k, v in _FULL_CI_JOBS.items() if k != "docs"}
+    with pytest.raises(RuntimeError, match="Unproducible required contexts: docs / docs"):
+        assert_ci_gates_producible(
+            _desired_with([develop, main]),
+            _ci_yaml(jobs=jobs_without_docs),
+            ghas=True,
+            source="ci.yml",
+        )
 
 
 # -- Local reusable-workflow calls (``uses: ./.github/workflows/...``, #3454)
@@ -993,7 +1054,7 @@ def test_local_reusable_workflow_calls_produce_same_contexts_as_remote() -> None
 def test_vergil_actions_real_ci_yaml_passes_the_guard() -> None:
     """vergil-actions' committed ci.yml emits every context its desired CI-gates
     ruleset requires — the exact set `apply` falsely refused (issue #3454)."""
-    ruleset = desired_ci_gates_ruleset(_project(language="shell"), _ci(), ghas=True, docs=True)
+    ruleset = _ci_gates_develop(_project(language="shell"), _ci(), ghas=True, docs=True)
     assert sorted(required_status_contexts(ruleset)) == [
         "Semgrep OSS",
         "Trivy",
@@ -1054,7 +1115,7 @@ def test_producible_gate_catalog_covers_desired_stable_gates() -> None:
     """Drift guard: every stable (non-per-version) gate a fully-enabled desired
     ruleset requires must be in the produced catalog, so the catalog can never
     silently fall behind ``desired_ci_gates_ruleset``."""
-    ruleset = desired_ci_gates_ruleset(
+    ruleset = _ci_gates_develop(
         _project(), _ci(integration_tests=True, images=True), ghas=True, docs=True, package=True
     )
     assert "images / evidence" in required_status_contexts(ruleset)
@@ -1071,7 +1132,7 @@ def test_audit_flags_stale_per_version_required_context() -> None:
     gate, deadlocking every merge with green checks (epic #338)."""
     desired = _state(_vergil_config(), visibility="public", is_org=True)
     actual = _state(_vergil_config(), visibility="public", is_org=True)
-    actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
+    actual_gates = next(r for r in actual.rulesets if r.name == CI_GATES_DEVELOP)
     _checks(actual_gates).append(
         {"context": "audit / dependencies / 3.12", "integration_id": 15368}
     )
@@ -1082,7 +1143,7 @@ def test_audit_flags_stale_per_version_required_context() -> None:
     unproducible = [
         item
         for item in diff.items
-        if item.field == "rulesets.CI gates.unproducible_required_context"
+        if item.field == "rulesets.CI gates (develop).unproducible_required_context"
     ]
     assert [item.actual for item in unproducible] == ["audit / dependencies / 3.12"]
 
@@ -1096,7 +1157,8 @@ def test_audit_compliant_when_required_are_evidence_gates() -> None:
     diff = compute_diff(desired=state, actual=state)
     assert diff.is_compliant()
     assert not any(
-        item.field == "rulesets.CI gates.unproducible_required_context" for item in diff.items
+        item.field == f"rulesets.{CI_GATES_DEVELOP}.unproducible_required_context"
+        for item in diff.items
     )
 
 
@@ -1106,14 +1168,15 @@ def test_audit_does_not_mislabel_producible_gate_as_unproducible() -> None:
     producibility check must not mislabel it (only the ruleset diff flags it)."""
     desired = _state(_vergil_config(release_model="none"), visibility="public", is_org=True)
     actual = _state(_vergil_config(release_model="none"), visibility="public", is_org=True)
-    actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
+    actual_gates = next(r for r in actual.rulesets if r.name == CI_GATES_DEVELOP)
     _checks(actual_gates).append({"context": "version / version-bump", "integration_id": 15368})
 
     diff = compute_diff(desired=desired, actual=actual)
 
     assert not diff.is_compliant()  # still drift, via the ruleset diff
     assert not any(
-        item.field == "rulesets.CI gates.unproducible_required_context" for item in diff.items
+        item.field == f"rulesets.{CI_GATES_DEVELOP}.unproducible_required_context"
+        for item in diff.items
     )
 
 
@@ -1127,7 +1190,7 @@ def test_ci_gates_matrixed_kinds_emit_one_evidence_gate_each() -> None:
     gate: quality (common, custom, lint, typecheck), test (unit), audit
     (dependencies)."""
     ci = _ci(versions=["3.12", "3.13", "3.14"])
-    names = _check_names(desired_ci_gates_ruleset(_project(), ci, ghas=True))
+    names = _check_names(_ci_gates_develop(_project(), ci, ghas=True))
     assert sorted(n for n in names if n.endswith("/ evidence")) == [
         "audit / evidence",
         "quality / evidence",
@@ -1138,9 +1201,9 @@ def test_ci_gates_matrixed_kinds_emit_one_evidence_gate_each() -> None:
 def test_ci_gates_matrixed_gates_are_independent_of_version_count() -> None:
     """The required set does not churn when ``[ci].versions`` changes — the whole
     point of requiring the evidence aggregate instead of per-version legs."""
-    one = _check_names(desired_ci_gates_ruleset(_project(), _ci(versions=["3.14"]), ghas=True))
+    one = _check_names(_ci_gates_develop(_project(), _ci(versions=["3.14"]), ghas=True))
     three = _check_names(
-        desired_ci_gates_ruleset(_project(), _ci(versions=["3.12", "3.13", "3.14"]), ghas=True)
+        _ci_gates_develop(_project(), _ci(versions=["3.12", "3.13", "3.14"]), ghas=True)
     )
     assert one == three
 
@@ -1173,7 +1236,7 @@ _EXPECTED_GATES_TWO_VERSIONS = [
 @pytest.mark.parametrize("language", ["python", "go", "rust"])
 def test_ci_gates_existing_languages_snapshot(language: str) -> None:
     ci = _ci(versions=["v1", "v2"])
-    r = desired_ci_gates_ruleset(_project(language=language), ci, ghas=True)
+    r = _ci_gates_develop(_project(language=language), ci, ghas=True)
     assert _check_names(r) == _EXPECTED_GATES_TWO_VERSIONS
 
 
@@ -1262,20 +1325,148 @@ def test_resolved_integration_versions_no_language_is_latest() -> None:
 def test_compute_desired_state_requires_resolved_integration_checks() -> None:
     cfg = _vergil_config(versions=["3.13"], integration_tests=True)
     state = _state(cfg, visibility="public", is_org=True)
-    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    gates = next(r for r in state.rulesets if r.name == CI_GATES_DEVELOP)
     assert "test / integration / 3.13" in _check_names(gates)
 
 
-def test_compute_desired_state_has_five_rulesets() -> None:
+def test_compute_desired_state_has_six_rulesets() -> None:
     state = _state(_vergil_config(), visibility="public", is_org=True)
-    assert len(state.rulesets) == 5
-    assert [r.name for r in state.rulesets][:4] == [
+    assert [r.name for r in state.rulesets] == [
         "Branch protection",
         "Tag protection",
         "Rolling tag branch names",
         "Automation branches",
+        CI_GATES_DEVELOP,
+        CI_GATES_MAIN,
     ]
-    assert "CI gates" in [r.name for r in state.rulesets]
+
+
+def test_legacy_ci_gates_is_undesired() -> None:
+    """The shared ``CI gates`` ruleset is no longer desired, so the audit
+    reports it as drift and apply deletes it (spec §6.1)."""
+    state = _state(_vergil_config(), visibility="public", is_org=True)
+    assert LEGACY_CI_GATES_RULESET_NAME == "CI gates"
+    assert LEGACY_CI_GATES_RULESET_NAME not in [r.name for r in state.rulesets]
+
+
+def _legacy_ci_gates(desired: DesiredState) -> DesiredRuleset:
+    """The pre-split shared ruleset, as a repo not yet migrated still has it."""
+    develop = next(r for r in desired.rulesets if r.name == CI_GATES_DEVELOP)
+    return dataclasses.replace(
+        develop,
+        name=LEGACY_CI_GATES_RULESET_NAME,
+        ref_include=["refs/heads/main", "refs/heads/develop"],
+        rules=[
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "strict_required_status_checks_policy": True,
+                    "required_status_checks": _checks(develop),
+                },
+            }
+        ],
+    )
+
+
+def test_drift_report_names_ruleset_split() -> None:
+    """A repo still on the shared ruleset reports it as replaced by the pair,
+    and the pair as missing, so the drift report names the change."""
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    others = [r for r in desired.rulesets if r.name not in CI_GATES_RULESET_NAMES]
+    actual = dataclasses.replace(desired, rulesets=[*others, _legacy_ci_gates(desired)])
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    by_field = {item.field: item for item in diff.items}
+    legacy = by_field["rulesets.CI gates"]
+    assert legacy.expected == "absent (replaced by 'CI gates (develop)' and 'CI gates (main)')"
+    assert legacy.actual == "present"
+    for name in CI_GATES_RULESET_NAMES:
+        assert by_field[f"rulesets.{name}"].actual == "missing"
+
+
+def test_drift_report_names_develop_only_replacement() -> None:
+    """A docs-single-branch repo's shared ruleset is replaced by develop's alone."""
+    cfg = _vergil_config()
+    cfg.project.branching_model = "docs-single-branch"
+    desired = _state(cfg, visibility="public", is_org=True)
+    actual = dataclasses.replace(desired, rulesets=[*desired.rulesets, _legacy_ci_gates(desired)])
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    legacy = next(item for item in diff.items if item.field == "rulesets.CI gates")
+    assert legacy.expected == "absent (replaced by 'CI gates (develop)')"
+
+
+def test_other_undesired_ruleset_is_plain_absent() -> None:
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    stray = dataclasses.replace(desired.rulesets[0], name="Stray")
+    actual = dataclasses.replace(desired, rulesets=[*desired.rulesets, stray])
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert [(i.field, i.expected) for i in diff.items] == [("rulesets.Stray", "absent")]
+
+
+def test_legacy_name_without_desired_pair_is_plain_absent() -> None:
+    """With no CI-gates ruleset desired, nothing replaces the legacy one."""
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    others = [r for r in desired.rulesets if r.name not in CI_GATES_RULESET_NAMES]
+    legacy = _legacy_ci_gates(desired)
+    diff = compute_diff(
+        desired=dataclasses.replace(desired, rulesets=others),
+        actual=dataclasses.replace(desired, rulesets=[*others, legacy]),
+    )
+    assert [(i.field, i.expected) for i in diff.items] == [("rulesets.CI gates", "absent")]
+
+
+def test_producibility_checks_both_rulesets() -> None:
+    """An unproducible context is reported on whichever CI-gates ruleset requires it."""
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    for name in CI_GATES_RULESET_NAMES:
+        actual = _state(_vergil_config(), visibility="public", is_org=True)
+        gates = next(r for r in actual.rulesets if r.name == name)
+        _checks(gates).append({"context": "audit / dependencies / 3.12", "integration_id": 15368})
+
+        diff = compute_diff(desired=desired, actual=actual)
+
+        unproducible = [
+            (item.field, item.actual)
+            for item in diff.items
+            if item.field.endswith(".unproducible_required_context")
+        ]
+        assert unproducible == [
+            (f"rulesets.{name}.unproducible_required_context", "audit / dependencies / 3.12")
+        ]
+
+
+@pytest.mark.parametrize("name", CI_GATES_RULESET_NAMES)
+def test_producibility_missing_ruleset_is_error(name: str) -> None:
+    """A desired CI-gates ruleset with no live counterpart is a
+    ``missing_ci_gates_ruleset`` item, never a silent skip."""
+    desired = _state(_vergil_config(), visibility="public", is_org=True)
+    actual = dataclasses.replace(desired, rulesets=[r for r in desired.rulesets if r.name != name])
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    item = next(i for i in diff.items if i.field == f"rulesets.{name}.missing_ci_gates_ruleset")
+    assert (item.expected, item.actual) == ("desired", "missing")
+
+
+def test_producibility_undesired_live_ruleset_is_error() -> None:
+    """The reverse: a live CI-gates ruleset the desired state has no counterpart
+    for (a main ruleset on a docs-single-branch repo) is reported too."""
+    cfg = _vergil_config()
+    cfg.project.branching_model = "docs-single-branch"
+    desired = _state(cfg, visibility="public", is_org=True)
+    actual = _state(_vergil_config(), visibility="public", is_org=True)
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    item = next(
+        i for i in diff.items if i.field == f"rulesets.{CI_GATES_MAIN}.missing_ci_gates_ruleset"
+    )
+    assert (item.expected, item.actual) == ("not desired", "present")
 
 
 def test_compute_desired_state_omits_docs_gate_when_publish_docs_false() -> None:
@@ -1283,13 +1474,13 @@ def test_compute_desired_state_omits_docs_gate_when_publish_docs_false() -> None
     non-docs repo's branch protection never requires the never-reported
     `docs / docs` check (vergil-project/vergil-tooling#2647)."""
     state = _state(_vergil_config(docs=False), visibility="public", is_org=True)
-    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    gates = next(r for r in state.rulesets if r.name == CI_GATES_DEVELOP)
     assert "docs / docs" not in _check_names(gates)
 
 
 def test_compute_desired_state_keeps_docs_gate_when_publish_docs_true() -> None:
     state = _state(_vergil_config(docs=True), visibility="public", is_org=True)
-    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    gates = next(r for r in state.rulesets if r.name == CI_GATES_DEVELOP)
     assert "docs / docs" in _check_names(gates)
 
 
@@ -1298,7 +1489,7 @@ def test_compute_desired_state_requires_package_gate_with_package_section() -> N
     branch protection requires `package / evidence` (epic #356, spec 8.1)."""
     cfg = _vergil_config(package=_package_config())
     state = _state(cfg, visibility="public", is_org=True)
-    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    gates = next(r for r in state.rulesets if r.name == CI_GATES_DEVELOP)
     assert "package / evidence" in _check_names(gates)
 
 
@@ -1308,7 +1499,7 @@ def test_compute_desired_state_requires_package_gate_with_several_packages() -> 
     cfg = _vergil_config()
     cfg.packages = (_package_config(), _package_config())
     state = _state(cfg, visibility="public", is_org=True)
-    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    gates = next(r for r in state.rulesets if r.name == CI_GATES_DEVELOP)
     assert "package / evidence" in _check_names(gates)
 
 
@@ -1316,14 +1507,14 @@ def test_compute_desired_state_requires_images_gate_with_ci_images() -> None:
     """``[ci].images`` in ``vergil.toml`` flows through to the CI-gates ruleset,
     and the audit then finds a live ruleset requiring it compliant."""
     state = _state(_vergil_config(images=True), visibility="public", is_org=True)
-    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    gates = next(r for r in state.rulesets if r.name == CI_GATES_DEVELOP)
     assert "images / evidence" in _check_names(gates)
     assert compute_diff(desired=state, actual=state).is_compliant()
 
 
 def test_compute_desired_state_omits_images_gate_by_default() -> None:
     state = _state(_vergil_config(), visibility="public", is_org=True)
-    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    gates = next(r for r in state.rulesets if r.name == CI_GATES_DEVELOP)
     assert "images / evidence" not in _check_names(gates)
 
 
@@ -1337,13 +1528,13 @@ def test_audit_reports_images_gate_drift_on_non_images_repo() -> None:
 
 def test_compute_desired_state_omits_package_gate_without_package_section() -> None:
     state = _state(_vergil_config(), visibility="public", is_org=True)
-    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    gates = next(r for r in state.rulesets if r.name == CI_GATES_DEVELOP)
     assert "package / evidence" not in _check_names(gates)
 
 
 def test_compute_desired_state_private_without_ghas_drops_alert_checks() -> None:
     state = _state(_vergil_config(), visibility="private", is_org=True)
-    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    gates = next(r for r in state.rulesets if r.name == CI_GATES_DEVELOP)
     names = _check_names(gates)
     assert "Trivy" not in names
     assert "security / trivy" in names
@@ -1354,7 +1545,7 @@ def test_compute_desired_state_private_with_declared_ghas_keeps_full_posture() -
     cfg.project.ghas = True
     state = _state(cfg, visibility="private", is_org=True)
     assert state.security.secret_scanning == "enabled"  # noqa: S105
-    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    gates = next(r for r in state.rulesets if r.name == CI_GATES_DEVELOP)
     names = _check_names(gates)
     assert "Trivy" in names
     assert "Semgrep OSS" in names
@@ -1372,9 +1563,9 @@ def test_compute_desired_state_includes_security() -> None:
 
 
 def test_compute_desired_state_includes_actions() -> None:
-    state = _state(_vergil_config(), visibility="public", is_org=True)
+    state = _state(_vergil_config(language="rust"), visibility="public", is_org=True)
     assert state.actions_permissions.allowed_actions == "selected"
-    assert "pypa/*" in state.actions_permissions.patterns_allowed
+    assert "swatinem/*" in state.actions_permissions.patterns_allowed
 
 
 # ---------------------------------------------------------------------------
@@ -2175,33 +2366,33 @@ def test_diff_detects_extra_required_check() -> None:
     """
     desired = _state(_vergil_config(release_model="none"), visibility="public", is_org=True)
     actual = _state(_vergil_config(release_model="none"), visibility="public", is_org=True)
-    actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
+    actual_gates = next(r for r in actual.rulesets if r.name == CI_GATES_DEVELOP)
     _checks(actual_gates).append({"context": "version / version-bump", "integration_id": 15368})
 
     diff = compute_diff(desired=desired, actual=actual)
 
     assert not diff.is_compliant()
-    assert any(d.field == "rulesets.CI gates.rules" for d in diff.items)
+    assert any(d.field == "rulesets.CI gates (develop).rules" for d in diff.items)
 
 
 def test_diff_detects_missing_required_check() -> None:
     """A required check desired but absent from the live ruleset is drift."""
     desired = _state(_vergil_config(), visibility="public", is_org=True)
     actual = _state(_vergil_config(), visibility="public", is_org=True)
-    actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
+    actual_gates = next(r for r in actual.rulesets if r.name == CI_GATES_DEVELOP)
     _checks(actual_gates).pop()
 
     diff = compute_diff(desired=desired, actual=actual)
 
     assert not diff.is_compliant()
-    assert any(d.field == "rulesets.CI gates.rules" for d in diff.items)
+    assert any(d.field == "rulesets.CI gates (develop).rules" for d in diff.items)
 
 
 def test_diff_ignores_required_check_ordering() -> None:
     """Reordered-but-identical check sets are not drift (no false positive)."""
     desired = _state(_vergil_config(), visibility="public", is_org=True)
     actual = _state(_vergil_config(), visibility="public", is_org=True)
-    actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
+    actual_gates = next(r for r in actual.rulesets if r.name == CI_GATES_DEVELOP)
     _checks(actual_gates).reverse()
 
     diff = compute_diff(desired=desired, actual=actual)
@@ -2775,12 +2966,26 @@ def test_cleanup_removes_only_stale_ci_contexts_and_preserves_the_rest() -> None
 
     # Each branch is PATCHed on the required-status-checks sub-resource with only
     # the surviving (non-stale) contexts — the evidence gate stays required.
+    # develop's PATCH also clears strict; main's keeps it (epic #1218).
     assert mock_write.call_count == 2
+    bodies: dict[str, object] = {}
     for call in mock_write.call_args_list:
         method, endpoint, body = call[0][0], call[0][1], call[0][2]
         assert method == "PATCH"
         assert endpoint.endswith("/protection/required_status_checks")
-        assert body == {"contexts": ["audit / evidence"]}
+        bodies[endpoint] = body
+    assert bodies == {
+        "repos/o/r/branches/develop/protection/required_status_checks": {
+            "contexts": ["audit / evidence"],
+            "strict": False,
+        },
+        "repos/o/r/branches/main/protection/required_status_checks": {
+            "contexts": ["audit / evidence"],
+        },
+    }
+    by_branch = {r.branch: r for r in reports}
+    assert by_branch["develop"].cleared_strict is True
+    assert by_branch["main"].cleared_strict is False
 
 
 def test_cleanup_empties_contexts_when_every_leg_is_stale() -> None:
@@ -2813,7 +3018,7 @@ def test_cleanup_empties_contexts_when_every_leg_is_stale() -> None:
 def test_cleanup_leaves_branch_untouched_when_no_stale_contexts() -> None:
     rulesets = [desired_branch_protection_ruleset()]
     protection: dict[str, object] = {
-        "required_status_checks": {"strict": True, "contexts": ["audit / evidence"]},
+        "required_status_checks": {"strict": False, "contexts": ["audit / evidence"]},
         "required_pull_request_reviews": {"required_approving_review_count": 1},
     }
     with (
@@ -2907,6 +3112,183 @@ def test_cleanup_deduplicates_branches_across_rulesets() -> None:
     # Each unique branch is inspected exactly once.
     assert mock_read.call_count == 2
     assert sorted(r.branch for r in reports) == ["develop", "main"]
+
+
+# ---------------------------------------------------------------------------
+# Classic protection's up-to-date flag (strict) on develop (epic #1218)
+# ---------------------------------------------------------------------------
+
+
+def _strict_protection(*, strict: bool) -> dict[str, object]:
+    """A classic protection with no stale CI leg and the given ``strict``."""
+    return {
+        "required_status_checks": {"strict": strict, "contexts": ["audit / evidence"]},
+        "required_pull_request_reviews": {"required_approving_review_count": 1},
+        "enforce_admins": {"enabled": True},
+    }
+
+
+def _desired_for_strict_tests() -> DesiredState:
+    return _state(_vergil_config(), visibility="public", is_org=True)
+
+
+def _branch_protection_items(diff: ConfigDiff) -> list[DiffItem]:
+    return [item for item in diff.items if item.field.startswith("branch_protection.")]
+
+
+def test_classic_strict_on_develop_is_drift() -> None:
+    result = _fetch_with_classic_protection({"develop": _strict_protection(strict=True)})
+    assert result.state.classic_develop_strict is True
+
+    diff = compute_diff(desired=_desired_for_strict_tests(), actual=result.state)
+    assert _branch_protection_items(diff) == [
+        DiffItem(field="branch_protection.develop.strict", expected=False, actual=True)
+    ]
+    assert not diff.is_compliant()
+
+
+def test_classic_strict_on_develop_read_when_not_default_or_ruleset_covered() -> None:
+    # develop is always inspected, even when it is neither the default branch
+    # nor covered by a live ruleset.
+    result = _fetch_with_classic_protection(
+        {"develop": _strict_protection(strict=True)}, default_branch="main"
+    )
+    assert result.state.classic_develop_strict is True
+
+
+def test_classic_strict_false_on_develop_no_item() -> None:
+    result = _fetch_with_classic_protection({"develop": _strict_protection(strict=False)})
+    diff = compute_diff(desired=_desired_for_strict_tests(), actual=result.state)
+    assert _branch_protection_items(diff) == []
+
+
+def test_apply_clears_only_strict() -> None:
+    rulesets = [desired_branch_protection_ruleset()]  # covers main + develop
+
+    def read_json(*args: str) -> dict[str, object]:
+        if args[1] == "repos/o/r/branches/develop/protection":
+            return _strict_protection(strict=True)
+        raise GitHubAPIError(1, ("gh", "api", args[1]), "", "gh: Branch not protected (HTTP 404)")
+
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=read_json),
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_delete,
+    ):
+        reports = _cleanup_classic_branch_protection("o/r", rulesets)
+
+    # One scoped PATCH that names only strict: the contexts and every other
+    # classic setting are left as they are.
+    mock_delete.assert_not_called()
+    mock_write.assert_called_once_with(
+        "PATCH",
+        "repos/o/r/branches/develop/protection/required_status_checks",
+        {"strict": False},
+    )
+    assert reports == [
+        ClassicProtectionReport(
+            branch="develop",
+            removed_contexts=[],
+            preserved_settings=["enforce_admins", "required_pull_request_reviews"],
+            cleared_strict=True,
+        )
+    ]
+    assert reports[0].summary() == (
+        "cleared the up-to-date requirement (strict); "
+        "preserved [enforce_admins, required_pull_request_reviews]"
+    )
+
+
+def test_classic_strict_on_main_untouched() -> None:
+    # Audit: main's strict is not drift.
+    summary: list[object] = [{"id": 7}]
+    detail: dict[str, object] = {
+        "name": "Branch protection",
+        "target": "branch",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": ["refs/heads/main"]}},
+        "bypass_actors": [],
+        "rules": [{"type": "deletion"}],
+    }
+    result = _fetch_with_classic_protection(
+        {"main": _strict_protection(strict=True)},
+        rulesets_summary=summary,
+        ruleset_details={"7": detail},
+    )
+    assert result.state.classic_develop_strict is False
+    diff = compute_diff(desired=_desired_for_strict_tests(), actual=result.state)
+    assert _branch_protection_items(diff) == []
+
+    # Apply: main's classic protection is never written.
+    def read_json(*args: str) -> dict[str, object]:
+        if args[1] == "repos/o/r/branches/main/protection":
+            return _strict_protection(strict=True)
+        raise GitHubAPIError(1, ("gh", "api", args[1]), "", "gh: Branch not protected (HTTP 404)")
+
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=read_json),
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+    ):
+        reports = _cleanup_classic_branch_protection("o/r", [desired_branch_protection_ruleset()])
+    mock_write.assert_not_called()
+    assert reports == []
+
+
+def test_no_classic_protection_no_item() -> None:
+    result = _fetch_with_classic_protection({})
+    assert result.state.classic_develop_strict is False
+    diff = compute_diff(desired=_desired_for_strict_tests(), actual=result.state)
+    assert _branch_protection_items(diff) == []
+
+    not_found = GitHubAPIError(1, ("gh", "api", "x"), "", "gh: Branch not protected (HTTP 404)")
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=not_found),
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+    ):
+        reports = _cleanup_classic_branch_protection("o/r", [desired_branch_protection_ruleset()])
+    mock_write.assert_not_called()
+    assert reports == []
+
+
+def test_classic_develop_unreadable_is_not_checked_not_drift() -> None:
+    # A token that cannot read develop's classic protection reports it as not
+    # checked, never as strict drift (#3816).
+    def read_json(*args: str) -> dict[str, object] | list[object]:
+        endpoint = args[1]
+        if endpoint == "repos/o/r":
+            return {**_REPO_SETTINGS_JSON, "default_branch": "", "security_and_analysis": {}}
+        if endpoint == "repos/o/r/rulesets":
+            return []
+        if endpoint == "repos/o/r/actions/permissions":
+            return {"allowed_actions": "all"}
+        if endpoint == "repos/o/r/actions/permissions/workflow":
+            return {"default_workflow_permissions": "read"}
+        raise _forbidden(endpoint)
+
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=read_json),
+        patch("vergil_tooling.lib.github_config._fetch_vulnerability_alerts", return_value=True),
+    ):
+        result = fetch_actual_state("o/r")
+    assert [nc.field for nc in result.not_checked] == ["classic_protection.develop"]
+    diff = compute_diff(
+        desired=_desired_for_strict_tests(), actual=result.state, not_checked=result.not_checked
+    )
+    assert _branch_protection_items(diff) == []
+    assert not diff.is_compliant()
+
+
+def test_cleanup_report_summary_names_removed_contexts_and_strict() -> None:
+    report = ClassicProtectionReport(
+        branch="develop",
+        removed_contexts=["audit / dependencies / 3.12"],
+        preserved_settings=[],
+        cleared_strict=True,
+    )
+    assert report.summary() == (
+        "removed stale CI contexts [audit / dependencies / 3.12]; "
+        "cleared the up-to-date requirement (strict); preserved [none]"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3106,7 +3488,12 @@ def test_fetch_actual_state_selected_actions_unreadable() -> None:
         patch("vergil_tooling.lib.github_config._fetch_vulnerability_alerts", return_value=True),
     ):
         result = fetch_actual_state("o/r")
-    assert [nc.field for nc in result.not_checked] == ["actions_permissions.patterns_allowed"]
+    # develop's classic protection is always read (epic #1218), so its 403 is
+    # recorded too.
+    assert [nc.field for nc in result.not_checked] == [
+        "actions_permissions.patterns_allowed",
+        "classic_protection.develop",
+    ]
 
 
 def test_fetch_actual_state_non_permission_403_propagates() -> None:

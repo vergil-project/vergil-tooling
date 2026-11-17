@@ -43,6 +43,13 @@ def trivy_home(tmp_path: Path) -> Iterator[Path]:
 
 
 @pytest.fixture(autouse=True)
+def _cwd_at_repo_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Most tests resolve the repo root to tmp_path; run from there, as a real
+    # run does, so the not-at-repo-root warning (#4594) stays out of their way.
+    monkeypatch.chdir(tmp_path)
+
+
+@pytest.fixture(autouse=True)
 def _host_platform() -> Iterator[None]:
     # Platform resolution probes the network and filesystem; pin it so every
     # run is hermetic. Tests that care override it explicitly.
@@ -335,6 +342,60 @@ def test_network_printed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     ):
         main(["--", "cmd"])
     assert "Network:  mynet" in capsys.readouterr().out
+
+
+# -- current directory vs resolved repo root (#4594) --------------------------
+
+
+def _launch_from(cwd: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    monkeypatch.chdir(cwd)
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=repo_root),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image") as mock_cache,
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", {"GH_TOKEN": "tok"}, clear=True),
+    ):
+        mock_cache.return_value = "ghcr.io/vergil-project/prod-base:latest"
+        main(["--", "vrg-validate", "--check", "lint"])
+    return mock_exec
+
+
+def test_no_warning_at_repo_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    mock_exec = _launch_from(tmp_path, tmp_path, monkeypatch)
+    mock_exec.assert_called_once()
+    assert "WARNING" not in capsys.readouterr().err
+
+
+def test_warns_below_repo_root_and_carries_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A copied fixture with no .git of its own resolves the enclosing repo.
+    copy = tmp_path / "build" / "tmp" / "fixture-copy"
+    copy.mkdir(parents=True)
+    mock_exec = _launch_from(copy, tmp_path, monkeypatch)
+    # It warns and still runs, mounting the resolved root.
+    mock_exec.assert_called_once()
+    assert f"{tmp_path}:/workspace" in mock_exec.call_args[0][1]
+    err = capsys.readouterr().err
+    assert "WARNING: the current directory is not the root of the repo this run resolved." in err
+    assert f"current directory: {copy}\n" in err
+    assert f"repo root:         {tmp_path}\n" in err
+
+
+def test_no_warning_when_root_is_named_through_a_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The same directory under two spellings is the repo root, not a mismatch.
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    _launch_from(real, link, monkeypatch)
+    assert "WARNING" not in capsys.readouterr().err
 
 
 # -- argv=None uses sys.argv --------------------------------------------------
