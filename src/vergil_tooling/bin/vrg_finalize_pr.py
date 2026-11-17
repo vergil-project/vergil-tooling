@@ -836,7 +836,7 @@ def _declares_cd_workflow(root: Path) -> bool | None:
     for path in files:
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        except OSError, UnicodeDecodeError, yaml.YAMLError:
             unknown = True
             continue
         if isinstance(data, dict) and data.get("name") == _CD_WORKFLOW_NAME:
