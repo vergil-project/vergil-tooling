@@ -20983,11 +20983,11 @@ quarter-named epics to that form; both are dry runs unless <code>--apply</code>.
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>GitHub App credentials for the target org</td>
+<td>GitHub App credentials for the target org; <code>--all-in</code> also needs an identity that sees every repo in ORG</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Error on stderr</td>
+<td>Error on stderr; <code>--all-in</code> refuses before any read when the identity may not see every repo in ORG</td>
 </tr>
 <tr>
 <td>Exit codes</td>
