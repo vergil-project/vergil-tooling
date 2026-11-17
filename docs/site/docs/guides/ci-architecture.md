@@ -83,8 +83,9 @@ rebuilds the cached image (see
 [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)).
 The build checks that `vrg-*` runs from `/usr/bin`
 on vergil-python; a branch is `uv tool install` from git on the core
-Python. With neither, it is `uv tool install` from git. An image with only
-one of the two fails the build. The build log names the path it took.
+Python. With neither, it is `uv tool install --python 3.15` from git. An
+image with only one of the two fails the build. The build log names the path
+it took.
 
 `vrg-validate` first runs the common checks: the
 [repo-profile](../reference/lint/repo-profile.md) check, markdownlint,

@@ -23,7 +23,8 @@ uv tool install --python 3.15 'vergil-tooling @ git+https://github.com/vergil-pr
 ```
 
 On an agent VM, a dev ref (`vrg-vm update --tag develop`, or any non-release
-ref) is an explicit `uv tool install` from git that shadows the packaged copy,
+ref) is an explicit `uv tool install --python 3.15` from git that shadows the
+packaged copy,
 and every `vrg-vm` command that touches the VM prints a `DEV tooling` banner
 while it is in place. A plain `vrg-vm update` returns the VM to the package.
 See [vergil-tooling inside the VM](../reference/vm-spec.md#vergil-tooling-inside-the-vm).
