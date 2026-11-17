@@ -1531,6 +1531,8 @@ def test_status_and_upgrade_refresh_when_a_brew_latest_is_read(
     _stub_upgrade(monkeypatch, (_dep(),))
     vrg_host.main(["upgrade", "gh"])
     assert brew_refresh_calls == [1]
+    vrg_host.main(["status"])
+    assert brew_refresh_calls == [1, 1]
 
 
 def test_host_settings_path_is_the_user_settings() -> None:
