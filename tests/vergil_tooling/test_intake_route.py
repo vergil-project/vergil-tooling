@@ -876,6 +876,72 @@ def test_route_planning_from_deferred(env: Env) -> None:
     env.reparent_child.assert_called_once_with(PLANNING, ITEM)
 
 
+def test_route_planning_from_adhoc_reparents(env: Env) -> None:
+    # #4598: an ad-hoc task found too big for one PR goes straight to planning.
+    env.parent = ADHOC_DOTGITHUB
+    env.native_parent[ITEM] = ADHOC_DOTGITHUB
+    result = route(ITEM, ToPlanning(), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    env.ensure_planning_epic.assert_called_once_with("org/.github")
+    env.reparent_child.assert_called_once_with(PLANNING, ITEM)
+    env.add_child.assert_not_called()
+    env.run.assert_not_called()
+
+
+def test_route_planning_from_adhoc_refuses_open_closing_pr(env: Env) -> None:
+    env.parent = ADHOC_DOTGITHUB
+    env.native_parent[ITEM] = ADHOC_DOTGITHUB
+    env.closing_prs = {
+        "https://github.com/org/tool/pull/41": "MERGED",
+        "https://github.com/org/tool/pull/42": "OPEN",
+    }
+    with pytest.raises(RouteRefusedError) as excinfo:
+        route(ITEM, ToPlanning(), today=TODAY)
+    message = str(excinfo.value)
+    assert "https://github.com/org/tool/pull/42" in message
+    assert "routing to planning it would strand that work" in message
+    env.ensure_planning_epic.assert_not_called()
+    env.reparent_child.assert_not_called()
+    env.run.assert_not_called()
+
+
+def test_route_planning_from_adhoc_ignores_closed_pr(env: Env) -> None:
+    env.parent = ADHOC_DOTGITHUB
+    env.native_parent[ITEM] = ADHOC_DOTGITHUB
+    env.closing_prs = {
+        "https://github.com/org/tool/pull/41": "MERGED",
+        "https://github.com/org/tool/pull/43": "CLOSED",
+    }
+    route(ITEM, ToPlanning(), today=TODAY)
+    env.reparent_child.assert_called_once_with(PLANNING, ITEM)
+
+
+def test_route_planning_from_intake_does_not_read_closing_prs(env: Env) -> None:
+    env.native_parent[ITEM] = INTAKE
+    route(ITEM, ToPlanning(), today=TODAY)
+    reads = [c.args[-1] for c in env.read_json.call_args_list]
+    assert "closedByPullRequestsReferences" not in reads
+
+
+def test_route_planning_from_adhoc_refuses_private_item_to_public_planning_epic(
+    env: Env,
+) -> None:
+    secret_item = IssueRef("org", "secret", 5)
+    env.parent = ADHOC_DOTGITHUB
+    env.native_parent[secret_item] = ADHOC_DOTGITHUB
+    env.public = {"org/secret": False}
+    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
+        route(secret_item, ToPlanning(), today=TODAY)
+    env.reparent_child.assert_not_called()
+
+
+def test_route_defer_adhoc_open_closing_pr_names_deferring(env: Env) -> None:
+    env.parent = ADHOC_DOTGITHUB
+    env.closing_prs = {"https://github.com/org/tool/pull/42": "OPEN"}
+    with pytest.raises(RouteRefusedError, match="deferring it would strand that work"):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+
+
 def test_route_one_off_from_deferred_same_repo_reparents(env: Env) -> None:
     env.parent = DEFERRED
     env.native_parent[ITEM] = DEFERRED
@@ -905,7 +971,7 @@ def test_routes_table_matches_spec() -> None:
     expected: dict[str | None, frozenset[type]] = {
         "intake": frozenset({Drop, Defer, OneOff, ToPlanning, Split}),
         "planning": frozenset({Defer, Drop, OneOff, SizeItem}),
-        "ad-hoc": frozenset({Defer}),
+        "ad-hoc": frozenset({Defer, ToPlanning}),
         "deferred": frozenset({Defer, ToIntake, ToPlanning, OneOff, Drop, Split, SizeItem}),
         None: frozenset({ToPlanning}),
     }
@@ -2594,6 +2660,21 @@ def test_planning_with_sizing(env: Env) -> None:
     env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
     result = route(ITEM, ToPlanning(sizing=SIZING), today=TODAY)
     assert result == RouteResult(final=ITEM, moved_by="none")
+    assert order == ["link", "issue:comment", "issue:edit"]
+    assert env.native_parent[ITEM] == PLANNING
+    assert env.run.call_args_list[0].args == _comment_args(SIZING_BODY)
+    env.ensure_labels.assert_called_once_with("org/.github", ["epic-size:M"])
+
+
+def test_planning_from_adhoc_with_sizing(env: Env) -> None:
+    # #4598: the ad-hoc route takes the same optional sizing as from intake.
+    env.parent = ADHOC_DOTGITHUB
+    env.native_parent[ITEM] = ADHOC_DOTGITHUB
+    _sized_labels(env, "bug")
+    order: list[str] = []
+    env.reparent_child.side_effect = lambda *a: order.append("link") or env.attach(*a)
+    env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
+    route(ITEM, ToPlanning(sizing=SIZING), today=TODAY)
     assert order == ["link", "issue:comment", "issue:edit"]
     assert env.native_parent[ITEM] == PLANNING
     assert env.run.call_args_list[0].args == _comment_args(SIZING_BODY)
