@@ -18522,10 +18522,12 @@ dev images come from
 <li>docs-links: a link to a mike-versioned Vergil docs site must carry a
    version segment after the site name (<code>latest</code>, <code>dev</code> or a version
    number such as <code>2.1</code>), since a deep link without one returns 404. A
-   bare site root is allowed, as mike redirects it. The check reads the
+   bare site root is allowed, as mike redirects it. A link to a site
+   name the org does not publish (anything but the versioned sites and
+   the unversioned <code>docs</code> and <code>packages</code>) fails too. The check reads the
    same markdown as markdownlint, less <code>epics/archive/</code>, against the
-   fixed list of versioned sites in vergil-tooling (no network), and
-   names each hit by path and line with its <code>/latest/</code> form. See
+   fixed lists of sites in vergil-tooling (no network), and names each
+   hit by path and line, with its <code>/latest/</code> form or its site name. See
    <a href="../../reference/lint/markdown-standards/#links-to-other-vergil-docs-sites">Links to other Vergil docs sites</a>.</li>
 <li>shellcheck on shell scripts under <code>scripts/</code> and on every <code>*.sh</code>
    file elsewhere in the repository.</li>
