@@ -100,7 +100,10 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(result.to_output(), indent=2))
     if result.merged:
         return EXIT_MERGED
-    print(f"vrg-pr-await: {result.pr} cannot merge ({result.reason}): {result.detail}", file=sys.stderr)
+    print(
+        f"vrg-pr-await: {result.pr} cannot merge ({result.reason}): {result.detail}",
+        file=sys.stderr,
+    )
     return EXIT_CANNOT_MERGE
 
 

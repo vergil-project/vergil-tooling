@@ -123,9 +123,7 @@ def _cannot_merge(
     )
 
 
-def judge(
-    snap: finalize_watch.Snapshot, required: frozenset[str] | None
-) -> AwaitResult | None:
+def judge(snap: finalize_watch.Snapshot, required: frozenset[str] | None) -> AwaitResult | None:
     """*snap*'s terminal result, steps 1-5 of the module docstring, or ``None``.
 
     *required* ``None`` counts every check as required.

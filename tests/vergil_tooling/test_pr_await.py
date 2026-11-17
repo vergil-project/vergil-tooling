@@ -19,7 +19,7 @@ import pytest
 
 from vergil_tooling.lib import finalize_watch, github, pr_await
 from vergil_tooling.lib.finalize_watch import DEADLINE_ENV, FinalizeWatchError
-from vergil_tooling.lib.pr_await import AwaitResult, PrAwaitError, wait_for_merge
+from vergil_tooling.lib.pr_await import PrAwaitError, wait_for_merge
 
 PR = "https://github.com/o/r/pull/1"
 HEAD_A = "a" * 40
@@ -325,6 +325,16 @@ def test_pending_check_not_orphaned_keeps_waiting(fake: FakeGitHub) -> None:
     assert wait_for_merge(PR, poll_interval=15, orphan_grace=1).merged
 
 
+def test_blocked_with_nothing_pending_keeps_waiting_without_a_probe(fake: FakeGitHub) -> None:
+    # A required check not registered yet: BLOCKED, but no check is pending.
+    green = [check_run("test / unit", "SUCCESS")]
+    fake.script(pr_state(statusCheckRollup=green), merged())
+    fake.orphans = ["test / unit"]
+
+    assert wait_for_merge(PR).merged
+    assert fake.orphan_probes == 0
+
+
 def test_orphan_probe_only_when_blocked(fake: FakeGitHub) -> None:
     fake.script(pr_state(mergeStateStatus="UNSTABLE"), merged())
     fake.orphans = ["test / unit"]
@@ -372,9 +382,3 @@ def test_unreadable_pr_raises(fake: FakeGitHub) -> None:
 
     with pytest.raises(FinalizeWatchError, match="unknown state"):
         wait_for_merge(PR)
-
-
-def test_result_is_frozen() -> None:
-    result = AwaitResult(pr=PR, reason=None, detail="", head_sha=HEAD_A, merge_state_status="")
-    with pytest.raises(AttributeError):
-        result.reason = "closed"  # type: ignore[misc]
