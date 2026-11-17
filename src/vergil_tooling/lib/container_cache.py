@@ -35,15 +35,13 @@ if TYPE_CHECKING:
 
 _VRG_GIT_URL = "https://github.com/vergil-project/vergil-tooling"
 
-# The vergil-tooling install's two environment probes (epic .github#649), the
-# package pin it writes, and the test seam prefixing every probed or written path.
+# The vergil-tooling install's paths: the core vergil-python, the package pin it
+# writes, and the test seam prefixing every path it reads or writes.
 _TOOLING_PACKAGE = "vergil-tooling"
-_VERGIL_SOURCE = "/etc/apt/sources.list.d/vergil.sources"
 _CORE_PYTHON_DIR = "/opt/vergil/python/"
 _CORE_PYTHON_GLOB = "/opt/vergil/python/*/bin/python3"
 _TOOLING_PIN_FILE = "/etc/apt/preferences.d/vergil-tooling"
 _CACHE_ROOT_ENV = "VRG_CACHE_ROOT"
-_UV_FROM_GIT = "vergil-tooling: uv tool install from git (image without the vergil apt repository)"
 _FIRST_CANDIDATE = '!c && $1 == "Candidate:" {c = $2} END {print c}'
 
 _PULL_TIMEOUT_SECONDS = 120
@@ -766,53 +764,26 @@ def _say(msg: str) -> str:
     return f"printf '%s\\n' {shlex.quote(msg)} >&2"
 
 
-def _probe_lines(spec: str) -> list[str]:
-    """Shell lines probing the image, and taking the two paths that need no core Python.
+def _preamble_lines() -> list[str]:
+    """Shell lines both install paths start with: the root seam and the core-Python glob.
 
-    Both probed paths are prefixed with ``$VRG_CACHE_ROOT`` (unset in a real
-    build), the seam the tests run the snippet through. Half an environment —
-    the vergil apt source without a core vergil-python, or the reverse — is
-    refused, never sent down the uv path. Neither present is today's install.
+    ``$VRG_CACHE_ROOT`` (unset in a real build) prefixes every path the snippet
+    reads or writes, the seam the tests run it through.
     """
-    source = f"the vergil apt source ({_VERGIL_SOURCE})"
-    core = f"a core vergil-python ({_CORE_PYTHON_GLOB})"
-    refuse = "vergil-tooling: the image has {} but not {}; refusing to guess"
     return [
         f'root="${{{_CACHE_ROOT_ENV}:-}}"',
         "shopt -s nullglob",
         f'cores=("$root"{_CORE_PYTHON_GLOB})',
-        f'if [ -e "$root"{_VERGIL_SOURCE} ]; then has_source=1; else has_source=0; fi',
-        'if [ "${#cores[@]}" -gt 0 ]; then has_core=1; else has_core=0; fi',
-        'if [ "$has_source" = 1 ] && [ "$has_core" = 0 ]; then',
-        f"  {_say(refuse.format(source, core))}",
-        "  exit 1",
-        "fi",
-        'if [ "$has_source" = 0 ] && [ "$has_core" = 1 ]; then',
-        f"  {_say(refuse.format(core, source))}",
-        "  exit 1",
-        "fi",
-        'if [ "$has_source" = 0 ]; then',
-        f"  {_say(_UV_FROM_GIT)}",
-        f"  exec uv tool install --quiet --python 3.15 {spec}",
-        "fi",
     ]
 
 
 def _dev_core_lines(tag: str, spec: str) -> list[str]:
-    """Shell lines installing a dev ref from git on the image's one core Python.
+    """Shell lines installing a dev ref from git on the image's core Python.
 
     The explicit ``--python`` overrides a family's ``UV_PYTHON``, which
     :func:`_compose_setup` exports before this snippet (spec §5.2).
     """
     return [
-        'if [ "${#cores[@]}" -gt 1 ]; then',
-        "  "
-        + _say(
-            f"vergil-tooling: the image has more than one core Python under {_CORE_PYTHON_DIR};"
-            " refusing to guess which is core"
-        ),
-        "  exit 1",
-        "fi",
         f"{_say(f'vergil-tooling: uv tool install from git on the core Python ({tag})')}",
         f'exec uv tool install --quiet --python "${{cores[0]}}" {spec}',
     ]
@@ -898,29 +869,22 @@ def _packaged_lines(tag: str) -> list[str]:
 def vergil_tooling_setup_command(tag: str) -> str:
     """Return the cache-build fragment installing vergil-tooling at *tag*.
 
-    The image's environment chooses the install (epic vergil-project/.github#649,
-    spec §5.2, §7), by two probes: the vergil apt source
-    (``/etc/apt/sources.list.d/vergil.sources``) and a core vergil-python
-    (``/opt/vergil/python/*/bin/python3``).
+    * **A line or exact** *tag* installs the package from the vergil apt
+      repository, pinned to it, and checks that ``vrg-*`` runs from
+      ``/usr/bin`` on vergil-python.
+    * **A dev** *tag* is ``uv tool install`` from git on the image's core
+      Python, with an explicit ``--python``.
 
-    * **Both present** — a line or exact *tag* installs the package from the
-      vergil apt repository, pinned to it, and checks that ``vrg-*`` runs from
-      ``/usr/bin`` on vergil-python; a dev *tag* is ``uv tool install`` from git
-      on the core Python, with an explicit ``--python``.
-    * **Neither present** — today's ``uv tool install`` from git, on
-      ``--python 3.15``.
-    * **Exactly one present** — refused: exit 1, nothing installed.
-
-    Every path logs which one it took. :func:`_compose_setup` joins fragments
+    Both paths log which one they took. :func:`_compose_setup` joins fragments
     with ``&&`` and sets no ``-e``, so the fragment runs as its own
-    ``bash -euo pipefail -c``: any failure on the chosen path fails the build.
+    ``bash -euo pipefail -c``: any failure on the path fails the build.
     """
     spec = shlex.quote(f"{_TOOLING_PACKAGE} @ git+{_VRG_GIT_URL}@{tag}")
     if vm_packages.classify_ref(tag) == "dev":
         chosen = _dev_core_lines(tag, spec)
     else:
         chosen = _packaged_lines(tag)
-    script = "\n".join((*_probe_lines(spec), *chosen))
+    script = "\n".join((*_preamble_lines(), *chosen))
     return f"bash -euo pipefail -c {shlex.quote(script)}"
 
 

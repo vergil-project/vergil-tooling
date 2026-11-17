@@ -1107,7 +1107,7 @@ def test_build_cached_image_no_warmup_for_unknown_lang(
     assert "Warmup:" not in out
 
 
-def test_build_cached_image_uses_uv_tool_install(tmp_path: Path) -> None:
+def test_build_cached_image_uses_packaged_install(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     ok = MagicMock(returncode=0)
@@ -1130,7 +1130,8 @@ def test_build_cached_image_uses_uv_tool_install(tmp_path: Path) -> None:
             tooling_tag="v2.0.7",
         )
     setup_cmd = create_cmd[-1]
-    assert "uv tool install" in setup_cmd
+    assert "install -y vergil-tooling" in setup_cmd
+    assert "uv tool install" not in setup_cmd
     assert "pip install" not in setup_cmd
 
 
@@ -1182,7 +1183,7 @@ def test_ensure_python_builds_cached_image(tmp_path: Path) -> None:
     assert result != "img:1"
 
 
-def test_build_cached_image_python_includes_uv_install(tmp_path: Path) -> None:
+def test_build_cached_image_python_uses_packaged_install(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     _bootstrap_python(tmp_path)
     create_result = MagicMock(returncode=0, stdout="abc123\n")
@@ -1206,7 +1207,8 @@ def test_build_cached_image_python_includes_uv_install(tmp_path: Path) -> None:
             tooling_tag="v2.0.7",
         )
     setup_cmd = create_cmd[-1]
-    assert "uv tool install" in setup_cmd
+    assert "install -y vergil-tooling" in setup_cmd
+    assert "uv tool install" not in setup_cmd
     assert "uv sync --frozen --group dev" in setup_cmd
 
 
@@ -1383,7 +1385,9 @@ def test_build_cached_image_prepends_apt_install_to_setup(tmp_path: Path) -> Non
     assert "apt-get update" in setup_cmd
     assert "lilypond" in setup_cmd
     # the apt snippet precedes the vergil-tooling install / warmup
-    assert setup_cmd.index("apt-get update") < setup_cmd.index("uv tool install")
+    assert setup_cmd.index("apt-get update") < setup_cmd.index(
+        "vergil-tooling: packaged install (v2.0.7)"
+    )
 
 
 def test_build_cached_image_no_apt_when_no_system_packages(tmp_path: Path) -> None:
@@ -1787,14 +1791,18 @@ _BUILD_CMD_TOML = _VALID_TOML + '[container]\nenv-prefixes = []\nbuild-command =
 
 def test_compose_setup_slots_build_after_install_before_warmup(tmp_path: Path) -> None:
     # For a non-self repo the composed setup is
-    # `<uv tool install …> && <build-command> && <warmup>`.
+    # `<vergil-tooling packaged install …> && <build-command> && <warmup>`.
     (tmp_path / "vergil.toml").write_text(_BUILD_CMD_TOML)
     _bootstrap_go(tmp_path)
     setup = _compose_setup(tmp_path, "go", build_env={}, tooling_tag="v2.0.7")
     warmup = _warmup_command("go", tmp_path)
-    assert "uv tool install" in setup
+    assert "vergil-tooling: packaged install (v2.0.7)" in setup
     assert "make deps" in setup
-    assert setup.index("uv tool install") < setup.index("make deps") < setup.index(warmup)
+    assert (
+        setup.index("vergil-tooling: packaged install (v2.0.7)")
+        < setup.index("make deps")
+        < setup.index(warmup)
+    )
 
 
 def test_compose_setup_absent_build_is_identical_to_install_and_warmup(tmp_path: Path) -> None:
@@ -1824,7 +1832,9 @@ def test_build_cached_image_bakes_build_command_into_setup(tmp_path: Path) -> No
     create_cmd = _capture_create_cmd(tmp_path, "go")
     setup_cmd = create_cmd[-1]
     assert "make deps" in setup_cmd
-    assert setup_cmd.index("uv tool install") < setup_cmd.index("make deps")
+    assert setup_cmd.index("vergil-tooling: packaged install (v2.0.7)") < setup_cmd.index(
+        "make deps"
+    )
 
 
 def test_build_cached_image_prints_build_banner(
@@ -2277,7 +2287,7 @@ def test_compose_setup_omits_warmup_on_unbootstrapped_repo(tmp_path: Path) -> No
     setup = _compose_setup(tmp_path, "go", build_env={}, tooling_tag="v2.0.7")
     # No warmup on an unbootstrapped repo: nothing is appended after the install.
     assert setup == vergil_tooling_setup_command("v2.0.7")
-    assert "uv tool install" in setup
+    assert "vergil-tooling: packaged install (v2.0.7)" in setup
 
 
 def test_build_cached_image_reports_skipped_warmup(
@@ -2344,14 +2354,14 @@ python-preference = "only-managed"
 
 
 def test_compose_setup_exports_build_env_before_every_step(tmp_path: Path) -> None:
-    # The env is exported at the head of the setup step, so the uv install, the
+    # The env is exported at the head of the setup step, so the vergil-tooling install, the
     # build-command and the warmup all run with it, as the run path does.
     (tmp_path / "vergil.toml").write_text(_BUILD_CMD_TOML)
     _bootstrap_python(tmp_path)
     setup = _compose_setup(tmp_path, "python", build_env=_PY_ENV, tooling_tag="v2.0.7")
     prefix = "export UV_PYTHON=3.14 UV_PYTHON_PREFERENCE=only-system && "
     assert setup.startswith(prefix)
-    assert setup.index("uv tool install") < setup.index("make deps")
+    assert setup.index("vergil-tooling: packaged install (v2.0.7)") < setup.index("make deps")
     assert setup.index("make deps") < setup.index("uv sync --frozen --group dev")
 
 
@@ -2648,12 +2658,11 @@ def test_sanitize_repo_refuses_a_name_that_leaves_nothing(name: str) -> None:
         sanitize_repo(name)
 
 
-# -- vergil_tooling_setup_command: the install the image's environment chooses --
-# (epic vergil-project/.github#649, Task 4). The snippet is run with bash against a
+# -- vergil_tooling_setup_command: the packaged install for a released tag, the --
+# git install on the core Python for a dev tag. The snippet is run with bash against a
 # temp root through the VRG_CACHE_ROOT seam, with apt-get, apt-cache and uv stubbed
 # first on PATH; each stub logs its argv to a shared log.
 
-_SOURCE_REL = "etc/apt/sources.list.d/vergil.sources"
 _CORE_REL = "opt/vergil/python/3.15/bin/python3"
 
 _TOOLS = ("awk", "bash", "cat", "dirname", "mkdir", "readlink")
@@ -2690,7 +2699,7 @@ def _interpreter(path: Path) -> None:
 class _Env:
     """A temp image root, the stub directory and the stubs' shared log."""
 
-    def __init__(self, tmp_path: Path, *, source: bool, core: bool) -> None:
+    def __init__(self, tmp_path: Path, *, core: bool) -> None:
         tmp_path = tmp_path.resolve()
         self.root = tmp_path / "root"
         self.stubs = tmp_path / "stubs"
@@ -2707,9 +2716,6 @@ class _Env:
         _write_exec(self.stubs / "apt-get", _APT_GET_STUB)
         _write_exec(self.stubs / "apt-cache", _APT_CACHE_STUB)
         _write_exec(self.stubs / "uv", _UV_STUB)
-        if source:
-            (self.root / _SOURCE_REL).parent.mkdir(parents=True)
-            (self.root / _SOURCE_REL).write_text("Types: deb\n")
         if core:
             _interpreter(self.root / _CORE_REL)
 
@@ -2750,19 +2756,8 @@ class _Env:
         return self.log.read_text().splitlines()
 
 
-_TODAYS_INSTALL = "uv tool install --quiet --python 3.15 vergil-tooling @ git+{url}@{tag}"
-
-
-def test_setup_dev_ref_without_core_is_todays_install(tmp_path: Path) -> None:
-    env = _Env(tmp_path, source=False, core=False)
-    result = env.run("develop")
-    assert result.returncode == 0, result.stderr
-    assert env.calls() == [_TODAYS_INSTALL.format(url=_VRG_GIT_URL, tag="develop")]
-    assert "uv tool install from git (image without the vergil apt repository)" in result.stderr
-
-
 def test_setup_dev_ref_binds_core_python(tmp_path: Path) -> None:
-    env = _Env(tmp_path, source=True, core=True)
+    env = _Env(tmp_path, core=True)
     result = env.run("feature/1-x", extra={"UV_PYTHON": "/opt/python/3.12/bin/python3"})
     assert result.returncode == 0, result.stderr
     core = env.root / _CORE_REL
@@ -2772,62 +2767,14 @@ def test_setup_dev_ref_binds_core_python(tmp_path: Path) -> None:
     assert "uv tool install from git on the core Python (feature/1-x)" in result.stderr
 
 
-def test_setup_dev_ref_refuses_more_than_one_core_python(tmp_path: Path) -> None:
-    env = _Env(tmp_path, source=True, core=True)
-    _interpreter(env.root / "opt/vergil/python/3.14/bin/python3")
-    result = env.run("develop")
-    assert result.returncode == 1
-    assert "more than one core Python" in result.stderr
-    assert env.calls() == []
-
-
-@pytest.mark.parametrize(
-    ("source", "core", "has", "lacks"),
-    [
-        (True, False, "the vergil apt source", "a core vergil-python"),
-        (False, True, "a core vergil-python", "the vergil apt source"),
-    ],
-)
-def test_setup_dev_ref_half_environment_refuses(
-    tmp_path: Path, source: bool, core: bool, has: str, lacks: str
-) -> None:
-    env = _Env(tmp_path, source=source, core=core)
-    result = env.run("develop")
-    assert result.returncode == 1
-    assert f"the image has {has}" in result.stderr
-    assert f"but not {lacks}" in result.stderr
-    assert "refusing to guess" in result.stderr
-    assert env.calls() == []
-
-
-@pytest.mark.parametrize(
-    ("source", "core", "has", "lacks"),
-    [
-        (True, False, "the vergil apt source", "a core vergil-python"),
-        (False, True, "a core vergil-python", "the vergil apt source"),
-    ],
-)
-def test_setup_half_environment_refuses(
-    tmp_path: Path, source: bool, core: bool, has: str, lacks: str
-) -> None:
-    env = _Env(tmp_path, source=source, core=core)
-    result = env.run("v2.1", candidate="2.1.4-1")
-    assert result.returncode == 1
-    assert f"the image has {has} (" in result.stderr
-    assert f"but not {lacks} (" in result.stderr
-    assert "refusing to guess" in result.stderr
-    assert env.calls() == []
-
-
-def test_setup_line_ref_branches_on_environment() -> None:
+def test_setup_line_ref_packaged_fragment() -> None:
     setup = vergil_tooling_setup_command("v2.1")
     assert setup.startswith("bash -euo pipefail -c ")
-    assert "/etc/apt/sources.list.d/vergil.sources" in setup
-    assert "/opt/vergil/python/*/bin/python3" in setup
     assert "vergil-tooling: packaged install (v2.1)" in setup
-    assert "uv tool install from git (image without the vergil apt repository)" in setup
     assert "install -y vergil-tooling" in setup
     assert "apt-get -o" in setup
+    assert "/etc/apt/sources.list.d/vergil.sources" not in setup
+    assert "uv tool install" not in setup
 
 
 def test_setup_exact_ref_pins_version() -> None:
@@ -2837,7 +2784,7 @@ def test_setup_exact_ref_pins_version() -> None:
 
 
 def test_setup_line_ref_packaged_install(tmp_path: Path) -> None:
-    env = _Env(tmp_path, source=True, core=True)
+    env = _Env(tmp_path, core=True)
     env.packaged_vrg()
     result = env.run("v2.1", candidate="2.1.4-1")
     assert result.returncode == 0, result.stderr
@@ -2852,7 +2799,7 @@ def test_setup_line_ref_packaged_install(tmp_path: Path) -> None:
 
 
 def test_setup_exact_ref_packaged_install(tmp_path: Path) -> None:
-    env = _Env(tmp_path, source=True, core=True)
+    env = _Env(tmp_path, core=True)
     env.packaged_vrg()
     result = env.run("v2.1.3", candidate="2.1.3-1")
     assert result.returncode == 0, result.stderr
@@ -2861,7 +2808,7 @@ def test_setup_exact_ref_packaged_install(tmp_path: Path) -> None:
 
 def test_setup_packaged_check_accepts_venv_home(tmp_path: Path) -> None:
     # A venv whose python is a copy, not a symlink: pyvenv.cfg's home decides.
-    env = _Env(tmp_path, source=True, core=True)
+    env = _Env(tmp_path, core=True)
     venv = env.root / "opt/vergil/vergil-tooling/venv"
     _interpreter(venv / "bin/python3")
     (venv / "pyvenv.cfg").write_text(f"home = {env.root / 'opt/vergil/python/3.15/bin'}\n")
@@ -2872,7 +2819,7 @@ def test_setup_packaged_check_accepts_venv_home(tmp_path: Path) -> None:
 
 def test_setup_packaged_check_refuses_wrong_vrg(tmp_path: Path) -> None:
     # The package installed, but the vrg-whoami on PATH is not the /usr/bin one.
-    env = _Env(tmp_path, source=True, core=True)
+    env = _Env(tmp_path, core=True)
     _write_exec(env.stubs / "vrg-whoami", "#!/bin/sh\nexit 0\n")
     result = env.run("v2.1", candidate="2.1.4-1")
     assert result.returncode == 1
@@ -2880,14 +2827,14 @@ def test_setup_packaged_check_refuses_wrong_vrg(tmp_path: Path) -> None:
 
 
 def test_setup_packaged_check_refuses_missing_vrg(tmp_path: Path) -> None:
-    env = _Env(tmp_path, source=True, core=True)
+    env = _Env(tmp_path, core=True)
     result = env.run("v2.1", candidate="2.1.4-1")
     assert result.returncode == 1
     assert "vrg-whoami is not on PATH after the packaged install" in result.stderr
 
 
 def test_setup_packaged_check_refuses_vrg_off_core_python(tmp_path: Path) -> None:
-    env = _Env(tmp_path, source=True, core=True)
+    env = _Env(tmp_path, core=True)
     other = tmp_path.resolve() / "elsewhere/bin/python3"
     _interpreter(other)
     env.packaged_vrg(shebang=str(other))
@@ -2897,7 +2844,7 @@ def test_setup_packaged_check_refuses_vrg_off_core_python(tmp_path: Path) -> Non
 
 
 def test_setup_packaged_check_refuses_failing_vrg(tmp_path: Path) -> None:
-    env = _Env(tmp_path, source=True, core=True)
+    env = _Env(tmp_path, core=True)
     target = env.packaged_vrg()
     target.write_text(f"#!{target.parent / 'python3'}\nexit 3\n")
     result = env.run("v2.1", candidate="2.1.4-1")
@@ -2910,7 +2857,7 @@ def test_setup_packaged_check_refuses_failing_vrg(tmp_path: Path) -> None:
     [("v2.1", "2.2.0-1"), ("v2.1", "2.10.0-1"), ("v2.1", "(none)"), ("v2.1", "")],
 )
 def test_setup_line_candidate_mismatch_refuses(tmp_path: Path, tag: str, candidate: str) -> None:
-    env = _Env(tmp_path, source=True, core=True)
+    env = _Env(tmp_path, core=True)
     env.packaged_vrg()
     result = env.run(tag, candidate=candidate)
     assert result.returncode == 1
@@ -2920,7 +2867,7 @@ def test_setup_line_candidate_mismatch_refuses(tmp_path: Path, tag: str, candida
 
 
 def test_setup_exact_candidate_mismatch_refuses(tmp_path: Path) -> None:
-    env = _Env(tmp_path, source=True, core=True)
+    env = _Env(tmp_path, core=True)
     env.packaged_vrg()
     result = env.run("v2.1.3", candidate="2.1.4-1")
     assert result.returncode == 1
@@ -2929,7 +2876,7 @@ def test_setup_exact_candidate_mismatch_refuses(tmp_path: Path) -> None:
 
 
 def test_setup_apt_update_failure_fails(tmp_path: Path) -> None:
-    env = _Env(tmp_path, source=True, core=True)
+    env = _Env(tmp_path, core=True)
     env.packaged_vrg()
     result = env.run("v2.1", candidate="2.1.4-1", extra={"APT_UPDATE_RC": "100"})
     assert result.returncode != 0

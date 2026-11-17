@@ -74,18 +74,13 @@ repository with no language uses the base image. On top of that image,
 vergil-tooling installed. Set `DOCKER_DEV_IMAGE` to use a different
 image.
 
-The image chooses how vergil-tooling is installed, by two checks: the
-vergil apt source (`/etc/apt/sources.list.d/vergil.sources`) and a core
-vergil-python (`/opt/vergil/python/*/bin/python3`). With both, a release
-version installs the vergil-tooling package at that release, and a `vX.Y`
-line resolves first to the newest release on the line, so a new release
-rebuilds the cached image (see
+For a release version, the cached image installs the vergil-tooling package
+at that release, and a `vX.Y` line resolves first to the newest release on the line, so a new
+release rebuilds the cached image (see
 [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)).
-The build checks that `vrg-*` runs from `/usr/bin`
-on vergil-python; a branch is `uv tool install` from git on the core
-Python. With neither, it is `uv tool install --python 3.15` from git. An
-image with only one of the two fails the build. The build log names the path
-it took.
+The build checks that `vrg-*` runs from `/usr/bin` on vergil-python. A
+branch is `uv tool install` from git on the image's core vergil-python
+(`/opt/vergil/python/*/bin/python3`). The build log names the path it took.
 
 `vrg-validate` first runs the common checks: the
 [repo-profile](../reference/lint/repo-profile.md) check, markdownlint,
