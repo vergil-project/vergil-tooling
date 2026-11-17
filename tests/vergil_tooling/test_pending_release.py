@@ -17,11 +17,11 @@ from vergil_tooling.lib.pending_release import (
     PendingRelease,
     PendingReleaseError,
     ReleaseTags,
-    _reason,
     classify,
     first_parent_chain,
     gather_pending_release,
     parse_release_tags,
+    redact_userinfo,
 )
 
 _URL = "https://github.com/o/r.git"
@@ -663,10 +663,10 @@ def test_error_reason_strips_url_userinfo() -> None:
 
 def test_reason_strips_every_userinfo_form() -> None:
     text = "a ssh://git@github.com/o/r and HTTPS://x-access-token:s3cr3t@github.com/o/r b"
-    assert _reason(text) == "a ssh://github.com/o/r and HTTPS://github.com/o/r b"
-    assert _reason("no urls here: user@example.com") == "no urls here: user@example.com"
-    assert _reason("'https://u:p@ss@github.com/o/r'") == "'https://github.com/o/r'"
-    assert _reason("https://github.com/o/r?x=a@b") == "https://github.com/o/r?x=a@b"
+    assert redact_userinfo(text) == "a ssh://github.com/o/r and HTTPS://github.com/o/r b"
+    assert redact_userinfo("no urls here: user@example.com") == "no urls here: user@example.com"
+    assert redact_userinfo("'https://u:p@ss@github.com/o/r'") == "'https://github.com/o/r'"
+    assert redact_userinfo("https://github.com/o/r?x=a@b") == "https://github.com/o/r?x=a@b"
 
 
 def test_non_github_remote_raises() -> None:
