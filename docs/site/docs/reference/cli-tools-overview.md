@@ -275,20 +275,36 @@ otherwise.
 
 ### vrg-pr-await
 
-Block until a pull request settles, then print its state as JSON. It settles
-when every check reaches a terminal conclusion, the head SHA moves, a new
-review appears, or the PR is wedged by an orphaned check-run (grace period
-`$VRG_ORPHAN_GRACE`, default 300s). `--since-sha` and `--since-reviews` carry
-the caller's last-seen baseline. Used by the `pr-watch` skill; it blocks
-indefinitely by design.
+Block until a pull request submitted with auto-merge on merges, or can no
+longer merge as it stands, then print the outcome as JSON. Used by the
+`pr-watch` skill. A PR that merged before the wait started counts as merged.
+A new review or a new commit does not end the wait: a review after submit
+never holds the merge, and auto-merge stays pinned to the head submit pushed.
+
+On exit 0 or 1 it prints one JSON object with `pr`, `outcome` (`merged` or
+`cannot_merge`), `reason` (`null` when merged), `detail`, `head_sha`,
+`merge_commit` (`null` unless merged), `merge_state_status`, `failed_checks`
+and `orphaned_checks`. On exit 1 the reason is also printed on stderr. The
+reasons are:
+
+- `check_failed`: a required check concluded in failure; `failed_checks`
+  names it.
+- `conflict`: the PR has a merge conflict with its base.
+- `auto_merge_off`: auto-merge is off, at the start or after a push.
+- `closed`: the PR was closed without merging.
+- `orphaned_check`: every pending check is stuck after its workflow run
+  completed, for longer than `$VRG_ORPHAN_GRACE` (default 300s);
+  `orphaned_checks` names them.
+- `timed_out`: the deadline passed with the PR still pending. The deadline is
+  `$VRG_FINALIZE_DEADLINE` seconds, default 7200, as for `vrg-finalize-pr`.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_pr_await` |
-| Args | `pr` (positional, URL or number), `--since-sha`, `--since-reviews` |
+| Args | `pr` (positional, URL or number). `--since-sha` and `--since-reviews` are removed and are an error |
 | Preconditions | GitHub App credentials for the PR's org |
-| Failure mode | Exits 1 with an error if the PR is already merged or the PR cannot be read |
-| Exit codes | 0 settled, 1 error |
+| Failure mode | Exit 1 only when the PR cannot merge. A malformed `$VRG_FINALIZE_DEADLINE` or `$VRG_ORPHAN_GRACE` (checked before any waiting), a GitHub API or permission failure, an unreadable PR or bad arguments exit 2 with a message on stderr and nothing on stdout |
+| Exit codes | 0 merged, 1 cannot merge, 2 any other error |
 | Status | Active |
 
 ### vrg-pr-review-comments

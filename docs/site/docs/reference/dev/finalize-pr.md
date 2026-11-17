@@ -102,7 +102,7 @@ declared orphaned, and the error says how long each check waited. The grace
 defaults to 5 minutes from when the backing run was first seen completed.
 Set `VRG_ORPHAN_GRACE` (seconds, a positive whole number) to change it; a
 malformed value is an error. `vrg-pr-await` applies the same grace before it
-settles with `orphaned_check`.
+reports a PR as unable to merge with reason `orphaned_check`.
 
 The deadline is the backstop. When it elapses with checks still pending,
 each one is checked against its backing run again, and a non-terminal check

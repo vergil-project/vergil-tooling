@@ -1,31 +1,41 @@
-"""Settle-predicate waiter for the post-PR loop (§9 of the 2.1 workflow design).
+"""Merge waiter behind ``vrg-pr-await`` (epic vergil-project/.github#1218, follow-up F5).
 
-There is no webhook ingress on a laptop, so ``vrg-pr-await`` polls the GitHub
-API. It blocks until the PR *settles*: all checks reach a terminal conclusion,
-**or** a new commit appears (the head SHA moves), **or** a new review appears,
-**or** the PR is wedged by an *orphaned check-run* (every still-pending check is
-stuck non-terminal after its backing workflow run already completed, while
-``mergeStateStatus`` is ``BLOCKED``). On settle it returns the observed state so
-the wrapping skill can reconcile.
+``vrg-submit-pr`` opens each PR with auto-merge on, and GitHub merges it once
+its required checks pass. :func:`wait_for_merge` waits on one such PR until it
+merges, until it can no longer merge as it stands, or until the deadline
+passes. It never merges a PR, never turns auto-merge on or off, and changes
+nothing locally.
 
-The orphaned-check settle is the one that keeps the loop from hanging forever:
-an orphaned check-run emits no further event, so waiting for a state transition
-that will never arrive would block indefinitely. Detecting it lets ``pr-watch``
-surface the condition (close/reopen the PR to re-run the gate) instead of
-spinning silently. The detection reuses ``github.orphaned_check_names`` — the
-same signal ``vrg-finalize-pr`` uses — rather than re-deriving it. Like that
-waiter it only settles once the suspected orphan has outlasted a grace period
-(``$VRG_ORPHAN_GRACE``), because GitHub writing results back late during an
-Actions incident looks identical at the moment of checking (#3431).
+There is no webhook ingress on a laptop, so it polls: one
+:func:`vergil_tooling.lib.finalize_watch.snapshot` read per interval, the same
+read ``vrg-finalize-pr``'s watch phase judges. Each read is judged in this
+order:
 
-A merged PR can never settle into anything actionable — continued polling
-would just spin as an orphaned watcher — so every poll (including the first)
-checks the PR's state and raises :class:`PrMergedError` when it is merged.
-A merge observed mid-watch means the audit cycle was bypassed; failing loudly
-surfaces the short-circuit instead of silently spinning.
+1. **Merged:** the wait ends in success, with the merge commit. A PR that
+   merged before the wait started counts too.
+2. **Closed** without merging: reason ``closed``.
+3. **Auto-merge off:** reason ``auto_merge_off``. Auto-merge stays pinned to
+   the head submit pushed, so a push that turns it off ends the wait here.
+4. **A required check concluded in failure:** reason ``check_failed``,
+   naming the checks, confirmed by
+   :func:`vergil_tooling.lib.finalize_watch.failed_required_checks`.
+5. **Conflict** (``mergeStateStatus`` ``DIRTY``): reason ``conflict``.
+6. **Orphaned check:** reason ``orphaned_check``. The PR is ``BLOCKED`` and
+   every pending check is stuck non-terminal after its backing workflow run
+   completed (``github.orphaned_check_names``). Such a check emits no further
+   event, so the PR would never merge. GitHub can write results back late
+   during an Actions incident, which looks the same at the moment of checking
+   (#3431), so the same pending set must stay orphaned for the grace period
+   (``$VRG_ORPHAN_GRACE``, 300s by default) first.
+7. **Deadline:** a PR still pending when the deadline passes is reason
+   ``timed_out``. The deadline is ``$VRG_FINALIZE_DEADLINE`` seconds (default
+   7200), the epic's batch deadline (:func:`finalize_watch.deadline_secs`).
 
-The "is it settled?" decision lives here in deterministic code, not in agent
-tokens — the agent only acts on the returned verdict.
+A new review or a new commit never ends the wait: a review after submit is
+advisory and never holds the merge (spec §6.2).
+
+Every configuration value is checked before the first read, and every failure
+to read the PR raises; none is read as a pending or a clean PR.
 """
 
 from __future__ import annotations
@@ -33,208 +43,205 @@ from __future__ import annotations
 import sys
 import time
 from dataclasses import dataclass, field
+from typing import Literal
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import finalize_watch, github
 
 _POLL_INTERVAL = 15.0
 
-_FAILED_BUCKETS = frozenset({"fail", "cancel"})
+#: Every reason a PR cannot merge as it stands.
+Reason = Literal[
+    "check_failed",
+    "conflict",
+    "auto_merge_off",
+    "closed",
+    "orphaned_check",
+    "timed_out",
+]
+
 _PENDING_BUCKET = "pending"
-_MERGED_STATE = "MERGED"
-_BLOCKED_STATE = "BLOCKED"
-_ORPHANED_CHECK_REASON = "orphaned_check"
+_PENDING_CONTEXT_STATES = frozenset({"PENDING", "EXPECTED"})
 
 
-class PrMergedError(Exception):
-    """The watched PR is already merged, so the watch can never settle."""
-
-    def __init__(self, pr: str) -> None:
-        self.pr = pr
-        super().__init__(f"PR {pr} is already merged; aborting watch")
+class PrAwaitError(RuntimeError):
+    """The PR's state could not be trusted; the message names the PR."""
 
 
 @dataclass(frozen=True)
-class PrState:
-    """A snapshot of the PR's gating state at one poll."""
+class AwaitResult:
+    """How the wait ended.
 
+    *reason* is ``None`` exactly when the PR merged; *merge_commit* is then
+    its merge commit. *detail* says in words why the PR cannot merge.
+    """
+
+    pr: str
+    reason: Reason | None
+    detail: str
     head_sha: str
-    checks: list[dict[str, str]] = field(default_factory=list)
-    reviews: list[dict[str, object]] = field(default_factory=list)
-    pr_state: str = "OPEN"
-    merge_state_status: str = ""
+    merge_state_status: str
+    merge_commit: str = ""
+    failed_checks: tuple[str, ...] = field(default_factory=tuple)
+    orphaned_checks: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def merged(self) -> bool:
-        """True when the PR has been merged."""
-        return self.pr_state == _MERGED_STATE
+        """True when the PR merged."""
+        return self.reason is None
 
-    @property
-    def blocked(self) -> bool:
-        """True when the PR's ``mergeStateStatus`` is ``BLOCKED``."""
-        return self.merge_state_status == _BLOCKED_STATE
-
-    @property
-    def has_checks(self) -> bool:
-        """True when at least one check has been registered for the head SHA."""
-        return len(self.checks) > 0
-
-    @property
-    def checks_pending(self) -> bool:
-        """True when any check is still running (bucket ``pending``)."""
-        return any(c.get("bucket") == _PENDING_BUCKET for c in self.checks)
-
-    @property
-    def pending_check_names(self) -> list[str]:
-        """Names of checks still in the ``pending`` bucket."""
-        return [str(c["name"]) for c in self.checks if c.get("bucket") == _PENDING_BUCKET]
-
-    @property
-    def failed_checks(self) -> list[str]:
-        """Names of checks whose bucket is ``fail`` or ``cancel``."""
-        return [str(c["name"]) for c in self.checks if c.get("bucket") in _FAILED_BUCKETS]
-
-    @property
-    def all_checks_passed(self) -> bool:
-        """True when checks exist and none are pending or failed."""
-        return self.has_checks and not self.checks_pending and not self.failed_checks
+    def to_output(self) -> dict[str, object]:
+        """The JSON object ``vrg-pr-await`` prints."""
+        return {
+            "pr": self.pr,
+            "outcome": "merged" if self.merged else "cannot_merge",
+            "reason": self.reason,
+            "detail": self.detail,
+            "head_sha": self.head_sha,
+            "merge_commit": self.merge_commit or None,
+            "merge_state_status": self.merge_state_status,
+            "failed_checks": list(self.failed_checks),
+            "orphaned_checks": list(self.orphaned_checks),
+        }
 
 
-def gather_state(pr: str) -> PrState:
-    """Poll the GitHub API once for the PR's head SHA, checks, reviews, and state."""
-    return PrState(
-        head_sha=github.head_sha(pr),
-        checks=github.pr_checks(pr),
-        reviews=github.pr_reviews(pr),
-        pr_state=github.pr_state(pr),
-        merge_state_status=github.merge_state_status(pr),
+def _cannot_merge(
+    snap: finalize_watch.Snapshot,
+    reason: Reason,
+    detail: str,
+    *,
+    failed: tuple[str, ...] = (),
+    orphaned: tuple[str, ...] = (),
+) -> AwaitResult:
+    return AwaitResult(
+        pr=snap.url,
+        reason=reason,
+        detail=detail,
+        head_sha=snap.head,
+        merge_state_status=snap.merge_state,
+        failed_checks=failed,
+        orphaned_checks=orphaned,
     )
 
 
-def settle_reason(
-    state: PrState,
-    *,
-    since_sha: str | None,
-    since_reviews: int | None,
-) -> str | None:
-    """Return why the PR has settled, or ``None`` if it has not.
+def judge(
+    snap: finalize_watch.Snapshot, required: frozenset[str] | None
+) -> AwaitResult | None:
+    """*snap*'s terminal result, steps 1-5 of the module docstring, or ``None``.
 
-    Priority order: a new commit invalidates everything downstream, so it wins
-    over a new review, which wins over checks merely reaching terminal state.
+    *required* ``None`` counts every check as required.
     """
-    if since_sha is not None and state.head_sha != since_sha:
-        return "new_commit"
-    if since_reviews is not None and len(state.reviews) > since_reviews:
-        return "new_review"
-    if state.has_checks and not state.checks_pending:
-        return "checks_terminal"
+    if snap.state == "MERGED":
+        if not snap.merge_commit:
+            msg = f"{snap.url}: GitHub reports the PR merged but names no merge commit"
+            raise PrAwaitError(msg)
+        return AwaitResult(
+            pr=snap.url,
+            reason=None,
+            detail="",
+            head_sha=snap.head,
+            merge_state_status=snap.merge_state,
+            merge_commit=snap.merge_commit,
+        )
+    if snap.state == "CLOSED":
+        return _cannot_merge(snap, "closed", "the PR was closed without merging")
+    if not snap.auto_merge_on:
+        return _cannot_merge(snap, "auto_merge_off", "auto-merge is off for the PR")
+    failed = tuple(finalize_watch.failed_required_checks(snap, required))
+    if failed:
+        detail = f"required check failed: {', '.join(failed)}"
+        return _cannot_merge(snap, "check_failed", detail, failed=failed)
+    if snap.merge_state == "DIRTY":
+        return _cannot_merge(snap, "conflict", "the PR has a merge conflict with its base")
     return None
 
 
-def is_orphaned_block(state: PrState, pr: str) -> bool:
-    """True when *pr* is wedged by an orphaned check-run and would hang the watch.
+def pending_check_names(snap: finalize_watch.Snapshot) -> list[str]:
+    """Names of *snap*'s checks that have not concluded, in rollup order."""
+    names: list[str] = []
+    for node in snap.rollup:
+        if node.get("__typename") == "StatusContext":
+            pending = str(node.get("state") or "").upper() in _PENDING_CONTEXT_STATES
+            name = str(node.get("context") or "")
+        else:
+            bucket = github.check_run_bucket(
+                str(node.get("status") or ""), str(node.get("conclusion") or "")
+            )
+            pending = bucket == _PENDING_BUCKET
+            name = str(node.get("name") or "")
+        if pending and name not in names:
+            names.append(name)
+    return names
 
-    The condition is: ``mergeStateStatus`` is ``BLOCKED``, at least one check is
-    still pending, and **every** pending check is an orphan — stuck non-terminal
-    after its backing workflow run already completed. Only then is continued
-    polling futile: an orphaned check emits no further event, so waiting for a
-    transition that will never arrive blocks forever.
 
-    The orphan set comes from ``github.orphaned_check_names`` (the same detector
-    ``vrg-finalize-pr`` uses). It excludes app-posted statuses that have no
-    backing Actions run, so a pending app status genuinely still running is
-    *not* an orphan — the ``all(...)`` guard then keeps the watch waiting rather
-    than declaring a false orphaned settle. The GitHub API call is made only
-    once the cheap local predicates (blocked + pending) already hold.
+def orphaned_block(snap: finalize_watch.Snapshot) -> list[str]:
+    """The pending checks when *snap*'s PR is wedged by orphaned checks, else ``[]``.
+
+    The PR is wedged when it is ``BLOCKED``, at least one check is pending,
+    and **every** pending check is an orphan. ``github.orphaned_check_names``
+    leaves out app-posted statuses with no backing Actions run, so a pending
+    app status genuinely still running keeps the wait going. The GitHub call
+    is made only once the cheap local tests hold.
     """
-    if not state.blocked:
-        return False
-    pending = state.pending_check_names
+    if snap.merge_state != "BLOCKED":
+        return []
+    pending = pending_check_names(snap)
     if not pending:
-        return False
-    orphans = set(github.orphaned_check_names(pr))
-    return all(name in orphans for name in pending)
+        return []
+    orphans = set(github.orphaned_check_names(snap.url))
+    return pending if all(name in orphans for name in pending) else []
 
 
-def wait_for_settle(
+def wait_for_merge(
     pr: str,
     *,
-    since_sha: str | None,
-    since_reviews: int | None,
     poll_interval: float = _POLL_INTERVAL,
     orphan_grace: float | None = None,
-) -> tuple[PrState, str]:
-    """Block until the PR settles; return the settled state and the reason.
+) -> AwaitResult:
+    """Block until *pr* merges or cannot merge; see the module docstring.
 
-    Raises :class:`PrMergedError` as soon as any poll (including the first)
-    observes the PR merged — a merged PR aborts the watch even when a settle
-    reason exists, since no settle verdict on a merged PR is actionable.
-
-    Beyond the pure :func:`settle_reason` verdicts, a poll also settles with
-    reason ``"orphaned_check"`` when :func:`is_orphaned_block` holds — the PR is
-    ``BLOCKED`` and every pending check is an orphaned check-run. That settle
-    exists so the watch reports the wedge instead of hanging forever on an event
-    that will never fire.
-
-    The orphan verdict is not immediate (#3431): during a GitHub Actions incident
-    job results are written back late, and that looks exactly like an orphan at
-    the moment of checking. The same orphaned block must persist — over the same
-    pending checks — for *orphan_grace* seconds (default
-    ``github.orphan_grace_secs()``, ``$VRG_ORPHAN_GRACE`` or 300s) before the
-    watch settles on it. The wait is announced on stderr when it starts and its
-    length named when it ends; a late result arriving in the window settles the
-    watch normally instead.
+    The deadline, the grace period and *poll_interval* are checked before the
+    PR is read: a malformed value raises :class:`ValueError`.
     """
+    deadline = finalize_watch.deadline_secs()
     grace = github.orphan_grace_secs() if orphan_grace is None else orphan_grace
+    if poll_interval <= 0:
+        msg = f"poll_interval must be positive, got {poll_interval!r}"
+        raise ValueError(msg)
+    snap = finalize_watch.snapshot(pr)
+    required = github.required_check_names(snap.url) if snap.state == "OPEN" else None
+    end = time.monotonic() + deadline
     suspected: list[str] = []
     suspected_since = 0.0
     while True:
-        state = gather_state(pr)
-        if state.merged:
-            raise PrMergedError(pr)
-        reason = settle_reason(state, since_sha=since_sha, since_reviews=since_reviews)
-        if reason is not None:
-            return state, reason
-        if not is_orphaned_block(state, pr):
+        result = judge(snap, required)
+        if result is not None:
+            return result
+        now = time.monotonic()
+        orphaned = orphaned_block(snap)
+        if not orphaned:
             suspected = []
         else:
-            now = time.monotonic()
-            names = state.pending_check_names
-            if names != suspected:
-                suspected, suspected_since = names, now
+            if orphaned != suspected:
+                suspected, suspected_since = orphaned, now
                 print(
-                    f"{len(names)} check-run(s) have a completed run but no result yet "
-                    f"({', '.join(names)}) — GitHub may be delayed; re-checking for up "
+                    f"{len(orphaned)} check-run(s) have a completed run but no result yet "
+                    f"({', '.join(orphaned)}) — GitHub may be delayed; re-checking for up "
                     f"to {github.format_wait(grace)} before reporting them orphaned.",
                     file=sys.stderr,
                 )
             if now - suspected_since >= grace:
-                print(
-                    f"Still no result for {', '.join(names)} after "
-                    f"{github.format_wait(now - suspected_since)}; reporting orphaned "
-                    "check-run(s).",
-                    file=sys.stderr,
+                detail = (
+                    f"no result for {', '.join(orphaned)} after "
+                    f"{github.format_wait(now - suspected_since)} although their "
+                    "workflow runs completed (orphaned check-runs)"
                 )
-                return state, _ORPHANED_CHECK_REASON
-        time.sleep(poll_interval)
-
-
-def to_output(state: PrState, reason: str) -> dict[str, object]:
-    """Build the JSON-serializable result emitted by ``vrg-pr-await``.
-
-    On an ``"orphaned_check"`` settle, ``orphaned_checks`` names the wedged
-    check-runs so ``pr-watch`` can report exactly which gates are stuck. Those
-    are the still-pending checks: :func:`is_orphaned_block` only returns the
-    reason when every pending check is an orphan, so the pending set *is* the
-    orphan set. For every other reason the list is empty.
-    """
-    orphaned_checks = state.pending_check_names if reason == _ORPHANED_CHECK_REASON else []
-    return {
-        "reason": reason,
-        "head_sha": state.head_sha,
-        "review_count": len(state.reviews),
-        "checks": state.checks,
-        "failed_checks": state.failed_checks,
-        "all_checks_passed": state.all_checks_passed,
-        "merge_state_status": state.merge_state_status,
-        "orphaned_checks": orphaned_checks,
-    }
+                return _cannot_merge(snap, "orphaned_check", detail, orphaned=tuple(orphaned))
+        remaining = end - now
+        if remaining <= 0:
+            detail = (
+                f"still pending at the {deadline}s deadline ({finalize_watch.DEADLINE_ENV}); "
+                "its auto-merge stays on"
+            )
+            return _cannot_merge(snap, "timed_out", detail)
+        time.sleep(min(poll_interval, remaining))
+        snap = finalize_watch.snapshot(snap.url)
