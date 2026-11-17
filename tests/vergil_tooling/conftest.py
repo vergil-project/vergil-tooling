@@ -35,6 +35,7 @@ from vergil_tooling.lib import (
     host_pins,
     identity_mode,
     local_settings,
+    tooling_release,
 )
 from vergil_tooling.lib.versions import window
 from vergil_tooling.lib.versions.resolve import Resolution
@@ -99,6 +100,29 @@ def _hermetic_version_window(monkeypatch: pytest.MonkeyPatch) -> None:
     v2.1. Tests of the fetch path pass their own ``env`` and ``fetch``.
     """
     monkeypatch.setenv(window.WINDOW_ENV, str(FIXTURE_WINDOW))
+
+
+# The releases the hermetic vergil package index lists, in every suite and arch.
+FIXTURE_TOOLING_RELEASES = ("2.0.6", "2.0.7", "2.1.9")
+
+
+def fixture_package_index(releases: tuple[str, ...] = FIXTURE_TOOLING_RELEASES) -> bytes:
+    """A deb ``Packages`` index listing vergil-tooling at each of *releases*."""
+    return "".join(
+        f"Package: vergil-tooling\nVersion: {r}-1\nArchitecture: all\n\n" for r in releases
+    ).encode()
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_tooling_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve a vergil-tooling line pin against a fixture index, never the network.
+
+    A cache key names the release a line pin resolves to, read from the vergil
+    package index (#4550). Here every index lists
+    :data:`FIXTURE_TOOLING_RELEASES`, so ``v2.0`` resolves to ``v2.0.7``. Tests
+    of the fetch path pass their own ``fetch``.
+    """
+    monkeypatch.setattr(tooling_release, "_http_fetch", lambda _url: fixture_package_index())
 
 
 @pytest.fixture(autouse=True)

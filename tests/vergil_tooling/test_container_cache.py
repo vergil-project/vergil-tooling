@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.vergil_tooling.conftest import window_default_resolution
-from vergil_tooling.lib.config import vrg_install_tag
 from vergil_tooling.lib.container_cache import (
     _VRG_GIT_URL,
     WARMUP_SKIPPED_MARKER,
@@ -337,7 +336,9 @@ def test_ensure_reuses_cache_when_hash_matches_and_launchable(tmp_path: Path) ->
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     cached_tag = "ghcr.io/r/dev-go:1.26--feature-42--"
     files = cache_sensitive_files(tmp_path, "go")
-    expected_hash = compute_cache_hash(files, base_digest="sha256:abc", salt=tmp_path.name)
+    expected_hash = compute_cache_hash(
+        files, base_digest="sha256:abc", salt=tmp_path.name, tooling="v2.0.7"
+    )
     full_tag = cached_tag + expected_hash
 
     with (
@@ -373,7 +374,9 @@ def test_ensure_rebuilds_when_cached_image_unlaunchable(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     cached_tag = "ghcr.io/r/dev-go:1.26--feature-42--"
     files = cache_sensitive_files(tmp_path, "go")
-    expected_hash = compute_cache_hash(files, base_digest="sha256:abc", salt=tmp_path.name)
+    expected_hash = compute_cache_hash(
+        files, base_digest="sha256:abc", salt=tmp_path.name, tooling="v2.0.7"
+    )
     full_tag = cached_tag + expected_hash
 
     with (
@@ -584,6 +587,7 @@ class _ImageStore:
         self.refs = list(refs)
         self.removed: list[str] = []
         self.built: list[str] = []
+        self.tooling: list[object] = []
 
     def run(self, cmd: list[str], **_kwargs: object) -> MagicMock:
         if cmd[1] == "images":
@@ -595,8 +599,9 @@ class _ImageStore:
         msg = f"unexpected runtime call: {cmd}"
         raise AssertionError(msg)
 
-    def build(self, _root: Path, _lang: str, _base: str, target_tag: str, **_kw: object) -> str:
+    def build(self, _root: Path, _lang: str, _base: str, target_tag: str, **kw: object) -> str:
         self.built.append(target_tag)
+        self.tooling.append(kw.get("tooling_tag"))
         self.refs.append(target_tag)
         return target_tag
 
@@ -772,7 +777,13 @@ def test_build_cached_image_success(tmp_path: Path) -> None:
 
     with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
         result = _build_cached_image(
-            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
     assert result == "img:1--branch--hash"
 
@@ -796,7 +807,13 @@ def test_build_cached_image_cleanup_reclaims_anonymous_volumes(tmp_path: Path) -
 
     with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(
-            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
 
     assert rm_cmd[:3] == ["docker", "rm", "-v"]
@@ -817,7 +834,13 @@ def test_build_cached_image_includes_platform(tmp_path: Path) -> None:
 
     with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(
-            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
     assert any(a.startswith("--platform=linux/") for a in create_cmd)
 
@@ -836,7 +859,13 @@ def _capture_create_cmd(tmp_path: Path, lang: str) -> list[str]:
 
     with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(
-            tmp_path, lang, "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            lang,
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
     return create_cmd
 
@@ -871,7 +900,13 @@ def test_build_cached_image_create_fails(tmp_path: Path) -> None:
         pytest.raises(RuntimeError, match="Failed to create container"),
     ):
         _build_cached_image(
-            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
 
 
@@ -893,7 +928,13 @@ def test_build_cached_image_start_fails(tmp_path: Path) -> None:
         pytest.raises(RuntimeError, match="Cache build failed"),
     ):
         _build_cached_image(
-            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
 
 
@@ -915,7 +956,13 @@ def test_build_cached_image_streams_warmup_by_default(tmp_path: Path) -> None:
 
     with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(
-            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
 
     # Not captured → streamed to the inherited terminal.
@@ -943,6 +990,7 @@ def test_build_cached_image_quiet_warmup_captures(tmp_path: Path) -> None:
             runtime="docker",
             quiet_warmup=True,
             build_env={},
+            tooling_tag="v2.0.7",
         )
 
     assert start_kwargs.get("capture_output") is True
@@ -975,6 +1023,7 @@ def test_build_cached_image_quiet_warmup_surfaces_output_on_failure(tmp_path: Pa
             runtime="docker",
             quiet_warmup=True,
             build_env={},
+            tooling_tag="v2.0.7",
         )
 
 
@@ -1001,6 +1050,7 @@ def test_build_cached_image_quiet_warmup_failure_without_output(tmp_path: Path) 
             runtime="docker",
             quiet_warmup=True,
             build_env={},
+            tooling_tag="v2.0.7",
         )
 
 
@@ -1018,7 +1068,13 @@ def test_build_cached_image_warmup_printed(
 
     with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(
-            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
     out = capsys.readouterr().out
     assert "Warmup:" in out
@@ -1038,7 +1094,13 @@ def test_build_cached_image_no_warmup_for_unknown_lang(
 
     with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(
-            tmp_path, "unknown", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "unknown",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
     out = capsys.readouterr().out
     assert "Warmup:" not in out
@@ -1058,7 +1120,13 @@ def test_build_cached_image_uses_uv_tool_install(tmp_path: Path) -> None:
 
     with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(
-            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
     setup_cmd = create_cmd[-1]
     assert "uv tool install" in setup_cmd
@@ -1128,7 +1196,13 @@ def test_build_cached_image_python_includes_uv_install(tmp_path: Path) -> None:
 
     with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(
-            tmp_path, "python", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "python",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
     setup_cmd = create_cmd[-1]
     assert "uv tool install" in setup_cmd
@@ -1154,6 +1228,7 @@ def test_ensure_repo_name_included_in_hash(tmp_path: Path) -> None:
         runtime: str = "",
         quiet_warmup: bool = False,
         build_env: dict[str, str],
+        tooling_tag: str,
     ) -> str:
         built_tags.append(target_tag)
         return target_tag
@@ -1193,7 +1268,13 @@ def test_build_cached_image_self_repo_skips_uv_install(tmp_path: Path) -> None:
 
     with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(
-            tmp_path, "python", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "python",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
     setup_cmd = create_cmd[-1]
     assert "uv tool install" not in setup_cmd
@@ -1214,7 +1295,13 @@ def test_build_cached_image_uses_pull_missing(tmp_path: Path) -> None:
         side_effect=[create, start, commit, rm],
     ) as mock_run:
         _build_cached_image(
-            tmp_path, "go", "ghcr.io/r/dev-go:1.26", "target:tag", runtime="docker", build_env={}
+            tmp_path,
+            "go",
+            "ghcr.io/r/dev-go:1.26",
+            "target:tag",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
     create_argv = mock_run.call_args_list[0][0][0]
     assert "create" in create_argv
@@ -1323,7 +1410,13 @@ def test_build_cached_image_prints_packages_banner(
 
     with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(
-            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
     out = capsys.readouterr().out
     assert "Packages:" in out
@@ -1696,7 +1789,7 @@ def test_compose_setup_slots_build_after_install_before_warmup(tmp_path: Path) -
     # `<uv tool install …> && <build-command> && <warmup>`.
     (tmp_path / "vergil.toml").write_text(_BUILD_CMD_TOML)
     _bootstrap_go(tmp_path)
-    setup = _compose_setup(tmp_path, "go", build_env={})
+    setup = _compose_setup(tmp_path, "go", build_env={}, tooling_tag="v2.0.7")
     warmup = _warmup_command("go", tmp_path)
     assert "uv tool install" in setup
     assert "make deps" in setup
@@ -1707,9 +1800,8 @@ def test_compose_setup_absent_build_is_identical_to_install_and_warmup(tmp_path:
     # Absent build-command ⇒ byte-identical to the pre-existing composition.
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     _bootstrap_go(tmp_path)
-    setup = _compose_setup(tmp_path, "go", build_env={})
-    tag = vrg_install_tag(tmp_path)
-    install = vergil_tooling_setup_command(tag)
+    setup = _compose_setup(tmp_path, "go", build_env={}, tooling_tag="v2.0.7")
+    install = vergil_tooling_setup_command("v2.0.7")
     warmup = _warmup_command("go", tmp_path)
     assert setup == f"{install} && {warmup}"
 
@@ -1720,7 +1812,7 @@ def test_compose_setup_self_repo_slots_build_after_apt_before_warmup(tmp_path: P
     (tmp_path / "vergil.toml").write_text(_BUILD_CMD_TOML)
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "vergil-tooling"\n')
     (tmp_path / "uv.lock").write_text("")
-    setup = _compose_setup(tmp_path, "python", build_env={})
+    setup = _compose_setup(tmp_path, "python", build_env={}, tooling_tag="v2.0.7")
     warmup = _warmup_command("python", tmp_path)
     assert "uv tool install" not in setup
     assert setup.index("make deps") < setup.index(warmup)
@@ -1748,7 +1840,13 @@ def test_build_cached_image_prints_build_banner(
 
     with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(
-            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
     out = capsys.readouterr().out
     assert "Build:" in out
@@ -1769,7 +1867,13 @@ def test_build_cached_image_no_build_banner_when_absent(
 
     with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(
-            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
     out = capsys.readouterr().out
     assert "Build:" not in out
@@ -2082,6 +2186,7 @@ def test_rust_warmup_skip_visible_when_quiet(
             runtime="docker",
             quiet_warmup=True,
             build_env={},
+            tooling_tag="v2.0.7",
         )
     out = capsys.readouterr().out
     assert "NOTICE: warmup skipped: Cargo.lock does not match Cargo.toml; x" in out
@@ -2109,6 +2214,7 @@ def test_quiet_warmup_without_skip_prints_no_notice(
             runtime="docker",
             quiet_warmup=True,
             build_env={},
+            tooling_tag="v2.0.7",
         )
     assert "NOTICE:" not in capsys.readouterr().out
 
@@ -2116,9 +2222,9 @@ def test_quiet_warmup_without_skip_prints_no_notice(
 def test_compose_setup_omits_warmup_on_unbootstrapped_repo(tmp_path: Path) -> None:
     # An unbootstrapped repo still yields a usable setup string: install only.
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
-    setup = _compose_setup(tmp_path, "go", build_env={})
+    setup = _compose_setup(tmp_path, "go", build_env={}, tooling_tag="v2.0.7")
     # No warmup on an unbootstrapped repo: nothing is appended after the install.
-    assert setup == vergil_tooling_setup_command(vrg_install_tag(tmp_path))
+    assert setup == vergil_tooling_setup_command("v2.0.7")
     assert "uv tool install" in setup
 
 
@@ -2131,7 +2237,13 @@ def test_build_cached_image_reports_skipped_warmup(
     ok = MagicMock(returncode=0, stdout="abc123\n")
     with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=ok):
         _build_cached_image(
-            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", build_env={}
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--branch--hash",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
         )
     out = capsys.readouterr().out
     assert "Warmup:  skipped" in out
@@ -2184,7 +2296,7 @@ def test_compose_setup_exports_build_env_before_every_step(tmp_path: Path) -> No
     # build-command and the warmup all run with it, as the run path does.
     (tmp_path / "vergil.toml").write_text(_BUILD_CMD_TOML)
     _bootstrap_python(tmp_path)
-    setup = _compose_setup(tmp_path, "python", build_env=_PY_ENV)
+    setup = _compose_setup(tmp_path, "python", build_env=_PY_ENV, tooling_tag="v2.0.7")
     prefix = "export UV_PYTHON=3.14 UV_PYTHON_PREFERENCE=only-system && "
     assert setup.startswith(prefix)
     assert setup.index("uv tool install") < setup.index("make deps")
@@ -2196,27 +2308,27 @@ def test_compose_setup_exports_build_env_before_apt(tmp_path: Path) -> None:
         _VALID_TOML + '[container]\nenv-prefixes = []\nsystem-packages = ["libfoo"]\n'
     )
     _bootstrap_go(tmp_path)
-    setup = _compose_setup(tmp_path, "go", build_env={"A": "1"})
+    setup = _compose_setup(tmp_path, "go", build_env={"A": "1"}, tooling_tag="v2.0.7")
     assert setup.startswith("export A=1 && apt-get update")
 
 
 def test_compose_setup_quotes_build_env_values(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     _bootstrap_go(tmp_path)
-    setup = _compose_setup(tmp_path, "go", build_env={"X": "a b;c"})
+    setup = _compose_setup(tmp_path, "go", build_env={"X": "a b;c"}, tooling_tag="v2.0.7")
     assert setup.startswith("export X='a b;c' && ")
 
 
 def test_compose_setup_rejects_an_invalid_env_name(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     with pytest.raises(ValueError, match="not a valid environment variable name"):
-        _compose_setup(tmp_path, "go", build_env={"BAD NAME": "x"})
+        _compose_setup(tmp_path, "go", build_env={"BAD NAME": "x"}, tooling_tag="v2.0.7")
 
 
 def test_compose_setup_empty_build_env_adds_nothing(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     _bootstrap_go(tmp_path)
-    assert "export" not in _compose_setup(tmp_path, "go", build_env={})
+    assert "export" not in _compose_setup(tmp_path, "go", build_env={}, tooling_tag="v2.0.7")
 
 
 def test_compute_cache_hash_covers_env(tmp_path: Path) -> None:
@@ -2259,7 +2371,13 @@ def test_build_cached_image_prints_env_banner(
     ok = MagicMock(returncode=0, stdout="abc123\n")
     with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=ok):
         _build_cached_image(
-            tmp_path, "python", "img:1", "img:1--b--h", runtime="docker", build_env=_PY_ENV
+            tmp_path,
+            "python",
+            "img:1",
+            "img:1--b--h",
+            runtime="docker",
+            build_env=_PY_ENV,
+            tooling_tag="v2.0.7",
         )
     assert "  Env:     UV_PYTHON=3.14 UV_PYTHON_PREFERENCE=only-system" in capsys.readouterr().out
 
@@ -2270,7 +2388,15 @@ def test_build_cached_image_no_env_banner_without_env(
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     ok = MagicMock(returncode=0, stdout="abc123\n")
     with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=ok):
-        _build_cached_image(tmp_path, "go", "img:1", "img:1--b--h", runtime="docker", build_env={})
+        _build_cached_image(
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--b--h",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
+        )
     assert "Env:" not in capsys.readouterr().out
 
 
@@ -2340,7 +2466,9 @@ def test_ensure_folds_build_env_into_the_key_and_the_build(tmp_path: Path) -> No
     (tmp_path / "uv.lock").write_text("lock\n")
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     files = cache_sensitive_files(tmp_path, "python")
-    expected = compute_cache_hash(files, base_digest="sha256:abc", salt=tmp_path.name, env=_PY_ENV)
+    expected = compute_cache_hash(
+        files, base_digest="sha256:abc", salt=tmp_path.name, env=_PY_ENV, tooling="v2.0.7"
+    )
     with (
         patch("vergil_tooling.lib.git.current_branch", return_value="develop"),
         patch(
@@ -2759,7 +2887,246 @@ def test_setup_apt_update_failure_fails(tmp_path: Path) -> None:
 def test_setup_self_repo_unchanged(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "vergil-tooling"\n')
-    setup = _compose_setup(tmp_path, "go", build_env={})
+    setup = _compose_setup(tmp_path, "go", build_env={}, tooling_tag="v2.0.7")
     assert "vergil-tooling @ git+" not in setup
     assert "packaged install" not in setup
     assert "apt-cache policy" not in setup
+
+
+# -- the vergil-tooling release in the cache key (#4550) ----------------------
+#
+# The hermetic index (conftest) lists 2.0.6, 2.0.7 and 2.1.9, so the pin v2.0
+# in _VALID_TOML resolves to v2.0.7.
+
+
+def _go_key(repo_root: Path, tooling: str) -> str:
+    files = cache_sensitive_files(repo_root, "go")
+    return compute_cache_hash(files, base_digest="sha256:abc", salt=repo_root.name, tooling=tooling)
+
+
+def _ensure_go(repo_root: Path, store: _ImageStore) -> str:
+    with (
+        patch("vergil_tooling.lib.git.current_branch", return_value="develop"),
+        patch(
+            "vergil_tooling.lib.container_cache.resolve_base_digest",
+            return_value=("sha256:abc", True),
+        ),
+        patch("vergil_tooling.lib.container_cache.cache_repo_name", return_value="r"),
+        patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=store.run),
+        patch("vergil_tooling.lib.container_cache._image_is_launchable", return_value=True),
+        patch("vergil_tooling.lib.container_cache._build_cached_image", side_effect=store.build),
+    ):
+        return ensure_cached_image(repo_root, "go", "img:1", runtime="docker", build_env={})
+
+
+def test_compute_cache_hash_folds_in_the_tooling_release(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    assert _go_key(tmp_path, "v2.0.6") != _go_key(tmp_path, "v2.0.7")
+    assert _go_key(tmp_path, "v2.0.7") != _go_key(tmp_path, "")
+
+
+def test_ensure_rebuilds_a_cache_older_than_the_pinned_lines_newest_release(
+    tmp_path: Path,
+) -> None:
+    # The branch cache was built when v2.0 resolved to v2.0.6. Nothing else has
+    # changed, but v2.0.7 is now released: the cache is rebuilt, at v2.0.7.
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    old = f"img:1--develop--r.{_go_key(tmp_path, 'v2.0.6')}"
+    store = _ImageStore([old])
+    image = _ensure_go(tmp_path, store)
+    assert image == f"img:1--develop--r.{_go_key(tmp_path, 'v2.0.7')}"
+    assert store.removed == [old]
+    assert store.built == [image]
+    assert store.tooling == ["v2.0.7"]
+
+
+def test_ensure_reuses_a_cache_at_the_pinned_lines_newest_release(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    current = f"img:1--develop--r.{_go_key(tmp_path, 'v2.0.7')}"
+    store = _ImageStore([current])
+    assert _ensure_go(tmp_path, store) == current
+    assert store.built == []
+    assert store.removed == []
+
+
+def test_ensure_refuses_when_the_release_cannot_be_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Offline: the cache is neither reused nor rebuilt, nor removed, and the
+    # error names the release the cached image holds and the exact pin to use.
+    import urllib.error
+
+    from vergil_tooling.lib import tooling_release
+    from vergil_tooling.lib.tooling_release import ToolingResolveError
+
+    def offline(url: str) -> bytes:
+        raise urllib.error.URLError("no route to host")
+
+    monkeypatch.setattr(tooling_release, "_http_fetch", offline)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    old = f"img:1--develop--r.{_go_key(tmp_path, 'v2.0.6')}"
+    store = _ImageStore([old])
+    with (
+        patch("vergil_tooling.lib.container_cache.cached_tooling", return_value="v2.0.6"),
+        pytest.raises(ToolingResolveError) as info,
+    ):
+        _ensure_go(tmp_path, store)
+    message = str(info.value)
+    assert "cannot resolve vergil-tooling v2.0 to a release" in message
+    assert "no route to host" in message
+    assert "VRG_DOCKER_INSTALL_TAG=v2.0.6" in message
+    assert store.built == []
+    assert store.removed == []
+
+
+def test_ensure_refusal_without_a_cached_release_names_the_exact_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vergil_tooling.lib import tooling_release
+    from vergil_tooling.lib.tooling_release import ToolingResolveError
+
+    monkeypatch.setattr(tooling_release, "_http_fetch", lambda _url: b"")
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    with pytest.raises(ToolingResolveError, match=r"pin an exact release \(vX\.Y\.Z\)"):
+        _ensure_go(tmp_path, _ImageStore([]))
+
+
+def test_ensure_with_an_exact_override_reuses_the_cache_with_no_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An exact pin is its own release: the cache built when v2.0 resolved to
+    # v2.0.6 has the same key, and no index is read.
+    from vergil_tooling.lib import tooling_release
+
+    def no_network(url: str) -> bytes:
+        msg = f"unexpected index fetch: {url}"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(tooling_release, "_http_fetch", no_network)
+    monkeypatch.setenv("VRG_DOCKER_INSTALL_TAG", "v2.0.6")
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    old = f"img:1--develop--r.{_go_key(tmp_path, 'v2.0.6')}"
+    store = _ImageStore([old])
+    assert _ensure_go(tmp_path, store) == old
+    assert store.built == []
+
+
+def test_self_repo_key_names_no_tooling_and_reads_no_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vergil_tooling.lib import tooling_release
+    from vergil_tooling.lib.container_cache import current_cache_key
+
+    def no_network(url: str) -> bytes:
+        msg = f"unexpected index fetch: {url}"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(tooling_release, "_http_fetch", no_network)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "vergil-tooling"\n')
+    files = cache_sensitive_files(tmp_path, "go")
+    with patch(
+        "vergil_tooling.lib.container_cache.resolve_base_digest",
+        return_value=("sha256:abc", True),
+    ):
+        key = current_cache_key(
+            tmp_path, "img:1", files, build_env={}, existing_tag=None, runtime="docker"
+        )
+    assert (key.pin, key.tooling) == ("", "")
+    assert key.cache_hash == _go_key(tmp_path, "")
+
+
+def test_compose_setup_installs_the_resolved_release(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    setup = _compose_setup(tmp_path, "go", build_env={}, tooling_tag="v2.0.7")
+    assert setup == vergil_tooling_setup_command("v2.0.7")
+    assert "vergil-tooling=2.0.7-1" in setup
+
+
+def test_compose_setup_refuses_no_release_for_a_consumer_repo(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    with pytest.raises(ValueError, match="no vergil-tooling release"):
+        _compose_setup(tmp_path, "go", build_env={}, tooling_tag="")
+
+
+def test_build_records_the_release_in_the_commit_and_banner(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    calls: list[list[str]] = []
+
+    def run(cmd: list[str], **_kwargs: object) -> MagicMock:
+        calls.append(cmd)
+        return _completed(0, stdout="cid\n")
+
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=run):
+        _build_cached_image(
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--b--r.h",
+            runtime="docker",
+            build_env={},
+            tooling_tag="v2.0.7",
+        )
+    commit = next(c for c in calls if c[1] == "commit")
+    assert commit == [
+        "docker",
+        "commit",
+        "--message",
+        "vergil-tooling v2.0.7",
+        "cid",
+        "img:1--b--r.h",
+    ]
+    assert "Install: vergil-tooling@v2.0.7 (pin v2.0)" in capsys.readouterr().out
+
+
+def test_build_for_the_self_repo_records_no_release(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "vergil-tooling"\n')
+    calls: list[list[str]] = []
+
+    def run(cmd: list[str], **_kwargs: object) -> MagicMock:
+        calls.append(cmd)
+        return _completed(0, stdout="cid\n")
+
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=run):
+        _build_cached_image(
+            tmp_path,
+            "go",
+            "img:1",
+            "img:1--b--r.h",
+            runtime="docker",
+            build_env={},
+            tooling_tag="",
+        )
+    assert next(c for c in calls if c[1] == "commit") == [
+        "docker",
+        "commit",
+        "cid",
+        "img:1--b--r.h",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (_completed(0, stdout="vergil-tooling v2.1.320\n"), "v2.1.320"),
+        (_completed(0, stdout="\n"), None),
+        (_completed(0, stdout="buildkit.dockerfile.v0\n"), None),
+        (_completed(1, stderr="no such image"), None),
+    ],
+)
+def test_cached_tooling_reads_the_commit_message(result: MagicMock, expected: str | None) -> None:
+    from vergil_tooling.lib.container_cache import cached_tooling
+
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=result) as run:
+        assert cached_tooling("img:1--b--r.h", runtime="docker") == expected
+    assert run.call_args[0][0] == [
+        "docker",
+        "image",
+        "inspect",
+        "img:1--b--r.h",
+        "--format",
+        "{{.Comment}}",
+    ]
