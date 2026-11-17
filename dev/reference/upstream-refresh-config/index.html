@@ -14353,6 +14353,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#a-hash-changes-only-with-its-blocks-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A hash changes only with its block's version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vergiltoml" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17940,6 +17951,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#a-hash-changes-only-with-its-blocks-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A hash changes only with its block's version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vergiltoml" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18254,6 +18276,35 @@ block. For example, a <code>runtime.toml</code> rule:</p>
   an existing anchored block. Dropping a series is made by a human, in
   an ordinary PR.</li>
 </ul>
+<h3 id="a-hash-changes-only-with-its-blocks-version">A hash changes only with its block's version<a class="headerlink" href="#a-hash-changes-only-with-its-blocks-version" title="Permanent link">&para;</a></h3>
+<p>A line rule may mark a hash or digest in its regex with a named group:</p>
+<ul>
+<li><code>(?P&lt;hash&gt;…)</code> for the first one;</li>
+<li><code>(?P&lt;hash_&lt;suffix&gt;&gt;…)</code> for each further one in the same regex, such
+  as <code>(?P&lt;hash_arm&gt;…)</code>, for the same reason as <code>version_&lt;suffix&gt;</code>.</li>
+</ul>
+<p>A <strong>hash line</strong> is a line one of these groups marks. Its identity is
+its block's anchor value and the text before its hash group, as for a
+versioned line, and its block is the one that anchor names (under a
+rule with no anchor group, the whole file). The file is compared as a
+whole, so a diff that does not show the whole file is refused.</p>
+<ul>
+<li><strong>A changed hash needs a version change.</strong> A hash line whose hash
+  changes is allowed only when a version of the same block also changes
+  in the same patch. A hash that changes while every version of its
+  block stays the same is refused, naming the path and the line. Under
+  a rule with no version group, no existing hash may change.</li>
+<li><strong>A hash pinned for the first time is allowed:</strong> a hash line in a new
+  block, or a new key in an existing block.</li>
+<li><strong>A hash line that disappears from a block that stays is refused</strong>
+  under a rule with an anchor group, since moving it above its block's
+  anchor line would otherwise give it a new identity. Under a rule with
+  no anchor group, a dropped hash line is a dropped pin, and is allowed.</li>
+</ul>
+<p>A rule with no hash group checks no hashes. For example, the
+<code>runtime.toml</code> rule above, with its hashes marked:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="err">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"runtime.toml"</span><span class="err">,</span><span class="w"> </span><span class="n">lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'^(\[\[series\]\]|\[series\.sha256\]|series = "(?P&lt;anchor&gt;\d+\.\d+)"|cpython = "(?P&lt;version&gt;\d+\.\d+\.\d+)"|pbs_tag = "(?P&lt;version_pbs&gt;\d{8})"|(x86_64|aarch64) = "(?P&lt;hash&gt;[0-9a-f]{64})"|)$'</span><span class="w"> </span><span class="err">}</span>
+</code></pre></div>
 <h3 id="vergiltoml"><code>vergil.toml</code><a class="headerlink" href="#vergiltoml" title="Permanent link">&para;</a></h3>
 <p>Where <code>paths</code> allows <code>vergil.toml</code>, publish parses it before (at the
 recorded commit) and after the patch:</p>
@@ -18397,9 +18448,9 @@ any violation is found.</p>
 <p>The command never reads or touches the caller's checkout. Every clone
 lives in a temporary directory, removed when the run ends.</p>
 <h2 id="cli">CLI<a class="headerlink" href="#cli" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-upstream-refresh prepare --out DIR [--repo OWNER/NAME]
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>vrg-upstream-refresh publish --from DIR [--repo OWNER/NAME]
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>vrg-upstream-refresh [--repo OWNER/NAME] [--dry-run [--rules-from PATH]]
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-upstream-refresh prepare --out DIR [--repo OWNER/NAME]
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>vrg-upstream-refresh publish --from DIR [--repo OWNER/NAME]
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>vrg-upstream-refresh [--repo OWNER/NAME] [--dry-run [--rules-from PATH]]
 </code></pre></div>
 <table>
 <thead>
