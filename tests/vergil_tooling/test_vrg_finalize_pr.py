@@ -3227,6 +3227,8 @@ def test_report_broken_develop_names_head_and_commits(
         ctx.synced_to = "bbbb222"
 
     output = "\n".join(f"gate line {i}" for i in range(50))
+    # stderr's warnings must not push the end of stdout out of the report.
+    stderr = "\n".join(f"uv warning {i}" for i in range(45))
 
     def read_output(*args: str) -> str:
         if args[0] == "log":
@@ -3242,7 +3244,9 @@ def test_report_broken_develop_names_head_and_commits(
         patch(_MOD + ".git.read_output", side_effect=read_output),
         patch(
             _MOD + ".progress.run",
-            side_effect=subprocess.CalledProcessError(1, ("vrg-container-run",), output=output),
+            side_effect=subprocess.CalledProcessError(
+                1, ("vrg-container-run",), output=output, stderr=stderr
+            ),
         ),
         patch(_MOD + "._report_cd_run", return_value=_CD_LINE),
         patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged),
@@ -3253,12 +3257,40 @@ def test_report_broken_develop_names_head_and_commits(
     report = out[out.index("DID NOT VALIDATE") :]
     assert "Head: bbbb222" in report
     assert "    bbbb222 feat: second" in report
-    assert "Last 40 lines of the validate:" in report
-    assert "    gate line 49" in report
-    assert "    gate line 10" in report
-    assert "gate line 9\n" not in report
+    stdout_tail = report[report.index("Last 40 lines of the validate's stdout:") :]
+    stdout_tail = stdout_tail[: stdout_tail.index("Last 40 lines of the validate's stderr:")]
+    assert "    gate line 49" in stdout_tail
+    assert "    gate line 10" in stdout_tail
+    assert "gate line 9\n" not in stdout_tail
+    assert "    uv warning 44" in report
     log_line = next(line for line in report.splitlines() if "Validate log:" in line)
     assert "gate line 0" in Path(log_line.split("Validate log:", 1)[1].strip()).read_text()
+
+
+def test_wait_cd_failure_after_a_passing_validate_names_cd(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With --wait-cd, a CD failure is 4, but the report blames CD, not the validate."""
+    with (
+        _settle_env(tmp_path, []),
+        patch(_MOD + "._stage_cd_check", side_effect=FinalizeError("CD run did not succeed")),
+        patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged),
+    ):
+        assert main([_PR_A, "--wait-cd"]) == 4
+    out = capsys.readouterr().out
+    assert "Validate: passed on develop" in out
+    assert "DID NOT VALIDATE" not in out
+    assert "ERROR: develop's CD did not succeed (--wait-cd)." in out
+    assert "  CD: FinalizeError: CD run did not succeed" in out
+
+
+def test_cd_check_failure_without_wait_cd_is_a_tool_error(tmp_path: Path) -> None:
+    with (
+        _settle_env(tmp_path, []),
+        patch(_MOD + "._stage_cd_check", side_effect=FinalizeError("lookup crashed")),
+        patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged),
+    ):
+        assert main([_PR_A]) == 1
 
 
 def test_settle_under_real_lock(tmp_path: Path) -> None:

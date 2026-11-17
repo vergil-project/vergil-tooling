@@ -497,13 +497,18 @@ def _settle(args: argparse.Namespace, root: Path, *, merged_prs: list[str]) -> S
     return SettleOutcome(ctx=ctx, results=tuple(results), rc=rc)
 
 
+def _validate_failed(settle: SettleOutcome) -> bool:
+    """Whether the validate failed or could not run (a provision failure stops it)."""
+    return settle.status("validation") == "failed" or settle.status("provision") == "failed"
+
+
 def _develop_broken(settle: SettleOutcome) -> bool:
     """Whether nothing has shown develop healthy: the validate failed or could not run.
 
     A provision failure stops the pipeline before the validate, so it could
     not run. With ``--wait-cd``, a CD check that failed counts too.
     """
-    if settle.status("validation") == "failed" or settle.status("provision") == "failed":
+    if _validate_failed(settle):
         return True
     return bool(settle.ctx.args.wait_cd) and settle.status("cd-check") == "failed"
 
@@ -536,7 +541,13 @@ def _print_settle_report(settle: SettleOutcome) -> None:
     if not _develop_broken(settle):
         return
     print()
-    print(f"ERROR: {branch} DID NOT VALIDATE. Fix it before anything else merges or releases.")
+    if _validate_failed(settle):
+        print(f"ERROR: {branch} DID NOT VALIDATE. Fix it before anything else merges or releases.")
+    else:
+        print(
+            f"ERROR: {branch}'s CD did not succeed (--wait-cd). "
+            "Fix it before anything else merges or releases."
+        )
     print(f"  Head: {ctx.synced_to or '(unknown)'}")
     print("  Commits the sync brought in:")
     for line in _synced_commits(ctx):
@@ -549,9 +560,9 @@ def _print_settle_report(settle: SettleOutcome) -> None:
         print(f"  CD: {settle.error('cd-check')}")
     if ctx.validate_log is not None:
         print(f"  Validate log: {ctx.validate_log}")
-    if ctx.validate_tail:
-        print(f"  Last {len(ctx.validate_tail)} lines of the validate:")
-        for line in ctx.validate_tail:
+    for label, tail in ctx.validate_tails:
+        print(f"  Last {len(tail)} lines of the validate's {label}:")
+        for line in tail:
             print(f"    {line}")
 
 
@@ -615,7 +626,8 @@ class FinalizeContext:
     cd_line: str = ""
     # A failed validate's full output log and its last lines.
     validate_log: Path | None = None
-    validate_tail: list[str] = field(default_factory=list)
+    # One (label, lines) pair per stream that had output, stdout first.
+    validate_tails: list[tuple[str, list[str]]] = field(default_factory=list)
     # The checkout lock, taken by the checkout-lock stage. _settle closes it
     # after the pipeline; cd-check closes it first, so the lock never covers
     # a wait on CD (spec §6.4).
@@ -1609,7 +1621,7 @@ def _stage_validation(ctx: FinalizeContext) -> None:
     Any failure, a gate that failed or a validate that could not run, is
     recorded for the report before the stage fails: the full output goes to
     its own run log (``.vergil/vrg-finalize-validate-<stamp>.log``) and its
-    last :data:`VALIDATE_TAIL_LINES` lines onto *ctx* (spec §6.3).
+    last :data:`VALIDATE_TAIL_LINES` lines of each stream onto *ctx* (spec §6.3).
 
     The checkout-lock stage holds the lock (``lib/checkout_lock.py``) around
     this stage; the stage never takes it itself.
@@ -1622,21 +1634,33 @@ def _stage_validation(ctx: FinalizeContext) -> None:
 
 
 def _record_validate_failure(ctx: FinalizeContext, exc: BaseException) -> None:
-    """Write a failed validate's output to its own run log and keep its tail on *ctx*."""
-    lines = [*str(exc).splitlines()]
+    """Write a failed validate's output to its own run log and keep its tails on *ctx*.
+
+    ``progress.run`` captures stdout and stderr apart, so their interleaving
+    is lost. Each stream is therefore kept, logged and tailed under its own
+    label, so stderr's warnings never push the end of stdout, where a failing
+    gate reports, out of the tail. With no output at all, the tail is the
+    failure's own message.
+    """
+    streams: list[tuple[str, list[str]]] = []
     cause = exc.__cause__
     if isinstance(cause, subprocess.CalledProcessError):
-        for stream in (cause.output, cause.stderr):
+        for label, stream in (("stdout", cause.output), ("stderr", cause.stderr)):
             if stream:
-                lines.extend(str(stream).splitlines())
+                streams.append((label, str(stream).splitlines()))
+    if not streams:
+        streams.append(("failure", str(exc).splitlines()))
     log = progress.RunLog(_VALIDATE_LOG_COMMAND, ctx.root)
     try:
-        for line in lines:
-            log.write(line)
+        log.write(str(exc))
+        for label, lines in streams:
+            log.write(f"=== {label} ===")
+            for line in lines:
+                log.write(line)
     finally:
         log.close()
     ctx.validate_log = log.path
-    ctx.validate_tail = lines[-VALIDATE_TAIL_LINES:]
+    ctx.validate_tails = [(label, lines[-VALIDATE_TAIL_LINES:]) for label, lines in streams]
 
 
 def _run_validation(ctx: FinalizeContext) -> None:
