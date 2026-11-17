@@ -227,11 +227,11 @@ class _IdentityRefusedError(Exception):
 def _update_identity() -> identity_mode.IdentityMode:
     """This run's identity mode, which ``update`` may run as.
 
-    Raises :class:`_IdentityRefusedError` when it refuses. ``update`` runs for the human and the verified org
-    automation App, and refuses the AI agent modes by name. A run whose
-    identity cannot be resolved (``$VRG_AUTOMATION_APP`` set but the token is
-    not that App's, or an agent signal beside it) is refused with the
-    resolver's reason.
+    Raises :class:`_IdentityRefusedError` when it refuses. ``update`` runs
+    for the human and the verified org automation App, and refuses the AI
+    agent modes by name. A run whose identity cannot be resolved
+    (``$VRG_AUTOMATION_APP`` set but the token is not that App's, or an agent
+    signal beside it) is refused with the resolver's reason.
     """
     try:
         mode = identity_mode.current_mode()
@@ -261,7 +261,7 @@ def _describe_identity(mode: identity_mode.IdentityMode) -> str:
             msg = "the automation identity resolved without $VRG_AUTOMATION_APP set"
             raise RuntimeError(msg)
         return f"{mode.value} ({slug}[bot])"
-    return mode.value
+    return str(mode.value)
 
 
 def _run_fixers(repo: str, clone: Path) -> list[CannotFix]:
