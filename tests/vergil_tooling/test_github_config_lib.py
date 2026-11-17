@@ -206,13 +206,13 @@ def test_desired_actions_permissions_with_language_patterns() -> None:
 
 
 def test_desired_actions_permissions_python() -> None:
+    # Python adds no language patterns: its CI runs through Vergil's
+    # reusable workflows (vergil-tooling#4577).
     a = desired_actions_permissions("python")
     assert a.patterns_allowed == [
         "actions/*",
-        "astral-sh/*",
         "docker/*",
         "github/*",
-        "pypa/*",
         "vergil-project/*",
     ]
 
@@ -230,14 +230,13 @@ def test_desired_actions_permissions_extra_patterns() -> None:
 
 def test_desired_actions_permissions_extra_patterns_unioned_not_duplicated() -> None:
     # An extra pattern that overlaps a language default is unioned, not duplicated.
-    a = desired_actions_permissions("python", ["astral-sh/*", "dataaxiom/ghcr-cleanup-action@*"])
+    a = desired_actions_permissions("rust", ["swatinem/*", "dataaxiom/ghcr-cleanup-action@*"])
     assert a.patterns_allowed == [
         "actions/*",
-        "astral-sh/*",
         "dataaxiom/ghcr-cleanup-action@*",
         "docker/*",
         "github/*",
-        "pypa/*",
+        "swatinem/*",
         "vergil-project/*",
     ]
 
@@ -1564,9 +1563,9 @@ def test_compute_desired_state_includes_security() -> None:
 
 
 def test_compute_desired_state_includes_actions() -> None:
-    state = _state(_vergil_config(), visibility="public", is_org=True)
+    state = _state(_vergil_config(language="rust"), visibility="public", is_org=True)
     assert state.actions_permissions.allowed_actions == "selected"
-    assert "pypa/*" in state.actions_permissions.patterns_allowed
+    assert "swatinem/*" in state.actions_permissions.patterns_allowed
 
 
 # ---------------------------------------------------------------------------
