@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.322] - 2026-11-17
+
+### Bug fixes
+
+- surface git failures in the release worktree setup as a ReleaseError (#4442)
+- line-buffer stdout so the PR poller's lines are logged as they happen (#4596)
+- refresh Homebrew metadata before reading brew latest versions (#4609)
+- restore the bumped files when a version bump fails (#4610)
+- skip the CD release job on the push that creates main (#4617)
+- name --python 3.15 in the container, VM dev and developer installs (#4622)
+- tighten the Python allowed-actions list (#4628)
+- warn when vrg-container-run runs below the repo root, and name the repo root when no language is set (#4630)
+- treat repo-init's dependency-free package.json as not bootstrapped (#4632)
+
+### Documentation
+
+- bring the upstream-refresh and automation-App docs up to date with self-merging refresh PRs (#4559)
+- retarget links to retired standard-actions and mq-rest-admin-python sites (#4560)
+- drop 'Sphinx' from the --mapping-pages-dir help (#4600)
+- bring the TypeScript, CI and release docs up to date with the TypeScript full-cycle epic (#4631)
+
+### Features
+
+- require a green develop CD run before cutting a release (#4586)
+- split CI gates into develop and main rulesets; develop drops the up-to-date rule (#4591)
+- treat agent auto-merge events as forbidden actions (#4601)
+- carry every batch issue's scope for a fix to an open batch PR (#4602)
+- log update's resolved identity mode and each ruleset's bypass actors read back (#4605)
+- flag links to Vergil docs sites that are not published (#4611)
+- verify the stored result against its capture record in vrg-merge-review-check (#4616)
+- add a read-only run job-log command that fetches one Actions job's log (#4620)
+- allow routing an ad-hoc item to planning (#4621)
+- install by default; --no-install skips it (#4623)
+- clear classic protection's up-to-date flag on develop (#4625)
+- re-dispatch a main CD run superseded before it started (#4626)
+- add the batch watch phase (#4627)
+- show open PRs on origin that have no local worktree (#4629)
+
+### Refactoring
+
+- share the auto-merge helper between submit and mechanized PRs (#4595)
+
 ## [2.1.321] - 2026-11-17
 
 ### Bug fixes
