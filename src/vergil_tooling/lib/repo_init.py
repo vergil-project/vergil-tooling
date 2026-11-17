@@ -1779,10 +1779,11 @@ def check_workflows_registered(ctx: RepoInitContext) -> None:
 
 
 def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState, *, ghas: bool) -> None:
-    """Fail loudly when the CI-gates ruleset requires a check ci.yml never emits.
+    """Fail loudly when a CI-gates ruleset requires a check ci.yml never emits.
 
-    Cross-checks the required status-check contexts of the derived ``CI gates``
-    ruleset against the contexts the generated ``.github/workflows/ci.yml``
+    Cross-checks the required status-check contexts of every derived CI-gates
+    ruleset (``CI gates (develop)`` and, with a ``main`` branch,
+    ``CI gates (main)``) against the contexts the generated ``.github/workflows/ci.yml``
     actually produces on a ``pull_request``. A mismatch means the repository
     cannot merge any PR — every check that runs is green while the merge stays
     blocked on a context that never reports (issue #2720). The check itself is

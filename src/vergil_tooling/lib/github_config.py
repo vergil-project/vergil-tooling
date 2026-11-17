@@ -388,7 +388,22 @@ def _lang_has_check(language: str | None, check: str) -> bool:
     return len(language_commands(language, kind)) > 0
 
 
-def desired_ci_gates_ruleset(
+# The CI-gates rulesets, one per eternal branch (epic vergil-project/.github#1218,
+# spec §6.1). ``develop``'s drops the up-to-date rule, so PRs into it can merge
+# in parallel (auto-merge never updates a ``BEHIND`` branch); ``main``'s keeps it.
+CI_GATES_DEVELOP = "CI gates (develop)"
+CI_GATES_MAIN = "CI gates (main)"
+CI_GATES_RULESET_NAMES = (CI_GATES_DEVELOP, CI_GATES_MAIN)
+
+# The single shared ruleset the pair replaces. It is no longer desired, so the
+# audit reports it as drift and ``apply`` deletes it, after writing the pair.
+LEGACY_CI_GATES_RULESET_NAME = "CI gates"
+
+# The branching model with no ``main`` branch, so no main CI-gates ruleset.
+_DEVELOP_ONLY_BRANCHING_MODEL = "docs-single-branch"
+
+
+def desired_ci_gates_rulesets(
     project: ProjectConfig,
     ci: CiConfig,
     *,
@@ -396,8 +411,62 @@ def desired_ci_gates_ruleset(
     docs: bool = True,
     package: bool = False,
     integration_versions: Sequence[str] = (),
+) -> tuple[DesiredRuleset, ...]:
+    """Derive the CI-gates rulesets: develop's, then main's when the repo has one.
+
+    Both require the same status checks (:func:`_ci_gate_checks`). ``develop``'s
+    sets ``strict_required_status_checks_policy`` to false and ``main``'s to
+    true. A ``docs-single-branch`` repo has no ``main``, so it gets the develop
+    ruleset only.
+    """
+    checks = _ci_gate_checks(
+        project,
+        ci,
+        ghas=ghas,
+        docs=docs,
+        package=package,
+        integration_versions=integration_versions,
+    )
+    rulesets = [_ci_gates_ruleset(CI_GATES_DEVELOP, "develop", checks, strict=False)]
+    if project.branching_model != _DEVELOP_ONLY_BRANCHING_MODEL:
+        rulesets.append(_ci_gates_ruleset(CI_GATES_MAIN, "main", checks, strict=True))
+    return tuple(rulesets)
+
+
+def _ci_gates_ruleset(
+    name: str, branch: str, checks: list[dict[str, object]], *, strict: bool
 ) -> DesiredRuleset:
-    """Derive the CI gates ruleset from project identity and CI config.
+    """One branch's CI-gates ruleset, requiring *checks*."""
+    return DesiredRuleset(
+        name=name,
+        target="branch",
+        enforcement="active",
+        ref_include=[f"refs/heads/{branch}"],
+        bypass_actors=[],
+        rules=[
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "strict_required_status_checks_policy": strict,
+                    # Each ruleset gets its own copies, so editing one
+                    # ruleset's checks never changes the other's.
+                    "required_status_checks": [dict(c) for c in checks],
+                },
+            },
+        ],
+    )
+
+
+def _ci_gate_checks(
+    project: ProjectConfig,
+    ci: CiConfig,
+    *,
+    ghas: bool,
+    docs: bool,
+    package: bool,
+    integration_versions: Sequence[str],
+) -> list[dict[str, object]]:
+    """The required status checks of the CI-gates rulesets.
 
     ``docs`` mirrors ``[publish].docs``: the ``docs / docs`` gate is only
     emitted by a repo whose ``ci.yml`` invokes ``ci-docs.yml``, which repos do
@@ -492,31 +561,16 @@ def desired_ci_gates_ruleset(
     if project.release_model != "none":
         checks.append(_make_check("version / version-bump"))
 
-    return DesiredRuleset(
-        name="CI gates",
-        target="branch",
-        enforcement="active",
-        ref_include=["refs/heads/main", "refs/heads/develop"],
-        bypass_actors=[],
-        rules=[
-            {
-                "type": "required_status_checks",
-                "parameters": {
-                    "strict_required_status_checks_policy": True,
-                    "required_status_checks": checks,
-                },
-            },
-        ],
-    )
+    return checks
 
 
 # ---------------------------------------------------------------------------
 # CI-gate producibility cross-check (issue #2720)
 # ---------------------------------------------------------------------------
 #
-# The CI-gates ruleset (``desired_ci_gates_ruleset``) and the generated
-# ``ci.yml`` workflow are two artifacts derived from the same identity along two
-# independent paths. When they disagree — the ruleset *requires* a status check
+# The CI-gates rulesets (``desired_ci_gates_rulesets``) and the generated
+# ``ci.yml`` workflow are derived from the same identity along two independent
+# paths. When they disagree — a ruleset *requires* a status check
 # the workflow never *emits on ``pull_request``* — the branch is unmergeable by
 # construction, with every check that does run green. Two flags have produced
 # this: ``integration-tests`` (no producing job at all) and ``publish-docs``
@@ -647,7 +701,7 @@ def unproducible_ci_yaml_contexts(
 
 
 # The required-context family ``[ci].integration-tests = true`` adds to the CI
-# gates, one per resolved version (``desired_ci_gates_ruleset``).
+# gates, one per resolved version (``desired_ci_gates_rulesets``).
 _INTEGRATION_CONTEXT_PREFIX = "test / integration / "
 
 # Why ``[ci].integration-tests = true`` is refused: shared by the guard below and
@@ -669,7 +723,7 @@ def assert_ci_gates_producible(
 ) -> None:
     """Refuse a CI-gates ruleset that requires a check ci.yml never emits on a PR.
 
-    The single guard shared by every path that writes the ``CI gates`` ruleset —
+    The single guard shared by every path that writes the CI-gates rulesets —
     repo-init (against the freshly generated ci.yml) and the ongoing config sync
     ``vrg-github-repo-config apply`` (against the repo's committed ci.yml,
     issue #2788). A mismatch means the repository cannot merge any PR: every
@@ -680,13 +734,24 @@ def assert_ci_gates_producible(
     ``[ci].integration-tests = true``, and no CI job produces it, so the error
     names that setting as the cause of those contexts and says why (issue
     #4448), rather than listing it as one guess among several.
+
+    Every desired CI-gates ruleset (:data:`CI_GATES_RULESET_NAMES`) is checked.
+    A desired state with no ``CI gates (develop)`` ruleset is an error, never a
+    skip: every repo's desired state has one, so its absence means the ruleset
+    was renamed or dropped and nothing would be checked (epic
+    vergil-project/.github#1218, spec §6.1).
     """
-    ci_gates = next((rs for rs in desired.rulesets if rs.name == _CI_GATES_RULESET_NAME), None)
-    if ci_gates is None:
-        return
-    unproducible = unproducible_ci_yaml_contexts(
-        ci_workflow_yaml, required_status_contexts(ci_gates), ghas=ghas
-    )
+    gates = [rs for rs in desired.rulesets if rs.name in CI_GATES_RULESET_NAMES]
+    if not any(rs.name == CI_GATES_DEVELOP for rs in gates):
+        msg = (
+            f"the desired state has no {CI_GATES_DEVELOP!r} ruleset, so the CI-gates "
+            f"producibility of {source} cannot be checked"
+        )
+        raise RuntimeError(msg)
+    required: list[str] = []
+    for rs in gates:
+        required.extend(c for c in required_status_contexts(rs) if c not in required)
+    unproducible = unproducible_ci_yaml_contexts(ci_workflow_yaml, required, ghas=ghas)
     if not unproducible:
         return
     integration = [c for c in unproducible if c.startswith(_INTEGRATION_CONTEXT_PREFIX)]
@@ -721,13 +786,13 @@ def assert_ci_gates_producible(
 # deliberately absent — the workflows emit them only as *non-required* PR check
 # runs, so a ruleset still requiring one is exactly the stale-gate drift this
 # check surfaces. ``quality / common`` stays in the catalog although
-# ``desired_ci_gates_ruleset`` no longer requires it (replaced by
+# ``desired_ci_gates_rulesets`` no longer requires it (replaced by
 # ``quality / evidence``, issue #3660): ci-quality.yml still runs the job on
 # every PR, so a live ruleset that still requires it cannot deadlock a merge.
 # That is ordinary ruleset drift, which the audit reports and ``apply``
 # converges, not an unproducible gate.
 # ``test_producible_gate_catalog_covers_desired_stable_gates`` guards the
-# catalog against drift from ``desired_ci_gates_ruleset``.
+# catalog against drift from ``desired_ci_gates_rulesets``.
 _PRODUCIBLE_GATE_CATALOG: frozenset[str] = frozenset(
     {
         "quality / common",
@@ -767,7 +832,7 @@ def unproducible_required_contexts(required: set[str], produced: set[str]) -> se
 #
 # The set of gates a repo MUST emit CI evidence for is derived from the *same*
 # required-status-check computation that drives branch protection
-# (``desired_ci_gates_ruleset``). This makes the enforced gates and the
+# (``desired_ci_gates_rulesets``). This makes the enforced gates and the
 # evidence-required gates provably identical — no hand-maintained list, no drift.
 
 
@@ -857,11 +922,11 @@ def required_evidence_gates(
     """The evidence-producing gates this repo MUST emit.
 
     Derived from the same required-status-check computation that drives branch
-    protection (:func:`desired_ci_gates_ruleset`), so the enforced gates and the
+    protection (:func:`desired_ci_gates_rulesets`), so the enforced gates and the
     evidence-required gates cannot drift apart. ``docs`` and ``package`` are
     threaded through identically for the same reason.
     """
-    ruleset = desired_ci_gates_ruleset(
+    checks = _ci_gate_checks(
         project,
         ci,
         ghas=ghas,
@@ -869,7 +934,6 @@ def required_evidence_gates(
         package=package,
         integration_versions=integration_versions,
     )
-    checks = _extract_status_checks(ruleset.rules) or []
 
     grouped: dict[str, list[str]] = {}
     for check in checks:
@@ -917,8 +981,8 @@ def compute_desired_state(
     rulesets.append(desired_tag_protection_ruleset())
     rulesets.append(desired_rolling_tag_branch_ruleset())
     rulesets.append(desired_automation_branch_ruleset(automation_app_id))
-    rulesets.append(
-        desired_ci_gates_ruleset(
+    rulesets.extend(
+        desired_ci_gates_rulesets(
             config.project,
             config.ci,
             ghas=ghas,
@@ -1805,13 +1869,25 @@ def _diff_rulesets(
             items.append(
                 DiffItem(
                     field=f"rulesets.{name}",
-                    expected="absent",
+                    expected=_undesired_ruleset_expected(name, desired_by_name),
                     actual="present",
                 )
             )
 
 
-_CI_GATES_RULESET_NAME = "CI gates"
+def _undesired_ruleset_expected(name: str, desired_by_name: dict[str, DesiredRuleset]) -> str:
+    """The ``expected`` of a live ruleset the desired state does not hold.
+
+    The legacy shared ``CI gates`` ruleset is named as replaced by the desired
+    CI-gates pair, so the drift report says what the change is (epic
+    vergil-project/.github#1218, spec §6.1).
+    """
+    if name != LEGACY_CI_GATES_RULESET_NAME:
+        return "absent"
+    replacements = [n for n in CI_GATES_RULESET_NAMES if n in desired_by_name]
+    if not replacements:
+        return "absent"
+    return "absent (replaced by " + " and ".join(repr(n) for n in replacements) + ")"
 
 
 def _diff_producibility(
@@ -1825,25 +1901,42 @@ def _diff_producibility(
     stable gate names the reusable workflows emit (``_PRODUCIBLE_GATE_CATALOG``),
     extended by the repo's own desired ruleset (which carries the still
     per-version ``test / integration / <version>`` family it legitimately
-    requires), form the produced set. Any context the *actual* CI-gates ruleset
+    requires), form the produced set. Any context an *actual* CI-gates ruleset
     requires outside that set is unproducible — a required check that never
     reports, deadlocking every merge with green checks — and is reported as its
     own diff item so the non-compliance names the exact offending context.
+
+    Each ruleset in :data:`CI_GATES_RULESET_NAMES` is checked on its own. One
+    that is desired with no live counterpart, or live with no desired one, is a
+    ``rulesets.<name>.missing_ci_gates_ruleset`` item, never a silent skip
+    (epic vergil-project/.github#1218, spec §6.1).
     """
-    desired_gates = next((r for r in desired if r.name == _CI_GATES_RULESET_NAME), None)
-    actual_gates = next((r for r in actual if r.name == _CI_GATES_RULESET_NAME), None)
-    if desired_gates is None or actual_gates is None:
-        return
-    produced = set(required_status_contexts(desired_gates)) | _PRODUCIBLE_GATE_CATALOG
-    required = set(required_status_contexts(actual_gates))
-    for ctx in sorted(unproducible_required_contexts(required, produced)):
-        items.append(
-            DiffItem(
-                field=f"rulesets.{_CI_GATES_RULESET_NAME}.unproducible_required_context",
-                expected="a status check the repo's workflows produce",
-                actual=ctx,
+    desired_by_name = {r.name: r for r in desired}
+    actual_by_name = {r.name: r for r in actual}
+    for name in CI_GATES_RULESET_NAMES:
+        desired_gates = desired_by_name.get(name)
+        actual_gates = actual_by_name.get(name)
+        if desired_gates is None and actual_gates is None:
+            continue
+        if desired_gates is None or actual_gates is None:
+            items.append(
+                DiffItem(
+                    field=f"rulesets.{name}.missing_ci_gates_ruleset",
+                    expected="desired" if desired_gates is not None else "not desired",
+                    actual="present" if actual_gates is not None else "missing",
+                )
             )
-        )
+            continue
+        produced = set(required_status_contexts(desired_gates)) | _PRODUCIBLE_GATE_CATALOG
+        required = set(required_status_contexts(actual_gates))
+        for ctx in sorted(unproducible_required_contexts(required, produced)):
+            items.append(
+                DiffItem(
+                    field=f"rulesets.{name}.unproducible_required_context",
+                    expected="a status check the repo's workflows produce",
+                    actual=ctx,
+                )
+            )
 
 
 def unreadable_bypass_lists(

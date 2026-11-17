@@ -13,7 +13,7 @@ import yaml
 from vergil_tooling.lib import repo_init
 from vergil_tooling.lib.config import CiConfig, ProjectConfig
 from vergil_tooling.lib.github_config import (
-    desired_ci_gates_ruleset,
+    desired_ci_gates_rulesets,
     required_status_contexts,
     unproducible_ci_yaml_contexts,
 )
@@ -105,9 +105,9 @@ class TestPackageGateProducible:
             primary_language=ctx.primary_language,
         )
         ci = CiConfig(versions=ctx.ci_versions, integration_tests=ctx.integration_tests)
-        ruleset = desired_ci_gates_ruleset(
+        ruleset = desired_ci_gates_rulesets(
             project, ci, ghas=True, docs=ctx.publish_docs, package=ruleset_package
-        )
+        )[0]
         assert ("package / evidence" in required_status_contexts(ruleset)) is ruleset_package
         result: list[str] = unproducible_ci_yaml_contexts(
             render_ci_workflow(ctx), required_status_contexts(ruleset), ghas=True

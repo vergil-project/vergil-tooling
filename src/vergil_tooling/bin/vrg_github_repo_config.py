@@ -455,9 +455,9 @@ _CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
 def _fetch_ci_workflow(repo: str, ref: str) -> str:
     """Fetch the committed ``.github/workflows/ci.yml`` of ``repo`` at ``ref``.
 
-    An absent ci.yml (HTTP 404) is a hard error, never a skip: the ``CI gates``
-    ruleset always requires status checks, and with no ci.yml nothing posts them
-    on a pull_request, so applying the ruleset would block every merge — the
+    An absent ci.yml (HTTP 404) is a hard error, never a skip: the CI-gates
+    rulesets always require status checks, and with no ci.yml nothing posts them
+    on a pull_request, so applying the rulesets would block every merge — the
     exact failure the producibility guard exists to prevent (issue #2788).
     Non-404 API errors propagate unchanged.
     """
@@ -469,7 +469,7 @@ def _fetch_ci_workflow(repo: str, ref: str) -> str:
     except github.GitHubAPIError as exc:
         if _is_not_found(exc):
             msg = (
-                f"Refusing to apply the CI-gates ruleset to {repo}: "
+                f"Refusing to apply the CI-gates rulesets to {repo}: "
                 f"{_CI_WORKFLOW_PATH} is absent from the '{ref}' branch, so no "
                 f"required status check could ever report on a pull_request and "
                 f"every merge would be blocked. Commit a ci.yml to '{ref}' "
@@ -666,7 +666,8 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
 def _apply_repo(repo: str, config: VergilConfig) -> list[ClassicProtectionReport]:
     """Apply desired state to a repo. Returns the classic-protection cleanup report.
 
-    Before anything is written, the desired ``CI gates`` ruleset is
+    Before anything is written, every desired CI-gates ruleset
+    (``CI gates (develop)`` and, with a ``main`` branch, ``CI gates (main)``) is
     cross-checked against the repo's committed ci.yml on the default branch —
     the same producibility guard repo-init runs — so a routine sync can never
     (re)apply a required status check no pull_request job emits (issue #2788).
