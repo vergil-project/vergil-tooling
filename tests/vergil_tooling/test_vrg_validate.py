@@ -54,6 +54,11 @@ from vergil_tooling.lib import languages
 from vergil_tooling.lib.config import ConfigError, TestConfig
 from vergil_tooling.lib.container_cache import unbootstrapped_manifests
 from vergil_tooling.lib.languages import RUST_DOCTEST_CMD, CheckKind, language_commands
+from vergil_tooling.lib.repo_init import (
+    RepoInitContext,
+    render_vergil_toml,
+    step_scaffold_config_files,
+)
 from vergil_tooling.lib.validate_record import RECORD_PATH, read_record
 
 _MOD = "vergil_tooling.bin.vrg_validate"
@@ -3079,6 +3084,104 @@ def test_unbootstrapped_typescript_repo_skips_pre_gate(
         "NOTICE: typescript-tools: skipped: no package.json, package-lock.json "
         "(typescript repo not bootstrapped yet); add them to run the typescript-tools stage"
     ) in out
+
+
+# -- A TypeScript repo as vrg-github-repo-init leaves it (issue #4624) ---------
+
+_TS_NO_LOCKFILE = "skipped: no package-lock.json (typescript repo not bootstrapped yet)"
+
+
+def _scaffold_repo_init_typescript(tmp_path: Path) -> None:
+    """Write the config files ``vrg-github-repo-init`` writes for a TypeScript repo."""
+    ctx = RepoInitContext(
+        org="vergil-project",
+        name="demo",
+        repository_type="library",
+        primary_language="typescript",
+        branching_model="library-release",
+        versioning_scheme="semver",
+        release_model="tagged-release",
+        vergil_version="v2.1",
+        license_type="none",
+        description="Test",
+        work_dir=tmp_path,
+    )
+    (tmp_path / "vergil.toml").write_text(render_vergil_toml(ctx))
+    with patch("vergil_tooling.lib.repo_init.git.run"):
+        step_scaffold_config_files(ctx)
+
+
+def _run_typescript_full_validate(tmp_path: Path) -> tuple[int, list[str]]:
+    """Run a full main() on a TypeScript repo at *tmp_path*; return rc and npm commands run.
+
+    Every npm command fails, as ``npm ci`` does with no ``package-lock.json``,
+    so a stage that runs one cannot pass.
+    """
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    _write_config(tmp_path, "typescript")
+    ran: list[str] = []
+
+    def mock_run(cmd: tuple[str, ...] | list[str], *, check: bool = True) -> int:
+        ran.append(" ".join(cmd))
+        return 1 if cmd[0] in ("npm", "npx") else 0
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._versions_resolve", return_value=("node-24",)),
+        patch(_MOD + "._run_common_checks", return_value=0),
+        patch(_MOD + "._find_custom_validator", return_value=None),
+        patch(_MOD + ".progress.run", side_effect=mock_run),
+    ):
+        rc = main([])
+    return rc, [cmd for cmd in ran if cmd.split()[0] in ("npm", "npx")]
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_repo_init_typescript_repo_skips_language_stages_loudly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _scaffold_repo_init_typescript(tmp_path)
+    assert not (tmp_path / "package-lock.json").exists()
+    rc, ran = _run_typescript_full_validate(tmp_path)
+    assert rc == 0
+    # No npm command ran: install would fail with no lockfile.
+    assert ran == []
+    data = json.loads((tmp_path / RECORD_PATH).read_text())
+    status = {stage["name"]: stage["status"] for stage in data["stages"]}
+    language = ("install", "typescript-tools", "lint", "typecheck", "build", "test", "audit")
+    assert {name: status[name] for name in language} == dict.fromkeys(language, "warn")
+    out = capsys.readouterr().out
+    for stage in language:
+        assert f"NOTICE: {stage}: {_TS_NO_LOCKFILE}; add it to run the {stage} stage" in out
+    assert f"install — {_TS_NO_LOCKFILE}" in out
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_typescript_dependencies_without_lockfile_fails_install(tmp_path: Path) -> None:
+    _scaffold_repo_init_typescript(tmp_path)
+    manifest = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    manifest["devDependencies"] = {"typescript": "^6.0.3"}
+    (tmp_path / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    rc, ran = _run_typescript_full_validate(tmp_path)
+    assert rc == 1
+    # The install ran for real and failed; no stage was skipped as unstarted.
+    assert ran == ["npm ci --ignore-scripts"]
+    data = json.loads((tmp_path / RECORD_PATH).read_text())
+    status = {stage["name"]: stage["status"] for stage in data["stages"]}
+    assert status["install"] == "failed"
+    assert "warn" not in status.values()
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_bootstrapped_typescript_repo_runs_install(tmp_path: Path) -> None:
+    _scaffold_repo_init_typescript(tmp_path)
+    (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
+    with patch(_MOD + ".typescript_tools.run_pre_gate_checks", return_value=[]):
+        rc, ran = _run_typescript_validate(tmp_path, ["--check", "lint"])
+    assert rc == 0
+    assert ran[0] == "npm ci --ignore-scripts"
+    record = read_record(tmp_path)
+    assert record.passed == ("install", "typescript-tools", "lint")
 
 
 def test_check_build_runs_typescript_pre_gate_then_build(tmp_path: Path) -> None:
