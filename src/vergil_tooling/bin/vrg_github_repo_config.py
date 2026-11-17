@@ -21,7 +21,7 @@ import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import github, identity_mode, in_tree_audit
+from vergil_tooling.lib import automation_identity, github, identity_mode, in_tree_audit
 from vergil_tooling.lib.automation_identity import (
     AutomationIdentityError,
     automation_app_id,
@@ -34,6 +34,7 @@ from vergil_tooling.lib.github_config import (
     BypassUnreadable,
     ClassicProtectionReport,
     ConfigDiff,
+    DesiredState,
     DiffItem,
     UndeclaredParam,
     apply_desired_state,
@@ -186,10 +187,12 @@ def _update_repo(args: argparse.Namespace, repo: str) -> int:
       checked or a failed GitHub write stops the run before the clone, so no
       PR is opened.
     """
-    refusal = _update_identity_refusal()
-    if refusal is not None:
-        emit_error(refusal)
+    try:
+        mode = _update_identity()
+    except _IdentityRefusedError as exc:
+        emit_error(str(exc))
         return 2
+    print(f"  {repo}: identity: {_describe_identity(mode)}")
 
     github_code = _audit_and_apply(args, repo, local_compliant=True)
     if github_code == 2:
@@ -217,25 +220,48 @@ def _update_repo(args: argparse.Namespace, repo: str) -> int:
     return 0
 
 
-def _update_identity_refusal() -> str | None:
-    """Why ``update`` refuses this run's identity, or ``None`` when it may run.
+class _IdentityRefusedError(Exception):
+    """``update`` refuses this run's identity; the message says why."""
 
-    ``update`` runs for the human and the verified org automation App, and
-    refuses the AI agent modes by name. A run whose identity cannot be
-    resolved (``$VRG_AUTOMATION_APP`` set but the token is not that App's, or
-    an agent signal beside it) is refused with the resolver's reason.
+
+def _update_identity() -> identity_mode.IdentityMode:
+    """This run's identity mode, which ``update`` may run as.
+
+    Raises :class:`_IdentityRefusedError` when it refuses. ``update`` runs for the human and the verified org
+    automation App, and refuses the AI agent modes by name. A run whose
+    identity cannot be resolved (``$VRG_AUTOMATION_APP`` set but the token is
+    not that App's, or an agent signal beside it) is refused with the
+    resolver's reason.
     """
     try:
         mode = identity_mode.current_mode()
     except AutomationIdentityError as exc:
-        return f"Refusing to update: the identity could not be resolved: {exc}"
+        msg = f"Refusing to update: the identity could not be resolved: {exc}"
+        raise _IdentityRefusedError(msg) from exc
     if mode in _UPDATE_REFUSED_MODES:
-        return (
+        msg = (
             f"Refusing to update: the identity mode is {mode.value!r}, an AI agent mode. "
             f"update runs only as the human or the org automation App, and the "
             f"automation identity is never used for agent work."
         )
-    return None
+        raise _IdentityRefusedError(msg)
+    return mode
+
+
+def _describe_identity(mode: identity_mode.IdentityMode) -> str:
+    """The resolved identity mode as ``update`` logs it (vergil-tooling#4433).
+
+    The automation mode names the App's bot login, which the resolver has
+    verified the token belongs to: ``automation (<slug>[bot])``. Every other
+    mode is its name alone. No credential is read or printed.
+    """
+    if mode is identity_mode.IdentityMode.AUTOMATION:
+        slug = automation_identity.env_slug()
+        if slug is None:
+            msg = "the automation identity resolved without $VRG_AUTOMATION_APP set"
+            raise RuntimeError(msg)
+        return f"{mode.value} ({slug}[bot])"
+    return mode.value
 
 
 def _run_fixers(repo: str, clone: Path) -> list[CannotFix]:
@@ -315,7 +341,7 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
         return 2
 
     try:
-        github_diff = _audit_repo(repo, config)
+        github_diff = _audit_repo(repo, config, log_bypass=updating)
     except VersionsError as exc:
         # The desired state carries the CI versions resolved from the published
         # window; the error already says what to fix, so report it on one line.
@@ -556,13 +582,16 @@ def _bypass_mode(repo: str, *, automation: bool) -> tuple[bool, int | None]:
     return False, automation_app_id(automation_app_slug(owner))
 
 
-def _audit_repo(repo: str, config: VergilConfig) -> ConfigDiff:
+def _audit_repo(repo: str, config: VergilConfig, *, log_bypass: bool = False) -> ConfigDiff:
     """Compute diff between desired and actual GitHub state for a repo.
 
     Under the automation identity an empty ``bypass_actors`` read of a
     non-empty desired list is recorded as not checked
     (:class:`BypassUnreadable`), so the audit is incomplete and ``apply``
     refuses before writing anything.
+
+    *log_bypass* (``update``'s) prints each managed ruleset's
+    ``bypass_actors`` as read back (:func:`_print_bypass_read`).
     """
     # Resolved once: under VRG_AUTOMATION_APP each resolution asks GitHub.
     automation = identity_mode.is_automation()
@@ -576,12 +605,47 @@ def _audit_repo(repo: str, config: VergilConfig) -> ConfigDiff:
         skip_bypass=skip_bypass,
         automation_app_id=app_id,
     )
-    return compute_diff(
+    diff = compute_diff(
         desired=desired,
         actual=result.state,
         not_checked=result.not_checked,
         automation=automation,
     )
+    if log_bypass:
+        _print_bypass_read(repo, desired, result.state, diff)
+    return diff
+
+
+def _print_bypass_read(
+    repo: str, desired: DesiredState, actual: DesiredState, diff: ConfigDiff
+) -> None:
+    """Print each managed ruleset's ``bypass_actors`` as read back (vergil-tooling#4433).
+
+    One line per ruleset of the desired state: the actors read, each as
+    ``<actor_type> <actor_id> <bypass_mode>``, or ``none`` for an empty read
+    taken at its word; or why the list was not read back: skipped (the field
+    is unmanaged for this identity), not checked (an empty read under the
+    automation identity, a :class:`BypassUnreadable`), or the ruleset absent.
+    """
+    actual_by_name = {rs.name: rs for rs in actual.rulesets}
+    unreadable = {nc.field for nc in diff.not_checked if isinstance(nc, BypassUnreadable)}
+    for rs in desired.rulesets:
+        field = f"rulesets.{rs.name}.bypass_actors"
+        live = actual_by_name.get(rs.name)
+        if rs.bypass_actors is None:
+            read = "skipped (not visible with GitHub App credentials)"
+        elif field in unreadable:
+            read = "not checked (read back empty under the automation identity, so unreadable)"
+        elif live is None:
+            read = f"not read (the ruleset does not exist on {repo})"
+        elif not live.bypass_actors:
+            read = "none"
+        else:
+            read = ", ".join(
+                f"{actor.get('actor_type')} {actor.get('actor_id')} {actor.get('bypass_mode')}"
+                for actor in live.bypass_actors
+            )
+        print(f"  {repo}: {field} read back: {read}")
 
 
 def _format_item(item: DiffItem) -> str:
