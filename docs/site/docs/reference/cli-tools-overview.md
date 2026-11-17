@@ -777,8 +777,8 @@ quarter-named epics to that form; both are dry runs unless `--apply`.
 |---|---|
 | Source | `vergil_tooling.bin.vrg_adhoc_epic` |
 | Args | `ensure [--repo]`; `archive --repo` or `archive --all-in ORG`, each with optional `--apply`; `normalize --all-in ORG [--apply]` |
-| Preconditions | GitHub App credentials for the target org |
-| Failure mode | Error on stderr |
+| Preconditions | GitHub App credentials for the target org; `--all-in` also needs an identity that sees every repo in ORG |
+| Failure mode | Error on stderr; `--all-in` refuses before any read when the identity may not see every repo in ORG |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 

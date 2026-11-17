@@ -264,6 +264,13 @@ vrg-adhoc-epic archive --all-in <ORG> --apply
 resolving each repo's ad-hoc home by visibility. Without `--apply` the command
 mutates nothing.
 
+`--all-in` (here and for `normalize`) first checks that the identity in use can
+see every repo in the org: an App token installed on the org for all its
+repositories, or a human login that owns the org. When it may not, the command
+names the gap and exits 1 before reading anything, dry run included, so a
+private self-homed repo it cannot see is never skipped as if it had no ad-hoc
+epic.
+
 #### Normalizing legacy archives
 
 Archives created before the `archive`-label rename carry the old
