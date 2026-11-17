@@ -45,6 +45,7 @@ from vergil_tooling.lib.cd_runs import (
     _supersede_group,
     cd_timeout_secs,
 )
+from vergil_tooling.lib.checkout_lock import CheckoutLockError, checkout_lock
 from vergil_tooling.lib.github import ClosingIssue, GitHubAPIError, PRClosingReferences
 from vergil_tooling.lib.live_branches import RepoSetError
 from vergil_tooling.lib.pr_merge import MergeAbortError, MergeConflictError
@@ -57,7 +58,7 @@ _MOD = "vergil_tooling.bin.vrg_finalize_pr"
 _PROJECTS = Path("/vergil/projects")
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterator
+    from collections.abc import Callable, Generator, Iterator
 
 
 @pytest.fixture(autouse=True)
@@ -1592,6 +1593,70 @@ def test_cleanup_only_skips_inference_and_prompts(tmp_path: Path) -> None:
     guard.assert_not_called()
     confirm.assert_not_called()
     fin.assert_not_called()
+
+
+# -- --cleanup-only holds the checkout lock (epic vergil-project/.github#1218) --
+
+
+def _lock_held(root: Path) -> bool:
+    """True when this process holds *root*'s checkout lock (a probe acquire nests)."""
+    try:
+        with checkout_lock(root, purpose="probe"):
+            return False
+    except CheckoutLockError:
+        return True
+
+
+def test_cleanup_only_takes_lock(tmp_path: Path) -> None:
+    """Cleanup, provision and validation run under the lock; cd-check does not."""
+    held: dict[str, bool] = {}
+
+    def record(name: str) -> Callable[[object], None]:
+        return lambda _ctx: held.__setitem__(name, _lock_held(tmp_path))
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._stage_cleanup", side_effect=record("cleanup")),
+        patch(_MOD + "._stage_provision", side_effect=record("provision")),
+        patch(_MOD + "._stage_validation", side_effect=record("validation")),
+        patch(_MOD + ".git.read_output", return_value="tip1234sha\n"),
+        patch(
+            _MOD + "._wait_for_cd_run",
+            side_effect=lambda *_a: held.__setitem__("cd-check", _lock_held(tmp_path)),
+        ),
+    ):
+        rc = main(["--cleanup-only"])
+    assert rc == 0
+    assert held == {"cleanup": True, "provision": True, "validation": True, "cd-check": False}
+    assert not _lock_held(tmp_path)
+    lock_file = tmp_path / "build" / ".vergil-state" / "checkout.lock"
+    assert lock_file.read_text() == ""
+
+
+def test_cleanup_only_releases_lock_when_cleanup_fails(tmp_path: Path) -> None:
+    """A fail_fast cleanup stops the pipeline before cd-check; main still lets go."""
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._stage_cleanup", side_effect=FinalizeError("boom")),
+    ):
+        rc = main(["--cleanup-only"])
+    assert rc == 1
+    assert not _lock_held(tmp_path)
+
+
+def test_pr_path_does_not_take_lock(tmp_path: Path) -> None:
+    """Only --cleanup-only takes the lock here; the PR path's settle is later work."""
+    held: list[bool] = []
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._stage_provenance"),
+        patch(_MOD + "._stage_merge"),
+        patch(_MOD + "._stage_close_refs"),
+        patch(_MOD + "._stage_cleanup", side_effect=lambda _c: held.append(_lock_held(tmp_path))),
+    ):
+        rc = main(["123", "--skip-post-checks"])
+    assert rc == 0
+    assert held == [False]
 
 
 # -- engine swap + explicit-target cleanup (issue #1423) -----------------------

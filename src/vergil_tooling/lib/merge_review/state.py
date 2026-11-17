@@ -63,10 +63,22 @@ def ensure_issue_dir(main_clone: Path, issue: int) -> Path:
     directory, which it returns.
     """
     _check_issue(issue)
-    path = ensure_build_dir(main_clone)
-    for level in ISSUE_LEVELS:
+    path = ensure_state_root(main_clone)
+    for level in ISSUE_LEVELS[1:]:
         path /= level.format(issue=issue)
         _ensure_level(path)
+    return path
+
+
+def ensure_state_root(main_clone: Path) -> Path:
+    """Check (creating where absent) the ``build/.vergil-state`` root alone.
+
+    Calls :func:`ensure_build_dir`, then makes the checks of
+    :func:`ensure_private_dir` on ``.vergil-state``, which it returns. The
+    checkout lock (``lib/checkout_lock.py``) keeps its file there.
+    """
+    path = ensure_build_dir(main_clone) / LEVELS[0]
+    _ensure_level(path)
     return path
 
 
