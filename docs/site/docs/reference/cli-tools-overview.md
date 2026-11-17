@@ -1409,8 +1409,9 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 ### vrg-repo-status
 
 Show every worktree git knows about in the current repo, grouped by
-kind, so nothing with code on disk goes unseen (issue #3386), then what
-the integration branch holds that `main` does not. Read-only — it never
+kind, so nothing with code on disk goes unseen (issue #3386), then the
+open PRs on `origin` that no worktree shows (issue #4581), then what the
+integration branch holds that `main` does not. Read-only — it never
 fetches or writes a ref, cleanup stays `vrg-finalize-pr`'s job, and
 finalize and sweep still act only on development worktrees. Local
 branches with no worktree are not shown. The sections, in order:
@@ -1433,7 +1434,9 @@ branches with no worktree are not shown. The sections, in order:
    each row shows age, PR state and dirty state and a leftover stands out.
 4. **Other / unknown** — any other branch, a detached HEAD, or a
    worktree outside `.worktrees/` (shown by its full path).
-5. **Pending release** — every change on the integration branch that is
+5. **Open PRs on origin with no local worktree** — every open PR whose
+   head branch no linked worktree holds, described below. Always shown.
+6. **Pending release** — every change on the integration branch that is
    not yet on `main`, described below. Shown only in a repo that
    publishes.
 
@@ -1480,7 +1483,46 @@ tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      
 Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
 ```
 
-**Pending release.** The section follows the worktree sections and comes
+**Open PRs on origin with no local worktree.** The section follows the
+worktree sections. Many PRs never touch the local checkout: those that
+automation jobs open (lifecycle, repo-config sync, dependency updates) and
+those prepared on another machine, such as a cloud VM. They are read from
+GitHub in one query per 100 open PRs. A PR is left out when a linked
+worktree already shows it: its PR number is in a worktree row, or its
+head branch is a linked worktree's branch. A PR from a fork is never
+matched by branch name, since a fork's branch can share a local name; its
+BRANCH shows as `<owner>:<branch>`. A VM that shares the file system
+already shows its PRs through its worktrees.
+
+```text
+Open PRs on origin with no local worktree
+PR    BRANCH                    BASE     TYPE       AUTHOR                     CI       OPENED  TITLE
+#935  lifecycle/rust-add-1.100  develop  lifecycle  vergil-project-automation  success  6h ago  feat(versions): add rust 1.100
+#936  lifecycle/rust-drop-1.98  develop  lifecycle  vergil-project-automation  pending  6h ago  feat(versions): drop rust 1.98 (EOL 2026-10-01)
+2 open PRs with no local worktree: 0 automation PRs, 2 lifecycle PRs, 0 dependency updates, 0 release PRs, 0 other PRs.
+```
+
+- **Rows** come in PR-number order. TYPE is as in Pending release
+  below, except that a `lifecycle/*` head branch (a language version
+  added or dropped) shows `lifecycle` first. AUTHOR is the PR author's
+  login (`ghost` for a deleted account). CI is the head commit's
+  combined check state (`success`, `failure`, `pending`, `error`,
+  `expected`), or `none` when it has no checks. OPENED is the PR's age.
+  A draft's TITLE starts with `[draft]`; a TITLE over 72 characters is
+  cut, ending in `…`.
+- **The summary line** counts the rows: automation PRs, lifecycle PRs,
+  dependency updates, release PRs and other PRs, every bucket listed.
+- **None left** prints `None: <n> open PRs on origin, each with a local
+  worktree.`, or `None: origin has no open PRs.`, in place of the table.
+- **A lookup that fails or is incomplete** (an API error, a missing
+  token, a non-GitHub `origin`, a list that changed between pages, a
+  truncated label list) is an error, never "no open PRs" and never a
+  partial list: the section prints its heading and
+  `ERROR: open PRs: <reason>` alone. The rest of the output still
+  prints, then the command exits 1. The reason never carries URL
+  credentials.
+
+**Pending release.** The section follows the open-PR section and comes
 before the summary lines. It is shown only when `vergil.toml` sets
 `[publish].release = true`; with the flag false or absent, nothing is
 printed for it, and without a `vergil.toml` a note says it was skipped.
@@ -1536,11 +1578,11 @@ PR     BRANCH                      TYPE     MERGED  TITLE
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_repo_status` (pending release: `lib/pending_release.py`) |
+| Source | `vergil_tooling.bin.vrg_repo_status` (open PRs: `lib/open_prs.py`; pending release: `lib/pending_release.py`) |
 | Args | `--target-branch` (default: develop) — the branch AHEAD is measured against |
-| Preconditions | Git repo; `gh` CLI on PATH for PR state; for the Pending release section, a github.com `origin` and GitHub credentials |
-| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason. A failed or incomplete pending-release lookup prints `ERROR:` in its section and exits 1 after the rest of the output |
-| Exit codes | 0 success, 1 malformed `vergil.toml` or a pending-release lookup error |
+| Preconditions | Git repo; `gh` CLI on PATH for PR state; for the open-PR and Pending release sections, a github.com `origin` and GitHub credentials |
+| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason. A failed or incomplete open-PR or pending-release lookup prints `ERROR:` in its section and exits 1 after the rest of the output |
+| Exit codes | 0 success, 1 malformed `vergil.toml`, or an open-PR or pending-release lookup error |
 | Status | Active |
 
 ### vrg-whoami
