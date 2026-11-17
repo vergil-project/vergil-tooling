@@ -391,6 +391,132 @@ def test_bump_claude_plugin_skips_lockfile(tmp_path: Path) -> None:
         mock_run.assert_not_called()
 
 
+# -- all-or-nothing bump (#4587) ------------------------------------------------
+
+
+def _lock_failure(cmd: list[str]) -> subprocess.CalledProcessError:
+    return subprocess.CalledProcessError(1, ["vrg-container-run", "--", *cmd], output="", stderr="")
+
+
+@pytest.mark.parametrize(
+    ("language", "manifest", "manifest_text", "lockfile", "cmd"),
+    [
+        (
+            "python",
+            "pyproject.toml",
+            '[project]\nname = "example"\nversion = "1.0.0"\n',
+            "uv.lock",
+            ["uv", "lock"],
+        ),
+        (
+            "rust",
+            "Cargo.toml",
+            '[package]\nname = "example"\nversion = "1.0.0"\n',
+            "Cargo.lock",
+            ["cargo", "update", "--workspace"],
+        ),
+    ],
+)
+def test_bump_failing_lockfile_step_leaves_files_byte_identical(  # noqa: PLR0913
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    language: str,
+    manifest: str,
+    manifest_text: str,
+    lockfile: str,
+    cmd: list[str],
+) -> None:
+    """A failing lock command leaves VERSION, the manifest and the lockfile as they were."""
+    _write_toml(tmp_path, language)
+    (tmp_path / "VERSION").write_bytes(b"1.0.0\n")
+    (tmp_path / manifest).write_bytes(manifest_text.encode())
+    (tmp_path / lockfile).write_bytes(b"# original lock\n")
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    plugin_json = b'{\n  "name": "example",\n  "version": "1.0.0"\n}\n'
+    (plugin_dir / "plugin.json").write_bytes(plugin_json)
+
+    def _fail(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        # The lock command sees the bumped files and half-writes the lockfile.
+        assert (tmp_path / "VERSION").read_text() == "1.0.1\n"
+        assert 'version = "1.0.1"' in (tmp_path / manifest).read_text()
+        (tmp_path / lockfile).write_text("# half-written\n")
+        raise _lock_failure(cmd)
+
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run", side_effect=_fail),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        bump(tmp_path)
+
+    assert (tmp_path / "VERSION").read_bytes() == b"1.0.0\n"
+    assert (tmp_path / manifest).read_bytes() == manifest_text.encode()
+    assert (tmp_path / lockfile).read_bytes() == b"# original lock\n"
+    assert (plugin_dir / "plugin.json").read_bytes() == plugin_json
+    err = capsys.readouterr().err
+    assert "bump to 1.0.1 failed" in err
+    assert "VERSION" in err
+    assert manifest in err
+
+
+def test_bump_failing_lockfile_step_removes_a_created_lockfile(tmp_path: Path) -> None:
+    """A lockfile absent before the bump is absent after a failed one."""
+    _write_toml(tmp_path, "rust")
+    (tmp_path / "VERSION").write_text("0.1.0\n")
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "example"\nversion = "0.1.0"\n')
+
+    def _fail(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        (tmp_path / "Cargo.lock").write_text("# created\n")
+        raise _lock_failure(["cargo", "update", "--workspace"])
+
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run", side_effect=_fail),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        bump(tmp_path)
+    assert not (tmp_path / "Cargo.lock").exists()
+    assert (tmp_path / "VERSION").read_text() == "0.1.0\n"
+
+
+def test_bump_interrupted_lockfile_step_restores_files(tmp_path: Path) -> None:
+    """An interrupt during the lock command restores the files too."""
+    _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    pyproject = '[project]\nname = "example"\nversion = "1.0.0"\n'
+    (tmp_path / "pyproject.toml").write_text(pyproject)
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run", side_effect=KeyboardInterrupt),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        bump(tmp_path)
+    assert (tmp_path / "VERSION").read_text() == "1.0.0\n"
+    assert (tmp_path / "pyproject.toml").read_text() == pyproject
+
+
+def test_bump_failed_restore_is_loud(tmp_path: Path) -> None:
+    """A file that cannot be put back is named, and the original failure is chained."""
+    _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "1.0.0"\n')
+    original = Path.write_bytes
+
+    def write_bytes(self: Path, data: bytes) -> int:
+        if self.name == "pyproject.toml":
+            raise PermissionError(13, "Permission denied")
+        return original(self, data)
+
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run", side_effect=_lock_failure(["uv", "lock"])),
+        patch.object(Path, "write_bytes", write_bytes),
+        pytest.raises(VersionSyncError, match=r"bump to 1\.0\.1 failed .*pyproject\.toml") as excinfo,
+    ):
+        bump(tmp_path)
+    assert isinstance(excinfo.value.__context__, subprocess.CalledProcessError)
+    assert "half-bumped" in str(excinfo.value)
+    # The files that could be restored were.
+    assert (tmp_path / "VERSION").read_text() == "1.0.0\n"
+
+
 # -- _discover_version_file error paths ----------------------------------------
 
 
@@ -1171,6 +1297,29 @@ def test_bump_paths_lists_package_json_and_lock(tmp_path: Path) -> None:
         "package-lock.json",
         ".claude-plugin/plugin.json",
     }
+
+
+def test_typescript_failing_lockfile_write_restores_files(tmp_path: Path) -> None:
+    """A lockfile write that fails leaves VERSION and package.json byte-identical (#4587)."""
+    _ts_repo(tmp_path)
+    before = {
+        name: (tmp_path / name).read_bytes()
+        for name in ("VERSION", "package.json", "package-lock.json")
+    }
+    original = Path.write_text
+
+    def write_text(self: Path, data: str, encoding: str | None = None) -> int:
+        if self.name == "package-lock.json":
+            raise PermissionError(13, "Permission denied")
+        return original(self, data, encoding=encoding)
+
+    with (
+        patch.object(Path, "write_text", write_text),
+        pytest.raises(VersionSyncError, match=r"cannot write package-lock\.json"),
+    ):
+        bump(tmp_path)
+    for name, data in before.items():
+        assert (tmp_path / name).read_bytes() == data, name
 
 
 def test_typescript_bump_write_failure_is_raised(tmp_path: Path) -> None:

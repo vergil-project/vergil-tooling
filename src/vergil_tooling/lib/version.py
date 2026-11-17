@@ -703,12 +703,67 @@ def bump(repo_root: Path, part: str = "patch") -> str:
 
     # Likewise for TypeScript: a missing package.json or lockfile, a missing
     # or mismatched version, or a lockfile with no root version fields fails
-    # before VERSION is written. It never reaches the handler below, which
-    # other languages keep (#1165 Task 5).
+    # before VERSION is written. It never reaches the handler in _write_bump,
+    # which other languages keep (#1165 Task 5).
     if language == "typescript":
         _check_typescript_bump(repo_root, old_version, new_version)
 
-    version_file.write_text(new_version + "\n")
+    # All or nothing (#4587): every path the bump may write is saved first, and
+    # any failure from here on, the lockfile step's included, puts them back
+    # before the error propagates, so no half-bumped tree is left behind.
+    saved = _save_paths(repo_root, bump_paths(repo_root))
+    try:
+        _write_bump(repo_root, language, old_version, new_version)
+    except BaseException:
+        _restore_paths(repo_root, saved, new_version)
+        raise
+    return new_version
+
+
+def _save_paths(repo_root: Path, paths: frozenset[str]) -> dict[str, bytes | None]:
+    """The bytes of each of *paths* under *repo_root*, or ``None`` for one that is absent."""
+    saved: dict[str, bytes | None] = {}
+    for rel in sorted(paths):
+        path = repo_root / rel
+        saved[rel] = path.read_bytes() if path.exists() else None
+    return saved
+
+
+def _restore_paths(repo_root: Path, saved: dict[str, bytes | None], new_version: str) -> None:
+    """Put every path in *saved* back as it was, after a failed bump to *new_version*.
+
+    A path that was absent is removed, since a lock command may have created
+    it. A path that cannot be restored is named in a :class:`VersionSyncError`,
+    raised in place of the original failure (which it chains), so a
+    half-bumped tree is never silent.
+    """
+    failed: list[str] = []
+    for rel, data in saved.items():
+        path = repo_root / rel
+        try:
+            if data is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(data)
+        except OSError as exc:
+            failed.append(f"{rel} ({exc})")
+    if failed:
+        msg = (
+            f"bump to {new_version} failed and these files could not be restored: "
+            f"{', '.join(failed)}. The tree is half-bumped. "
+            "Fix: restore them with git checkout, then re-run the bump."
+        )
+        raise VersionSyncError(msg)
+    print(
+        f"vrg-version: bump to {new_version} failed; "
+        f"{', '.join(saved)} are back as they were before the bump.",
+        file=sys.stderr,
+    )
+
+
+def _write_bump(repo_root: Path, language: str | None, old_version: str, new_version: str) -> None:
+    """Write *new_version* to every version file, then refresh the lockfile."""
+    (repo_root / VERSION_FILE).write_text(new_version + "\n")
 
     if language == "typescript":
         _write_version(repo_root / _PACKAGE_JSON, language, old_version, new_version)
@@ -727,7 +782,6 @@ def bump(repo_root: Path, part: str = "patch") -> str:
 
     if language is not None:
         _run_lockfile_maintenance(repo_root, language)
-    return new_version
 
 
 def next_version(current: str, part: str = "patch") -> str:

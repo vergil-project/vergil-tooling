@@ -279,9 +279,11 @@ merges. Fix the cause and run `vrg-release --resume`. The stage reuses the
 post-release branch, local or pushed, when it holds only its own work:
 
 - **At `origin/main` with no commit of its own.** The bump still has to
-  run. A partial bump left uncommitted in the worktree (changes to the
-  files the bump writes, with `VERSION` already at the next version) is
-  discarded first, so the bump is not applied twice.
+  run. A bump that fails, in its lockfile refresh or anywhere else, puts
+  every file it writes back as it was, so the worktree is clean. A partial
+  bump left uncommitted by a run killed mid-bump (changes to the files the
+  bump writes, with `VERSION` already at the next version) is discarded
+  first, so the bump is not applied twice.
 - **One bump commit on `origin/main`**, with the expected subject and
   `VERSION`, and a clean worktree. The bump is done, and the stage goes on
   to its PR.
