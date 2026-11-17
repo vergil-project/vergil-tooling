@@ -17416,6 +17416,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#run-job-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run job-log
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#credential-selection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18269,6 +18280,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#run-job-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run job-log
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#credential-selection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18951,6 +18973,13 @@ rejected as not recognized.</p>
 <td>Retry a failed CI job (<code>--failed</code> allowed)</td>
 </tr>
 <tr>
+<td><code>run job-log</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>yes</td>
+<td>One job's log, read-only; see <a href="#run-job-log"><code>run job-log</code></a></td>
+</tr>
+<tr>
 <td><code>workflow list</code></td>
 <td>yes</td>
 <td>yes</td>
@@ -19031,7 +19060,7 @@ rejected as not recognized.</p>
 </table>
 <p>The <code>audit</code> identity is a read/review reviewer, so it gets the
 PR read and review actions plus the read-only <code>workflow list</code>,
-<code>workflow view</code> and <code>cache list</code>, which only read CI
+<code>workflow view</code>, <code>cache list</code> and <code>run job-log</code>, which only read CI
 configuration and state a reviewer may need to judge a PR's
 checks. Every write (<code>run rerun</code>, <code>pr update-branch</code>, the
 <code>issue</code> actions) stays off its allowlist.</p>
@@ -19135,6 +19164,25 @@ instead of by pair:</p>
 review comments, goes through the dedicated read-only
 <a href="../../reference/cli-tools-overview/#vrg-pr-review-comments"><code>vrg-pr-review-comments</code></a>
 rather than an exception in this refusal.</p>
+<h3 id="run-job-log"><code>run job-log</code><a class="headerlink" href="#run-job-log" title="Permanent link">&para;</a></h3>
+<p><code>vrg-gh run job-log --repo &lt;owner&gt;/&lt;repo&gt; --job &lt;job-id&gt;</code> prints one
+GitHub Actions job's log. It is the wrapper's own command, not a <code>gh</code>
+subcommand: <code>gh run view --job &lt;id&gt; --log</code> downloads the whole run's
+log archive, which fails on a run with many jobs, and the per-job log
+endpoint is otherwise reachable only through <code>gh api</code>.</p>
+<p>It calls exactly one endpoint, a <code>GET</code> of
+<code>repos/&lt;owner&gt;/&lt;repo&gt;/actions/jobs/&lt;job-id&gt;/logs</code>, which it builds
+itself, so it reopens none of the <code>gh api</code> access above. It accepts
+only <code>--repo</code> (or <code>-R</code>) and <code>--job</code>, each once, and forwards no other
+argument. <code>--repo</code> must be a plain <code>&lt;owner&gt;/&lt;repo&gt;</code> made of the
+characters GitHub allows in those names, and <code>--job</code> a positive
+number. Anything else is refused before <code>gh</code> runs. The App
+installation is chosen by the <code>--repo</code> owner. Because it only reads,
+it is open to every identity, <code>audit</code> included.</p>
+<p>Job logs usually carry ANSI color codes, which <code>gh</code> refuses to print
+unless told to. The command lets <code>gh</code> return them and then strips every
+terminal escape sequence and control character except tab and newline
+before printing, so none reaches the terminal.</p>
 <h3 id="credential-selection">Credential Selection<a class="headerlink" href="#credential-selection" title="Permanent link">&para;</a></h3>
 <p><code>vrg-gh</code> is responsible for choosing which account's token to use
 per-command. See <a href="../credential-management/">Credential Management</a>

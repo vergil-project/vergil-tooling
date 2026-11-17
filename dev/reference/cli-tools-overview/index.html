@@ -19799,7 +19799,11 @@ only after enforcing a per-identity subcommand allowlist, injecting the GitHub
 App installation token for the target owner. Raw <code>gh issue create</code>, <code>gh auth</code>,
 <code>pr close</code>, <code>repo edit/create/delete</code> and <code>workflow run</code> are denied outright;
 <code>gh api</code> is full for a human, read-only <code>GET</code> for the audit identity, and
-denied for the user identity. <code>vrg-gh --help</code> lists the allowlist.</p>
+denied for the user identity. Its own <code>run job-log --repo &lt;owner&gt;/&lt;repo&gt; --job
+&lt;job-id&gt;</code> prints one Actions job's log from the read-only per-job log endpoint,
+for every identity, with terminal control sequences stripped (see
+<a href="../../guides/permission-model/#run-job-log"><code>run job-log</code></a>). <code>vrg-gh --help</code>
+lists the allowlist.</p>
 <table>
 <thead>
 <tr>
@@ -19826,7 +19830,7 @@ denied for the user identity. <code>vrg-gh --help</code> lists the allowlist.</p
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success; 1 refusal; 2 no subcommand; otherwise gh's exit code</td>
+<td>0 success; 1 refusal; 2 no subcommand or bad <code>run job-log</code> arguments; otherwise gh's exit code</td>
 </tr>
 <tr>
 <td>Status</td>
