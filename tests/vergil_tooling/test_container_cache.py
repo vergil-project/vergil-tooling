@@ -1385,7 +1385,9 @@ def test_build_cached_image_prepends_apt_install_to_setup(tmp_path: Path) -> Non
     assert "apt-get update" in setup_cmd
     assert "lilypond" in setup_cmd
     # the apt snippet precedes the vergil-tooling install / warmup
-    assert setup_cmd.index("apt-get update") < setup_cmd.index("vergil-tooling: packaged install (v2.0.7)")
+    assert setup_cmd.index("apt-get update") < setup_cmd.index(
+        "vergil-tooling: packaged install (v2.0.7)"
+    )
 
 
 def test_build_cached_image_no_apt_when_no_system_packages(tmp_path: Path) -> None:
@@ -1796,7 +1798,11 @@ def test_compose_setup_slots_build_after_install_before_warmup(tmp_path: Path) -
     warmup = _warmup_command("go", tmp_path)
     assert "vergil-tooling: packaged install (v2.0.7)" in setup
     assert "make deps" in setup
-    assert setup.index("vergil-tooling: packaged install (v2.0.7)") < setup.index("make deps") < setup.index(warmup)
+    assert (
+        setup.index("vergil-tooling: packaged install (v2.0.7)")
+        < setup.index("make deps")
+        < setup.index(warmup)
+    )
 
 
 def test_compose_setup_absent_build_is_identical_to_install_and_warmup(tmp_path: Path) -> None:
@@ -1826,7 +1832,9 @@ def test_build_cached_image_bakes_build_command_into_setup(tmp_path: Path) -> No
     create_cmd = _capture_create_cmd(tmp_path, "go")
     setup_cmd = create_cmd[-1]
     assert "make deps" in setup_cmd
-    assert setup_cmd.index("vergil-tooling: packaged install (v2.0.7)") < setup_cmd.index("make deps")
+    assert setup_cmd.index("vergil-tooling: packaged install (v2.0.7)") < setup_cmd.index(
+        "make deps"
+    )
 
 
 def test_build_cached_image_prints_build_banner(
