@@ -82,6 +82,12 @@ class DesiredState:
     actions_permissions: DesiredActionsPermissions
     rulesets: list[DesiredRuleset]
     publish: DesiredPublishConfig
+    # Classic branch protection's up-to-date flag (``required_status_checks.
+    # strict``) on ``develop``. Always false in the desired state: develop does
+    # not require a branch to be up to date before it merges (epic
+    # vergil-project/.github#1218, spec §6.1). The fetched state sets it true
+    # only when develop carries classic protection with ``strict: true``.
+    classic_develop_strict: bool = False
 
 
 @dataclass(frozen=True)
@@ -1302,26 +1308,60 @@ def _stale_classic_ruleset(branch: str, stale_contexts: list[str]) -> DesiredRul
     )
 
 
+# The branch whose classic protection must not require up-to-date branches
+# (epic vergil-project/.github#1218, spec §6.1). ``main`` keeps the flag.
+_NON_STRICT_BRANCH = "develop"
+
+
+def _classic_strict(protection: dict[str, object]) -> bool:
+    """True when a classic protection requires branches to be up to date.
+
+    That is ``required_status_checks.strict``. A protection with no
+    status-check block requires nothing, so it reads as false.
+    """
+    rsc = protection.get("required_status_checks")
+    if not isinstance(rsc, dict):
+        return False
+    return cast("dict[str, object]", rsc).get("strict") is True
+
+
+@dataclass
+class _ClassicProtectionDrift:
+    """The drift the audit reads from classic branch protection.
+
+    ``synthetic`` holds a stand-in ruleset for each branch still enforcing a
+    stale CI leg. ``develop_strict`` is true when ``develop``'s classic
+    protection requires up-to-date branches.
+    """
+
+    synthetic: list[DesiredRuleset]
+    develop_strict: bool
+
+
 def _classic_protection_drift(
     repo: str,
     default_branch: str,
     rulesets: list[DesiredRuleset],
     not_checked: list[NotChecked],
-) -> list[DesiredRuleset]:
-    """Synthetic rulesets surfacing stale classic-protection CI legs as drift.
+) -> _ClassicProtectionDrift:
+    """Read classic branch protection for the drift it carries.
 
-    Inspects the default branch plus every branch covered by an actual
-    branch-target ruleset. For each that still enforces a stale version-suffixed
-    CI leg via classic protection, emits a synthetic ruleset so the audit flags
-    it. A branch with no classic protection (404) contributes nothing; one the
-    token cannot read (a permission-gap 403) is recorded in *not_checked* as
+    Inspects ``develop``, the default branch and every branch covered by an
+    actual branch-target ruleset. For each that still enforces a stale
+    version-suffixed CI leg via classic protection, emits a synthetic ruleset so
+    the audit flags it, and records whether ``develop``'s classic protection
+    sets ``strict``. A branch with no classic protection (404, which a missing
+    branch also returns) contributes nothing; one the token cannot read (a
+    permission-gap 403) is recorded in *not_checked* as
     ``classic_protection.<branch>``, never read as unprotected (#3816).
     """
     inspect: set[str] = set(_ruleset_branches(rulesets))
+    inspect.add(_NON_STRICT_BRANCH)
     if default_branch:
         inspect.add(default_branch)
 
     synthetic: list[DesiredRuleset] = []
+    develop_strict = False
     for branch in sorted(inspect):
         try:
             protection = _read_classic_protection(repo, branch)
@@ -1337,7 +1377,9 @@ def _classic_protection_drift(
         stale = [c for c in _classic_required_contexts(protection) if _is_stale_ci_context(c)]
         if stale:
             synthetic.append(_stale_classic_ruleset(branch, stale))
-    return synthetic
+        if branch == _NON_STRICT_BRANCH:
+            develop_strict = _classic_strict(protection)
+    return _ClassicProtectionDrift(synthetic=synthetic, develop_strict=develop_strict)
 
 
 # What a repo-settings field missing from ``GET repos/{repo}`` needs. GitHub
@@ -1579,10 +1621,11 @@ def fetch_actual_state(repo: str) -> FetchResult:
         )
 
     # Fold any stale version-suffixed CI legs still enforced via classic branch
-    # protection into the actual state so the audit flags them as drift (#338).
-    rulesets.extend(
-        _classic_protection_drift(repo, repo_settings.default_branch, rulesets, not_checked)
-    )
+    # protection into the actual state so the audit flags them as drift (#338),
+    # and record whether develop's classic protection requires up-to-date
+    # branches (epic vergil-project/.github#1218).
+    classic = _classic_protection_drift(repo, repo_settings.default_branch, rulesets, not_checked)
+    rulesets.extend(classic.synthetic)
 
     return FetchResult(
         state=DesiredState(
@@ -1591,6 +1634,7 @@ def fetch_actual_state(repo: str) -> FetchResult:
             actions_permissions=actions_permissions,
             rulesets=rulesets,
             publish=DesiredPublishConfig(release=False, docs=False),
+            classic_develop_strict=classic.develop_strict,
         ),
         visibility=visibility,
         owner_type=owner_type,
@@ -2006,6 +2050,14 @@ def _compute_checked_diff(*, desired: DesiredState, actual: DesiredState) -> Con
     )
     _diff_rulesets(desired.rulesets, actual.rulesets, items, skipped, undeclared)
     _diff_producibility(desired.rulesets, actual.rulesets, items)
+    if actual.classic_develop_strict != desired.classic_develop_strict:
+        items.append(
+            DiffItem(
+                field=f"branch_protection.{_NON_STRICT_BRANCH}.strict",
+                expected=desired.classic_develop_strict,
+                actual=actual.classic_develop_strict,
+            )
+        )
     return ConfigDiff(items=items, skipped=skipped, undeclared=undeclared)
 
 
@@ -2172,27 +2224,42 @@ class ClassicProtectionReport:
     """The outcome of scoped classic-protection cleanup for one branch.
 
     ``removed_contexts`` are the stale version-suffixed CI legs stripped from the
-    branch's required status checks; ``preserved_settings`` names every other
-    classic setting the cleanup left untouched.
+    branch's required status checks; ``cleared_strict`` is true when the cleanup
+    turned off the branch's up-to-date requirement (``develop`` only);
+    ``preserved_settings`` names every other classic setting the cleanup left
+    untouched.
     """
 
     branch: str
     removed_contexts: list[str]
     preserved_settings: list[str]
+    cleared_strict: bool = False
+
+    def summary(self) -> str:
+        """What the cleanup changed on the branch and what it preserved."""
+        changes: list[str] = []
+        if self.removed_contexts:
+            changes.append(f"removed stale CI contexts [{', '.join(self.removed_contexts)}]")
+        if self.cleared_strict:
+            changes.append("cleared the up-to-date requirement (strict)")
+        preserved = ", ".join(self.preserved_settings) or "none"
+        return f"{'; '.join(changes)}; preserved [{preserved}]"
 
 
 def _cleanup_classic_branch_protection(
     repo: str, rulesets: list[DesiredRuleset]
 ) -> list[ClassicProtectionReport]:
-    """Strip stale CI legs from classic protection on ruleset-covered branches.
+    """Scoped cleanup of classic protection on ruleset-covered branches.
 
     For each branch a branch-target ruleset now owns, reads the classic
-    ``branches/<b>/protection`` object (a 404 means none; a 403 raises) and removes
-    **only** the stale version-suffixed CI contexts the evidence ruleset now
-    aggregates — via a scoped PATCH of ``required_status_checks``. The whole
-    protection object is never deleted: every other setting is preserved and
-    returned in the per-branch report. Branches with no classic protection, or
-    none carrying a stale leg, are left entirely untouched and unreported.
+    ``branches/<b>/protection`` object (a 404 means none; a 403 raises). Through
+    one scoped PATCH of ``required_status_checks`` it removes **only** the stale
+    version-suffixed CI contexts the evidence ruleset now aggregates and, on
+    ``develop`` only, sets ``strict`` to false (epic
+    vergil-project/.github#1218, spec §6.1). The whole protection object is
+    never deleted: every other setting is preserved and returned in the
+    per-branch report. A branch with no classic protection, or with nothing to
+    change, is left entirely untouched and unreported.
     """
     reports: list[ClassicProtectionReport] = []
     for branch in sorted(_ruleset_branches(rulesets)):
@@ -2201,19 +2268,25 @@ def _cleanup_classic_branch_protection(
             continue
         contexts = _classic_required_contexts(protection)
         stale = [c for c in contexts if _is_stale_ci_context(c)]
-        if not stale:
+        clear_strict = branch == _NON_STRICT_BRANCH and _classic_strict(protection)
+        if not stale and not clear_strict:
             continue
-        kept = [c for c in contexts if c not in stale]
+        body: dict[str, object] = {}
+        if stale:
+            body["contexts"] = [c for c in contexts if c not in stale]
+        if clear_strict:
+            body["strict"] = False
         github.write_json(
             "PATCH",
             f"repos/{repo}/branches/{branch}/protection/required_status_checks",
-            {"contexts": kept},
+            body,
         )
         reports.append(
             ClassicProtectionReport(
                 branch=branch,
                 removed_contexts=stale,
                 preserved_settings=_preserved_classic_settings(protection),
+                cleared_strict=clear_strict,
             )
         )
     return reports

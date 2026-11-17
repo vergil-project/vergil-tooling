@@ -404,11 +404,7 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
             return 2
         print(f"  {repo}: applied")
         for report in reports:
-            preserved = ", ".join(report.preserved_settings) or "none"
-            print(
-                f"  {repo}: classic protection on {report.branch} — removed stale CI "
-                f"contexts [{', '.join(report.removed_contexts)}]; preserved [{preserved}]"
-            )
+            print(f"  {repo}: classic protection on {report.branch} — {report.summary()}")
 
     if github_diff.undeclared:
         # apply cannot converge an undeclared parameter: the PUT body omits

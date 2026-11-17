@@ -35,8 +35,11 @@ from vergil_tooling.lib.github_config import (
     MERGE_SETTINGS_READ,
     SETTING_RETURNED,
     BypassUnreadable,
+    ClassicProtectionReport,
+    ConfigDiff,
     DesiredRuleset,
     DesiredState,
+    DiffItem,
     EvidenceGate,
     FetchResult,
     NotChecked,
@@ -2964,12 +2967,26 @@ def test_cleanup_removes_only_stale_ci_contexts_and_preserves_the_rest() -> None
 
     # Each branch is PATCHed on the required-status-checks sub-resource with only
     # the surviving (non-stale) contexts — the evidence gate stays required.
+    # develop's PATCH also clears strict; main's keeps it (epic #1218).
     assert mock_write.call_count == 2
+    bodies: dict[str, object] = {}
     for call in mock_write.call_args_list:
         method, endpoint, body = call[0][0], call[0][1], call[0][2]
         assert method == "PATCH"
         assert endpoint.endswith("/protection/required_status_checks")
-        assert body == {"contexts": ["audit / evidence"]}
+        bodies[endpoint] = body
+    assert bodies == {
+        "repos/o/r/branches/develop/protection/required_status_checks": {
+            "contexts": ["audit / evidence"],
+            "strict": False,
+        },
+        "repos/o/r/branches/main/protection/required_status_checks": {
+            "contexts": ["audit / evidence"],
+        },
+    }
+    by_branch = {r.branch: r for r in reports}
+    assert by_branch["develop"].cleared_strict is True
+    assert by_branch["main"].cleared_strict is False
 
 
 def test_cleanup_empties_contexts_when_every_leg_is_stale() -> None:
@@ -3002,7 +3019,7 @@ def test_cleanup_empties_contexts_when_every_leg_is_stale() -> None:
 def test_cleanup_leaves_branch_untouched_when_no_stale_contexts() -> None:
     rulesets = [desired_branch_protection_ruleset()]
     protection: dict[str, object] = {
-        "required_status_checks": {"strict": True, "contexts": ["audit / evidence"]},
+        "required_status_checks": {"strict": False, "contexts": ["audit / evidence"]},
         "required_pull_request_reviews": {"required_approving_review_count": 1},
     }
     with (
@@ -3096,6 +3113,183 @@ def test_cleanup_deduplicates_branches_across_rulesets() -> None:
     # Each unique branch is inspected exactly once.
     assert mock_read.call_count == 2
     assert sorted(r.branch for r in reports) == ["develop", "main"]
+
+
+# ---------------------------------------------------------------------------
+# Classic protection's up-to-date flag (strict) on develop (epic #1218)
+# ---------------------------------------------------------------------------
+
+
+def _strict_protection(*, strict: bool) -> dict[str, object]:
+    """A classic protection with no stale CI leg and the given ``strict``."""
+    return {
+        "required_status_checks": {"strict": strict, "contexts": ["audit / evidence"]},
+        "required_pull_request_reviews": {"required_approving_review_count": 1},
+        "enforce_admins": {"enabled": True},
+    }
+
+
+def _desired_for_strict_tests() -> DesiredState:
+    return _state(_vergil_config(), visibility="public", is_org=True)
+
+
+def _branch_protection_items(diff: ConfigDiff) -> list[DiffItem]:
+    return [item for item in diff.items if item.field.startswith("branch_protection.")]
+
+
+def test_classic_strict_on_develop_is_drift() -> None:
+    result = _fetch_with_classic_protection({"develop": _strict_protection(strict=True)})
+    assert result.state.classic_develop_strict is True
+
+    diff = compute_diff(desired=_desired_for_strict_tests(), actual=result.state)
+    assert _branch_protection_items(diff) == [
+        DiffItem(field="branch_protection.develop.strict", expected=False, actual=True)
+    ]
+    assert not diff.is_compliant()
+
+
+def test_classic_strict_on_develop_read_when_not_default_or_ruleset_covered() -> None:
+    # develop is always inspected, even when it is neither the default branch
+    # nor covered by a live ruleset.
+    result = _fetch_with_classic_protection(
+        {"develop": _strict_protection(strict=True)}, default_branch="main"
+    )
+    assert result.state.classic_develop_strict is True
+
+
+def test_classic_strict_false_on_develop_no_item() -> None:
+    result = _fetch_with_classic_protection({"develop": _strict_protection(strict=False)})
+    diff = compute_diff(desired=_desired_for_strict_tests(), actual=result.state)
+    assert _branch_protection_items(diff) == []
+
+
+def test_apply_clears_only_strict() -> None:
+    rulesets = [desired_branch_protection_ruleset()]  # covers main + develop
+
+    def read_json(*args: str) -> dict[str, object]:
+        if args[1] == "repos/o/r/branches/develop/protection":
+            return _strict_protection(strict=True)
+        raise GitHubAPIError(1, ("gh", "api", args[1]), "", "gh: Branch not protected (HTTP 404)")
+
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=read_json),
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_delete,
+    ):
+        reports = _cleanup_classic_branch_protection("o/r", rulesets)
+
+    # One scoped PATCH that names only strict: the contexts and every other
+    # classic setting are left as they are.
+    mock_delete.assert_not_called()
+    mock_write.assert_called_once_with(
+        "PATCH",
+        "repos/o/r/branches/develop/protection/required_status_checks",
+        {"strict": False},
+    )
+    assert reports == [
+        ClassicProtectionReport(
+            branch="develop",
+            removed_contexts=[],
+            preserved_settings=["enforce_admins", "required_pull_request_reviews"],
+            cleared_strict=True,
+        )
+    ]
+    assert reports[0].summary() == (
+        "cleared the up-to-date requirement (strict); "
+        "preserved [enforce_admins, required_pull_request_reviews]"
+    )
+
+
+def test_classic_strict_on_main_untouched() -> None:
+    # Audit: main's strict is not drift.
+    summary: list[object] = [{"id": 7}]
+    detail: dict[str, object] = {
+        "name": "Branch protection",
+        "target": "branch",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": ["refs/heads/main"]}},
+        "bypass_actors": [],
+        "rules": [{"type": "deletion"}],
+    }
+    result = _fetch_with_classic_protection(
+        {"main": _strict_protection(strict=True)},
+        rulesets_summary=summary,
+        ruleset_details={"7": detail},
+    )
+    assert result.state.classic_develop_strict is False
+    diff = compute_diff(desired=_desired_for_strict_tests(), actual=result.state)
+    assert _branch_protection_items(diff) == []
+
+    # Apply: main's classic protection is never written.
+    def read_json(*args: str) -> dict[str, object]:
+        if args[1] == "repos/o/r/branches/main/protection":
+            return _strict_protection(strict=True)
+        raise GitHubAPIError(1, ("gh", "api", args[1]), "", "gh: Branch not protected (HTTP 404)")
+
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=read_json),
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+    ):
+        reports = _cleanup_classic_branch_protection("o/r", [desired_branch_protection_ruleset()])
+    mock_write.assert_not_called()
+    assert reports == []
+
+
+def test_no_classic_protection_no_item() -> None:
+    result = _fetch_with_classic_protection({})
+    assert result.state.classic_develop_strict is False
+    diff = compute_diff(desired=_desired_for_strict_tests(), actual=result.state)
+    assert _branch_protection_items(diff) == []
+
+    not_found = GitHubAPIError(1, ("gh", "api", "x"), "", "gh: Branch not protected (HTTP 404)")
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=not_found),
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+    ):
+        reports = _cleanup_classic_branch_protection("o/r", [desired_branch_protection_ruleset()])
+    mock_write.assert_not_called()
+    assert reports == []
+
+
+def test_classic_develop_unreadable_is_not_checked_not_drift() -> None:
+    # A token that cannot read develop's classic protection reports it as not
+    # checked, never as strict drift (#3816).
+    def read_json(*args: str) -> dict[str, object] | list[object]:
+        endpoint = args[1]
+        if endpoint == "repos/o/r":
+            return {**_REPO_SETTINGS_JSON, "default_branch": "", "security_and_analysis": {}}
+        if endpoint == "repos/o/r/rulesets":
+            return []
+        if endpoint == "repos/o/r/actions/permissions":
+            return {"allowed_actions": "all"}
+        if endpoint == "repos/o/r/actions/permissions/workflow":
+            return {"default_workflow_permissions": "read"}
+        raise _forbidden(endpoint)
+
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=read_json),
+        patch("vergil_tooling.lib.github_config._fetch_vulnerability_alerts", return_value=True),
+    ):
+        result = fetch_actual_state("o/r")
+    assert [nc.field for nc in result.not_checked] == ["classic_protection.develop"]
+    diff = compute_diff(
+        desired=_desired_for_strict_tests(), actual=result.state, not_checked=result.not_checked
+    )
+    assert _branch_protection_items(diff) == []
+    assert not diff.is_compliant()
+
+
+def test_cleanup_report_summary_names_removed_contexts_and_strict() -> None:
+    report = ClassicProtectionReport(
+        branch="develop",
+        removed_contexts=["audit / dependencies / 3.12"],
+        preserved_settings=[],
+        cleared_strict=True,
+    )
+    assert report.summary() == (
+        "removed stale CI contexts [audit / dependencies / 3.12]; "
+        "cleared the up-to-date requirement (strict); preserved [none]"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3295,7 +3489,12 @@ def test_fetch_actual_state_selected_actions_unreadable() -> None:
         patch("vergil_tooling.lib.github_config._fetch_vulnerability_alerts", return_value=True),
     ):
         result = fetch_actual_state("o/r")
-    assert [nc.field for nc in result.not_checked] == ["actions_permissions.patterns_allowed"]
+    # develop's classic protection is always read (epic #1218), so its 403 is
+    # recorded too.
+    assert [nc.field for nc in result.not_checked] == [
+        "actions_permissions.patterns_allowed",
+        "classic_protection.develop",
+    ]
 
 
 def test_fetch_actual_state_non_permission_403_propagates() -> None:
