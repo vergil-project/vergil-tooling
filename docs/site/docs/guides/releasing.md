@@ -89,9 +89,6 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
    - The rolling minor tag (`v1.3`) is **force-updated** to point at
      the new release.
    - The boundary tag (`develop-v1.3.1`) is created on `develop`.
-   - `repository_dispatch` fires a `vergil-tooling-released`
-     event at `vergil-containers`, which rebuilds the dev
-     images against the now-current `v1.3` tag.
    - The Documentation workflow publishes the new release notes to
      the docs site under `releases/v1.3.1`.
    - **Repos with `[package]`** (vergil-tooling is one) also publish
@@ -160,7 +157,7 @@ issue and ticks its box in the issue's stage checklist.
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
-| `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, refreshes the lockfile in the dev container (`uv lock` for Python, `cargo update --workspace` for Rust), and merges it to `develop`. Records the back-merge's merge commit |
+| `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, refreshes the lockfile (`uv lock` for Python and `cargo update --workspace` for Rust, in the dev container; for TypeScript, a direct edit of `package-lock.json`'s root version fields that runs no npm), and merges it to `develop`. Records the back-merge's merge commit |
 | `teardown-worktree` | deferred | Removes the release worktree and returns to the root checkout |
 | `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed docs publish is deferred |
 | `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index. A miss is a deferred publish failure, not a halted stage |
@@ -328,7 +325,7 @@ get the fix on the next normal action:
 |---|---|
 | Developer host | Manual `uv tool upgrade vergil-tooling` (or `vrg-host upgrade vergil-tooling` on macOS) |
 | Python repo `.venv` | `uv lock --upgrade-package vergil-tooling` (typically batched with other dep bumps) |
-| Dev container image | Already rebuilt by `repository_dispatch`; new pulls of `dev-base` etc. carry the patch within the rebuild window (minutes) |
+| Dev container image | The base images carry no vergil-tooling. The next `vrg-container-run` rebuilds the branch's cached image with the patch once it is in the package index: a `vX.Y` line pin in `vergil.toml` resolves to the newest release on the line (see [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)). An exact `vX.Y.Z` pin stays put |
 | Agent VM (Lima/cloud) | `vrg-vm update`: an apt upgrade of the packaged install within its pin, once the patch is in the package index. A `vX.Y` line pin picks the patch up; an exact `vX.Y.Z` pin stays put |
 
 ## Minor release — opt-in for new features
@@ -339,33 +336,20 @@ A minor release adds backwards-compatible new features. Versions:
 ### Producer steps
 
 Same steps as patch, with one important addition: the rolling
-minor tag changes from `v1.3` to `v1.4`. The image's pin in
-`vergil-containers` and any per-repo dev-dep declarations
-**must be bumped manually** — the rolling-tag mechanism only handles
-patches within a minor.
+minor tag changes from `v1.3` to `v1.4`. Any per-repo dev-dep
+declarations **must be bumped manually** — the rolling-tag mechanism
+only handles patches within a minor.
 
 1. Run `vrg-release minor`. It bumps the version to the next minor
    (`1.4.0`) on the release branch instead of releasing the current
    `develop` version. Everything else matches a patch release.
-2. **Bump `vergil-containers`'s pin** in
-   [`docker/common/vergil-tooling-uv.dockerfile`][docker-frag]:
-
-   ```dockerfile
-   ARG ST_TOOLING_TAG=v1.4   # was v1.3
-   ```
-
-   Open a small PR in `vergil-containers`, merge it, and the
-   next image rebuild (whether triggered by your release or a
-   subsequent push there) carries the new minor.
-3. **Coordinate consumer bumps.** Each Python repo that has
+2. **Coordinate consumer bumps.** Each Python repo that has
    `[tool.uv.sources]` pinning to `v1.3` needs its `pyproject.toml`
    updated to `v1.4`. This is a per-repo decision — consumers who
    prefer to stay on `v1.3` can keep doing so until they're ready.
-4. Update the canonical install command in `getting-started.md`
+3. Update the canonical install command in `getting-started.md`
    (and anywhere else the documentation pins a minor) to the new
    tag.
-
-[docker-frag]: https://github.com/vergil-project/vergil-containers/blob/develop/docker/common/vergil-tooling-uv.dockerfile
 
 ### Consumer steps
 
@@ -375,7 +359,7 @@ Minor bumps are **deliberate opt-in** at every deployment target:
 |---|---|
 | Developer host | `uv tool install --python 3.15 --reinstall 'vergil-tooling @ git+...@v1.4'` (or update the pinned tag in their notes / shell history) |
 | Python repo `.venv` | Edit `pyproject.toml` `[tool.uv.sources]` to `tag = "v1.4"`, then `uv lock --upgrade-package vergil-tooling` |
-| Dev container image | Wait for `vergil-containers` to land the `ARG` bump, then pull the rebuilt image |
+| Dev container image | Set `[dependencies].vergil` in `vergil.toml` to `v1.4`; `vergil.toml` is part of the cache key, so the next `vrg-container-run` rebuilds the branch's cached image with the newest `v1.4` release |
 | Agent VM (Lima/cloud) | Set the identity's `vergil` version (in `identities.toml`) to `v1.4`, then `vrg-vm rebuild`, which installs and records the new line. A plain `vrg-vm update` keeps upgrading within the line recorded at install time, and `vrg-vm update --tag v1.4` is a one-off override that is not remembered (see [VM spec](../reference/vm-spec.md#vergil-tooling-inside-the-vm)) |
 
 The release author should announce the minor bump in the GitHub
@@ -398,10 +382,7 @@ communication and migration window:
 2. Run `vrg-release major` to release `v2.0.0`. The
    release notes prominently call out the breaking-change list and
    link to the migration guide.
-3. Bump `vergil-containers`'s `ARG ST_TOOLING_TAG=` to `v2`
-   in a separate PR — coordinate so consumers can opt in on their
-   own schedule.
-4. Notify consumer maintainers (e.g., update `vergil-tooling`'s
+3. Notify consumer maintainers (e.g., update `vergil-tooling`'s
    release tracking issue / project board with a callout). The
    release notes alone are not sufficient for major bumps;
    consumers should be primed.

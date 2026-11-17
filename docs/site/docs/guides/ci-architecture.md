@@ -77,8 +77,11 @@ image.
 The image chooses how vergil-tooling is installed, by two checks: the
 vergil apt source (`/etc/apt/sources.list.d/vergil.sources`) and a core
 vergil-python (`/opt/vergil/python/*/bin/python3`). With both, a release
-version (`vX.Y` or `vX.Y.Z`) installs the vergil-tooling package, pinned
-to that version, and the build checks that `vrg-*` runs from `/usr/bin`
+version installs the vergil-tooling package at that release, and a `vX.Y`
+line resolves first to the newest release on the line, so a new release
+rebuilds the cached image (see
+[How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)).
+The build checks that `vrg-*` runs from `/usr/bin`
 on vergil-python; a branch is `uv tool install` from git on the core
 Python. With neither, it is `uv tool install` from git. An image with only
 one of the two fails the build. The build log names the path it took.
@@ -588,9 +591,13 @@ chosen, and why.
 **`dev-ts-node`**
 :   Base: `base` (Ubuntu 24.04), with the major's pinned nodejs.org
     prebuilt tarball at `/opt/node/<major>` (never built from
-    source). Includes Node.js, npm, TypeScript (`tsc`),
-    ESLint + typescript-eslint, Prettier, Vitest, `@vitest/coverage-v8`,
-    and license-checker. The runtime family rides the `ts-node` image
+    source). Includes Node.js, npm, Prettier and license-checker.
+    TypeScript, ESLint, typescript-eslint, `@eslint/js`, Vitest and
+    `@vitest/coverage-v8` are not in the image: each repository declares
+    them as devDependencies, and the gates run them from its
+    `node_modules/.bin` (see the
+    [Tool Ownership Guideline](../standards/development/tool-ownership.md)).
+    The runtime family rides the `ts-node` image
     suffix and the Node major is the tag (`node-24` → `prod-ts-node:24`);
     `node-24` is the primary, `node-22` the second (epic
     [vergil-project/.github#284](https://github.com/vergil-project/.github/issues/284)).
