@@ -18956,7 +18956,11 @@ never produces.</p>
 <li><strong><code>epic-rollup.yml</code></strong> — on any issue close, closes the parent epic
   once all of its tasks are closed.</li>
 <li><strong><code>cd.yml</code></strong> — the release and docs publishing workflow, generated
-  when <code>[publish]</code> enables either.</li>
+  when <code>[publish]</code> enables either. Its <code>release</code> job runs on every push to
+  <code>main</code> except the one that creates the branch: the wizard creates <code>main</code>
+  by a direct push, which no release PR produced, so there is nothing to
+  release. A later push to <code>main</code> with no release PR still fails the
+  release's CI-evidence gate.</li>
 </ul>
 <p>To regenerate them after a <code>vergil.toml</code> change, re-run
 <code>vrg-github-repo-init --adopt</code>. See the
