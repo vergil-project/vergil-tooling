@@ -50,6 +50,7 @@ from vergil_tooling.lib.github import ClosingIssue, GitHubAPIError, PRClosingRef
 from vergil_tooling.lib.live_branches import RepoSetError
 from vergil_tooling.lib.pr_merge import MergeAbortError, MergeConflictError
 from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
+from vergil_tooling.lib.pr_workflow import batch_rules
 from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
 from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
@@ -2402,6 +2403,42 @@ def test_batch_pr_refuses_a_duplicate_close() -> None:
     with (
         _batch_pr(body=body) as mocks,
         pytest.raises(FinalizeError, match="Closes #10 more than once"),
+    ):
+        _stage_merge(ctx)
+    mocks["engine"].assert_not_called()
+
+
+def test_finalize_merge_path_uses_moved_check() -> None:
+    """Task 18 moved the closing-reference check into batch_rules; the merge
+    path calls it with the body and GitHub's closing references until Task
+    12b deletes that path, and a refusal still stops the merge."""
+    ctx = _stage_ctx(["123"])
+    with (
+        _batch_pr() as mocks,
+        patch(
+            _MOD + ".batch_rules.check_closing_refs", wraps=batch_rules.check_closing_refs
+        ) as check,
+    ):
+        _stage_merge(ctx)
+    check.assert_called_once_with(_BATCH_BODY, ["o/r#10", "o/r#11"], repo="o/r")
+    assert mocks["engine"].call_args.kwargs["strategy"] == "rebase"
+    with (
+        _batch_pr() as mocks,
+        patch(
+            _MOD + ".batch_rules.check_closing_refs",
+            side_effect=batch_rules.BatchRuleError("closing references", "boom"),
+        ),
+        pytest.raises(FinalizeError, match=r"batch PR o/r#123 is not merged: .*boom"),
+    ):
+        _stage_merge(ctx)
+    mocks["engine"].assert_not_called()
+
+
+def test_batch_pr_refuses_a_closing_ref_the_body_does_not_close() -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        _batch_pr(refs=_open_refs(10, 11, 12)) as mocks,
+        pytest.raises(FinalizeError, match="its body does not close o/r#12"),
     ):
         _stage_merge(ctx)
     mocks["engine"].assert_not_called()

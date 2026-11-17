@@ -69,7 +69,6 @@ from vergil_tooling.lib import (
     config,
     git,
     github,
-    linkage,
     pr_merge,
     pr_provenance,
     progress,
@@ -1038,52 +1037,21 @@ def _read_pr_body(pr: str) -> str:
     return body
 
 
-def _batch_closes(body: str) -> list[str]:
-    """The body's ``Closes`` refs, in body order, when it has more than one; else ``[]``.
-
-    A PR whose body has more than one ``Closes`` line is a batch PR (epic
-    vergil-project/.github#1019). ``Ref`` lines never count, and nor do
-    manual links in GitHub's Development sidebar, which are not in the body.
-    """
-    closes = [ref for keyword, ref in linkage.extract_tracking_refs(body) if keyword == "Closes"]
-    return closes if len(closes) > 1 else []
-
-
-def _batch_issues(pr: str, closes: list[str]) -> list[str]:
+def _batch_issues(pr: str, body: str, closes: list[str]) -> list[str]:
     """Cross-check a batch PR's ``Closes`` refs against GitHub; return them as ``#N``.
 
-    Each ref must be in the PR's own repo, listed once, and among GitHub's
-    closing references for the PR, so GitHub closes every issue the commits
-    are checked against. Anything else refuses, naming both lists.
+    :func:`batch_rules.check_closing_refs` holds the body's ``Closes`` refs
+    (*closes*, read from *body*) to exactly GitHub's closing references for
+    the PR, so GitHub closes every issue the commits are checked against and
+    no other. A mismatch refuses, naming both lists.
     """
     refs = _read_closing_refs(pr)
-    repo = refs.repo
-    numbers: list[int] = []
-    for ref in closes:
-        ref_repo, _, number = ref.rpartition("#")
-        if ref_repo and ref_repo.lower() != repo.lower():
-            msg = (
-                f"batch PR {refs.ref} closes {ref}, an issue in another repo; every "
-                f"issue in a batch is in the PR's repo ({repo})"
-            )
-            raise FinalizeError(msg)
-        if int(number) in numbers:
-            msg = f"batch PR {refs.ref} lists Closes #{number} more than once"
-            raise FinalizeError(msg)
-        numbers.append(int(number))
-    listed = {issue.ref.lower() for issue in refs.issues}
-    missing = [f"{repo}#{n}" for n in numbers if f"{repo}#{n}".lower() not in listed]
-    if missing:
-        body_refs = ", ".join(f"{repo}#{n}" for n in numbers)
-        github_refs = ", ".join(issue.ref for issue in refs.issues) or "none"
-        msg = (
-            f"batch PR {refs.ref}: its body closes {body_refs}, but GitHub's closing "
-            f"references are {github_refs}; missing {', '.join(missing)}. GitHub would "
-            "not close every issue of the batch, so it is not merged. Fix the PR body's "
-            "Closes lines, then re-run."
-        )
-        raise FinalizeError(msg)
-    return [f"#{n}" for n in numbers]
+    try:
+        batch_rules.check_closing_refs(body, [issue.ref for issue in refs.issues], repo=refs.repo)
+    except batch_rules.BatchRuleError as exc:
+        msg = f"batch PR {refs.ref} is not merged: {exc}; then re-run."
+        raise FinalizeError(msg) from exc
+    return [f"#{ref.rpartition('#')[2]}" for ref in closes]
 
 
 # The batch rule whose fix is a rebase onto the base (batch_rules.check_commit_per_issue).
@@ -1147,7 +1115,8 @@ def _stage_merge(ctx: FinalizeContext) -> None:
     """
     args = ctx.args
     branch = github.head_ref(args.pr)
-    closes = _batch_closes(_read_pr_body(args.pr))
+    body = _read_pr_body(args.pr)
+    closes = batch_rules.batch_closes(body)
     is_batch = bool(closes)
     strategy = _resolve_strategy(branch, args.strategy, batch=is_batch)
     if github.pr_state(args.pr) == "MERGED":
@@ -1160,7 +1129,7 @@ def _stage_merge(ctx: FinalizeContext) -> None:
         try:
             if is_batch:
                 base = github.base_ref(args.pr)
-                issues = _batch_issues(args.pr, closes)
+                issues = _batch_issues(args.pr, body, closes)
                 batch_check = _make_batch_check(
                     args.pr, issues, head=branch, base=base, root=ctx.root
                 )

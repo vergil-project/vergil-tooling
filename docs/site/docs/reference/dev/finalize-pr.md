@@ -385,7 +385,9 @@ a batch. For a batch PR, finalize:
 
 - cross-checks the body's `Closes` issues against GitHub's closing
   references, and refuses to merge if any is missing, is in another repo,
-  or is listed twice;
+  or is listed twice, or if GitHub lists a closing reference the body does
+  not close (a hand-added Development link, say), since merging would close
+  an issue the batch has no commit for;
 - checks the one-commit-per-issue invariant on the PR's head before it
   waits, and refuses with the reason when it fails, never falling back to a
   squash;

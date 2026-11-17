@@ -252,10 +252,22 @@ takes `--issue` as `N`, `#N` or `owner/repo#N` for this clone's repo:
   state included. It refuses while a `security-*.md` details file is under
   that directory.
 
+`batch-check --pr <url> [--head <sha>]` checks a submitted batch PR before a
+push to it, from a clone of the PR's repo (pr-watch runs it on the head it is
+about to push). It reads the PR's body and base. A PR whose body has one
+`Closes` line or none is not a batch PR and passes. A batch PR's `Closes` refs
+must be exactly the issues GitHub lists as its closing references, and its
+branch must hold one commit per issue, in the body's order, from the base as
+fetched now to `--head` (default: the PR's head, fetched by its SHA so the
+branch's remote-tracking ref never moves). The hard rules are not run. It
+writes nothing and makes no freeze check, so it runs on a frozen branch. It
+exits 0 when the PR passes or is not a batch PR, and 1 with the rule's message
+otherwise.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_pr_workflow` |
-| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref), `unfreeze`, `status`, `batch-start`, `batch-extract`, `batch-show`; global `--base` (default: origin/develop) |
+| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref), `unfreeze`, `status`, `batch-start`, `batch-extract`, `batch-show`, `batch-check` (`--pr` required, `--head`); global `--base` (default: origin/develop) |
 | Preconditions | Git repo; run from the worktree whose branch is being staged |
 | Failure mode | `WorkflowError` on stderr (e.g. unfreeze after submit, nothing to unfreeze, or a relay ref unfreeze could not update) |
 | Exit codes | 0 success, 1 error |

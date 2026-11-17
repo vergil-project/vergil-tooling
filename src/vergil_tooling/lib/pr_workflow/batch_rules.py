@@ -1,18 +1,22 @@
-"""The batch rules: the hard rules and the one-commit-per-issue invariant.
+"""The batch rules: the hard rules, the one-commit-per-issue invariant, the closing refs.
 
 A *batch* is one PR that implements and closes 2 to 8 same-epic, same-repo
-issues, one commit per issue (epic vergil-project/.github#1019). Its two
-checks are shared by ``vrg-pr-workflow batch-start``, ``report-ready``,
-``vrg-submit-pr`` and ``vrg-finalize-pr``, so every stage refuses the same
-batch with the same words:
+issues, one commit per issue (epic vergil-project/.github#1019). Its checks
+are shared by ``vrg-pr-workflow batch-start``, ``report-ready``,
+``batch-check``, ``vrg-submit-pr`` and ``vrg-finalize-pr``, so every stage
+refuses the same batch with the same words:
 
 - :func:`check_hard_rules` reads each issue on GitHub and refuses a batch
   that breaks a hard rule (spec §5.1).
 - :func:`check_commit_per_issue` reads the branch's commits since the base and
   refuses unless there is exactly one per issue, in the listed order, each
   subject ending in its issue's ref, and no merge commit.
+- :func:`check_closing_refs` refuses a batch PR whose body's ``Closes`` refs
+  are not exactly the issues GitHub lists as its closing references (epic
+  vergil-project/.github#1218). :func:`batch_closes` tells a batch PR by its
+  body.
 
-Both **fail closed**. A read that fails (a label, a parent, a blocker, an
+All **fail closed**. A read that fails (a label, a parent, a blocker, an
 author, the trusted-author list, the git history) refuses and names what
 could not be read; no rule is ever skipped. Every refusal is a
 :class:`BatchRuleError` naming the rule and the issue or commit.
@@ -25,7 +29,7 @@ import subprocess
 from functools import partial
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import epics, git, github
+from vergil_tooling.lib import epics, git, github, linkage
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.trusted_authors import (
@@ -82,6 +86,21 @@ class BatchRuleError(WorkflowError):
 def is_batch(issues: list[str]) -> bool:
     """True when *issues* is a batch (more than one issue)."""
     return len(issues) > 1
+
+
+def batch_closes(body: str) -> list[str]:
+    """The body's ``Closes`` refs, in body order, when it has more than one; else ``[]``.
+
+    A PR whose body has more than one ``Closes`` line is a batch PR (epic
+    vergil-project/.github#1019). ``Ref`` lines never count, and nor do
+    manual links in GitHub's Development sidebar, which are not in the body.
+    """
+    closes = _body_closes(body)
+    return closes if len(closes) > 1 else []
+
+
+def _body_closes(body: str) -> list[str]:
+    return [ref for keyword, ref in linkage.extract_tracking_refs(body) if keyword == "Closes"]
 
 
 def _read[T](what: str, rule: str, read: Callable[[], T]) -> T:
@@ -327,3 +346,63 @@ def check_commit_per_issue(issues: list[str], *, base: str, head: str) -> None:
             "one commit per issue",
             f"commit {sha[:12]} ({subject}) {found}; it should end in (#{number}) for {ref}",
         )
+
+
+_CLOSING_RULE = "closing references"
+
+
+def _closing_issue(ref: str, repo: str) -> epics.IssueRef:
+    try:
+        return epics.parse_issue_ref(ref, default_repo=repo)
+    except ValueError as exc:
+        raise BatchRuleError(_CLOSING_RULE, f"{ref!r} is not an issue ref: {exc}") from exc
+
+
+def check_closing_refs(pr_body: str, issues: list[str], *, repo: str) -> None:
+    """Refuse unless *pr_body*'s ``Closes`` refs are exactly *issues*.
+
+    *issues* are the issues GitHub lists as the PR's closing references
+    (``owner/repo#N``, or ``#N`` in *repo*); *repo* is the PR's
+    ``owner/name``. Each of the body's ``Closes`` refs must be in *repo* and
+    listed once. A body ref missing from *issues* refuses, since GitHub would
+    not close that issue of the batch; so does an issue of *issues* the body
+    does not close (a manual Development link, say), since GitHub would close
+    an issue the batch has no commit for. Each mismatch names both lists.
+    """
+    body: list[epics.IssueRef] = []
+    for ref in _body_closes(pr_body):
+        issue = _closing_issue(ref, repo)
+        if f"{issue.owner}/{issue.repo}".lower() != repo.lower():
+            raise BatchRuleError(
+                _CLOSING_RULE,
+                f"the PR's body closes {ref}, an issue in another repo; every issue in a"
+                f" batch is in the PR's repo ({repo})",
+            )
+        if any(seen.number == issue.number for seen in body):
+            raise BatchRuleError(
+                _CLOSING_RULE, f"the PR's body lists Closes #{issue.number} more than once"
+            )
+        body.append(issue)
+    body_refs = [f"{repo}#{issue.number}" for issue in body]
+    body_keys = {ref.lower() for ref in body_refs}
+    listed = [(ref, _closing_issue(ref, repo).slug.lower()) for ref in issues]
+    listed_keys = {key for _ref, key in listed}
+    missing = [ref for ref in body_refs if ref.lower() not in listed_keys]
+    extra = [ref for ref, key in listed if key not in body_keys]
+    if not missing and not extra:
+        return
+    found = (
+        f"its body closes {', '.join(body_refs) or 'none'}, but GitHub's closing references"
+        f" are {', '.join(ref for ref, _key in listed) or 'none'}"
+    )
+    if missing:
+        raise BatchRuleError(
+            _CLOSING_RULE,
+            f"{found}; missing {', '.join(missing)}. GitHub would not close every issue of"
+            " the batch: fix the PR body's Closes lines",
+        )
+    raise BatchRuleError(
+        _CLOSING_RULE,
+        f"{found}; its body does not close {', '.join(extra)}. GitHub would close an issue"
+        " the batch has no commit for: remove that link from the PR",
+    )
