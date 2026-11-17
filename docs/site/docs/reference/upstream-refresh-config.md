@@ -306,8 +306,11 @@ the wait updates the PR's branch from `develop` and CI decides. The
 wait merges the PR itself once its checks are green on an up-to-date
 branch; a failed check, a conflict, a closed PR, the branch-update cap
 or the deadline ends it unmerged. Under a token source the deadline is
-7200 seconds, counted from publish's own start, so the clone, the patch
-and the push are inside it. A human's run keeps the building block's
+7200 seconds, counted from publish's own start: the clone and the patch
+come out of it, and the wait gets what is left. Closing an earlier
+run's PR, the push and opening the PR come after that is worked out,
+so they are not counted; they take seconds, well inside the publish
+job's 140-minute timeout. A human's run keeps the building block's
 own deadline, `$VRG_MECHANIZED_PR_DEADLINE` seconds (2400 by default).
 
 The commit and the PR title are `chore(upstream): refresh upstream
@@ -433,7 +436,4 @@ command as two jobs, each on a fresh runner:
 
 Each consuming repo calls it from its own `ops.yml` on its own schedule,
 and declares its allowlist in `[upstream-refresh].paths`. A failed or
-unmerged run shows as a red scheduled run. Until the two-job workflow
-is released, a run of the older single-job workflow against this
-version of the command fails loudly and merges nothing (spec section
-6.4 of epic #1168).
+unmerged run shows as a red scheduled run.
