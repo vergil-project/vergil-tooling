@@ -126,7 +126,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
         with github.target_org(args.all_in):
             if _refuse_partial_org(args.all_in):
                 return 1
-            plans =epics.drain_adhoc_org(args.all_in, apply=args.apply, now=now)
+            plans = epics.drain_adhoc_org(args.all_in, apply=args.apply, now=now)
         print(f"[{verb}] {args.all_in}: {len(plans)} ad-hoc epic(s) with work to archive")
         for plan in plans:
             print(_render_plan(plan))
@@ -147,7 +147,7 @@ def cmd_normalize(args: argparse.Namespace) -> int:
     with github.target_org(args.all_in):
         if _refuse_partial_org(args.all_in):
             return 1
-        conversions =epics.normalize_adhoc_archives(args.all_in, apply=args.apply)
+        conversions = epics.normalize_adhoc_archives(args.all_in, apply=args.apply)
     print(f"[{verb}] {args.all_in}: {len(conversions)} archive(s) to normalize")
     for conv in conversions:
         print(f"  {conv.ref.slug}: {conv.old_title!r} -> {conv.new_title!r}")
