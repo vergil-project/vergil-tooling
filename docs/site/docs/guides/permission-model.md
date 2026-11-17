@@ -260,7 +260,13 @@ token `gh` runs with:
 `vrg-queue`, `vrg-release`, `vrg-repo-status`,
 `vrg-resolve-tracking-issue`, `vrg-roadmap`, `vrg-ruling`,
 `vrg-ruling-reply`, `vrg-scope-change`, `vrg-security-record`,
-`vrg-submit-pr`, `vrg-update-deps` and `vrg-upstream-refresh`.
+`vrg-submit-pr` and `vrg-update-deps`.
+
+`vrg-upstream-refresh` also clones, commits and pushes, in temporary
+clones. Under GitHub Actions its `publish` mode takes every `gh` and
+`git` token from an in-process automation App token source and runs as
+the `automation` identity; agents may run only its `--dry-run` (see
+[Upstream Refresh](../reference/upstream-refresh-config.md#identity-and-credentials)).
 
 `vrg-package` calls `gh` only: it lists and downloads releases, and
 verifies their attestations, when it builds the package index.
@@ -421,9 +427,13 @@ and branch protection rulesets.
   `contents: write`). Neither App holds Workflows access, so neither
   can push under `.github/workflows/`. GitHub rejects the API call
   regardless of what happens locally.
-- Branch protection rulesets require review approval from a
-  different identity before merging. No client-side manipulation
-  changes this.
+- Branch protection rulesets require a pull request to change
+  `develop` or `main`, with its required CI checks passing on an
+  up-to-date branch; they require no approving review. Who can merge
+  is set by the identity's permissions: the human, and the org
+  automation App for the mechanized `automation/` PRs that merge
+  once CI passes (the repo-config sync and the upstream refresh). No
+  client-side manipulation changes this.
 - An App can only act on accounts it is installed on and repos that
   installation covers.
 

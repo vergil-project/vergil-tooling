@@ -22,7 +22,7 @@ user account:
 | `<username>-vergil-user` | Daily development (Driver) | GitHub App, write-shaped permissions |
 | `<username>-vergil-audit` | PR review (Officials) | GitHub App, read-shaped permissions (inverted) |
 | `<username>-vergil-admin` | Reserved — **not provisioned** | — |
-| `<org>-automation` | CI automation: nightly ops (including the automatic fleet sync), epic roll-up, package-index dispatch | GitHub App owned by the org, one per org |
+| `<org>-automation` | CI automation: nightly ops (including the automatic fleet sync), the scheduled upstream refresh, epic roll-up, package-index dispatch | GitHub App owned by the org, one per org |
 
 The human account owns the decision-making authority: code review,
 PR approval, merge, and administrative operations. The two agent
@@ -47,13 +47,15 @@ not a control: the credential the process holds is the boundary.
 | `human` | The human's own `gh` login | The fall-through when no other signal is present | Everything, including submitting and merging PRs |
 | `user` | `<username>-vergil-user` | `VRG_IDENTITY_MODE`, the mode file, or the provisioned App key or ID in an agent VM | The narrowest: stops at `vrg-pr-workflow report-ready`, never submits or merges |
 | `audit` | `<username>-vergil-audit` | As for `user` | Dormant (see the note below) |
-| `automation` | The org automation App, `<org>-automation` | Only when `VRG_AUTOMATION_APP` is set and the token verifies as that App's installation token; no mode signal selects it | A subset of the human's: `vrg-github-repo-config update`, which converges a repo and merges its own sync PR |
+| `automation` | The org automation App, `<org>-automation` | Only when `VRG_AUTOMATION_APP` is set and the token verifies as that App's installation token; no mode signal selects it | A subset of the human's: `vrg-github-repo-config update`, which converges a repo and merges its own sync PR, and `vrg-upstream-refresh publish`, which opens a refresh PR on `automation/upstream-refresh/<run-id>` and merges it once CI passes |
 
 **The automation invariant.** The `automation` mode is used only for
 mechanized work, with no AI agent involved. Any work an AI agent does,
 automated or not, runs under the agent identities. In the fleet today
-only the nightly `github-config` ops job sets `VRG_AUTOMATION_APP`
-(epic vergil-project/.github#1064); every other job that mints an
+two jobs set `VRG_AUTOMATION_APP`: the nightly `github-config` ops job
+(epic vergil-project/.github#1064) and the `publish` job of the
+scheduled upstream refresh (epic vergil-project/.github#1168). Every
+other job that mints an
 automation App token still resolves to `human`. A
 `VRG_AUTOMATION_APP` whose token does not verify, or an agent signal
 alongside a verified automation token, is an error, never a guess.
@@ -226,10 +228,18 @@ and mint a short-lived installation token with
 workflows use it for:
 
 - **Nightly ops** (`ops-github-config.yml`): the `github-config` job's
-  `vrg-github-repo-config update` (the automatic fleet sync, the one
-  job that runs in the `automation` mode), the branch sweep, and the
+  `vrg-github-repo-config update` (the automatic fleet sync, which
+  runs in the `automation` mode), the branch sweep, and the
   `vrg-dependabot-audit` open-alert gate. Each of these jobs mints a
   token scoped to the calling repo and to the permissions it needs.
+- **Upstream refresh** (`ops-upstream-refresh.yml`): the `publish`
+  job's `vrg-upstream-refresh publish`, which runs in the `automation`
+  mode. It does not use `actions/create-github-app-token`: the
+  workflow passes the two secrets to the tool, which mints its own
+  tokens in-process, limited to the one repo, renewed and revoked by
+  the tool (see
+  [Upstream Refresh](../reference/upstream-refresh-config.md#identity-and-credentials)).
+  The `prepare` job holds no secrets.
 - **Epic roll-up and sweep** (`ops-epic-rollup.yml`,
   `ops-epic-sweep.yml`): closing epics and tasks across the org.
 - **Package-index dispatch** (`cd-release.yml`): sending
@@ -253,7 +263,9 @@ Four of the App's permissions matter to the tooling in this repo:
   Administration write, and the job runs only from `develop`.
 - **Workflows: Read and write.** A sync PR from `update` can change
   files under `.github/workflows/` (the `vergil-*` workflow pins), and
-  GitHub refuses such a push without it.
+  GitHub refuses such a push without it. Upstream refresh's `publish`
+  token also requests it, for the wait's branch update when `develop`
+  has changed a workflow file; its patch never touches `.github/**`.
 - **Repository security advisories: not needed.** The scheduled
   sweep (`vrg-epic-audit --close` in `ops-epic-sweep.yml`) makes no
   security-advisory call. Syncing advisory states to their issues is
