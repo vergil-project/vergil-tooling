@@ -21040,7 +21040,9 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
   authors configured. If a step fails after the move, the command fails
   loudly, naming the moved item and the by-hand fix for each step not done.
 - <code>planning</code> — reparent the item onto the planning epic of the same queue
-  home. It also takes a <strong>follow-on brainstorm</strong> out of a development epic: a
+  home. From an ad-hoc epic it takes a task found too big for one PR straight
+  to planning, with no stop in the deferred queue; like <code>defer</code>, it is
+  refused while an open PR would close the item. It also takes a <strong>follow-on brainstorm</strong> out of a development epic: a
   task titled <code>Follow-on brainstorm: …</code> whose native parent is a development
   epic. A brainstorm never gates its epic's work, so moving it suspends
   nothing. The parent is replaced in one step, then the hand-off is recorded
@@ -21094,7 +21096,7 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
 </tr>
 <tr>
 <td>ad hoc</td>
-<td><code>defer</code> — refused while an open PR would close the item</td>
+<td><code>defer</code>, <code>planning</code> — each refused while an open PR would close the item</td>
 </tr>
 <tr>
 <td>deferred</td>
