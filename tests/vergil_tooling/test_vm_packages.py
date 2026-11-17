@@ -469,6 +469,7 @@ class TestDevInstall:
         install = next(c for c in _flat(t) if "uv tool install" in c)
         assert "--reinstall" in install
         assert "--force" not in install
+        assert "uv tool install --python 3.15 " in install
 
     def test_failed_dev_install_records_no_marker(self) -> None:
         t = _transport_answering({})
@@ -492,6 +493,7 @@ class TestDevInstall:
         assert len(installs) == 2
         assert "--force" not in installs[0]
         assert "--force" in installs[1]
+        assert all("uv tool install --python 3.15 " in c for c in installs)
 
     def test_propagates_when_retry_also_fails(self) -> None:
         t = _transport_answering({})

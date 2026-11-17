@@ -372,7 +372,7 @@ Minor bumps are **deliberate opt-in** at every deployment target:
 
 | Consumer | What changes |
 |---|---|
-| Developer host | `uv tool install --reinstall 'vergil-tooling @ git+...@v1.4'` (or update the pinned tag in their notes / shell history) |
+| Developer host | `uv tool install --python 3.15 --reinstall 'vergil-tooling @ git+...@v1.4'` (or update the pinned tag in their notes / shell history) |
 | Python repo `.venv` | Edit `pyproject.toml` `[tool.uv.sources]` to `tag = "v1.4"`, then `uv lock --upgrade-package vergil-tooling` |
 | Dev container image | Wait for `vergil-containers` to land the `ARG` bump, then pull the rebuilt image |
 | Agent VM (Lima/cloud) | Set the identity's `vergil` version (in `identities.toml`) to `v1.4`, then `vrg-vm rebuild`, which installs and records the new line. A plain `vrg-vm update` keeps upgrading within the line recorded at install time, and `vrg-vm update --tag v1.4` is a one-off override that is not remembered (see [VM spec](../reference/vm-spec.md#vergil-tooling-inside-the-vm)) |
