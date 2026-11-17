@@ -1751,7 +1751,7 @@ def _checks_terminal(checks: list[dict[str, str]], required: Collection[str]) ->
 # vergil-actions' ci-security.yml: its ``semgrep``, ``trivy`` and ``codeql`` jobs
 # upload SARIF, and the GitHub Advanced Security app then registers ``Semgrep OSS``,
 # ``Trivy`` and ``CodeQL`` with no ``<job> /`` prefix (see
-# ``github_config.desired_ci_gates_ruleset``). A producing job that fails before
+# ``github_config.desired_ci_gates_rulesets``). A producing job that fails before
 # its upload leaves its check unregistered for good.
 UPLOADED_CHECK_JOBS: dict[str, str] = {
     "CodeQL": "codeql",

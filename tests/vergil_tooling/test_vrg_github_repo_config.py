@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -1012,6 +1013,63 @@ def test_human_apply_converges_emptied_bypass_list() -> None:
     ]
 
 
+def _fetch_with_legacy_ci_gates() -> FetchResult:
+    """A repo in sync but still on the shared ``CI gates`` ruleset (pre-split)."""
+    state = compute_desired_state(
+        _make_config(),
+        visibility="public",
+        is_org=True,
+        skip_bypass=False,
+        automation_app_id=_APP_ID,
+    )
+    develop = next(rs for rs in state.rulesets if rs.name == "CI gates (develop)")
+    legacy = dataclasses.replace(
+        develop, name="CI gates", ref_include=["refs/heads/main", "refs/heads/develop"]
+    )
+    state.rulesets = [rs for rs in state.rulesets if not rs.name.startswith("CI gates")]
+    state.rulesets.append(legacy)
+    return FetchResult(state=state, visibility="public", owner_type="Organization")
+
+
+def test_repo_config_reports_both(capsys: pytest.CaptureFixture[str]) -> None:
+    """The audit of a repo still on the shared ruleset names it as replaced by
+    the develop and main pair, and reports both as missing (spec §6.1)."""
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._resolve_config", return_value=_make_config()),
+        patch(f"{_MODULE}.github.is_app_mode", return_value=False),
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_fetch_with_legacy_ci_gates()),
+    ):
+        main(["audit", "--repo", "o/r"])
+    output = capsys.readouterr().out
+    assert "o/r: NON-COMPLIANT" in output
+    assert (
+        "rulesets.CI gates: expected=\"absent (replaced by 'CI gates (develop)' and "
+        "'CI gates (main)')\", actual='present'" in output
+    )
+    for name in ("CI gates (develop)", "CI gates (main)"):
+        assert f"rulesets.{name}: expected='present', actual='missing'" in output
+        assert (
+            f"rulesets.{name}.missing_ci_gates_ruleset: expected='desired', actual='missing'"
+            in output
+        )
+
+
+def test_repo_config_apply_writes_both() -> None:
+    """``apply`` checks and writes both CI-gates rulesets, and not the legacy one."""
+    with (
+        patch(f"{_MODULE}.fetch_actual_state", return_value=_actual_state()),
+        patch(f"{_MODULE}.github.read_json", return_value=_ci_contents(_ALL_CI_JOBS)),
+        patch(f"{_MODULE}.apply_desired_state", return_value=[]) as mock_apply,
+    ):
+        _apply_repo("o/r", _make_config())
+    desired = mock_apply.call_args.args[1]
+    gates = [rs.name for rs in desired.rulesets if rs.name.startswith("CI gates")]
+    assert gates == ["CI gates (develop)", "CI gates (main)"]
+
+
 # -- _apply_repo --------------------------------------------------------------
 
 
@@ -1340,7 +1398,7 @@ def test_print_diff_shows_delta_for_rules_mismatch(
     diff = ConfigDiff(
         items=[
             DiffItem(
-                field="rulesets.CI gates.rules",
+                field="rulesets.CI gates (develop).rules",
                 expected=expected_rules,
                 actual=actual_rules,
             )
@@ -1391,7 +1449,7 @@ def test_print_local_diff_shows_delta_for_rules_mismatch(
     diff = ConfigDiff(
         items=[
             DiffItem(
-                field="rulesets.CI gates.rules",
+                field="rulesets.CI gates (develop).rules",
                 expected=expected_rules,
                 actual=actual_rules,
             )
@@ -1461,7 +1519,7 @@ def test_audit_prints_skipped_bypass_actors(capsys: pytest.CaptureFixture[str]) 
         skipped=[
             "rulesets.Tag protection.bypass_actors",
             "rulesets.Branch protection.bypass_actors",
-            "rulesets.CI gates.bypass_actors",
+            "rulesets.CI gates (develop).bypass_actors",
         ],
     )
     with (

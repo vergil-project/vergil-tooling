@@ -1691,7 +1691,7 @@ later build once the lock is committed
 ([epic vergil-project/.github#342](https://github.com/vergil-project/.github/issues/342)).
 
 **Integration tests are refused.** `[ci].integration-tests = true` would
-make the `CI gates` ruleset require `test / integration / <version>`,
+make the CI-gates rulesets require `test / integration / <version>`,
 which no vergil-actions CI job produces yet
 ([#2721](https://github.com/vergil-project/vergil-tooling/issues/2721)),
 so the repo could never merge a PR. The wizard refuses the setting as

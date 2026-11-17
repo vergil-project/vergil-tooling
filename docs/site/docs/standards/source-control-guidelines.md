@@ -142,9 +142,11 @@ The rulesets are declared by `compute_desired_state()` in
 [rulesets table](../reference/config-audit.md#github-checks-rulesets) lists
 each one's includes, rules and bypass.
 
-Every repository requires the same five rulesets, whatever its
+Every repository requires the same rulesets, whatever its
 `repository-type`: `compute_desired_state()` does not vary them by type, and
-only the CI gates' required checks differ from one repository to another. A
+only the CI gates' required checks differ from one repository to another. The
+one exception is the branching model: a `docs-single-branch` repository has no
+`main`, so it carries no `CI gates (main)` ruleset. A
 repository that publishes no tags still carries Tag protection and Rolling tag
 branch names, so a tag or branch of either shape can never appear unprotected.
 
@@ -153,10 +155,12 @@ branch names, so a tag or branch of either shape can never appear unprotected.
    - Prevent force push
    - Require pull requests (0 approvals, dismiss stale reviews)
 
-2. **CI gates** (targets: `main`, `develop`)
-   - Require status checks to pass before merging (`strict` mode)
-   - Required checks are repo-specific and must match the CI job names defined
-     in the repository's workflow files
+2. **CI gates (develop)** and **CI gates (main)** (one ruleset per branch)
+   - Require status checks to pass before merging. Only `main`'s requires the
+     branch to be up to date first (`strict` mode); `develop`'s does not, so
+     ready PRs into `develop` can merge in parallel
+   - Both require the same checks, which are repo-specific and must match the
+     CI job names defined in the repository's workflow files
 
 3. **Tag protection** (targets: `v*.*.*` release tags and `v*.*` rolling tags)
    - Prevent tag deletion

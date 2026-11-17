@@ -703,7 +703,7 @@ class TestRenderCiWorkflow:
         # For every primary language (and none), ci.yml runs CodeQL exactly when
         # the CI-gates ruleset requires its checks, so the ruleset never waits
         # on a check the workflow skips (issue #4381).
-        from vergil_tooling.lib.github_config import desired_ci_gates_ruleset
+        from vergil_tooling.lib.github_config import desired_ci_gates_rulesets
 
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.primary_language = language
@@ -718,9 +718,9 @@ class TestRenderCiWorkflow:
             release_model="tagged-release",
             primary_language=language or None,
         )
-        ruleset = desired_ci_gates_ruleset(
+        ruleset = desired_ci_gates_rulesets(
             project, CiConfig(versions=["latest"], integration_tests=False), ghas=True
-        )
+        )[0]
         required = {
             str(check["context"])
             for rule in ruleset.rules
@@ -918,7 +918,7 @@ class TestCiGatesProducibility:
     @staticmethod
     def _unproducible(ctx: RepoInitContext, *, ghas: bool, docs: bool) -> list[str]:
         from vergil_tooling.lib.github_config import (
-            desired_ci_gates_ruleset,
+            desired_ci_gates_rulesets,
             required_status_contexts,
             unproducible_ci_yaml_contexts,
         )
@@ -931,9 +931,9 @@ class TestCiGatesProducibility:
             primary_language=ctx.primary_language,
         )
         ci = CiConfig(versions=ctx.ci_versions, integration_tests=ctx.integration_tests)
-        ruleset = desired_ci_gates_ruleset(
+        ruleset = desired_ci_gates_rulesets(
             project, ci, ghas=ghas, docs=docs, integration_versions=ctx.ci_versions
-        )
+        )[0]
         result: list[str] = unproducible_ci_yaml_contexts(
             render_ci_workflow(ctx), required_status_contexts(ruleset), ghas=ghas
         )
@@ -979,7 +979,7 @@ class TestAssertCiGatesProducible:
         """A minimal desired-state stand-in: the guard only reads ``.rulesets``."""
         from types import SimpleNamespace
 
-        from vergil_tooling.lib.github_config import desired_ci_gates_ruleset
+        from vergil_tooling.lib.github_config import desired_ci_gates_rulesets
 
         project = ProjectConfig(
             repository_type="documentation",
@@ -989,14 +989,14 @@ class TestAssertCiGatesProducible:
             primary_language=ctx.primary_language,
         )
         ci = CiConfig(versions=ctx.ci_versions, integration_tests=ctx.integration_tests)
-        ruleset = desired_ci_gates_ruleset(
+        rulesets = desired_ci_gates_rulesets(
             project,
             ci,
             ghas=ghas,
             docs=ctx.publish_docs,
             integration_versions=ctx.ci_versions,
         )
-        return SimpleNamespace(rulesets=[ruleset])
+        return SimpleNamespace(rulesets=list(rulesets))
 
     def test_passes_for_a_docs_repo(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="mnemosys-project", name="docs")
@@ -2447,6 +2447,57 @@ class TestStepGithubConfig:
         ]
         assert all(rs.bypass_actors is not None for rs in desired.rulesets)
         assert desired.repo_settings.allow_auto_merge is True
+
+    @pytest.mark.parametrize(
+        ("branching_model", "expected"),
+        [
+            ("library-release", [("CI gates (develop)", False), ("CI gates (main)", True)]),
+            ("docs-single-branch", [("CI gates (develop)", False)]),
+        ],
+    )
+    def test_repo_init_creates_both(
+        self, tmp_path: Path, branching_model: str, expected: list[tuple[str, bool]]
+    ) -> None:
+        """A new repo gets develop's non-strict CI-gates ruleset and, with a main
+        branch, main's strict one, each checked against the generated ci.yml
+        (epic vergil-project/.github#1218, spec §6.1)."""
+        ctx = RepoInitContext(org="vergil-project", name="new-repo")
+        ctx.work_dir = tmp_path
+        ctx.repository_type = "tooling"
+        ctx.primary_language = "python"
+        ctx.branching_model = branching_model
+        ctx.versioning_scheme = "semver"
+        ctx.release_model = "tagged-release"
+        ctx.ci_versions = ["3.14"]
+        ctx.publish_docs = True
+        ctx.vergil_version = "v2.1"
+        cfg = _parse_raw_config(tomllib.loads(render_vergil_toml(ctx)))
+        workflows = tmp_path / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yml").write_text(render_ci_workflow(ctx))
+
+        with (
+            patch(
+                "vergil_tooling.lib.automation_identity.automation_app_slug",
+                return_value="acme-automation",
+            ),
+            patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
+            patch(
+                "vergil_tooling.lib.github_config.apply_desired_state", return_value=[]
+            ) as mock_apply,
+            patch("vergil_tooling.lib.repo_init.sync_labels"),
+            patch("vergil_tooling.lib.config.read_config", return_value=cfg),
+        ):
+            mock_fetch.return_value.owner_type = "Organization"
+            mock_fetch.return_value.visibility = "public"
+            step_github_config(ctx)
+
+        desired = mock_apply.call_args.args[1]
+        gates = [rs for rs in desired.rulesets if rs.name.startswith("CI gates")]
+        assert [
+            (rs.name, rs.rules[0]["parameters"]["strict_required_status_checks_policy"])
+            for rs in gates
+        ] == expected
 
 
 _PAGES_ENDPOINT = "repos/vergil-project/vergil-vm/pages"

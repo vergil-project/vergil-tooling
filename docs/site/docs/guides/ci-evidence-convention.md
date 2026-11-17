@@ -142,7 +142,7 @@ evidence, so it does not satisfy the gate.
 
 The set of gates that MUST emit evidence is **not a hand-maintained list.** It
 is **derived from the same source of truth that drives branch protection**:
-`lib/github_config.py:desired_ci_gates_ruleset()` computes a repo's required
+`lib/github_config.py:desired_ci_gates_rulesets()` computes a repo's required
 status checks from its `VergilConfig` (language, resolved versions, GHAS
 availability, and whether a `[package]` section is present). The evidence
 layer consumes that *same* computation, so the gates that are **enforced to

@@ -441,12 +441,14 @@ generates it, for a new repository or for an existing one with
   `[ci].integration-tests` is on, `docs` only when `[publish].docs` is
   on, `version` only when `[project].release-model` is not `none`, and
   `package` only when `vergil.toml` has `[package]`.
-- **The `CI gates` ruleset** is applied to `main` and `develop` with
-  the required checks listed in [CI gates](#ci-gates). Before it is
-  applied, the tool checks that the generated `ci.yml` produces every
-  required check and fails if it does not. `vrg-github-repo-config`
-  runs the same check against the committed `ci.yml` before it writes
-  the ruleset. `[ci].integration-tests = true` always fails it, since no
+- **The CI-gates rulesets**, `CI gates (develop)` and `CI gates (main)`,
+  are applied to `develop` and `main` with the required checks listed in
+  [CI gates](#ci-gates). Only `main`'s requires a branch to be up to
+  date before it merges. A `docs-single-branch` repo gets `develop`'s
+  only. Before they are applied, the tool checks that the generated
+  `ci.yml` produces every required check and fails if it does not.
+  `vrg-github-repo-config` runs the same check against the committed
+  `ci.yml` before it writes the rulesets. `[ci].integration-tests = true` always fails it, since no
   reusable workflow runs an integration job yet
   ([#2721](https://github.com/vergil-project/vergil-tooling/issues/2721)):
   the error names the setting as the cause, and `vrg-github-repo-init`
@@ -461,7 +463,8 @@ is the local command. Nothing else needs to be added to the repository.
 
 ## CI gates
 
-The `CI gates` ruleset requires these checks. The list is computed from
+The CI-gates rulesets, `CI gates (develop)` and `CI gates (main)`, both
+require these checks. The list is computed from
 `vergil.toml`:
 
 | Check | Required when |
