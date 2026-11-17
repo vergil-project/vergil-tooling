@@ -1275,6 +1275,21 @@ the human excused (not sent to the reviewer). It refuses an ID no earlier
 result raised, an ID given to both, a check with no `--fix-id`, and an
 earlier defect named by neither unless a later result marks it `fixed`.
 
+For a fix to an open PR, `--pr` names the PR by number or URL. The PR must
+be in the `--issue` repository, open, and headed by the current branch.
+When its body has more than one `Closes` line it is a batch PR: the
+`--issue` must be one of them, and every step's request adds
+`batch_issues` (each other issue's ref, body and human comments, read as
+for the `--issue`), `batch_commits` (every commit under review as
+`{"sha", "subject", "issue"}`, its issue the one its subject's trailing
+` (#N)` names) and `batch_commits_path` (`commits-<step>.patch`, each
+commit with its own patch), and leaves the batch's issues out of
+`epic_open_tasks`. It refuses a merge commit, a commit naming no issue of the
+PR, an issue with no commit, and a check whose batch issues differ from its
+previous step's. A single-issue PR must link the `--issue`, and its request
+is the one built without `--pr`. See the protocol's
+[A batch PR](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md#a-batch-pr).
+
 Before writing, and on its own with `--ensure-dir`, it checks the private
 directory level by level: `build` must be a real directory (it is created
 when absent), and each level from `.vergil-state` down to `merge-review`
@@ -1284,9 +1299,9 @@ makes there, and writes only to the path it prints.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_merge_review_request` (library: `lib/merge_review/request.py`, `lib/merge_review/state.py`, `lib/build_dir.py`, `lib/validate_record.py`, `lib/rulings/comments.py`, `lib/rulings/identity.py`) |
-| Args | `--issue OWNER/NAME#N --base REF --step {review,check,check-<k>} [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]`, or `--issue OWNER/NAME#N --ensure-dir` |
-| Preconditions | Run inside the task's worktree after `vrg-container-run -- vrg-validate` passed at `HEAD`; trusted authors are configured with exactly one human login, and GitHub is reachable to read the issue, its comments and its epic's sub-issues |
+| Source | `vergil_tooling.bin.vrg_merge_review_request` (library: `lib/merge_review/request.py`, `lib/merge_review/open_pr.py`, `lib/merge_review/state.py`, `lib/build_dir.py`, `lib/validate_record.py`, `lib/rulings/comments.py`, `lib/rulings/identity.py`) |
+| Args | `--issue OWNER/NAME#N --base REF --step {review,check,check-<k>} [--design-source FILE]... [--pr N\|URL] [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]`, or `--issue OWNER/NAME#N --ensure-dir` |
+| Preconditions | Run inside the task's worktree after `vrg-container-run -- vrg-validate` passed at `HEAD`; trusted authors are configured with exactly one human login, and GitHub is reachable to read the issue, its comments and its epic's sub-issues (and, with `--pr`, the PR and each of its issues) |
 | Failure mode | `ERROR: <reason>` on stderr, nothing on stdout |
 | Exit codes | 0 the path was printed, 1 a refusal or error, 2 bad arguments, 3 a check's `--fix-base` is not an ancestor of `HEAD` (the branch was rebased) |
 | Status | Active |

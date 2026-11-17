@@ -60,6 +60,13 @@ and `issue-implement` folds the issue to one commit once its review has
 closed. `report-ready`'s notes carry each issue's eligibility line, prefixed
 with its ref.
 
+A fix to an open batch PR is reviewed as the whole branch against
+`origin/develop`, so its diff holds every issue's commits. The skill then
+passes `--pr`, and the request builder reads the PR's `Closes` lines itself
+and carries each issue's scope and the issue each commit belongs to, so the
+reviewer judges each commit against its own issue (the protocol's
+[A batch PR](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md#a-batch-pr)).
+
 ### What a reviewer can raise
 
 Each finding answers one of two questions: **production-safety** (can this
