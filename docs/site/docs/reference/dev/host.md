@@ -26,7 +26,7 @@ The pinning doctrine is inherited from epic
 
 | Command | What it does |
 | --- | --- |
-| `vrg-host` / `vrg-host status` | Read-only report of every host dependency (the default) |
+| `vrg-host` / `vrg-host status` | Report of every host dependency, changing no installed tool (the default) |
 | `vrg-host status --fix` | Run the remediation of each unsatisfied auxiliary check first, then report |
 | `vrg-host upgrade <dep>…` | Upgrade the named dependencies |
 | `vrg-host upgrade --all [--force]` | Upgrade every `auto` dependency, holding pinned ones unless `--force` |
@@ -39,7 +39,19 @@ The pinning doctrine is inherited from epic
 For each dependency in the [host-dependency manifest](#the-host-dependency-manifest),
 `status` prints its install method, installed version, latest version, version
 state and severity, followed by any pin and auxiliary-check detail lines, and an
-`overall:` line. It changes nothing on the host (unless `--fix` is given).
+`overall:` line. It installs, upgrades and repairs nothing (unless `--fix` is
+given). Its one write is the refresh of Homebrew's package metadata described
+below.
+
+**Homebrew latest versions.** A `brew-formula` or `brew-cask` dependency's
+latest version comes from `brew info`, which reads Homebrew's local metadata
+and never refreshes it. Homebrew's auto-update runs before commands such as
+`brew install` and `brew upgrade`, not before `brew info`, so that metadata can
+be days old and an outdated tool would read as `current`. `status` and
+`upgrade` therefore run `brew update` once, before reading any Homebrew latest
+version. If `brew update` fails (no network, a broken tap), `vrg-host` prints a
+warning on stderr, and every Homebrew dependency reports `latest-unknown`
+(WARN), never `current`.
 
 Each dependency is classified on two axes, its **version state** and its
 **auxiliary checks**, and gets the worse of the two severities:
@@ -157,7 +169,7 @@ skipped (upgrade = manual, upgrade by hand): docker-desktop, macos
 | `upgraded … (still behind latest <v>)` | Was behind; the version moved but is still older than the latest (or cannot be ordered against it) | WARN |
 | `unchanged …` | Was behind; the upgrade command succeeded but the installed version did not change | WARN |
 | `ran … <before> -> <after> (no latest feed)` | `latest = "unmanaged"`: nothing to compare with, so the upgrade runs and the change is reported | OK |
-| `ran … (latest unknown: …)` | The latest probe did not answer (as `status`'s `latest-unknown`) | WARN |
+| `ran … (latest unknown: …)` | The latest probe did not answer, or `brew update` failed for a Homebrew dependency (as `status`'s `latest-unknown`) | WARN |
 | `held …` | Actively pinned and no `--force`; shows the installed version and the latest it holds back from | WARN (not counted under `--all`) |
 | `ERROR … missing` / `ERROR … probe-error` | Not installed, or a probe failed, as `status` reports it; the upgrade is not attempted | ERROR |
 | `ERROR … upgrade ran but …` | The installed version could not be re-probed after the upgrade | ERROR |

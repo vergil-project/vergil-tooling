@@ -33,7 +33,10 @@
 #   - nfpm, npm, language toolchains: container / CI only (vrg-package,
 #     vrg-validate), never host-side.
 #   - Homebrew itself: the install mechanism for the brew-formula entries, not a
-#     Vergil dependency; it keeps its own metadata fresh via auto-update.
+#     Vergil dependency. Its auto-update does NOT keep `brew info` fresh (it
+#     runs before `brew install` and `brew upgrade`, not `brew info`), so
+#     vrg-host runs `brew update` once before reading any brew latest; when
+#     that fails, every brew entry reports `latest-unknown` (#4582).
 #   - Editors, voice-to-text and other personal tools (spec §4). Claude Code
 #     was on this list until #3300 deliberately reversed that; see its entry.
 #   - Full Xcode: nothing on the host needs more than the Command Line Tools
