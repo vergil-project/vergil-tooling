@@ -104,7 +104,11 @@ only after enforcing a per-identity subcommand allowlist, injecting the GitHub
 App installation token for the target owner. Raw `gh issue create`, `gh auth`,
 `pr close`, `repo edit/create/delete` and `workflow run` are denied outright;
 `gh api` is full for a human, read-only `GET` for the audit identity, and
-denied for the user identity. `vrg-gh --help` lists the allowlist.
+denied for the user identity. Its own `run job-log --repo <owner>/<repo> --job
+<job-id>` prints one Actions job's log from the read-only per-job log endpoint,
+for every identity, with terminal control sequences stripped (see
+[`run job-log`](../guides/permission-model.md#run-job-log)). `vrg-gh --help`
+lists the allowlist.
 
 | Attribute | Value |
 |---|---|
@@ -112,7 +116,7 @@ denied for the user identity. `vrg-gh --help` lists the allowlist.
 | Args | `<subcommand> <action> [args...]`, forwarded to `gh` |
 | Preconditions | `gh` on PATH; identity resolved via `vrg-whoami` |
 | Failure mode | A refused command prints the reason on stderr |
-| Exit codes | 0 success; 1 refusal; 2 no subcommand; otherwise gh's exit code |
+| Exit codes | 0 success; 1 refusal; 2 no subcommand or bad `run job-log` arguments; otherwise gh's exit code |
 | Status | Active |
 
 ### vrg-submit-pr
