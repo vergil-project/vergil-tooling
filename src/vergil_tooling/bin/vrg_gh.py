@@ -7,11 +7,16 @@ Injects GitHub App installation tokens when available.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import github, identity_mode, retry
 from vergil_tooling.lib.cli import cli_main
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _ALLOWED: dict[str, set[str]] = {
     "issue": {"view", "close", "reopen", "edit", "list", "comment", "transfer"},
@@ -124,6 +129,30 @@ _API_WRITE_FLAGS: set[str] = {"-f", "-F", "--field", "--raw-field", "--input"}
 
 _MIN_MERGE_ARGS = 3
 
+# `run job-log` is a wrapper-native command, not a gh subcommand: gh can read
+# one job's log only by downloading the whole run's log archive (`gh run view
+# --job <id> --log`), which fails on a run with many jobs. It maps to exactly
+# one read-only REST endpoint, built here from validated parts, so it reopens
+# none of the `gh api` access the user identity is denied. It is available to
+# every identity, audit included, because it only reads. See issue #4597.
+_JOB_LOG_SUB = "job-log"
+_JOB_LOG_USAGE = "usage: vrg-gh run job-log --repo <owner>/<repo> --job <job-id>"
+# GitHub owner (user or org) names: alphanumerics and hyphens, at most 39
+# characters, not starting with a hyphen. Repository names: alphanumerics,
+# '.', '-' and '_', at most 100 characters. Neither admits '/', '?', '#', '%',
+# '{' or whitespace, so the endpoint path cannot be redirected or extended.
+_OWNER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}")
+_REPO_RE = re.compile(r"[A-Za-z0-9._-]{1,100}")
+_JOB_ID_RE = re.compile(r"[1-9][0-9]{0,19}")
+# Terminal escape sequences: CSI (ESC [ ... final byte), OSC (ESC ] ... BEL or
+# ESC \), and any other two-byte ESC sequence. Then every remaining C0 control
+# character except tab and newline, DEL, and the C1 controls (which include
+# the 8-bit CSI and OSC introducers).
+_ESCAPE_SEQUENCE_RE = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b\n]*(?:\x07|\x1b\\)?|\x1b[^\n]?"
+)
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
@@ -144,6 +173,9 @@ def main(argv: list[str] | None = None) -> int:
         msg = _DENIED_TOP[top]
         print(f"vrg-gh: {top} is denied. {msg}", file=sys.stderr)
         return 1
+
+    if top == "run" and len(argv) >= 2 and argv[1] == _JOB_LOG_SUB:  # noqa: PLR2004
+        return _job_log(argv[2:])
 
     # Identity-aware `gh api`: the broad escape hatch is gated per identity.
     if top == "api":
@@ -320,7 +352,96 @@ def _exec_gh(argv: list[str]) -> int:
     minted for a different installation cannot reach that owner's
     private repos (#1413).
     """
-    owner = _extract_repo_owner(argv)
+    return _run_gh(argv, _extract_repo_owner(argv))
+
+
+def _parse_job_log_args(args: list[str]) -> tuple[str, str, str] | str:
+    """Parse and validate ``run job-log``'s arguments.
+
+    Returns ``(owner, repo, job_id)``, or an error message. Only
+    ``--repo``/``-R`` and ``--job`` are accepted, each exactly once, in
+    separate-value or ``=`` form. Anything else is refused rather than
+    forwarded: no argument is passed through to gh.
+    """
+    names = {"--repo": "repo", "-R": "repo", "--job": "job"}
+    values: dict[str, str] = {}
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        flag, sep, value = arg.partition("=")
+        if flag not in names:
+            return f"unexpected argument {arg!r}."
+        if not sep:
+            if i + 1 >= len(args):
+                return f"{flag} requires a value."
+            value = args[i + 1]
+            i += 1
+        key = names[flag]
+        if key in values:
+            return f"--{key} was given more than once."
+        values[key] = value
+        i += 1
+    missing = [f"--{key}" for key in ("repo", "job") if key not in values]
+    if missing:
+        return f"missing {' and '.join(missing)}."
+    owner, sep, repo = values["repo"].partition("/")
+    if not (
+        sep and _OWNER_RE.fullmatch(owner) and _REPO_RE.fullmatch(repo) and repo not in (".", "..")
+    ):
+        return f"--repo must be <owner>/<repo>, got {values['repo']!r}."
+    if not _JOB_ID_RE.fullmatch(values["job"]):
+        return f"--job must be a numeric job ID, got {values['job']!r}."
+    return owner, repo, values["job"]
+
+
+def _job_log(args: list[str]) -> int:
+    """Print one Actions job's log from the read-only per-job log endpoint."""
+    if any(arg in ("-h", "--help") for arg in args):
+        print(
+            f"{_JOB_LOG_USAGE}\n"
+            "\n"
+            "Print the log of one GitHub Actions job, by its numeric job ID, from\n"
+            "the read-only per-job log endpoint. Unlike 'run view --job <id> --log',\n"
+            "it does not download the whole run's log archive. Terminal escape\n"
+            "sequences and other control characters are stripped. Available to every\n"
+            "identity."
+        )
+        return 0
+    parsed = _parse_job_log_args(args)
+    if isinstance(parsed, str):
+        print(f"vrg-gh: run job-log: {parsed}\n{_JOB_LOG_USAGE}", file=sys.stderr)
+        return 2
+    owner, repo, job_id = parsed
+    endpoint = f"repos/{owner}/{repo}/actions/jobs/{job_id}/logs"
+    # Job logs routinely carry ANSI color codes, which gh refuses to print
+    # unless told to. The wrapper accepts them from gh and strips every
+    # terminal control sequence itself, so none reaches the terminal.
+    return _run_gh(
+        ["api", "--method", "GET", "--allow-escape-sequences", endpoint],
+        owner,
+        clean=_strip_terminal_controls,
+    )
+
+
+def _strip_terminal_controls(text: str) -> str:
+    """Remove terminal escape sequences and other control characters from *text*.
+
+    Keeps tab and newline; a carriage return is dropped, so CRLF becomes LF.
+    """
+    return _CONTROL_CHAR_RE.sub("", _ESCAPE_SEQUENCE_RE.sub("", text))
+
+
+def _unchanged(text: str) -> str:
+    return text
+
+
+def _run_gh(
+    argv: list[str], owner: str | None, *, clean: Callable[[str], str] = _unchanged
+) -> int:
+    """Execute ``gh`` with *owner*'s installation token (cwd detection when None).
+
+    *clean* is applied to gh's output before it is replayed.
+    """
     try:
         token = github.get_installation_token(org=owner, require_installation=owner is not None)
     except github.NoInstallationError as exc:
@@ -347,14 +468,14 @@ def _exec_gh(argv: list[str]) -> int:
         )
     except subprocess.CalledProcessError as exc:
         if exc.stdout:
-            sys.stdout.write(exc.stdout)
+            sys.stdout.write(clean(exc.stdout))
         if exc.stderr:
-            sys.stderr.write(exc.stderr)
+            sys.stderr.write(clean(exc.stderr))
         return exc.returncode
     if result.stdout:
-        sys.stdout.write(result.stdout)
+        sys.stdout.write(clean(result.stdout))
     if result.stderr:
-        sys.stderr.write(result.stderr)
+        sys.stderr.write(clean(result.stderr))
     return 0
 
 
@@ -378,6 +499,8 @@ def _print_help() -> None:
         "    edit/create/delete, workflow run.\n"
         "  - gh api is gated by identity: human full, audit read-only GET, user\n"
         "    denied.\n"
+        "  - run job-log --repo <owner>/<repo> --job <id> prints one Actions\n"
+        "    job's log from the read-only per-job log endpoint, for every identity.\n"
         "\n"
         "Identity mode is resolved via vrg-whoami. Per-subcommand gh help still\n"
         "forwards, e.g. 'vrg-gh pr view --help'."
