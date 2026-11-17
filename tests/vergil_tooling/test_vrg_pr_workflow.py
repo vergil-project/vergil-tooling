@@ -12,6 +12,7 @@ report-ready paths are covered in
 
 from __future__ import annotations
 
+import itertools
 import json
 import subprocess
 from typing import TYPE_CHECKING
@@ -20,8 +21,11 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin import vrg_pr_workflow
+from vergil_tooling.lib.github import ClosingIssue, PRClosingReferences
+from vergil_tooling.lib.pr_workflow import engine, freeze
 from vergil_tooling.lib.pr_workflow.batch_marker import Marker, read_marker, write_markers
 from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
+from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -612,3 +616,248 @@ def test_report_ready_batch_marker_removal_failure_is_loud(
     # The re-run it names finishes the job.
     assert _report("10", "11") == 0
     assert read_marker(ready_clone, "#10") is None
+
+
+# -- batch-check (epic vergil-project/.github#1218, Task 18) ---------------------
+
+_PR = "https://github.com/acme/tools/pull/50"
+_PR_BRANCH = "feature/10-batch-x"
+_BATCH_BODY = "## Issue Linkage\n\nCloses #10\nCloses #11\n"
+_WF = "vergil_tooling.bin.vrg_pr_workflow"
+_AUTHORS = itertools.count()
+
+
+def _closing(*numbers: int) -> PRClosingReferences:
+    return PRClosingReferences(
+        repo="acme/tools",
+        number=50,
+        state="OPEN",
+        merged_at=None,
+        issues=tuple(ClosingIssue(repo="acme/tools", number=n, state="OPEN") for n in numbers),
+    )
+
+
+@pytest.fixture()
+def origin(clone: Path) -> Path:
+    """A local bare origin holding develop; the clone fetches from it."""
+    bare = clone.parent / "origin.git"
+    _git(clone.parent, "init", "--bare", str(bare))
+    _git(bare, "config", "uploadpack.allowAnySHA1InWant", "true")
+    _git(clone, "remote", "set-url", "origin", str(bare))
+    _git(clone, "push", "origin", "develop")
+    return bare
+
+
+def _push_pr_branch(origin: Path, *subjects: str) -> str:
+    """Push a PR branch off develop from another clone; return its head SHA.
+
+    The commits are never in the checking clone, so batch-check must fetch them.
+    """
+    author = origin.parent / f"author-{next(_AUTHORS)}"
+    _git(origin.parent, "clone", "-q", "-b", "develop", str(origin), str(author))
+    _git(author, "config", "user.email", "t@example.com")
+    _git(author, "config", "user.name", "Test")
+    _git(author, "checkout", "-q", "-B", _PR_BRANCH)
+    for index, subject in enumerate(subjects):
+        _commit(author, f"pr{index}.txt", subject)
+    _git(author, "push", "-q", "-f", "origin", _PR_BRANCH)
+    return _git(author, "rev-parse", "HEAD")
+
+
+@pytest.fixture()
+def github_pr(origin: Path) -> Iterator[dict[str, MagicMock]]:
+    """GitHub's view of PR 50 (a batch of #10 and #11) and this clone's repo."""
+    with (
+        patch(f"{_WF}.github.read_json") as read_json,
+        patch(f"{_WF}.github.pr_closing_references", return_value=_closing(10, 11)) as closing,
+        patch(f"{_WF}._clone_repo", return_value="acme/tools"),
+        patch(RULES) as rules,
+    ):
+        yield {"read_json": read_json, "closing": closing, "rules": rules}
+
+
+def _pr_is(github_pr: dict[str, MagicMock], head: str, body: str = _BATCH_BODY) -> None:
+    github_pr["read_json"].return_value = {
+        "body": body,
+        "baseRefName": "develop",
+        "headRefOid": head,
+    }
+
+
+def test_batch_check_passes_a_batch_pr_at_its_head(
+    clone: Path, origin: Path, github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+) -> None:
+    head = _push_pr_branch(origin, "fix: a (#10)", "feat: b (#11)")
+    _pr_is(github_pr, head)
+    assert _run("batch-check", "--pr", _PR) == 0
+    assert f"Batch check passed for PR {_PR} at {head}" in capsys.readouterr().out
+    github_pr["read_json"].assert_called_once_with(
+        "pr", "view", _PR, "--json", "body,baseRefName,headRefOid"
+    )
+    github_pr["rules"].assert_not_called()
+    # The head was fetched by its SHA: the PR branch's tracking ref never moved.
+    branch_ref = subprocess.run(
+        ("git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{_PR_BRANCH}"),
+        cwd=clone,
+        check=False,
+        capture_output=True,
+    )
+    assert branch_ref.returncode != 0
+
+
+def test_batch_check_passes_non_batch_pr(
+    clone: Path, github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _pr_is(github_pr, "a" * 40, body="## Issue Linkage\n\nCloses #10\nRef #11\n")
+    assert _run("batch-check", "--pr", _PR) == 0
+    assert "is not a batch PR" in capsys.readouterr().out
+    github_pr["closing"].assert_not_called()
+    github_pr["rules"].assert_not_called()
+
+
+def test_batch_check_fixup_commit_fails(
+    origin: Path, github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+) -> None:
+    head = _push_pr_branch(origin, "fix: a (#10)", "feat: b (#11)", "fixup! feat: b (#11)")
+    _pr_is(github_pr, head)
+    assert _run("batch-check", "--pr", _PR) == 1
+    err = capsys.readouterr().err
+    assert f"batch-check: PR {_PR} at {head[:12]}" in err
+    assert "unfolded fixup" in err
+
+
+def test_batch_check_uses_given_head(
+    clone: Path, origin: Path, github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The PR's head on GitHub fails, but --head (a local, unpushed rebase) passes,
+    and the other way round: only the given head is checked."""
+    bad = _push_pr_branch(origin, "fix: a (#10)", "feat: b (#11)", "fixup! feat: b (#11)")
+    _git(clone, "checkout", "-q", "-b", _PR_BRANCH)
+    _commit(clone, "a.txt", "fix: a (#10)")
+    _commit(clone, "b.txt", "feat: b (#11)")
+    good = _git(clone, "rev-parse", "HEAD")
+    _pr_is(github_pr, bad)
+    assert _run("batch-check", "--pr", _PR, "--head", good) == 0
+    assert f"at {good}" in capsys.readouterr().out
+    _pr_is(github_pr, good)
+    assert _run("batch-check", "--pr", _PR, "--head", bad) == 1
+    assert "unfolded fixup" in capsys.readouterr().err
+
+
+def test_batch_check_allowed_when_frozen(
+    clone: Path, origin: Path, github_pr: dict[str, MagicMock]
+) -> None:
+    _git(clone, "checkout", "-q", "-b", _PR_BRANCH)
+    _commit(clone, "a.txt", "fix: a (#10)")
+    _commit(clone, "b.txt", "feat: b (#11)")
+    head = _git(clone, "rev-parse", "HEAD")
+    state = engine.init_state(
+        issues=["10", "11"],
+        branch=_PR_BRANCH,
+        base="origin/develop",
+        head_sha=head,
+        base_sha=_git(clone, "rev-parse", "develop"),
+        now="2026-11-17T00:00:00Z",
+    )
+    LocalFileTransport(clone).write(
+        engine.apply_report_ready(
+            state,
+            title="t",
+            summary="s",
+            notes="n",
+            linkage="Ref",
+            head_sha=head,
+            now="2026-11-17T01:00:00Z",
+        )
+    )
+    assert freeze.check_worktree(clone, action="commit").frozen
+    before = _state_file(clone).read_text()
+    _pr_is(github_pr, head)
+    assert _run("batch-check", "--pr", _PR) == 0
+    assert _state_file(clone).read_text() == before
+
+
+@pytest.mark.parametrize(
+    ("closing", "expected"),
+    [((10,), "missing acme/tools#11"), ((10, 11, 12), "its body does not close acme/tools#12")],
+)
+def test_batch_check_refuses_a_closing_refs_mismatch(
+    origin: Path,
+    github_pr: dict[str, MagicMock],
+    capsys: pytest.CaptureFixture[str],
+    closing: tuple[int, ...],
+    expected: str,
+) -> None:
+    _pr_is(github_pr, _push_pr_branch(origin, "fix: a (#10)", "feat: b (#11)"))
+    github_pr["closing"].return_value = _closing(*closing)
+    assert _run("batch-check", "--pr", _PR) == 1
+    err = capsys.readouterr().err
+    assert "batch-check: PR acme/tools#50: batch refused (closing references)" in err
+    assert expected in err
+
+
+def test_batch_check_refuses_another_repos_clone(
+    origin: Path, github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _pr_is(github_pr, _push_pr_branch(origin, "fix: a (#10)", "feat: b (#11)"))
+    with patch(f"{_WF}._clone_repo", return_value="acme/other"):
+        assert _run("batch-check", "--pr", _PR) == 1
+    assert "this is a clone of acme/other" in capsys.readouterr().err
+
+
+def test_batch_check_refuses_a_failed_pr_read(
+    github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+) -> None:
+    github_pr["read_json"].side_effect = subprocess.CalledProcessError(1, "gh pr view")
+    assert _run("batch-check", "--pr", _PR) == 1
+    assert f"batch-check: cannot read PR {_PR}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "response",
+    [{}, {"body": "x", "baseRefName": "develop"}, {"body": "x", "headRefOid": "a" * 40}, []],
+)
+def test_batch_check_refuses_a_malformed_pr_read(
+    github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str], response: object
+) -> None:
+    github_pr["read_json"].return_value = response
+    assert _run("batch-check", "--pr", _PR) == 1
+    assert f"batch-check: cannot read PR {_PR}" in capsys.readouterr().err
+
+
+def test_batch_check_refuses_a_failed_closing_refs_read(
+    github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _pr_is(github_pr, "a" * 40)
+    github_pr["closing"].side_effect = RuntimeError("GraphQL error")
+    assert _run("batch-check", "--pr", _PR) == 1
+    assert "cannot read the closing issue references" in capsys.readouterr().err
+
+
+def test_batch_check_refuses_an_unknown_head(
+    origin: Path, github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _pr_is(github_pr, _push_pr_branch(origin, "fix: a (#10)", "feat: b (#11)"))
+    assert _run("batch-check", "--pr", _PR, "--head", "no-such-branch") == 1
+    assert "cannot find the commit no-such-branch" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("head", ["", "--all"])
+def test_batch_check_refuses_an_option_as_head(
+    github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str], head: str
+) -> None:
+    assert _run("batch-check", "--pr", _PR, f"--head={head}") == 1
+    assert "--head is not a git revision" in capsys.readouterr().err
+    github_pr["read_json"].assert_not_called()
+
+
+def test_batch_check_refuses_a_base_it_cannot_fetch(
+    origin: Path, github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+) -> None:
+    github_pr["read_json"].return_value = {
+        "body": _BATCH_BODY,
+        "baseRefName": "no-such-base",
+        "headRefOid": "a" * 40,
+    }
+    assert _run("batch-check", "--pr", _PR) == 1
+    assert "cannot fetch PR" in capsys.readouterr().err

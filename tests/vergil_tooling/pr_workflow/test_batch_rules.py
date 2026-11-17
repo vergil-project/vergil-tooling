@@ -21,6 +21,8 @@ from vergil_tooling.lib.pr_workflow.batch_rules import (
     MAX_BATCH,
     MIN_BATCH,
     BatchRuleError,
+    batch_closes,
+    check_closing_refs,
     check_commit_per_issue,
     check_hard_rules,
     is_batch,
@@ -469,3 +471,65 @@ def test_commits_refuse_an_unparseable_rev_list_line(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(batch_rules.git, "read_output", lambda *args: "deadbeef no separators")
     with pytest.raises(BatchRuleError, match="could not parse the git rev-list line"):
         check_commit_per_issue(["#10", "#11"], base="develop", head="HEAD")
+
+
+# -- the closing references ---------------------------------------------------
+
+_BODY = (
+    "## Summary\n\nTwo fixes.\n\n## Issue Linkage\n\nCloses #10\nCloses acme/Tools#11\nRef #12\n"
+)
+
+
+def _closing_refused(body: str, issues: list[str]) -> str:
+    with pytest.raises(BatchRuleError) as info:
+        check_closing_refs(body, issues, repo=REPO)
+    assert info.value.rule == "closing references"
+    return str(info.value)
+
+
+def test_batch_closes_reads_a_batch_body() -> None:
+    assert batch_closes(_BODY) == ["#10", "acme/Tools#11"]
+    assert batch_closes("Closes #10\nRef #11\n") == []
+    assert batch_closes("") == []
+
+
+def test_check_closing_refs_match() -> None:
+    check_closing_refs(_BODY, ["acme/tools#11", "ACME/tools#10"], repo=REPO)
+    check_closing_refs(_BODY, ["#10", "#11"], repo=REPO)
+
+
+def test_check_closing_refs_missing_issue() -> None:
+    message = _closing_refused(_BODY, ["acme/tools#10"])
+    assert "its body closes acme/tools#10, acme/tools#11" in message
+    assert "GitHub's closing references are acme/tools#10" in message
+    assert "missing acme/tools#11" in message
+    assert "GitHub would not close every issue of the batch" in message
+
+
+def test_check_closing_refs_extra_issue() -> None:
+    message = _closing_refused(_BODY, ["acme/tools#10", "acme/tools#11", "acme/tools#12"])
+    assert "GitHub's closing references are acme/tools#10, acme/tools#11, acme/tools#12" in message
+    assert "its body does not close acme/tools#12" in message
+    assert "missing" not in message
+
+
+def test_check_closing_refs_names_none_for_an_empty_side() -> None:
+    message = _closing_refused(_BODY, [])
+    assert "GitHub's closing references are none" in message
+    message = _closing_refused("Ref #10\n", ["acme/tools#10"])
+    assert "its body closes none" in message
+
+
+def test_check_closing_refs_refuses_a_close_in_another_repo() -> None:
+    message = _closing_refused("Closes #10\nCloses acme/other#11\n", ["#10", "acme/other#11"])
+    assert "acme/other#11, an issue in another repo" in message
+
+
+def test_check_closing_refs_refuses_a_duplicate_close() -> None:
+    message = _closing_refused("Closes #10\nCloses acme/tools#10\n", ["#10"])
+    assert "lists Closes #10 more than once" in message
+
+
+def test_check_closing_refs_refuses_a_malformed_issue() -> None:
+    message = _closing_refused("Closes #10\nCloses #11\n", ["#10", "eleven"])
+    assert "'eleven' is not an issue ref" in message
