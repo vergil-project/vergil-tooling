@@ -18467,8 +18467,14 @@ order:</p>
    automation App (identity mode <code>human</code> or <code>automation</code>). It refuses
    the AI agent modes, <code>user</code> and <code>audit</code>, by name, and exits 2. It also
    exits 2 when the identity cannot be resolved, for example when
-   <code>VRG_AUTOMATION_APP</code> is set but the token belongs to another App.</li>
-<li><strong>The GitHub side.</strong> The same audit and convergence as <code>apply</code>. A
+   <code>VRG_AUTOMATION_APP</code> is set but the token belongs to another App.
+   A run that passes logs the mode it resolved, such as
+   <code>identity: human</code> or <code>identity: automation (&lt;slug&gt;[bot])</code>.</li>
+<li><strong>The GitHub side.</strong> The same audit and convergence as <code>apply</code>. For
+   each managed ruleset, <code>update</code> logs the bypass actors it read back,
+   one <code>&lt;actor_type&gt; &lt;actor_id&gt; &lt;bypass_mode&gt;</code> per actor (<code>none</code> for an
+   empty list), or why the list was not read: skipped, not checked, or
+   the ruleset absent. A
    setting that is <a href="#settings-the-identity-cannot-read">not checked</a>,
    such as an empty <code>bypass_actors</code> read under the automation identity,
    stops the run with exit 2 before anything is written or cloned. So
