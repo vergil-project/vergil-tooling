@@ -18429,18 +18429,13 @@ repository with no language uses the base image. On top of that image,
 <code>vrg-container-run</code> builds a per-branch cached image with
 vergil-tooling installed. Set <code>DOCKER_DEV_IMAGE</code> to use a different
 image.</p>
-<p>The image chooses how vergil-tooling is installed, by two checks: the
-vergil apt source (<code>/etc/apt/sources.list.d/vergil.sources</code>) and a core
-vergil-python (<code>/opt/vergil/python/*/bin/python3</code>). With both, a release
-version installs the vergil-tooling package at that release, and a <code>vX.Y</code>
-line resolves first to the newest release on the line, so a new release
-rebuilds the cached image (see
+<p>For a release version, the cached image installs the vergil-tooling package
+at that release, and a <code>vX.Y</code> line resolves first to the newest release on the line, so a new
+release rebuilds the cached image (see
 <a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>).
-The build checks that <code>vrg-*</code> runs from <code>/usr/bin</code>
-on vergil-python; a branch is <code>uv tool install</code> from git on the core
-Python. With neither, it is <code>uv tool install --python 3.15</code> from git. An
-image with only one of the two fails the build. The build log names the path
-it took.</p>
+The build checks that <code>vrg-*</code> runs from <code>/usr/bin</code> on vergil-python. A
+branch is <code>uv tool install</code> from git on the image's core vergil-python
+(<code>/opt/vergil/python/*/bin/python3</code>). The build log names the path it took.</p>
 <p><code>vrg-validate</code> first runs the common checks: the
 <a href="../../reference/lint/repo-profile/">repo-profile</a> check, markdownlint,
 shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the
