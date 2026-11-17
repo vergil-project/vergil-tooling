@@ -3521,21 +3521,75 @@ def test_merged_with_violation_blocks_release(
     assert "not a full success" in out
 
 
-def test_allowed_violation_does_not_block_release(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("flags", [[], ["--allow-provenance-violation"]])
+def test_merged_violation_blocks_release_with_or_without_the_flag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flags: list[str]
 ) -> None:
-    """--allow-provenance-violation overrides the merged-PR block for the run (spec §6.3)."""
+    """The override never covers a violation that has already merged (vergil-tooling#4662)."""
+    calls: list[str] = []
     watch = _watch_returning(_pr_result(_PR_A, detail="x (audit): closed", violation=True))
+    run = _release_ok()
+    with (
+        _settle_env(tmp_path, calls),
+        patch(_MOD + ".finalize_watch.watch", watch),
+        patch(_MOD + ".subprocess.run", run),
+    ):
+        assert main([_PR_A, "--release", *flags]) == 3
+    watch.assert_called_once_with([_PR_A], allow_provenance_violation=bool(flags))
+    assert calls == _SETTLED  # develop still settles: the PR is merged
+    run.assert_not_called()
+    out = capsys.readouterr().out
+    assert f"{_PR_A}  PROVENANCE VIOLATION (x (audit): closed)" in out
+    assert "not a full success" in out
+    assert "does not cover a violation that has already merged" in out
+    assert "a human must look before any release" in out
+    assert "Release skipped: the run is not a full success (exit 3)." in out
+
+
+@pytest.mark.parametrize("flags", [[], ["--allow-provenance-violation"]])
+def test_merged_violation_with_failed_validate_is_4(tmp_path: Path, flags: list[str]) -> None:
+    """A develop that did not validate takes precedence over the violation's 3."""
+    watch = _watch_returning(_pr_result(_PR_A, detail="x (audit): closed", violation=True))
+    run = _release_ok()
+    with (
+        _settle_env(tmp_path, [], validation=_validate_fails),
+        patch(_MOD + ".finalize_watch.watch", watch),
+        patch(_MOD + ".subprocess.run", run),
+    ):
+        assert main([_PR_A, "--release", *flags]) == 4
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("flags", [[], ["--allow-provenance-violation"]])
+def test_merged_violation_with_skip_post_checks_is_3(tmp_path: Path, flags: list[str]) -> None:
+    watch = _watch_returning(_pr_result(_PR_A, detail="x (audit): closed", violation=True))
+    with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
+        assert main([_PR_A, "--skip-post-checks", *flags]) == 3
+
+
+def test_open_pr_failed_on_provenance_is_3(tmp_path: Path) -> None:
+    """Without the flag the watch fails an open PR on provenance: the run is 3."""
+    watch = _watch_returning(
+        _pr_result(_PR_A, "failed: provenance", "x (audit): closed", violation=True)
+    )
     run = _release_ok()
     with (
         _settle_env(tmp_path, []),
         patch(_MOD + ".finalize_watch.watch", watch),
         patch(_MOD + ".subprocess.run", run),
     ):
-        assert main([_PR_A, "--release", "--allow-provenance-violation"]) == 0
-    watch.assert_called_once_with([_PR_A], allow_provenance_violation=True)
-    run.assert_called_once()
-    assert "allowed by --allow-provenance-violation" in capsys.readouterr().out
+        assert main([_PR_A, "--release"]) == 3
+    watch.assert_called_once_with([_PR_A], allow_provenance_violation=False)
+    run.assert_not_called()
+
+
+def test_allow_provenance_violation_help_names_its_limit(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "does not cover a violation that has already merged" in help_text
 
 
 def test_skip_post_checks_watches_without_settling(tmp_path: Path) -> None:
