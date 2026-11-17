@@ -18402,8 +18402,11 @@ image.</p>
 <p>The image chooses how vergil-tooling is installed, by two checks: the
 vergil apt source (<code>/etc/apt/sources.list.d/vergil.sources</code>) and a core
 vergil-python (<code>/opt/vergil/python/*/bin/python3</code>). With both, a release
-version (<code>vX.Y</code> or <code>vX.Y.Z</code>) installs the vergil-tooling package, pinned
-to that version, and the build checks that <code>vrg-*</code> runs from <code>/usr/bin</code>
+version installs the vergil-tooling package at that release, and a <code>vX.Y</code>
+line resolves first to the newest release on the line, so a new release
+rebuilds the cached image (see
+<a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>).
+The build checks that <code>vrg-*</code> runs from <code>/usr/bin</code>
 on vergil-python; a branch is <code>uv tool install</code> from git on the core
 Python. With neither, it is <code>uv tool install</code> from git. An image with only
 one of the two fails the build. The build log names the path it took.</p>
@@ -18910,9 +18913,13 @@ chosen, and why.</p>
 <p><strong><code>dev-ts-node</code></strong>
 :   Base: <code>base</code> (Ubuntu 24.04), with the major's pinned nodejs.org
     prebuilt tarball at <code>/opt/node/&lt;major&gt;</code> (never built from
-    source). Includes Node.js, npm, TypeScript (<code>tsc</code>),
-    ESLint + typescript-eslint, Prettier, Vitest, <code>@vitest/coverage-v8</code>,
-    and license-checker. The runtime family rides the <code>ts-node</code> image
+    source). Includes Node.js, npm, Prettier and license-checker.
+    TypeScript, ESLint, typescript-eslint, <code>@eslint/js</code>, Vitest and
+    <code>@vitest/coverage-v8</code> are not in the image: each repository declares
+    them as devDependencies, and the gates run them from its
+    <code>node_modules/.bin</code> (see the
+    <a href="../../standards/development/tool-ownership/">Tool Ownership Guideline</a>).
+    The runtime family rides the <code>ts-node</code> image
     suffix and the Node major is the tag (<code>node-24</code> → <code>prod-ts-node:24</code>);
     <code>node-24</code> is the primary, <code>node-22</code> the second (epic
     <a href="https://github.com/vergil-project/.github/issues/284">vergil-project/.github#284</a>).</p>

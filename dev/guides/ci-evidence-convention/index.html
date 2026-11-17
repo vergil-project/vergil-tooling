@@ -18532,8 +18532,14 @@ console output and coverage table; <code>--coverage.reportOnFailure</code> makes
 write the coverage report when a test fails. <code>TYPESCRIPT_REPORT_FILES</code> in
 vergil-tooling's <code>languages.py</code> names all five, and a TypeScript repository's
 managed <code>.gitignore</code> block ignores them, with Vitest's <code>coverage/</code> directory, so a
-second local <code>vrg-validate</code> never lints the first run's reports. vergil-actions
-stages them once its report table has a TypeScript entry.</p>
+second local <code>vrg-validate</code> never lints the first run's reports.</p>
+<p><code>ci-quality.yml</code>, <code>ci-test.yml</code> and <code>ci-audit.yml</code> stage each leg's reports
+with version-suffixed names, as for Python and Rust:
+<code>quality-eslint-&lt;ver&gt;.json</code>, <code>quality-tsc-&lt;ver&gt;.txt</code>, <code>coverage-&lt;ver&gt;.xml</code>,
+<code>junit-&lt;ver&gt;.xml</code> and <code>npm-audit-&lt;ver&gt;.json</code>. The TypeScript entries of
+vergil-actions' report table require these reports from vergil-actions
+v2.1.78, so a TypeScript repository needs a vergil-tooling release whose
+gates write them (2.1.319 or later).</p>
 <p><code>quality-common.log</code> is the transcript of <code>vrg-validate --check common</code> and
 <code>quality-custom.log</code> the transcript of <code>vrg-validate --check custom</code>, each
 captured once per run by the <code>quality / common</code> and <code>quality / custom</code> jobs.

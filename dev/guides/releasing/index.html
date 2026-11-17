@@ -18627,9 +18627,6 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
    - The rolling minor tag (<code>v1.3</code>) is <strong>force-updated</strong> to point at
      the new release.
    - The boundary tag (<code>develop-v1.3.1</code>) is created on <code>develop</code>.
-   - <code>repository_dispatch</code> fires a <code>vergil-tooling-released</code>
-     event at <code>vergil-containers</code>, which rebuilds the dev
-     images against the now-current <code>v1.3</code> tag.
    - The Documentation workflow publishes the new release notes to
      the docs site under <code>releases/v1.3.1</code>.
    - <strong>Repos with <code>[package]</code></strong> (vergil-tooling is one) also publish
@@ -18725,7 +18722,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>back-merge-bump</code></td>
 <td>fail-fast</td>
-<td>Creates <code>release/post-&lt;version&gt;</code> from <code>main</code>, bumps the version, refreshes the lockfile in the dev container (<code>uv lock</code> for Python, <code>cargo update --workspace</code> for Rust), and merges it to <code>develop</code>. Records the back-merge's merge commit</td>
+<td>Creates <code>release/post-&lt;version&gt;</code> from <code>main</code>, bumps the version, refreshes the lockfile (<code>uv lock</code> for Python and <code>cargo update --workspace</code> for Rust, in the dev container; for TypeScript, a direct edit of <code>package-lock.json</code>'s root version fields that runs no npm), and merges it to <code>develop</code>. Records the back-merge's merge commit</td>
 </tr>
 <tr>
 <td><code>teardown-worktree</code></td>
@@ -18924,7 +18921,7 @@ get the fix on the next normal action:</p>
 </tr>
 <tr>
 <td>Dev container image</td>
-<td>Already rebuilt by <code>repository_dispatch</code>; new pulls of <code>dev-base</code> etc. carry the patch within the rebuild window (minutes)</td>
+<td>The base images carry no vergil-tooling. The next <code>vrg-container-run</code> rebuilds the branch's cached image with the patch once it is in the package index: a <code>vX.Y</code> line pin in <code>vergil.toml</code> resolves to the newest release on the line (see <a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>). An exact <code>vX.Y.Z</code> pin stays put</td>
 </tr>
 <tr>
 <td>Agent VM (Lima/cloud)</td>
@@ -18937,29 +18934,21 @@ get the fix on the next normal action:</p>
 <code>v1.3.x</code> → <code>v1.4.0</code>.</p>
 <h3 id="producer-steps_1">Producer steps<a class="headerlink" href="#producer-steps_1" title="Permanent link">&para;</a></h3>
 <p>Same steps as patch, with one important addition: the rolling
-minor tag changes from <code>v1.3</code> to <code>v1.4</code>. The image's pin in
-<code>vergil-containers</code> and any per-repo dev-dep declarations
-<strong>must be bumped manually</strong> — the rolling-tag mechanism only handles
-patches within a minor.</p>
+minor tag changes from <code>v1.3</code> to <code>v1.4</code>. Any per-repo dev-dep
+declarations <strong>must be bumped manually</strong> — the rolling-tag mechanism
+only handles patches within a minor.</p>
 <ol>
 <li>Run <code>vrg-release minor</code>. It bumps the version to the next minor
    (<code>1.4.0</code>) on the release branch instead of releasing the current
    <code>develop</code> version. Everything else matches a patch release.</li>
-<li><strong>Bump <code>vergil-containers</code>'s pin</strong> in
-   <a href="https://github.com/vergil-project/vergil-containers/blob/develop/docker/common/vergil-tooling-uv.dockerfile"><code>docker/common/vergil-tooling-uv.dockerfile</code></a>:</li>
-</ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">ARG</span><span class="w"> </span><span class="nv">ST_TOOLING_TAG</span><span class="o">=</span>v1.4<span class="w">   </span>#<span class="w"> </span>was<span class="w"> </span>v1.3
-</code></pre></div>
-<p>Open a small PR in <code>vergil-containers</code>, merge it, and the
-   next image rebuild (whether triggered by your release or a
-   subsequent push there) carries the new minor.
-3. <strong>Coordinate consumer bumps.</strong> Each Python repo that has
+<li><strong>Coordinate consumer bumps.</strong> Each Python repo that has
    <code>[tool.uv.sources]</code> pinning to <code>v1.3</code> needs its <code>pyproject.toml</code>
    updated to <code>v1.4</code>. This is a per-repo decision — consumers who
-   prefer to stay on <code>v1.3</code> can keep doing so until they're ready.
-4. Update the canonical install command in <code>getting-started.md</code>
+   prefer to stay on <code>v1.3</code> can keep doing so until they're ready.</li>
+<li>Update the canonical install command in <code>getting-started.md</code>
    (and anywhere else the documentation pins a minor) to the new
-   tag.</p>
+   tag.</li>
+</ol>
 <h3 id="consumer-steps_1">Consumer steps<a class="headerlink" href="#consumer-steps_1" title="Permanent link">&para;</a></h3>
 <p>Minor bumps are <strong>deliberate opt-in</strong> at every deployment target:</p>
 <table>
@@ -18980,7 +18969,7 @@ patches within a minor.</p>
 </tr>
 <tr>
 <td>Dev container image</td>
-<td>Wait for <code>vergil-containers</code> to land the <code>ARG</code> bump, then pull the rebuilt image</td>
+<td>Set <code>[dependencies].vergil</code> in <code>vergil.toml</code> to <code>v1.4</code>; <code>vergil.toml</code> is part of the cache key, so the next <code>vrg-container-run</code> rebuilds the branch's cached image with the newest <code>v1.4</code> release</td>
 </tr>
 <tr>
 <td>Agent VM (Lima/cloud)</td>
@@ -19004,9 +18993,6 @@ communication and migration window:</p>
 <li>Run <code>vrg-release major</code> to release <code>v2.0.0</code>. The
    release notes prominently call out the breaking-change list and
    link to the migration guide.</li>
-<li>Bump <code>vergil-containers</code>'s <code>ARG ST_TOOLING_TAG=</code> to <code>v2</code>
-   in a separate PR — coordinate so consumers can opt in on their
-   own schedule.</li>
 <li>Notify consumer maintainers (e.g., update <code>vergil-tooling</code>'s
    release tracking issue / project board with a callout). The
    release notes alone are not sufficient for major bumps;
@@ -19048,22 +19034,22 @@ from the wrong checkout would move the wrong repo's tag.</p>
 <li><code>cd</code> into a vergil-claude-plugin checkout.</li>
 <li>Fetch the tags:</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-git<span class="w"> </span>fetch<span class="w"> </span>--tags<span class="w"> </span>--force<span class="w"> </span>origin
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-git<span class="w"> </span>fetch<span class="w"> </span>--tags<span class="w"> </span>--force<span class="w"> </span>origin
 </code></pre></div>
 <p>The rolling tag moves on every release, and without <code>--force</code> the fetch
    refuses to update a local tag that has moved.
 3. Check the move:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-promote<span class="w"> </span>--dry-run<span class="w"> </span>&lt;X.Y.Z&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-promote<span class="w"> </span>--dry-run<span class="w"> </span>&lt;X.Y.Z&gt;
 </code></pre></div>
 <p>It prints the origin repo and the tag move, and changes nothing:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>origin: vergil-project/vergil-claude-plugin
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>v2.1 1a2b3c4d5e6f -&gt; v2.1.50 fc17882a9b0c
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>origin: vergil-project/vergil-claude-plugin
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>v2.1 1a2b3c4d5e6f -&gt; v2.1.50 fc17882a9b0c
 </code></pre></div>
 <p>Check that the origin line names vergil-claude-plugin, that the rolling
    tag is <code>v2.1</code>, and that the move goes to the release you mean. Always
    pass the version: with none, <code>vrg-promote</code> reads the <code>VERSION</code> file.
 4. Move the tag:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-promote<span class="w"> </span>&lt;X.Y.Z&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-promote<span class="w"> </span>&lt;X.Y.Z&gt;
 </code></pre></div>
 <p>It checks the move again, prints the two lines from that check and asks
    <code>Move v2.1 on vergil-project/vergil-claude-plugin? [y/N]</code>. Read the lines
@@ -19102,8 +19088,8 @@ for every exit path.</p>
 <h3 id="pick-the-move-up-on-each-machine">Pick the move up on each machine<a class="headerlink" href="#pick-the-move-up-on-each-machine" title="Permanent link">&para;</a></h3>
 <p>Each machine picks up the move when its plugins are next updated. Run, in a
 human shell:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-host<span class="w"> </span>plugins<span class="w">        </span><span class="c1"># the host</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>vrg-vm<span class="w"> </span>update<span class="w"> </span>--all<span class="w">     </span><span class="c1"># every running agent VM</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-host<span class="w"> </span>plugins<span class="w">        </span><span class="c1"># the host</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-vm<span class="w"> </span>update<span class="w"> </span>--all<span class="w">     </span><span class="c1"># every running agent VM</span>
 </code></pre></div>
 <p>Then restart Claude Code: a running session keeps the plugin version it
 loaded. Both commands refresh the marketplace and the installed plugins and
@@ -19206,9 +19192,9 @@ as a warning. If a publish job also failed, <code>publish-status</code> fails wi
 both.</p>
 <p>To fix a failed update, work the fix task like any other task, but cut
 its branch from the failed update so it starts from those commits:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>vrg-git<span class="w"> </span>fetch<span class="w"> </span>origin
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>vrg-git<span class="w"> </span>worktree<span class="w"> </span>add<span class="w"> </span>-b<span class="w"> </span>chore/&lt;fix-issue&gt;-dep-update-&lt;version&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>.worktrees/issue-&lt;fix-issue&gt;-dep-update<span class="w"> </span>origin/deps/update-&lt;version&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-git<span class="w"> </span>fetch<span class="w"> </span>origin
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>vrg-git<span class="w"> </span>worktree<span class="w"> </span>add<span class="w"> </span>-b<span class="w"> </span>chore/&lt;fix-issue&gt;-dep-update-&lt;version&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>.worktrees/issue-&lt;fix-issue&gt;-dep-update<span class="w"> </span>origin/deps/update-&lt;version&gt;
 </code></pre></div>
 <p>Fix the cause, then hand off and merge as usual. When the fix PR merges
 and closes the fix task as completed, the next <code>vrg-release</code> closes the
@@ -19261,9 +19247,9 @@ anything.
 It runs before the dependency-update gate, so a refusal changes
 nothing. The refusal names each conflicting package and the release
 that first published it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vergil-project/example@v1.2.0 would re-publish 4 package(s) at a version an earlier release already published:
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>  - example-server 2.0.0-1 amd64 (deb): already published by vergil-project/example@v1.1.0
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>  ...
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>vergil-project/example@v1.2.0 would re-publish 4 package(s) at a version an earlier release already published:
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>  - example-server 2.0.0-1 amd64 (deb): already published by vergil-project/example@v1.1.0
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>  ...
 </code></pre></div>
 <p>To fix it, bump the package version in <code>vergil.toml</code>: a new
 <code>upstream-version</code>, or for a <code>version</code> override a new <code>version</code>. An
@@ -19290,9 +19276,9 @@ any other fresh-start check, when <code>origin/main</code> has commits not on
   <code>back-merge-bump</code> has <code>main</code> ahead of <code>develop</code> by design.</li>
 <li>Otherwise, back-merge <code>main</code> into <code>develop</code> by hand:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>git<span class="w"> </span>fetch<span class="w"> </span>origin
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>git<span class="w"> </span>switch<span class="w"> </span>-c<span class="w"> </span>release/back-merge-main<span class="w"> </span>origin/main
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>git<span class="w"> </span>push<span class="w"> </span>-u<span class="w"> </span>origin<span class="w"> </span>release/back-merge-main
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>git<span class="w"> </span>fetch<span class="w"> </span>origin
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>git<span class="w"> </span>switch<span class="w"> </span>-c<span class="w"> </span>release/back-merge-main<span class="w"> </span>origin/main
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>git<span class="w"> </span>push<span class="w"> </span>-u<span class="w"> </span>origin<span class="w"> </span>release/back-merge-main
 </code></pre></div>
 <p>Open a PR from <code>release/back-merge-main</code> to <code>develop</code> and merge it
   with a merge commit. A squash merge leaves <code>main</code>'s commits off
@@ -19346,8 +19332,8 @@ deadline defaults to 90 minutes and can be changed with <code>VRG_CD_TIMEOUT</co
 progress; result unknown", with the run URL and how to re-check it, not
 as a failed run. It still fails finalize (issue #3316).</p>
 <p>For deeper investigation, view recent runs directly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">"Documentation"</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">"Documentation"</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
 </code></pre></div>
 <h2 id="release-tracking-artifacts">Release tracking artifacts<a class="headerlink" href="#release-tracking-artifacts" title="Permanent link">&para;</a></h2>
 <p>Each release has a tracking issue, <code>release: &lt;version&gt;</code>, which
