@@ -6,6 +6,11 @@ itself when private — one per repo. This provisions it before linking
 pre-existing issues to it as ad-hoc tasks. Routing
 work to ``adhoc`` (``vrg-issue-create``/``vrg-epic-move --epic adhoc``) also
 ensures it via the same path.
+
+``--all-in ORG`` walks every repo in ORG, private self-homed ones included, so
+it first checks that the identity in use can see every repo there. When it
+may not, it refuses (exit 1) before any read or write, so a short or empty
+list never reads as "no private homes" (#4579).
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ import argparse
 import sys
 from datetime import UTC, datetime
 
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epic_audit, epics, github
 from vergil_tooling.lib.cli import cli_main
 
 
@@ -84,6 +89,25 @@ def cmd_ensure(args: argparse.Namespace) -> int:
     return 0
 
 
+def _refuse_partial_org(org: str) -> bool:
+    """True, after naming the gap on stderr, when the token may not see all of *org*.
+
+    ``--all-in`` walks *org* through :func:`github.list_org_repos`, which lists
+    only the repos the token can see, so a private self-homed repo it cannot see
+    would be skipped silently (#4579). Call it under ``github.target_org(org)``.
+    """
+    gap = epic_audit.coverage_gap(org)
+    if gap is None:
+        return False
+    print(
+        f"vrg-adhoc-epic: --all-in {org} refused: {gap}, so repos it cannot see "
+        "would be skipped silently; run it as an identity that sees every repo "
+        "in the org.",
+        file=sys.stderr,
+    )
+    return True
+
+
 def _render_plan(plan: epics.DrainPlan) -> str:
     lines = [f"{plan.live.slug}: {len(plan.moves)} closed child(ren) to archive"]
     for child, quarter in plan.moves:
@@ -100,7 +124,9 @@ def cmd_archive(args: argparse.Namespace) -> int:
         # Scope the App token to the org before any mutation, mirroring
         # vrg-epic-move / vrg-issue-create (spec §7).
         with github.target_org(args.all_in):
-            plans = epics.drain_adhoc_org(args.all_in, apply=args.apply, now=now)
+            if _refuse_partial_org(args.all_in):
+                return 1
+            plans =epics.drain_adhoc_org(args.all_in, apply=args.apply, now=now)
         print(f"[{verb}] {args.all_in}: {len(plans)} ad-hoc epic(s) with work to archive")
         for plan in plans:
             print(_render_plan(plan))
@@ -119,7 +145,9 @@ def cmd_archive(args: argparse.Namespace) -> int:
 def cmd_normalize(args: argparse.Namespace) -> int:
     verb = "APPLY" if args.apply else "DRY-RUN"
     with github.target_org(args.all_in):
-        conversions = epics.normalize_adhoc_archives(args.all_in, apply=args.apply)
+        if _refuse_partial_org(args.all_in):
+            return 1
+        conversions =epics.normalize_adhoc_archives(args.all_in, apply=args.apply)
     print(f"[{verb}] {args.all_in}: {len(conversions)} archive(s) to normalize")
     for conv in conversions:
         print(f"  {conv.ref.slug}: {conv.old_title!r} -> {conv.new_title!r}")
