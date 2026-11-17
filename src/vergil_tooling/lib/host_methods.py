@@ -24,6 +24,13 @@ No-silent-failure contract:
   not answer (the ``latest-unknown`` WARN). The two are never conflated. A
   latest probe that *did* answer but unreadably raises :class:`ProbeError`,
   exactly like the installed probe.
+- A ``brew-formula`` / ``brew-cask`` latest comes from ``brew info``, which
+  reads Homebrew's local metadata and never refreshes it (Homebrew's
+  auto-update runs before ``brew install`` and ``brew upgrade``, not before
+  ``brew info``). So :func:`latest_version` first runs ``brew update`` once
+  per process (:func:`refresh_brew_metadata`); when that fails, every brew
+  latest is ``None`` (``latest-unknown``), never a stale version that would
+  read as ``current`` (issue #4582).
 - A ``custom`` entry that declares a ``latest_versions`` probe (instead of
   ``latest_version``) reports **every** pending update rather than one latest
   (issue #3269): its probe prints one bare version per line and
@@ -327,13 +334,42 @@ def installed_version(dep: HostDependency) -> str | None:
     raise _unknown_method(dep)
 
 
+def reads_brew_latest(dep: HostDependency) -> bool:
+    """Whether :func:`latest_version` reads *dep*'s latest from Homebrew (``brew info``)."""
+    return dep.method in _BREW_METHODS and dep.latest != "unmanaged"
+
+
+@functools.cache
+def refresh_brew_metadata() -> bool:
+    """Refresh Homebrew's package metadata with ``brew update``, once per process.
+
+    ``brew info`` answers from Homebrew's local metadata, which only ``brew
+    update`` refreshes (run by hand, or by Homebrew's auto-update before
+    commands such as ``brew install`` and ``brew upgrade``). Without it, a
+    stale cache gives an outdated tool's installed version as its latest, and
+    ``vrg-host`` would call the tool ``current`` (issue #4582).
+
+    It refreshes Homebrew's metadata only; it installs or upgrades nothing.
+    The result is cached, so one ``vrg-host`` run refreshes at most once
+    however many brew dependencies it probes.
+
+    Returns:
+        ``True`` when ``brew update`` succeeded, ``False`` when it failed (no
+        network, no Homebrew, a broken tap). On ``False``,
+        :func:`latest_version` reports every brew dependency's latest as
+        unknown.
+    """
+    return _run(["brew", "update"]) is not None
+
+
 def latest_version(dep: HostDependency) -> str | Offers | _Unmanaged | None:
     """Return *dep*'s normalized latest available version.
 
     Returns :data:`UNMANAGED` when the manifest declares no latest feed, and
     ``None`` when a probe that should work could not answer. A ``custom``
     entry with a ``latest_versions`` probe returns every offered version as
-    :class:`Offers`.
+    :class:`Offers`. A brew dependency's latest is ``None`` when Homebrew's
+    metadata could not be refreshed first (:func:`refresh_brew_metadata`).
 
     Raises:
         ProbeError: the probe answered but its output is unparseable.
@@ -341,7 +377,9 @@ def latest_version(dep: HostDependency) -> str | Offers | _Unmanaged | None:
     """
     if dep.latest == "unmanaged":
         return UNMANAGED
-    if dep.method in _BREW_METHODS:
+    if reads_brew_latest(dep):
+        if not refresh_brew_metadata():
+            return None
         out = _run(["brew", "info", "--json=v2", *_brew_kind_flag(dep), dep.name])
         return _parse_brew_info_latest(dep.name, dep.method, out) if out is not None else None
     if dep.method == "uv-tool":
