@@ -53,6 +53,7 @@ regains control to report how far the cascade got.
 from __future__ import annotations
 
 import argparse
+import shlex
 import subprocess
 import sys
 import time
@@ -204,8 +205,7 @@ def main(argv: list[str] | None = None) -> int:
     if rc != 0 or not args.release or args.skip_post_checks:
         return rc
     if args.dry_run:
-        target = "vrg-release --install" if args.install else "vrg-release"
-        print(f"\n[dry-run] would chain into: {target}")
+        print(f"\n[dry-run] would chain into: {shlex.join(_release_cmd(args.install))}")
         return 0
     return _chain_release(root, install=args.install)
 
@@ -270,9 +270,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--install",
         action="store_true",
-        help="Extend the cascade one step further: implies --release and passes "
-        "--install through, so vrg-release runs the consumer-refresh install "
-        "step (issue #1643)",
+        help="Extend the cascade one step further: implies --release and lets "
+        "vrg-release run its consumer-refresh install step (issue #1643). "
+        "--release alone runs vrg-release --no-install",
     )
     parser.add_argument(
         "--skip-post-checks",
@@ -328,7 +328,8 @@ def _run_finalize_batch(
     Each item shells out to ``vrg-finalize-pr <pr> --skip-post-checks`` (merge
     + cleanup, no validation). On full success, one end-of-batch
     ``vrg-finalize-pr --cleanup-only`` runs validation + the CD check, then a
-    single ``vrg-release [--install]`` if requested (issue #1673).
+    single ``vrg-release`` if requested (issue #1673), built by
+    ``_release_cmd``.
     """
 
     def _finalize_item(pr: str) -> None:
@@ -342,10 +343,10 @@ def _run_finalize_batch(
             raise batch.BatchAbortError(msg)
 
     def _release() -> None:
-        cmd = ("vrg-release", "--install") if install else ("vrg-release",)
+        cmd = _release_cmd(install)
         result = subprocess.run(cmd, cwd=root, check=False)  # noqa: S603,S607
         if result.returncode != 0:
-            raise batch.BatchAbortError(f"{' '.join(cmd)} exited {result.returncode}")
+            raise batch.BatchAbortError(f"{shlex.join(cmd)} exited {result.returncode}")
 
     post_steps = [batch.finalize_post_checks_step(root)]
     if release:
@@ -1671,6 +1672,17 @@ def build_stages(*, include_pr: bool, include_post_checks: bool = True) -> tuple
     return tuple(stages)
 
 
+def _release_cmd(install: bool) -> tuple[str, ...]:
+    """The ``vrg-release`` command the cascade runs, the one source for it.
+
+    ``vrg-release`` installs by default (#1184), so ``--install`` runs it
+    plain and ``--release`` alone passes ``--no-install``. Every hint that
+    names the command prints this same tuple, so a hint cannot drift from
+    what runs.
+    """
+    return ("vrg-release",) if install else ("vrg-release", "--no-install")
+
+
 def _chain_release(root: Path, *, install: bool = False) -> int:
     """Hand off to ``vrg-release`` after a successful finalize (issue #1634).
 
@@ -1682,27 +1694,27 @@ def _chain_release(root: Path, *, install: bool = False) -> int:
     so a caller like ``vrg-submit-pr`` regains control to report the
     cascade outcome.
 
-    With *install*, passes ``--install`` through so ``vrg-release`` also runs
-    the consumer-refresh install step (issue #1643).
+    With *install*, ``vrg-release`` also runs the consumer-refresh install
+    step (issue #1643); without it, the install is skipped (see
+    ``_release_cmd``).
 
     A failure here never un-merges the PR — it was already merged and
     cleaned up — so report it clearly and let the human re-run vrg-release
     alone.
     """
-    cmd: tuple[str, ...] = ("vrg-release", "--install") if install else ("vrg-release",)
+    cmd = _release_cmd(install)
     print()
-    print(f"--{'install' if install else 'release'}: handing off to {' '.join(cmd)}")
+    print(f"--{'install' if install else 'release'}: handing off to {shlex.join(cmd)}")
     result = subprocess.run(  # noqa: S603
         cmd,  # noqa: S607
         cwd=root,
         check=False,
     )
     if result.returncode != 0:
-        rerun = "vrg-release --install" if install else "vrg-release"
         print(
             f"vrg-finalize-pr: release failed (exit {result.returncode}); "
             "the PR was already merged and cleaned up and is unaffected.\n"
-            f"  Re-run the release alone with: {rerun}",
+            f"  Re-run the release alone with: {shlex.join(cmd)}",
             file=sys.stderr,
         )
     return result.returncode

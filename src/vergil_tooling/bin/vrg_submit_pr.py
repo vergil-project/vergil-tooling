@@ -67,7 +67,9 @@ cascades into ``vrg-release`` — the whole submit -> finalize -> release
 sequence from one command. ``--install`` extends it one link further still
 (issue #1643): it implies ``--release`` and passes ``--install`` through, so
 ``vrg-release`` runs the consumer-refresh install commands rather than only
-printing them — submit -> finalize -> release -> install. Each hop runs as a
+printing them — submit -> finalize -> release -> install. ``vrg-release``
+installs by default (#1184), so ``--release`` alone runs it with
+``--no-install``. Each hop runs as a
 subprocess (not ``exec``) so control returns here for the final summary,
 which states how far the cascade got: submitted, submitted and finalized,
 submitted/finalized/released, or submitted/finalized/released/installed.
@@ -77,6 +79,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -364,6 +367,17 @@ def _print_cascade_summary(pr_url: str, *, released: bool, installed: bool) -> N
         print(f"Done: PR submitted, finalized, and released.\n  {pr_url}")
     else:
         print(f"Done: PR submitted and finalized.\n  {pr_url}")
+
+
+def _release_cmd(install: bool) -> tuple[str, ...]:
+    """The ``vrg-release`` command a batch cascade runs, the one source for it.
+
+    ``vrg-release`` installs by default (#1184), so ``--install`` runs it
+    plain and ``--release`` alone passes ``--no-install``. Every message that
+    names the command prints this same tuple, so it cannot drift from what
+    runs.
+    """
+    return ("vrg-release",) if install else ("vrg-release", "--no-install")
 
 
 def _dry_run_chain_note(*, release: bool, install: bool) -> str:
@@ -772,10 +786,10 @@ def _run_submit_batch(
                 )
 
     def _release() -> None:
-        cmd = ("vrg-release", "--install") if install else ("vrg-release",)
+        cmd = _release_cmd(install)
         result = subprocess.run(cmd, cwd=main_root, check=False)  # noqa: S603,S607
         if result.returncode != 0:
-            raise batch.BatchAbortError(f"{' '.join(cmd)} exited {result.returncode}")
+            raise batch.BatchAbortError(f"{shlex.join(cmd)} exited {result.returncode}")
 
     post_steps: list[batch.PostStep] = []
     if finalize:
@@ -1439,10 +1453,10 @@ def _run_relay_cascade(
             )
 
     def _release() -> None:
-        cmd = ("vrg-release", "--install") if install else ("vrg-release",)
+        cmd = _release_cmd(install)
         result = subprocess.run(cmd, cwd=main_root, check=False)  # noqa: S603,S607
         if result.returncode != 0:
-            raise batch.BatchAbortError(f"{' '.join(cmd)} exited {result.returncode}")
+            raise batch.BatchAbortError(f"{shlex.join(cmd)} exited {result.returncode}")
 
     post_steps: list[batch.PostStep] = [batch.finalize_post_checks_step(main_root)]
     if release:

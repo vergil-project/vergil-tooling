@@ -36,7 +36,7 @@ vrg-release [minor|major] [options]
 | `--no-promote` | No | Skip moving the rolling `vX.Y` tag |
 | `--without-deps` | No | Skip the `update-deps` stage |
 | `--allow-pending-deps` | No | Release even though an open `dependency-update` PR blocks it. For urgent fixes only; the bypassed PRs are listed on the tracking issue |
-| `--install` | No | After a clean release, run the `[publish].consumer-refresh` commands instead of only printing them. Fails if none are configured |
+| `--no-install` | No | Skip the install step. By default, after a clean release, `vrg-release` runs the `[publish].consumer-refresh` commands instead of only printing them; with none configured it says there is nothing to run, which is not an error. `--install` was removed: passing it exits 1 and names this default |
 | `--resume [X.Y.Z]` | No | Resume an interrupted release from its open tracking issue. Name the version when more than one release is in flight. Cannot be combined with `minor`/`major` |
 | `--skip-audit` | No | Skip the `audit` stage |
 | `--output-window N` | No | Rolling output window for the terminal renderer (`0` streams everything) |

@@ -47,7 +47,7 @@ release = false
 """
 
 
-@pytest.mark.parametrize("argv", [[], ["--install"], ["--resume"], ["minor"]])
+@pytest.mark.parametrize("argv", [[], ["--no-install"], ["--resume"], ["minor"]])
 def test_main_refuses_repo_not_released(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
 ) -> None:
@@ -322,15 +322,23 @@ def test_main_success_label_names_released_tag() -> None:
     assert success_label() == "vrg-release v2.1.44"
 
 
-# -- --install: run the consumer-refresh commands after release (issue #1643) --
+# -- install by default; --no-install skips it (issues #1643, #1184) --
 
 
-def test_parse_args_install_defaults_false() -> None:
-    assert parse_args([]).install is False
+def test_parse_args_no_install_defaults_false() -> None:
+    assert parse_args([]).no_install is False
 
 
-def test_parse_args_install_flag() -> None:
-    assert parse_args(["--install"]).install is True
+def test_parse_args_no_install_flag() -> None:
+    assert parse_args(["--no-install"]).no_install is True
+
+
+def test_help_lists_no_install_and_hides_install(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--help"])
+    out = capsys.readouterr().out
+    assert "--no-install" in out
+    assert "--install" not in out.replace("--no-install", "")
 
 
 def _pipeline_with_commands(commands: str | None, rc: int) -> Callable[..., int]:
@@ -350,7 +358,7 @@ def _pipeline_with_commands(commands: str | None, rc: int) -> Callable[..., int]
     return fake_pipeline
 
 
-def test_main_install_runs_consumer_refresh_on_success() -> None:
+def test_install_runs_by_default() -> None:
     with (
         patch(_MOD + ".git"),
         patch(
@@ -359,11 +367,38 @@ def test_main_install_runs_consumer_refresh_on_success() -> None:
         ),
         patch(_MOD + ".run_consumer_refresh", return_value=0) as m_run,
     ):
-        assert main(["--install"]) == 0
+        assert main([]) == 0
     m_run.assert_called_once_with("uv tool install pkg\nvrg-vm update --all", "2.1.0")
 
 
-def test_main_install_returns_consumer_refresh_exit_code() -> None:
+def test_no_install_skips() -> None:
+    with (
+        patch(_MOD + ".git"),
+        patch(_MOD + ".progress.run_pipeline", side_effect=_pipeline_with_commands("cmd", 0)),
+        patch(_MOD + ".run_consumer_refresh") as m_run,
+    ):
+        assert main(["--no-install"]) == 0
+    m_run.assert_not_called()
+
+
+def test_install_flag_is_fatal(capsys: pytest.CaptureFixture[str]) -> None:
+    """--install was removed: exit 1 with the exact message, before any stage."""
+    with (
+        patch(_MOD + ".git") as m_git,
+        patch(_MOD + ".progress.run_pipeline") as m_pipeline,
+        patch(_MOD + ".run_consumer_refresh") as m_run,
+    ):
+        assert main(["--install"]) == 1
+    m_git.repo_root.assert_not_called()
+    m_pipeline.assert_not_called()
+    m_run.assert_not_called()
+    assert capsys.readouterr().err == (
+        "vrg-release: --install was removed; installing is now the default "
+        "(use --no-install to skip it)\n"
+    )
+
+
+def test_install_returns_consumer_refresh_exit_code() -> None:
     """A failed install propagates its exit code (the release already
     succeeded; only the local refresh failed)."""
     with (
@@ -371,41 +406,33 @@ def test_main_install_returns_consumer_refresh_exit_code() -> None:
         patch(_MOD + ".progress.run_pipeline", side_effect=_pipeline_with_commands("cmd", 0)),
         patch(_MOD + ".run_consumer_refresh", return_value=5) as m_run,
     ):
-        assert main(["--install"]) == 5
+        assert main([]) == 5
     m_run.assert_called_once()
 
 
-def test_main_install_skipped_when_release_fails() -> None:
+def test_install_skipped_after_failed_release() -> None:
     """A non-zero pipeline must never trigger the install step."""
     with (
         patch(_MOD + ".git"),
         patch(_MOD + ".progress.run_pipeline", side_effect=_pipeline_with_commands("cmd", 1)),
         patch(_MOD + ".run_consumer_refresh") as m_run,
     ):
-        assert main(["--install"]) == 1
+        assert main([]) == 1
     m_run.assert_not_called()
 
 
-def test_main_install_without_configured_commands_errors(
+def test_install_without_configured_commands_is_not_an_error(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """--install with no [publish].consumer-refresh is a clear error, not a
-    silent no-op."""
+    """No [publish].consumer-refresh: say there is nothing to run, exit 0."""
     with (
         patch(_MOD + ".git"),
         patch(_MOD + ".progress.run_pipeline", side_effect=_pipeline_with_commands(None, 0)),
         patch(_MOD + ".run_consumer_refresh") as m_run,
     ):
-        assert main(["--install"]) == 1
-    m_run.assert_not_called()
-    assert "--install" in capsys.readouterr().err
-
-
-def test_main_without_install_never_runs_consumer_refresh() -> None:
-    with (
-        patch(_MOD + ".git"),
-        patch(_MOD + ".progress.run_pipeline", side_effect=_pipeline_with_commands("cmd", 0)),
-        patch(_MOD + ".run_consumer_refresh") as m_run,
-    ):
         assert main([]) == 0
     m_run.assert_not_called()
+    assert (
+        "vrg-release: no [publish].consumer-refresh is configured; nothing to run.\n"
+        in capsys.readouterr().out
+    )

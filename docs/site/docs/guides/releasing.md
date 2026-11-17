@@ -134,8 +134,9 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      (see [A promote held back by the index](#a-promote-held-back-by-the-index)),
      and `vrg-release` exits 1. See the
      [package config reference](../reference/package-config.md#cd).
-4. Act on the consumer-refresh commands `vrg-release` prints at the end
-   (or pass `--install` to have it run them after a clean release).
+4. After a clean release, `vrg-release` prints the consumer-refresh
+   commands and then runs them (pass `--no-install` to only print them,
+   and act on them yourself).
    A clean run names the released tag in its completion line
    (`✓  vrg-release v1.3.1 complete`) and in the
    `Consumer refresh commands for v1.3.1:` header.
