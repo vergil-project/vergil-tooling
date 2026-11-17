@@ -112,3 +112,63 @@ def test_versioned_form_inserts_latest() -> None:
 def test_versioned_form_rejects_other_url() -> None:
     with pytest.raises(ValueError, match="not a Vergil docs site URL"):
         doc_links.versioned_form("https://example.com/x/")
+
+
+# -- unpublished_links (issue #4599) -----------------------------------------
+
+
+def test_published_sites_are_versioned_plus_docs_and_packages() -> None:
+    assert doc_links.UNVERSIONED_SITES == {"docs", "packages"}
+    assert doc_links.PUBLISHED_SITES == doc_links.VERSIONED_SITES | {"docs", "packages"}
+    assert not doc_links.VERSIONED_SITES & doc_links.UNVERSIONED_SITES
+
+
+@pytest.mark.parametrize("site", sorted(doc_links.PUBLISHED_SITES))
+@pytest.mark.parametrize("path", ["", "/", "/latest/guides/x/", "/guides/x/", "#top"])
+def test_published_site_not_flagged_as_unpublished(site: str, path: str) -> None:
+    assert doc_links.unpublished_links(f"[x]({_HOST}/{site}{path})\n") == []
+
+
+@pytest.mark.parametrize(
+    ("url", "site"),
+    [
+        (f"{_HOST}/standard-actions/guides/", "standard-actions"),
+        (f"{_HOST}/standard-actions/latest/guides/", "standard-actions"),
+        (f"{_HOST}/standard-actions", "standard-actions"),
+        (f"{_HOST}/vergil-tooling-old/", "vergil-tooling-old"),
+        (f"{_HOST}/vergil-python/", "vergil-python"),
+        (f"{_HOST}/Vergil-Tooling/latest/", "Vergil-Tooling"),
+        (f"{_HOST}/index.html", "index.html"),
+        ("http://Vergil-Project.GitHub.io/old-site/x/", "old-site"),
+    ],
+)
+def test_unpublished_site_flagged(url: str, site: str) -> None:
+    assert doc_links.unpublished_links(f"See [x]({url}).\n") == [(1, site, url)]
+
+
+def test_unpublished_links_report_line_and_text_order() -> None:
+    text = (
+        "# Title\n"
+        f"<{_HOST}/vergil-tooling/latest/ok/> and <{_HOST}/gone-a/x/>\n"
+        "\n"
+        f'<a href="{_HOST}/gone-b/">b</a> `{_HOST}/gone-c/y/`\n'
+    )
+    assert doc_links.unpublished_links(text) == [
+        (2, "gone-a", f"{_HOST}/gone-a/x/"),
+        (4, "gone-b", f"{_HOST}/gone-b/"),
+        (4, "gone-c", f"{_HOST}/gone-c/y/"),
+    ]
+
+
+def test_unpublished_links_trailing_dot_is_punctuation() -> None:
+    """A URL ending a sentence at the site name keeps its dot out of the name."""
+    text = f"See {_HOST}/vergil-tooling. Or {_HOST}/gone.\n"
+    assert doc_links.unpublished_links(text) == [(1, "gone", f"{_HOST}/gone")]
+
+
+def test_unpublished_links_host_alone_and_other_hosts_ignored() -> None:
+    text = (
+        f"{_HOST}/ and {_HOST} and https://example.github.io/gone/x/ "
+        "and https://vergil-project.github.io.evil.example/gone/\n"
+    )
+    assert doc_links.unpublished_links(text) == []
