@@ -245,6 +245,18 @@ manifest is missing: a repository with some of them, such as a
 gap, as does a `Cargo.toml` with no `Cargo.lock`, or one that
 `cargo fetch --locked` cannot resolve.
 
+TypeScript has one exception. A `package.json` that declares no
+dependencies, with no `package-lock.json`, is not bootstrapped either:
+that is the minimal `package.json` `vrg-github-repo-init --language
+typescript` writes (`name`, `version` and `private` only). A
+`package.json` declares no dependencies when it has no `dependencies`,
+`devDependencies`, `optionalDependencies` or `peerDependencies`, or each
+is empty. Such a repository skips the install, `typescript-tools` and
+language stages with the reason `skipped: no package-lock.json
+(typescript repo not bootstrapped yet)`. A `package.json` that declares
+any dependency but has no `package-lock.json` runs the stages, and its
+install fails.
+
 The skip also needs the repository to hold no source files of its
 language (`.rs` for Rust, `.py` for Python, and so on), tracked or
 untracked, ignored files left out. A repository with sources but none of

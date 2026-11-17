@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shlex
@@ -199,8 +200,36 @@ def missing_warmup_files(lang: str, repo_root: Path) -> list[str]:
     ]
 
 
+# The package.json fields that declare dependencies npm would install.
+_NPM_DEPENDENCY_FIELDS = (
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+)
+
+
+def _package_json_declares_no_dependencies(path: Path) -> bool:
+    """Return True when *path* is a JSON object that declares no npm dependency.
+
+    Each of :data:`_NPM_DEPENDENCY_FIELDS` must be absent or an empty object,
+    as in the minimal ``package.json`` ``vrg-github-repo-init`` writes
+    (``name``, ``version``, ``private``; vergil-tooling#4552). A file that is
+    not such an object (JSON that does not parse, a field of another type)
+    returns False: the repo then counts as bootstrapped, and its install
+    stage reports the error, so a broken manifest never passes as unstarted.
+    """
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(manifest, dict):
+        return False
+    return all(manifest.get(field, {}) == {} for field in _NPM_DEPENDENCY_FIELDS)
+
+
 def unbootstrapped_manifests(lang: str, repo_root: Path) -> list[str]:
-    """Return *lang*'s missing manifests when the repo has none of them, else ``[]``.
+    """Return *lang*'s missing manifests when the repo is not bootstrapped, else ``[]``.
 
     The same table as the image warmup (:data:`_WARMUP_REQUIRES`), read
     strictly: a repo is *unbootstrapped* only when **every** group is
@@ -209,10 +238,24 @@ def unbootstrapped_manifests(lang: str, repo_root: Path) -> list[str]:
     #4384). A partial bootstrap (``pyproject.toml`` with no ``uv.lock``, say)
     is not this state: the warmup may skip it, but validation runs and fails
     on it, so a broken project never passes as an unstarted one.
+
+    TypeScript has one more unbootstrapped state: a ``package.json`` that
+    declares no dependencies, with no ``package-lock.json``. That is exactly
+    what ``vrg-github-repo-init`` writes (vergil-tooling#4624), and only the
+    lockfile is returned as missing. A ``package.json`` that declares
+    dependencies but has no lockfile is a partial bootstrap, and fails.
     """
     groups = _WARMUP_REQUIRES.get(lang, [])
     missing = missing_warmup_files(lang, repo_root)
-    return missing if groups and len(missing) == len(groups) else []
+    if groups and len(missing) == len(groups):
+        return missing
+    if (
+        lang == "typescript"
+        and missing == ["package-lock.json"]
+        and _package_json_declares_no_dependencies(repo_root / "package.json")
+    ):
+        return missing
+    return []
 
 
 # File suffixes of each language's own sources. A repo with none of its

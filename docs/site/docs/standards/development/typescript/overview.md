@@ -75,7 +75,13 @@ Its `version` is the `VERSION` repo-init writes, so the new repository passes
 the version cross-check (`vrg-version show` and the `typescript-tools` stage)
 from its first commit. It has no devDependencies and no scripts: those, and
 `"type": "module"`, are the repository's to add, and the `typescript-tools`
-stage names what is missing. Repo-init never overwrites an existing
+stage names what is missing. Until then the repository is not bootstrapped:
+a `package.json` that declares no dependencies, with no `package-lock.json`,
+makes `vrg-validate` skip the install, `typescript-tools` and language
+stages, each with a warning (see
+[the validation matrix](../../../guides/validation-matrix.md)). Once it
+declares a dependency, it needs its `package-lock.json`, or the install
+stage fails. Repo-init never overwrites an existing
 `package.json`. It is not a managed file, so the fleet sync does not keep it,
 and Prettier checks it like any other file the repository owns.
 
