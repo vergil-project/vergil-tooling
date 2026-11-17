@@ -505,10 +505,12 @@ def test_bump_failed_restore_is_loud(tmp_path: Path) -> None:
             raise PermissionError(13, "Permission denied")
         return original(self, data)
 
+    failure = _lock_failure(["uv", "lock"])
+    match = r"bump to 1\.0\.1 failed .*pyproject\.toml"
     with (
-        patch("vergil_tooling.lib.version.subprocess.run", side_effect=_lock_failure(["uv", "lock"])),
+        patch("vergil_tooling.lib.version.subprocess.run", side_effect=failure),
         patch.object(Path, "write_bytes", write_bytes),
-        pytest.raises(VersionSyncError, match=r"bump to 1\.0\.1 failed .*pyproject\.toml") as excinfo,
+        pytest.raises(VersionSyncError, match=match) as excinfo,
     ):
         bump(tmp_path)
     assert isinstance(excinfo.value.__context__, subprocess.CalledProcessError)
