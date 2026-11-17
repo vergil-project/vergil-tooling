@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import contextlib
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from vergil_tooling.lib.branch_sweep import PullRequest
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.update_deps.preflight import preflight
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 _MOD = "vergil_tooling.lib.update_deps.preflight"
 
@@ -312,3 +317,84 @@ def test_preflight_rejects_out_of_sync_develop(monkeypatch) -> None:
     monkeypatch.setattr(_MOD + ".git.read_output", lambda *a: next(outs))
     with pytest.raises(UpdateDepsError, match="sync"):
         preflight(repo_root=Path("/tmp/repo"))  # noqa: S108
+
+
+# --- The fast-forward vrg-release asks for (spec §6.6 of epic #1218) ---
+
+
+def _behind_develop(monkeypatch, events: list[str], *, ancestor: bool = True) -> dict[str, str]:
+    """A clean develop one merge behind origin/develop; git calls go to *events*."""
+    _sync_ok(monkeypatch)
+    refs = {"HEAD": "a" * 40, "origin/develop": "b" * 40}
+
+    def read_output(*a: str) -> str:
+        if a == ("status", "--porcelain"):
+            return ""
+        if a[0] == "rev-parse":
+            return refs[a[1]]
+        msg = f"unexpected git read {a}"
+        raise AssertionError(msg)
+
+    def run(*a: str) -> None:
+        events.append(f"git {' '.join(a)}")
+        if a == ("merge", "--ff-only", "origin/develop"):
+            refs["HEAD"] = refs["origin/develop"]
+
+    @contextlib.contextmanager
+    def fake_lock(main_root: Path, *, purpose: str) -> Generator[None]:
+        events.append(f"lock {main_root} {purpose}")
+        try:
+            yield
+        finally:
+            events.append("unlock")
+
+    monkeypatch.setattr(_MOD + ".git.read_output", read_output)
+    monkeypatch.setattr(_MOD + ".git.run", run)
+    # The shared fast_forward_develop reads the same git module.
+    monkeypatch.setattr(_MOD + ".git.is_ancestor", lambda _a, _d: ancestor)
+    monkeypatch.setattr(_MOD + ".checkout_lock", fake_lock)
+
+    def fake_create(_root, *, branch, base):  # noqa: ARG001
+        events.append("create-worktree")
+        return Path("/tmp/repo/.worktrees/deps")  # noqa: S108
+
+    monkeypatch.setattr(_MOD + ".create_worktree", fake_create)
+    monkeypatch.setattr(_MOD + ".os.chdir", lambda p: None)  # noqa: ARG005
+    return refs
+
+
+def test_update_deps_preflight_fast_forwards_from_release(monkeypatch, capsys) -> None:
+    events: list[str] = []
+    refs = _behind_develop(monkeypatch, events)
+    preflight(repo_root=Path("/tmp/repo"), fast_forward=True)  # noqa: S108
+    assert events == [
+        "lock /tmp/repo vrg-release update-deps preflight",
+        "git fetch origin develop",
+        "git merge --ff-only origin/develop",
+        "unlock",
+        "create-worktree",
+    ]
+    assert refs["HEAD"] == "b" * 40
+    assert "Fast-forwarded develop aaaaaaaa..bbbbbbbb" in capsys.readouterr().out
+
+
+def test_update_deps_preflight_diverged_refuses_from_release(monkeypatch) -> None:
+    events: list[str] = []
+    _behind_develop(monkeypatch, events, ancestor=False)
+    with pytest.raises(UpdateDepsError, match="has diverged from origin/develop"):
+        preflight(repo_root=Path("/tmp/repo"), fast_forward=True)  # noqa: S108
+    assert events == [
+        "lock /tmp/repo vrg-release update-deps preflight",
+        "git fetch origin develop",
+        "unlock",
+    ]
+
+
+def test_update_deps_preflight_standalone_unchanged(monkeypatch) -> None:
+    """Run standalone, a develop behind origin still refuses, with no lock taken."""
+    events: list[str] = []
+    refs = _behind_develop(monkeypatch, events)
+    with pytest.raises(UpdateDepsError, match="not in sync"):
+        preflight(repo_root=Path("/tmp/repo"))  # noqa: S108
+    assert events == ["git fetch origin develop"]
+    assert refs["HEAD"] == "a" * 40

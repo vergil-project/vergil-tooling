@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -31,6 +32,9 @@ from vergil_tooling.lib.update_deps.report import HeldBack
 from vergil_tooling.lib.update_deps.updater import Updater, UpdateResult
 from vergil_tooling.lib.update_deps.updaters.cargo import CargoUpdater
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 
 class _Changed:
     name = "changed"
@@ -57,6 +61,19 @@ class _NoChange:
 _MOD = "vergil_tooling.lib.update_deps.orchestrator"
 
 
+def _preflight_returning(
+    ctx: UpdateDepsContext, calls: list[bool] | None = None
+) -> Callable[..., UpdateDepsContext]:
+    """A stand-in for preflight returning *ctx*, recording each fast_forward in *calls*."""
+
+    def _preflight(*, repo_root: Path, fast_forward: bool) -> UpdateDepsContext:  # noqa: ARG001
+        if calls is not None:
+            calls.append(fast_forward)
+        return ctx
+
+    return _preflight
+
+
 def _state() -> tuple[UpdateDepsState, UpdateDepsContext]:
     state = UpdateDepsState(repo_root=Path("/tmp/r"))  # noqa: S108
     ctx = UpdateDepsContext(repo="o/r", repo_root=Path("/tmp/r"))  # noqa: S108
@@ -78,7 +95,7 @@ def test_require_ctx_raises_when_missing() -> None:
 
 def test_preflight_stage_populates_ctx_and_bump(monkeypatch) -> None:
     fake_ctx = UpdateDepsContext(repo="o/r", repo_root=Path("/tmp/r"))  # noqa: S108
-    monkeypatch.setattr(_MOD + ".preflight", lambda *, repo_root: fake_ctx)  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".preflight", _preflight_returning(fake_ctx))
     state = UpdateDepsState(repo_root=Path("/tmp/r"), vergil_bump="v2.2")  # noqa: S108
     preflight_stage(state)
     assert state.ctx is fake_ctx
@@ -440,7 +457,7 @@ def test_status_stage_quiet_on_success() -> None:
 def test_run_update_runs_stages_in_order_and_always_cleans_up(monkeypatch) -> None:
     order: list[str] = []
     ctx = UpdateDepsContext(repo="o/r", repo_root=Path("/tmp/r"))  # noqa: S108
-    monkeypatch.setattr(_MOD + ".preflight", lambda *, repo_root: ctx)  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".preflight", _preflight_returning(ctx))
     for name in (
         "run_updaters_stage",
         "validate_stage",
@@ -464,7 +481,7 @@ def test_run_update_runs_stages_in_order_and_always_cleans_up(monkeypatch) -> No
 def test_run_update_uses_given_registry(monkeypatch) -> None:
     ctx = UpdateDepsContext(repo="o/r", repo_root=Path("/tmp/r"))  # noqa: S108
     seen: list[list[object]] = []
-    monkeypatch.setattr(_MOD + ".preflight", lambda *, repo_root: ctx)  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".preflight", _preflight_returning(ctx))
     monkeypatch.setattr(_MOD + ".run_updaters_stage", lambda s: seen.append(list(s.registry)))
     for name in ("validate_stage", "prepare_pr_stage", "merge_stage", "fix_task_stage"):
         monkeypatch.setattr(f"{_MOD}.{name}", lambda s: None)  # noqa: ARG005
@@ -476,9 +493,28 @@ def test_run_update_uses_given_registry(monkeypatch) -> None:
     assert seen[1] == list(DEFAULT_REGISTRY)
 
 
+def test_run_update_passes_fast_forward_to_preflight(monkeypatch) -> None:
+    """Only a caller that asks (vrg-release's stage) gets the fast-forwarding preflight."""
+    ctx = UpdateDepsContext(repo="o/r", repo_root=Path("/tmp/r"))  # noqa: S108
+    calls: list[bool] = []
+    monkeypatch.setattr(_MOD + ".preflight", _preflight_returning(ctx, calls))
+    for name in (
+        "run_updaters_stage",
+        "validate_stage",
+        "prepare_pr_stage",
+        "merge_stage",
+        "fix_task_stage",
+        "finalize_stage",
+    ):
+        monkeypatch.setattr(f"{_MOD}.{name}", lambda s: None)  # noqa: ARG005
+    run_update(repo_root=Path("/tmp/r"))  # noqa: S108
+    run_update(repo_root=Path("/tmp/r"), fast_forward=True)  # noqa: S108
+    assert calls == [False, True]
+
+
 def test_run_update_returns_recorded_failure(monkeypatch) -> None:
     ctx = UpdateDepsContext(repo="o/r", repo_root=Path("/tmp/r"))  # noqa: S108
-    monkeypatch.setattr(_MOD + ".preflight", lambda *, repo_root: ctx)  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".preflight", _preflight_returning(ctx))
 
     def _fail(state: UpdateDepsState) -> None:
         assert state.ctx is not None
@@ -497,7 +533,7 @@ def test_run_update_returns_recorded_failure(monkeypatch) -> None:
 def test_run_update_cleans_up_when_a_stage_raises(monkeypatch) -> None:
     order: list[str] = []
     ctx = UpdateDepsContext(repo="o/r", repo_root=Path("/tmp/r"))  # noqa: S108
-    monkeypatch.setattr(_MOD + ".preflight", lambda *, repo_root: ctx)  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".preflight", _preflight_returning(ctx))
 
     def boom(state: UpdateDepsState) -> None:  # noqa: ARG001
         msg = "git commit failed"
@@ -513,7 +549,7 @@ def test_run_update_cleans_up_when_a_stage_raises(monkeypatch) -> None:
 def test_run_update_preflight_error_propagates_without_cleanup(monkeypatch) -> None:
     cleaned: list[bool] = []
 
-    def _bad(*, repo_root: Path) -> UpdateDepsContext:  # noqa: ARG001
+    def _bad(*, repo_root: Path, fast_forward: bool) -> UpdateDepsContext:  # noqa: ARG001
         raise UpdateDepsError(phase="preflight", command="c", message="dirty")
 
     monkeypatch.setattr(_MOD + ".preflight", _bad)
