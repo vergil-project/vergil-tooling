@@ -18413,10 +18413,31 @@ the same <code>.prettierrc.json</code> on its own, so both format by the same co
 second config source fails <code>vrg-validate</code>: a <code>"prettier"</code> key in
 <code>package.json</code>, or any <code>.prettierrc</code>, <code>.prettierrc.*</code> or <code>prettier.config.*</code>
 other than the root <code>.prettierrc.json</code>.</p>
+<p><strong>What Prettier checks.</strong> Every file in the repository that Prettier can
+parse (TypeScript, JavaScript, JSON, Markdown and YAML among them), except what
+<code>.gitignore</code> or a <code>.prettierignore</code> excludes and the files Vergil manages.
+Those are the files the config audit holds to Vergil's content, so the
+repository cannot reformat them: the fleet sync writes them, and a reformatted
+copy is drift. The check leaves them out with one <code>!&lt;path&gt;</code> pattern each,
+anchored at the repository root:</p>
+<ul>
+<li><code>CLAUDE.md</code> (the whole file, the repository's own section included),
+  <code>.claude/settings.json</code> and <code>.claude/hooks/guard.sh</code>;</li>
+<li><code>.gitignore</code>, <code>.github/dependabot.yml</code> and <code>.github/workflows/ops.yml</code>;</li>
+<li><code>tsconfig.vergil.json</code>, <code>eslint.vergil.config.mjs</code> and <code>.prettierrc.json</code>.</li>
+</ul>
+<p>The list is the audit's own (<code>managed_paths</code> in <code>repo_config.py</code>), so a file
+Vergil starts to manage is left out with it. Everything else repo-init writes,
+<code>ci.yml</code>, <code>cd.yml</code> and <code>epic-rollup.yml</code> among them, is the repository's to
+format and is checked.</p>
 <p>The same config does not mean the same Prettier <strong>version</strong>. Prettier is an
 image tool, so the version the gate runs is guaranteed only inside the
-container: format with <code>vrg-container-run -- prettier --write .</code>. An editor's
-own Prettier may be a different version and format some code differently.</p>
+container: format with <code>vrg-container-run -- prettier --write &lt;paths&gt;</code>, naming
+the repository's own files (for example <code>src tests</code>). Run over <code>.</code>, Prettier
+also rewrites the managed files above, and the next fleet sync rewrites them
+back. An editor's own Prettier may be a different version and format some code
+differently, and it does not know the managed files: do not let it format them
+on save.</p>
 <h3 id="what-vrg-validate-checks">What <code>vrg-validate</code> checks<a class="headerlink" href="#what-vrg-validate-checks" title="Permanent link">&para;</a></h3>
 <p>The <code>typescript-tools</code> stage (see
 <a href="#required-devdependencies-and-their-accepted-majors">Required devDependencies</a>)
@@ -18460,7 +18481,8 @@ version a repo resolves from the version window is a hard CI leg (see the
   <a href="../toolchain-and-strictness/">Toolchain and Strictness</a>). The run writes
   its diagnostics and closing statistics (<code>--pretty false --diagnostics</code>) to
   <code>quality-tsc.txt</code>, the typecheck gate's evidence, and prints them to the log.</li>
-<li><strong>LINT</strong> (once) — Prettier <code>--check</code> for format, then ESLint's flat config
+<li><strong>LINT</strong> (once) — Prettier <code>--check</code> for format (every file but the
+  Vergil-managed ones, see <a href="#one-prettier-config">One Prettier config</a>), then ESLint's flat config
   with type-aware typescript-eslint rules, carrying the no-standing-suppression
   rule (<code>@typescript-eslint/ban-ts-comment</code>). The ESLint run writes its JSON
   report to <code>quality-eslint.json</code>, the lint gate's evidence, and prints each

@@ -18034,7 +18034,9 @@ and <strong>ESLint</strong> (type-aware typescript-eslint rules) once:</p>
 <ul>
 <li><strong>Prettier</strong> runs <code>prettier --check</code> against the managed <code>.prettierrc.json</code>
   (<code>semi: true</code>, <code>singleQuote: false</code>, <code>trailingComma: "all"</code>,
-  <code>printWidth: 100</code>) — formatting only, no logic judgments.</li>
+  <code>printWidth: 100</code>) — formatting only, no logic judgments. It checks every
+  file it can parse but the Vergil-managed ones (see
+  <a href="../overview/#one-prettier-config">One Prettier config</a>).</li>
 <li><strong>ESLint</strong> runs the repository's <code>eslint.config.mjs</code>, which spreads Vergil's
   managed <code>eslint.vergil.config.mjs</code>: its flat config with
   <code>js.configs.recommended</code> plus typescript-eslint's <code>recommendedTypeChecked</code> (type-aware rules resolved via
