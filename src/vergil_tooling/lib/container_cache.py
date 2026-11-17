@@ -26,6 +26,7 @@ from vergil_tooling.lib.container import (
 from vergil_tooling.lib.languages import CheckKind, language_commands
 from vergil_tooling.lib.package import orgs, repo_setup
 from vergil_tooling.lib.self_repo import is_self_repo
+from vergil_tooling.lib.tooling_release import ToolingResolveError, resolve_tooling_tag
 from vergil_tooling.lib.versions.extensions import container_env
 
 if TYPE_CHECKING:
@@ -505,8 +506,9 @@ def compute_cache_hash(
     base_digest: str = "",
     salt: str = "",
     env: Mapping[str, str] | None = None,
+    tooling: str = "",
 ) -> str:
-    """SHA-256 over sorted file contents, base image digest, salt, and build env.
+    """SHA-256 over sorted file contents, base image digest, salt, build env and tooling.
 
     Folding ``base_digest`` (the content id of the base image the cache is built
     from) into the key means a republished base tag yields a different hash, so the
@@ -514,6 +516,10 @@ def compute_cache_hash(
     step runs with (:func:`_compose_setup`); folding it in means a change of
     resolved version or interpreter source rebuilds the cache (#3421). An empty
     ``env`` adds nothing, so a language without a container env keeps its key.
+    ``tooling`` is the vergil-tooling release the cache installs, the pin as
+    :func:`~vergil_tooling.lib.tooling_release.resolve_tooling_tag` resolves it:
+    a new release on a pinned line changes the hash, so the cache is rebuilt
+    with it (#4550). Empty for the self-repo, which installs none.
     Returns the first 8 hex chars.
     """
     h = hashlib.sha256()
@@ -526,6 +532,9 @@ def compute_cache_hash(
     if env:
         h.update(b"\0env\0")
         h.update("\0".join(f"{k}={v}" for k, v in sorted(env.items())).encode())
+    if tooling:
+        h.update(b"\0tooling\0")
+        h.update(tooling.encode())
     return h.hexdigest()[:8]
 
 
@@ -871,8 +880,14 @@ def vergil_tooling_setup_command(tag: str) -> str:
     return f"bash -euo pipefail -c {shlex.quote(script)}"
 
 
-def _compose_setup(repo_root: Path, lang: str, *, build_env: Mapping[str, str]) -> str:
+def _compose_setup(
+    repo_root: Path, lang: str, *, build_env: Mapping[str, str], tooling_tag: str
+) -> str:
     """Return the shell setup string baked into the cached image.
+
+    *tooling_tag* is the vergil-tooling release to install: the pin as
+    :func:`current_cache_key` resolved it, the same release the cache key
+    names. Ignored for the self-repo; any other repo must name one.
 
     The composed step is, in order,
     ``<export env> && <apt fragment> && <vergil-tooling install> && <build-command> &&
@@ -889,7 +904,7 @@ def _compose_setup(repo_root: Path, lang: str, *, build_env: Mapping[str, str]) 
     * **apt** — repo-declared ``[container].system-packages``, installed first so
       the rest of the step runs against the provisioned base (epic
       vergil-project/.github#272).
-    * **install** — the pinned vergil-tooling install
+    * **install** — the vergil-tooling install at *tooling_tag*
       (:func:`vergil_tooling_setup_command`). Skipped for the self-repo
       (vergil-tooling itself), which uses its local dev version; the build-command
       then runs after apt and before warmup, the same relative slot.
@@ -919,7 +934,10 @@ def _compose_setup(repo_root: Path, lang: str, *, build_env: Mapping[str, str]) 
     if is_self_repo(repo_root):
         setup = tail or "true"
     else:
-        install = vergil_tooling_setup_command(vrg_install_tag(repo_root))
+        if not tooling_tag:
+            msg = "no vergil-tooling release to install in the cached image"
+            raise ValueError(msg)
+        install = vergil_tooling_setup_command(tooling_tag)
         setup = f"{install} && {tail}" if tail else install
 
     apt = apt_install_command(container_system_packages(repo_root), container_platform())
@@ -940,10 +958,14 @@ def _build_cached_image(
     runtime: str = "",
     quiet_warmup: bool = False,
     build_env: Mapping[str, str],
+    tooling_tag: str,
 ) -> str:
     """Build a cached image with vergil-tooling installed.
 
     ``build_env`` is exported for the whole setup step (see :func:`_compose_setup`).
+    ``tooling_tag`` is the vergil-tooling release installed (see there), and is
+    recorded as the committed image's message, where :func:`cached_tooling`
+    reads it back.
 
     ``quiet_warmup`` captures the warmup subprocess's output instead of
     streaming it to the inherited terminal, surfacing it only on failure. The
@@ -966,7 +988,7 @@ def _build_cached_image(
 
     apt = apt_install_command(container_system_packages(repo_root), container_platform())
     build = container_build_command(repo_root)
-    setup = _compose_setup(repo_root, lang, build_env=build_env)
+    setup = _compose_setup(repo_root, lang, build_env=build_env, tooling_tag=tooling_tag)
 
     # Attribute the build clearly as an environment-provisioning step. A rebuild
     # can be triggered lazily by an operational command (the first vrg-container-run
@@ -981,7 +1003,9 @@ def _build_cached_image(
     if self_repo:
         print("  Install: skipped (self-repo uses local dev version)")
     else:
-        print(f"  Install: vergil-tooling@{vrg_install_tag(repo_root)}")
+        pin = vrg_install_tag(repo_root)
+        resolved = "" if pin == tooling_tag else f" (pin {pin})"
+        print(f"  Install: vergil-tooling@{tooling_tag}{resolved}")
     if build_env:
         print(f"  Env:     {' '.join(f'{k}={v}' for k, v in build_env.items())}")
     if build:
@@ -1048,8 +1072,11 @@ def _build_cached_image(
         if quiet_warmup:
             _report_warmup_skip(run_result.stdout or "")
 
+        commit = [rt, "commit"]
+        if not self_repo:
+            commit += ["--message", _tooling_message(tooling_tag)]
         subprocess.run(  # noqa: S603
-            [rt, "commit", container_id, target_tag],  # noqa: S607
+            [*commit, container_id, target_tag],
             capture_output=True,
             check=True,
         )
@@ -1091,6 +1118,105 @@ def _image_is_launchable(image: str, *, runtime: str = "") -> bool:
     return create.returncode == 0
 
 
+# The committed image's message, recording the vergil-tooling release it holds.
+_TOOLING_MESSAGE_PREFIX = "vergil-tooling "
+
+
+def _tooling_message(tooling_tag: str) -> str:
+    return f"{_TOOLING_MESSAGE_PREFIX}{tooling_tag}"
+
+
+def cached_tooling(image: str, *, runtime: str = "") -> str | None:
+    """Return the vergil-tooling release *image* was built with, or None.
+
+    Read from the image's commit message, which :func:`_build_cached_image`
+    writes. None for an image with no such message: one built for the
+    self-repo, or by a vergil-tooling release before #4550, or one that cannot
+    be inspected.
+    """
+    rt = runtime or detect_runtime()
+    result = subprocess.run(  # noqa: S603
+        [rt, "image", "inspect", image, "--format", "{{.Comment}}"],  # noqa: S607
+        capture_output=True,
+        text=True,
+    )
+    comment = result.stdout.strip()
+    if result.returncode != 0 or not comment.startswith(_TOOLING_MESSAGE_PREFIX):
+        return None
+    return comment.removeprefix(_TOOLING_MESSAGE_PREFIX).strip() or None
+
+
+@dataclass(frozen=True)
+class CacheKey:
+    """The key a branch's cached image must have now, and the tooling it names.
+
+    *pin* is the ``[dependencies].vergil`` pin (or ``VRG_DOCKER_INSTALL_TAG``)
+    and *tooling* the release it resolves to now; both are ``""`` for the
+    self-repo, which installs no vergil-tooling.
+    """
+
+    cache_hash: str
+    pin: str
+    tooling: str
+
+
+def _resolve_tooling(repo_root: Path, existing_tag: str | None, runtime: str) -> tuple[str, str]:
+    """Return ``(pin, release)`` for the cache of *repo_root*; see :class:`CacheKey`.
+
+    A failure to resolve a line pin is never papered over with the release
+    the existing cache holds: it raises :class:`ToolingResolveError`, naming
+    the cached release when it is known, and the exact pin that reuses it.
+    """
+    if is_self_repo(repo_root):
+        return "", ""
+    pin = vrg_install_tag(repo_root)
+    try:
+        return pin, resolve_tooling_tag(pin, arch=container_platform().split("/")[-1])
+    except ToolingResolveError as exc:
+        held = cached_tooling(existing_tag, runtime=runtime) if existing_tag else None
+        reuse = (
+            f" This branch's cached image holds {held}: set VRG_DOCKER_INSTALL_TAG={held} "
+            "to use it without the index."
+            if held
+            else " To work without the index, pin an exact release (vX.Y.Z) with "
+            "VRG_DOCKER_INSTALL_TAG."
+        )
+        msg = (
+            f"cannot resolve vergil-tooling {pin} to a release: {exc}. Refusing to use a "
+            f"cached image that may hold an older release than {pin} now installs.{reuse}"
+        )
+        raise ToolingResolveError(msg) from exc
+
+
+def current_cache_key(
+    repo_root: Path,
+    base_image: str,
+    files: list[Path],
+    *,
+    build_env: Mapping[str, str],
+    existing_tag: str | None,
+    runtime: str = "",
+) -> CacheKey:
+    """Return the key *repo_root*'s cached image must have now.
+
+    The one computation :func:`ensure_cached_image` and ``vrg-container-cache
+    status`` share: the base image's digest (:func:`resolve_base_digest`, which
+    pulls it), the vergil-tooling release the pin resolves to (a lookup in the
+    vergil package index for a line pin, #4550), the cache-sensitive *files*,
+    the repository salt and *build_env*. *existing_tag* is the branch's cached
+    image, if any, named in the error when the release cannot be resolved.
+    Raises ``RuntimeError`` (:class:`ToolingResolveError` for the release)
+    when either lookup fails.
+    """
+    rt = runtime or detect_runtime()
+    base_digest, _verified = resolve_base_digest(base_image, runtime=rt)
+    pin, tooling = _resolve_tooling(repo_root, existing_tag, rt)
+    cache_hash = compute_cache_hash(
+        files, base_digest=base_digest, salt=repo_root.name, env=build_env, tooling=tooling
+    )
+    return CacheKey(cache_hash=cache_hash, pin=pin, tooling=tooling)
+
+
 def ensure_cached_image(
     repo_root: Path,
     lang: str,
@@ -1110,6 +1236,10 @@ def ensure_cached_image(
     cache without deciding it: it is exported for the setup step and folded into
     the cache key, so a change of resolved version or source rebuilds (#3421).
 
+    The key (:func:`current_cache_key`) also names the vergil-tooling release
+    the pin resolves to now, and the build installs exactly that release, so
+    a new release on a pinned line rebuilds the cache (#4550).
+
     Before a build it runs the low-disk auto-prune
     (:func:`~vergil_tooling.lib.cache_space.ensure_build_space`), which raises
     :class:`~vergil_tooling.lib.cache_space.CacheSpaceError` when the build
@@ -1124,11 +1254,16 @@ def ensure_cached_image(
 
     branch = _git.current_branch()
     repo = cache_repo_name(repo_root)
-    base_digest, _verified = resolve_base_digest(base_image, runtime=rt)
-    current_hash = compute_cache_hash(
-        files, base_digest=base_digest, salt=repo_root.name, env=build_env
-    )
     existing = find_cached_image(base_image, branch, repo=repo, runtime=rt)
+    key = current_cache_key(
+        repo_root,
+        base_image,
+        files,
+        build_env=build_env,
+        existing_tag=existing[0] if existing else None,
+        runtime=rt,
+    )
+    current_hash = key.cache_hash
 
     if existing is not None:
         existing_tag, existing_hash = existing
@@ -1170,6 +1305,7 @@ def ensure_cached_image(
         runtime=rt,
         quiet_warmup=quiet_warmup,
         build_env=build_env,
+        tooling_tag=key.tooling,
     )
 
 

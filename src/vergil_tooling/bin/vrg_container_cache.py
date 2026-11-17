@@ -35,13 +35,14 @@ from vergil_tooling.lib.container import (
     resolve_language,
 )
 from vergil_tooling.lib.container_cache import (
+    CacheKey,
     cache_image_tag,
     cache_repo_name,
     cache_sensitive_files,
-    compute_cache_hash,
+    cached_tooling,
+    current_cache_key,
     ensure_cached_image,
     find_cached_image,
-    resolve_base_digest,
 )
 from vergil_tooling.lib.live_branches import (
     RepoSetError,
@@ -50,6 +51,7 @@ from vergil_tooling.lib.live_branches import (
     live_branches,
 )
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.tooling_release import ToolingResolveError
 from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.versions.extensions import container_env
 
@@ -107,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         return dispatch[args.command](args, runtime=runtime)
     except PackageJsonError as exc:
         report_package_json_error(exc)
-    except (VersionsError, CacheSpaceError) as exc:
+    except (VersionsError, CacheSpaceError, ToolingResolveError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -153,31 +155,56 @@ def _cmd_status(_args: argparse.Namespace, *, runtime: str) -> int:
     existing = find_cached_image(base, branch, repo=repo, runtime=runtime)
     files = cache_sensitive_files(repo_root, lang)
 
-    def _current_hash() -> str:
-        # Match ensure_cached_image exactly: salt (repo name) + base digest +
-        # the resolver's container env (#3421).
-        base_digest, _ = resolve_base_digest(base, runtime=runtime)
-        return compute_cache_hash(
+    def _current_key() -> CacheKey:
+        # The key ensure_cached_image computes, shared so the two never drift.
+        return current_cache_key(
+            repo_root,
+            base,
             files,
-            base_digest=base_digest,
-            salt=repo_root.name,
-            env=container_env(resolution),
+            build_env=container_env(resolution),
+            existing_tag=existing[0] if existing else None,
+            runtime=runtime,
         )
 
     if existing is None:
         print("No cached image for this branch.")
         if files:
-            print(f"Expected tag: {cache_image_tag(base, branch, _current_hash(), repo=repo)}")
+            key = _current_key()
+            print(f"Expected tag: {cache_image_tag(base, branch, key.cache_hash, repo=repo)}")
+            _print_tooling(key)
         return 0
     print(f"Cached image: {existing[0]}")
     print(f"Hash:         {existing[1]}")
     if files:
-        current_hash = _current_hash()
-        if current_hash == existing[1]:
+        key = _current_key()
+        held = cached_tooling(existing[0], runtime=runtime)
+        _print_tooling(key, held=held)
+        if key.cache_hash == existing[1]:
             print("Status:       current")
         else:
-            print(f"Status:       stale (current hash: {current_hash})")
+            print(f"Status:       stale (current hash: {key.cache_hash})")
+            if key.tooling and held != key.tooling:
+                was = held or "an unrecorded release"
+                print(
+                    f"              vergil-tooling: the image holds {was}; "
+                    f"{key.pin} now installs {key.tooling}"
+                )
+            print(
+                "              vrg-container-run rebuilds it on its next run; "
+                "vrg-container-cache build rebuilds it now"
+            )
     return 0
+
+
+def _print_tooling(key: CacheKey, *, held: str | None = None) -> None:
+    """Print the vergil-tooling release the cache installs, and the cached one."""
+    if not key.tooling:
+        print("Tooling:      none installed (self-repo uses its local dev version)")
+        return
+    resolved = key.tooling if key.pin == key.tooling else f"{key.tooling} (pin {key.pin})"
+    print(f"Tooling:      {resolved}")
+    if held is not None:
+        print(f"Cached with:  {held}")
 
 
 def _cmd_clean_all(_args: argparse.Namespace, *, runtime: str) -> int:

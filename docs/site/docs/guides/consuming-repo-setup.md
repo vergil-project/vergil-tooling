@@ -703,8 +703,10 @@ pin it with `vrg-host pin` rather than skipping upgrades — see the
 
 `vrg-container-run` pulls the base dev image on every run and rebuilds
 its per-branch cached image when the base image, the language
-lockfile or `vergil.toml` changes, so there is nothing to refresh by
-hand.
+lockfile or `vergil.toml` changes, or when a new vergil-tooling release
+lands on the line `vergil.toml` pins, so there is nothing to refresh by
+hand. See
+[How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases).
 `vrg-container-cache status` shows the cache state for the current
 branch.
 
