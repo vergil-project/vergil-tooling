@@ -17997,9 +17997,9 @@ push, PR or merge.</p>
 <td>Release even though an open <code>dependency-update</code> PR blocks it. For urgent fixes only; the bypassed PRs are listed on the tracking issue</td>
 </tr>
 <tr>
-<td><code>--install</code></td>
+<td><code>--no-install</code></td>
 <td>No</td>
-<td>After a clean release, run the <code>[publish].consumer-refresh</code> commands instead of only printing them. Fails if none are configured</td>
+<td>Skip the install step. By default, after a clean release, <code>vrg-release</code> runs the <code>[publish].consumer-refresh</code> commands instead of only printing them; with none configured it says there is nothing to run, which is not an error. <code>--install</code> was removed: passing it exits 1 and names this default</td>
 </tr>
 <tr>
 <td><code>--resume [X.Y.Z]</code></td>
