@@ -17,20 +17,21 @@ the way a person would, with plain git in that checkout:
    ``automation/<job>/<run-id>``, whose parent is the clone's ``HEAD``, and
    pushed. ``HEAD`` is normally the ``develop`` tip; a caller may check out an
    older ``develop`` commit first (``vrg-upstream-refresh`` publishes on the
-   commit its hook ran against), and the wait's branch update then brings the
-   PR up to date. Git records content and file mode, so an executable bit
-   the job set survives.
-4. The PR is opened against ``develop`` and GitHub auto-merge is turned on with
-   the squash method and the pushed commit as the expected head, then read back
-   to confirm it is on. Auto-merge is only a speed-up: nothing below depends on
-   it.
+   commit its hook ran against). ``develop`` does not require a branch to be
+   up to date, so the PR merges from that base once its own checks pass. Git
+   records content and file mode, so an executable bit the job set survives.
+4. The PR is opened against ``develop`` and GitHub auto-merge is turned on
+   through the shared helper
+   (:func:`vergil_tooling.lib.auto_merge.enable_auto_merge`) with the squash
+   method and the pushed commit as the expected head, then read back to
+   confirm it is on. When GitHub refuses because the PR can already merge, the
+   helper merges it directly with the same method and head, and the result is
+   ``merged`` with no wait. Any other refusal raises
+   :class:`MechanizedPRError`.
 5. **Wait until merged** (:func:`vergil_tooling.lib.pr_merge.wait_until_merged`).
-   A merged PR is the result ``merged``. A PR behind ``develop`` has its
-   branch updated (the automation App may update ``automation/**`` branches)
-   and the wait goes on, up to the engine's cap of branch updates. A PR whose
-   checks are green on an up-to-date branch is merged by the wait itself,
-   whether or not auto-merge is on. A failed check, a conflict, a closed PR,
-   the update cap or the deadline stops the wait with
+   A merged PR is the result ``merged``. A PR whose checks are green is merged
+   by the wait itself if auto-merge has not merged it first. A failed check, a
+   conflict, a closed PR or the deadline stops the wait with
    :class:`PRNotMergedError`, naming the PR and the reason. The deadline is
    the caller's ``deadline_secs`` when it gives one. A job that holds an App
    token source (:mod:`vergil_tooling.lib.app_token`, registered with
@@ -41,12 +42,12 @@ the way a person would, with plain git in that checkout:
    default, inside the one hour an ambient App installation token lasts.
 
 Each step that changes GitHub prints one line as it happens: each earlier
-run's PR it closes, the PR it opens, and how the wait ended, with the time it
-waited. A run that waits for an hour or more can then be read from its log
-alone.
+run's PR it closes, the PR it opens, a direct merge, and how the wait ended,
+with the time it waited. A run that waits for an hour or more can then be read
+from its log alone.
 
-Every GitHub call names the repo (``--repo`` or a ``repos/<repo>/…`` endpoint),
-so nothing depends on the cwd. The push authenticates the way
+Every GitHub call names the repo (``--repo``, a ``repos/<repo>/…`` endpoint or
+the PR's URL), so nothing depends on the cwd. The push authenticates the way
 :mod:`vergil_tooling.lib.git` does for any ``-C <checkout>`` push: the
 registered token source's current token, git's credential helper, or the App
 installation token of the checkout's own org. No token appears in argv or the
@@ -71,7 +72,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
-from vergil_tooling.lib import git, github, pr_merge
+from vergil_tooling.lib import auto_merge, git, github, pr_merge
 from vergil_tooling.lib.develop_clone import DEVELOP_BRANCH
 from vergil_tooling.lib.process_errors import error_text
 
@@ -93,16 +94,6 @@ _JOB_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 
 _CLOSE_COMMENT = "Superseded by a new run of this automation job; closing."
-
-_ENABLE_AUTO_MERGE_MUTATION = """
-mutation($id: ID!, $head: GitObjectID!) {
-  enablePullRequestAutoMerge(
-    input: {pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $head}
-  ) {
-    pullRequest { number }
-  }
-}
-"""
 
 
 class MechanizedPRError(RuntimeError):
@@ -323,37 +314,13 @@ def _open_pr(repo: str, branch: str, title: str, body: str) -> str:
     return url
 
 
-def _pr_view(repo: str, pr_url: str, fields: str, step: str) -> dict[str, object]:
+def _enable_auto_merge(repo: str, pr_url: str, head: str) -> bool:
+    """Turn on squash auto-merge for *pr_url* at *head*; true when it merged directly."""
     try:
-        result = github.read_json("pr", "view", pr_url, "--repo", repo, "--json", fields)
-    except subprocess.CalledProcessError as exc:
-        raise _fail(step, repo, exc) from exc
-    if not isinstance(result, dict):
-        msg = f"mechanized PR for {repo}: {step}: gh pr view returned {result!r}"
-        raise MechanizedPRError(msg)
-    return result
-
-
-def _enable_auto_merge(repo: str, pr_url: str, head: str) -> None:
-    """Turn on squash auto-merge for *pr_url* at *head*, then confirm it is on."""
-    node_id = _pr_view(repo, pr_url, "id", "reading the PR's node ID").get("id")
-    if not isinstance(node_id, str) or not node_id:
-        msg = f"mechanized PR for {repo}: {pr_url} has no node ID"
-        raise MechanizedPRError(msg)
-    try:
-        github.graphql(_ENABLE_AUTO_MERGE_MUTATION, id=node_id, head=head)
-    except (subprocess.CalledProcessError, RuntimeError) as exc:
-        raise _fail(f"enabling auto-merge on {pr_url}", repo, exc) from exc
-    request = _pr_view(repo, pr_url, "autoMergeRequest", "reading back auto-merge").get(
-        "autoMergeRequest"
-    )
-    method = request.get("mergeMethod") if isinstance(request, dict) else None
-    if method != "SQUASH":
-        msg = (
-            f"mechanized PR for {repo}: auto-merge is not confirmed on {pr_url} "
-            f"(autoMergeRequest read back as {request!r})"
-        )
-        raise MechanizedPRError(msg)
+        result = auto_merge.enable_auto_merge(pr_url, head=head, method="SQUASH")
+    except auto_merge.AutoMergeError as exc:
+        raise _fail("enabling auto-merge", repo, exc) from exc
+    return result.merged_now
 
 
 def _wait_until_merged(repo: str, pr_url: str, deadline: int) -> None:
@@ -418,6 +385,8 @@ def open_sync_pr(  # noqa: PLR0913 - the PR's parts and its deadline, all keywor
     head = _commit_and_push(repo, clone, branch, title)
     pr_url = _open_pr(repo, branch, title, body)
     print(f"{repo}: opened {pr_url}; waiting up to {deadline}s for it to merge")
-    _enable_auto_merge(repo, pr_url, head)
-    _wait_until_merged(repo, pr_url, deadline)
+    if _enable_auto_merge(repo, pr_url, head):
+        print(f"{repo}: {pr_url} was already mergeable and merged directly")
+    else:
+        _wait_until_merged(repo, pr_url, deadline)
     return SyncResult(status="merged", pr_url=pr_url, closed=closed)
