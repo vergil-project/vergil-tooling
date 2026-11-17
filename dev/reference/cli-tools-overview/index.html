@@ -22260,6 +22260,14 @@ GitHub config, and Pages. The scaffolded <code>base + &lt;language&gt;</code>
 <code>.gitignore</code> fence, canonical <code>dependabot.yml</code> and staggered-cron
 <code>ops.yml</code> make a new repo pass the config audit's checks for those
 files from day one.</p>
+<p>For a TypeScript repo, the config-files step also writes the language's
+managed files (<code>tsconfig.vergil.json</code>, <code>eslint.vergil.config.mjs</code>,
+<code>.prettierrc.json</code>) and a minimal <code>package.json</code> holding only <code>name</code>
+(the repo name), <code>version</code> (the <code>VERSION</code> it writes) and
+<code>"private": true</code>, so the new repo passes the <code>package.json</code> version
+cross-check from its first commit. It never overwrites an existing
+<code>package.json</code>, which is the repo's, not a managed file (see
+<a href="../../standards/development/typescript/overview/#a-new-repositorys-packagejson">A new repository's <code>package.json</code></a>).</p>
 <p>The vergil series a new repo uses comes from the installed
 vergil-tooling: <code>[dependencies].vergil</code> defaults to its <code>vX.Y</code>, and the
 generated workflows pin the vergil-actions reusable workflows to that
