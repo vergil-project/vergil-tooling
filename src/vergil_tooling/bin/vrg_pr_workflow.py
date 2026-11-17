@@ -244,7 +244,7 @@ def _reject_cross_repo_issue(issue_ref: str) -> None:
     """
     try:
         current = github.current_repo()
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return
     if not current:
         return
@@ -273,7 +273,7 @@ def _reject_non_task_issue(issue_ref: str) -> None:
     """
     try:
         kind = epics.non_task_ref_kind(issue_ref, default_repo=github.current_repo())
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return
     if kind is not None:
         raise WorkflowError(epics.non_task_refusal_message("--issue", issue_ref, kind))
@@ -291,7 +291,7 @@ def _reject_operational_issue(issue_ref: str) -> None:
     """
     try:
         is_operational = epics.is_operational_task(issue_ref, default_repo=github.current_repo())
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return
     if is_operational:
         raise WorkflowError(

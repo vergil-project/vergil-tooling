@@ -958,7 +958,7 @@ def _rerun_searches(task: IssueRef, old_parent: IssueRef) -> bool:
         return old_parent in _queue_epics(task)
     except github.MissingGitHubTokenError:
         raise
-    except (github.GitHubAPIError, RuntimeError, ValueError, epics.EpicHomeError):
+    except github.GitHubAPIError, RuntimeError, ValueError, epics.EpicHomeError:
         return False
 
 
@@ -1010,7 +1010,7 @@ def _clear_stale_queue_listing(item: IssueRef, action: OneOff, parent: IssueRef)
             )
             epics.remove_child(queue, item)
         placement = _settled_placement(item, parent, queues)
-    except (RouteHalfAppliedError, github.MissingGitHubTokenError):
+    except RouteHalfAppliedError, github.MissingGitHubTokenError:
         raise
     except (github.GitHubAPIError, RuntimeError) as exc:
         raise RouteHalfAppliedError(
@@ -1133,7 +1133,7 @@ def _half_applied_on_error(item: IssueRef, epic: IssueRef, task: IssueRef) -> Ge
     """
     try:
         yield
-    except (RouteHalfAppliedError, github.MissingGitHubTokenError):
+    except RouteHalfAppliedError, github.MissingGitHubTokenError:
         raise
     except (github.GitHubAPIError, RuntimeError) as exc:
         lead = f"moved {item.slug} to {task.slug}, but" if task != item else f"{item.slug}:"

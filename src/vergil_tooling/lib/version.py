@@ -496,7 +496,7 @@ def _cross_check_language_file(
     if language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
         try:
             lang_file = _discover_version_file(repo_root, language)
-        except (FileNotFoundError, ValueError):
+        except FileNotFoundError, ValueError:
             print(
                 f"warning: {language} version file not found; sync check skipped",
                 file=sys.stderr,
@@ -772,7 +772,7 @@ def _write_bump(repo_root: Path, language: str | None, old_version: str, new_ver
             lang_file = _discover_version_file(repo_root, language)
             if lang_file.is_file():
                 _write_version(lang_file, language, old_version, new_version)
-        except (FileNotFoundError, ValueError):
+        except FileNotFoundError, ValueError:
             pass
 
     for rel_path, fmt in _SECONDARY_VERSION_FILES.items():
@@ -804,7 +804,7 @@ def bump_paths(repo_root: Path) -> frozenset[str]:
     if language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
         try:
             lang_file = _discover_version_file(repo_root, language)
-        except (FileNotFoundError, ValueError):
+        except FileNotFoundError, ValueError:
             # bump() writes no language file then, so none is listed: a dirty
             # path outside this set is refused by the caller, never ignored.
             pass
