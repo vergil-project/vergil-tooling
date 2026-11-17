@@ -160,7 +160,7 @@ def load_commands(mapping_data_path: Path) -> list[CommandSpec]:
 # ---------------------------------------------------------------------------
 
 MQSC_REF_URL = "https://www.ibm.com/docs/en/ibm-mq/9.4?topic=reference-mqsc-commands"
-PYTHON_DOCS_BASE_URL = "https://vergil-project.github.io/mq-rest-admin-python"
+PYTHON_DOCS_BASE_URL = "https://mq-rest-admin-project.github.io/mq-rest-admin-python/latest"
 
 
 def _python_docstring(cmd: CommandSpec, mapping_pages: frozenset[str]) -> str:
@@ -173,7 +173,7 @@ def _python_docstring(cmd: CommandSpec, mapping_pages: frozenset[str]) -> str:
     if cmd.qualifier in mapping_pages:
         lines.append(
             f"        See `{cmd.qualifier} attribute mappings"
-            f" <{PYTHON_DOCS_BASE_URL}/mappings/{cmd.qualifier}.html>`__."
+            f" <{PYTHON_DOCS_BASE_URL}/mappings/{cmd.qualifier}/>`__."
         )
     lines.append("")
 
