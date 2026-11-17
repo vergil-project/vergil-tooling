@@ -535,7 +535,11 @@ Alongside it:
 - **`epic-rollup.yml`** — on any issue close, closes the parent epic
   once all of its tasks are closed.
 - **`cd.yml`** — the release and docs publishing workflow, generated
-  when `[publish]` enables either.
+  when `[publish]` enables either. Its `release` job runs on every push to
+  `main` except the one that creates the branch: the wizard creates `main`
+  by a direct push, which no release PR produced, so there is nothing to
+  release. A later push to `main` with no release PR still fails the
+  release's CI-evidence gate.
 
 To regenerate them after a `vergil.toml` change, re-run
 `vrg-github-repo-init --adopt`. See the

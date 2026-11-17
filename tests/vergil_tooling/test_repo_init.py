@@ -1157,7 +1157,7 @@ class TestRenderCdWorkflow:
         ctx.resolution = _resolved("python", ctx.ci_versions)
         content = render_cd_workflow(ctx)
         assert "cd-release.yml@v2.1" in content
-        assert "if: github.ref == 'refs/heads/main'" in content
+        assert "if: github.ref == 'refs/heads/main' && !github.event.created\n" in content
         assert "language: python" in content
         # cd-release@v2.1 derives the release image tag from the resolver's
         # primary, so the caller passes no container tag (issue #3484).
@@ -1182,6 +1182,19 @@ class TestRenderCdWorkflow:
         ctx.publish_release = False
         content = render_cd_workflow(ctx)
         assert "actions: read" not in content
+
+    def test_release_skips_the_push_that_creates_main(self) -> None:
+        # Step 8 creates `main` by a direct push, which no release PR produced:
+        # cd-release's evidence gate could only fail on it (issue #4580). The
+        # job runs on every other push to main, so a real release without a
+        # resolvable PR still fails the gate.
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.publish_docs = True
+        ctx.publish_release = True
+        ctx.primary_language = "go"
+        ctx.resolution = _resolved("go")
+        release = yaml.safe_load(render_cd_workflow(ctx))["jobs"]["release"]
+        assert release["if"] == "github.ref == 'refs/heads/main' && !github.event.created"
 
     def test_docs_and_release(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
