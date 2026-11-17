@@ -1440,6 +1440,8 @@
       
         
       
+        
+      
     
     
     
@@ -1492,6 +1494,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.321/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.321
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16771,6 +16801,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#a-new-repositorys-packagejson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A new repository's package.json
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#baking-a-non-npm-dependency-into-the-dev-image" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18027,6 +18068,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#a-new-repositorys-packagejson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A new repository's package.json
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#baking-a-non-npm-dependency-into-the-dev-image" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18256,14 +18308,30 @@ more than one major fails resolution (see
   native ES modules resolved the way modern Node resolves them. A repository's
   <code>package.json</code> declares <code>"type": "module"</code> to match.</li>
 </ul>
+<h3 id="a-new-repositorys-packagejson">A new repository's <code>package.json</code><a class="headerlink" href="#a-new-repositorys-packagejson" title="Permanent link">&para;</a></h3>
+<p><code>vrg-github-repo-init --language typescript</code> writes a minimal <code>package.json</code>
+in its config-files step, beside the three managed files:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;repo name&gt;"</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.1.0"</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">"private"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">}</span>
+</code></pre></div>
+<p>Its <code>version</code> is the <code>VERSION</code> repo-init writes, so the new repository passes
+the version cross-check (<code>vrg-version show</code> and the <code>typescript-tools</code> stage)
+from its first commit. It has no devDependencies and no scripts: those, and
+<code>"type": "module"</code>, are the repository's to add, and the <code>typescript-tools</code>
+stage names what is missing. Repo-init never overwrites an existing
+<code>package.json</code>. It is not a managed file, so the fleet sync does not keep it,
+and Prettier checks it like any other file the repository owns.</p>
 <h3 id="baking-a-non-npm-dependency-into-the-dev-image">Baking a non-npm dependency into the dev image<a class="headerlink" href="#baking-a-non-npm-dependency-into-the-dev-image" title="Permanent link">&para;</a></h3>
 <p>A repo occasionally needs a JS library present in the dev image itself — for
 example a package a test driver loads at runtime that is not part of the repo's
 own <code>package-lock.json</code>. That is a <code>[container].build-command</code> in <code>vergil.toml</code>,
 not an apt package:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[container]</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">[container]</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span>
 </code></pre></div>
 <p>One TypeScript-specific caveat is load-bearing. A global <code>npm install -g</code> puts a
 library's <strong>executables</strong> on <code>PATH</code>, but does <strong>not</strong> add the npm global root
@@ -18401,14 +18469,14 @@ flag list.</p>
 <h3 id="tsconfigjson"><code>tsconfig.json</code><a class="headerlink" href="#tsconfigjson" title="Permanent link">&para;</a></h3>
 <p>A consuming repository's <code>tsconfig.json</code> extends the managed base and adds only
 repo-local paths:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"extends"</span><span class="p">:</span><span class="w"> </span><span class="s2">"./tsconfig.vergil.json"</span><span class="p">,</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">"compilerOptions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">"rootDir"</span><span class="p">:</span><span class="w"> </span><span class="s2">"src"</span><span class="p">,</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">"outDir"</span><span class="p">:</span><span class="w"> </span><span class="s2">"dist"</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="nt">"include"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"src"</span><span class="p">]</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"extends"</span><span class="p">:</span><span class="w"> </span><span class="s2">"./tsconfig.vergil.json"</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">"compilerOptions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">"rootDir"</span><span class="p">:</span><span class="w"> </span><span class="s2">"src"</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="nt">"outDir"</span><span class="p">:</span><span class="w"> </span><span class="s2">"dist"</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="nt">"include"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"src"</span><span class="p">]</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="p">}</span>
 </code></pre></div>
 <p>The <code>./</code> matters: without it, <code>tsc</code> looks the name up as a package in
 <code>node_modules</code>. The base may also be one entry of an <code>extends</code> array, beside a
@@ -18424,12 +18492,12 @@ The concrete set the base carries is documented in
 <h3 id="eslintconfigmjs"><code>eslint.config.mjs</code><a class="headerlink" href="#eslintconfigmjs" title="Permanent link">&para;</a></h3>
 <p>The repository's <code>eslint.config.mjs</code> imports Vergil's config and spreads it. It
 may add ignores (generated code, for example) and rules of its own:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">import</span><span class="w"> </span><span class="nx">vergil</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s2">"./eslint.vergil.config.mjs"</span><span class="p">;</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">export</span><span class="w"> </span><span class="k">default</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">ignores</span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"src/generated/"</span><span class="p">]</span><span class="w"> </span><span class="p">},</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="p">...</span><span class="nx">vergil</span><span class="p">,</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">];</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">import</span><span class="w"> </span><span class="nx">vergil</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s2">"./eslint.vergil.config.mjs"</span><span class="p">;</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">export</span><span class="w"> </span><span class="k">default</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">ignores</span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"src/generated/"</span><span class="p">]</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="p">...</span><span class="nx">vergil</span><span class="p">,</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">];</span>
 </code></pre></div>
 <p>Passing the imported config to <code>defineConfig(…)</code> (from <code>eslint/config</code>) or to
 <code>tseslint.config(…)</code> works too. LINT runs <code>node_modules/.bin/eslint .</code>, which
@@ -18445,8 +18513,8 @@ second config source fails <code>vrg-validate</code>: a <code>"prettier"</code> 
 other than the root <code>.prettierrc.json</code>.</p>
 <p><strong>What Prettier checks.</strong> Every file in the repository that Prettier can
 parse (TypeScript, JavaScript, JSON, Markdown and YAML among them), except what
-<code>.gitignore</code> or a <code>.prettierignore</code> excludes and the files Vergil manages.
-Those are the files the config audit holds to Vergil's content, so the
+<code>.gitignore</code> or a <code>.prettierignore</code> excludes, the files Vergil manages and
+the files a release writes. The managed files are the files the config audit holds to Vergil's content, so the
 repository cannot reformat them: the fleet sync writes them, and a reformatted
 copy is drift. The check leaves them out with one <code>!&lt;path&gt;</code> pattern each,
 anchored at the repository root:</p>
@@ -18457,9 +18525,15 @@ anchored at the repository root:</p>
 <li><code>tsconfig.vergil.json</code>, <code>eslint.vergil.config.mjs</code> and <code>.prettierrc.json</code>.</li>
 </ul>
 <p>The list is the audit's own (<code>managed_paths</code> in <code>repo_config.py</code>), so a file
-Vergil starts to manage is left out with it. Everything else repo-init writes,
-<code>ci.yml</code>, <code>cd.yml</code> and <code>epic-rollup.yml</code> among them, is the repository's to
-format and is checked.</p>
+Vergil starts to manage is left out with it.</p>
+<p>The release files are those <code>vrg-release</code> writes: <code>CHANGELOG.md</code> and the
+release notes, <code>releases/*.md</code>. git-cliff generates them, so the release PR's
+LINT does not depend on how a given Prettier version formats them. The check
+leaves them out with <code>!CHANGELOG.md</code> and <code>!releases/*.md</code>, also anchored at
+the root, from where the release defines them (<code>release_output_paths</code> in
+<code>changelog.py</code>).</p>
+<p>Everything else repo-init writes, <code>ci.yml</code>, <code>cd.yml</code> and <code>epic-rollup.yml</code>
+among them, is the repository's to format and is checked.</p>
 <p>The same config does not mean the same Prettier <strong>version</strong>. Prettier is an
 image tool, so the version the gate runs is guaranteed only inside the
 container: format with <code>vrg-container-run -- prettier --write &lt;paths&gt;</code>, naming
@@ -18490,11 +18564,11 @@ exception: the checks above fail it.</p>
 <h2 id="testing-vitest-runner-v8-coverage-default">Testing: Vitest Runner, V8 Coverage Default<a class="headerlink" href="#testing-vitest-runner-v8-coverage-default" title="Permanent link">&para;</a></h2>
 <p><strong>Vitest is the mandated test runner</strong>, run with the V8 coverage provider and
 held to a <strong>100% line threshold per Node version</strong>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>node_modules/.bin/vitest<span class="w"> </span>run<span class="w"> </span>--coverage<span class="w"> </span>--coverage.provider<span class="o">=</span>v8<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--coverage.thresholds.lines<span class="o">=</span><span class="m">100</span><span class="w"> </span>--coverage.reportOnFailure<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--coverage.reportsDirectory<span class="o">=</span>coverage<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--coverage.reporter<span class="o">=</span>text<span class="w"> </span>--coverage.reporter<span class="o">=</span>cobertura<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--reporter<span class="o">=</span>default<span class="w"> </span>--reporter<span class="o">=</span>junit<span class="w"> </span>--outputFile.junit<span class="o">=</span>junit.xml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>node_modules/.bin/vitest<span class="w"> </span>run<span class="w"> </span>--coverage<span class="w"> </span>--coverage.provider<span class="o">=</span>v8<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--coverage.thresholds.lines<span class="o">=</span><span class="m">100</span><span class="w"> </span>--coverage.reportOnFailure<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>--coverage.reportsDirectory<span class="o">=</span>coverage<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>--coverage.reporter<span class="o">=</span>text<span class="w"> </span>--coverage.reporter<span class="o">=</span>cobertura<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span>--reporter<span class="o">=</span>default<span class="w"> </span>--reporter<span class="o">=</span>junit<span class="w"> </span>--outputFile.junit<span class="o">=</span>junit.xml
 </code></pre></div>
 <p>The gate is a forcing function for explicitness, not a claim that every line was
 exercised — see <a href="../testing-and-coverage/">Testing and Coverage</a> for the 100%
@@ -18512,7 +18586,8 @@ version a repo resolves from the version window is a hard CI leg (see the
   its diagnostics and closing statistics (<code>--pretty false --diagnostics</code>) to
   <code>quality-tsc.txt</code>, the typecheck gate's evidence, and prints them to the log.</li>
 <li><strong>LINT</strong> (once) — Prettier <code>--check</code> for format (every file but the
-  Vergil-managed ones, see <a href="#one-prettier-config">One Prettier config</a>), then ESLint's flat config
+  Vergil-managed ones and the release's, see
+  <a href="#one-prettier-config">One Prettier config</a>), then ESLint's flat config
   with type-aware typescript-eslint rules, carrying the no-standing-suppression
   rule (<code>@typescript-eslint/ban-ts-comment</code>). The ESLint run writes its JSON
   report to <code>quality-eslint.json</code>, the lint gate's evidence, and prints each

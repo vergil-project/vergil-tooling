@@ -1438,6 +1438,8 @@
       
         
       
+        
+      
     
     
     
@@ -1490,6 +1492,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.321/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.321
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18474,7 +18504,10 @@ so an interrupted run resumes where it stopped:</p>
 <li>Clone it.</li>
 <li>Generate <code>vergil.toml</code> from your answers (see Step 4).</li>
 <li>Scaffold <code>VERSION</code>, <code>CLAUDE.md</code>, <code>.claude/settings.json</code>,
-   <code>.claude/hooks/guard.sh</code>, <code>README.md</code>, <code>.gitignore</code> and <code>LICENSE</code>.</li>
+   <code>.claude/hooks/guard.sh</code>, <code>README.md</code>, <code>.gitignore</code> and <code>LICENSE</code>.
+   A TypeScript repo also gets its three managed files and a minimal
+   <code>package.json</code> (see the
+   <a href="../../standards/development/typescript/overview/#a-new-repositorys-packagejson">TypeScript standards</a>).</li>
 <li>Scaffold the language skeleton, where the language has one.</li>
 <li>Generate the workflows under <code>.github/workflows/</code> (see Step 6).</li>
 <li>Scaffold the MkDocs site under <code>docs/site/</code> (when docs publishing
@@ -19064,8 +19097,10 @@ pin it with <code>vrg-host pin</code> rather than skipping upgrades — see the
 <a href="../../reference/dev/host/#pinning-host-dependencies">vrg-host reference</a>.</p>
 <p><code>vrg-container-run</code> pulls the base dev image on every run and rebuilds
 its per-branch cached image when the base image, the language
-lockfile or <code>vergil.toml</code> changes, so there is nothing to refresh by
-hand.
+lockfile or <code>vergil.toml</code> changes, or when a new vergil-tooling release
+lands on the line <code>vergil.toml</code> pins, so there is nothing to refresh by
+hand. See
+<a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>.
 <code>vrg-container-cache status</code> shows the cache state for the current
 branch.</p>
 <p>After a plugin release, refresh the host and every agent VM with
