@@ -92,7 +92,11 @@ Where each tool lives follows the
 
 - The repository declares no gate tool.
 - rustfmt and clippy ship with the toolchain, and cargo-deny, cargo-llvm-cov
-  and cargo-nextest come from the image.
+  and cargo-nextest come from the image. Each image tool is pinned to a
+  version, so an upstream release cannot change a gate's verdict unreviewed:
+  cargo-deny and cargo-nextest are checked against a per-architecture SHA-256
+  pinned beside the version, and cargo-llvm-cov is built from crates.io with
+  `--locked`.
 
 ## Toolchain Selection
 
@@ -134,7 +138,8 @@ Hard gates for a Rust repository (all are required status checks; the
 rules):
 
 - `quality / evidence`: the common checks, the custom validator, rustfmt,
-  clippy and `cargo check`
+  clippy, `cargo check` and the release build (`quality / build / <version>`,
+  once on the primary version)
 - `test / evidence`: the nextest run under cargo-llvm-cov at 100% line and
   region coverage, and the doctests
 - `audit / evidence`: `cargo deny` against the fleet policy

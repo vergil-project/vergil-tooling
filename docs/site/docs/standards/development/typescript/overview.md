@@ -238,10 +238,32 @@ second config source fails `vrg-validate`: a `"prettier"` key in
 `package.json`, or any `.prettierrc`, `.prettierrc.*` or `prettier.config.*`
 other than the root `.prettierrc.json`.
 
+**What Prettier checks.** Every file in the repository that Prettier can
+parse (TypeScript, JavaScript, JSON, Markdown and YAML among them), except what
+`.gitignore` or a `.prettierignore` excludes and the files Vergil manages.
+Those are the files the config audit holds to Vergil's content, so the
+repository cannot reformat them: the fleet sync writes them, and a reformatted
+copy is drift. The check leaves them out with one `!<path>` pattern each,
+anchored at the repository root:
+
+- `CLAUDE.md` (the whole file, the repository's own section included),
+  `.claude/settings.json` and `.claude/hooks/guard.sh`;
+- `.gitignore`, `.github/dependabot.yml` and `.github/workflows/ops.yml`;
+- `tsconfig.vergil.json`, `eslint.vergil.config.mjs` and `.prettierrc.json`.
+
+The list is the audit's own (`managed_paths` in `repo_config.py`), so a file
+Vergil starts to manage is left out with it. Everything else repo-init writes,
+`ci.yml`, `cd.yml` and `epic-rollup.yml` among them, is the repository's to
+format and is checked.
+
 The same config does not mean the same Prettier **version**. Prettier is an
 image tool, so the version the gate runs is guaranteed only inside the
-container: format with `vrg-container-run -- prettier --write .`. An editor's
-own Prettier may be a different version and format some code differently.
+container: format with `vrg-container-run -- prettier --write <paths>`, naming
+the repository's own files (for example `src tests`). Run over `.`, Prettier
+also rewrites the managed files above, and the next fleet sync rewrites them
+back. An editor's own Prettier may be a different version and format some code
+differently, and it does not know the managed files: do not let it format them
+on save.
 
 ### What `vrg-validate` checks
 
@@ -295,7 +317,8 @@ TypeScript hard gates:
   [Toolchain and Strictness](toolchain-and-strictness.md)). The run writes
   its diagnostics and closing statistics (`--pretty false --diagnostics`) to
   `quality-tsc.txt`, the typecheck gate's evidence, and prints them to the log.
-- **LINT** (once) — Prettier `--check` for format, then ESLint's flat config
+- **LINT** (once) — Prettier `--check` for format (every file but the
+  Vergil-managed ones, see [One Prettier config](#one-prettier-config)), then ESLint's flat config
   with type-aware typescript-eslint rules, carrying the no-standing-suppression
   rule (`@typescript-eslint/ban-ts-comment`). The ESLint run writes its JSON
   report to `quality-eslint.json`, the lint gate's evidence, and prints each

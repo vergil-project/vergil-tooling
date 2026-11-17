@@ -141,9 +141,12 @@ Triggers on `pull_request` events. Runs the full validation suite.
 - `quality` (`ci-quality.yml`): the common checks once (`vrg-validate
   --check common`), the repository's custom validator once
   (`vrg-validate --check custom`, as `quality / custom`), then lint and
-  typecheck across the full version matrix. The custom job's transcript
-  is `quality-custom.log`, and `quality / evidence` needs the job, so a
-  failing custom validator fails that gate
+  typecheck across the full version matrix, and, for a language that turns
+  it on (Rust and TypeScript), the release build once on the primary
+  version (`vrg-validate --check build`, as `quality / build / <version>`).
+  The custom job's transcript is `quality-custom.log`, and
+  `quality / evidence` needs the job, so a failing custom validator fails
+  that gate
 - `security` (`ci-security.yml`): CodeQL, Trivy and Semgrep
 - `test` (`ci-test.yml`): the language's test command across the full
   version matrix
@@ -503,7 +506,11 @@ permanently blocked with no `--admin` escape (epic
 fails if any of them did not succeed. That holds in every repo, whatever its
 language, so `quality / evidence` is required everywhere and `quality / common`,
 which still runs, is not required on its own. A failing custom validator
-therefore blocks the merge even in a repo with no primary language. The other
+therefore blocks the merge even in a repo with no primary language.
+`quality / evidence` also needs the `build` job, which runs only when
+`vrg-ci-resolve` reports `build-enabled` (Rust and TypeScript), and checks
+its result against that flag: a build skipped with the flag off passes, and
+a failed build, or one skipped with the flag on, fails the gate. The other
 non-matrixed checks (the security scanners, the version-bump gate,
 `docs / docs`) keep their fixed, version-free names. A repo whose
 `vergil.toml` has a `[package]` section also requires `package / evidence`, the
@@ -558,6 +565,12 @@ chosen, and why.
     as the C linker. The image pins rustup to that release
     (`RUSTUP_TOOLCHAIN`, with auto-install off), so a repo's
     `rust-toolchain.toml` cannot select or download another toolchain.
+    Includes rustfmt, clippy and llvm-tools from the toolchain, and the
+    validation tools cargo-nextest, cargo-deny and cargo-llvm-cov, each
+    pinned to a version the daily upstream refresh moves. cargo-nextest
+    and cargo-deny come from their prebuilt releases, verified against a
+    per-architecture SHA-256 pinned in source; cargo-llvm-cov is built from
+    crates.io with `--locked`.
 
 **`dev-cpp-clang`**
 :   Base: `base` (Ubuntu 24.04), with Clang from apt.llvm.org's noble

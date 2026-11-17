@@ -171,6 +171,39 @@ block. For example, a `runtime.toml` rule:
   an existing anchored block. Dropping a series is made by a human, in
   an ordinary PR.
 
+### A hash changes only with its block's version
+
+A line rule may mark a hash or digest in its regex with a named group:
+
+- `(?P<hash>…)` for the first one;
+- `(?P<hash_<suffix>>…)` for each further one in the same regex, such
+  as `(?P<hash_arm>…)`, for the same reason as `version_<suffix>`.
+
+A **hash line** is a line one of these groups marks. Its identity is
+its block's anchor value and the text before its hash group, as for a
+versioned line, and its block is the one that anchor names (under a
+rule with no anchor group, the whole file). The file is compared as a
+whole, so a diff that does not show the whole file is refused.
+
+- **A changed hash needs a version change.** A hash line whose hash
+  changes is allowed only when a version of the same block also changes
+  in the same patch. A hash that changes while every version of its
+  block stays the same is refused, naming the path and the line. Under
+  a rule with no version group, no existing hash may change.
+- **A hash pinned for the first time is allowed:** a hash line in a new
+  block, or a new key in an existing block.
+- **A hash line that disappears from a block that stays is refused**
+  under a rule with an anchor group, since moving it above its block's
+  anchor line would otherwise give it a new identity. Under a rule with
+  no anchor group, a dropped hash line is a dropped pin, and is allowed.
+
+A rule with no hash group checks no hashes. For example, the
+`runtime.toml` rule above, with its hashes marked:
+
+```toml
+{ path = "runtime.toml", lines = '^(\[\[series\]\]|\[series\.sha256\]|series = "(?P<anchor>\d+\.\d+)"|cpython = "(?P<version>\d+\.\d+\.\d+)"|pbs_tag = "(?P<version_pbs>\d{8})"|(x86_64|aarch64) = "(?P<hash>[0-9a-f]{64})"|)$' }
+```
+
 ### `vergil.toml`
 
 Where `paths` allows `vergil.toml`, publish parses it before (at the

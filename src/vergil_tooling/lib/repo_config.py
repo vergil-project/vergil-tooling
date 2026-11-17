@@ -53,6 +53,9 @@ CLAUDE_MD_PATH = "CLAUDE.md"
 #: Where the managed ``.gitignore`` lives in a repo, relative to its root.
 GITIGNORE_PATH = ".gitignore"
 
+#: Where the nightly config-audit caller lives in a repo, relative to its root.
+OPS_WORKFLOW_PATH = ".github/workflows/ops.yml"
+
 #: The mode the hook guard shim is written with.
 HOOK_GUARD_SHIM_MODE = 0o755
 
@@ -321,6 +324,30 @@ def language_managed_files(language: str | None) -> tuple[LanguageManagedFile, .
     return LANGUAGE_MANAGED_FILES.get(language, ())
 
 
+def managed_paths(language: str | None) -> tuple[str, ...]:
+    """Return every file the config audit holds to Vergil's content, for ``language``.
+
+    The paths are relative to the repo root: the files every repo shares
+    (``CLAUDE.md``, whose template region is managed, the Claude settings and
+    hook guard shim, ``.gitignore``, ``.github/dependabot.yml`` and the
+    ``ops.yml`` audit caller), then the whole files
+    :data:`LANGUAGE_MANAGED_FILES` lists for ``language``. A repo cannot
+    reformat any of them: the fleet sync rewrites them, or the audit reports
+    the change. TypeScript's Prettier check leaves them out for that reason
+    (vergil-project/vergil-tooling#4541), so a file added here, or to
+    :data:`LANGUAGE_MANAGED_FILES`, is left out with them.
+    """
+    return (
+        CLAUDE_MD_PATH,
+        CLAUDE_SETTINGS_PATH,
+        HOOK_GUARD_SHIM_PATH,
+        GITIGNORE_PATH,
+        dependabot.DEPENDABOT_PATH.as_posix(),
+        OPS_WORKFLOW_PATH,
+        *(entry.repo_path for entry in language_managed_files(language)),
+    )
+
+
 def _check_language_files(repo_root: Path, items: list[DiffItem]) -> None:
     """Assert the per-language managed files match their masters (.github#1174)."""
     _report(language_files_drift(repo_root), items)
@@ -385,7 +412,7 @@ def _check_required_workflows(repo_root: Path, items: list[DiffItem]) -> None:
     centrally (a manual run or a fleet sweep) — which is exactly what the
     Task 13 backfill uses to close the gap fleet-wide. (#311, #338)
     """
-    ops = repo_root / ".github" / "workflows" / "ops.yml"
+    ops = repo_root / OPS_WORKFLOW_PATH
     if not ops.is_file():
         items.append(DiffItem(field="local.ops_workflow", expected="present", actual="missing"))
         return
