@@ -130,7 +130,9 @@ The refusal names both repositories.
 | `capture-<step>.json` | The plugin's capture hook | The capture record: what the hook stored ([below](#the-capture-record)). |
 | `security-<ID>.md` | The caller | One per security finding: its details, taken from the prose. |
 
-`<step>` is the step name: `review`, `check` or `check-<k>`.
+`<step>` is the step name: `review`, `check` or `check-<k>`. The directory
+is working storage, deleted when the task is handed off, except that the
+details of a security item still awaiting its record are kept.
 
 #### The capture record
 
@@ -155,9 +157,7 @@ and the record. The result check's rule 10 refuses a result that does not
 match its record, so a result changed after the capture by any other means
 is refused too. The digest guards against a caller retyping or tidying the
 result; it is no defence against a deliberately adversarial agent running
-as the same Unix user, which could rewrite both files. The directory
-is working storage, deleted when the task is handed off, except that the
-details of a security item still awaiting its record are kept.
+as the same Unix user, which could rewrite both files.
 
 ### The request
 
