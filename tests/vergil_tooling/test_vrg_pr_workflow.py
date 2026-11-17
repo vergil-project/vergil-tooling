@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin import vrg_pr_workflow
-from vergil_tooling.lib.github import ClosingIssue, PRClosingReferences
+from vergil_tooling.lib.github import ClosingIssue, MissingGitHubTokenError, PRClosingReferences
 from vergil_tooling.lib.pr_workflow import engine, freeze
 from vergil_tooling.lib.pr_workflow.batch_marker import Marker, read_marker, write_markers
 from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
@@ -832,6 +832,29 @@ def test_batch_check_refuses_a_failed_closing_refs_read(
     github_pr["closing"].side_effect = RuntimeError("GraphQL error")
     assert _run("batch-check", "--pr", _PR) == 1
     assert "cannot read the closing issue references" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("read", ["read_json", "closing"])
+def test_batch_check_lets_a_missing_token_reach_the_cli(
+    github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str], read: str
+) -> None:
+    _pr_is(github_pr, "a" * 40)
+    github_pr[read].side_effect = MissingGitHubTokenError(1, ["gh"], stderr="GH_TOKEN")
+    with pytest.raises(SystemExit) as exit_info:
+        _run("batch-check", "--pr", _PR)
+    assert exit_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "no GitHub token available" in err
+    assert "batch-check: cannot read" not in err
+
+
+def test_batch_check_refuses_a_clone_whose_repo_cannot_be_told(
+    github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _pr_is(github_pr, "a" * 40)
+    with patch(f"{_WF}._clone_repo", side_effect=vrg_pr_workflow.WrongCloneError("no origin")):
+        assert _run("batch-check", "--pr", _PR) == 1
+    assert "batch-check: no origin" in capsys.readouterr().err
 
 
 def test_batch_check_refuses_an_unknown_head(

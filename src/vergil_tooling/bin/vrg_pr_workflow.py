@@ -849,7 +849,6 @@ def _check_commits_at(pr: str, base: str, head: str) -> tuple[str, str]:
     by its SHA alone, so the PR branch's remote-tracking ref, the one a
     ``--force-with-lease`` push checks against, never moves.
     """
-
     try:
         git.run("fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}")
         base_sha = _commit_sha(f"refs/remotes/origin/{base}")
