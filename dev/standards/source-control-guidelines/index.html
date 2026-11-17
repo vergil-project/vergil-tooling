@@ -18267,9 +18267,11 @@ applies to all users, including repository administrators.</p>
 <code>lib/github_config.py</code> and checked by the config audit; the
 <a href="../../reference/config-audit/#github-checks-rulesets">rulesets table</a> lists
 each one's includes, rules and bypass.</p>
-<p>Every repository requires the same five rulesets, whatever its
+<p>Every repository requires the same rulesets, whatever its
 <code>repository-type</code>: <code>compute_desired_state()</code> does not vary them by type, and
-only the CI gates' required checks differ from one repository to another. A
+only the CI gates' required checks differ from one repository to another. The
+one exception is the branching model: a <code>docs-single-branch</code> repository has no
+<code>main</code>, so it carries no <code>CI gates (main)</code> ruleset. A
 repository that publishes no tags still carries Tag protection and Rolling tag
 branch names, so a tag or branch of either shape can never appear unprotected.</p>
 <ol>
@@ -18280,12 +18282,14 @@ branch names, so a tag or branch of either shape can never appear unprotected.</
 <p>Require pull requests (0 approvals, dismiss stale reviews)</p>
 </li>
 <li>
-<p><strong>CI gates</strong> (targets: <code>main</code>, <code>develop</code>)</p>
+<p><strong>CI gates (develop)</strong> and <strong>CI gates (main)</strong> (one ruleset per branch)</p>
 </li>
-<li>Require status checks to pass before merging (<code>strict</code> mode)</li>
+<li>Require status checks to pass before merging. Only <code>main</code>'s requires the
+     branch to be up to date first (<code>strict</code> mode); <code>develop</code>'s does not, so
+     ready PRs into <code>develop</code> can merge in parallel</li>
 <li>
-<p>Required checks are repo-specific and must match the CI job names defined
-     in the repository's workflow files</p>
+<p>Both require the same checks, which are repo-specific and must match the
+     CI job names defined in the repository's workflow files</p>
 </li>
 <li>
 <p><strong>Tag protection</strong> (targets: <code>v*.*.*</code> release tags and <code>v*.*</code> rolling tags)</p>

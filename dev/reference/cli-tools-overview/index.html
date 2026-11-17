@@ -22323,7 +22323,7 @@ unwarmed-but-usable container, and the warmup runs normally on every
 later build once the lock is committed
 (<a href="https://github.com/vergil-project/.github/issues/342">epic vergil-project/.github#342</a>).</p>
 <p><strong>Integration tests are refused.</strong> <code>[ci].integration-tests = true</code> would
-make the <code>CI gates</code> ruleset require <code>test / integration / &lt;version&gt;</code>,
+make the CI-gates rulesets require <code>test / integration / &lt;version&gt;</code>,
 which no vergil-actions CI job produces yet
 (<a href="https://github.com/vergil-project/vergil-tooling/issues/2721">#2721</a>),
 so the repo could never merge a PR. The wizard refuses the setting as

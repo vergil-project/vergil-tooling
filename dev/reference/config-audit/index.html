@@ -19032,18 +19032,40 @@ order:</p>
 <td>the org automation App (<code>Integration</code>, its App ID) and the repository Admin role (<code>RepositoryRole</code>, <code>actor_id</code> 5)</td>
 </tr>
 <tr>
-<td><code>CI gates</code></td>
+<td><code>CI gates (develop)</code></td>
 <td>branch</td>
-<td><code>refs/heads/main</code>, <code>refs/heads/develop</code></td>
-<td><code>required_status_checks</code> (see below)</td>
+<td><code>refs/heads/develop</code></td>
+<td><code>required_status_checks</code> (see below), not strict</td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>CI gates (main)</code></td>
+<td>branch</td>
+<td><code>refs/heads/main</code></td>
+<td><code>required_status_checks</code> (see below), strict</td>
 <td>none</td>
 </tr>
 </tbody>
 </table>
 <ul>
-<li><strong>Tag protection</strong> covers both the <code>vX.Y.Z</code> release tags and the rolling
+<li>
+<p><strong>CI gates</strong> is one ruleset per branch, both requiring the same checks.
+  <code>develop</code>'s does not require a branch to be up to date before it merges
+  (<code>strict_required_status_checks_policy</code> is <code>false</code>), so ready PRs into
+  <code>develop</code> can merge in parallel; <code>main</code>'s does (<code>true</code>). A
+  <code>docs-single-branch</code> repo has no <code>main</code>, so it gets <code>CI gates (develop)</code>
+  only
+  (<a href="https://github.com/vergil-project/.github/issues/1218">epic vergil-project/.github#1218</a>).
+  A repo still carrying the older shared <code>CI gates</code> ruleset reports it as
+  drift, replaced by the pair, and <code>update</code> writes the pair before it
+  deletes the old ruleset, so neither branch is ever left without required
+  checks.</p>
+</li>
+<li>
+<p><strong>Tag protection</strong> covers both the <code>vX.Y.Z</code> release tags and the rolling
   <code>vX.Y</code> tags consumers follow as their deploy ref, so only the human release
-  identity can move or delete either.</li>
+  identity can move or delete either.</p>
+</li>
 <li><strong>Rolling tag branch names</strong> blocks creating any branch named like a rolling
   tag (a <code>v</code> followed by a digit). Some consumers, Claude Code among them,
   resolve a ref such as <code>v2.1</code> as a branch before a tag (git's own short-name
@@ -19094,8 +19116,8 @@ order:</p>
 </ul>
 <h2 id="github-checks-the-required-status-check-set">GitHub checks — the required-status-check set<a class="headerlink" href="#github-checks-the-required-status-check-set" title="Permanent link">&para;</a></h2>
 <p>The GitHub half compares the repo's live branch-protection configuration
-against the canonical CI-gates ruleset that
-<a href="../../guides/ci-evidence-convention/#the-evidence-producing-gate-set"><code>desired_ci_gates_ruleset()</code></a>
+against the canonical CI-gates rulesets that
+<a href="../../guides/ci-evidence-convention/#the-evidence-producing-gate-set"><code>desired_ci_gates_rulesets()</code></a>
 computes from <code>vergil.toml</code>. Three properties matter for the dynamic,
 version-agnostic CI model (epic
 <a href="https://github.com/vergil-project/.github/issues/338">vergil-project/.github#338</a>):</p>
@@ -19111,10 +19133,12 @@ version-agnostic CI model (epic
   one the repo's workflows can actually produce. A leftover required leg that no
   workflow emits — for example a stale per-version check surviving a matrix
   reduction — is reported as drift rather than silently sitting "expected, never
-  reported" and blocking every PR.</li>
+  reported" and blocking every PR. Each CI-gates ruleset is checked on its
+  own, and one that is desired but not live, or live but not desired, is
+  reported as <code>rulesets.&lt;name&gt;.missing_ci_gates_ruleset</code>, never skipped.</li>
 <li><strong>Apply-time producibility guard.</strong> Before <code>update</code> or <code>apply</code> writes
   anything, it fetches the repo's committed <code>.github/workflows/ci.yml</code> from
-  <code>develop</code> and refuses (exit 2 for <code>update</code>, 1 for <code>apply</code>) if the desired <code>CI gates</code> ruleset requires a context no
+  <code>develop</code> and refuses (exit 2 for <code>update</code>, 1 for <code>apply</code>) if a desired CI-gates ruleset requires a context no
   <code>pull_request</code> job in that file emits — the same guard repo-init runs
   against the ci.yml it generates. A missing <code>ci.yml</code> is also a refusal, never
   a skip: with no workflow, no required check could ever report.</li>
