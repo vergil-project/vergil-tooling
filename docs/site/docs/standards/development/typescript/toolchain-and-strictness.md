@@ -129,7 +129,9 @@ and **ESLint** (type-aware typescript-eslint rules) once:
 
 - **Prettier** runs `prettier --check` against the managed `.prettierrc.json`
   (`semi: true`, `singleQuote: false`, `trailingComma: "all"`,
-  `printWidth: 100`) — formatting only, no logic judgments.
+  `printWidth: 100`) — formatting only, no logic judgments. It checks every
+  file it can parse but the Vergil-managed ones (see
+  [One Prettier config](overview.md#one-prettier-config)).
 - **ESLint** runs the repository's `eslint.config.mjs`, which spreads Vergil's
   managed `eslint.vergil.config.mjs`: its flat config with
   `js.configs.recommended` plus typescript-eslint's `recommendedTypeChecked` (type-aware rules resolved via

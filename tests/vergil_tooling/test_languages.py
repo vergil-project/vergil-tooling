@@ -1005,7 +1005,22 @@ def _ts_script(kind: CheckKind) -> str:
 def test_typescript_lint_commands() -> None:
     """Prettier reads the managed ``.prettierrc.json``; ESLint finds the repo's own config."""
     lint = language_commands("typescript", CheckKind.LINT)
-    assert lint[0] == ["prettier", "--check", ".", "--config", ".prettierrc.json"]
+    assert lint[0] == [
+        "prettier",
+        "--check",
+        ".",
+        "!CLAUDE.md",
+        "!.claude/settings.json",
+        "!.claude/hooks/guard.sh",
+        "!.gitignore",
+        "!.github/dependabot.yml",
+        "!.github/workflows/ops.yml",
+        "!tsconfig.vergil.json",
+        "!eslint.vergil.config.mjs",
+        "!.prettierrc.json",
+        "--config",
+        ".prettierrc.json",
+    ]
     assert lint[1][:2] == ["sh", "-c"]
     assert len(lint) == 2
 
