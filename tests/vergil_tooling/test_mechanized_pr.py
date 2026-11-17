@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import develop_clone, github, mechanized_pr, pr_merge
+from vergil_tooling.lib import auto_merge, develop_clone, github, mechanized_pr, pr_merge
 from vergil_tooling.lib.develop_clone import clone_develop
 from vergil_tooling.lib.mechanized_pr import (
     AUTOMATION_BRANCH_PREFIX,
@@ -66,6 +66,8 @@ class FakeGitHub:
     mutations: list[dict[str, object]] = field(default_factory=list)
     auto_merge: dict[str, str] | None = None
     confirm_auto_merge: bool = True
+    auto_merge_refusal: BaseException | None = None
+    merges: list[tuple[str, str, str | None]] = field(default_factory=list)
     waits: list[tuple[str, str, int]] = field(default_factory=list)
     wait_failure: BaseException | None = None
 
@@ -102,6 +104,9 @@ class FakeGitHub:
             fields = args[args.index("--json") + 1]
             if fields == "id":
                 return {"id": f"PR_{args[2].rsplit('/', 1)[1]}"}
+            if fields == "state":
+                merged = any(pr == args[2] for pr, _strategy, _head in self.merges)
+                return {"state": "MERGED" if merged else "OPEN"}
             return {"autoMergeRequest": self.auto_merge}
         raise AssertionError(args)
 
@@ -131,9 +136,15 @@ class FakeGitHub:
     def graphql(self, query: str, **variables: object) -> dict[str, object]:
         assert "enablePullRequestAutoMerge" in query
         self.mutations.append({"query": query, **variables})
+        if self.auto_merge_refusal is not None:
+            raise self.auto_merge_refusal
         if self.confirm_auto_merge:
-            self.auto_merge = {"mergeMethod": "SQUASH"}
+            self.auto_merge = {"mergeMethod": str(variables["method"])}
         return {"enablePullRequestAutoMerge": {"pullRequest": {"number": 1}}}
+
+    def merge(self, pr: str, *, strategy: str, match_head: str | None = None) -> None:
+        self.calls.append(("pr", "merge", pr))
+        self.merges.append((pr, strategy, match_head))
 
     def wait_until_merged(self, pr: str, *, strategy: str, deadline_secs: int) -> None:
         """Stands in for ``pr_merge.wait_until_merged`` (tested in test_pr_merge)."""
@@ -171,7 +182,14 @@ def origin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture
 def fake(origin: Path, monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     api = FakeGitHub(origin)
-    for name in ("read_json_paginated", "read_json", "run", "delete_if_exists", "create_pr"):
+    for name in (
+        "read_json_paginated",
+        "read_json",
+        "run",
+        "delete_if_exists",
+        "create_pr",
+        "merge",
+    ):
         monkeypatch.setattr(github, name, getattr(api, name))
     monkeypatch.setattr(github, "graphql", api.graphql)
     monkeypatch.setattr(pr_merge, "wait_until_merged", api.wait_until_merged)
@@ -295,17 +313,71 @@ def test_branch_without_pr_under_own_prefix_deleted(
     assert _git(origin, "show", f"{BRANCH}:vergil.toml") == "v2"
 
 
-def test_auto_merge_enabled_squash_with_expected_head(
-    fake: FakeGitHub, origin: Path, clone: Path
+def test_mechanized_uses_helper_squash(
+    fake: FakeGitHub, origin: Path, clone: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    seen: list[tuple[str, str, str]] = []
+    helper = auto_merge.enable_auto_merge
+
+    def spy(pr_url: str, *, head: str, method: auto_merge.MergeMethod) -> object:
+        seen.append((pr_url, head, method))
+        return helper(pr_url, head=head, method=method)
+
+    monkeypatch.setattr(auto_merge, "enable_auto_merge", spy)
     (clone / "vergil.toml").write_text("v2\n")
 
     _sync(clone)
 
+    head = _git(origin, "rev-parse", BRANCH)
+    assert seen == [(fake.prs[0].url, head, "SQUASH")]
     [mutation] = fake.mutations
-    assert "mergeMethod: SQUASH" in str(mutation["query"])
-    assert mutation["head"] == _git(origin, "rev-parse", BRANCH)
+    assert mutation["method"] == "SQUASH"
+    assert mutation["head"] == head
     assert mutation["id"] == f"PR_{fake.prs[0].number}"
+
+
+def test_mechanized_auto_merge_refusal_is_mechanized_error(
+    fake: FakeGitHub, clone: Path
+) -> None:
+    fake.auto_merge_refusal = github.GitHubAPIError(
+        1,
+        ("gh", "api", "graphql"),
+        "",
+        "GraphQL: Auto merge is not allowed for this repository (enablePullRequestAutoMerge)",
+    )
+    (clone / "vergil.toml").write_text("v2\n")
+
+    with pytest.raises(MechanizedPRError) as excinfo:
+        _sync(clone)
+
+    assert not isinstance(excinfo.value, auto_merge.AutoMergeError)
+    message = str(excinfo.value)
+    assert message.startswith(f"mechanized PR for {REPO}: enabling auto-merge failed: ")
+    assert fake.prs[0].url in message
+    assert "Auto merge is not allowed" in message
+    assert fake.merges == []
+    assert fake.waits == []
+
+
+def test_mechanized_already_mergeable_merges_directly(
+    fake: FakeGitHub, origin: Path, clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.auto_merge_refusal = github.GitHubAPIError(
+        1,
+        ("gh", "api", "graphql"),
+        "",
+        "GraphQL: Pull request Pull request is in clean status (enablePullRequestAutoMerge)",
+    )
+    (clone / "vergil.toml").write_text("v2\n")
+
+    result = _sync(clone)
+
+    url = fake.prs[0].url
+    assert result.status == "merged"
+    assert result.pr_url == url
+    assert fake.merges == [(url, "squash", _git(origin, "rev-parse", BRANCH))]
+    assert fake.waits == []
+    assert f"{REPO}: {url} was already mergeable and merged directly" in capsys.readouterr().out
 
 
 def test_auto_merge_not_confirmed_raises(fake: FakeGitHub, clone: Path) -> None:
@@ -368,7 +440,10 @@ def test_pr_opened_for_named_repo_from_unrelated_cwd(
     kinds = {call[1] for call in fake.pr_calls()}
     assert {"create", "list", "close", "view"} <= kinds
     for call in fake.pr_calls():
-        assert call[call.index("--repo") + 1] == REPO, call
+        if "--repo" in call:
+            assert call[call.index("--repo") + 1] == REPO, call
+        else:
+            assert call[2].startswith(f"https://github.com/{REPO}/pull/"), call
 
 
 def test_only_own_job_prefix_closed(fake: FakeGitHub, origin: Path, clone: Path) -> None:
