@@ -336,9 +336,7 @@ def test_mechanized_uses_helper_squash(
     assert mutation["id"] == f"PR_{fake.prs[0].number}"
 
 
-def test_mechanized_auto_merge_refusal_is_mechanized_error(
-    fake: FakeGitHub, clone: Path
-) -> None:
+def test_mechanized_auto_merge_refusal_is_mechanized_error(fake: FakeGitHub, clone: Path) -> None:
     fake.auto_merge_refusal = github.GitHubAPIError(
         1,
         ("gh", "api", "graphql"),

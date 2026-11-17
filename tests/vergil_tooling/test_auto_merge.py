@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass, field
+from typing import Any, cast
 
 import pytest
 
@@ -100,9 +101,7 @@ def test_mutation_pins_method_and_head_as_variables() -> None:
     assert "expectedHeadOid: $head" in query
 
 
-@pytest.mark.parametrize(
-    ("method", "strategy"), [("REBASE", "rebase"), ("SQUASH", "squash")]
-)
+@pytest.mark.parametrize(("method", "strategy"), [("REBASE", "rebase"), ("SQUASH", "squash")])
 def test_already_mergeable_merges_directly_with_method_and_head(
     fake: FakeGitHub, method: MergeMethod, strategy: str
 ) -> None:
@@ -173,7 +172,9 @@ def test_direct_merge_failure_raises(fake: FakeGitHub) -> None:
     fake.refusal = _gh_refusal(CLEAN_STDERR)
     fake.merge_failure = _gh_refusal("GraphQL: Head branch was modified (mergePullRequest)")
 
-    with pytest.raises(AutoMergeError, match="(?s)the direct merge failed.*Head branch was modified"):
+    with pytest.raises(
+        AutoMergeError, match="(?s)the direct merge failed.*Head branch was modified"
+    ):
         enable_auto_merge(PR, head=HEAD, method="REBASE")
 
 
@@ -187,7 +188,7 @@ def test_direct_merge_that_leaves_pr_open_raises(fake: FakeGitHub) -> None:
 
 def test_unknown_method_raises_before_any_call(fake: FakeGitHub) -> None:
     with pytest.raises(AutoMergeError, match="merge method must be one of SQUASH, REBASE"):
-        enable_auto_merge(PR, head=HEAD, method="MERGE")  # type: ignore[arg-type]
+        enable_auto_merge(PR, head=HEAD, method=cast("Any", "MERGE"))
     assert fake.mutations == []
 
 
@@ -221,7 +222,7 @@ def test_auto_merge_enabled_false_when_off(fake: FakeGitHub) -> None:
 
 
 def test_auto_merge_enabled_rejects_malformed_request(fake: FakeGitHub) -> None:
-    fake.auto_merge = "SQUASH"  # type: ignore[assignment]
+    fake.auto_merge = cast("Any", "SQUASH")
 
     with pytest.raises(AutoMergeError, match="neither an object nor null"):
         auto_merge_enabled(PR)

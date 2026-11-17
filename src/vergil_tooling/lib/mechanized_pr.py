@@ -95,6 +95,7 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 
 _CLOSE_COMMENT = "Superseded by a new run of this automation job; closing."
 
+
 class MechanizedPRError(RuntimeError):
     """A step of the mechanized-PR flow failed; the message names the step and repo."""
 
