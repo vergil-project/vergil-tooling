@@ -18561,9 +18561,9 @@ such as <code>develop</code> or a feature branch):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-vm<span class="w"> </span>update<span class="w"> </span>--tag<span class="w"> </span>develop
 </code></pre></div>
 <ul>
-<li>This runs <code>uv tool install</code> from git into <code>~/.local/bin</code>, which
-  takes precedence over the packaged <code>/usr/bin</code> copy on the VM user's
-  <code>PATH</code>, and records the ref in <code>~/.config/vergil/tooling-dev-ref</code>.</li>
+<li>This runs <code>uv tool install --python 3.15</code> from git into
+  <code>~/.local/bin</code>, which takes precedence over the packaged <code>/usr/bin</code>
+  copy on the VM user's <code>PATH</code>, and records the ref in <code>~/.config/vergil/tooling-dev-ref</code>.</li>
 <li>You only get a dev install by passing a dev ref. A failed packaged
   install never falls back to one.</li>
 <li>While it is in place, every <code>vrg-vm</code> command that touches the VM

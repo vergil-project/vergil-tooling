@@ -18600,7 +18600,8 @@ old <code>standard-tooling</code>/<code>st-*</code> naming):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.15<span class="w"> </span><span class="s1">'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'</span>
 </code></pre></div>
 <p>On an agent VM, a dev ref (<code>vrg-vm update --tag develop</code>, or any non-release
-ref) is an explicit <code>uv tool install</code> from git that shadows the packaged copy,
+ref) is an explicit <code>uv tool install --python 3.15</code> from git that shadows the
+packaged copy,
 and every <code>vrg-vm</code> command that touches the VM prints a <code>DEV tooling</code> banner
 while it is in place. A plain <code>vrg-vm update</code> returns the VM to the package.
 See <a href="../../reference/vm-spec/#vergil-tooling-inside-the-vm">vergil-tooling inside the VM</a>.</p>

@@ -18131,7 +18131,12 @@ page applies it to Python.</p>
 <p>vergil-tooling itself is a <code>tooling</code> repo with no pin: every install path runs
 it on its own Python 3.15 interpreter, so no consumer runs it on a version it
 builds. It resolves as an app, so its CI and local validation run on the newest
-window version with a published runtime, 3.15 today.</p>
+window version with a published runtime, 3.15 today. Its <code>requires-python</code>
+floor is 3.15, but the floor does not choose the versions it builds: only the
+repository type does. When a newer series joins the window with a published
+runtime, its CI moves to that series on the next build, while its install paths
+still name <code>--python 3.15</code>. Moving the install paths to the new series, and
+raising the floor with them, is a deliberate change of its own.</p>
 <h2 id="toolchain-selection-in-the-repo">Toolchain selection in the repo<a class="headerlink" href="#toolchain-selection-in-the-repo" title="Permanent link">&para;</a></h2>
 <p><code>vrg-validate</code> checks the repo's own Python settings against the window
 (<code>src/vergil_tooling/lib/versions/extensions/python.py</code>):</p>
