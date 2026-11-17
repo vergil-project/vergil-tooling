@@ -62,6 +62,8 @@ class UpdateDepsState:
     only: list[str] | None = None
     skip: list[str] | None = None
     vergil_bump: str | None = None
+    # Set only by vrg-release's update-deps stage (see preflight).
+    fast_forward: bool = False
 
 
 def _require_ctx(state: UpdateDepsState) -> UpdateDepsContext:
@@ -75,7 +77,7 @@ def _require_ctx(state: UpdateDepsState) -> UpdateDepsContext:
 
 
 def preflight_stage(state: UpdateDepsState) -> None:
-    state.ctx = preflight(repo_root=state.repo_root)
+    state.ctx = preflight(repo_root=state.repo_root, fast_forward=state.fast_forward)
     state.ctx.vergil_bump = state.vergil_bump
 
 
@@ -207,7 +209,9 @@ def build_stages() -> list[Stage]:
     ]
 
 
-def run_update(*, repo_root: Path, registry: list[Updater] | None = None) -> UpdateDepsContext:
+def run_update(
+    *, repo_root: Path, registry: list[Updater] | None = None, fast_forward: bool = False
+) -> UpdateDepsContext:
     """Run the pipeline as plain calls, for callers already inside a pipeline.
 
     vrg-release's update-deps stage uses this rather than nesting
@@ -215,8 +219,12 @@ def run_update(*, repo_root: Path, registry: list[Updater] | None = None) -> Upd
     always runs once preflight has created the worktree. A recorded failure is
     returned on the context, not raised: the caller decides how to surface it.
     Preflight errors and unexpected exceptions propagate.
+
+    *fast_forward* is passed to preflight: only vrg-release's update-deps stage
+    sets it, so a ``develop`` behind ``origin/develop`` is fast-forwarded there
+    rather than refused. ``vrg-update-deps`` never does.
     """
-    state = UpdateDepsState(repo_root=repo_root)
+    state = UpdateDepsState(repo_root=repo_root, fast_forward=fast_forward)
     if registry is not None:
         state.registry = list(registry)
     preflight_stage(state)

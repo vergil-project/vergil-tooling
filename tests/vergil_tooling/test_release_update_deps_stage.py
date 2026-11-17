@@ -58,6 +58,7 @@ class _Recorder:
         self.gits: list[tuple[str, ...]] = []
         self.chdirs: list[Path] = []
         self.run_update_roots: list[Path] = []
+        self.run_update_fast_forwards: list[bool] = []
         # Every lock, branch, git and run_update event, in order.
         self.events: list[str] = []
 
@@ -95,9 +96,10 @@ def _patch(
     monkeypatch.setattr(_MOD + ".git.current_branch", fake_branch)
     monkeypatch.setattr(_MOD + ".git.run", fake_git)
 
-    def fake_run_update(*, repo_root: Path) -> UpdateDepsContext:
+    def fake_run_update(*, repo_root: Path, fast_forward: bool) -> UpdateDepsContext:
         rec.events.append("run_update")
         rec.run_update_roots.append(repo_root)
+        rec.run_update_fast_forwards.append(fast_forward)
         if isinstance(deps, BaseException):
             raise deps
         return deps
@@ -146,6 +148,7 @@ def test_syncs_root_develop_before_running(monkeypatch: pytest.MonkeyPatch) -> N
     assert rec.chdirs == [Path("/r")]
     assert rec.gits == [("fetch", "origin", "develop"), ("merge", "--ff-only", "origin/develop")]
     assert rec.run_update_roots == [Path("/r")]
+    assert rec.run_update_fast_forwards == [True]
 
 
 def test_refuses_when_root_checkout_not_on_develop(monkeypatch: pytest.MonkeyPatch) -> None:
