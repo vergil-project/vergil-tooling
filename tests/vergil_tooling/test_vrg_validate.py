@@ -1700,7 +1700,45 @@ def test_check_build_nothing_to_run(tmp_path: Path, capsys: pytest.CaptureFixtur
     ):
         assert main(["--check", "build"]) == 0
     m_pipeline.assert_not_called()
-    assert "build: no build check for python — nothing to run" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "build: no build check for python — nothing to run\n" in out
+    # A detected language names no repo root: only the no-language case does.
+    assert "repo root" not in out
+
+
+@pytest.mark.parametrize("kind", ["lint", "typecheck", "test"])
+@pytest.mark.parametrize("with_config", [True, False])
+def test_check_no_language_names_repo_root(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], kind: str, with_config: bool
+) -> None:
+    # No language still exits 0 (repos that declare none run these checks in
+    # CI), but the message names the repo root resolved, so a run against the
+    # wrong repo shows in its own output (#4594).
+    if with_config:
+        _write_config(tmp_path)
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._find_custom_validator", return_value=None),
+        patch(_MOD + ".progress.run_pipeline") as m_pipeline,
+    ):
+        assert main(["--check", kind]) == 0
+    m_pipeline.assert_not_called()
+    out = capsys.readouterr().out
+    assert f"No {kind} commands for language '<not set>' (repo root: {tmp_path})\n" in out
+
+
+def test_check_build_no_language_names_repo_root(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_config(tmp_path)
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline") as m_pipeline,
+    ):
+        assert main(["--check", "build"]) == 0
+    m_pipeline.assert_not_called()
+    out = capsys.readouterr().out
+    assert f"build: no build check for <not set> — nothing to run (repo root: {tmp_path})\n" in out
 
 
 def test_full_validate_runs_build_after_typecheck(
