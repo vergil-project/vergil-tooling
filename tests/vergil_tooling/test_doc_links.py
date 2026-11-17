@@ -118,8 +118,9 @@ def test_versioned_form_rejects_other_url() -> None:
 
 
 def test_published_sites_are_versioned_plus_docs_and_packages() -> None:
-    assert doc_links.UNVERSIONED_SITES == {"docs", "packages"}
-    assert doc_links.PUBLISHED_SITES == doc_links.VERSIONED_SITES | {"docs", "packages"}
+    unversioned = {"docs", "packages"}
+    assert unversioned == doc_links.UNVERSIONED_SITES
+    assert doc_links.VERSIONED_SITES | unversioned == doc_links.PUBLISHED_SITES
     assert not doc_links.VERSIONED_SITES & doc_links.UNVERSIONED_SITES
 
 
