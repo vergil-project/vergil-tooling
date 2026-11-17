@@ -1037,27 +1037,6 @@ def test_graphql_rejects_a_response_with_no_data_object(payload: object) -> None
         github.graphql("query")
 
 
-def test_pr_reviews_returns_list() -> None:
-    reviews = [{"id": "r1", "state": "APPROVED"}, {"id": "r2", "state": "COMMENTED"}]
-    with patch("vergil_tooling.lib.github.read_json", return_value=reviews):
-        assert github.pr_reviews("https://github.com/pr/1") == reviews
-
-
-def test_pr_reviews_empty_list() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
-        assert github.pr_reviews("https://github.com/pr/1") == []
-
-
-@pytest.mark.parametrize("payload", [None, {"reviews": []}, ["review"]])
-def test_pr_reviews_rejects_a_malformed_response(payload: object) -> None:
-    # Never "no reviews" for a response that is not a list of reviews (#4058).
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value=payload),
-        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
-    ):
-        github.pr_reviews("https://github.com/pr/1")
-
-
 def test_post_check_run_posts_completed_check() -> None:
     with patch("vergil_tooling.lib.github.write_json") as mock_write:
         github.post_check_run(

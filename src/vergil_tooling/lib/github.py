@@ -2372,19 +2372,6 @@ def pr_checks(pr: str) -> list[dict[str, str]]:
     raise GitHubAPIError(result.returncode or 1, cmd, stderr=result.stderr)
 
 
-def pr_reviews(pr: str) -> list[dict[str, object]]:
-    """Return the PR's reviews (``id``, ``state``, ``author``, ...).
-
-    A response that is not a list of objects raises :class:`GitHubAPIError`
-    rather than read as "no reviews" (#4058).
-    """
-    cmd = ("pr", "view", pr, "--json", "reviews", "--jq", ".reviews")
-    result = read_json(*cmd)
-    if not isinstance(result, list) or not all(isinstance(r, dict) for r in result):
-        raise _shape_error(("gh", *cmd), f"reviews are not a list of objects: {result!r}")
-    return cast("list[dict[str, object]]", result)
-
-
 def post_check_run(
     repo: str,
     *,

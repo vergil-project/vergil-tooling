@@ -78,7 +78,7 @@ _RELEASE_PREFIX = "release/"
 _STATES = frozenset({"OPEN", "MERGED", "CLOSED"})
 _VIEW_FIELDS = (
     "id,url,state,baseRefName,headRefName,headRefOid,autoMergeRequest,"
-    "mergeStateStatus,statusCheckRollup"
+    "mergeStateStatus,statusCheckRollup,mergeCommit"
 )
 # A status context's failing states; a check-run is judged by
 # github.check_run_bucket.
@@ -135,8 +135,13 @@ def deadline_secs() -> int:
 
 
 @dataclass(frozen=True)
-class _Snapshot:
-    """One ``gh pr view`` read of a PR."""
+class Snapshot:
+    """One ``gh pr view`` read of a PR.
+
+    *merge_commit* is the merge commit's SHA, or ``""`` while GitHub reports
+    none. ``vrg-pr-await`` reads a PR through :func:`snapshot` and judges its
+    checks with :func:`failed_required_checks` too.
+    """
 
     node_id: str
     url: str
@@ -147,6 +152,7 @@ class _Snapshot:
     auto_merge_on: bool
     merge_state: str
     rollup: tuple[dict[str, object], ...]
+    merge_commit: str
 
 
 def _field(data: dict[str, object], name: str, pr: str) -> str:
@@ -157,7 +163,7 @@ def _field(data: dict[str, object], name: str, pr: str) -> str:
     return value
 
 
-def _snapshot(pr: str) -> _Snapshot:
+def snapshot(pr: str) -> Snapshot:
     """Read *pr*'s state in one ``gh pr view`` call; a bad answer raises."""
     try:
         data = github.read_json("pr", "view", pr, "--json", _VIEW_FIELDS)
@@ -185,7 +191,15 @@ def _snapshot(pr: str) -> _Snapshot:
     if not isinstance(rollup, list) or not all(isinstance(n, dict) for n in rollup):
         msg = f"{pr}: statusCheckRollup is not a list of objects: {rollup!r}"
         raise FinalizeWatchError(msg)
-    return _Snapshot(
+    commit = data.get("mergeCommit")
+    if commit is None:
+        merge_commit = ""
+    elif isinstance(commit, dict) and isinstance(commit.get("oid"), str) and commit["oid"]:
+        merge_commit = str(commit["oid"])
+    else:
+        msg = f"{pr}: mergeCommit is neither null nor an object with an oid: {commit!r}"
+        raise FinalizeWatchError(msg)
+    return Snapshot(
         node_id=_field(data, "id", pr),
         url=_field(data, "url", pr),
         state=state,
@@ -195,10 +209,11 @@ def _snapshot(pr: str) -> _Snapshot:
         auto_merge_on=request is not None,
         merge_state=merge_state,
         rollup=tuple(rollup),
+        merge_commit=merge_commit,
     )
 
 
-def _not_develop(snap: _Snapshot) -> str | None:
+def _not_develop(snap: Snapshot) -> str | None:
     """Why *snap* is not a develop PR, or ``None`` when it is one."""
     if snap.base != _DEVELOP:
         return f"its base is {snap.base}, not {_DEVELOP}"
@@ -223,7 +238,7 @@ def _violations(pr: str) -> str:
     return ", ".join(f"{v.login} ({v.role.value}): {v.action}" for v in result.violations)
 
 
-def _disable_auto_merge(snap: _Snapshot) -> None:
+def _disable_auto_merge(snap: Snapshot) -> None:
     """Turn auto-merge off for *snap*'s PR and confirm it is off; any failure raises."""
     try:
         github.graphql(_DISABLE_AUTO_MERGE_MUTATION, id=snap.node_id)
@@ -240,7 +255,7 @@ def _disable_auto_merge(snap: _Snapshot) -> None:
         raise FinalizeWatchError(msg)
 
 
-def _failed_required(snap: _Snapshot, required: Collection[str] | None) -> list[str]:
+def failed_required_checks(snap: Snapshot, required: Collection[str] | None) -> list[str]:
     """The required checks on *snap*'s head that concluded in failure, confirmed.
 
     The rollup decides whether to look; :func:`github.failed_check_names`
@@ -275,7 +290,7 @@ class _Watched:
     violation: str = ""
 
 
-def _result(snap: _Snapshot, outcome: Outcome, detail: str, watched: _Watched) -> PRResult:
+def _result(snap: Snapshot, outcome: Outcome, detail: str, watched: _Watched) -> PRResult:
     print(f"{snap.url}: {outcome}{f' ({detail})' if detail else ''}")
     return PRResult(
         pr=snap.url,
@@ -286,7 +301,7 @@ def _result(snap: _Snapshot, outcome: Outcome, detail: str, watched: _Watched) -
     )
 
 
-def _check_provenance(snap: _Snapshot, watched: _Watched) -> bool:
+def _check_provenance(snap: Snapshot, watched: _Watched) -> bool:
     """Check *snap*'s PR at its head; record a violation on *watched*. True if one was found."""
     watched.checked_head = snap.head
     found = _violations(snap.url)
@@ -295,7 +310,7 @@ def _check_provenance(snap: _Snapshot, watched: _Watched) -> bool:
     return bool(found)
 
 
-def _judge(snap: _Snapshot, watched: _Watched, *, allow: bool) -> PRResult | None:
+def _judge(snap: Snapshot, watched: _Watched, *, allow: bool) -> PRResult | None:
     """*snap*'s terminal result, in the module docstring's order, or ``None`` while pending."""
     why = _not_develop(snap)
     if why is not None:
@@ -328,7 +343,7 @@ def _judge(snap: _Snapshot, watched: _Watched, *, allow: bool) -> PRResult | Non
     if not snap.auto_merge_on:
         detail = "auto-merge is off; investigate before re-enabling auto-merge"
         return _result(snap, "failed: auto-merge off", detail, watched)
-    failed = _failed_required(snap, watched.required)
+    failed = failed_required_checks(snap, watched.required)
     if failed:
         return _result(snap, "failed: CI", f"required check failed: {', '.join(failed)}", watched)
     if snap.merge_state == "DIRTY":
@@ -350,10 +365,10 @@ def watch(
         msg = f"poll_interval must be positive, got {poll_interval!r}"
         raise ValueError(msg)
     results: dict[str, PRResult] = {}
-    pending: dict[str, tuple[_Watched, _Snapshot]] = {}
+    pending: dict[str, tuple[_Watched, Snapshot]] = {}
     order: list[str] = []
     for pr in prs:
-        snap = _snapshot(pr)
+        snap = snapshot(pr)
         if snap.url in order:
             continue
         order.append(snap.url)
@@ -372,7 +387,7 @@ def watch(
             break
         time.sleep(min(poll_interval, remaining))
         for url, (watched, _) in list(pending.items()):
-            snap = _snapshot(url)
+            snap = snapshot(url)
             result = _judge(snap, watched, allow=allow_provenance_violation)
             if result is None:
                 pending[url] = (watched, snap)
