@@ -13,7 +13,15 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from vergil_tooling.lib import dependabot, github, gitignore, repo_config, repo_init
+from vergil_tooling.lib import (
+    dependabot,
+    github,
+    gitignore,
+    repo_config,
+    repo_init,
+    typescript_tools,
+    version,
+)
 from vergil_tooling.lib.config import _ENUMS, CiConfig, ProjectConfig, _parse_raw_config
 from vergil_tooling.lib.github_config import ClassicProtectionReport
 from vergil_tooling.lib.languages import CheckKind, language_commands
@@ -2026,6 +2034,50 @@ class TestStepScaffoldConfigFiles:
         items = repo_config.audit_local_config(tmp_path).items
         assert [i for i in items if i.field == "local.language_files"] == []
 
+    def _fresh_typescript_ctx(self, tmp_path: Path) -> RepoInitContext:
+        ctx = _committed_answers()
+        ctx.primary_language = "typescript"
+        ctx.ci_versions = []
+        ctx.work_dir = tmp_path
+        ctx.description = "Test"
+        ctx.license_type = "none"
+        ctx.initial_version = "0.1.0"
+        (tmp_path / "vergil.toml").write_text(render_vergil_toml(ctx))
+        return ctx
+
+    def test_fresh_typescript_init_writes_minimal_package_json(self, tmp_path: Path) -> None:
+        """A new TypeScript repo's package.json holds name, version and private only (#4552)."""
+        ctx = self._fresh_typescript_ctx(tmp_path)
+
+        with patch("vergil_tooling.lib.repo_init.git.run"):
+            step_scaffold_config_files(ctx)
+
+        text = (tmp_path / "package.json").read_text(encoding="utf-8")
+        assert text == '{\n  "name": "demo",\n  "version": "0.1.0",\n  "private": true\n}\n'
+        assert json.loads(text) == {"name": "demo", "version": "0.1.0", "private": True}
+        assert (tmp_path / "VERSION").read_text().strip() == "0.1.0"
+
+    def test_fresh_typescript_init_passes_version_checks(self, tmp_path: Path) -> None:
+        """The new repo passes check_version_matches and vrg-version show's cross-check (#4552)."""
+        ctx = self._fresh_typescript_ctx(tmp_path)
+
+        with patch("vergil_tooling.lib.repo_init.git.run"):
+            step_scaffold_config_files(ctx)
+
+        assert typescript_tools.check_version_matches(tmp_path) == []
+        assert version.show(tmp_path) == "0.1.0"
+
+    def test_typescript_init_keeps_existing_package_json(self, tmp_path: Path) -> None:
+        """An existing package.json is the repo's: repo-init never overwrites it (#4552)."""
+        ctx = self._fresh_typescript_ctx(tmp_path)
+        existing = '{\n  "name": "kept",\n  "version": "0.1.0",\n  "type": "module"\n}\n'
+        (tmp_path / "package.json").write_text(existing, encoding="utf-8")
+
+        with patch("vergil_tooling.lib.repo_init.git.run"):
+            step_scaffold_config_files(ctx)
+
+        assert (tmp_path / "package.json").read_text(encoding="utf-8") == existing
+
     @pytest.mark.parametrize("lang", ["python", ""])
     def test_config_files_writes_no_language_files_for_other_languages(
         self, tmp_path: Path, lang: str
@@ -2039,7 +2091,12 @@ class TestStepScaffoldConfigFiles:
         with patch("vergil_tooling.lib.repo_init.git.run"):
             step_scaffold_config_files(ctx)
 
-        for name in ("tsconfig.vergil.json", "eslint.vergil.config.mjs", ".prettierrc.json"):
+        for name in (
+            "tsconfig.vergil.json",
+            "eslint.vergil.config.mjs",
+            ".prettierrc.json",
+            "package.json",
+        ):
             assert not (tmp_path / name).exists()
 
     def test_no_githooks_created(self, tmp_path: Path) -> None:

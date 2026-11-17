@@ -1655,6 +1655,15 @@ GitHub config, and Pages. The scaffolded `base + <language>`
 `ops.yml` make a new repo pass the config audit's checks for those
 files from day one.
 
+For a TypeScript repo, the config-files step also writes the language's
+managed files (`tsconfig.vergil.json`, `eslint.vergil.config.mjs`,
+`.prettierrc.json`) and a minimal `package.json` holding only `name`
+(the repo name), `version` (the `VERSION` it writes) and
+`"private": true`, so the new repo passes the `package.json` version
+cross-check from its first commit. It never overwrites an existing
+`package.json`, which is the repo's, not a managed file (see
+[A new repository's `package.json`](../standards/development/typescript/overview.md#a-new-repositorys-packagejson)).
+
 The vergil series a new repo uses comes from the installed
 vergil-tooling: `[dependencies].vergil` defaults to its `vX.Y`, and the
 generated workflows pin the vergil-actions reusable workflows to that

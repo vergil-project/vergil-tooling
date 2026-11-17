@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -1439,6 +1440,31 @@ def restore_generated_config(ctx: RepoInitContext) -> None:
     print("  vergil.toml answers restored.")
 
 
+def render_package_json(ctx: RepoInitContext) -> str:
+    """Render the minimal ``package.json`` repo-init writes for a TypeScript repo.
+
+    Only ``name``, ``version`` (the ``VERSION`` repo-init writes) and
+    ``private``: devDependencies and scripts are the repo's to add, and the
+    ``typescript-tools`` stage names what is missing. Two-space JSON with a
+    final newline, as npm writes it and as Prettier formats it.
+    """
+    manifest = {"name": ctx.name, "version": ctx.initial_version, "private": True}
+    return json.dumps(manifest, indent=2) + "\n"
+
+
+def write_initial_package_json(work_dir: Path, ctx: RepoInitContext) -> None:
+    """Write :func:`render_package_json` to ``package.json``, never over an existing one.
+
+    ``package.json`` is not a managed file: once written it is the repo's, so
+    an adopted repo's own manifest is left as it is.
+    """
+    path = work_dir / "package.json"
+    if path.exists():
+        print("  package.json exists; left as it is.")
+        return
+    path.write_text(render_package_json(ctx), encoding="utf-8")
+
+
 def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     """Step 4: Scaffold local config files."""
     import datetime
@@ -1491,6 +1517,12 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
         managed_path = wd / entry.repo_path
         managed_path.parent.mkdir(parents=True, exist_ok=True)
         managed_path.write_bytes(repo_config.read_language_master(entry))
+
+    # A TypeScript repo's version lives in package.json too, so write the
+    # minimal one the version cross-check needs (vergil-tooling#4552). It is
+    # not a managed file, so an existing one is the repo's and is kept.
+    if ctx.primary_language == "typescript":
+        write_initial_package_json(wd, ctx)
 
     # LICENSE
     if ctx.license_type != "none":

@@ -58,6 +58,27 @@ Package management is **npm**, chosen for universality at zero adoption barrier:
   native ES modules resolved the way modern Node resolves them. A repository's
   `package.json` declares `"type": "module"` to match.
 
+### A new repository's `package.json`
+
+`vrg-github-repo-init --language typescript` writes a minimal `package.json`
+in its config-files step, beside the three managed files:
+
+```json
+{
+  "name": "<repo name>",
+  "version": "0.1.0",
+  "private": true
+}
+```
+
+Its `version` is the `VERSION` repo-init writes, so the new repository passes
+the version cross-check (`vrg-version show` and the `typescript-tools` stage)
+from its first commit. It has no devDependencies and no scripts: those, and
+`"type": "module"`, are the repository's to add, and the `typescript-tools`
+stage names what is missing. Repo-init never overwrites an existing
+`package.json`. It is not a managed file, so the fleet sync does not keep it,
+and Prettier checks it like any other file the repository owns.
+
 ### Baking a non-npm dependency into the dev image
 
 A repo occasionally needs a JS library present in the dev image itself — for
