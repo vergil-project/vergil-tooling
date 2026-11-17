@@ -21,7 +21,7 @@ host-level developer tool per
 
 ```bash
 cd vergil-tooling
-uv sync --group dev
+uv sync --python 3.15 --group dev
 export PATH="$(pwd)/.venv/bin:$PATH"
 ```
 

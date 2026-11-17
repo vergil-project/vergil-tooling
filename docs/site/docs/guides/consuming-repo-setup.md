@@ -83,7 +83,7 @@ vrg-container-run --help   # should print usage
     If you are developing vergil-tooling itself and want to test
     unreleased code on the host, use the single-`.venv` dev-tree
     override described in the vergil-tooling `CLAUDE.md` (`uv sync
-    --group dev`, then prepend `.venv/bin` to `PATH`). A single
+    --python 3.15 --group dev`, then prepend `.venv/bin` to `PATH`). A single
     `.venv` is safe because the dev container masks the host `.venv`
     with an anonymous volume, so host and container never clobber
     each other's environment. This does not apply to consuming repos.

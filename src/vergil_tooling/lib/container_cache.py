@@ -750,7 +750,7 @@ def _probe_lines(spec: str) -> list[str]:
         "fi",
         'if [ "$has_source" = 0 ]; then',
         f"  {_say(_UV_FROM_GIT)}",
-        f"  exec uv tool install --quiet {spec}",
+        f"  exec uv tool install --quiet --python 3.15 {spec}",
         "fi",
     ]
 
@@ -864,7 +864,8 @@ def vergil_tooling_setup_command(tag: str) -> str:
       vergil apt repository, pinned to it, and checks that ``vrg-*`` runs from
       ``/usr/bin`` on vergil-python; a dev *tag* is ``uv tool install`` from git
       on the core Python, with an explicit ``--python``.
-    * **Neither present** — today's ``uv tool install`` from git.
+    * **Neither present** — today's ``uv tool install`` from git, on
+      ``--python 3.15``.
     * **Exactly one present** — refused: exit 1, nothing installed.
 
     Every path logs which one it took. :func:`_compose_setup` joins fragments

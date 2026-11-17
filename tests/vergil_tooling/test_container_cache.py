@@ -2698,7 +2698,7 @@ class _Env:
         return self.log.read_text().splitlines()
 
 
-_TODAYS_INSTALL = "uv tool install --quiet vergil-tooling @ git+{url}@{tag}"
+_TODAYS_INSTALL = "uv tool install --quiet --python 3.15 vergil-tooling @ git+{url}@{tag}"
 
 
 def test_setup_dev_ref_without_core_is_todays_install(tmp_path: Path) -> None:

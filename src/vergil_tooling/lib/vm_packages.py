@@ -186,8 +186,8 @@ def _uv_tool_install(transport: Transport, install_spec: str, *, reinstall: bool
     force to fully recover.
     """
     flag = "--reinstall " if reinstall else ""
-    install_cmd = f'{_UV_PATH} && uv tool install {flag}"{install_spec}"'
-    retry_cmd = f'{_UV_PATH} && uv tool install --force --reinstall "{install_spec}"'
+    install_cmd = f'{_UV_PATH} && uv tool install --python 3.15 {flag}"{install_spec}"'
+    retry_cmd = f'{_UV_PATH} && uv tool install --python 3.15 --force --reinstall "{install_spec}"'
     try:
         transport.run("bash", "-c", install_cmd)
         return
