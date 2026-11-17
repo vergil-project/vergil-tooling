@@ -1700,8 +1700,11 @@ def test_develop_cd_gate_timed_out_refuses(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("VRG_CD_TIMEOUT", "60")
     with _gate(run=_cd_run(3), states=["timed_out"]), pytest.raises(ReleaseError) as exc:
         check_develop_cd(_REPO, _CD_HEAD)
-    assert "still not complete after 60s" in str(exc.value)
-    assert "actions/runs/3" in str(exc.value)
+    assert (
+        "The develop CD run is still not complete after 60s; result unknown. "
+        "Re-run vrg-release once it finishes, or raise VRG_CD_TIMEOUT. "
+        "Run: https://github.com/owner/repo/actions/runs/3"
+    ) in str(exc.value)
 
 
 def test_develop_cd_gate_no_run_uses_green_ancestor() -> None:
@@ -1737,6 +1740,27 @@ def test_develop_cd_gate_no_run_red_ancestor_refuses() -> None:
         check_develop_cd(_REPO, _CD_HEAD)
     assert "build" in str(exc.value)
     assert "actions/runs/5" in str(exc.value)
+
+
+def test_develop_cd_gate_no_run_unfinished_ancestor_refuses_without_a_wait() -> None:
+    # The ancestor run is judged with no wait, so an unfinished one says so
+    # rather than reporting a timeout that never ran.
+    with (
+        _gate(run=None, states=["timed_out"], runs=[_cd_run(5, sha="d" * 40)]) as watch,
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".git.is_ancestor", return_value=True),
+        pytest.raises(ReleaseError) as exc,
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+    watch.assert_called_once_with("5", timeout=0)
+    message = str(exc.value)
+    assert (
+        f"The develop CD run on ancestor {'d' * 12} of {_CD_HEAD[:12]} is not finished; "
+        "result unknown. Re-run vrg-release once it finishes. "
+        "Run: https://github.com/owner/repo/actions/runs/5"
+    ) in message
+    assert "after" not in message
+    assert "VRG_CD_TIMEOUT" not in message
 
 
 def test_develop_cd_gate_no_run_and_no_ancestor_refuses() -> None:
