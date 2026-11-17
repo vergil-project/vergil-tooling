@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 _FINALIZE_CMD = (
     "vrg-finalize-pr",
     "--cleanup-only",
-    "--no-wait-cd",
     "--output-format",
     "plain",
 )
@@ -89,15 +88,16 @@ def close_and_finalize(ctx: ReleaseContext) -> None:
     # CalledProcessError for ReleaseError.detail; the streamed lines
     # mean warnings are never silently swallowed.
     #
-    # --no-wait-cd: the release has already verified develop's CD, pinned to
+    # No --wait-cd: the release has already verified develop's CD, pinned to
     # the back-merge's merge commit, in confirm-develop (#3329). Finalize's
-    # cleanup-only cd-check has no merge to pin to, so it would watch
-    # develop's current tip instead — on a resume that can be an unrelated
-    # commit (a dependency-update or feature PR merged since), whose CD says
-    # nothing about the release. It would also re-fail on a docs publish
-    # failure confirm-develop deliberately deferred. This point is reached only
-    # when confirm-develop succeeded in this run (any failed stage returns
-    # early above), so skipping the second wait loses no coverage.
+    # cleanup-only cd-check has no merge to pin to, so it looks at develop's
+    # current tip instead — on a resume that can be an unrelated commit (a
+    # dependency-update or feature PR merged since), whose CD says nothing
+    # about the release. Without --wait-cd it only reports that run and never
+    # fails on it, so it cannot re-fail on a docs publish failure
+    # confirm-develop deliberately deferred. This point is reached only when
+    # confirm-develop succeeded in this run (any failed stage returns early
+    # above), so not waiting a second time loses no coverage.
     try:
         progress.run(_FINALIZE_CMD, stdin=subprocess.DEVNULL)
     except subprocess.CalledProcessError as exc:
