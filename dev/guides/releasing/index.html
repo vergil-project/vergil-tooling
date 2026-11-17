@@ -18058,6 +18058,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-develop-cd-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The develop-CD gate
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18444,6 +18455,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-develop-cd-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The develop-CD gate
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18682,7 +18704,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>preflight</code></td>
 <td>fail-fast</td>
-<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code> matching <code>origin/develop</code>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, and runs the <a href="#the-dependency-update-gate">dependency-update gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it</td>
+<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code> matching <code>origin/develop</code>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, runs the <a href="#the-dependency-update-gate">dependency-update gate</a>, and last runs the <a href="#the-develop-cd-gate">develop-CD gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it</td>
 </tr>
 <tr>
 <td><code>prepare</code></td>
@@ -19274,6 +19296,33 @@ any other fresh-start check, when <code>origin/main</code> has commits not on
   <code>develop</code>, and the check keeps refusing. Then re-run <code>vrg-release</code>.</p>
 <p>If preflight cannot fetch <code>main</code> or compare the branches, it refuses
 rather than skipping.</p>
+<h3 id="the-develop-cd-gate">The develop-CD gate<a class="headerlink" href="#the-develop-cd-gate" title="Permanent link">&para;</a></h3>
+<p>A fresh start (not <code>--resume</code>) refuses to cut a release from a
+<code>develop</code> whose CD is not green. It is the last preflight check, because
+it may wait. It finds the develop CD run for the local <code>develop</code> head,
+by its commit, the way <code>vrg-finalize-pr</code> finds a merge's run:</p>
+<ul>
+<li><strong>Queued, pending or in progress.</strong> The gate waits for it, up to
+  <code>$VRG_CD_TIMEOUT</code> seconds (default 5400). A run still not complete at
+  the deadline refuses, as "result unknown": re-run <code>vrg-release</code> once
+  it finishes.</li>
+<li><strong>Succeeded.</strong> The release goes ahead.</li>
+<li><strong>Failed.</strong> The release refuses, naming the failed jobs and linking the
+  run. A failure only in a docs job is the exception: <code>confirm-develop</code>
+  defers a develop docs publish, and so does the gate. It prints a loud
+  warning and the release goes ahead.</li>
+<li><strong>Superseded.</strong> GitHub cancelled it to make way for a higher-priority
+  run in the same concurrency group. The gate judges the develop CD run
+  created next instead. With none, it refuses: nothing green covers the
+  head. Re-run the superseded run, then re-run <code>vrg-release</code>.</li>
+<li><strong>Cancelled any other way.</strong> The release refuses.</li>
+<li><strong>No run registered</strong> for the head within 120 seconds. The gate judges
+  the latest completed develop CD run whose head is an ancestor of the
+  release head instead, and requires it to be green.</li>
+</ul>
+<p>If the gate cannot list the runs or read a run's jobs, it refuses
+rather than skipping. A resume skips the gate: the release it adopts
+already passed it.</p>
 <h2 id="documentation-publication">Documentation publication<a class="headerlink" href="#documentation-publication" title="Permanent link">&para;</a></h2>
 <p>The Documentation workflow (<code>.github/workflows/docs.yml</code>) deploys
 the MkDocs site to GitHub Pages on every push to <code>develop</code> and

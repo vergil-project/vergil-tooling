@@ -14786,6 +14786,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-develop-cd-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The develop-CD gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17896,6 +17907,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-develop-cd-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The develop-CD gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18017,6 +18039,15 @@ update landed through the fix PR), and deletes its head branch. A failed
 branch delete is reported, not fatal. <code>--allow-pending-deps</code> lets the
 release past whatever still blocks. Lookup failures refuse the release.
 See <a href="../../../guides/releasing/#the-dependency-update-gate">The dependency-update gate</a>.</p>
+<h2 id="the-develop-cd-gate">The develop-CD gate<a class="headerlink" href="#the-develop-cd-gate" title="Permanent link">&para;</a></h2>
+<p>On a fresh start (not on <code>--resume</code>), preflight last requires the
+develop CD run for the local <code>develop</code> head to be green. It waits on a
+run still queued or in progress, up to <code>$VRG_CD_TIMEOUT</code> seconds, and
+refuses on a failed, timed-out or cancelled run, with the run's link. A
+failure only in a docs job is a warning. A superseded run is replaced by
+the next develop CD run. With no run for the head, the latest completed
+run on an ancestor must be green. Lookup failures refuse the release.
+See <a href="../../../guides/releasing/#the-develop-cd-gate">The develop-CD gate</a>.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
