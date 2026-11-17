@@ -905,7 +905,11 @@ def check_develop_cd(repo: str, head_sha: str) -> None:
         print(f"  Develop CD run: {url}")
         state = _watch(run, timeout=max(0.0, deadline - time.monotonic()))
         if state != "superseded":
-            _judge_run(repo, run, state, timeout=timeout)
+            unfinished = (
+                f"The develop CD run is still not complete after {timeout}s; result unknown. "
+                f"Re-run vrg-release once it finishes, or raise {cd_runs.CD_TIMEOUT_ENV}."
+            )
+            _judge_run(repo, run, state, unfinished=unfinished)
             return
         newer = _next_run(repo, run)
         if newer is None:
@@ -978,7 +982,13 @@ def _judge_ancestor_run(repo: str, head_sha: str) -> None:
             f"completed run on an ancestor ({sha[:12]}): {_run_url(repo, run)}"
         )
         state = _watch(run, timeout=0)
-        _judge_run(repo, run, state, timeout=0)
+        # The ancestor run is judged as it stands, with no wait, so an
+        # unfinished one is reported as such, never as a timeout.
+        unfinished = (
+            f"The develop CD run on ancestor {sha[:12]} of {head_sha[:12]} is not finished; "
+            "result unknown. Re-run vrg-release once it finishes."
+        )
+        _judge_run(repo, run, state, unfinished=unfinished)
         return
     raise ReleaseError(
         phase="preflight",
@@ -991,8 +1001,14 @@ def _judge_ancestor_run(repo: str, head_sha: str) -> None:
     )
 
 
-def _judge_run(repo: str, run: dict[str, object], state: cd_runs.RunState, *, timeout: int) -> None:
-    """Pass a green run, warn on a docs-only failure, refuse anything else."""
+def _judge_run(
+    repo: str, run: dict[str, object], state: cd_runs.RunState, *, unfinished: str
+) -> None:
+    """Pass a green run, warn on a docs-only failure, refuse anything else.
+
+    *unfinished* is the refusal for a run that did not finish (``timed_out``),
+    which only the caller can word: it alone knows whether it waited.
+    """
     run_id = str(run.get("databaseId"))
     url = _run_url(repo, run)
     if state == "success":
@@ -1022,10 +1038,7 @@ def _judge_run(repo: str, run: dict[str, object], state: cd_runs.RunState, *, ti
         failed = ", ".join(blocking) or "no failed job identified"
         message = f"The develop CD run failed ({failed}). Run: {url}"
     elif state == "timed_out":
-        message = (
-            f"The develop CD run is still not complete after {timeout}s; result unknown. "
-            f"Re-run vrg-release once it finishes, or raise {cd_runs.CD_TIMEOUT_ENV}. Run: {url}"
-        )
+        message = f"{unfinished} Run: {url}"
     else:
         how = {
             "superseded": "was superseded by a concurrency group, so it published nothing",
