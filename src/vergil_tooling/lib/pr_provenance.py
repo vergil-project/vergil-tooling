@@ -12,6 +12,9 @@ docs/specs/2026-05-29-agent-permission-model-design.md: it closes the
 gap the coarse GitHub permission model cannot enforce server-side
 (notably the audit identity's ``pull_requests: write`` scope, which
 GitHub cannot narrow to "review but never author/close/merge").
+Turning auto-merge on merges a PR, so an agent's auto-merge enable event,
+under any method's event name, is a forbidden action too; turning it off is
+not.
 
 Read-only ``gh api`` GET calls back this check. They run in the human
 context where the API is available; the same endpoints are reachable
@@ -23,6 +26,7 @@ broken check aborts the merge rather than silently passing.
 from __future__ import annotations
 
 import enum
+import re
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -44,10 +48,18 @@ def classify_login(login: str) -> Role:
     return Role.HUMAN
 
 
+# The action for any auto-merge enable event, whatever its method (see
+# ``_EVENT_MAP``).
+_AUTO_MERGE_ENABLED = "auto_merge_enabled"
+
 # Actions an agent role must never perform on a PR it is merging.
 _FORBIDDEN: dict[Role, frozenset[str]] = {
-    Role.USER: frozenset({"created", "edited", "closed", "reopened", "merged", "approved"}),
-    Role.AUDIT: frozenset({"created", "edited", "closed", "reopened", "merged"}),
+    Role.USER: frozenset(
+        {"created", "edited", "closed", "reopened", "merged", _AUTO_MERGE_ENABLED, "approved"}
+    ),
+    Role.AUDIT: frozenset(
+        {"created", "edited", "closed", "reopened", "merged", _AUTO_MERGE_ENABLED}
+    ),
 }
 
 # Actions permitted but advisory — surfaced to the human, not blocked.
@@ -75,12 +87,36 @@ class ProvenanceResult:
         return not self.violations
 
 
+# Timeline event name -> action. Turning auto-merge on is how a PR is merged,
+# so every name GitHub uses for an enable is the one ``auto_merge_enabled``
+# action. ``auto_squash_enabled`` and ``auto_rebase_enabled`` were recorded
+# from a live PR (tests/vergil_tooling/fixtures/pr_provenance/);
+# ``auto_merge_enabled``, the merge-commit method's expected name, was not
+# recorded and is listed so the map names every method, not left to the
+# fail-closed pattern below.
+# ``auto_merge_disabled`` is deliberately absent: an agent turning auto-merge
+# off is not a violation.
 _EVENT_MAP = {
     "closed": "closed",
     "reopened": "reopened",
     "merged": "merged",
     "renamed": "edited",
+    "auto_merge_enabled": _AUTO_MERGE_ENABLED,
+    "auto_squash_enabled": _AUTO_MERGE_ENABLED,
+    "auto_rebase_enabled": _AUTO_MERGE_ENABLED,
 }
+
+# Fail closed on any other auto-merge enable: a renamed or new
+# ``auto_<method>_enabled`` event by an agent is a violation, never ignored.
+_AUTO_ENABLE_PATTERN = re.compile(r"auto_\w+_enabled")
+
+
+def _map_event(name: str) -> str | None:
+    """The action a timeline event *name* records, or ``None`` if none counts."""
+    mapped = _EVENT_MAP.get(name)
+    if mapped is None and _AUTO_ENABLE_PATTERN.fullmatch(name):
+        return _AUTO_MERGE_ENABLED
+    return mapped
 
 
 def _collect_actions(pr: str) -> list[Action]:
@@ -118,7 +154,7 @@ def _collect_actions(pr: str) -> list[Action]:
         github.read_json_paginated(f"repos/{repo}/issues/{number}/timeline"),
     )
     for event in timeline:
-        mapped = _EVENT_MAP.get(event.get("event", ""))
+        mapped = _map_event(event.get("event", ""))
         if mapped is None:
             continue
         login = (event.get("actor") or {}).get("login", "")

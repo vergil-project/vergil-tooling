@@ -1,0 +1,69 @@
+[
+  {
+    "sha": "5b55fee6b34da222aae4b7543bd953fd9cc05ccc",
+    "node_id": "C_kwDOVuORsNoAKDViNTVmZWU2YjM0ZGEyMjJhYWU0Yjc1NDNiZDk1M2ZkOWNjMDVjY2M",
+    "url": "https://api.github.com/repos/vergil-project/vergil-fixture-python-lib/git/commits/5b55fee6b34da222aae4b7543bd953fd9cc05ccc",
+    "html_url": "https://github.com/vergil-project/vergil-fixture-python-lib/commit/5b55fee6b34da222aae4b7543bd953fd9cc05ccc",
+    "author": {
+      "name": "Phillip Moore",
+      "email": "w.phillip.moore@gmail.com",
+      "date": "2026-11-17T15:38:03Z"
+    },
+    "committer": {
+      "name": "Phillip Moore",
+      "email": "w.phillip.moore@gmail.com",
+      "date": "2026-11-17T15:38:03Z"
+    },
+    "tree": {
+      "sha": "a0b8b5794a4bbd574f714e968d643bbfb1731786",
+      "url": "https://api.github.com/repos/vergil-project/vergil-fixture-python-lib/git/trees/a0b8b5794a4bbd574f714e968d643bbfb1731786"
+    },
+    "message": "chore: scratch file for provenance fixture recording (do not merge)",
+    "parents": [
+      {
+        "sha": "415486231b701d1eb34a044e47ccb285e0a325c3",
+        "url": "https://api.github.com/repos/vergil-project/vergil-fixture-python-lib/git/commits/415486231b701d1eb34a044e47ccb285e0a325c3",
+        "html_url": "https://github.com/vergil-project/vergil-fixture-python-lib/commit/415486231b701d1eb34a044e47ccb285e0a325c3"
+      }
+    ],
+    "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    },
+    "event": "committed"
+  },
+  {
+    "id": 36423384057,
+    "node_id": "ASEE_lADOVuORsM8AAAABgFd3tc8AAAAIewC7-Q",
+    "url": "https://api.github.com/repos/vergil-project/vergil-fixture-python-lib/issues/events/36423384057",
+    "actor": {
+      "login": "wphillipmoore",
+      "id": 3788880,
+      "node_id": "MDQ6VXNlcjM3ODg4ODA=",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3788880?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/wphillipmoore",
+      "html_url": "https://github.com/wphillipmoore",
+      "followers_url": "https://api.github.com/users/wphillipmoore/followers",
+      "following_url": "https://api.github.com/users/wphillipmoore/following{/other_user}",
+      "gists_url": "https://api.github.com/users/wphillipmoore/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/wphillipmoore/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/wphillipmoore/subscriptions",
+      "organizations_url": "https://api.github.com/users/wphillipmoore/orgs",
+      "repos_url": "https://api.github.com/users/wphillipmoore/repos",
+      "events_url": "https://api.github.com/users/wphillipmoore/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/wphillipmoore/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "event": "auto_squash_enabled",
+    "commit_id": null,
+    "commit_url": null,
+    "created_at": "2026-11-17T15:38:07Z",
+    "performed_via_github_app": null
+  }
+]
