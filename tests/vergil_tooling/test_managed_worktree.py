@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
@@ -65,6 +66,58 @@ def test_adopt_worktree_reuses_existing_path(tmp_path: Path, monkeypatch) -> Non
     path = adopt_worktree(tmp_path, branch="release/2.1.0")
     assert path == target
     assert runs == []  # path already there — nothing to add
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)  # noqa: S607
+
+
+def test_adopt_worktree_names_a_branch_checked_out_elsewhere(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A real repo: the release branch is checked out in another worktree, so
+    # git refuses the add. The caller gets a ManagedWorktreeError naming the
+    # branch, the path and the recovery, with git's refusal as its detail (#4442).
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "develop")
+    _git(
+        repo,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "init",
+    )
+    _git(repo, "branch", "release/2.1.0")
+    _git(repo, "worktree", "add", str(tmp_path / "elsewhere"), "release/2.1.0")
+    monkeypatch.chdir(repo)
+    with pytest.raises(ManagedWorktreeError) as info:
+        adopt_worktree(repo, branch="release/2.1.0")
+    message = str(info.value)
+    assert "release/2.1.0" in message
+    assert str(repo / ".worktrees" / "release-2.1.0") in message
+    assert "git worktree list" in message
+    assert info.value.detail is not None
+    assert "returned non-zero exit status" in info.value.detail
+    assert "stderr:" in info.value.detail
+    assert not (repo / ".worktrees" / "release-2.1.0").exists()
+
+
+def test_adopt_worktree_wraps_any_add_failure(tmp_path: Path, monkeypatch) -> None:
+    def _fail(*args: str) -> None:
+        raise subprocess.CalledProcessError(128, ("git", *args), stderr="fatal: boom")
+
+    monkeypatch.setattr(_MOD + ".git.run", _fail)
+    with pytest.raises(ManagedWorktreeError, match="Could not attach") as info:
+        adopt_worktree(tmp_path, branch="release/2.1.0")
+    assert info.value.detail is not None
+    assert "stderr: fatal: boom" in info.value.detail
+    assert isinstance(info.value.__cause__, subprocess.CalledProcessError)
 
 
 def test_remove_worktree_force_removes(tmp_path: Path, monkeypatch) -> None:
