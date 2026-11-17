@@ -22445,6 +22445,10 @@ project language to select the Docker image; falls back to
 Local-settings guard: on the host, before any container starts, it refuses an
 agent (warns a human) while a loadable <code>.claude/settings.local.json</code> is not
 absent or <code>{}</code> (epic vergil-project/.github#558).
+The container mounts and runs in the root of the repo <code>git</code> resolves from the
+current directory, not the current directory itself. When the two differ (a
+subdirectory, or a copied tree with no <code>.git</code> of its own inside another repo),
+it prints a warning on stderr naming both paths and carries on (issue #4594).
 Every launch bind-mounts the per-user <code>~/.cache/vergil/trivy</code> directory
 (under <code>$XDG_CACHE_HOME</code> when set), creating it if missing, where
 <code>vrg-validate</code>'s trivy stage caches the vulnerability database (see
@@ -22994,7 +22998,10 @@ one) and then the custom stage; with no custom validator it prints one
 "no custom validator" line and exits 0, and a validator that is present
 but not an executable regular file fails. <code>--check build</code> for a
 language with no build check prints one "nothing to run" line and exits
-0. PR CI runs each stage through
+0. A <code>--check</code> of a language stage in a repo with no language declared
+also exits 0, with a line naming the repo root it resolved, since PR CI
+runs <code>--check lint</code> and <code>--check typecheck</code> in such repos too.
+PR CI runs each stage through
 the <code>vergil-actions</code> reusable workflows, the custom stage as
 <code>quality / custom</code>. See the <a href="../../guides/validation-matrix/">Validation Matrix</a>
 for every check and where it runs. Every pipeline run, pass or fail,
