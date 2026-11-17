@@ -1440,6 +1440,8 @@
       
         
       
+        
+      
     
     
     
@@ -1492,6 +1494,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.322/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.322
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18402,8 +18432,11 @@ image.</p>
 <p>The image chooses how vergil-tooling is installed, by two checks: the
 vergil apt source (<code>/etc/apt/sources.list.d/vergil.sources</code>) and a core
 vergil-python (<code>/opt/vergil/python/*/bin/python3</code>). With both, a release
-version (<code>vX.Y</code> or <code>vX.Y.Z</code>) installs the vergil-tooling package, pinned
-to that version, and the build checks that <code>vrg-*</code> runs from <code>/usr/bin</code>
+version installs the vergil-tooling package at that release, and a <code>vX.Y</code>
+line resolves first to the newest release on the line, so a new release
+rebuilds the cached image (see
+<a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>).
+The build checks that <code>vrg-*</code> runs from <code>/usr/bin</code>
 on vergil-python; a branch is <code>uv tool install</code> from git on the core
 Python. With neither, it is <code>uv tool install</code> from git. An image with only
 one of the two fails the build. The build log names the path it took.</p>
@@ -18741,12 +18774,14 @@ generates it, for a new repository or for an existing one with
   <code>[ci].integration-tests</code> is on, <code>docs</code> only when <code>[publish].docs</code> is
   on, <code>version</code> only when <code>[project].release-model</code> is not <code>none</code>, and
   <code>package</code> only when <code>vergil.toml</code> has <code>[package]</code>.</li>
-<li><strong>The <code>CI gates</code> ruleset</strong> is applied to <code>main</code> and <code>develop</code> with
-  the required checks listed in <a href="#ci-gates">CI gates</a>. Before it is
-  applied, the tool checks that the generated <code>ci.yml</code> produces every
-  required check and fails if it does not. <code>vrg-github-repo-config</code>
-  runs the same check against the committed <code>ci.yml</code> before it writes
-  the ruleset. <code>[ci].integration-tests = true</code> always fails it, since no
+<li><strong>The CI-gates rulesets</strong>, <code>CI gates (develop)</code> and <code>CI gates (main)</code>,
+  are applied to <code>develop</code> and <code>main</code> with the required checks listed in
+  <a href="#ci-gates">CI gates</a>. Only <code>main</code>'s requires a branch to be up to
+  date before it merges. A <code>docs-single-branch</code> repo gets <code>develop</code>'s
+  only. Before they are applied, the tool checks that the generated
+  <code>ci.yml</code> produces every required check and fails if it does not.
+  <code>vrg-github-repo-config</code> runs the same check against the committed
+  <code>ci.yml</code> before it writes the rulesets. <code>[ci].integration-tests = true</code> always fails it, since no
   reusable workflow runs an integration job yet
   (<a href="https://github.com/vergil-project/vergil-tooling/issues/2721">#2721</a>):
   the error names the setting as the cause, and <code>vrg-github-repo-init</code>
@@ -18759,7 +18794,8 @@ ruleset, and fixes the managed files through one sync PR (<code>apply</code>, wh
 reconciles only the GitHub side, is deprecated). <code>vrg-container-run -- vrg-validate</code>
 is the local command. Nothing else needs to be added to the repository.</p>
 <h2 id="ci-gates">CI gates<a class="headerlink" href="#ci-gates" title="Permanent link">&para;</a></h2>
-<p>The <code>CI gates</code> ruleset requires these checks. The list is computed from
+<p>The CI-gates rulesets, <code>CI gates (develop)</code> and <code>CI gates (main)</code>, both
+require these checks. The list is computed from
 <code>vergil.toml</code>:</p>
 <table>
 <thead>
@@ -18907,9 +18943,13 @@ chosen, and why.</p>
 <p><strong><code>dev-ts-node</code></strong>
 :   Base: <code>base</code> (Ubuntu 24.04), with the major's pinned nodejs.org
     prebuilt tarball at <code>/opt/node/&lt;major&gt;</code> (never built from
-    source). Includes Node.js, npm, TypeScript (<code>tsc</code>),
-    ESLint + typescript-eslint, Prettier, Vitest, <code>@vitest/coverage-v8</code>,
-    and license-checker. The runtime family rides the <code>ts-node</code> image
+    source). Includes Node.js, npm, Prettier and license-checker.
+    TypeScript, ESLint, typescript-eslint, <code>@eslint/js</code>, Vitest and
+    <code>@vitest/coverage-v8</code> are not in the image: each repository declares
+    them as devDependencies, and the gates run them from its
+    <code>node_modules/.bin</code> (see the
+    <a href="../../standards/development/tool-ownership/">Tool Ownership Guideline</a>).
+    The runtime family rides the <code>ts-node</code> image
     suffix and the Node major is the tag (<code>node-24</code> → <code>prod-ts-node:24</code>);
     <code>node-24</code> is the primary, <code>node-22</code> the second (epic
     <a href="https://github.com/vergil-project/.github/issues/284">vergil-project/.github#284</a>).</p>

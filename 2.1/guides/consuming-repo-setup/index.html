@@ -1440,6 +1440,8 @@
       
         
       
+        
+      
     
     
     
@@ -1492,6 +1494,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.322/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.322
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18476,7 +18506,7 @@ a Homebrew-installed <code>uv</code>, run <code>uv tool update-shell</code> once
 <p>If you are developing vergil-tooling itself and want to test
 unreleased code on the host, use the single-<code>.venv</code> dev-tree
 override described in the vergil-tooling <code>CLAUDE.md</code> (<code>uv sync
---group dev</code>, then prepend <code>.venv/bin</code> to <code>PATH</code>). A single
+--python 3.15 --group dev</code>, then prepend <code>.venv/bin</code> to <code>PATH</code>). A single
 <code>.venv</code> is safe because the dev container masks the host <code>.venv</code>
 with an anonymous volume, so host and container never clobber
 each other's environment. This does not apply to consuming repos.</p>
@@ -18956,7 +18986,11 @@ never produces.</p>
 <li><strong><code>epic-rollup.yml</code></strong> — on any issue close, closes the parent epic
   once all of its tasks are closed.</li>
 <li><strong><code>cd.yml</code></strong> — the release and docs publishing workflow, generated
-  when <code>[publish]</code> enables either.</li>
+  when <code>[publish]</code> enables either. Its <code>release</code> job runs on every push to
+  <code>main</code> except the one that creates the branch: the wizard creates <code>main</code>
+  by a direct push, which no release PR produced, so there is nothing to
+  release. A later push to <code>main</code> with no release PR still fails the
+  release's CI-evidence gate.</li>
 </ul>
 <p>To regenerate them after a <code>vergil.toml</code> change, re-run
 <code>vrg-github-repo-init --adopt</code>. See the

@@ -1440,6 +1440,8 @@
       
         
       
+        
+      
     
     
     
@@ -1492,6 +1494,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.322/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.322
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19799,7 +19829,11 @@ only after enforcing a per-identity subcommand allowlist, injecting the GitHub
 App installation token for the target owner. Raw <code>gh issue create</code>, <code>gh auth</code>,
 <code>pr close</code>, <code>repo edit/create/delete</code> and <code>workflow run</code> are denied outright;
 <code>gh api</code> is full for a human, read-only <code>GET</code> for the audit identity, and
-denied for the user identity. <code>vrg-gh --help</code> lists the allowlist.</p>
+denied for the user identity. Its own <code>run job-log --repo &lt;owner&gt;/&lt;repo&gt; --job
+&lt;job-id&gt;</code> prints one Actions job's log from the read-only per-job log endpoint,
+for every identity, with terminal control sequences stripped (see
+<a href="../../guides/permission-model/#run-job-log"><code>run job-log</code></a>). <code>vrg-gh --help</code>
+lists the allowlist.</p>
 <table>
 <thead>
 <tr>
@@ -19826,7 +19860,7 @@ denied for the user identity. <code>vrg-gh --help</code> lists the allowlist.</p
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success; 1 refusal; 2 no subcommand; otherwise gh's exit code</td>
+<td>0 success; 1 refusal; 2 no subcommand or bad <code>run job-log</code> arguments; otherwise gh's exit code</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -20217,7 +20251,7 @@ and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>minor</code>/<code>major</code> (optional positional), <code>--no-promote</code>, <code>--without-deps</code>, <code>--allow-pending-deps</code>, <code>--install</code>, <code>--resume [X.Y.Z]</code>, <code>--skip-audit</code>, <code>--output-window</code>, <code>--output-format</code></td>
+<td><code>minor</code>/<code>major</code> (optional positional), <code>--no-promote</code>, <code>--without-deps</code>, <code>--allow-pending-deps</code>, <code>--no-install</code>, <code>--resume [X.Y.Z]</code>, <code>--skip-audit</code>, <code>--output-window</code>, <code>--output-format</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -20333,8 +20367,11 @@ as done.</p>
 increments <code>patch</code> (default), <code>minor</code> or <code>major</code> and prints the new version.
 For a Python or Rust repo, <code>bump</code> then refreshes the lockfile (<code>uv lock</code>,
 <code>cargo update --workspace</code>) in the dev container, through
-<code>vrg-container-run</code>, so no host toolchain is needed. Used by the CD
-workflows to read the release version.</p>
+<code>vrg-container-run</code>, so no host toolchain is needed. A bump is all or
+nothing: when any step fails, the lockfile refresh included, <code>bump</code> puts
+<code>VERSION</code>, the language manifest, the secondary version files and the
+lockfile back as they were, says so on stderr and exits non-zero. Used by
+the CD workflows to read the release version.</p>
 <p>In a TypeScript repo the version is also kept in <code>package.json</code>. <code>show</code>
 fails, naming the fix, when <code>package.json</code> is missing, has no <code>version</code>, or
 holds another version than <code>VERSION</code>; <code>vrg-validate</code>'s TypeScript pre-gate
@@ -21033,7 +21070,9 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
   authors configured. If a step fails after the move, the command fails
   loudly, naming the moved item and the by-hand fix for each step not done.
 - <code>planning</code> — reparent the item onto the planning epic of the same queue
-  home. It also takes a <strong>follow-on brainstorm</strong> out of a development epic: a
+  home. From an ad-hoc epic it takes a task found too big for one PR straight
+  to planning, with no stop in the deferred queue; like <code>defer</code>, it is
+  refused while an open PR would close the item. It also takes a <strong>follow-on brainstorm</strong> out of a development epic: a
   task titled <code>Follow-on brainstorm: …</code> whose native parent is a development
   epic. A brainstorm never gates its epic's work, so moving it suspends
   nothing. The parent is replaced in one step, then the hand-off is recorded
@@ -21087,7 +21126,7 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
 </tr>
 <tr>
 <td>ad hoc</td>
-<td><code>defer</code> — refused while an open PR would close the item</td>
+<td><code>defer</code>, <code>planning</code> — each refused while an open PR would close the item</td>
 </tr>
 <tr>
 <td>deferred</td>
@@ -21596,6 +21635,11 @@ prints the comment ID and deletes the draft ref. See the
 <p>The merge-review result check (epic vergil-project/.github#881): it checks
 a reviewer's stored reply against the request it answers, by the rules of
 the <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md">merge-review protocol</a>.
+It first reads the capture record the plugin's capture hook wrote beside the
+result, <code>capture-&lt;step&gt;.json</code> in the result's directory (<code>&lt;step&gt;</code> from the
+request), and refuses a result with no record, a malformed record, one for
+another step or request, or one whose <code>result_sha256</code> is not the SHA-256 of
+the result file's bytes, so a result edited after the capture is refused.
 The reply must open, after optional whitespace, with exactly one
 <code>merge-review-result</code> fenced block holding one JSON object, with no second
 such block anywhere. The block must carry exactly the schema's fields at
@@ -21610,7 +21654,8 @@ prefix is refused too, so it can go into a <code>vrg-ruling</code> item unchange
 success it prints <code>{"step", "counts", "security", "fix_status"}</code> as JSON on
 stdout. A refusal names the rule, the finding by ID (or by position when
 the ID is bad) and, for a bad character, its code point and offset; it
-never repeats the refused value. It reads the two files and writes nothing.</p>
+never repeats the refused value. It reads the two files and the capture
+record, and writes nothing.</p>
 <table>
 <thead>
 <tr>
@@ -21629,7 +21674,7 @@ never repeats the refused value. It reads the two files and writes nothing.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>None: no identity mode, network or git access</td>
+<td>The capture record <code>capture-&lt;step&gt;.json</code> beside the result; no identity mode, network or git access</td>
 </tr>
 <tr>
 <td>Failure mode</td>
@@ -21742,6 +21787,20 @@ that step's stored request, <code>--fix-id</code> for each earlier ID asked to c
 the human excused (not sent to the reviewer). It refuses an ID no earlier
 result raised, an ID given to both, a check with no <code>--fix-id</code>, and an
 earlier defect named by neither unless a later result marks it <code>fixed</code>.</p>
+<p>For a fix to an open PR, <code>--pr</code> names the PR by number or URL. The PR must
+be in the <code>--issue</code> repository, open, and headed by the current branch.
+When its body has more than one <code>Closes</code> line it is a batch PR: the
+<code>--issue</code> must be one of them, and every step's request adds
+<code>batch_issues</code> (each other issue's ref, body and human comments, read as
+for the <code>--issue</code>), <code>batch_commits</code> (every commit under review as
+<code>{"sha", "subject", "issue"}</code>, its issue the one its subject's trailing
+<code>(#N)</code> names) and <code>batch_commits_path</code> (<code>commits-&lt;step&gt;.patch</code>, each
+commit with its own patch), and leaves the batch's issues out of
+<code>epic_open_tasks</code>. It refuses a merge commit, a commit naming no issue of the
+PR, an issue with no commit, and a check whose batch issues differ from its
+previous step's. A single-issue PR must link the <code>--issue</code>, and its request
+is the one built without <code>--pr</code>. See the protocol's
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md#a-batch-pr">A batch PR</a>.</p>
 <p>Before writing, and on its own with <code>--ensure-dir</code>, it checks the private
 directory level by level: <code>build</code> must be a real directory (it is created
 when absent), and each level from <code>.vergil-state</code> down to <code>merge-review</code>
@@ -21758,15 +21817,15 @@ makes there, and writes only to the path it prints.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.vrg_merge_review_request</code> (library: <code>lib/merge_review/request.py</code>, <code>lib/merge_review/state.py</code>, <code>lib/build_dir.py</code>, <code>lib/validate_record.py</code>, <code>lib/rulings/comments.py</code>, <code>lib/rulings/identity.py</code>)</td>
+<td><code>vergil_tooling.bin.vrg_merge_review_request</code> (library: <code>lib/merge_review/request.py</code>, <code>lib/merge_review/open_pr.py</code>, <code>lib/merge_review/state.py</code>, <code>lib/build_dir.py</code>, <code>lib/validate_record.py</code>, <code>lib/rulings/comments.py</code>, <code>lib/rulings/identity.py</code>)</td>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--issue OWNER/NAME#N --base REF --step {review,check,check-&lt;k&gt;} [--design-source FILE]... [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]</code>, or <code>--issue OWNER/NAME#N --ensure-dir</code></td>
+<td><code>--issue OWNER/NAME#N --base REF --step {review,check,check-&lt;k&gt;} [--design-source FILE]... [--pr N\|URL] [--fix-base SHA --earlier-result FILE... --fix-id ID... [--ruled-id ID]...]</code>, or <code>--issue OWNER/NAME#N --ensure-dir</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run inside the task's worktree after <code>vrg-container-run -- vrg-validate</code> passed at <code>HEAD</code>; trusted authors are configured with exactly one human login, and GitHub is reachable to read the issue, its comments and its epic's sub-issues</td>
+<td>Run inside the task's worktree after <code>vrg-container-run -- vrg-validate</code> passed at <code>HEAD</code>; trusted authors are configured with exactly one human login, and GitHub is reachable to read the issue, its comments and its epic's sub-issues (and, with <code>--pr</code>, the PR and each of its issues)</td>
 </tr>
 <tr>
 <td>Failure mode</td>
@@ -21885,8 +21944,9 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </table>
 <h3 id="vrg-repo-status">vrg-repo-status<a class="headerlink" href="#vrg-repo-status" title="Permanent link">&para;</a></h3>
 <p>Show every worktree git knows about in the current repo, grouped by
-kind, so nothing with code on disk goes unseen (issue #3386), then what
-the integration branch holds that <code>main</code> does not. Read-only — it never
+kind, so nothing with code on disk goes unseen (issue #3386), then the
+open PRs on <code>origin</code> that no worktree shows (issue #4581), then what the
+integration branch holds that <code>main</code> does not. Read-only — it never
 fetches or writes a ref, cleanup stays <code>vrg-finalize-pr</code>'s job, and
 finalize and sweep still act only on development worktrees. Local
 branches with no worktree are not shown. The sections, in order:</p>
@@ -21909,6 +21969,8 @@ branches with no worktree are not shown. The sections, in order:</p>
    each row shows age, PR state and dirty state and a leftover stands out.</li>
 <li><strong>Other / unknown</strong> — any other branch, a detached HEAD, or a
    worktree outside <code>.worktrees/</code> (shown by its full path).</li>
+<li><strong>Open PRs on origin with no local worktree</strong> — every open PR whose
+   head branch no linked worktree holds, described below. Always shown.</li>
 <li><strong>Pending release</strong> — every change on the integration branch that is
    not yet on <code>main</code>, described below. Shown only in a repo that
    publishes.</li>
@@ -21951,7 +22013,44 @@ keeps its LAST COMMIT.</p>
 <a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
 <a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
 </code></pre></div>
-<p><strong>Pending release.</strong> The section follows the worktree sections and comes
+<p><strong>Open PRs on origin with no local worktree.</strong> The section follows the
+worktree sections. Many PRs never touch the local checkout: those that
+automation jobs open (lifecycle, repo-config sync, dependency updates) and
+those prepared on another machine, such as a cloud VM. They are read from
+GitHub in one query per 100 open PRs. A PR is left out when a linked
+worktree already shows it: its PR number is in a worktree row, or its
+head branch is a linked worktree's branch. A PR from a fork is never
+matched by branch name, since a fork's branch can share a local name; its
+BRANCH shows as <code>&lt;owner&gt;:&lt;branch&gt;</code>. A VM that shares the file system
+already shows its PRs through its worktrees.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Open PRs on origin with no local worktree
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>PR    BRANCH                    BASE     TYPE       AUTHOR                     CI       OPENED  TITLE
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>#935  lifecycle/rust-add-1.100  develop  lifecycle  vergil-project-automation  success  6h ago  feat(versions): add rust 1.100
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>#936  lifecycle/rust-drop-1.98  develop  lifecycle  vergil-project-automation  pending  6h ago  feat(versions): drop rust 1.98 (EOL 2026-10-01)
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>2 open PRs with no local worktree: 0 automation PRs, 2 lifecycle PRs, 0 dependency updates, 0 release PRs, 0 other PRs.
+</code></pre></div>
+<ul>
+<li><strong>Rows</strong> come in PR-number order. TYPE is as in Pending release
+  below, except that a <code>lifecycle/*</code> head branch (a language version
+  added or dropped) shows <code>lifecycle</code> first. AUTHOR is the PR author's
+  login (<code>ghost</code> for a deleted account). CI is the head commit's
+  combined check state (<code>success</code>, <code>failure</code>, <code>pending</code>, <code>error</code>,
+  <code>expected</code>), or <code>none</code> when it has no checks. OPENED is the PR's age.
+  A draft's TITLE starts with <code>[draft]</code>; a TITLE over 72 characters is
+  cut, ending in <code>…</code>.</li>
+<li><strong>The summary line</strong> counts the rows: automation PRs, lifecycle PRs,
+  dependency updates, release PRs and other PRs, every bucket listed.</li>
+<li><strong>None left</strong> prints <code>None: &lt;n&gt; open PRs on origin, each with a local
+  worktree.</code>, or <code>None: origin has no open PRs.</code>, in place of the table.</li>
+<li><strong>A lookup that fails or is incomplete</strong> (an API error, a missing
+  token, a non-GitHub <code>origin</code>, a list that changed between pages, a
+  truncated label list) is an error, never "no open PRs" and never a
+  partial list: the section prints its heading and
+  <code>ERROR: open PRs: &lt;reason&gt;</code> alone. The rest of the output still
+  prints, then the command exits 1. The reason never carries URL
+  credentials.</li>
+</ul>
+<p><strong>Pending release.</strong> The section follows the open-PR section and comes
 before the summary lines. It is shown only when <code>vergil.toml</code> sets
 <code>[publish].release = true</code>; with the flag false or absent, nothing is
 printed for it, and without a <code>vergil.toml</code> a note says it was skipped.
@@ -21961,12 +22060,12 @@ read from the remote without fetching: the current refs and tags, the
 first-parent commits from the GitHub compare API, and each commit's
 merged PR into the integration branch, by commit SHA (so a batch PR
 rebase-merged as several commits is one row).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Pending release (develop → main): latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>PR     BRANCH                      TYPE     MERGED  TITLE
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 1 other PR.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Pending release (develop → main): latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>PR     BRANCH                      TYPE     MERGED  TITLE
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 1 other PR.
 </code></pre></div>
 <ul>
 <li><strong>Release line.</strong> It follows the section heading on the same line,
@@ -22013,7 +22112,7 @@ rebase-merged as several commits is one row).</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.vrg_repo_status</code> (pending release: <code>lib/pending_release.py</code>)</td>
+<td><code>vergil_tooling.bin.vrg_repo_status</code> (open PRs: <code>lib/open_prs.py</code>; pending release: <code>lib/pending_release.py</code>)</td>
 </tr>
 <tr>
 <td>Args</td>
@@ -22021,15 +22120,15 @@ rebase-merged as several commits is one row).</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Git repo; <code>gh</code> CLI on PATH for PR state; for the Pending release section, a github.com <code>origin</code> and GitHub credentials</td>
+<td>Git repo; <code>gh</code> CLI on PATH for PR state; for the open-PR and Pending release sections, a github.com <code>origin</code> and GitHub credentials</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>None for classification — a failed PR lookup is reported as an <code>unknown</code> row and a failed branch-gone check as a note, never a crash. A malformed <code>vergil.toml</code> exits 1 with the reason. A failed or incomplete pending-release lookup prints <code>ERROR:</code> in its section and exits 1 after the rest of the output</td>
+<td>None for classification — a failed PR lookup is reported as an <code>unknown</code> row and a failed branch-gone check as a note, never a crash. A malformed <code>vergil.toml</code> exits 1 with the reason. A failed or incomplete open-PR or pending-release lookup prints <code>ERROR:</code> in its section and exits 1 after the rest of the output</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success, 1 malformed <code>vergil.toml</code> or a pending-release lookup error</td>
+<td>0 success, 1 malformed <code>vergil.toml</code>, or an open-PR or pending-release lookup error</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -22323,7 +22422,7 @@ unwarmed-but-usable container, and the warmup runs normally on every
 later build once the lock is committed
 (<a href="https://github.com/vergil-project/.github/issues/342">epic vergil-project/.github#342</a>).</p>
 <p><strong>Integration tests are refused.</strong> <code>[ci].integration-tests = true</code> would
-make the <code>CI gates</code> ruleset require <code>test / integration / &lt;version&gt;</code>,
+make the CI-gates rulesets require <code>test / integration / &lt;version&gt;</code>,
 which no vergil-actions CI job produces yet
 (<a href="https://github.com/vergil-project/vergil-tooling/issues/2721">#2721</a>),
 so the repo could never merge a PR. The wizard refuses the setting as
@@ -22376,6 +22475,10 @@ project language to select the Docker image; falls back to
 Local-settings guard: on the host, before any container starts, it refuses an
 agent (warns a human) while a loadable <code>.claude/settings.local.json</code> is not
 absent or <code>{}</code> (epic vergil-project/.github#558).
+The container mounts and runs in the root of the repo <code>git</code> resolves from the
+current directory, not the current directory itself. When the two differ (a
+subdirectory, or a copied tree with no <code>.git</code> of its own inside another repo),
+it prints a warning on stderr naming both paths and carries on (issue #4594).
 Every launch bind-mounts the per-user <code>~/.cache/vergil/trivy</code> directory
 (under <code>$XDG_CACHE_HOME</code> when set), creating it if missing, where
 <code>vrg-validate</code>'s trivy stage caches the vulnerability database (see
@@ -22925,7 +23028,10 @@ one) and then the custom stage; with no custom validator it prints one
 "no custom validator" line and exits 0, and a validator that is present
 but not an executable regular file fails. <code>--check build</code> for a
 language with no build check prints one "nothing to run" line and exits
-0. PR CI runs each stage through
+0. A <code>--check</code> of a language stage in a repo with no language declared
+also exits 0, with a line naming the repo root it resolved, since PR CI
+runs <code>--check lint</code> and <code>--check typecheck</code> in such repos too.
+PR CI runs each stage through
 the <code>vergil-actions</code> reusable workflows, the custom stage as
 <code>quality / custom</code>. See the <a href="../../guides/validation-matrix/">Validation Matrix</a>
 for every check and where it runs. Every pipeline run, pass or fail,
@@ -22974,7 +23080,8 @@ stage. Shared validation checks for all repos: the
 (<code>docs/site/**/*.md</code>, <code>README.md</code> and <code>epics/**/*.md</code>) using the bundled canonical config,
 the docs-links guard (over the same markdown less <code>epics/archive/</code>, a link
 to a mike-versioned Vergil docs site must carry a <code>latest</code>, <code>dev</code> or
-version-number segment after the site name), shellcheck on
+version-number segment after the site name, and a link to a site the org
+does not publish fails), shellcheck on
 <code>scripts/</code> and every <code>*.sh</code> file in the repository, yamllint on <code>.github/</code>
 and <code>docs/</code> YAML files, the
 dependabot-limit guard (when <code>.github/dependabot.yml</code> exists, every

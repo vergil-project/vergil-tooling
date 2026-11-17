@@ -1440,6 +1440,8 @@
       
         
       
+        
+      
     
     
     
@@ -1492,6 +1494,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.322/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.322
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18459,8 +18489,11 @@ the wait updates the PR's branch from <code>develop</code> and CI decides. The
 wait merges the PR itself once its checks are green on an up-to-date
 branch; a failed check, a conflict, a closed PR, the branch-update cap
 or the deadline ends it unmerged. Under a token source the deadline is
-7200 seconds, counted from publish's own start, so the clone, the patch
-and the push are inside it. A human's run keeps the building block's
+7200 seconds, counted from publish's own start: the clone and the patch
+come out of it, and the wait gets what is left. Closing an earlier
+run's PR, the push and opening the PR come after that is worked out,
+so they are not counted; they take seconds, well inside the publish
+job's 140-minute timeout. A human's run keeps the building block's
 own deadline, <code>$VRG_MECHANIZED_PR_DEADLINE</code> seconds (2400 by default).</p>
 <p>The commit and the PR title are <code>chore(upstream): refresh upstream
 inputs</code>. The PR body says that the job merges it once CI passes, and
@@ -18637,10 +18670,7 @@ command as two jobs, each on a fresh runner:</p>
 </ul>
 <p>Each consuming repo calls it from its own <code>ops.yml</code> on its own schedule,
 and declares its allowlist in <code>[upstream-refresh].paths</code>. A failed or
-unmerged run shows as a red scheduled run. Until the two-job workflow
-is released, a run of the older single-job workflow against this
-version of the command fails loudly and merges nothing (spec section
-6.4 of epic #1168).</p>
+unmerged run shows as a red scheduled run.</p>
 
 
 

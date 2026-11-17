@@ -1440,6 +1440,8 @@
       
         
       
+        
+      
     
     
     
@@ -1492,6 +1494,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.322/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.322
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18522,10 +18552,12 @@ dev images come from
 <li>docs-links: a link to a mike-versioned Vergil docs site must carry a
    version segment after the site name (<code>latest</code>, <code>dev</code> or a version
    number such as <code>2.1</code>), since a deep link without one returns 404. A
-   bare site root is allowed, as mike redirects it. The check reads the
+   bare site root is allowed, as mike redirects it. A link to a site
+   name the org does not publish (anything but the versioned sites and
+   the unversioned <code>docs</code> and <code>packages</code>) fails too. The check reads the
    same markdown as markdownlint, less <code>epics/archive/</code>, against the
-   fixed list of versioned sites in vergil-tooling (no network), and
-   names each hit by path and line with its <code>/latest/</code> form. See
+   fixed lists of sites in vergil-tooling (no network), and names each
+   hit by path and line, with its <code>/latest/</code> form or its site name. See
    <a href="../../reference/lint/markdown-standards/#links-to-other-vergil-docs-sites">Links to other Vergil docs sites</a>.</li>
 <li>shellcheck on shell scripts under <code>scripts/</code> and on every <code>*.sh</code>
    file elsewhere in the repository.</li>
@@ -18603,6 +18635,17 @@ manifest is missing: a repository with some of them, such as a
 <code>pyproject.toml</code> with no <code>uv.lock</code>, runs the stages and fails on the
 gap, as does a <code>Cargo.toml</code> with no <code>Cargo.lock</code>, or one that
 <code>cargo fetch --locked</code> cannot resolve.</p>
+<p>TypeScript has one exception. A <code>package.json</code> that declares no
+dependencies, with no <code>package-lock.json</code>, is not bootstrapped either:
+that is the minimal <code>package.json</code> <code>vrg-github-repo-init --language
+typescript</code> writes (<code>name</code>, <code>version</code> and <code>private</code> only). A
+<code>package.json</code> declares no dependencies when it has no <code>dependencies</code>,
+<code>devDependencies</code>, <code>optionalDependencies</code> or <code>peerDependencies</code>, or each
+is empty. Such a repository skips the install, <code>typescript-tools</code> and
+language stages with the reason <code>skipped: no package-lock.json
+(typescript repo not bootstrapped yet)</code>. A <code>package.json</code> that declares
+any dependency but has no <code>package-lock.json</code> runs the stages, and its
+install fails.</p>
 <p>The skip also needs the repository to hold no source files of its
 language (<code>.rs</code> for Rust, <code>.py</code> for Python, and so on), tracked or
 untracked, ignored files left out. A repository with sources but none of

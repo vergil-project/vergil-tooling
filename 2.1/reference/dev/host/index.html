@@ -1440,6 +1440,8 @@
       
         
       
+        
+      
     
     
     
@@ -1492,6 +1494,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.322/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.322
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18220,7 +18250,7 @@ The pinning doctrine is inherited from epic
 <tbody>
 <tr>
 <td><code>vrg-host</code> / <code>vrg-host status</code></td>
-<td>Read-only report of every host dependency (the default)</td>
+<td>Report of every host dependency, changing no installed tool (the default)</td>
 </tr>
 <tr>
 <td><code>vrg-host status --fix</code></td>
@@ -18252,7 +18282,18 @@ The pinning doctrine is inherited from epic
 <p>For each dependency in the <a href="#the-host-dependency-manifest">host-dependency manifest</a>,
 <code>status</code> prints its install method, installed version, latest version, version
 state and severity, followed by any pin and auxiliary-check detail lines, and an
-<code>overall:</code> line. It changes nothing on the host (unless <code>--fix</code> is given).</p>
+<code>overall:</code> line. It installs, upgrades and repairs nothing (unless <code>--fix</code> is
+given). Its one write is the refresh of Homebrew's package metadata described
+below.</p>
+<p><strong>Homebrew latest versions.</strong> A <code>brew-formula</code> or <code>brew-cask</code> dependency's
+latest version comes from <code>brew info</code>, which reads Homebrew's local metadata
+and never refreshes it. Homebrew's auto-update runs before commands such as
+<code>brew install</code> and <code>brew upgrade</code>, not before <code>brew info</code>, so that metadata can
+be days old and an outdated tool would read as <code>current</code>. <code>status</code> and
+<code>upgrade</code> therefore run <code>brew update</code> once, before reading any Homebrew latest
+version. If <code>brew update</code> fails (no network, a broken tap), <code>vrg-host</code> prints a
+warning on stderr, and every Homebrew dependency reports <code>latest-unknown</code>
+(WARN), never <code>current</code>.</p>
 <p>Each dependency is classified on two axes, its <strong>version state</strong> and its
 <strong>auxiliary checks</strong>, and gets the worse of the two severities:</p>
 <table>
@@ -18441,7 +18482,7 @@ prints one line per dependency saying what it actually did:</p>
 </tr>
 <tr>
 <td><code>ran … (latest unknown: …)</code></td>
-<td>The latest probe did not answer (as <code>status</code>'s <code>latest-unknown</code>)</td>
+<td>The latest probe did not answer, or <code>brew update</code> failed for a Homebrew dependency (as <code>status</code>'s <code>latest-unknown</code>)</td>
 <td>WARN</td>
 </tr>
 <tr>

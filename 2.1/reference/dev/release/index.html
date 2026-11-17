@@ -1440,6 +1440,8 @@
       
         
       
+        
+      
     
     
     
@@ -1492,6 +1494,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.322/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.322
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14786,6 +14816,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-develop-cd-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The develop-CD gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17896,6 +17937,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-develop-cd-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The develop-CD gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17975,9 +18027,9 @@ push, PR or merge.</p>
 <td>Release even though an open <code>dependency-update</code> PR blocks it. For urgent fixes only; the bypassed PRs are listed on the tracking issue</td>
 </tr>
 <tr>
-<td><code>--install</code></td>
+<td><code>--no-install</code></td>
 <td>No</td>
-<td>After a clean release, run the <code>[publish].consumer-refresh</code> commands instead of only printing them. Fails if none are configured</td>
+<td>Skip the install step. By default, after a clean release, <code>vrg-release</code> runs the <code>[publish].consumer-refresh</code> commands instead of only printing them; with none configured it says there is nothing to run, which is not an error. <code>--install</code> was removed: passing it exits 1 and names this default</td>
 </tr>
 <tr>
 <td><code>--resume [X.Y.Z]</code></td>
@@ -18017,6 +18069,15 @@ update landed through the fix PR), and deletes its head branch. A failed
 branch delete is reported, not fatal. <code>--allow-pending-deps</code> lets the
 release past whatever still blocks. Lookup failures refuse the release.
 See <a href="../../../guides/releasing/#the-dependency-update-gate">The dependency-update gate</a>.</p>
+<h2 id="the-develop-cd-gate">The develop-CD gate<a class="headerlink" href="#the-develop-cd-gate" title="Permanent link">&para;</a></h2>
+<p>On a fresh start (not on <code>--resume</code>), preflight last requires the
+develop CD run for the local <code>develop</code> head to be green. It waits on a
+run still queued or in progress, up to <code>$VRG_CD_TIMEOUT</code> seconds, and
+refuses on a failed, timed-out or cancelled run, with the run's link. A
+failure only in a docs job is a warning. A superseded run is replaced by
+the next develop CD run. With no run for the head, the latest completed
+run on an ancestor must be green. Lookup failures refuse the release.
+See <a href="../../../guides/releasing/#the-develop-cd-gate">The develop-CD gate</a>.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
