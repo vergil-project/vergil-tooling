@@ -62,6 +62,22 @@ independently — no shared state, no lock contention.
     trip to the GitHub UI, but the App ID is what the tooling uses
     until the migration lands.
 
+### Token sources (mechanized jobs)
+
+A mechanized job that outlives one token's hour registers a **token
+source** instead (`github.set_token_source`, epic
+vergil-project/.github#1168). While one is registered, every `gh` and
+`git` call takes its token from the source, and the retrying callers
+rebuild their environment for every attempt, so a renewed token
+reaches the next call even in the middle of a long wait. The one
+source today is `lib/app_token.py`'s `AppTokenSource`, which
+`vrg-upstream-refresh publish` uses: it mints repo-scoped automation
+App tokens, renews them and revokes them (see
+[Upstream Refresh](../reference/upstream-refresh-config.md#identity-and-credentials)).
+A token source refuses to run while the agent App mode is configured
+(`VRG_APP_ID` or `VRG_PRIVATE_KEY_PATH` set), so the two kinds of
+token never mix.
+
 ## Credential selection
 
 ### The tool selects the credential, not the caller
@@ -130,9 +146,10 @@ in priority order:
 1. **App permission shape** — the installation token can only
    perform what the App declares. This is the primary, server-side
    boundary. A user-App token physically cannot merge a PR.
-2. **Branch protection** — rulesets prevent merging without review,
-   prevent direct pushes to protected branches, and require CI to
-   pass.
+2. **Branch protection** — rulesets require a pull request (no direct
+   pushes to protected branches) and require CI to pass. They
+   require no approving review: the mechanized `automation/` PRs
+   merge on CI alone, and the human merges every development PR.
 3. **`vrg-gh` / `vrg-git` wrappers** — gate which operations an agent
    may attempt and surface clear errors. A soft ergonomic layer,
    bypassable by root, not the security boundary.
@@ -350,6 +367,9 @@ CI reaches an org's App through the `APP_CLIENT_ID` and
 `APP_PRIVATE_KEY` Actions secrets. The nightly `ops` workflow uses them
 for the `github-config` job (`vrg-github-repo-config update`, the
 automatic fleet sync), the branch sweep and the `dependabot-audit` job.
+The `publish` job of `ops-upstream-refresh.yml` passes them to
+`vrg-upstream-refresh publish`, which mints its own repo-scoped tokens
+(see [Upstream Refresh](../reference/upstream-refresh-config.md#identity-and-credentials)).
 The `epic-rollup` and epic-sweep workflows use them to close epics and
 tasks. The `cd-release` workflow uses them to dispatch to the org's
 `packages` repository (see
@@ -378,7 +398,8 @@ the draft advisories in the org's `.github` (see
 delete the key, suspend the installation if access must stop at once,
 and generate a new key. Then update the `APP_PRIVATE_KEY` secret
 wherever it is stored. Until you do, the workflows that depend on it
-(ops, epic roll-up and sweep, package-index dispatch) will fail.
+(ops, upstream refresh, epic roll-up and sweep, package-index
+dispatch) will fail.
 
 ### CI publishing secrets
 
