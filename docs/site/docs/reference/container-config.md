@@ -42,12 +42,29 @@ token file and forwards it itself (see the next section and
 [C++ Overview → ConanCenter Audit Token](../standards/development/cpp/overview.md#conancenter-audit-token)).
 An existing `CONAN_AUDIT_PROVIDER_TOKEN` prefix is harmless but redundant.
 
-A few names are never forwarded, whatever prefix matches them:
-`VRG_VERSION_WINDOW` (see [below](#vrg_version_window-a-local-version-window)),
-and rustup's `RUSTUP_TOOLCHAIN` and `RUSTUP_AUTO_INSTALL`. A forwarded variable
-overrides the image's own setting, and the Rust image selects its toolchain
-itself, so a prefix such as `RUST` cannot let the host pick another one (epic
-[vergil-project/.github#1095](https://github.com/vergil-project/.github/issues/1095)).
+Some names are never forwarded, whatever prefix matches them. A forwarded
+variable overrides the image's own setting, so these would let the host change
+what the image decides for itself:
+
+| Withheld | Why |
+|---|---|
+| `VRG_VERSION_WINDOW` | It names a host path the container cannot see (see [below](#vrg_version_window-a-local-version-window)). |
+| `RUSTUP_TOOLCHAIN`, `RUSTUP_AUTO_INSTALL` | They would override the image's Rust toolchain: the Rust image selects its toolchain itself, so a prefix such as `RUST` cannot let the host pick another one (epic [vergil-project/.github#1095](https://github.com/vergil-project/.github/issues/1095)). |
+| `NODE_OPTIONS` | It would change how Node behaves inside the container, for example by preloading code. |
+| Any name starting `npm_config_`, `COREPACK_` or `VOLTA_`, in any case (`NPM_CONFIG_` too) | They would change how npm behaves, or pick another package manager or Node than the image's. npm reads its environment configuration without regard to case, so the match ignores case too (epic [vergil-project/.github#1281](https://github.com/vergil-project/.github/issues/1281)). |
+
+The other `NODE_*` names, such as `NODE_ENV` and `NODE_EXTRA_CA_CERTS`, are
+forwarded as usual, and a host `NODE_PATH` still overrides the default
+`vrg-container-run` sets (see the next section). The rule applies to every repo.
+
+A withheld variable is never dropped silently. For each host variable a repo's
+prefix matches and the passthrough withholds, `vrg-container-run` prints one
+notice on stderr, naming it and why:
+
+```text
+vrg-container-run: not forwarding NODE_OPTIONS from the host: it would change how Node or npm behaves inside the container
+```
+
 The passthrough design is specified in
 [`docs/specs/2026-05-25-configurable-container-env-passthrough-design.md`](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/2026-05-25-configurable-container-env-passthrough-design.md).
 
