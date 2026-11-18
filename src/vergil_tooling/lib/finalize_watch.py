@@ -32,11 +32,28 @@ judge it in this order:
    PR with a violation, as in step 2.
 5. **Auto-merge off:** ``failed: auto-merge off``.
 6. **A required check concluded in failure:** ``failed: CI``, naming the
-   check. A failure in the snapshot's check rollup is confirmed with
-   :func:`vergil_tooling.lib.github.failed_check_names`, which leaves out
-   check-runs of superseded workflow runs. When the base branch's required
-   checks cannot be read, every check counts as required.
-7. **Conflict** (``mergeStateStatus`` ``DIRTY``): ``failed: conflict``.
+   check. :func:`check_failures` judges the snapshot's checks, and leaves
+   out a failed or cancelled check-run of a superseded workflow run. When
+   the base branch's required checks cannot be read, every check counts as
+   required.
+7. **A required check was cancelled** on a cancelled run that no newer run
+   of its workflow has replaced, for :data:`CANCEL_GRACE_SECS` on end:
+   ``failed: cancelled``, naming the check. Until then the PR is pending,
+   since a re-run may still start.
+8. **Conflict** (``mergeStateStatus`` ``DIRTY``): ``failed: conflict``.
+
+**A superseded run is not a failure** (issue #4692). A push to an open PR
+starts a new CI run, and ``concurrency: cancel-in-progress`` cancels the run
+in flight on the same head. GitHub keeps the cancelled run's check-runs in
+the PR's check rollup, and for a while they are the only ones there: the new
+run registers its check-runs only once its jobs start. So a failed or
+cancelled check-run is judged by its workflow run, read from the Actions
+runs API (:func:`vergil_tooling.lib.github.head_workflow_runs`), which lists
+the new run as soon as it is created.
+
+**A merged PR is never reported as not merged.** A PR that ended
+``failed: CI`` or ``failed: cancelled`` is read again on every later poll
+while the watch goes on. If GitHub has merged it, it ends ``merged`` instead.
 
 A PR still pending at the deadline is ``timed out``; its auto-merge stays on.
 Every failure to read a PR, to run the provenance check or to turn auto-merge
@@ -71,6 +88,7 @@ if TYPE_CHECKING:
 Outcome = Literal[
     "merged",
     "failed: CI",
+    "failed: cancelled",
     "failed: conflict",
     "failed: closed",
     "failed: auto-merge off",
@@ -84,6 +102,10 @@ Outcome = Literal[
 DEADLINE_ENV = "VRG_FINALIZE_DEADLINE"
 _DEFAULT_DEADLINE_SECS = 7200
 
+#: How long a cancelled required check with no newer run holds a PR pending
+#: before the PR ends ``failed: cancelled``: time for a re-run to start.
+CANCEL_GRACE_SECS = 120.0
+
 _DEVELOP = "develop"
 _RELEASE_PREFIX = "release/"
 _STATES = frozenset({"OPEN", "MERGED", "CLOSED"})
@@ -95,6 +117,11 @@ _VIEW_FIELDS = (
 # github.check_run_bucket.
 _FAILED_CONTEXT_STATES = frozenset({"FAILURE", "ERROR"})
 _FAILED_BUCKETS = frozenset({"fail", "cancel"})
+_CANCEL_BUCKET = "cancel"
+_RUN_COMPLETED = "completed"
+_RUN_CANCELLED = "cancelled"
+# The outcomes judged from checks alone: a later poll may still find the PR merged.
+_CHECK_OUTCOMES = frozenset({"failed: CI", "failed: cancelled"})
 _PENDING_CONTEXT_STATES = frozenset({"PENDING", "EXPECTED"})
 _PENDING_BUCKET = "pending"
 # The merge states in which GitHub merges an auto-merge PR with no check left.
@@ -155,8 +182,8 @@ class Snapshot:
     """One ``gh pr view`` read of a PR.
 
     *merge_commit* is the merge commit's SHA, or ``""`` while GitHub reports
-    none. ``vrg-pr-await`` reads a PR through :func:`snapshot` and judges its
-    checks with :func:`failed_required_checks` too.
+    none. ``vrg-pr-await`` and ``vrg-repo-status`` read a PR through
+    :func:`snapshot` and judge its checks with :func:`check_failures` too.
     """
 
     node_id: str
@@ -273,30 +300,154 @@ def _disable_auto_merge(snap: Snapshot) -> None:
         raise FinalizeWatchError(msg)
 
 
-def failed_required_checks(snap: Snapshot, required: Collection[str] | None) -> list[str]:
-    """The required checks on *snap*'s head that concluded in failure, confirmed.
+@dataclass(frozen=True)
+class CheckFailures:
+    """The required checks that refuse a snapshot's merge, by kind.
 
-    The rollup decides whether to look; :func:`github.failed_check_names`
-    confirms, leaving out check-runs of superseded runs. *required* ``None``
-    counts every check as required.
+    *failed* concluded in failure; *cancelled* were cancelled on a completed,
+    cancelled workflow run that no newer run of the workflow has replaced.
     """
-    candidates: set[str] = set()
+
+    failed: tuple[str, ...] = ()
+    cancelled: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _Occurrence:
+    """The newest failed or cancelled occurrence of a check in a rollup.
+
+    *run* is its Actions run as ``(owner/repo, run_id)``, or ``None`` for a
+    status context or a check-run with no Actions job link.
+    """
+
+    run: tuple[str, int] | None
+    cancelled: bool
+
+
+def _rank(occurrence: _Occurrence) -> float:
+    """Order occurrences by run id; one with no Actions run outranks every run."""
+    return float("inf") if occurrence.run is None else float(occurrence.run[1])
+
+
+def _failed_occurrences(snap: Snapshot, required: Collection[str] | None) -> dict[str, _Occurrence]:
+    """Each required check with a failed or cancelled occurrence in *snap*'s rollup.
+
+    A check that repeats across runs keeps its occurrence on the newest run.
+    """
+    found: dict[str, _Occurrence] = {}
     for node in snap.rollup:
-        if node.get("__typename") == "StatusContext":
+        context = node.get("__typename") == "StatusContext"
+        if context:
             name = str(node.get("context") or "")
-            failed = str(node.get("state") or "").upper() in _FAILED_CONTEXT_STATES
+            bucket = (
+                "fail" if str(node.get("state") or "").upper() in _FAILED_CONTEXT_STATES else ""
+            )
         else:
             name = str(node.get("name") or "")
             bucket = github.check_run_bucket(
                 str(node.get("status") or ""), str(node.get("conclusion") or "")
             )
-            failed = bucket in _FAILED_BUCKETS
-        if failed and (required is None or name in required):
-            candidates.add(name)
-    if not candidates:
-        return []
+        if bucket not in _FAILED_BUCKETS or (required is not None and name not in required):
+            continue
+        run = None
+        if not context:
+            try:
+                link = github.actions_run_of(str(node.get("detailsUrl") or ""))
+            except ValueError as exc:
+                msg = f"{snap.url}: {exc}"
+                raise FinalizeWatchError(msg) from exc
+            run = None if link is None else (link[0], int(link[1]))
+        occurrence = _Occurrence(run=run, cancelled=bucket == _CANCEL_BUCKET)
+        held = found.get(name)
+        if held is None or _rank(occurrence) > _rank(held):
+            found[name] = occurrence
+    return found
+
+
+def _superseded(run: github.WorkflowRun, runs: dict[int, github.WorkflowRun]) -> bool:
+    """True when a newer run of *run*'s workflow, for the same event, is on the head."""
+    return any(
+        other.workflow_id == run.workflow_id
+        and other.event == run.event
+        and other.run_id > run.run_id
+        for other in runs.values()
+    )
+
+
+def check_failures(snap: Snapshot, required: Collection[str] | None) -> CheckFailures:
+    """Judge the required checks on *snap*'s head; see the module docstring.
+
+    The rollup decides whether to look. :func:`github.failed_check_names`
+    confirms, leaving out a check whose every check-run is on a superseded
+    run. A confirmed check with no failed or cancelled check-run in the
+    snapshot failed after the snapshot was read, so it is not yet decided:
+    the next snapshot judges it. Each other confirmed check is judged by the
+    workflow run of its newest failed or cancelled check-run, read from the
+    head's Actions runs:
+
+    - a newer run of the same workflow, for the same event, is on the head:
+      superseded, so not a failure (issue #4692);
+    - cancelled, on a run that has not completed: not yet decided, as the
+      run is still being cancelled or re-run;
+    - on a completed run that concluded ``cancelled``: *cancelled*;
+    - anything else, a status context and a run the Actions API does not
+      list included: *failed*.
+
+    *required* ``None`` counts every check as required. A failure to read
+    GitHub raises; none is read as a passing check.
+    """
+    occurrences = _failed_occurrences(snap, required)
+    if not occurrences:
+        return CheckFailures()
     names = github.failed_check_names(snap.url)
-    return [n for n in dict.fromkeys(names) if required is None or n in required]
+    confirmed = [n for n in dict.fromkeys(names) if required is None or n in required]
+    runs_by_repo: dict[str, dict[int, github.WorkflowRun]] = {}
+    failed: list[str] = []
+    cancelled: list[str] = []
+    for name in confirmed:
+        occurrence = occurrences.get(name)
+        if occurrence is None:
+            continue  # it failed after the snapshot was read: judged on the next one
+        if occurrence.run is None:
+            failed.append(name)
+            continue
+        repo, run_id = occurrence.run
+        if repo not in runs_by_repo:
+            try:
+                runs_by_repo[repo] = github.head_workflow_runs(repo, snap.head)
+            except (subprocess.CalledProcessError, ValueError) as exc:
+                msg = f"{snap.url}: reading the workflow runs on {snap.head} failed: "
+                raise FinalizeWatchError(msg + error_text(exc)) from exc
+        runs = runs_by_repo[repo]
+        run = runs.get(run_id)
+        if run is None:
+            failed.append(name)
+        elif _superseded(run, runs) or (occurrence.cancelled and run.status != _RUN_COMPLETED):
+            continue
+        elif run.status == _RUN_COMPLETED and run.conclusion == _RUN_CANCELLED:
+            cancelled.append(name)
+        else:
+            failed.append(name)
+    return CheckFailures(failed=tuple(failed), cancelled=tuple(cancelled))
+
+
+@dataclass
+class CancelGrace:
+    """How long the same set of cancelled required checks has been seen.
+
+    A cancelled check with no newer run holds the PR pending for *grace*
+    seconds, so a re-run has time to start. A different set starts it again.
+    """
+
+    grace: float
+    names: tuple[str, ...] = ()
+    since: float = 0.0
+
+    def expired(self, names: tuple[str, ...], now: float) -> bool:
+        """Record *names* as cancelled at *now*; true once they have stayed so for *grace*."""
+        if names != self.names:
+            self.names, self.since = names, now
+        return bool(names) and now - self.since >= self.grace
 
 
 @dataclass
@@ -304,6 +455,7 @@ class _Watched:
     """What the watch remembers about one PR between snapshots."""
 
     required: frozenset[str] | None
+    cancel: CancelGrace
     checked_head: str | None = None
     violation: str = ""
 
@@ -328,7 +480,7 @@ def _check_provenance(snap: Snapshot, watched: _Watched) -> bool:
     return bool(found)
 
 
-def _judge(snap: Snapshot, watched: _Watched, *, allow: bool) -> PRResult | None:
+def _judge(snap: Snapshot, watched: _Watched, *, allow: bool, now: float) -> PRResult | None:
     """*snap*'s terminal result, in the module docstring's order, or ``None`` while pending."""
     why = _not_develop(snap)
     if why is not None:
@@ -362,9 +514,16 @@ def _judge(snap: Snapshot, watched: _Watched, *, allow: bool) -> PRResult | None
     if not snap.auto_merge_on:
         detail = "auto-merge is off; investigate before re-enabling auto-merge"
         return _result(snap, "failed: auto-merge off", detail, watched)
-    failed = failed_required_checks(snap, watched.required)
-    if failed:
-        return _result(snap, "failed: CI", f"required check failed: {', '.join(failed)}", watched)
+    checks = check_failures(snap, watched.required)
+    if checks.failed:
+        detail = f"required check failed: {', '.join(checks.failed)}"
+        return _result(snap, "failed: CI", detail, watched)
+    if watched.cancel.expired(checks.cancelled, now):
+        detail = (
+            f"required check cancelled: {', '.join(checks.cancelled)}; no newer run "
+            f"started within {github.format_wait(watched.cancel.grace)}"
+        )
+        return _result(snap, "failed: cancelled", detail, watched)
     if snap.merge_state == "DIRTY":
         return _result(snap, "failed: conflict", "the PR can no longer merge cleanly", watched)
     return None
@@ -393,6 +552,8 @@ def _pending_checks(snap: Snapshot, required: frozenset[str] | None) -> int:
 
 def _pending_state(snap: Snapshot, watched: _Watched) -> str:
     """The status table's state for *snap*'s PR while it is still pending."""
+    if watched.cancel.names:
+        return f"checks cancelled ({len(watched.cancel.names)}), awaiting a re-run"
     checks = _pending_checks(snap, watched.required)
     if checks:
         return f"checks pending ({checks})"
@@ -454,14 +615,21 @@ def _print_status(
 
 
 def watch(
-    prs: Sequence[str], *, allow_provenance_violation: bool, poll_interval: float = 15.0
+    prs: Sequence[str],
+    *,
+    allow_provenance_violation: bool,
+    poll_interval: float = 15.0,
+    cancel_grace: float = CANCEL_GRACE_SECS,
 ) -> list[PRResult]:
     """Watch *prs* until each reaches a terminal :data:`Outcome` or the deadline passes.
 
     Returns one :class:`PRResult` per distinct PR, in the order given. The
     deadline (:func:`deadline_secs`) and *poll_interval* are checked before any
     PR is read. Each open PR is read once at start-up and once per interval,
-    and the status table is printed after start-up and after each poll.
+    and the status table is printed after start-up and after each poll. A PR
+    that ended on its checks alone is read again on every later poll, and
+    ends ``merged`` once GitHub reports it merged. *cancel_grace* is how long
+    a cancelled required check with no newer run holds a PR pending.
     """
     deadline = deadline_secs()
     if poll_interval <= 0:
@@ -469,24 +637,33 @@ def watch(
         raise ValueError(msg)
     results: dict[str, PRResult] = {}
     pending: dict[str, tuple[_Watched, Snapshot]] = {}
+    # The PRs that ended on their checks alone, re-read while the watch goes on.
+    recheck: dict[str, _Watched] = {}
     rows: dict[str, _Row] = {}
     order: list[str] = []
     start = time.monotonic()
+
+    def judge(snap: Snapshot, watched: _Watched) -> None:
+        now = time.monotonic()
+        result = _judge(snap, watched, allow=allow_provenance_violation, now=now)
+        if result is None:
+            pending[snap.url] = (watched, snap)
+            rows[snap.url] = _row(snap, _pending_state(snap, watched), now - start)
+            return
+        results[snap.url] = result
+        rows[snap.url] = _row(snap, result.outcome, now - start)
+        pending.pop(snap.url, None)
+        if result.outcome in _CHECK_OUTCOMES:
+            recheck[snap.url] = watched
+
     for pr in prs:
         snap = snapshot(pr)
         if snap.url in order:
             continue
         order.append(snap.url)
         watchable = snap.state == "OPEN" and _not_develop(snap) is None
-        watched = _Watched(required=github.required_check_names(snap.url) if watchable else None)
-        result = _judge(snap, watched, allow=allow_provenance_violation)
-        waited = time.monotonic() - start
-        if result is None:
-            pending[snap.url] = (watched, snap)
-            rows[snap.url] = _row(snap, _pending_state(snap, watched), waited)
-        else:
-            results[snap.url] = result
-            rows[snap.url] = _row(snap, result.outcome, waited)
+        required = github.required_check_names(snap.url) if watchable else None
+        judge(snap, _Watched(required=required, cancel=CancelGrace(cancel_grace)))
 
     end = time.monotonic() + deadline
     rows_now = [rows[u] for u in order]
@@ -496,17 +673,13 @@ def watch(
         if remaining <= 0:
             break
         time.sleep(min(poll_interval, remaining))
-        for url, (watched, _) in list(pending.items()):
+        for url, watched in list(recheck.items()):
             snap = snapshot(url)
-            result = _judge(snap, watched, allow=allow_provenance_violation)
-            waited = time.monotonic() - start
-            if result is None:
-                pending[url] = (watched, snap)
-                rows[url] = _row(snap, _pending_state(snap, watched), waited)
-            else:
-                results[url] = result
-                rows[url] = _row(snap, result.outcome, waited)
-                del pending[url]
+            if snap.state == "MERGED":
+                del recheck[url]
+                judge(snap, watched)
+        for url, (watched, _) in list(pending.items()):
+            judge(snapshot(url), watched)
         now = time.monotonic()
         rows_now = [rows[u] for u in order]
         _print_status(rows_now, list(results.values()), len(pending), now - start, end - now)

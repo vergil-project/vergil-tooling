@@ -39,8 +39,8 @@ included. A development worktree's open PR, the kind ``vrg-submit-pr`` opens
 with auto-merge on, is read once more for its merge state (issue #4678). A PR that
 cannot merge as it stands shows ``merge failed: <reason>`` in STATE, with the
 reasons ``vrg-pr-await`` defines (``conflict``, ``check_failed``,
-``auto_merge_off``, ``orphaned_check``), beside any local state such as
-``rebasing``, and a note naming the failure. A merge state that cannot be read
+``check_cancelled``, ``auto_merge_off``, ``orphaned_check``), beside any local
+state such as ``rebasing``, and a note naming the failure. A merge state that cannot be read
 shows ``merge unknown`` with the reason.
 """
 

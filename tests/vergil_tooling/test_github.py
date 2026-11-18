@@ -342,6 +342,66 @@ def test_run_completed_queries_run_status_in_the_given_repo(
     ]
 
 
+def test_head_workflow_runs_reads_every_run_on_the_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runs of the #1324 head: the cancelled run and the newer run that replaced it (#4692)."""
+    calls: list[tuple[str, str | None, str | None]] = []
+
+    def fake_paginated(endpoint: str, key: str | None = None, *, jq: str | None = None) -> list:
+        calls.append((endpoint, key, jq))
+        return [
+            {
+                "id": 44336022050,
+                "workflow_id": 276918787,
+                "event": "pull_request",
+                "status": "queued",
+                "conclusion": "",
+            },
+            {
+                "id": 44335987154,
+                "workflow_id": 276918787,
+                "event": "pull_request",
+                "status": "completed",
+                "conclusion": "cancelled",
+            },
+        ]
+
+    monkeypatch.setattr(github, "read_json_paginated", fake_paginated)
+    runs = github.head_workflow_runs("vergil-project/.github", "5b32ced")
+
+    assert runs == {
+        44336022050: github.WorkflowRun(44336022050, 276918787, "pull_request", "queued", ""),
+        44335987154: github.WorkflowRun(
+            44335987154, 276918787, "pull_request", "completed", "cancelled"
+        ),
+    }
+    [(endpoint, key, jq)] = calls
+    assert endpoint == "repos/vergil-project/.github/actions/runs?head_sha=5b32ced"
+    assert key == "workflow_runs"
+    assert jq is not None
+    assert "workflow_id" in jq
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        None,
+        {"id": "1", "workflow_id": 2, "event": "push", "status": "queued", "conclusion": ""},
+        {"id": 1, "workflow_id": None, "event": "push", "status": "queued", "conclusion": ""},
+        {"id": 1, "workflow_id": 2, "event": "push", "status": None, "conclusion": ""},
+        {"id": 1, "workflow_id": 2, "event": "push", "status": "queued"},
+    ],
+)
+def test_head_workflow_runs_rejects_a_malformed_run(
+    monkeypatch: pytest.MonkeyPatch, item: object
+) -> None:
+    # Never skipped as if the run were not there (#4058).
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [item])
+    with pytest.raises(github.GitHubAPIError, match="a workflow run is"):
+        github.head_workflow_runs("o/r", "abc")
+
+
 def test_actions_run_of_reads_repo_and_run_id() -> None:
     link = "https://github.com/vergil-project/vergil-tooling/actions/runs/40694126522/job/7"
     assert github.actions_run_of(link) == ("vergil-project/vergil-tooling", "40694126522")

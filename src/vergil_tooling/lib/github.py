@@ -1532,6 +1532,54 @@ def run_completed(repo: str, run_id: str) -> bool:
     return status == "completed"
 
 
+@dataclass(frozen=True)
+class WorkflowRun:
+    """One workflow run on a commit, as the Actions runs API lists it.
+
+    *conclusion* is ``""`` while the run has none. Two runs are runs of the
+    same workflow for the same trigger when *workflow_id* and *event* match.
+    """
+
+    run_id: int
+    workflow_id: int
+    event: str
+    status: str
+    conclusion: str
+
+
+_HEAD_RUNS_JQ = (
+    "{workflow_runs: [.workflow_runs[] | "
+    '{id, workflow_id, event, status, conclusion: (.conclusion // "")}]}'
+)
+
+
+def head_workflow_runs(repo: str, sha: str) -> dict[int, WorkflowRun]:
+    """Every workflow run of *repo* (``owner/repo``) on commit *sha*, by run id.
+
+    It reads every page of ``GET /repos/{repo}/actions/runs?head_sha=<sha>``,
+    so a newer run that has not registered a check-run yet is listed too
+    (#4692). A run that is not an object with an integer ``id`` and
+    ``workflow_id`` and string ``event``, ``status`` and ``conclusion``
+    raises :class:`GitHubAPIError` rather than being skipped (#4058).
+    """
+    endpoint = f"repos/{repo}/actions/runs?head_sha={sha}"
+    runs: dict[int, WorkflowRun] = {}
+    for item in read_json_paginated(endpoint, "workflow_runs", jq=_HEAD_RUNS_JQ):
+        if not isinstance(item, dict):
+            raise _shape_error(("gh", "api", endpoint), f"a workflow run is {item!r}")
+        run_id, workflow_id = item.get("id"), item.get("workflow_id")
+        texts = [item.get(key) for key in ("event", "status", "conclusion")]
+        if (
+            not isinstance(run_id, int)
+            or not isinstance(workflow_id, int)
+            or not all(isinstance(text, str) for text in texts)
+        ):
+            raise _shape_error(("gh", "api", endpoint), f"a workflow run is {item!r}")
+        event, status, conclusion = (str(text) for text in texts)
+        runs[run_id] = WorkflowRun(run_id, workflow_id, event, status, conclusion)
+    return runs
+
+
 # The repo and job id of an Actions job link, for reading the job itself.
 _ACTIONS_JOB_LINK_RE = re.compile(r"github\.com/([^/]+/[^/]+)/actions/runs/\d+/job/(\d+)")
 

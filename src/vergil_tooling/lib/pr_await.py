@@ -17,17 +17,23 @@ order:
 3. **Auto-merge off:** reason ``auto_merge_off``. Auto-merge stays pinned to
    the head submit pushed, so a push that turns it off ends the wait here.
 4. **A required check concluded in failure:** reason ``check_failed``,
-   naming the checks, confirmed by
-   :func:`vergil_tooling.lib.finalize_watch.failed_required_checks`.
-5. **Conflict** (``mergeStateStatus`` ``DIRTY``): reason ``conflict``.
-6. **Orphaned check:** reason ``orphaned_check``. The PR is ``BLOCKED`` and
+   naming the checks, judged by
+   :func:`vergil_tooling.lib.finalize_watch.check_failures` as the finalize
+   watch judges them: a failed or cancelled check-run of a run that a newer
+   run of its workflow superseded on the same head is not a failure (#4692).
+5. **A required check was cancelled** on a cancelled run that no newer run
+   replaced, for :data:`finalize_watch.CANCEL_GRACE_SECS` on end: reason
+   ``check_cancelled``, naming the checks in ``failed_checks``. Until then
+   the wait goes on, since a re-run may still start.
+6. **Conflict** (``mergeStateStatus`` ``DIRTY``): reason ``conflict``.
+7. **Orphaned check:** reason ``orphaned_check``. The PR is ``BLOCKED`` and
    every pending check is stuck non-terminal after its backing workflow run
    completed (``github.orphaned_check_names``). Such a check emits no further
    event, so the PR would never merge. GitHub can write results back late
    during an Actions incident, which looks the same at the moment of checking
    (#3431), so the same pending set must stay orphaned for the grace period
    (``$VRG_ORPHAN_GRACE``, 300s by default) first.
-7. **Deadline:** a PR still pending when the deadline passes is reason
+8. **Deadline:** a PR still pending when the deadline passes is reason
    ``timed_out``. The deadline is ``$VRG_FINALIZE_DEADLINE`` seconds (default
    7200), the epic's batch deadline (:func:`finalize_watch.deadline_secs`).
 
@@ -52,6 +58,7 @@ _POLL_INTERVAL = 15.0
 #: Every reason a PR cannot merge as it stands.
 Reason = Literal[
     "check_failed",
+    "check_cancelled",
     "conflict",
     "auto_merge_off",
     "closed",
@@ -123,10 +130,17 @@ def _cannot_merge(
     )
 
 
-def judge(snap: finalize_watch.Snapshot, required: frozenset[str] | None) -> AwaitResult | None:
-    """*snap*'s terminal result, steps 1-5 of the module docstring, or ``None``.
+def judge(
+    snap: finalize_watch.Snapshot,
+    required: frozenset[str] | None,
+    cancel: finalize_watch.CancelGrace | None = None,
+    now: float = 0.0,
+) -> AwaitResult | None:
+    """*snap*'s terminal result, steps 1-6 of the module docstring, or ``None``.
 
-    *required* ``None`` counts every check as required.
+    *required* ``None`` counts every check as required. *cancel* tracks the
+    cancelled checks' grace period at *now*; with none, as for one read, a
+    cancelled check is reported at once.
     """
     if snap.state == "MERGED":
         if not snap.merge_commit:
@@ -144,10 +158,18 @@ def judge(snap: finalize_watch.Snapshot, required: frozenset[str] | None) -> Awa
         return _cannot_merge(snap, "closed", "the PR was closed without merging")
     if not snap.auto_merge_on:
         return _cannot_merge(snap, "auto_merge_off", "auto-merge is off for the PR")
-    failed = tuple(finalize_watch.failed_required_checks(snap, required))
-    if failed:
-        detail = f"required check failed: {', '.join(failed)}"
-        return _cannot_merge(snap, "check_failed", detail, failed=failed)
+    checks = finalize_watch.check_failures(snap, required)
+    if checks.failed:
+        detail = f"required check failed: {', '.join(checks.failed)}"
+        return _cannot_merge(snap, "check_failed", detail, failed=checks.failed)
+    held = cancel is not None and not cancel.expired(checks.cancelled, now)
+    if checks.cancelled and not held:
+        detail = f"required check cancelled: {', '.join(checks.cancelled)}; no newer run "
+        if cancel is None:
+            detail += "of its workflow has started (a re-run may still start)"
+        else:
+            detail += f"started within {github.format_wait(cancel.grace)}"
+        return _cannot_merge(snap, "check_cancelled", detail, failed=checks.cancelled)
     if snap.merge_state == "DIRTY":
         return _cannot_merge(snap, "conflict", "the PR has a merge conflict with its base")
     return None
@@ -200,15 +222,15 @@ def standing_block(pr: str) -> AwaitResult | None:
 
     - The base branch's required checks are read only when a check has
       failed, so a pending or green PR costs no extra call.
-    - An orphaned check is reported from this one read, with no grace
-      period: a single read cannot wait one out, so the detail says that
-      GitHub may only be delayed.
+    - An orphaned or a cancelled check is reported from this one read, with
+      no grace period: a single read cannot wait one out, so the detail says
+      that GitHub may only be delayed, or that a re-run may still start.
 
     Every failure to read the PR raises, as in :func:`wait_for_merge`.
     """
     snap = finalize_watch.snapshot(pr)
     result = judge(snap, None)
-    if result is not None and result.reason == "check_failed":
+    if result is not None and result.reason in {"check_failed", "check_cancelled"}:
         result = judge(snap, github.required_check_names(snap.url))
     if result is not None:
         return None if result.merged else result
@@ -227,6 +249,7 @@ def wait_for_merge(
     *,
     poll_interval: float = _POLL_INTERVAL,
     orphan_grace: float | None = None,
+    cancel_grace: float = finalize_watch.CANCEL_GRACE_SECS,
 ) -> AwaitResult:
     """Block until *pr* merges or cannot merge; see the module docstring.
 
@@ -243,8 +266,9 @@ def wait_for_merge(
     end = time.monotonic() + deadline
     suspected: list[str] = []
     suspected_since = 0.0
+    cancel = finalize_watch.CancelGrace(cancel_grace)
     while True:
-        result = judge(snap, required)
+        result = judge(snap, required, cancel, time.monotonic())
         if result is not None:
             return result
         now = time.monotonic()
