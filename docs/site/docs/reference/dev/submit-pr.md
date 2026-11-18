@@ -94,7 +94,8 @@ stage per PR**, named after its branch. On a terminal the active stage
 shows a spinner and a rolling window of its output, then collapses to
 one line with its mark, its duration and what it did; piped, each stage
 prints in full (`--output-format` and `--output-window` choose, as for
-the other progress commands). Every step's output goes to
+the other progress commands, and are passed on to the chained
+`vrg-finalize-pr` when given). Every step's output goes to
 `.vergil/vrg-submit-pr-<stamp>.log` in the main worktree, and the
 summary points at it:
 
@@ -249,8 +250,8 @@ orphaned relay ref whose branch no longer exists.
 | `--no-install` | No | With `--release`, run `vrg-release --no-install` |
 | `--dry-run` | No | Print what would be done without executing |
 | `--yes` | No | Skip the confirmation |
-| `--output-window N` | No | Rolling output window for the terminal renderer of the submit rollup (`0` streams everything) |
-| `--output-format` | No | Force the submit rollup's renderer: `rich`, `gha` or `plain` |
+| `--output-window N` | No | Rolling output window for the terminal renderer of the submit rollup (`0` streams everything); passed on to the chained `vrg-finalize-pr` |
+| `--output-format` | No | Force the submit rollup's renderer: `rich`, `gha` or `plain`; passed on to the chained `vrg-finalize-pr` |
 
 ### Removed flags
 
