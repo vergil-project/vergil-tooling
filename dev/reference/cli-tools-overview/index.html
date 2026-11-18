@@ -21383,14 +21383,16 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
 </tr>
 </tbody>
 </table>
-<p>A <code>security</code> item keeps its advisory links. A recreate retargets every
-advisory the item names before the original closes, and a transfer
-retargets every one after the move; on a failure, either names every
-advisory still not retargeted. A split retargets an item's one advisory
+<p>A <code>security</code> item keeps its advisory links. Every retarget moves the
+advisory from the item and keeps every other issue it tracks. A recreate
+retargets every advisory the item names before the original closes, and a
+transfer retargets every one after the move; on a failure, either names
+every advisory still not retargeted, with a <code>retarget --from</code> command for
+each. A split retargets an item's one advisory
 before the original closes. A split of an item naming several advisories
 is refused before any change, because which advisory goes to which task
 can't be inferred:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand to the tasks that fix it, keeping every other issue it tracks (vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt; [--to …], then vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt; [--to …]), then split
 </code></pre></div>
 <p>See <a href="../../guides/security-records/#when-the-issue-moves">Security Records</a>.</p>
 <h3 id="vrg-security-record">vrg-security-record<a class="headerlink" href="#vrg-security-record" title="Permanent link">&para;</a></h3>
@@ -21398,8 +21400,9 @@ can't be inferred:</p>
 paired with a neutral <code>security</code>-labelled intake issue (epic
 vergil-project/.github#517). <code>create</code> makes the pair (or attaches an
 advisory to an existing issue, or resumes an unfinished pair), <code>list</code> and
-<code>show</code> read records, <code>retarget</code> moves an advisory's tracking to new
-issues, <code>sync</code> sets each paired advisory's state from its issues and
+<code>show</code> read records, <code>retarget</code> moves an advisory's tracking from an issue
+it tracks (<code>--from</code>) to new issues, refusing to stop tracking an open
+issue unless <code>--drop</code> names it, <code>sync</code> sets each paired advisory's state from its issues and
 reports broken pairs (<code>--dry-run</code> previews it), and <code>close</code> closes a draft
 advisory whose issues are all closed, posting the GHSA ID and a required
 <code>--reason</code> on each of them first, and <code>note</code> appends a dated private note
@@ -21420,7 +21423,7 @@ from a file to an advisory's description (append-only). Advisory text is printed
 </tr>
 <tr>
 <td>Args</td>
-<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code>; <code>sync [--dry-run]</code>; <code>close GHSA-ID --reason TEXT</code>; <code>note GHSA-ID --file FILE</code></td>
+<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --from REF --to REF [--to REF …] [--drop REF …]</code>; <code>sync [--dry-run]</code>; <code>close GHSA-ID --reason TEXT</code>; <code>note GHSA-ID --file FILE</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -21428,7 +21431,7 @@ from a file to an advisory's description (append-only). Advisory text is printed
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A partial pair exits 1 naming what exists and the exact <code>--resume</code> command that finishes it; a private <code>.github</code>, a duplicate draft, or <code>--details</code> under <code>VRG_EPIC_SWEEP</code> is refused; <code>sync</code> exits 1 on a broken pair after syncing the rest</td>
+<td>A partial pair exits 1 naming what exists and the exact <code>--resume</code> command that finishes it; a private <code>.github</code>, a duplicate draft, or <code>--details</code> under <code>VRG_EPIC_SWEEP</code> is refused; <code>retarget</code> refuses, before any write, a <code>--from</code> the advisory does not track and dropping an open tracked issue, printing the command that would succeed; <code>create</code> refuses an advisory that already tracks another issue; <code>sync</code> exits 1 on a broken pair after syncing the rest</td>
 </tr>
 <tr>
 <td>Exit codes</td>

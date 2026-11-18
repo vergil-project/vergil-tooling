@@ -17836,6 +17836,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#retargeting-by-hand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retargeting by hand
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18295,6 +18306,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#retargeting-by-hand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retargeting by hand
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18639,13 +18661,18 @@ with a <code>Tracking issue:</code> line. See the
 <a href="../../reference/dev/security-record/#note">CLI reference</a>.</p>
 <h3 id="when-the-issue-moves">When the issue moves<a class="headerlink" href="#when-the-issue-moves" title="Permanent link">&para;</a></h3>
 <p>A record's link moves only through <code>vrg-security-record retarget</code>, and
-<code>vrg-intake-route</code> calls it for you:</p>
+<code>vrg-intake-route</code> calls it for you. Each call moves the advisory from the
+routed item and keeps every other issue the advisory tracks, so a route
+never stops tracking another issue:</p>
 <ul>
 <li><strong>transfer</strong> (<code>one-off</code> into another repo): after the move, <strong>every</strong>
   advisory the issue names is retargeted, in body order, so each tracking
   line is rewritten to the issue's new number. If one fails, the move
   stands and the error names every advisory still not retargeted, with
-  one <code>retarget</code> command for each, to run in order;</li>
+  one <code>retarget</code> command for each, to run in order. Each command names
+  the issue's old number as <code>--from</code>, since the tracking line still
+  names it. If the tracked issues can't be read before the move, the
+  route stops with nothing moved;</li>
 <li><strong>recreate</strong> (when GitHub refuses the transfer): <strong>every</strong> advisory the
   issue names is retargeted to the copy, in body order, <strong>before</strong> the
   original closes. If one fails, the original stays open, the copy stays
@@ -18658,15 +18685,50 @@ with a <code>Tracking issue:</code> line. See the
 </ul>
 <p>An item naming <strong>several</strong> advisories is refused before anything
   changes, because which advisory goes to which task can't be inferred:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand to the tasks that fix it, keeping every other issue it tracks (vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt; [--to …], then vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt; [--to …]), then split
 </code></pre></div>
-<p>Retarget each advisory to the task or tasks that fix it, one at a time.
+<p>Retarget each advisory to the task or tasks that fix it, one at a time,
+  with <code>--from</code> the item and a <code>--to</code> for every other issue it still
+  tracks as well as for each task.
   The last retarget leaves the item with no advisory line and no
   <code>security</code> label, so the split that follows is an ordinary one.</p>
 <p>An issue an advisory stops tracking loses that advisory's line, and gets
 the neutral comment <code>Security record moved to &lt;refs&gt;</code>. It loses its
 <code>security</code> label only when that was its last advisory line; while it
 still names another advisory, the label and the other lines stay.</p>
+<h3 id="retargeting-by-hand">Retargeting by hand<a class="headerlink" href="#retargeting-by-hand" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--from<span class="w"> </span><span class="s1">'vergil-project/.github#500'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#101'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#102'</span>
+</code></pre></div>
+<p><code>--from</code> is required and names the issue the advisory moves from, which
+it must track now. <code>--to</code> names the <strong>complete</strong> set it tracks
+afterwards. Two checks run before anything is written; each refusal
+names the issues the advisory tracks and the command that would succeed:</p>
+<ul>
+<li><strong>The source check.</strong> A <code>--from</code> that no <code>Tracking issue:</code> line names
+  is refused: the advisory is not that issue's to hand on. Take the GHSA
+  IDs from <code>vrg-security-record list</code> (the advisories whose <code>tracks:</code>
+  names the issue), never from an issue body's lines alone.</li>
+<li><strong>The open-issue check.</strong> An open issue the advisory tracks, other than
+  <code>--from</code>, that the <code>--to</code> set leaves out is refused, so a retarget
+  never silently stops tracking work still in flight. The refusal's
+  command keeps every such issue as a <code>--to</code>. To add a fix task later,
+  retarget <code>--from</code> one of the current tasks with every task, old and
+  new, as <code>--to</code>. <code>--drop &lt;ref&gt;</code> (repeatable) names an open issue the
+  advisory is <strong>deliberately</strong> left to stop tracking: that is the human's
+  decision, and no tool ever suggests it.</li>
+</ul>
+<p>A retarget that fails partway (a step error, not a refusal) is finished
+by running the identical command again: the source check still accepts
+the <code>--from</code> once the tracking lines are rewritten, while that issue
+still names the advisory or carries the <code>Security record moved to</code>
+comment for the same <code>--to</code> set. A re-run after a full success writes
+nothing. <code>--from</code> is unmarked last, after every other dropped issue.</p>
+<p><code>create</code> makes an advisory's <strong>first</strong> pairing on its own path: it refuses,
+before it creates, marks or links any issue, an advisory that already
+tracks another issue. Move a paired advisory with <code>retarget</code>.</p>
 <h2 id="security-items-in-planning">Security items in planning<a class="headerlink" href="#security-items-in-planning" title="Permanent link">&para;</a></h2>
 <p>A security item can go through planning like any other. Planning
 discusses the problem in general terms; the details stay in the advisory.
@@ -18681,11 +18743,13 @@ of them until the plan exists.</p>
   back a line the other removed. Post <code>Tasks filed: yes</code> only after every
   retarget has succeeded:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#101'</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#102'</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-yyyy-yyyy-yyyy<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#103'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--from<span class="w"> </span><span class="s1">'vergil-project/.github#500'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#101'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#102'</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-yyyy-yyyy-yyyy<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span>--from<span class="w"> </span><span class="s1">'vergil-project/.github#500'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#103'</span>
 </code></pre></div>
 <p>From then on, the PRs that close those tasks are what close each
   advisory.
@@ -18701,8 +18765,8 @@ of them until the plan exists.</p>
   its body names that advisory. It
   shows it as <code>in-progress</code> with a note that counts the advisories still
   tracking it and names them by GHSA ID only:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget
 </code></pre></div>
 <p>After one of two retargets, the planning issue stays held by the other.
   Don't close the planning issue by hand before every retarget: that
