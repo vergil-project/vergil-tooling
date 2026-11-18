@@ -18504,8 +18504,7 @@ which is unsafe when the calling shell's CWD is inside one.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-finalize-pr<span class="w"> </span><span class="o">[</span>PR<span class="o">[</span>,PR…<span class="o">]</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>--all<span class="w"> </span><span class="p">|</span><span class="w"> </span>--cleanup-only<span class="o">]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                </span><span class="o">[</span>--target-branch<span class="w"> </span>BRANCH<span class="o">]</span><span class="w"> </span><span class="o">[</span>--wait-cd<span class="o">]</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">                </span><span class="o">[</span>--release<span class="w"> </span><span class="o">[</span>--no-install<span class="o">]]</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">                </span><span class="o">[</span>--allow-provenance-violation<span class="o">]</span><span class="w"> </span><span class="o">[</span>--clean-dirty<span class="o">]</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">                </span><span class="o">[</span>--dry-run<span class="o">]</span><span class="w"> </span><span class="o">[</span>--yes<span class="o">]</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">                </span><span class="o">[</span>--clean-dirty<span class="o">]</span><span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span><span class="w"> </span><span class="o">[</span>--yes<span class="o">]</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
@@ -18543,10 +18542,6 @@ which is unsafe when the calling shell's CWD is inside one.</p>
 <tr>
 <td><code>--no-install</code></td>
 <td>With <code>--release</code>, run <code>vrg-release --no-install</code>. Refused without <code>--release</code>.</td>
-</tr>
-<tr>
-<td><code>--allow-provenance-violation</code></td>
-<td>Leave auto-merge on for an open PR with a provenance violation (a conscious human override). It does not cover a violation that has already merged: see <a href="#provenance">Provenance</a>.</td>
 </tr>
 <tr>
 <td><code>--clean-dirty</code></td>
@@ -18588,6 +18583,10 @@ names what replaced it:</p>
 <tr>
 <td><code>--install</code></td>
 <td><code>--release</code> installs by default; <code>--no-install</code> opts out.</td>
+</tr>
+<tr>
+<td><code>--allow-provenance-violation</code></td>
+<td>A provenance violation always fails: fix its cause, or fix the classifier if the violation is a false one. See <a href="#provenance">Provenance</a>.</td>
 </tr>
 </tbody>
 </table>
@@ -18635,21 +18634,18 @@ clean PR.</p>
 <h4 id="provenance">Provenance<a class="headerlink" href="#provenance" title="Permanent link">&para;</a></h4>
 <p>The watch runs the provenance check on every PR when it starts, and
 again each time a PR's head changes. <code>vrg-submit-pr</code> ran the same check
-before it turned auto-merge on. Advisories are printed but do not
-block. What a violation does depends on whether the PR has merged:</p>
+before it turned auto-merge on. A violation always fails, and there is
+no override (issue #4695): it is either a real problem to investigate or
+a bug in the classifier to fix. What it does depends on whether the PR
+has merged:</p>
 <ul>
 <li><strong>Open PR.</strong> Finalize turns the PR's auto-merge off and reports it
-  <em>failed: provenance</em>. With <code>--allow-provenance-violation</code> it leaves
-  auto-merge on, prints the violation loudly and watches the PR on, so
-  the PR may merge. Once it merges, it is a merged PR with a violation,
-  below.</li>
+  <em>failed: provenance</em>.</li>
 <li><strong>Merged PR</strong>, one that merged before finalize started included.
   Nothing can be disabled. The PR is reported as merged with a loud
   provenance-violation flag, and the run cannot reach full success: it
   exits 3 (or 4, if develop did not validate) and no chained release
-  runs. <code>--allow-provenance-violation</code> does not change this: the
-  override does not cover a violation that has already merged, which a
-  human must look at before any release (issue #4662).</li>
+  runs. A human must look at it before any release (issue #4662).</li>
 </ul>
 <h4 id="status-table">Status table<a class="headerlink" href="#status-table" title="Permanent link">&para;</a></h4>
 <p>The watch builds a status table once at start-up and again after every
