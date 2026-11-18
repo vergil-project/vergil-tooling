@@ -18718,13 +18718,21 @@ do.</p>
   An item with the <code>security</code> label but no advisory line, or the
   reverse, gets a warning and no retarget.</li>
 <li><strong><code>vrg-queue planning</code></strong> keeps a planning issue at <code>in-progress</code> while
-  <strong>any</strong> advisory still tracks it, whether or not its body names that
-  advisory, with a note that counts
-  them and names them by GHSA ID only (<code>advisory still tracks</code> for one,
-  <code>advisories still track</code> for more):</li>
+  it is held: while <strong>any</strong> advisory still tracks it, whether or not its
+  body names that advisory, or while its body names, with the <code>security</code>
+  label on, an advisory the listing does not return (one that cannot be
+  read). The note counts them and names them by GHSA ID only
+  (<code>advisory still tracks</code> for one, <code>advisories still track</code> for more),
+  and ends with the retarget command:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt;
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>held: &lt;k&gt; advisories this planning issue names cannot be read (&lt;GHSA-id&gt;[, …]): re-run with a token that can read the repository's advisories, or have the human check it — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt;
 </code></pre></div>
+<p>An item held both ways gives both parts, joined by a semicolon. A
+  <code>Security advisory:</code> line on an issue without the <code>security</code> label,
+  when no advisory tracks the issue, is a broken pair: the note reports it
+  (<code>broken pair: …</code>) and the item is not held. The docs PR's planning
+  close applies the same rule and gives the same reason.</p>
 <p>It lists each org's advisories once per view, and skips an org whose
   <code>.github</code> is absent or not public unless one of its items has an
   advisory line (then the private home is refused). An advisory line

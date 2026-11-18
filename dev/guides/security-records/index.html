@@ -18784,22 +18784,41 @@ of them until the plan exists.</p>
   this <strong>only</strong> when the weakness exists only in the design and no
   shipped code has it. A finding about shipped behaviour always goes to a
   fix task that changes the code.
-- <strong>The guard.</strong> <code>vrg-queue planning</code> never shows a planning issue as
-  <code>ready-to-close</code> while <strong>any</strong> advisory still tracks it, whether or not
-  its body names that advisory. It
-  shows it as <code>in-progress</code> with a note that counts the advisories still
-  tracking it and names them by GHSA ID only:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+- <strong>The guard.</strong> One hold rule decides whether a planning issue may
+  close, and it fails closed. It trusts the <code>security</code> label and the
+  advisories' own <code>Tracking issue:</code> lines, never a <code>Security advisory:</code>
+  body line alone:
+  - <strong>Any advisory that tracks it</strong> holds it, whether or not its body
+    names that advisory.
+  - <strong>An advisory that cannot be read</strong> holds it too: an advisory a
+    <code>security</code>-labelled planning issue names on a <code>Security advisory:</code>
+    line, which the advisory listing does not return. A missing
+    advisory is never read as "not tracking". Re-run with a token that
+    can read the repository's advisories, or have the human check the
+    advisory.
+  - <strong>A <code>Security advisory:</code> line on an issue without the <code>security</code>
+    label</strong>, with no advisory tracking the issue, is a broken pair. The
+    queue reports it in the item's note (<code>broken pair: …</code>, saying to
+    have the human check the pair) and does not hold the item.</p>
+<p><code>vrg-queue planning</code> never shows a held planning issue as
+  <code>ready-to-close</code>. It shows it as <code>in-progress</code> with a note that names
+  the advisories by GHSA ID only, and ends with the command that hands
+  each one on:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from 'vergil-project/.github#500' --to &lt;task&gt;
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from 'vergil-project/.github#500' --to &lt;task&gt;
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>held: 1 advisory this planning issue names cannot be read (GHSA-zzzz-zzzz-zzzz): re-run with a token that can read the repository's advisories, or have the human check it — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from 'vergil-project/.github#500' --to &lt;task&gt;
 </code></pre></div>
+<p>When an advisory both tracks the planning issue and another one cannot
+  be read, the note gives both, joined by a semicolon.</p>
 <p>After one of two retargets, the planning issue stays held by the other.
   Don't close the planning issue by hand before every retarget: the
   remaining advisories would be left tracking a closed planning item,
   with the fix unwritten. <code>sync</code>'s close guard keeps them <code>draft</code> and
   reports them as held, but only a retarget hands them on. The same
-  hold applies to the epic's docs PR, which normally also closes the
-  planning issue: while an advisory still tracks it, <code>vrg-submit-pr</code>
-  leaves the <code>Planning issue: Closes</code> line out of the body and says why.</p>
+  rule holds the epic's docs PR, which normally also closes the planning
+  issue: while the planning issue is held, <code>vrg-submit-pr</code> leaves the
+  <code>Planning issue: Closes</code> line out of the body and gives the same
+  reason.</p>
 <h2 id="recording-findings-from-a-review">Recording findings from a review<a class="headerlink" href="#recording-findings-from-a-review" title="Permanent link">&para;</a></h2>
 <p>Security findings can surface while the work is still being designed or
 built. Three recipes cover the findings raised inside the epic/task
