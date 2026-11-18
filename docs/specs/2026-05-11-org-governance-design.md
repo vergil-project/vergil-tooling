@@ -107,10 +107,33 @@ protection — new repos automatically inherit the governance model.
 - Require at least 1 approving review
 - Require review from someone other than the PR author
 - Require status checks to pass (CI must be green)
-- Require branches to be up to date before merging
 - No standing bypass permissions (see No Standing Bypass Policy)
 
+`develop` does not require branches to be up to date before merging;
+`main` does (see the supersession note below).
+
 #### Why "Require Up to Date" Is Retained
+
+> **Superseded for `develop` (2026-11-17, vergil-project/.github#1218):**
+> `develop` no longer requires branches to be up to date. The "CI gates"
+> ruleset is split in two: `CI gates (develop)` requires the same status
+> checks without the up-to-date rule, and `CI gates (main)` keeps it.
+> `vrg-submit-pr` now opens each PR with auto-merge on, so a batch of PRs
+> merges into `develop` in parallel. Auto-merge never updates a branch that
+> is behind, so under the old rule every PR after the first would wait
+> forever. The correctness the rule bought is held elsewhere: the
+> `vrg-validate` that `vrg-finalize-pr` runs once on the `develop` head
+> after a batch merges, and the release
+> PR into `main`, which runs full CI under the up-to-date rule before
+> anything ships. The rationale below still holds for `main`, and stays as
+> the record of the earlier decision. See
+> `epics/1218-parallel-pr-merging/spec.md` in `vergil-project/.github`
+> (§6.1 and §6.9).
+>
+> **OpenSSF Scorecard.** Once the split is applied, the Scorecard's
+> Branch-Protection check no longer lists "up-to-date branches required on
+> develop" for any repo. That change in the score is accepted, for the
+> reason above.
 
 The "require branches to be up to date" rule guarantees that CI ran
 on the exact code that will land on the target branch. Without it,
@@ -141,6 +164,8 @@ and `main` as a priority.
 
 All rules from `develop`, plus:
 
+- Require branches to be up to date before merging (the
+  `CI gates (main)` ruleset)
 - Restrict who can push/merge to org owners only
 - This is the release gate — only the mechanized release workflow
   (running under human credentials) can promote code to `main`
@@ -717,6 +742,6 @@ long-term direction is for `vergil.toml` to declare what the repo
 | GitHub App private key distribution at scale | At scale of one, the key is in the macOS Keychain. At scale of many, use a shared secret store. The key is only needed by contributors who run releases, not all contributors |
 | App installation token expires mid-release | The release tool detects expiry and re-generates the token. Installation tokens live 1 hour; releases complete in minutes |
 | Contributors resist the two-identity requirement | Document the rationale clearly; the bar for contribution is higher than most OSS projects, and that is intentional |
-| Merge serialization on `develop` at scale | Acceptable at scale of one. At scale of many, enable GitHub merge queue (requires Teams plan) to batch PRs without losing the "up to date" guarantee |
+| Merge serialization on `develop` at scale | Resolved (2026-11-17, vergil-project/.github#1218): `develop` no longer requires up-to-date branches, so PRs merge into it in parallel through auto-merge. The `vrg-validate` that `vrg-finalize-pr` runs on `develop` after a batch merges, and the release PR into `main`, which keeps the up-to-date rule, check the changes together. `main` still merges one release PR at a time |
 | Single human bottleneck for all reviews | Acceptable at scale of one; at scale of 2+, cross-review distributes the load |
 | Credential management adds friction to development workflow | Invest in tooling that makes credential selection invisible — the developer should not think about tokens |
