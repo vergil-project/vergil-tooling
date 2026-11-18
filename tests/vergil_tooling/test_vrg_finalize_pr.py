@@ -4143,6 +4143,13 @@ def _run_logs(root: Path) -> list[Path]:
     return sorted((root / ".vergil").glob("vrg-finalize-pr-*.log"))
 
 
+@pytest.fixture
+def plain_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the plain renderer: under GitHub Actions detect_format() picks gha."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
+@pytest.mark.usefixtures("plain_renderer")
 def test_watch_is_a_stage_sharing_the_settle_log(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -4164,6 +4171,7 @@ def test_watch_is_a_stage_sharing_the_settle_log(
     assert f"full log → {log}" in out
 
 
+@pytest.mark.usefixtures("plain_renderer")
 @pytest.mark.parametrize(
     ("results", "line"),
     [
@@ -4191,6 +4199,7 @@ def test_watch_stage_warns_unless_every_pr_merged_cleanly(
     assert re.search(rf"\n{pattern}\n", capsys.readouterr().out)
 
 
+@pytest.mark.usefixtures("plain_renderer")
 def test_nothing_merged_names_the_watch_log(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -4203,6 +4212,7 @@ def test_nothing_merged_names_the_watch_log(
     assert "=== watch: warn (0 merged, 1 failed, " in log.read_text()
 
 
+@pytest.mark.usefixtures("plain_renderer")
 def test_a_watch_error_fails_the_stage(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[str] = []
     watch = MagicMock(side_effect=FinalizeWatchError(f"{_PR_A}: reading the PR failed: boom"))
