@@ -560,6 +560,16 @@ def test_unreadable_actions_link_raises(fake: FakeGitHub) -> None:
         run([url(1)])
 
 
+def test_unreadable_actions_link_of_a_check_not_required_is_not_read(fake: FakeGitHub) -> None:
+    bad = {**failing_check("lint"), "detailsUrl": "https://example.com/actions/runs/2/job/1"}
+    fake.script(1, pr_state(1, statusCheckRollup=[bad]), merged(1))
+    fake.failed[url(1)] = ["lint"]
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+
+
 def test_a_pr_failed_on_its_checks_that_then_merges_is_merged(fake: FakeGitHub) -> None:
     fake.script(1, pr_state(1, statusCheckRollup=[failing_check("test / unit")]), merged(1))
     fake.failed[url(1)] = ["test / unit"]

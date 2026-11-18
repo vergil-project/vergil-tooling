@@ -336,27 +336,28 @@ def _failed_occurrences(snap: Snapshot, required: Collection[str] | None) -> dic
     """
     found: dict[str, _Occurrence] = {}
     for node in snap.rollup:
-        if node.get("__typename") == "StatusContext":
+        context = node.get("__typename") == "StatusContext"
+        if context:
             name = str(node.get("context") or "")
-            if str(node.get("state") or "").upper() not in _FAILED_CONTEXT_STATES:
-                continue
-            occurrence = _Occurrence(run=None, cancelled=False)
+            bucket = (
+                "fail" if str(node.get("state") or "").upper() in _FAILED_CONTEXT_STATES else ""
+            )
         else:
             name = str(node.get("name") or "")
             bucket = github.check_run_bucket(
                 str(node.get("status") or ""), str(node.get("conclusion") or "")
             )
-            if bucket not in _FAILED_BUCKETS:
-                continue
+        if bucket not in _FAILED_BUCKETS or (required is not None and name not in required):
+            continue
+        run = None
+        if not context:
             try:
                 link = github.actions_run_of(str(node.get("detailsUrl") or ""))
             except ValueError as exc:
                 msg = f"{snap.url}: {exc}"
                 raise FinalizeWatchError(msg) from exc
             run = None if link is None else (link[0], int(link[1]))
-            occurrence = _Occurrence(run=run, cancelled=bucket == _CANCEL_BUCKET)
-        if required is not None and name not in required:
-            continue
+        occurrence = _Occurrence(run=run, cancelled=bucket == _CANCEL_BUCKET)
         held = found.get(name)
         if held is None or _rank(occurrence) > _rank(held):
             found[name] = occurrence
