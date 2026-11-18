@@ -14871,6 +14871,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-npm-audit-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-npm-audit-gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-sarif-filter" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19471,6 +19482,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-npm-audit-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-npm-audit-gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-sarif-filter" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -23335,6 +23357,47 @@ workflows; <code>matrix</code> is also useful locally. See the
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-npm-audit-gate">vrg-npm-audit-gate<a class="headerlink" href="#vrg-npm-audit-gate" title="Permanent link">&para;</a></h3>
+<p>Give the TypeScript audit gate's verdict on an <code>npm audit --json</code> report:
+drop the advisories a live entry of the repository's
+<code>.npm-audit-exceptions</code> covers, list them, and fail on any other advisory
+at high or critical. The TypeScript AUDIT check runs it after <code>npm audit</code>.
+See
+<a href="../../guides/validation-matrix/#typescript-audit-exceptions">TypeScript audit exceptions</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_npm_audit_gate</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>REPORT</code> (positional), <code>--npm-exit STATUS</code> (required: the status of the <code>npm audit --audit-level=high</code> run), <code>--exceptions PATH</code> (default <code>.npm-audit-exceptions</code>)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td><code>REPORT</code> is an <code>npm audit --json</code> report (version 2); a missing exceptions file means none</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Error on stderr for each advisory at high or critical with no live exception, each expired or malformed exception, an unreadable or error report, or an npm status that disagrees with the report; a warning for each exception that matches no advisory</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 pass, 1 gate failure or error</td>
 </tr>
 <tr>
 <td>Status</td>

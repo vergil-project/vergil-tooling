@@ -18703,7 +18703,12 @@ code, where review sees it. Rules for writing a suppression:</p>
 </ul>
 <p>Other analyzers are honored as long as their SARIF carries a <code>suppressions</code>
 entry. Trivy's <code>.trivyignore</code> works differently: it drops the finding before
-SARIF is written, so ignored findings never appear in the summary at all.</p>
+SARIF is written, so ignored findings never appear in the summary at all.
+The TypeScript audit's <code>.npm-audit-exceptions</code> follows the same rules for
+an npm advisory with no fix: each entry names the advisory, an expiry, a
+tracking issue and a reason, and the audit log lists every exception it
+applied (see
+<a href="../validation-matrix/#typescript-audit-exceptions">TypeScript audit exceptions</a>).</p>
 <h3 id="cd-release-publishing-secrets">CD: release-publishing secrets<a class="headerlink" href="#cd-release-publishing-secrets" title="Permanent link">&para;</a></h3>
 <p>The release-publishing workflow generated into a consuming repo's
 <code>cd.yml</code> (by <code>repo_init</code>) forwards <strong>explicit, least-privilege secrets</strong>
