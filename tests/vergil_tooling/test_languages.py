@@ -1195,13 +1195,17 @@ def test_typescript_report_files() -> None:
         "npm-audit.json",
         "quality-eslint.json",
         "quality-tsc.txt",
+        "licenses.json",
     )
-    every_script = " ".join(
-        _ts_script(kind)
+    # Every report name is written by a gate command: in an ``sh -c`` script,
+    # or as an argument of a plain argv (the license gate's ``--output``).
+    every_command = " ".join(
+        " ".join(cmd)
         for kind in (CheckKind.LINT, CheckKind.TYPECHECK, CheckKind.TEST, CheckKind.AUDIT)
+        for cmd in language_commands("typescript", kind)
     )
     for report in TYPESCRIPT_REPORT_FILES:
-        assert report in every_script, report
+        assert report in every_command, report
 
 
 def test_typescript_audit_commands() -> None:
@@ -1212,8 +1216,22 @@ def test_typescript_audit_commands() -> None:
     assert _ts_script(CheckKind.AUDIT).startswith("npm audit --audit-level=high ")
     # OSV-Scanner is the documented contingency, not the v1 default.
     assert not any("osv-scanner" in c for c in joined)
-    # Best-effort license-metadata surfacing (hardened gating deferred, §9 #7).
-    assert any("license-checker" in c for c in joined)
+    # The license gate runs after the audit script, over the same lockfile,
+    # and names its report on the command line (epic .github#1339, spec §6.1).
+    assert cmds == [
+        ["sh", "-c", _ts_script(CheckKind.AUDIT)],
+        ["vrg-npm-license-gate", "--output", LICENSES_REPORT],
+    ]
+    assert LICENSES_REPORT == "licenses.json"
+    # license-checker gates nothing and runs in no AUDIT command.
+    assert not any("license-checker" in c for c in joined)
+
+
+def test_typescript_license_gate_is_a_declared_command() -> None:
+    """The AUDIT check's ``vrg-npm-license-gate`` is this package's console script."""
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    scripts = tomllib.loads(pyproject.read_text())["project"]["scripts"]
+    assert scripts["vrg-npm-license-gate"] == "vergil_tooling.bin.vrg_npm_license_gate:main"
 
 
 def test_typescript_audit_covers_dev_dependencies() -> None:
@@ -1234,7 +1252,7 @@ def test_typescript_audit_license_allowlist_reviewed_set() -> None:
     assert "MIT" in licenses
     assert "Apache-2.0" in licenses
     assert "ISC" in licenses
-    # Semicolon-separated (the form license-checker --onlyAllow consumes).
+    # Semicolon-separated: the license gate splits it on ``;``.
     assert ";" in _TYPESCRIPT_LICENSES_ALLOWLIST
 
 

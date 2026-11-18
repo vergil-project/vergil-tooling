@@ -137,7 +137,8 @@ RUST_REPORT_FILES = (
 # The TypeScript gates' evidence (epic vergil-project/.github#1174, spec §6.6),
 # each from the gate's own run: ESLint's JSON formatter output from LINT, the
 # diagnostics of ``tsc`` from TYPECHECK and ``npm audit --json`` from AUDIT.
-# TEST writes COVERAGE_REPORT and JUNIT_REPORT, as for Python and Rust. The
+# TEST writes COVERAGE_REPORT and JUNIT_REPORT, as for Python and Rust, and
+# AUDIT's license gate writes LICENSES_REPORT, the name Python's uses. The
 # names are the contract with vergil-actions' ``reports.sh`` (its
 # ``typescript/*`` entries), so keep them exact.
 ESLINT_REPORT = "quality-eslint.json"
@@ -151,6 +152,7 @@ TYPESCRIPT_REPORT_FILES = (
     NPM_AUDIT_REPORT,
     ESLINT_REPORT,
     TSC_REPORT,
+    LICENSES_REPORT,
 )
 
 # The pip-audit input: every package pinned in ``uv.lock`` — all dependency
@@ -429,15 +431,15 @@ _CPP_LICENSES_ALLOWLIST = ";".join(
     ]
 )
 
-# TypeScript / npm license allowlist (epic vergil-project/.github#284 §4).
-# Mirrors the C++ pattern exactly: npm has no turnkey allowlist-enforcing gate
-# with reliable metadata (npm package license fields are inconsistent), so v1
-# license checking is *best-effort surfacing* (see the AUDIT commands below) and
-# hardened gating is deferred (spec §9 ledger #7). This constant is the reviewed
-# allowlist the TypeScript standards docs (T8) reference and that a future
-# hardened gate (e.g. ``license-checker --onlyAllow``, which consumes this exact
-# ``;``-separated form) will enforce; keeping it here alongside the other
-# language allowlists preserves the single-source-of-truth contract.
+# TypeScript / npm license allowlist (epic vergil-project/.github#284 §4). The
+# TypeScript AUDIT check's ``vrg-npm-license-gate`` enforces it (epic
+# vergil-project/.github#1339, spec §6.1): every package in
+# ``package-lock.json`` must carry an SPDX expression these IDs allow, or a
+# live entry of the repo's ``.npm-license-exceptions`` (see
+# ``lib/npm_licenses.py``). The gate imports this constant and splits it on
+# ``;``, so it stays the one source of truth, beside the other languages'
+# allowlists. Each entry is one SPDX license ID (a ``WITH`` term or an ID with
+# ``+`` matches only an entry spelled the same way).
 _TYPESCRIPT_LICENSES_ALLOWLIST = ";".join(
     [
         "0BSD",
@@ -1132,7 +1134,7 @@ _REGISTRY: dict[str, Language] = {
             # with ``--no-install``). ``vrg-validate``'s pre-gate stage checks
             # them against the accepted majors in
             # ``{configs}/typescript/dev-dependencies.json`` first. Prettier
-            # and license-checker stay image tools.
+            # stays an image tool.
             CheckKind.INSTALL: [["npm", "ci", "--ignore-scripts"]],
             # LINT runs *once* (§3.6): Prettier for format, then ESLint's flat
             # config with type-aware typescript-eslint rules. Both read the
@@ -1196,15 +1198,21 @@ _REGISTRY: dict[str, Language] = {
             # (#4682). Contingency (spec §4 caveat 1): if
             # ``npm audit``'s signal/noise is unworkable, fall back to
             # OSV-Scanner over ``package-lock.json`` — the switch is proven or
-            # rejected against a known CVE in T10, not asserted here. License
-            # checking stays best-effort surfacing in v1 (``license-checker
-            # --summary``, non-gating — npm license metadata is inconsistent);
-            # hardened gating against ``_TYPESCRIPT_LICENSES_ALLOWLIST`` is
-            # deferred (spec §9 ledger #7). The ``npm audit`` run writes
-            # ``npm-audit.json``; see ``_TYPESCRIPT_AUDIT_SCRIPT``.
+            # rejected against a known CVE in T10, not asserted here. The
+            # ``npm audit`` run writes ``npm-audit.json``; see
+            # ``_TYPESCRIPT_AUDIT_SCRIPT``.
+            #
+            # ``vrg-npm-license-gate`` then gates the licenses of the same
+            # locked tree, devDependencies included, against
+            # ``_TYPESCRIPT_LICENSES_ALLOWLIST``, less the packages the repo's
+            # reviewed, time-boxed ``.npm-license-exceptions`` entries cover,
+            # and writes ``licenses.json`` (epic vergil-project/.github#1339,
+            # spec §6.1; see ``lib/npm_licenses.py``). It reads only the
+            # committed ``package-lock.json``. The AUDIT stage runs every
+            # command even when one fails, so one run shows both verdicts.
             CheckKind.AUDIT: [
                 ["sh", "-c", _TYPESCRIPT_AUDIT_SCRIPT],
-                ["license-checker", "--production", "--summary"],
+                ["vrg-npm-license-gate", "--output", LICENSES_REPORT],
             ],
         },
         ecosystem=EcosystemInfo(

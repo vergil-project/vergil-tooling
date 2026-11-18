@@ -2350,6 +2350,25 @@ See
 | Exit codes | 0 pass, 1 gate failure or error |
 | Status | Active |
 
+### vrg-npm-license-gate
+
+Gate the licenses of every package in a TypeScript repository's
+`package-lock.json`, dev dependencies included, against the TypeScript
+license allowlist, honoring the live entries of the repository's
+`.npm-license-exceptions`, and write the `licenses.json` evidence. The
+TypeScript AUDIT check runs it after the npm audit, as
+`vrg-npm-license-gate --output licenses.json`. See
+[TypeScript license exceptions](../guides/validation-matrix.md#typescript-license-exceptions).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_npm_license_gate` |
+| Args | `--lockfile PATH` (default `package-lock.json`), `--output PATH` (default `licenses.json`) |
+| Preconditions | The lockfile is an npm v2 or v3 lockfile; `.npm-license-exceptions` is read from the lockfile's directory, and a missing one means none |
+| Failure mode | Error on stderr for each package whose license is disallowed, unparseable or missing with no live exception, naming its version and license value; for each expired or malformed exception; and for a missing, unreadable or pre-v2 lockfile or an entry with no `version`, naming the file and `npm install --package-lock-only`. A warning for each exception that covers no failing package. The report is written whenever the lockfile is read, judged against no exceptions when the exceptions file is bad |
+| Exit codes | 0 pass, 1 gate failure or error |
+| Status | Active |
+
 ### vrg-sarif-filter
 
 Write a copy of a SARIF file with every accepted-suppressed result
