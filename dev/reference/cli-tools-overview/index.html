@@ -14972,6 +14972,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-npm-license-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-npm-license-gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-sarif-filter" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19583,6 +19594,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-npm-license-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-npm-license-gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-sarif-filter" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -23496,6 +23518,48 @@ See
 <tr>
 <td>Failure mode</td>
 <td>Error on stderr for each advisory at high or critical with no live exception, each expired or malformed exception, an unreadable or error report, or an npm status that disagrees with the report; a warning for each exception that matches no advisory</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 pass, 1 gate failure or error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-npm-license-gate">vrg-npm-license-gate<a class="headerlink" href="#vrg-npm-license-gate" title="Permanent link">&para;</a></h3>
+<p>Gate the licenses of every package in a TypeScript repository's
+<code>package-lock.json</code>, dev dependencies included, against the TypeScript
+license allowlist, honoring the live entries of the repository's
+<code>.npm-license-exceptions</code>, and write the <code>licenses.json</code> evidence. The
+TypeScript AUDIT check runs it after the npm audit, as
+<code>vrg-npm-license-gate --output licenses.json</code>. See
+<a href="../../guides/validation-matrix/#typescript-license-exceptions">TypeScript license exceptions</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_npm_license_gate</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--lockfile PATH</code> (default <code>package-lock.json</code>), <code>--output PATH</code> (default <code>licenses.json</code>)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>The lockfile is an npm v2 or v3 lockfile; <code>.npm-license-exceptions</code> is read from the lockfile's directory, and a missing one means none</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Error on stderr for each package whose license is disallowed, unparseable or missing with no live exception, naming its version and license value; for each expired or malformed exception; and for a missing, unreadable or pre-v2 lockfile or an entry with no <code>version</code>, naming the file and <code>npm install --package-lock-only</code>. A warning for each exception that covers no failing package. The report is written whenever the lockfile is read, judged against no exceptions when the exceptions file is bad</td>
 </tr>
 <tr>
 <td>Exit codes</td>

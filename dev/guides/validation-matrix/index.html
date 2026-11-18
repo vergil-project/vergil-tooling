@@ -17994,6 +17994,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#typescript-license-exceptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TypeScript license exceptions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#semgrep-scan" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18256,6 +18267,17 @@
     <span class="md-ellipsis">
       
         TypeScript audit exceptions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#typescript-license-exceptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TypeScript license exceptions
       
     </span>
   </a>
@@ -18847,6 +18869,79 @@ an npm error report, and an npm exit status that disagrees with the
 report also fail the stage. When an exception is allowed, and for how
 long, is in the TypeScript standards'
 <a href="../../standards/development/typescript/overview/#audit-exceptions">Audit exceptions</a>.</p>
+<h3 id="typescript-license-exceptions">TypeScript license exceptions<a class="headerlink" href="#typescript-license-exceptions" title="Permanent link">&para;</a></h3>
+<p>After the npm audit, the TypeScript audit stage runs
+<a href="../../reference/cli-tools-overview/#vrg-npm-license-gate"><code>vrg-npm-license-gate</code></a>,
+whatever the audit's result. It reads every package in the committed
+<code>package-lock.json</code>, dev dependencies included, and judges the <code>license</code>
+field npm records for each as an SPDX license expression against the
+TypeScript allowlist (<code>_TYPESCRIPT_LICENSES_ALLOWLIST</code> in
+<code>lib/languages.py</code>):</p>
+<ul>
+<li><code>OR</code> is allowed when any branch is, and <code>AND</code> only when every branch
+  is. <code>AND</code> binds tighter than <code>OR</code>.</li>
+<li>IDs match without regard to case. The operators <code>AND</code>, <code>OR</code> and <code>WITH</code>
+  are upper case only, so <code>mit or Apache-2.0</code> does not parse.</li>
+<li>A <code>WITH</code> term is allowed only when the allowlist names the whole term,
+  and an ID with <code>+</code> only when an entry is spelled with <code>+</code>.</li>
+<li>The parse checks syntax only. A well-formed ID the allowlist does not
+  name, such as <code>UNLICENSED</code>, is disallowed. A string that is not an
+  expression, such as <code>SEE LICENSE IN LICENSE</code>, and a legacy object or
+  array value are unparseable.</li>
+</ul>
+<p>A package passes when its expression is allowed. One whose license is
+disallowed, unparseable or missing fails, unless a live entry of the
+repository's <code>.npm-license-exceptions</code> covers it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a># The vendor SDK ships under its own terms, reviewed in owner/repo#45.
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vendor-sdk "SEE LICENSE IN LICENSE" exp:2027-06-30 owner/repo#45 vendor terms reviewed; no SPDX ID
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>legacy-pkg "{\"type\":\"MIT\"}" exp:2027-06-30 owner/repo#46 MIT, in the legacy object form
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>bare-pkg - exp:2027-06-30 owner/repo#47 MIT per its README; package.json records no license
+</code></pre></div>
+<p>The fields, separated by spaces, are:</p>
+<ol>
+<li>The package name, as npm locks it (<code>@scope/name</code> for a scoped one).</li>
+<li>The license value: the lockfile's <code>license</code> string exactly as
+   recorded, as a JSON string literal. A non-string value is its compact
+   JSON with sorted keys, also quoted. A bare <code>-</code> stands for a package
+   with no <code>license</code> field, so it never matches a package that records
+   the string <code>"-"</code>.</li>
+<li>The expiry, <code>exp:YYYY-MM-DD</code>. The entry is live through that day
+   (UTC), and the expiry may be at most 365 days after the day the gate
+   runs.</li>
+<li>The tracking issue: <code>#N</code>, <code>owner/repo#N</code> or a GitHub issue URL.</li>
+<li>The reason: the rest of the line.</li>
+</ol>
+<p>Lines starting with <code>#</code> and blank lines are ignored. An entry covers a
+locked package only when the name matches and the recorded value equals
+the entry's value exactly. It covers every locked version whose license
+is unchanged, so a version move alone needs no new review; a version
+whose license differs is not covered and fails. A package may have one
+entry per excused value.</p>
+<p>The gate writes <code>licenses.json</code> whenever it can read the lockfile, with
+one object per package: <code>name</code>, <code>version</code>, <code>license</code> (the value an
+exception matches, <code>null</code> when absent), <code>license_canonical</code> (the parsed
+expression with each ID in the allowlist's spelling, <code>null</code> when it does
+not parse), <code>dev</code>, <code>verdict</code> (<code>allowed</code>, <code>excepted</code> or <code>failing</code>) and,
+when excepted, <code>exception</code> (<code>tracking</code> and <code>expires</code>). It prints each
+exception it applied. These fail the stage:</p>
+<ul>
+<li>a package that fails with no live exception, named with its version,
+  its license value and why, followed by the two fixes:
+  <code>.npm-license-exceptions</code> and the allowlist;</li>
+<li>an expired entry, a malformed one (a missing field, a value that is not
+  a JSON string literal or <code>-</code>, an expiry that is not a real date, a bad
+  tracking issue), an expiry more than 365 days ahead, or a second entry
+  for the same package and value, each named by its line. The report is
+  still written, judged against no exceptions, so it shows each
+  package's real standing;</li>
+<li>a missing, unreadable or pre-v2 lockfile, or an entry with no
+  <code>version</code>, naming the file and the fix (<code>npm install
+  --package-lock-only</code> with a current npm). No report is written.</li>
+</ul>
+<p>An entry that matches no package, or only packages that pass without it,
+is reported as a warning, so a stale one gets removed. When an exception
+is allowed is in the TypeScript standards'
+<a href="../../standards/development/typescript/overview/#license-gate">License gate</a>.</p>
 <h3 id="semgrep-scan">Semgrep scan<a class="headerlink" href="#semgrep-scan" title="Permanent link">&para;</a></h3>
 <p>After the language checks, <code>vrg-validate</code> runs the scan of PR CI's
 <code>security / semgrep</code> gate, so a finding fails locally before the PR

@@ -17133,6 +17133,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#license-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        License gate
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18428,6 +18439,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#license-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        License gate
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18833,15 +18855,19 @@ version a repo resolves from the version window is a hard CI leg (see the
   100% line coverage per Node major (see
   <a href="../testing-and-coverage/">Testing and Coverage</a>). The run writes
   <code>junit.xml</code> and Cobertura <code>coverage.xml</code>, even when a test fails.</li>
-<li><strong>AUDIT</strong> (once) — <code>npm audit --audit-level=high --json</code>, plus a best-effort
-  license summary. The audit run writes its JSON to <code>npm-audit.json</code>, the
-  audit gate's evidence, and <code>vrg-npm-audit-gate</code> gives the verdict: it
-  fails on any advisory at high or critical that no live entry of
-  <code>.npm-audit-exceptions</code> covers (see <a href="#audit-exceptions">Audit exceptions</a>).
-  The vulnerability audit covers every package in
-  <code>package-lock.json</code>, devDependencies included, so a vulnerable docs or test
-  tool fails the audit just as a runtime dependency does. The license summary
-  still covers production dependencies only.</li>
+<li><strong>AUDIT</strong> (once) — <code>npm audit --audit-level=high --json</code>, then the license
+  gate, <code>vrg-npm-license-gate --output licenses.json</code>. Both always run, so
+  one run shows both verdicts. The audit run writes its JSON to
+  <code>npm-audit.json</code>, the audit gate's evidence, and <code>vrg-npm-audit-gate</code> gives
+  the verdict: it fails on any advisory at high or critical that no live
+  entry of <code>.npm-audit-exceptions</code> covers (see
+  <a href="#audit-exceptions">Audit exceptions</a>). The license gate fails on any
+  package whose license the allowlist does not allow and no live entry of
+  <code>.npm-license-exceptions</code> covers, and writes <code>licenses.json</code> (see
+  <a href="#license-gate">License gate</a>). Both cover every package in
+  <code>package-lock.json</code>, devDependencies included, so a vulnerable or
+  disallowed docs or test tool fails the audit just as a runtime dependency
+  does.</li>
 </ul>
 <h3 id="audit-exceptions">Audit exceptions<a class="headerlink" href="#audit-exceptions" title="Permanent link">&para;</a></h3>
 <p>An advisory sometimes has no patched release: upgrading cannot clear it,
@@ -18871,6 +18897,40 @@ gate makes are in
 <li><strong>Reviewed like code.</strong> An entry is visible in the diff, and the audit
   log lists every exception the gate applied, so reviewers can challenge
   it like any other change.</li>
+</ul>
+<h3 id="license-gate">License gate<a class="headerlink" href="#license-gate" title="Permanent link">&para;</a></h3>
+<p><code>vrg-npm-license-gate</code> reads every package in the committed
+<code>package-lock.json</code> and judges the <code>license</code> field npm records for it as
+an SPDX license expression against the TypeScript allowlist:</p>
+<p><code>0BSD</code>, <code>Apache-2.0</code>, <code>BlueOak-1.0.0</code>, <code>BSD-2-Clause</code>, <code>BSD-3-Clause</code>,
+<code>CC0-1.0</code>, <code>ISC</code>, <code>MIT</code>, <code>MPL-2.0</code>, <code>Python-2.0</code>, <code>Unlicense</code>.</p>
+<p>An <code>OR</code> expression passes when any branch is allowed, so
+<code>(MIT OR GPL-3.0-only)</code> passes and <code>(MIT AND GPL-3.0-only)</code> fails. IDs
+match without regard to case; the operators only in upper case. A package
+fails when its license is disallowed, is not an SPDX expression (such as
+<code>SEE LICENSE IN LICENSE</code>, or a legacy object), or is missing. The
+allowlist is <code>_TYPESCRIPT_LICENSES_ALLOWLIST</code> in vergil-tooling's
+<code>lib/languages.py</code>, and changing it is a vergil-tooling change, reviewed
+like any other.</p>
+<p>A failing package has two fixes: replace it, or record a reviewed,
+time-boxed exception in <code>.npm-license-exceptions</code> at the repository root.
+The file's format, the matching rules and the <code>licenses.json</code> report are
+in
+<a href="../../../../guides/validation-matrix/#typescript-license-exceptions">TypeScript license exceptions</a>.</p>
+<ul>
+<li><strong>Keyed by the exact value.</strong> An entry names the package and the
+  license value its lockfile entry records. It covers every version whose
+  value is unchanged, so a version move needs no new review, but a
+  version whose license changes fails until it is reviewed again.</li>
+<li><strong>At most 365 days.</strong> A license quirk, such as a non-SPDX string on an
+  otherwise permissively licensed package, is usually permanent, so a
+  yearly review is enough. The audit's advisories keep their 90 days.</li>
+<li><strong>Always give a reason and a tracking issue.</strong> The reason says why the
+  license is acceptable, for example the license text the package ships.
+  Put the longer justification in a <code>#</code> comment above the entry.</li>
+<li><strong>Remove a stale entry.</strong> The gate warns about an entry that matches no
+  package, or only packages that pass without it; delete it in the next
+  change.</li>
 </ul>
 <h2 id="document-map">Document Map<a class="headerlink" href="#document-map" title="Permanent link">&para;</a></h2>
 <ul>
