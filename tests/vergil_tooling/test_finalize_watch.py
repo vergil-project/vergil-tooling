@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import re
 import subprocess
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -19,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from vergil_tooling.lib import auto_merge, finalize_watch, github, pr_provenance
+from vergil_tooling.lib import auto_merge, finalize_watch, github, pr_provenance, progress
 from vergil_tooling.lib.finalize_watch import (
     DEADLINE_ENV,
     FinalizeWatchError,
@@ -929,8 +930,31 @@ def _tables(out: str) -> list[str]:
     return tables
 
 
+@dataclass
+class _Block:
+    lines: list[str]
+    changed: bool
+    heartbeat: str
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self.lines)
+
+
+@pytest.fixture
+def blocks(monkeypatch: pytest.MonkeyPatch) -> list[_Block]:
+    """Every status block the watch sends to the progress display, in order."""
+    sent: list[_Block] = []
+
+    def record(lines: list[str], *, changed: bool, heartbeat: str) -> None:
+        sent.append(_Block(list(lines), changed, heartbeat))
+
+    monkeypatch.setattr(progress, "status_block", record)
+    return sent
+
+
 def test_status_table_for_a_mixed_batch(
-    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, blocks: list[_Block]
 ) -> None:
     monkeypatch.setenv(DEADLINE_ENV, "30")
     fake.script(1, pr_state(1), merged(1))
@@ -942,7 +966,7 @@ def test_status_table_for_a_mixed_batch(
 
     assert [r.outcome for r in results] == ["merged", "timed out", "failed: CI"]
     # One table after start-up and one after each of the two polls.
-    assert _tables(capsys.readouterr().out) == [
+    assert [b.text for b in blocks] == [
         "Watch status after 0m00s:\n"
         "  PR  TITLE           STATE               WAITING\n"
         "  #1  feat: change 1  checks pending (2)  0m00s\n"
@@ -963,6 +987,57 @@ def test_status_table_for_a_mixed_batch(
         "  #3  feat: change 3  failed: CI          0m15s\n"
         "  1 merged, 1 pending, 1 failed; 0m00s left before the batch deadline",
     ]
+    # The last poll changed no PR's state, only the waiting times (issue #4694).
+    assert [b.changed for b in blocks] == [True, True, False]
+    assert blocks[2].heartbeat == (
+        "Watch status after 0m30s: no change; "
+        "1 merged, 1 pending, 1 failed; 0m00s left before the batch deadline"
+    )
+
+
+def test_status_table_change_of_pending_state_is_a_change(
+    fake: FakeGitHub, blocks: list[_Block]
+) -> None:
+    clean = pr_state(
+        1,
+        statusCheckRollup=[
+            {"__typename": "CheckRun", "name": "test / unit", "conclusion": "SUCCESS"},
+            {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SUCCESS"},
+        ],
+        mergeStateStatus="CLEAN",
+    )
+    fake.script(1, pr_state(1), pr_state(1), clean, merged(1))
+
+    run([url(1)])
+
+    states = [re.split(r"\s{2,}", b.lines[2].strip())[2] for b in blocks]
+    assert states == ["checks pending (2)", "checks pending (2)", "checks green, merging", "merged"]
+    assert [b.changed for b in blocks] == [True, False, True, True]
+
+
+def test_status_table_off_a_tty_prints_changes_only(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv(DEADLINE_ENV, "60")
+    fake.script(1, pr_state(1))
+
+    run([url(1)])
+
+    # Five tables were built (start-up and four polls), but no PR's state
+    # changed after the first; outside a progress stage only changes print.
+    assert len(_tables(capsys.readouterr().out)) == 1
+
+
+def test_summarize() -> None:
+    def result(outcome: finalize_watch.Outcome) -> PRResult:
+        return PRResult(pr=url(1), outcome=outcome, detail="", head=HEAD_A)
+
+    assert finalize_watch.summarize([result("merged")] * 4 + [result("failed: CI")]) == (
+        "4 merged, 1 failed"
+    )
+    assert finalize_watch.summarize([result("merged"), result("timed out")]) == (
+        "1 merged, 0 failed, 1 timed out"
+    )
 
 
 @pytest.mark.parametrize(
