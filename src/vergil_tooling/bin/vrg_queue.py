@@ -4,7 +4,8 @@
 first. ``vrg-queue planning`` lists the open items under the planning queue
 epic with their state: waiting, in-progress, or ready-to-close. A planning
 item that would be ready-to-close is held at in-progress, with a ``held:``
-note, while any advisory still tracks it; reading the advisories needs
+note, while any advisory still tracks it or it names, with the ``security``
+label, an advisory that cannot be read; reading the advisories needs
 Repository security advisories access on the org's ``.github``.
 ``vrg-queue deferred`` lists the open items under the deferred queue epic,
 least recently deferred first, each noted with its latest deferral (see

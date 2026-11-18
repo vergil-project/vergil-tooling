@@ -462,14 +462,23 @@ These commands read or move records as part of their own work:
   An item with the `security` label but no advisory line, or the
   reverse, gets a warning and no retarget.
 - **`vrg-queue planning`** keeps a planning issue at `in-progress` while
-  **any** advisory still tracks it, whether or not its body names that
-  advisory, with a note that counts
-  them and names them by GHSA ID only (`advisory still tracks` for one,
-  `advisories still track` for more):
+  it is held: while **any** advisory still tracks it, whether or not its
+  body names that advisory, or while its body names, with the `security`
+  label on, an advisory the listing does not return (one that cannot be
+  read). The note counts them and names them by GHSA ID only
+  (`advisory still tracks` for one, `advisories still track` for more),
+  and ends with the retarget command:
 
   ```text
-  held: <k> advisories still track this planning issue (<GHSA-id>[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+  held: <k> advisories still track this planning issue (<GHSA-id>[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget <GHSA> --from '<owner>/<repo>#<N>' --to <task>
+  held: <k> advisories this planning issue names cannot be read (<GHSA-id>[, …]): re-run with a token that can read the repository's advisories, or have the human check it — retarget each to the task or tasks that fix it with vrg-security-record retarget <GHSA> --from '<owner>/<repo>#<N>' --to <task>
   ```
+
+  An item held both ways gives both parts, joined by a semicolon. A
+  `Security advisory:` line on an issue without the `security` label,
+  when no advisory tracks the issue, is a broken pair: the note reports it
+  (`broken pair: …`) and the item is not held. The docs PR's planning
+  close applies the same rule and gives the same reason.
 
   It lists each org's advisories once per view, and skips an org whose
   `.github` is absent or not public unless one of its items has an

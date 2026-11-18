@@ -12,7 +12,7 @@ import pytest
 from vergil_tooling.lib import epics, github, in_flight, queue_view, security_records
 from vergil_tooling.lib.epic_size import SizeRecord
 from vergil_tooling.lib.epics import ChildState, IssueRef
-from vergil_tooling.lib.queue_view import Deferral, PlanningMarkers, QueueItem
+from vergil_tooling.lib.queue_view import AdvisoryHold, Deferral, PlanningMarkers, QueueItem
 from vergil_tooling.lib.security_records import Advisory
 
 if TYPE_CHECKING:
@@ -460,9 +460,13 @@ _OTHER_GHSA = "GHSA-mnop-qrst-uvwx"
 _ADVISORY_BODY = f"Neutral planning body.\n\nSecurity advisory: org/.github {_GHSA}"
 _PLAN = IssueRef("org", ".github", 5)
 _FIX = IssueRef("org", "tool", 60)
-_HELD_NOTE = (
-    f"held: 1 advisory still tracks this planning issue ({_GHSA}) — retarget "
-    "each to the task or tasks that fix it with vrg-security-record retarget"
+_RETARGET = (
+    " — retarget each to the task or tasks that fix it with vrg-security-record retarget "
+    "<GHSA> --from 'org/.github#5' --to <task>"
+)
+_HELD_NOTE = f"held: 1 advisory still tracks this planning issue ({_GHSA}){_RETARGET}"
+_CANNOT_READ = (
+    "re-run with a token that can read the repository's advisories, or have the human check it"
 )
 _TWO_ADVISORY_BODY = f"{_ADVISORY_BODY}\nSecurity advisory: org/.github {_OTHER_GHSA}"
 
@@ -473,7 +477,9 @@ def _advisory(ghsa_id: str, *tracking: IssueRef) -> Advisory:
     )
 
 
-def _ready_view(body: str = _ADVISORY_BODY, *, labels: tuple[str, ...] = ("in-progress",)) -> Any:
+def _ready_view(
+    body: str = _ADVISORY_BODY, *, labels: tuple[str, ...] = ("in-progress", "security")
+) -> Any:
     return _view("plan x", "2026-10-01T00:00:00Z", labels=labels, comments=_ALL_MARKERS, body=body)
 
 
@@ -494,7 +500,7 @@ def _security_planning(
     return items, home, listing
 
 
-def test_tracking_advisories_lists_each_advisory_tracking_the_issue() -> None:
+def test_read_advisory_hold_lists_each_advisory_tracking_the_issue() -> None:
     advisories = [
         _advisory(_GHSA, _PLAN),
         _advisory(_OTHER_GHSA, _FIX),
@@ -504,18 +510,73 @@ def test_tracking_advisories_lists_each_advisory_tracking_the_issue() -> None:
         patch(f"{_MOD}.security_records.advisory_home", return_value="org/.github") as home,
         patch(f"{_MOD}.security_records.list_advisories", return_value=advisories),
     ):
-        held = queue_view.tracking_advisories(_PLAN, _ADVISORY_BODY)
-    assert held == (_GHSA, "GHSA-cccc-cccc-cccc")
+        hold = queue_view.read_advisory_hold(_PLAN, _ADVISORY_BODY, {"security"})
+    assert hold == AdvisoryHold(tracking=(_GHSA, "GHSA-cccc-cccc-cccc"))
     home.assert_called_once_with("org")
 
 
-def test_tracking_advisories_none_without_a_public_dotgithub() -> None:
+def test_read_advisory_hold_none_without_a_public_dotgithub() -> None:
     with (
         patch(f"{_MOD}.github.repo_exists", return_value=False),
         patch(f"{_MOD}.security_records.list_advisories") as listing,
     ):
-        assert queue_view.tracking_advisories(_PLAN, "Neutral body.") == ()
+        assert queue_view.read_advisory_hold(_PLAN, "Neutral body.", {"security"}) == (
+            AdvisoryHold()
+        )
     listing.assert_not_called()
+
+
+def test_advisory_hold_tracking_line_holds() -> None:
+    # A tracking line holds whatever the body or the label says.
+    for body, labels in [
+        ("No advisory line.", set()),
+        ("No advisory line.", {"security"}),
+        (f"Neutral.\n\nSecurity advisory: org/.github {_OTHER_GHSA}", set()),
+    ]:
+        hold = queue_view.advisory_hold(_PLAN, body, labels, [_advisory(_GHSA, _PLAN)])
+        assert hold.tracking == (_GHSA,)
+        assert hold.unreadable == ()
+        assert hold.broken is None
+        assert hold.held
+
+
+def test_advisory_hold_unreadable_labelled_holds() -> None:
+    # Review Focus 5: the listing does not return the advisory the body names.
+    hold = queue_view.advisory_hold(_PLAN, _ADVISORY_BODY, {"security"}, [_advisory(_OTHER_GHSA)])
+    assert hold == AdvisoryHold(unreadable=(_GHSA,))
+    assert hold.held
+
+
+def test_advisory_hold_unreadable_unlabelled_is_broken() -> None:
+    # Review Focus 5: the same body without the label is a broken pair, not a hold.
+    hold = queue_view.advisory_hold(_PLAN, _ADVISORY_BODY, set(), [])
+    assert hold.tracking == ()
+    assert hold.unreadable == ()
+    assert hold.broken == (
+        f"broken pair: the issue names {_GHSA} on a Security advisory: line but has no "
+        "security label, so no advisory holds it — have the human check the pair"
+    )
+    assert not hold.held
+
+
+def test_advisory_hold_readable_advisory_tracking_elsewhere_does_not_hold() -> None:
+    # The advisory's own tracking lines decide, never the body line alone.
+    hold = queue_view.advisory_hold(_PLAN, _ADVISORY_BODY, {"security"}, [_advisory(_GHSA, _FIX)])
+    assert hold == AdvisoryHold()
+    assert not hold.held
+
+
+def test_advisory_hold_compares_ghsa_ids_case_insensitively() -> None:
+    hold = queue_view.advisory_hold(
+        _PLAN, _ADVISORY_BODY, {"security"}, [_advisory(_GHSA.upper(), _FIX)]
+    )
+    assert hold == AdvisoryHold()
+
+
+def test_advisory_hold_refuses_a_foreign_advisory_line() -> None:
+    body = f"Neutral.\n\nSecurity advisory: other/.github {_GHSA}"
+    with pytest.raises(queue_view.AdvisoryLineError, match="the issue's own org"):
+        queue_view.advisory_hold(_PLAN, body, {"security"}, [])
 
 
 def test_planning_state_held_while_advisory_tracks_it() -> None:
@@ -533,15 +594,50 @@ def test_planning_state_ready_after_retarget() -> None:
 
 
 def test_planning_held_by_an_advisory_its_body_does_not_name() -> None:
-    # The body names _GHSA, which is gone; _OTHER_GHSA still tracks the issue (#3826).
+    # The body names _GHSA, which the listing does not return; _OTHER_GHSA still
+    # tracks the issue (#3826). Unlabelled, the missing advisory is not a hold.
+    [item], _home, _listing = _security_planning(
+        {5: _ready_view(labels=("in-progress",))}, [_advisory(_OTHER_GHSA, _PLAN)]
+    )
+    assert item.state == "in-progress"
+    assert item.note == (
+        f"held: 1 advisory still tracks this planning issue ({_OTHER_GHSA}){_RETARGET}"
+    )
+
+
+def test_planning_items_holds_unreadable() -> None:
+    # Labelled, the advisory the body names and the listing does not return
+    # cannot be read: it holds the item, beside the one that tracks it (#3996).
     [item], _home, _listing = _security_planning(
         {5: _ready_view()}, [_advisory(_OTHER_GHSA, _PLAN)]
     )
     assert item.state == "in-progress"
     assert item.note == (
-        f"held: 1 advisory still tracks this planning issue ({_OTHER_GHSA}) — retarget "
-        "each to the task or tasks that fix it with vrg-security-record retarget"
+        f"held: 1 advisory still tracks this planning issue ({_OTHER_GHSA}); 1 advisory "
+        f"this planning issue names cannot be read ({_GHSA}): {_CANNOT_READ}{_RETARGET}"
     )
+
+
+def test_planning_items_holds_only_unreadable() -> None:
+    [item], _home, _listing = _security_planning({5: _ready_view(_TWO_ADVISORY_BODY)}, [])
+    assert item.state == "in-progress"
+    assert item.note == (
+        "held: 2 advisories this planning issue names cannot be read "
+        f"({_GHSA}, {_OTHER_GHSA}): {_CANNOT_READ}{_RETARGET}"
+    )
+
+
+def test_planning_items_reports_a_broken_pair_without_holding() -> None:
+    [item], _home, _listing = _security_planning(
+        {5: _ready_view(labels=("in-progress",))}, [_advisory(_OTHER_GHSA, _FIX)]
+    )
+    assert item.state == "ready-to-close"
+    assert item.note.startswith(f"broken pair: the issue names {_GHSA} on a Security advisory:")
+
+
+def test_held_note_names_from() -> None:
+    [item], _home, _listing = _security_planning({5: _ready_view()}, [_advisory(_GHSA, _PLAN)])
+    assert "vrg-security-record retarget <GHSA> --from 'org/.github#5' --to <task>" in item.note
 
 
 def test_planning_not_held_when_no_advisory_tracks_it() -> None:
@@ -555,8 +651,7 @@ def test_planning_held_while_any_named_advisory_tracks_it() -> None:
     [item], home, listing = _security_planning({5: _ready_view(_TWO_ADVISORY_BODY)}, advisories)
     assert item.state == "in-progress"
     assert item.note == (
-        f"held: 1 advisory still tracks this planning issue ({_OTHER_GHSA}) — retarget "
-        "each to the task or tasks that fix it with vrg-security-record retarget"
+        f"held: 1 advisory still tracks this planning issue ({_OTHER_GHSA}){_RETARGET}"
     )
     home.assert_called_once_with("org")
     listing.assert_called_once_with("org/.github")
@@ -567,8 +662,7 @@ def test_planning_held_note_names_every_advisory_still_tracking() -> None:
     [item], _home, _listing = _security_planning({5: _ready_view(_TWO_ADVISORY_BODY)}, advisories)
     assert item.state == "in-progress"
     assert item.note == (
-        f"held: 2 advisories still track this planning issue ({_GHSA}, {_OTHER_GHSA}) — "
-        "retarget each to the task or tasks that fix it with vrg-security-record retarget"
+        f"held: 2 advisories still track this planning issue ({_GHSA}, {_OTHER_GHSA}){_RETARGET}"
     )
 
 
@@ -612,7 +706,7 @@ def test_tracking_line_holds_an_item_with_no_advisory_line() -> None:
     assert by_number[5].state == "in-progress"
     # #8's body names no advisory, but the advisory's tracking line names it (#3826).
     assert by_number[8].state == "in-progress"
-    assert by_number[8].note == _HELD_NOTE
+    assert by_number[8].note == _HELD_NOTE.replace("'org/.github#5'", "'org/.github#8'")
 
 
 def test_no_advisory_lines_still_lists_a_public_home() -> None:

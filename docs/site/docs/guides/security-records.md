@@ -413,25 +413,46 @@ of them until the plan exists.
   this **only** when the weakness exists only in the design and no
   shipped code has it. A finding about shipped behaviour always goes to a
   fix task that changes the code.
-- **The guard.** `vrg-queue planning` never shows a planning issue as
-  `ready-to-close` while **any** advisory still tracks it, whether or not
-  its body names that advisory. It
-  shows it as `in-progress` with a note that counts the advisories still
-  tracking it and names them by GHSA ID only:
+- **The guard.** One hold rule decides whether a planning issue may
+  close, and it fails closed. It trusts the `security` label and the
+  advisories' own `Tracking issue:` lines, never a `Security advisory:`
+  body line alone:
+  - **Any advisory that tracks it** holds it, whether or not its body
+    names that advisory.
+  - **An advisory that cannot be read** holds it too: an advisory a
+    `security`-labelled planning issue names on a `Security advisory:`
+    line, which the advisory listing does not return. A missing
+    advisory is never read as "not tracking". Re-run with a token that
+    can read the repository's advisories, or have the human check the
+    advisory.
+  - **A `Security advisory:` line on an issue without the `security`
+    label**, with no advisory tracking the issue, is a broken pair. The
+    queue reports it in the item's note (`broken pair: …`, saying to
+    have the human check the pair) and does not hold the item.
+
+  `vrg-queue planning` never shows a held planning issue as
+  `ready-to-close`. It shows it as `in-progress` with a note that names
+  the advisories by GHSA ID only, and ends with the command that hands
+  each one on:
 
   ```text
-  held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget
-  held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+  held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget <GHSA> --from 'vergil-project/.github#500' --to <task>
+  held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget <GHSA> --from 'vergil-project/.github#500' --to <task>
+  held: 1 advisory this planning issue names cannot be read (GHSA-zzzz-zzzz-zzzz): re-run with a token that can read the repository's advisories, or have the human check it — retarget each to the task or tasks that fix it with vrg-security-record retarget <GHSA> --from 'vergil-project/.github#500' --to <task>
   ```
+
+  When an advisory both tracks the planning issue and another one cannot
+  be read, the note gives both, joined by a semicolon.
 
   After one of two retargets, the planning issue stays held by the other.
   Don't close the planning issue by hand before every retarget: the
   remaining advisories would be left tracking a closed planning item,
   with the fix unwritten. `sync`'s close guard keeps them `draft` and
   reports them as held, but only a retarget hands them on. The same
-  hold applies to the epic's docs PR, which normally also closes the
-  planning issue: while an advisory still tracks it, `vrg-submit-pr`
-  leaves the `Planning issue: Closes` line out of the body and says why.
+  rule holds the epic's docs PR, which normally also closes the planning
+  issue: while the planning issue is held, `vrg-submit-pr` leaves the
+  `Planning issue: Closes` line out of the body and gives the same
+  reason.
 
 ## Recording findings from a review
 

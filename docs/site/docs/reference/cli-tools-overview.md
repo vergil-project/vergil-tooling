@@ -1011,12 +1011,14 @@ under the planning epic with their state: **waiting** (no `in-progress`
 label), **in-progress** (labelled, with its latest progress note), or
 **ready-to-close** (labelled, the `Epic:` / `Docs task:` / `Tasks filed: yes`
 markers present, and the docs task closed). A planning item that any security
-advisory still tracks, named in its body or not, is held at **in-progress**
-until every such
+advisory still tracks, named in its body or not, or whose body names (with
+the `security` label on) an advisory that cannot be read, is held at
+**in-progress** until every such
 advisory is retargeted to the task or tasks that fix it, with a note that
 counts them and names them by GHSA ID only (`held: <k> advisory still tracks
 this planning issue (<GHSA-id>) — …` for one, `held: <k> advisories still
-track this planning issue (<GHSA-id>, …) — …` for more; see
+track this planning issue (<GHSA-id>, …) — …` for more, and
+`… cannot be read …` for an unreadable one; see
 [Security Records](../guides/security-records.md#security-items-in-planning)).
 `vrg-queue deferred` lists the
 open items under the deferred epic, all **waiting**, least recently deferred
