@@ -1446,6 +1446,8 @@
       
         
       
+        
+      
     
     
     
@@ -1498,6 +1500,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.325/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.325
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14983,6 +15013,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-watch-stage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The watch stage
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18243,6 +18284,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-watch-stage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The watch stage
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18482,8 +18534,7 @@ which is unsafe when the calling shell's CWD is inside one.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-finalize-pr<span class="w"> </span><span class="o">[</span>PR<span class="o">[</span>,PR…<span class="o">]</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>--all<span class="w"> </span><span class="p">|</span><span class="w"> </span>--cleanup-only<span class="o">]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                </span><span class="o">[</span>--target-branch<span class="w"> </span>BRANCH<span class="o">]</span><span class="w"> </span><span class="o">[</span>--wait-cd<span class="o">]</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">                </span><span class="o">[</span>--release<span class="w"> </span><span class="o">[</span>--no-install<span class="o">]]</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">                </span><span class="o">[</span>--allow-provenance-violation<span class="o">]</span><span class="w"> </span><span class="o">[</span>--clean-dirty<span class="o">]</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">                </span><span class="o">[</span>--dry-run<span class="o">]</span><span class="w"> </span><span class="o">[</span>--yes<span class="o">]</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">                </span><span class="o">[</span>--clean-dirty<span class="o">]</span><span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span><span class="w"> </span><span class="o">[</span>--yes<span class="o">]</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
@@ -18521,10 +18572,6 @@ which is unsafe when the calling shell's CWD is inside one.</p>
 <tr>
 <td><code>--no-install</code></td>
 <td>With <code>--release</code>, run <code>vrg-release --no-install</code>. Refused without <code>--release</code>.</td>
-</tr>
-<tr>
-<td><code>--allow-provenance-violation</code></td>
-<td>Leave auto-merge on for an open PR with a provenance violation (a conscious human override). It does not cover a violation that has already merged: see <a href="#provenance">Provenance</a>.</td>
 </tr>
 <tr>
 <td><code>--clean-dirty</code></td>
@@ -18567,6 +18614,10 @@ names what replaced it:</p>
 <td><code>--install</code></td>
 <td><code>--release</code> installs by default; <code>--no-install</code> opts out.</td>
 </tr>
+<tr>
+<td><code>--allow-provenance-violation</code></td>
+<td>A provenance violation always fails: fix its cause, or fix the classifier if the violation is a false one. See <a href="#provenance">Provenance</a>.</td>
+</tr>
 </tbody>
 </table>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
@@ -18584,11 +18635,25 @@ names what replaced it:</p>
    Finalize never turns it back on: someone turned it off on purpose, or
    GitHub did, and a human looks first.</li>
 <li><strong>A required check failed:</strong> <em>failed: CI</em>, naming the check. A failed
-   check-run of a superseded workflow run does not count. When the base
-   branch's required checks cannot be read, every check counts as
-   required.</li>
+   or cancelled check-run of a superseded workflow run does not count (see
+   below). When the base branch's required checks cannot be read, every
+   check counts as required.</li>
+<li><strong>A required check was cancelled</strong> and no newer run of its workflow
+   replaced the cancelled run: <em>failed: cancelled</em>, naming the check. The
+   PR stays pending for two minutes first, in case a re-run starts.</li>
 <li><strong>A conflict</strong> with its base: <em>failed: conflict</em>.</li>
 </ol>
+<p><strong>A superseded run is not a failure.</strong> A push to an open PR starts a new
+CI run, and the workflow's <code>concurrency: cancel-in-progress</code> cancels the
+run in flight on the same head. GitHub keeps the cancelled run's
+check-runs on the PR, and until the new run's jobs start they are the only
+ones there. Finalize judges a failed or cancelled check by its workflow
+run: while a newer run of the same workflow, for the same event, is on the
+PR's head, the check is not a failure and the PR stays pending.
+<code>vrg-pr-await</code> and <code>vrg-repo-status</code> judge checks the same way.</p>
+<p>A PR that ended <em>failed: CI</em> or <em>failed: cancelled</em> is read again on every
+later poll while the watch goes on. If GitHub has merged it, it is reported
+as <em>merged</em>.</p>
 <p>A PR still pending when the batch deadline passes ends as <em>timed out</em>,
 and its auto-merge stays on, so it may still merge later. The deadline
 covers the whole watch: <code>$VRG_FINALIZE_DEADLINE</code> seconds, 7200 by default.
@@ -18599,26 +18664,23 @@ clean PR.</p>
 <h4 id="provenance">Provenance<a class="headerlink" href="#provenance" title="Permanent link">&para;</a></h4>
 <p>The watch runs the provenance check on every PR when it starts, and
 again each time a PR's head changes. <code>vrg-submit-pr</code> ran the same check
-before it turned auto-merge on. Advisories are printed but do not
-block. What a violation does depends on whether the PR has merged:</p>
+before it turned auto-merge on. A violation always fails, and there is
+no override (issue #4695): it is either a real problem to investigate or
+a bug in the classifier to fix. What it does depends on whether the PR
+has merged:</p>
 <ul>
 <li><strong>Open PR.</strong> Finalize turns the PR's auto-merge off and reports it
-  <em>failed: provenance</em>. With <code>--allow-provenance-violation</code> it leaves
-  auto-merge on, prints the violation loudly and watches the PR on, so
-  the PR may merge. Once it merges, it is a merged PR with a violation,
-  below.</li>
+  <em>failed: provenance</em>.</li>
 <li><strong>Merged PR</strong>, one that merged before finalize started included.
   Nothing can be disabled. The PR is reported as merged with a loud
   provenance-violation flag, and the run cannot reach full success: it
   exits 3 (or 4, if develop did not validate) and no chained release
-  runs. <code>--allow-provenance-violation</code> does not change this: the
-  override does not cover a violation that has already merged, which a
-  human must look at before any release (issue #4662).</li>
+  runs. A human must look at it before any release (issue #4662).</li>
 </ul>
 <h4 id="status-table">Status table<a class="headerlink" href="#status-table" title="Permanent link">&para;</a></h4>
-<p>The watch prints a status table to stdout once at start-up and again
-after every poll, about every 15 seconds (issue #4677). It has one row
-for each PR in the batch:</p>
+<p>The watch builds a status table once at start-up and again after every
+poll, about every 15 seconds (issue #4677). It has one row for each PR in
+the batch:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Watch status after 0m30s:
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  PR     TITLE                                     STATE               WAITING
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  #4661  feat(finalize): watch a batch of PRs      merged              0m15s
@@ -18640,10 +18702,35 @@ for each PR in the batch:</p>
   can be watched merging one by one.</li>
 </ul>
 <p>The last line counts the merged, pending and failed PRs and gives the
-time left before the batch deadline (<code>$VRG_FINALIZE_DEADLINE</code>). The table
-is printed as plain lines and never redraws the terminal, so it reads the
-same in a log. The per-PR outcome lines and the final report are as
-before.</p>
+time left before the batch deadline (<code>$VRG_FINALIZE_DEADLINE</code>).</p>
+<h4 id="the-watch-stage">The watch stage<a class="headerlink" href="#the-watch-stage" title="Permanent link">&para;</a></h4>
+<p>The watch is a stage of finalize's progress display, <code>watch</code>, shown
+before the settle phase's stages (issue #4694). How the table appears
+depends on where the output goes:</p>
+<ul>
+<li><strong>On a terminal</strong>, the table sits under the stage's spinner and is
+  redrawn in place after every poll, never appended. When the watch
+  ends, the stage collapses to one line, <code>✓</code> when every PR merged with
+  no provenance violation and <code>⚠</code> otherwise:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>⚠ watch  3m12s — 4 merged, 1 failed
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>✓ close-refs  1.2s
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>✓ checkout-lock  0.0s
+</code></pre></div>
+<ul>
+<li><strong>Off a terminal</strong> (a pipe, a log, CI), output stays plain and
+  append-only. The table is printed at start-up and then only when some
+  PR's state changes. Between changes, a heartbeat line is printed every
+  five minutes:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Watch status after 5m15s: no change; 1 merged, 2 pending, 0 failed; 1h54m45s left before the batch deadline
+</code></pre></div>
+<p>The run log, <code>.vergil/vrg-finalize-pr-&lt;stamp&gt;.log</code>, is shared by the
+watch and the settle phase. It keeps every table in which some PR's
+state changed, each under a timestamped <code>status changed:</code> line, so the
+full history survives the terminal's redraw. When no PR merged, the run
+ends by naming the log. The per-PR outcome lines (<code>&lt;url&gt;: merged</code>) go to
+the stage's output and the log, and the final report is unchanged.</p>
 <h3 id="2-settle">2. Settle<a class="headerlink" href="#2-settle" title="Permanent link">&para;</a></h3>
 <p>The settle phase runs once, after the watch, and only when at least one
 PR merged. With no PR merged it is skipped, and the report says so.
@@ -18838,6 +18925,10 @@ each unmerged PR with its reason and the next step:</p>
 <tr>
 <td><em>failed: CI</em>, <em>failed: conflict</em>, <em>failed: closed</em>, <em>timed out</em></td>
 <td>Hand it to an agent, then re-run <code>vrg-finalize-pr &lt;pr&gt;</code></td>
+</tr>
+<tr>
+<td><em>failed: cancelled</em></td>
+<td>Re-run its cancelled checks, then re-run <code>vrg-finalize-pr &lt;pr&gt;</code></td>
 </tr>
 <tr>
 <td><em>failed: auto-merge off</em>, <em>failed: provenance</em></td>

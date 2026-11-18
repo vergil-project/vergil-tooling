@@ -1446,6 +1446,8 @@
       
         
       
+        
+      
     
     
     
@@ -1498,6 +1500,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.325/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.325
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18289,15 +18319,24 @@ each PR in turn:</p>
    <a href="#batch-prs-one-pr-closing-several-issues">Batch PRs</a>).</li>
 <li>Push the branch, in the modes that push.</li>
 <li>Hold origin's tip to the head the PR must open at, then open the PR
-   with <code>gh pr create</code> and record the submission.</li>
-<li>Run the <strong>provenance check</strong>. A violation leaves the PR's auto-merge
-   off and counts as a failed submit, unless
-   <code>--allow-provenance-violation</code> is given. Advisories are printed but
-   do not block. A check that cannot run is a failed submit too.</li>
+   with <code>gh pr create</code> and record the submission. <code>gh pr create</code> is
+   never retried blindly, since GitHub can open the PR and still return
+   an error. After a failed attempt submit looks for an open PR from the
+   branch into the base. It adopts one only when it has the same head
+   branch (in this repository), base, title and head commit, and carries
+   on as for a PR it just opened. Any other open PR fails the submit,
+   naming the PR. With none open, a transient error is retried with
+   backoff and any other error fails the submit.</li>
+<li>Run the <strong>provenance check</strong>. A violation always fails that PR's
+   submit and leaves its auto-merge off; there is no override. A check
+   that cannot run is a failed submit too.</li>
 <li>Turn <strong>auto-merge</strong> on, pinned to that head (<code>expectedHeadOid</code>): the
    <strong>squash</strong> method for a single-issue PR, <strong>rebase</strong> for a batch PR.
    When GitHub refuses because the PR can already merge, submit merges
-   it directly with the same method and head, and says so.</li>
+   it directly with the same method and head, and says so. When either
+   write returns an error, submit reads the PR back first: auto-merge on
+   with that method, or the PR merged at that head, means the write
+   landed (a retry after a lost response), and counts as done.</li>
 </ol>
 <p>Submit <strong>never rebases a branch</strong>: rebasing before handoff is the
 agent's job, and <code>develop</code> does not require a branch to be up to date,
@@ -18331,9 +18370,6 @@ value refuses the run with nothing done.</p>
   default; <code>--no-install</code> (which requires <code>--release</code>) passes through to
   skip the install. <code>--release</code> is refused on a repo that is not
   released, before any push, PR or merge.</li>
-<li><strong><code>--allow-provenance-violation</code></strong> is passed to finalize too. There it
-  covers only an open PR's auto-merge: a PR that merged with a violation
-  still blocks full success, so no release runs.</li>
 <li><strong><code>--no-finalize</code></strong> opens the PRs with auto-merge on and returns
   without watching them. It prints each PR's URL, the
   <code>/vergil:pr-watch &lt;PR_URL&gt;</code> line that starts the agent's monitoring,
@@ -18476,11 +18512,6 @@ orphaned relay ref whose branch no longer exists.</p>
 <td>With <code>--release</code>, run <code>vrg-release --no-install</code></td>
 </tr>
 <tr>
-<td><code>--allow-provenance-violation</code></td>
-<td>No</td>
-<td>Turn auto-merge on even for a PR whose provenance check finds a violation (a conscious human override); also passed to <code>vrg-finalize-pr</code>, where it covers only an open PR</td>
-</tr>
-<tr>
 <td><code>--dry-run</code></td>
 <td>No</td>
 <td>Print what would be done without executing</td>
@@ -18510,6 +18541,10 @@ names the new default:</p>
 <tr>
 <td><code>--install</code></td>
 <td><code>--release</code> installs by default; <code>--no-install</code> opts out</td>
+</tr>
+<tr>
+<td><code>--allow-provenance-violation</code></td>
+<td>A provenance violation always fails: fix its cause, or fix the classifier if the violation is a false one</td>
 </tr>
 </tbody>
 </table>
