@@ -2078,6 +2078,14 @@ class TestSubmitRollup:
             _submit_all([_submission("feature/1-a")], _ARGS)
         assert "✗ feature/1-a" in capsys.readouterr().out
 
+    def test_failed_rollup_with_no_failed_pr_is_an_internal_error(self) -> None:
+        """A rollup that reports a failure no PR recorded is never read as success."""
+        with (
+            patch(_MOD + ".progress.run_pipeline", return_value=1),
+            pytest.raises(RuntimeError, match="no PR recorded as failed"),
+        ):
+            _submit_all([_submission()], _ARGS)
+
     def test_rollup_starts_after_the_preview(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
