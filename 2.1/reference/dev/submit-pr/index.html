@@ -1448,6 +1448,8 @@
       
         
       
+        
+      
     
     
     
@@ -1500,6 +1502,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.326/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.326
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14864,6 +14894,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The one submit path">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -18113,6 +18160,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The one submit path">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -18343,6 +18407,35 @@ agent's job, and <code>develop</code> does not require a branch to be up to date
 so ready PRs merge in parallel. A PR whose submit fails is named, with
 its reason, in a summary printed at the end, and the other PRs go on:
 nothing is fail-fast, since one PR no longer waits on another.</p>
+<h3 id="output">Output<a class="headerlink" href="#output" title="Permanent link">&para;</a></h3>
+<p>The previews, any refusal, the confirmation and <code>--dry-run</code> print
+plainly. Once the selection is confirmed, the steps above run as a
+progress rollup, as in <a href="../release/"><code>vrg-release</code></a> (issue #4709): <strong>one
+stage per PR</strong>, named after its branch. On a terminal the active stage
+shows a spinner and a rolling window of its output, then collapses to
+one line with its mark, its duration and what it did; piped, each stage
+prints in full (<code>--output-format</code> and <code>--output-window</code> choose, as for
+the other progress commands, and are passed on to the chained
+<code>vrg-finalize-pr</code> when given). Every step's output goes to
+<code>.vergil/vrg-submit-pr-&lt;stamp&gt;.log</code> in the main worktree, and the
+summary points at it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>✓ feature/4709-submit-pr-rollup  1.8s — PR #123 auto-merge on (squash, pinned to 9f8e7d6c5b4a)
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>✓ feature/4710-other  1.2s — PR #124 merged directly (squash)
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>✗ feature/4711-batch  0.9s — no PR opened: pushing 'feature/4711-batch' to origin failed.
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>─────────────────────────────────────────────
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>✗  failures:
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>   feature/4711-batch — no PR opened: pushing 'feature/4711-batch' to origin failed.
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>vrg-submit-pr completed with errors  (total: 00:03)
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>PipelineError: 1 stage failed (feature/4711-batch)
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>   full log → /path/to/repo/.vergil/vrg-submit-pr-20261118-194502.log
+</code></pre></div>
+<p>A PR that fails after it opened says so (<code>PR #123 opened, submit
+failed: …</code>). An unexpected error (a bug rather than a failed PR) stops
+the rollup: the PRs after it are marked not attempted, and the error is
+raised once the summary is printed. The chained <code>vrg-finalize-pr</code> then
+prints its own rollup, and the failed submits are named again after its
+report.</p>
 <p>PRs are opened against <strong><code>develop</code> only</strong>. A <code>--base</code>, or a base
 recorded by <code>report-ready</code>, naming any other branch is refused, since
 releases go through <code>vrg-release</code>.</p>
@@ -18411,7 +18504,7 @@ of the GitHub relay: the cloud VM and the Mac never share a disk, so the
 agent's <code>report-ready</code> mirrors its ready-state onto the reserved ref
 <code>refs/vergil/pr-workflow/&lt;branch&gt;</code> in addition to the local
 <code>.vergil/pr-workflow.json</code>. Run from the <strong>main worktree</strong>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-submit-pr<span class="w"> </span>feature/123-x<span class="w"> </span>feature/124-y
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-submit-pr<span class="w"> </span>feature/123-x<span class="w"> </span>feature/124-y
 </code></pre></div>
 <p>For each branch, the tool:</p>
 <ol>
@@ -18521,6 +18614,16 @@ orphaned relay ref whose branch no longer exists.</p>
 <td>No</td>
 <td>Skip the confirmation</td>
 </tr>
+<tr>
+<td><code>--output-window N</code></td>
+<td>No</td>
+<td>Rolling output window for the terminal renderer of the submit rollup (<code>0</code> streams everything); passed on to the chained <code>vrg-finalize-pr</code></td>
+</tr>
+<tr>
+<td><code>--output-format</code></td>
+<td>No</td>
+<td>Force the submit rollup's renderer: <code>rich</code>, <code>gha</code> or <code>plain</code>; passed on to the chained <code>vrg-finalize-pr</code></td>
+</tr>
 </tbody>
 </table>
 <h3 id="removed-flags">Removed flags<a class="headerlink" href="#removed-flags" title="Permanent link">&para;</a></h3>
@@ -18553,30 +18656,30 @@ names the new default:</p>
 issue with an <code>epic</code>-labelled parent) so it closes on merge. <code>Fixes</code> and
 <code>Resolves</code> are rejected.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Normal flow: resolve the worktree, preview, confirm, open with</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># auto-merge on, then watch it merge and settle develop</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>vrg-submit-pr
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="c1"># Every ready worktree, one confirmation, one finalize</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>vrg-submit-pr<span class="w"> </span>--all
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># Merge, then release (installing by default)</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>vrg-submit-pr<span class="w"> </span>--release
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="c1"># Open with auto-merge on and return; watch later with vrg-finalize-pr</span>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>vrg-submit-pr<span class="w"> </span>--no-finalize
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
-<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="c1"># Relay branch mode: open PRs for cloud-implemented branches, worktree-free</span>
-<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>vrg-submit-pr<span class="w"> </span>feature/123-x<span class="w"> </span>feature/124-y
-<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>
-<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="c1"># Preview without submitting</span>
-<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>vrg-submit-pr<span class="w"> </span>--dry-run
-<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>
-<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="c1"># Emergency CLI mode</span>
-<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>vrg-submit-pr<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">"Add new lint check for X"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">"feat(lint): add new check for X"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Normal flow: resolve the worktree, preview, confirm, open with</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="c1"># auto-merge on, then watch it merge and settle develop</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>vrg-submit-pr
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="c1"># Every ready worktree, one confirmation, one finalize</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>vrg-submit-pr<span class="w"> </span>--all
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="c1"># Merge, then release (installing by default)</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>vrg-submit-pr<span class="w"> </span>--release
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="c1"># Open with auto-merge on and return; watch later with vrg-finalize-pr</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>vrg-submit-pr<span class="w"> </span>--no-finalize
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="c1"># Relay branch mode: open PRs for cloud-implemented branches, worktree-free</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>vrg-submit-pr<span class="w"> </span>feature/123-x<span class="w"> </span>feature/124-y
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="c1"># Preview without submitting</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>vrg-submit-pr<span class="w"> </span>--dry-run
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="c1"># Emergency CLI mode</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>vrg-submit-pr<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">"Add new lint check for X"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">"feat(lint): add new check for X"</span>
 </code></pre></div>
 <h2 id="batch-prs-one-pr-closing-several-issues">Batch PRs (one PR closing several issues)<a class="headerlink" href="#batch-prs-one-pr-closing-several-issues" title="Permanent link">&para;</a></h2>
 <p>A <code>report-ready</code> state can hand off a <strong>batch</strong>: 2 to 8 issues of one epic,
@@ -18609,10 +18712,10 @@ checks whether that issue is an epic's documentation task:</p>
    Only comments by trusted authors count.</li>
 </ol>
 <p>If both hold, the body gets one more line under its issue linkage:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="gu">## Issue Linkage</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">-</span><span class="w"> </span>Closes <span class="ni">#20</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="k">-</span><span class="w"> </span>Planning issue: Closes <span class="ni">#7</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="gu">## Issue Linkage</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">-</span><span class="w"> </span>Closes <span class="ni">#20</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="k">-</span><span class="w"> </span>Planning issue: Closes <span class="ni">#7</span>
 </code></pre></div>
 <p>It adds the line only when the planning issue is in the PR's own repo, is
 open, sits under the planning epic, and has no security advisory still

@@ -1448,6 +1448,8 @@
       
         
       
+        
+      
     
     
     
@@ -1500,6 +1502,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.326/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.326
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18912,8 +18942,24 @@ succeed:</p>
   annotations cannot be read, is a failure that says why (issue #3834).</li>
 </ul>
 <h3 id="4-report">4. Report<a class="headerlink" href="#4-report" title="Permanent link">&para;</a></h3>
-<p>The report lists every watched PR under <strong>Merged</strong> or <strong>Not merged</strong>,
-each unmerged PR with its reason and the next step:</p>
+<p>The report is one table with a row per watched PR, laid out like the PR
+tables of <code>vrg-repo-status</code>: <strong>PR</strong>, <strong>BRANCH</strong>, <strong>TYPE</strong> (the
+conventional-commit type, or <code>deps</code>, <code>automation</code>, <code>release</code>,
+<code>lifecycle</code>), <strong>OUTCOME</strong> and <strong>TITLE</strong>. OUTCOME is <code>merged</code> or the
+outcome the watch ended with (<code>failed: CI</code>, <code>timed out</code>, …); a merged PR
+with a provenance violation shows <code>merged, PROVENANCE VIOLATION</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-finalize-pr report
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  PR     BRANCH                   TYPE  OUTCOME     TITLE
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  #1173  feature/1170-cache-key   fix   merged      fix(cache): key the image cache by lockfile
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  #1174  feature/1171-docs-links  docs  failed: CI  docs: fix the broken guide links
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  #1174 https://github.com/o/r/pull/1174 (failed: CI: required check failed: docs)
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    next: hand it to an agent, then rerun `vrg-finalize-pr https://github.com/o/r/pull/1174`
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>  Validate: passed on develop at 51f024e…
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>  CD: in progress https://github.com/o/r/actions/runs/44377329305
+</code></pre></div>
+<p>Beneath the table, each unmerged PR is named with its reason and the next
+step, and a provenance violation is named loudly:</p>
 <table>
 <thead>
 <tr>
