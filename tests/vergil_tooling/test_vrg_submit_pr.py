@@ -2277,6 +2277,15 @@ def test_planning_close_ordinary_task_is_silent(capsys: pytest.CaptureFixture[st
     assert capsys.readouterr().out == ""
 
 
+def test_planning_close_unresolvable_ref_is_not_looked_up() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value=""),
+        patch(f"{_MOD}.planning_close.find") as find,
+    ):
+        assert _planning_close(["#20"]) is None
+    find.assert_not_called()
+
+
 def test_planning_close_never_for_a_batch() -> None:
     with patch(f"{_MOD}.planning_close.find") as find:
         assert _planning_close(["#20", "#21"]) is None

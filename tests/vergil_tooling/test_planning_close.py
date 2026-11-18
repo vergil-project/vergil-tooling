@@ -219,6 +219,17 @@ def test_failed_read_propagates(
         planning_close.find(TASK)
 
 
+def test_malformed_planning_view_is_refused(
+    fake: Callable[..., _GitHub], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake()
+    monkeypatch.setattr(planning_close.github, "read_json", lambda *_args: [])
+    with pytest.raises(
+        RuntimeError, match=r"unexpected 'gh issue view' response for acme/\.github#7"
+    ):
+        planning_close.find(TASK)
+
+
 def test_planning_refs_reads_only_whole_lines() -> None:
     body = (
         "Planning: acme/.github#7\n"
