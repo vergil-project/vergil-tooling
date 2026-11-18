@@ -19,6 +19,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _metadata_from_state,
     _origin_has_branch,
     _planning_close,
+    _pr_label,
     _prepare,
     _push_branch,
     _recheck_batch,
@@ -46,7 +47,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
 from vergil_tooling.bin.vrg_submit_pr import (
     _chain_finalize as _real_chain_finalize,
 )
-from vergil_tooling.lib import auto_merge, epics, github, pr_provenance, retry, worktrees
+from vergil_tooling.lib import auto_merge, epics, github, pr_provenance, progress, retry, worktrees
 from vergil_tooling.lib.linkage import extract_tracking_refs
 from vergil_tooling.lib.planning_close import PlanningClose
 from vergil_tooling.lib.pr_workflow import batch_rules, engine, freeze
@@ -199,6 +200,34 @@ def _in_worktree() -> Iterator[None]:
     """
     with patch(_MOD + ".git.is_main_worktree", return_value=False):
         yield
+
+
+_REAL_RUN_LOG = progress.RunLog
+
+
+@pytest.fixture(autouse=True)
+def _run_log_in_tmp(tmp_path: Path) -> Iterator[Path]:
+    """Write every submit rollup's run log under *tmp_path*, never the real repo.
+
+    ``_submit_all`` opens ``.vergil/vrg-submit-pr-<stamp>.log`` in the main
+    worktree, which tests patch to paths like ``/repo``. Yields the root the
+    logs land in.
+    """
+    with patch(
+        "vergil_tooling.lib.progress.RunLog",
+        side_effect=lambda command, _root: _REAL_RUN_LOG(command, tmp_path),
+    ):
+        yield tmp_path
+
+
+def _submit_log(root: Path) -> str:
+    """The text of the one submit run log written under *root*."""
+    [log] = (root / ".vergil").glob("vrg-submit-pr-*.log")
+    return log.read_text()
+
+
+# The renderer is fixed to plain so the rollup's lines are the same under any CI.
+_ARGS = parse_args(["--output-format", "plain"])
 
 
 def test_target_branch_explicit_develop_accepted() -> None:
@@ -1591,7 +1620,7 @@ def test_submit_all_pushes_creates_records_and_turns_auto_merge_on() -> None:
         patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
     ):
         enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
-        summary = _submit_all([sub])
+        summary = _submit_all([sub], _ARGS)
     assert summary == SubmitSummary(opened=["https://example/pull/9"], failed=[])
     push.assert_called_once_with("feature/1673-x")
     create.assert_called_once_with(
@@ -1640,7 +1669,7 @@ def _submit_with_create(
         patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
     ):
         enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
-        summary = _submit_all([_submission()])
+        summary = _submit_all([_submission()], _ARGS)
     return summary, create, lookup, record, enable, sleep
 
 
@@ -1695,7 +1724,9 @@ def test_other_open_pr_is_refused_by_name(
     sleep.assert_not_called()
     record.assert_not_called()
     enable.assert_not_called()
-    assert "no PR opened" in capsys.readouterr().err
+    out = capsys.readouterr().out
+    assert "✗ feature/1673-x" in out
+    assert "no PR opened: " in out
 
 
 def test_several_open_prs_are_refused() -> None:
@@ -1776,7 +1807,7 @@ def test_auto_merge_squash_single() -> None:
         patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
     ):
         enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
-        _submit_all([_submission(head="abc123")])
+        _submit_all([_submission(head="abc123")], _ARGS)
     enable.assert_called_once_with("https://x/pull/1", head="abc123", method="SQUASH")
 
 
@@ -1790,7 +1821,7 @@ def test_auto_merge_rebase_batch() -> None:
         patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
     ):
         enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
-        _submit_all([_submission(issues=("#10", "#11"), head="def456")])
+        _submit_all([_submission(issues=("#10", "#11"), head="def456")], _ARGS)
     enable.assert_called_once_with("https://x/pull/1", head="def456", method="REBASE")
 
 
@@ -1805,7 +1836,7 @@ def test_already_mergeable_pr_counts_as_opened(capsys: pytest.CaptureFixture[str
             return_value=auto_merge.AutoMergeResult(merged_now=True),
         ),
     ):
-        summary = _submit_all([_submission()])
+        summary = _submit_all([_submission()], _ARGS)
     assert summary == SubmitSummary(opened=["https://x/pull/1"], failed=[])
     assert "merged directly (squash)" in capsys.readouterr().out
 
@@ -1830,7 +1861,7 @@ def test_provenance_runs_before_auto_merge() -> None:
             ),
         ),
     ):
-        _submit_all([_submission()])
+        _submit_all([_submission()], _ARGS)
     assert calls == ["provenance https://x/pull/1", "auto-merge https://x/pull/1"]
 
 
@@ -1858,7 +1889,7 @@ def test_provenance_violation_fails_pr_others_continue(
         patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
     ):
         enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
-        summary = _submit_all([a, b])
+        summary = _submit_all([a, b], _ARGS)
     assert summary.opened == ["https://x/pull/2"]
     assert len(summary.failed) == 1
     label, reason = summary.failed[0]
@@ -1866,7 +1897,11 @@ def test_provenance_violation_fails_pr_others_continue(
     assert "bot-vergil-user (user): auto_merge_enabled" in reason
     assert "auto-merge was left off" in reason
     enable.assert_called_once_with("https://x/pull/2", head="h0", method="SQUASH")
-    assert "https://x/pull/1: submit failed" in capsys.readouterr().err
+    out = capsys.readouterr().out
+    assert "✗ feature/1-a" in out
+    assert "PR #1 opened, submit failed: provenance violations found" in out
+    assert "✓ feature/2-b" in out
+    assert "PR #2 auto-merge on (squash, pinned to h0)" in out
 
 
 def test_provenance_check_that_cannot_run_fails_pr() -> None:
@@ -1881,7 +1916,7 @@ def test_provenance_check_that_cannot_run_fails_pr() -> None:
         ),
         patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
     ):
-        summary = _submit_all([_submission()])
+        summary = _submit_all([_submission()], _ARGS)
     assert summary.opened == []
     assert summary.failed[0][0] == "https://x/pull/1"
     enable.assert_not_called()
@@ -1902,7 +1937,7 @@ def test_auto_merge_refusal_fails_pr_others_continue() -> None:
             ],
         ),
     ):
-        summary = _submit_all([a, b])
+        summary = _submit_all([a, b], _ARGS)
     assert summary.opened == ["https://x/pull/2"]
     assert summary.failed == [
         ("https://x/pull/1", "https://x/pull/1: enabling auto-merge failed: nope")
@@ -1920,7 +1955,7 @@ def test_open_failure_names_the_branch_others_continue() -> None:
         ),
         patch(_MOD + "._create_pr", return_value="https://x/pull/2") as create,
     ):
-        summary = _submit_all([a, b])
+        summary = _submit_all([a, b], _ARGS)
     assert summary.opened == ["https://x/pull/2"]
     assert summary.failed == [("feature/1-a", "pushing 'feature/1-a' failed")]
     create.assert_called_once()
@@ -1937,8 +1972,152 @@ def test_submission_recorded_when_auto_merge_fails() -> None:
             side_effect=auto_merge.AutoMergeError("refused"),
         ),
     ):
-        _submit_all([_submission()])
+        _submit_all([_submission()], _ARGS)
     record.assert_called_once()
+
+
+class TestSubmitRollup:
+    """The submit runs as a progress rollup, one stage per PR (vergil-tooling#4709)."""
+
+    def test_one_stage_per_pr_with_its_outcome_and_the_log(
+        self, capsys: pytest.CaptureFixture[str], _run_log_in_tmp: Path
+    ) -> None:
+        """Each PR is a stage named after its branch, ending ✓ with what it did,
+        and the summary points at the run log holding the steps' output."""
+        a = _submission("feature/1-a", head="aaaabbbbccccdddd", record_in=None)
+        b = _submission("feature/2-b", record_in=None)
+        with (
+            patch(_MOD + "._push_branch"),
+            patch(_MOD + "._create_pr", side_effect=["https://x/pull/11", "https://x/pull/12"]),
+            patch(
+                _MOD + ".auto_merge.enable_auto_merge",
+                side_effect=[
+                    auto_merge.AutoMergeResult(merged_now=False),
+                    auto_merge.AutoMergeResult(merged_now=True),
+                ],
+            ),
+        ):
+            summary = _submit_all([a, b], _ARGS)
+        assert summary == SubmitSummary(
+            opened=["https://x/pull/11", "https://x/pull/12"], failed=[]
+        )
+        out = capsys.readouterr().out
+        assert re.search(
+            r"^✓ feature/1-a  \d+\.\ds — PR #11 auto-merge on \(squash, pinned to aaaabbbbcccc\)$",
+            out,
+            re.MULTILINE,
+        )
+        assert re.search(
+            r"^✓ feature/2-b  \d+\.\ds — PR #12 merged directly \(squash\)$", out, re.MULTILINE
+        )
+        assert "✓  vrg-submit-pr complete" in out
+        [log_path] = (_run_log_in_tmp / ".vergil").glob("vrg-submit-pr-*.log")
+        assert f"   full log → {log_path}" in out
+        log = _submit_log(_run_log_in_tmp)
+        assert "=== feature/1-a: started ===" in log
+        assert "PR created: https://x/pull/11" in log
+        assert "https://x/pull/12: merged directly (squash); it could already merge." in log
+        assert "feature/2-b: ok (PR #12 merged directly (squash)" in log
+
+    def test_failed_pr_is_a_failed_stage_and_the_next_still_runs(
+        self, capsys: pytest.CaptureFixture[str], _run_log_in_tmp: Path
+    ) -> None:
+        """A PR that fails ends its stage ✗ with the reason; the next PR's stage
+        still runs, and the summary names no exit status (finalize decides it)."""
+        a = _submission("feature/1-a", record_in=None)
+        b = _submission("feature/2-b", record_in=None)
+        with (
+            patch(
+                _MOD + "._push_branch",
+                side_effect=[SystemExit("vrg-submit-pr: pushing 'feature/1-a' failed"), None],
+            ),
+            patch(_MOD + "._create_pr", return_value="https://x/pull/2"),
+        ):
+            summary = _submit_all([a, b], _ARGS)
+        assert summary.failed == [("feature/1-a", "pushing 'feature/1-a' failed")]
+        out = capsys.readouterr().out
+        assert re.search(
+            r"^✗ feature/1-a  \d+\.\ds — no PR opened: pushing 'feature/1-a' failed$",
+            out,
+            re.MULTILINE,
+        )
+        assert "✓ feature/2-b" in out
+        assert "✗  failures:\n   feature/1-a — no PR opened: pushing 'feature/1-a' failed" in out
+        assert "vrg-submit-pr completed with errors" in out
+        assert "PipelineError: 1 stage failed (feature/1-a)\n" in out
+        assert "· exit" not in out
+        assert "feature/1-a: failed (no PR opened" in _submit_log(_run_log_in_tmp)
+
+    def test_unexpected_error_stops_the_rollup_and_is_raised(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An error outside the per-PR failures is a bug, not a failed PR: the
+        PRs after it are not attempted, and it is raised after the summary."""
+        a = _submission("feature/1-a", record_in=None)
+        b = _submission("feature/2-b", record_in=None)
+        with (
+            patch(_MOD + "._push_branch"),
+            patch(_MOD + "._create_pr", side_effect=RuntimeError("boom")) as create,
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            _submit_all([a, b], _ARGS)
+        create.assert_called_once()
+        out = capsys.readouterr().out
+        assert "✗ feature/1-a" in out
+        assert "RuntimeError: boom" in out
+        assert "✗ feature/2-b" in out
+        assert "not attempted: an earlier PR's submit stopped on an unexpected error" in out
+
+    def test_interrupt_is_raised_after_the_summary(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch(_MOD + "._push_branch", side_effect=KeyboardInterrupt),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            _submit_all([_submission("feature/1-a")], _ARGS)
+        assert "✗ feature/1-a" in capsys.readouterr().out
+
+    def test_failed_rollup_with_no_failed_pr_is_an_internal_error(self) -> None:
+        """A rollup that reports a failure no PR recorded is never read as success."""
+        with (
+            patch(_MOD + ".progress.run_pipeline", return_value=1),
+            pytest.raises(RuntimeError, match="no PR recorded as failed"),
+        ):
+            _submit_all([_submission()], _ARGS)
+
+    def test_rollup_starts_after_the_preview(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The preview prints plainly first; the rollup follows the confirmation."""
+        _write_workflow_state(tmp_path)
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + "._push_branch"),
+            patch(_MOD + "._create_pr", return_value="https://x/pull/5"),
+        ):
+            assert main(["--yes", "--output-format", "plain"]) == 0
+        out = capsys.readouterr().out
+        assert out.index("=== Body Preview ===") < out.index("→ feature/x  starting...")
+        assert "✓ feature/x" in out
+        assert "PR #5 auto-merge on (squash, pinned to h0)" in out
+
+    def test_progress_flags_parse(self) -> None:
+        args = parse_args(["--output-format", "gha", "--output-window", "0"])
+        assert args.output_format == "gha"
+        assert args.output_window == 0
+
+    @pytest.mark.parametrize(
+        ("url", "label"),
+        [
+            ("https://github.com/o/r/pull/123", "PR #123"),
+            ("https://github.com/o/r/pull/123/", "PR #123"),
+            ("https://example/not-a-pr", "https://example/not-a-pr"),
+        ],
+    )
+    def test_pr_label(self, url: str, label: str) -> None:
+        assert _pr_label(url) == label
 
 
 def test_single_and_batch_share_submit_all(tmp_path: Path) -> None:
@@ -1965,7 +2144,7 @@ def test_single_and_batch_share_submit_all(tmp_path: Path) -> None:
         patch(_MOD + "._submit_all", return_value=summary) as submit_all,
     ):
         assert _run_submit_batch([a, b], parse_args(["--all", "--yes"])) == 0
-    (selection,) = submit_all.call_args.args
+    selection, _args = submit_all.call_args.args
     assert [s.branch for s in selection] == ["feature/1-x", "feature/2-x"]
     assert [s.record_in for s in selection] == [a.path, b.path]
 
@@ -2546,7 +2725,7 @@ def test_relay_submission_opens_without_pushing() -> None:
             expected_head="abc123",
             record_in=None,
         )
-        summary = _submit_all([sub])
+        summary = _submit_all([sub], _ARGS)
     assert summary.opened == ["https://github.com/pr/9"]
     push.assert_not_called()
     assert create.call_args.kwargs["head"] == "feature/x"
@@ -2569,7 +2748,7 @@ def test_local_submission_pushes_before_creating() -> None:
             expected_head="abc123",
             record_in=None,
         )
-        summary = _submit_all([sub])
+        summary = _submit_all([sub], _ARGS)
     assert summary.opened == ["https://github.com/pr/9"]
     push.assert_called_once_with("feature/x")
 
@@ -2821,8 +3000,10 @@ class TestRelayBranchPath:
         # it in-flight, exactly like the worktree submit path.
         record.assert_called_once_with(wt.path, pr_url="https://github.com/pr/7")
         # Only the origin-presence probe runs — no `_verify_origin_tip` ls-remote
-        # against a branch that is not there.
-        assert read_output.call_count == 1
+        # against a branch that is not there. (The other read is the rollup's
+        # main-worktree lookup for its run log.)
+        ls_remotes = [c for c in read_output.call_args_list if c.args[0] == "ls-remote"]
+        assert len(ls_remotes) == 1
 
     def test_named_branch_local_worktree_already_on_origin_uses_relay(self) -> None:
         """A local worktree branch that *is* on origin keeps the relay path
@@ -2908,7 +3089,10 @@ class TestRelayBranchPath:
         ):
             assert main(["feature/x", "--yes"]) == 3
         record.assert_not_called()
-        assert "feature/x: no PR opened" in capsys.readouterr().err
+        captured = capsys.readouterr()
+        assert "✗ feature/x" in captured.out
+        assert "no PR opened: creating the PR failed" in captured.out
+        assert "Failed to submit:\n  feature/x — creating the PR failed" in captured.err
 
     def test_relay_head_sha_mismatch_errors(self) -> None:
         state = _ready_state(branch="feature/x", head_sha="abc123")
@@ -3019,7 +3203,7 @@ class TestRelayBranchPath:
         assert rc == 0
         ask.assert_called_once()
         submit_all.assert_called_once()
-        (selection,) = submit_all.call_args.args
+        selection, _args = submit_all.call_args.args
         assert [(s.branch, s.expected_head, s.push) for s in selection] == [
             ("feature/a", "sha_a", False),
             ("feature/b", "sha_b", False),
@@ -3274,7 +3458,7 @@ def test_submit_refuses_when_origin_is_not_the_expected_head() -> None:
         patch(_MOD + ".git.read_output", return_value="e4570be\trefs/heads/feature/x"),
         patch(_MOD + ".github.create_pr") as create,
     ):
-        summary = _submit_all([_submission("feature/x", head="258cf59", record_in=None)])
+        summary = _submit_all([_submission("feature/x", head="258cf59", record_in=None)], _ARGS)
     push.assert_called_once_with("feature/x")
     create.assert_not_called()
     assert summary.opened == []
@@ -3734,7 +3918,7 @@ def test_batch_submission_rechecks_before_push() -> None:
             expected_head="reported1",
             record_in=None,
         )
-        summary = _submit_all([sub])
+        summary = _submit_all([sub], _ARGS)
     assert summary.opened == ["https://github.com/o/r/pull/3"]
     assert [c[0] for c in order.mock_calls] == ["recheck", "push", "create"]
     order.recheck.assert_called_once_with(

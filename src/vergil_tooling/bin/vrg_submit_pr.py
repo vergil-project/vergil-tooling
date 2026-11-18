@@ -35,6 +35,16 @@ provenance violation always fails that PR's submit and leaves its auto-merge
 off (vergil-tooling#4695). Submit never rebases a branch:
 rebasing before handoff stays the agent's job.
 
+The previews, refusals, confirmation and ``--dry-run`` print plainly. Once
+the selection is confirmed, :func:`_submit_all` runs as a progress rollup
+(:mod:`vergil_tooling.lib.progress`, as ``vrg-release`` does) with one stage
+per PR, named after its branch (vergil-tooling#4709): each step's output
+goes to ``.vergil/vrg-submit-pr-<stamp>.log`` in the main worktree, each
+stage ends on one ✓ / ✗ line with its duration and outcome, and the summary
+points at the log. ``--output-format`` and ``--output-window`` choose the
+renderer, as for the other progress commands. The chained finalize then
+prints its own rollup.
+
 PRs are opened against ``develop`` only: a ``--base``, or a recorded base,
 naming any other branch is refused, since releases go through
 ``vrg-release``.
@@ -106,7 +116,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -120,6 +130,7 @@ from vergil_tooling.lib import (
     planning_close,
     pr_create,
     pr_provenance,
+    progress,
     worktrees,
 )
 from vergil_tooling.lib.cli import cli_main
@@ -294,6 +305,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Comma-separated list of ready worktrees to batch-submit, by issue "
         "number or worktree directory name (issue #1673).",
     )
+    progress.add_progress_args(parser, ())
     add_yes_argument(parser)
     return parser.parse_args(argv)
 
@@ -431,6 +443,9 @@ def _create_or_adopt(sub: _Submission) -> str:
 EXIT_OK = 0
 EXIT_NOT_ALL_MERGED = 3
 _FINALIZE_OUTCOMES = frozenset({EXIT_OK, EXIT_NOT_ALL_MERGED, 4, 5})
+
+# What progress.run_pipeline returns when the rollup is interrupted.
+_INTERRUPTED = 130
 
 
 def _finalize_cmd(opened: list[str], args: argparse.Namespace, *, release: bool) -> list[str]:
@@ -600,47 +615,112 @@ def _check_provenance(pr_url: str) -> None:
     raise _SubmitFailedError(msg)
 
 
-def _submit_all(selection: list[_Submission]) -> SubmitSummary:
-    """Open every PR in *selection* and turn its auto-merge on: the one submit path.
+_SUBMIT_COMMAND = "vrg-submit-pr"
 
-    Every mode reaches this loop with its PRs already gated (ready state,
-    freeze, recorded head) and confirmed. For each PR: open it
-    (:func:`_open_one`), run the provenance check, then turn auto-merge on
-    pinned to the expected head, with the rebase method for a batch PR and
-    squash otherwise. GitHub refuses auto-merge on a PR that can already
-    merge; :func:`auto_merge.enable_auto_merge` then merges it directly.
+_NOT_ATTEMPTED = "not attempted: an earlier PR's submit stopped on an unexpected error"
 
-    A PR whose submit fails is named in the summary with its reason and the
-    loop moves on to the next PR: nothing here is fail-fast, since one PR
-    no longer waits on another.
+
+def _pr_label(pr_url: str) -> str:
+    """``PR #N`` for a pull-request URL ending in its number, else the URL itself."""
+    tail = pr_url.rstrip("/").rsplit("/", 1)[-1]
+    return f"PR #{tail}" if tail.isdigit() else pr_url
+
+
+@dataclass
+class _SubmitRun:
+    """The state one :func:`_submit_all` rollup builds up, one stage per PR.
+
+    *opened* and *failed* become the run's :class:`SubmitSummary`. *fatal* is
+    an error outside :data:`_PER_PR_ERRORS` (a bug, not a failed PR): the PRs
+    after it are not attempted, and :func:`_submit_all` raises it once the
+    rollup's summary is printed, as the loop before the rollup did.
     """
-    opened: list[str] = []
-    failed: list[tuple[str, str]] = []
-    for sub in selection:
+
+    opened: list[str] = field(default_factory=list)
+    failed: list[tuple[str, str]] = field(default_factory=list)
+    fatal: Exception | None = None
+
+    def stage(self, sub: _Submission) -> progress.Stage:
+        """The rollup stage for *sub*, named after its branch."""
+        return progress.Stage(sub.branch, lambda _ctx: self.submit(sub), mode="fail_defer")
+
+    def submit(self, sub: _Submission) -> None:
+        """Run *sub*'s stage: open its PR and turn auto-merge on, or fail the stage."""
+        if self.fatal is not None:
+            raise progress.StageFailedError(_NOT_ATTEMPTED)
+        try:
+            self._submit(sub)
+        except progress.StageFailedError:
+            raise
+        except Exception as exc:
+            self.fatal = exc
+            raise
+
+    def _submit(self, sub: _Submission) -> None:
         try:
             pr_url = _open_one(sub)
         except _PER_PR_ERRORS as exc:
             reason = _failure_reason(exc)
-            print(f"vrg-submit-pr: {sub.branch}: no PR opened: {reason}", file=sys.stderr)
-            failed.append((sub.branch, reason))
-            continue
+            self.failed.append((sub.branch, reason))
+            raise progress.StageFailedError(f"no PR opened: {reason}") from exc
+        method = _merge_method(sub.issue_refs)
         try:
             _check_provenance(pr_url)
-            method = _merge_method(sub.issue_refs)
             result = auto_merge.enable_auto_merge(pr_url, head=sub.expected_head, method=method)
         except _PER_PR_ERRORS as exc:
             reason = _failure_reason(exc)
-            print(f"vrg-submit-pr: {pr_url}: submit failed: {reason}", file=sys.stderr)
-            failed.append((pr_url, reason))
-            continue
+            self.failed.append((pr_url, reason))
+            raise progress.StageFailedError(
+                f"{_pr_label(pr_url)} opened, submit failed: {reason}"
+            ) from exc
+        self.opened.append(pr_url)
         if result.merged_now:
-            print(f"{pr_url}: merged directly ({method.lower()}); it could already merge.")
+            outcome = f"merged directly ({method.lower()})"
+            print(f"{pr_url}: {outcome}; it could already merge.")
         else:
-            print(
-                f"{pr_url}: auto-merge on ({method.lower()}, pinned to {sub.expected_head[:12]})."
-            )
-        opened.append(pr_url)
-    return SubmitSummary(opened=opened, failed=failed)
+            outcome = f"auto-merge on ({method.lower()}, pinned to {sub.expected_head[:12]})"
+            print(f"{pr_url}: {outcome}.")
+        progress.note(f"{_pr_label(pr_url)} {outcome}")
+
+
+def _submit_all(selection: list[_Submission], args: argparse.Namespace) -> SubmitSummary:
+    """Open every PR in *selection* and turn its auto-merge on: the one submit path.
+
+    Every mode reaches this rollup with its PRs already gated (ready state,
+    freeze, recorded head) and confirmed. Each PR is one stage of a
+    :mod:`~vergil_tooling.lib.progress` rollup, named after its branch: open
+    it (:func:`_open_one`), run the provenance check, then turn auto-merge on
+    pinned to the expected head, with the rebase method for a batch PR and
+    squash otherwise. GitHub refuses auto-merge on a PR that can already
+    merge; :func:`auto_merge.enable_auto_merge` then merges it directly. The
+    steps' output goes to the run log (``.vergil/vrg-submit-pr-<stamp>.log``
+    in the main worktree); each stage ends on one line with its outcome,
+    and the summary points at the log.
+
+    A PR whose submit fails ends its stage ✗ with its reason, is named in
+    the summary, and the rollup moves on to the next PR: nothing here is
+    fail-fast, since one PR no longer waits on another. An error outside
+    :data:`_PER_PR_ERRORS`, or an interrupt, stops the rollup and is raised
+    once its summary is printed.
+    """
+    run = _SubmitRun()
+    rc = progress.run_pipeline(
+        run,
+        [run.stage(sub) for sub in selection],
+        command=_SUBMIT_COMMAND,
+        label=_SUBMIT_COMMAND,
+        args=args,
+        repo_root=git.main_worktree_root(),
+        failure_exit=None,
+    )
+    if run.fatal is not None:
+        raise run.fatal
+    if rc == _INTERRUPTED:
+        raise KeyboardInterrupt
+    if rc != EXIT_OK and not run.failed:
+        msg = f"internal error: the submit rollup exited {rc} with no PR recorded as failed"
+        raise RuntimeError(msg)
+    return SubmitSummary(opened=run.opened, failed=run.failed)
 
 
 def _print_failed(summary: SubmitSummary) -> None:
@@ -967,7 +1047,7 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
             record_in=None,
         )
     ]
-    summary = _submit_all(selection)
+    summary = _submit_all(selection, args)
     return _finish(summary, args)
 
 
@@ -1087,7 +1167,7 @@ def _run_submit_batch(selected: list[worktrees.Worktree], args: argparse.Namespa
         return 0
     if not _confirm_selection(selection, assume_yes=args.yes):
         return 1
-    summary = _submit_all(selection)
+    summary = _submit_all(selection, args)
     return _finish(summary, args)
 
 
@@ -1249,7 +1329,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     ]
     if not _confirm_selection(selection, assume_yes=args.yes):
         return 1
-    summary = _submit_all(selection)
+    summary = _submit_all(selection, args)
     return _finish(summary, args)
 
 
@@ -1562,7 +1642,7 @@ def _run_relay(branches: list[str], args: argparse.Namespace) -> int:
         return 0
     if not _confirm_selection(selection, assume_yes=args.yes):
         return 1
-    summary = _submit_all(selection)
+    summary = _submit_all(selection, args)
     return _finish(summary, args)
 
 
