@@ -452,13 +452,20 @@ def _finalize_cmd(opened: list[str], args: argparse.Namespace, *, release: bool)
     """The one ``vrg-finalize-pr`` command over every opened PR.
 
     *release* is whether ``--release`` (and, with it, ``--no-install``) is
-    passed: the caller drops it when any PR failed to submit.
+    passed: the caller drops it when any PR failed to submit. The progress
+    flags ``--output-format`` and ``--output-window`` are passed on when
+    given, so both halves of the run render alike (issue #4711); left out,
+    finalize auto-detects its renderer as the submit rollup does.
     """
     cmd = ["vrg-finalize-pr", ",".join(opened)]
     if release:
         cmd.append("--release")
         if args.no_install:
             cmd.append("--no-install")
+    if args.output_format is not None:
+        cmd += ["--output-format", args.output_format]
+    if args.output_window is not None:
+        cmd += ["--output-window", str(args.output_window)]
     return cmd
 
 

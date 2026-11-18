@@ -1257,6 +1257,12 @@ class TestFinalizeByDefault:
         [
             (["--release"], ["--release"]),
             (["--release", "--no-install"], ["--release", "--no-install"]),
+            (["--output-format", "plain"], ["--output-format", "plain"]),
+            (["--output-window", "0"], ["--output-window", "0"]),
+            (
+                ["--release", "--output-format", "gha", "--output-window", "5"],
+                ["--release", "--output-format", "gha", "--output-window", "5"],
+            ),
         ],
     )
     def test_flags_passed_to_finalize(self, argv: list[str], flags: list[str]) -> None:
@@ -1310,6 +1316,20 @@ class TestFinalizeByDefault:
         out = capsys.readouterr().out
         assert f"Not watching. To finalize these PRs: vrg-finalize-pr {_URL1},{_URL2}\n" in out
         assert f"/vergil:pr-watch {_URL1}" in out
+
+    def test_no_finalize_command_carries_progress_flags(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+        argv = ["--no-finalize", "--output-format", "plain", "--output-window", "0"]
+        rc, calls = _run_batch([a, b], argv, urls=[_URL1, _URL2])
+        assert rc == 0
+        assert calls == []
+        out = capsys.readouterr().out
+        assert (
+            "Not watching. To finalize these PRs: vrg-finalize-pr "
+            f"{_URL1},{_URL2} --output-format plain --output-window 0\n"
+        ) in out
         assert f"/vergil:pr-watch {_URL2}" in out
 
     def test_no_finalize_failed_submit_exits_3(self, capsys: pytest.CaptureFixture[str]) -> None:
