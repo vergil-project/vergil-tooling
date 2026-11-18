@@ -145,6 +145,39 @@ block. What a violation does depends on whether the PR has merged:
   override does not cover a violation that has already merged, which a
   human must look at before any release (issue #4662).
 
+#### Status table
+
+The watch prints a status table to stdout once at start-up and again
+after every poll, about every 15 seconds (issue #4677). It has one row
+for each PR in the batch:
+
+```text
+Watch status after 0m30s:
+  PR     TITLE                                     STATE               WAITING
+  #4661  feat(finalize): watch a batch of PRs      merged              0m15s
+  #4662  fix(provenance): flag a merged violation  checks pending (2)  0m30s
+  #4663  docs: describe the watch                  failed: CI          0m15s
+  1 merged, 1 pending, 1 failed; 1h59m30s left before the batch deadline
+```
+
+- **PR** and **TITLE**: the PR number and its title, cut to 50
+  characters with `...`.
+- **STATE**: while the PR is pending, `checks pending (<n>)` (checks not
+  finished yet, counting a required check that has not registered),
+  `checks green, merging` (no check left, and GitHub can merge it),
+  `behind develop`, or `waiting (<merge state>)` for any other merge
+  state, such as `waiting (blocked)`. Once the PR has ended, the outcome
+  it ended with: `merged` or a `failed: …` outcome.
+- **WAITING**: how long the PR has waited since the watch started. A PR
+  that has ended keeps its row, its time frozen when it ended, so the PRs
+  can be watched merging one by one.
+
+The last line counts the merged, pending and failed PRs and gives the
+time left before the batch deadline (`$VRG_FINALIZE_DEADLINE`). The table
+is printed as plain lines and never redraws the terminal, so it reads the
+same in a log. The per-PR outcome lines and the final report are as
+before.
+
 ### 2. Settle
 
 The settle phase runs once, after the watch, and only when at least one

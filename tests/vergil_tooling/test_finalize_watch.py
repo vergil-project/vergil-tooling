@@ -44,6 +44,7 @@ def pr_state(n: int, **overrides: Any) -> dict[str, Any]:
     state: dict[str, Any] = {
         "id": f"PR_{n}",
         "url": url(n),
+        "title": f"feat: change {n}",
         "state": "OPEN",
         "baseRefName": "develop",
         "headRefName": f"feature/{n}-thing",
@@ -558,6 +559,7 @@ def test_unreadable_snapshot_raises(fake: FakeGitHub, monkeypatch: pytest.Monkey
     [
         ("state", "DRAFT"),
         ("headRefOid", None),
+        ("title", ""),
         ("autoMergeRequest", "on"),
         ("statusCheckRollup", {"x": 1}),
         ("mergeStateStatus", 3),
@@ -613,3 +615,160 @@ def test_disable_read_back_failure_raises(
 
     with pytest.raises(FinalizeWatchError, match="reading it back failed"):
         run([url(1)])
+
+
+# --- the status table (issue #4677) ------------------------------------------------
+
+
+def _tables(out: str) -> list[str]:
+    """Each status table printed in *out*, from its header line to its totals line."""
+    tables = []
+    for block in out.split("\nWatch status after ")[1:]:
+        lines = block.splitlines()
+        end = next(i for i, line in enumerate(lines) if "left before the batch deadline" in line)
+        tables.append("\n".join(["Watch status after " + lines[0], *lines[1 : end + 1]]))
+    return tables
+
+
+def test_status_table_for_a_mixed_batch(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv(DEADLINE_ENV, "30")
+    fake.script(1, pr_state(1), merged(1))
+    fake.script(2, pr_state(2))
+    fake.script(3, pr_state(3), pr_state(3, statusCheckRollup=[failing_check("test / unit", 3)]))
+    fake.failed[url(3)] = ["test / unit"]
+
+    results = run([url(1), url(2), url(3)])
+
+    assert [r.outcome for r in results] == ["merged", "timed out", "failed: CI"]
+    # One table after start-up and one after each of the two polls.
+    assert _tables(capsys.readouterr().out) == [
+        "Watch status after 0m00s:\n"
+        "  PR  TITLE           STATE               WAITING\n"
+        "  #1  feat: change 1  checks pending (2)  0m00s\n"
+        "  #2  feat: change 2  checks pending (2)  0m00s\n"
+        "  #3  feat: change 3  checks pending (2)  0m00s\n"
+        "  0 merged, 3 pending, 0 failed; 0m30s left before the batch deadline",
+        "Watch status after 0m15s:\n"
+        "  PR  TITLE           STATE               WAITING\n"
+        "  #1  feat: change 1  merged              0m15s\n"
+        "  #2  feat: change 2  checks pending (2)  0m15s\n"
+        "  #3  feat: change 3  failed: CI          0m15s\n"
+        "  1 merged, 1 pending, 1 failed; 0m15s left before the batch deadline",
+        # The ended PRs keep their rows, their waiting time frozen.
+        "Watch status after 0m30s:\n"
+        "  PR  TITLE           STATE               WAITING\n"
+        "  #1  feat: change 1  merged              0m15s\n"
+        "  #2  feat: change 2  checks pending (2)  0m30s\n"
+        "  #3  feat: change 3  failed: CI          0m15s\n"
+        "  1 merged, 1 pending, 1 failed; 0m00s left before the batch deadline",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "state"),
+    [
+        # test / unit still running, CodeQL not registered yet.
+        ({}, "checks pending (2)"),
+        (
+            {
+                "statusCheckRollup": [
+                    {"__typename": "StatusContext", "context": "test / unit", "state": "PENDING"},
+                    {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SUCCESS"},
+                    {"__typename": "CheckRun", "name": "lint", "status": "QUEUED"},
+                ]
+            },
+            "checks pending (2)",
+        ),
+        (
+            {
+                "statusCheckRollup": [
+                    {"__typename": "StatusContext", "context": "test / unit", "state": "SUCCESS"},
+                    {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SUCCESS"},
+                ],
+                "mergeStateStatus": "CLEAN",
+            },
+            "checks green, merging",
+        ),
+        (
+            {
+                "statusCheckRollup": [
+                    {"__typename": "CheckRun", "name": "test / unit", "conclusion": "SUCCESS"},
+                    {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SUCCESS"},
+                ],
+                "mergeStateStatus": "BEHIND",
+            },
+            "behind develop",
+        ),
+        (
+            {
+                "statusCheckRollup": [
+                    {"__typename": "CheckRun", "name": "test / unit", "conclusion": "SUCCESS"},
+                    {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SUCCESS"},
+                ],
+                "mergeStateStatus": "BLOCKED",
+            },
+            "waiting (blocked)",
+        ),
+        ({"statusCheckRollup": None, "mergeStateStatus": ""}, "checks pending (2)"),
+    ],
+)
+def test_status_table_pending_states(
+    fake: FakeGitHub,
+    capsys: pytest.CaptureFixture[str],
+    overrides: dict[str, Any],
+    state: str,
+) -> None:
+    fake.script(1, pr_state(1, **overrides), merged(1))
+
+    run([url(1)])
+
+    first = _tables(capsys.readouterr().out)[0]
+    assert f"  #1  feat: change 1  {state}  0m00s\n" in first
+
+
+def test_status_table_with_unknown_required_checks(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.required = None
+    fake.script(1, pr_state(1, statusCheckRollup=[], mergeStateStatus=""), merged(1))
+
+    run([url(1)])
+
+    assert "  #1  feat: change 1  waiting (no merge state)  0m00s\n" in capsys.readouterr().out
+
+
+def test_status_table_shortens_long_titles_and_counts_hours(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv(DEADLINE_ENV, "7200")
+    title = "feat(finalize): print a status table on every poll of the watch phase"
+    fake.script(1, pr_state(1, title=title), merged(1, title=title))
+
+    run([url(1)], poll=3725.0)
+
+    first, second = _tables(capsys.readouterr().out)
+    assert "  #1  feat(finalize): print a status table on every p...  " in first
+    assert title not in first
+    assert "2h00m00s left before the batch deadline" in first
+    assert "Watch status after 1h02m05s:" in second
+    assert "merged  1h02m05s\n" in second
+    assert "failed; 57m55s left before the batch deadline" in second
+
+
+def test_status_table_when_every_pr_ended_at_start_up(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.script(1, merged(1))
+    fake.script(2, pr_state(2, state="CLOSED"))
+
+    run([url(1), url(2)])
+
+    assert _tables(capsys.readouterr().out) == [
+        "Watch status after 0m00s:\n"
+        "  PR  TITLE           STATE           WAITING\n"
+        "  #1  feat: change 1  merged          0m00s\n"
+        "  #2  feat: change 2  failed: closed  0m00s\n"
+        "  1 merged, 0 pending, 1 failed; 2h00m00s left before the batch deadline"
+    ]
