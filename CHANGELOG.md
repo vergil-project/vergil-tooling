@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.323] - 2026-11-18
+
+### Bug fixes
+
+- refuse an --all-in sweep when the identity may not see every repo in the org (#4646)
+- say an unfinished ancestor CD run is not finished, not timed out after 0s (#4655)
+- keep --allow-provenance-violation from releasing past a merged violation (#4665)
+
+### Build
+
+- raise vergil-tooling's floor to Python 3.15 (#4647)
+
+### Chores
+
+- uv lock --upgrade
+- lint-clean scripts/perf/ under the repo's ruff configuration (#4656)
+
+### Documentation
+
+- name Python 3.15 in the remaining install docs and drop the stale CI example (#4653)
+- supersede the up-to-date rationale; update the provenance mitigation (#4667)
+
+### Features
+
+- serialize local develop sync and cleanup with a checkout lock (#4641)
+- add batch-check for a submitted batch PR (#4642)
+- open every PR through one path with auto-merge on (#4643)
+- fast-forward develop in preflight instead of refusing (#4650)
+- report develop CD instead of waiting; --wait-cd opts in (#4651)
+- wait for the PR to merge: exit 0 merged, 1 cannot merge, 2 other errors (#4654)
+- finalize watches a batch, then settles develop once (#4660)
+- finalize by default; --no-finalize opts out (#4666)
+
+### Refactoring
+
+- remove the cutover install switch from the cache build (#4664)
+
 ## [2.1.322] - 2026-11-17
 
 ### Bug fixes
