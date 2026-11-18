@@ -282,9 +282,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # new default, rather than argparse rejecting it as unknown (spec §6.10).
     parser.add_argument("--finalize", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--allow-provenance-violation", action="store_true", help=argparse.SUPPRESS
-    )
+    parser.add_argument("--allow-provenance-violation", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--all",
         dest="all_worktrees",

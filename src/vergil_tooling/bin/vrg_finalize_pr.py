@@ -336,9 +336,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--strategy", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--skip-post-checks", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--allow-provenance-violation", action="store_true", help=argparse.SUPPRESS
-    )
+    parser.add_argument("--allow-provenance-violation", action="store_true", help=argparse.SUPPRESS)
     add_yes_argument(parser)
     progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
