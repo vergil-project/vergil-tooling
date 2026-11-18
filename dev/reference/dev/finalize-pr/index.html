@@ -14983,6 +14983,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-watch-stage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The watch stage
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18243,6 +18254,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-watch-stage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The watch stage
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18630,9 +18652,9 @@ block. What a violation does depends on whether the PR has merged:</p>
   human must look at before any release (issue #4662).</li>
 </ul>
 <h4 id="status-table">Status table<a class="headerlink" href="#status-table" title="Permanent link">&para;</a></h4>
-<p>The watch prints a status table to stdout once at start-up and again
-after every poll, about every 15 seconds (issue #4677). It has one row
-for each PR in the batch:</p>
+<p>The watch builds a status table once at start-up and again after every
+poll, about every 15 seconds (issue #4677). It has one row for each PR in
+the batch:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Watch status after 0m30s:
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  PR     TITLE                                     STATE               WAITING
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  #4661  feat(finalize): watch a batch of PRs      merged              0m15s
@@ -18654,10 +18676,35 @@ for each PR in the batch:</p>
   can be watched merging one by one.</li>
 </ul>
 <p>The last line counts the merged, pending and failed PRs and gives the
-time left before the batch deadline (<code>$VRG_FINALIZE_DEADLINE</code>). The table
-is printed as plain lines and never redraws the terminal, so it reads the
-same in a log. The per-PR outcome lines and the final report are as
-before.</p>
+time left before the batch deadline (<code>$VRG_FINALIZE_DEADLINE</code>).</p>
+<h4 id="the-watch-stage">The watch stage<a class="headerlink" href="#the-watch-stage" title="Permanent link">&para;</a></h4>
+<p>The watch is a stage of finalize's progress display, <code>watch</code>, shown
+before the settle phase's stages (issue #4694). How the table appears
+depends on where the output goes:</p>
+<ul>
+<li><strong>On a terminal</strong>, the table sits under the stage's spinner and is
+  redrawn in place after every poll, never appended. When the watch
+  ends, the stage collapses to one line, <code>✓</code> when every PR merged with
+  no provenance violation and <code>⚠</code> otherwise:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>⚠ watch  3m12s — 4 merged, 1 failed
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>✓ close-refs  1.2s
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>✓ checkout-lock  0.0s
+</code></pre></div>
+<ul>
+<li><strong>Off a terminal</strong> (a pipe, a log, CI), output stays plain and
+  append-only. The table is printed at start-up and then only when some
+  PR's state changes. Between changes, a heartbeat line is printed every
+  five minutes:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Watch status after 5m15s: no change; 1 merged, 2 pending, 0 failed; 1h54m45s left before the batch deadline
+</code></pre></div>
+<p>The run log, <code>.vergil/vrg-finalize-pr-&lt;stamp&gt;.log</code>, is shared by the
+watch and the settle phase. It keeps every table in which some PR's
+state changed, each under a timestamped <code>status changed:</code> line, so the
+full history survives the terminal's redraw. When no PR merged, the run
+ends by naming the log. The per-PR outcome lines (<code>&lt;url&gt;: merged</code>) go to
+the stage's output and the log, and the final report is unchanged.</p>
 <h3 id="2-settle">2. Settle<a class="headerlink" href="#2-settle" title="Permanent link">&para;</a></h3>
 <p>The settle phase runs once, after the watch, and only when at least one
 PR merged. With no PR merged it is skipped, and the report says so.
