@@ -418,6 +418,36 @@ def test_issue_1324_superseded_cancel_then_green_run_merges(
     )
 
 
+def test_check_that_fails_between_the_two_reads_waits_for_the_next_snapshot(
+    fake: FakeGitHub,
+) -> None:
+    # The snapshot still shows evidence running on the cancelled run; gh, read a
+    # moment later, already reports it failed. The next snapshot shows it superseded.
+    fake.required = frozenset({SEMGREP, EVIDENCE})
+    runs = [ci_run(OLD_RUN, "in_progress"), ci_run(NEW_RUN, "queued")]
+    cancelled_semgrep = ci_check(SEMGREP, OLD_RUN, 1, "CANCELLED")
+    fake.script(
+        1,
+        pr_state(
+            1,
+            statusCheckRollup=[cancelled_semgrep, ci_check(EVIDENCE, OLD_RUN, 2)],
+            _failed=[SEMGREP, EVIDENCE],
+            _runs=runs,
+        ),
+        pr_state(
+            1,
+            statusCheckRollup=[cancelled_semgrep, ci_check(EVIDENCE, OLD_RUN, 2, "FAILURE")],
+            _failed=[SEMGREP, EVIDENCE],
+            _runs=runs,
+        ),
+        merged(1),
+    )
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+
+
 def test_cancelled_check_with_no_newer_run_ends_after_the_grace(fake: FakeGitHub) -> None:
     fake.required = frozenset({SEMGREP, EVIDENCE})
     fake.script(

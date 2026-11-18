@@ -379,8 +379,11 @@ def check_failures(snap: Snapshot, required: Collection[str] | None) -> CheckFai
 
     The rollup decides whether to look. :func:`github.failed_check_names`
     confirms, leaving out a check whose every check-run is on a superseded
-    run. Each confirmed check is then judged by the workflow run of its
-    newest failed or cancelled check-run, read from the head's Actions runs:
+    run. A confirmed check with no failed or cancelled check-run in the
+    snapshot failed after the snapshot was read, so it is not yet decided:
+    the next snapshot judges it. Each other confirmed check is judged by the
+    workflow run of its newest failed or cancelled check-run, read from the
+    head's Actions runs:
 
     - a newer run of the same workflow, for the same event, is on the head:
       superseded, so not a failure (issue #4692);
@@ -403,7 +406,9 @@ def check_failures(snap: Snapshot, required: Collection[str] | None) -> CheckFai
     cancelled: list[str] = []
     for name in confirmed:
         occurrence = occurrences.get(name)
-        if occurrence is None or occurrence.run is None:
+        if occurrence is None:
+            continue  # it failed after the snapshot was read: judged on the next one
+        if occurrence.run is None:
             failed.append(name)
             continue
         repo, run_id = occurrence.run
