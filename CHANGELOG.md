@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.324] - 2026-11-18
+
+### Bug fixes
+
+- withhold Node and npm host settings from containers, with a notice (#4675)
+- show a submitted PR that cannot merge, with its reason (#4681)
+- clear a stale Rust coverage build when the toolchain changes (#4686)
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- describe the auto-merge submit and the watch-and-settle finalize (#4673)
+- name the 26/24/22 Node window where the docs list its majors (#4683)
+
+### Features
+
+- close an epic's planning issue from its docs PR (#4676)
+- report TypeScript settings that select Node or the package manager (#4674)
+- warn on an engines.node range outside the Node window (#4679)
+- print a status table after each poll of the watch (#4680)
+- honor time-boxed .npm-audit-exceptions in the TypeScript audit (#4685)
+
 ## [2.1.323] - 2026-11-18
 
 ### Bug fixes
