@@ -20,16 +20,13 @@ judge it in this order:
    started included. Provenance (:func:`vergil_tooling.lib.pr_provenance.check_pr`)
    runs on it first: a violation cannot be undone, so nothing is disabled,
    and the result carries ``provenance_violation=True``, printed loudly. The
-   caller treats such a run as not a full success, whatever
-   ``allow_provenance_violation`` says: the override covers only an open PR.
+   caller treats such a run as not a full success.
 3. **Closed** without merging: ``failed: closed``.
 4. **Provenance** runs at start-up and again each time the PR's head
    changes. A violation turns auto-merge off (GraphQL
    ``disablePullRequestAutoMerge``, confirmed by reading it back) and ends the
-   PR as ``failed: provenance``, unless ``allow_provenance_violation``: then
-   the violation is printed loudly, flagged on the result, and the PR is
-   watched on with its auto-merge left on. If it then merges, it is a merged
-   PR with a violation, as in step 2.
+   PR as ``failed: provenance``. A violation always fails; there is no
+   override (vergil-tooling#4695).
 5. **Auto-merge off:** ``failed: auto-merge off``.
 6. **A required check concluded in failure:** ``failed: CI``, naming the
    check. :func:`check_failures` judges the snapshot's checks, and leaves
@@ -274,16 +271,10 @@ def _not_develop(snap: Snapshot) -> str | None:
 def _violations(pr: str) -> str:
     """Run the provenance check on *pr*; its violations as text, ``""`` for none.
 
-    Advisories and violations are printed to stderr. A check that cannot run
-    raises, as :func:`vergil_tooling.lib.pr_provenance.check_pr` does.
+    A check that cannot run raises, as
+    :func:`vergil_tooling.lib.pr_provenance.check_pr` does.
     """
     result = pr_provenance.check_pr(pr)
-    for adv in result.advisories:
-        print(
-            f"  ADVISORY: {pr}: {adv.login} ({adv.role.value}) performed "
-            f"'{adv.action}' (permitted but advisory)",
-            file=sys.stderr,
-        )
     return ", ".join(f"{v.login} ({v.role.value}): {v.action}" for v in result.violations)
 
 
@@ -484,7 +475,7 @@ def _check_provenance(snap: Snapshot, watched: _Watched) -> bool:
     return bool(found)
 
 
-def _judge(snap: Snapshot, watched: _Watched, *, allow: bool, now: float) -> PRResult | None:
+def _judge(snap: Snapshot, watched: _Watched, *, now: float) -> PRResult | None:
     """*snap*'s terminal result, in the module docstring's order, or ``None`` while pending."""
     why = _not_develop(snap)
     if why is not None:
@@ -500,21 +491,14 @@ def _judge(snap: Snapshot, watched: _Watched, *, allow: bool, now: float) -> PRR
     if snap.state == "CLOSED":
         return _result(snap, "failed: closed", "closed without merging", watched)
     if snap.head != watched.checked_head and _check_provenance(snap, watched):
-        if not allow:
-            print(
-                f"PROVENANCE VIOLATION: {snap.url}: {watched.violation}. "
-                "Turning its auto-merge off; investigate before re-enabling auto-merge.",
-                file=sys.stderr,
-            )
-            if snap.auto_merge_on:
-                _disable_auto_merge(snap)
-            return _result(snap, "failed: provenance", watched.violation, watched)
         print(
             f"PROVENANCE VIOLATION: {snap.url}: {watched.violation}. "
-            "Watching it on, per --allow-provenance-violation; if it merges, "
-            "this run is still not a full success.",
+            "Turning its auto-merge off; investigate before re-enabling auto-merge.",
             file=sys.stderr,
         )
+        if snap.auto_merge_on:
+            _disable_auto_merge(snap)
+        return _result(snap, "failed: provenance", watched.violation, watched)
     if not snap.auto_merge_on:
         detail = "auto-merge is off; investigate before re-enabling auto-merge"
         return _result(snap, "failed: auto-merge off", detail, watched)
@@ -659,7 +643,6 @@ def summarize(results: Sequence[PRResult]) -> str:
 def watch(
     prs: Sequence[str],
     *,
-    allow_provenance_violation: bool,
     poll_interval: float = 15.0,
     cancel_grace: float = CANCEL_GRACE_SECS,
 ) -> list[PRResult]:
@@ -688,7 +671,7 @@ def watch(
 
     def judge(snap: Snapshot, watched: _Watched) -> None:
         now = time.monotonic()
-        result = _judge(snap, watched, allow=allow_provenance_violation, now=now)
+        result = _judge(snap, watched, now=now)
         if result is None:
             pending[snap.url] = (watched, snap)
             rows[snap.url] = _row(snap, _pending_state(snap, watched), now - start)

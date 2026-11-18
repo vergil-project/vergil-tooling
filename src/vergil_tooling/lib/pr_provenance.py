@@ -10,7 +10,10 @@ GitHub and verifies that no agent identity performed an action its
 role forbids on the PR. Agent identities are recognized
 by the account naming convention (``*-vergil-user`` and
 ``*-vergil-audit``); everything else is treated as human and is never
-forbidden — the human holds every right.
+forbidden — the human holds every right. An action is either allowed or a
+violation, and a violation always fails: there is no override
+(vergil-tooling#4695). It is either a real problem to investigate or a bug
+in this classifier to fix.
 
 This is the host-side "human chokepoint" verification described in
 docs/specs/2026-05-29-agent-permission-model-design.md: it closes the
@@ -58,7 +61,11 @@ def classify_login(login: str) -> Role:
 # ``_EVENT_MAP``).
 _AUTO_MERGE_ENABLED = "auto_merge_enabled"
 
-# Actions an agent role must never perform on a PR it is merging.
+# Actions an agent role must never perform on a PR it is merging. Every other
+# action is allowed: the check has two outcomes, allowed or a violation, and a
+# violation always fails (vergil-tooling#4695). The audit identity is not in
+# use yet; its entry is kept so its forbidden actions are enforced from the
+# day it is.
 _FORBIDDEN: dict[Role, frozenset[str]] = {
     Role.USER: frozenset(
         {"created", "edited", "closed", "reopened", "merged", _AUTO_MERGE_ENABLED, "approved"}
@@ -66,11 +73,6 @@ _FORBIDDEN: dict[Role, frozenset[str]] = {
     Role.AUDIT: frozenset(
         {"created", "edited", "closed", "reopened", "merged", _AUTO_MERGE_ENABLED}
     ),
-}
-
-# Actions permitted but advisory — surfaced to the human, not blocked.
-_ADVISORY: dict[Role, frozenset[str]] = {
-    Role.AUDIT: frozenset({"approved"}),
 }
 
 
@@ -86,7 +88,6 @@ class Action:
 @dataclass
 class ProvenanceResult:
     violations: list[Action] = field(default_factory=list)
-    advisories: list[Action] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -171,14 +172,10 @@ def _collect_actions(pr: str) -> list[Action]:
 
 
 def evaluate(actions: list[Action]) -> ProvenanceResult:
-    """Partition *actions* into violations and advisories. Pure."""
+    """The violations among *actions*: each agent action its role forbids. Pure."""
     result = ProvenanceResult()
     for act in actions:
-        if act.role is Role.HUMAN:
-            continue
-        if act.action in _ADVISORY.get(act.role, frozenset()):
-            result.advisories.append(act)
-        elif act.action in _FORBIDDEN.get(act.role, frozenset()):
+        if act.role is not Role.HUMAN and act.action in _FORBIDDEN.get(act.role, frozenset()):
             result.violations.append(act)
     return result
 

@@ -181,8 +181,8 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     return api
 
 
-def run(prs: list[str], *, allow: bool = False, poll: float = 15.0) -> list[PRResult]:
-    return watch(prs, allow_provenance_violation=allow, poll_interval=poll)
+def run(prs: list[str], *, poll: float = 15.0) -> list[PRResult]:
+    return watch(prs, poll_interval=poll)
 
 
 # --- start-up ------------------------------------------------------------------
@@ -464,7 +464,7 @@ def test_cancelled_check_with_no_newer_run_ends_after_the_grace(fake: FakeGitHub
         ),
     )
 
-    [result] = watch([url(1)], allow_provenance_violation=False, cancel_grace=60)
+    [result] = watch([url(1)], cancel_grace=60)
 
     assert result.outcome == "failed: cancelled"
     assert result.detail == (
@@ -504,7 +504,7 @@ def test_cancelled_check_on_a_run_not_yet_completed_is_pending(fake: FakeGitHub)
     )
     fake.script(1, rerun, rerun, rerun, merged(1))
 
-    [result] = watch([url(1)], allow_provenance_violation=False, cancel_grace=1)
+    [result] = watch([url(1)], cancel_grace=1)
 
     assert result.outcome == "merged"
 
@@ -686,23 +686,6 @@ def test_provenance_violation_disables_auto_merge(fake: FakeGitHub) -> None:
     assert fake.disables == [url(1)]
 
 
-def test_merged_pr_with_violation_flagged_alike_with_the_flag(
-    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The override does not cover a PR that has already merged (vergil-tooling#4662)."""
-    fake.script(1, merged(1))
-    fake.violations[url(1), HEAD_A] = [AGENT_ENABLE]
-
-    [result] = run([url(1)], allow=True)
-
-    assert result.outcome == "merged"
-    assert result.provenance_violation is True
-    assert fake.disables == []
-    err = capsys.readouterr().err
-    assert "PROVENANCE VIOLATION" in err
-    assert "investigate before any release" in err
-
-
 def test_violation_found_at_merge_is_flagged(
     fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -748,20 +731,6 @@ def test_violation_with_auto_merge_already_off_is_not_disabled(fake: FakeGitHub)
 
     assert result.outcome == "failed: provenance"
     assert fake.disables == []
-
-
-def test_allow_provenance_violation(fake: FakeGitHub, capsys: pytest.CaptureFixture[str]) -> None:
-    fake.script(1, pr_state(1), merged(1))
-    fake.violations[url(1), HEAD_A] = [AGENT_ENABLE]
-
-    [result] = run([url(1)], allow=True)
-
-    assert result.outcome == "merged"
-    assert result.provenance_violation is True
-    assert fake.disables == []
-    err = capsys.readouterr().err
-    assert "--allow-provenance-violation" in err
-    assert "still not a full success" in err
 
 
 def test_watch_never_enables_auto_merge() -> None:
@@ -885,21 +854,6 @@ def test_null_rollup_is_no_checks(fake: FakeGitHub) -> None:
     [result] = run([url(1)])
 
     assert result.outcome == "merged"
-
-
-def test_advisory_is_printed_not_a_violation(
-    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    fake.script(1, merged(1))
-    advisory = Action("x-vergil-audit", Role.AUDIT, "approved")
-    monkeypatch.setattr(
-        pr_provenance, "check_pr", lambda pr: ProvenanceResult(advisories=[advisory])
-    )
-
-    [result] = run([url(1)])
-
-    assert result.provenance_violation is False
-    assert "ADVISORY" in capsys.readouterr().err
 
 
 def test_disable_read_back_failure_raises(

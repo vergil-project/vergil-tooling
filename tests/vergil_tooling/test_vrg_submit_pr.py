@@ -1228,7 +1228,6 @@ class TestFinalizeByDefault:
         [
             (["--release"], ["--release"]),
             (["--release", "--no-install"], ["--release", "--no-install"]),
-            (["--allow-provenance-violation"], ["--allow-provenance-violation"]),
         ],
     )
     def test_flags_passed_to_finalize(self, argv: list[str], flags: list[str]) -> None:
@@ -1276,16 +1275,11 @@ class TestFinalizeByDefault:
 
     def test_no_finalize_prints_command(self, capsys: pytest.CaptureFixture[str]) -> None:
         a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
-        rc, calls = _run_batch(
-            [a, b], ["--no-finalize", "--allow-provenance-violation"], urls=[_URL1, _URL2]
-        )
+        rc, calls = _run_batch([a, b], ["--no-finalize"], urls=[_URL1, _URL2])
         assert rc == 0
         assert calls == []
         out = capsys.readouterr().out
-        assert (
-            "Not watching. To finalize these PRs: vrg-finalize-pr "
-            f"{_URL1},{_URL2} --allow-provenance-violation"
-        ) in out
+        assert f"Not watching. To finalize these PRs: vrg-finalize-pr {_URL1},{_URL2}\n" in out
         assert f"/vergil:pr-watch {_URL1}" in out
         assert f"/vergil:pr-watch {_URL2}" in out
 
@@ -1406,6 +1400,12 @@ class TestFinalizeByDefault:
             (["--finalize"], "--finalize was removed; finalizing is now the default"),
             (["--install"], "--install was removed; --release now installs by default"),
             (["--release", "--install"], "--install was removed"),
+            (
+                ["--allow-provenance-violation"],
+                "--allow-provenance-violation was removed; a provenance violation always "
+                "fails. Fix its cause, or fix the classifier",
+            ),
+            (["--release", "--allow-provenance-violation"], "--allow-provenance-violation was"),
             (["--release", "--no-finalize"], "--release cannot be combined with --no-finalize"),
             (["--no-install"], "--no-install requires --release"),
             (["--no-finalize", "--no-install"], "--no-install requires --release"),
@@ -1435,6 +1435,7 @@ class TestFinalizeByDefault:
         assert "--no-finalize" in out
         assert "--finalize " not in out
         assert "  --install" not in out
+        assert "--allow-provenance-violation" not in out
 
     def test_dry_run_plans_without_side_effects(self, capsys: pytest.CaptureFixture[str]) -> None:
         """A dry run previews every PR and names the finalize run, opening nothing."""
@@ -1866,24 +1867,6 @@ def test_provenance_violation_fails_pr_others_continue(
     assert "auto-merge was left off" in reason
     enable.assert_called_once_with("https://x/pull/2", head="h0", method="SQUASH")
     assert "https://x/pull/1: submit failed" in capsys.readouterr().err
-
-
-def test_provenance_violation_overridden_turns_auto_merge_on(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """--allow-provenance-violation turns auto-merge on despite a violation, loudly."""
-    with (
-        patch(_MOD + "._push_branch"),
-        patch(_MOD + "._create_pr", return_value="https://x/pull/1"),
-        patch(_MOD + ".submission.record_submission"),
-        patch(_MOD + ".pr_provenance.check_pr", return_value=_violation()),
-        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
-    ):
-        enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
-        summary = _submit_all([_submission()], allow_provenance_violation=True)
-    assert summary.opened == ["https://x/pull/1"]
-    enable.assert_called_once()
-    assert "overriding provenance violations" in capsys.readouterr().err
 
 
 def test_provenance_check_that_cannot_run_fails_pr() -> None:
@@ -3032,7 +3015,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".confirm", return_value=True) as ask,
             patch(_MOD + "._submit_all", return_value=summary) as submit_all,
         ):
-            rc = main(["feature/a", "feature/b", "--allow-provenance-violation"])
+            rc = main(["feature/a", "feature/b"])
         assert rc == 0
         ask.assert_called_once()
         submit_all.assert_called_once()
@@ -3041,7 +3024,7 @@ class TestRelayBranchPath:
             ("feature/a", "sha_a", False),
             ("feature/b", "sha_b", False),
         ]
-        assert submit_all.call_args.kwargs == {"allow_provenance_violation": True}
+        assert submit_all.call_args.kwargs == {}
 
     def test_relay_failed_submit_exits_3_and_names_it(
         self, capsys: pytest.CaptureFixture[str]
@@ -3889,25 +3872,6 @@ def test_batch_checks_the_reported_head_without_rebasing(
     push.assert_called_once_with("feature/10-x")
     create.assert_called_once()
     enable.assert_called_once_with("https://x/pull/1", head=reported, method="REBASE")
-
-
-def test_provenance_advisory_is_printed_and_auto_merge_still_turned_on(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    advisory = pr_provenance.ProvenanceResult(
-        advisories=[pr_provenance.Action("bot-vergil-audit", pr_provenance.Role.AUDIT, "approved")]
-    )
-    with (
-        patch(_MOD + "._push_branch"),
-        patch(_MOD + "._create_pr", return_value="https://x/pull/1"),
-        patch(_MOD + ".submission.record_submission"),
-        patch(_MOD + ".pr_provenance.check_pr", return_value=advisory),
-    ):
-        summary = _submit_all([_submission()])
-    assert summary.opened == ["https://x/pull/1"]
-    assert "ADVISORY: https://x/pull/1: bot-vergil-audit (audit) performed 'approved'" in (
-        capsys.readouterr().err
-    )
 
 
 def test_relay_declined_opens_nothing(capsys: pytest.CaptureFixture[str]) -> None:

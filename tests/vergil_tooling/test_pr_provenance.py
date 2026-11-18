@@ -36,15 +36,23 @@ def test_evaluate_human_actions_ignored() -> None:
     result = pr_provenance.evaluate(actions)
     assert result.ok
     assert not result.violations
-    assert not result.advisories
 
 
-def test_evaluate_audit_approval_is_advisory() -> None:
+def test_evaluate_audit_approval_is_allowed() -> None:
+    # Two outcomes only (#4695): the audit identity's approval is allowed.
     actions = [Action("a-vergil-audit", Role.AUDIT, "approved")]
     result = pr_provenance.evaluate(actions)
     assert result.ok
-    assert len(result.advisories) == 1
     assert not result.violations
+
+
+@pytest.mark.parametrize(
+    "action", ["created", "edited", "closed", "reopened", "merged", "auto_merge_enabled"]
+)
+def test_evaluate_audit_forbidden_actions_are_kept(action: str) -> None:
+    # The audit identity is unused, but its forbidden actions stay enforced.
+    result = pr_provenance.evaluate([Action("a-vergil-audit", Role.AUDIT, action)])
+    assert [v.action for v in result.violations] == [action]
 
 
 def test_evaluate_audit_close_is_violation() -> None:
@@ -62,18 +70,17 @@ def test_evaluate_user_approval_is_violation() -> None:
 
 
 def test_evaluate_agent_neutral_action_ignored() -> None:
-    # An agent action that is neither forbidden nor advisory is ignored.
+    # An agent action its role does not forbid is allowed.
     actions = [Action("a-vergil-user", Role.USER, "commented")]
     result = pr_provenance.evaluate(actions)
     assert result.ok
     assert not result.violations
-    assert not result.advisories
 
 
 def test_check_pr_collects_reviews_and_skips_unmapped() -> None:
     reviews = json.dumps(
         [
-            {"state": "APPROVED", "user": {"login": "a-vergil-audit"}},
+            {"state": "APPROVED", "user": {"login": "a-vergil-user"}},
             {"state": "COMMENTED", "user": {"login": "x"}},  # not an approval
             {"state": "APPROVED", "user": {}},  # approval with no login
         ]
@@ -107,9 +114,8 @@ def test_check_pr_collects_reviews_and_skips_unmapped() -> None:
         ),
     ):
         result = pr_provenance.check_pr("7")
-    assert result.ok
-    assert len(result.advisories) == 1
-    assert result.advisories[0].action == "approved"
+    # Only the user identity's approval is collected, as its one violation.
+    assert [(v.login, v.action) for v in result.violations] == [("a-vergil-user", "approved")]
 
 
 def test_check_pr_flags_audit_close() -> None:
@@ -358,7 +364,6 @@ def test_disable_is_not_a_violation() -> None:
     timeline = _as_agent(_recorded_timeline("auto_merge_rebase_enable"), "auto_merge_disabled")
     result = _check_timeline(timeline)
     assert result.ok
-    assert not result.advisories
 
 
 def test_unknown_auto_enable_fails_closed() -> None:
@@ -372,4 +377,3 @@ def test_unknown_auto_enable_fails_closed() -> None:
 def test_human_auto_merge_enabled_allowed(name: str) -> None:
     result = _check_timeline(_recorded_timeline(name))
     assert result.ok
-    assert not result.advisories
