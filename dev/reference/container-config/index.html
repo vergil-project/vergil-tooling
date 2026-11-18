@@ -18366,13 +18366,44 @@ repo, <code>vrg-container-run</code> resolves it from the environment or its can
 token file and forwards it itself (see the next section and
 <a href="../../standards/development/cpp/overview/#conancenter-audit-token">C++ Overview → ConanCenter Audit Token</a>).
 An existing <code>CONAN_AUDIT_PROVIDER_TOKEN</code> prefix is harmless but redundant.</p>
-<p>A few names are never forwarded, whatever prefix matches them:
-<code>VRG_VERSION_WINDOW</code> (see <a href="#vrg_version_window-a-local-version-window">below</a>),
-and rustup's <code>RUSTUP_TOOLCHAIN</code> and <code>RUSTUP_AUTO_INSTALL</code>. A forwarded variable
-overrides the image's own setting, and the Rust image selects its toolchain
-itself, so a prefix such as <code>RUST</code> cannot let the host pick another one (epic
-<a href="https://github.com/vergil-project/.github/issues/1095">vergil-project/.github#1095</a>).
-The passthrough design is specified in
+<p>Some names are never forwarded, whatever prefix matches them. A forwarded
+variable overrides the image's own setting, so these would let the host change
+what the image decides for itself:</p>
+<table>
+<thead>
+<tr>
+<th>Withheld</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>VRG_VERSION_WINDOW</code></td>
+<td>It names a host path the container cannot see (see <a href="#vrg_version_window-a-local-version-window">below</a>).</td>
+</tr>
+<tr>
+<td><code>RUSTUP_TOOLCHAIN</code>, <code>RUSTUP_AUTO_INSTALL</code></td>
+<td>They would override the image's Rust toolchain: the Rust image selects its toolchain itself, so a prefix such as <code>RUST</code> cannot let the host pick another one (epic <a href="https://github.com/vergil-project/.github/issues/1095">vergil-project/.github#1095</a>).</td>
+</tr>
+<tr>
+<td><code>NODE_OPTIONS</code></td>
+<td>It would change how Node behaves inside the container, for example by preloading code.</td>
+</tr>
+<tr>
+<td>Any name starting <code>npm_config_</code>, <code>COREPACK_</code> or <code>VOLTA_</code>, in any case (<code>NPM_CONFIG_</code> too)</td>
+<td>They would change how npm behaves, or pick another package manager or Node than the image's. npm reads its environment configuration without regard to case, so the match ignores case too (epic <a href="https://github.com/vergil-project/.github/issues/1281">vergil-project/.github#1281</a>).</td>
+</tr>
+</tbody>
+</table>
+<p>The other <code>NODE_*</code> names, such as <code>NODE_ENV</code> and <code>NODE_EXTRA_CA_CERTS</code>, are
+forwarded as usual, and a host <code>NODE_PATH</code> still overrides the default
+<code>vrg-container-run</code> sets (see the next section). The rule applies to every repo.</p>
+<p>A withheld variable is never dropped silently. For each host variable a repo's
+prefix matches and the passthrough withholds, <code>vrg-container-run</code> prints one
+notice on stderr, naming it and why:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-container-run: not forwarding NODE_OPTIONS from the host: it would change how Node or npm behaves inside the container
+</code></pre></div>
+<p>The passthrough design is specified in
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/2026-05-25-configurable-container-env-passthrough-design.md"><code>docs/specs/2026-05-25-configurable-container-env-passthrough-design.md</code></a>.</p>
 <h3 id="variables-vrg-container-run-always-sets">Variables <code>vrg-container-run</code> always sets<a class="headerlink" href="#variables-vrg-container-run-always-sets" title="Permanent link">&para;</a></h3>
 <p>Besides the forwarded variables, every container launch sets a few itself. Each
@@ -18491,7 +18522,7 @@ forward the variable as is. When <code>VRG_VERSION_WINDOW</code> is set on the h
 The host value is never forwarded, even when an <code>env-prefixes</code> entry such as
 <code>VRG_</code> matches it. When the variable is unset, nothing changes: the container
 fetches the published window.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">VRG_VERSION_WINDOW</span><span class="o">=</span>/abs/path/window.json<span class="w"> </span>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-ci-resolve
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nv">VRG_VERSION_WINDOW</span><span class="o">=</span>/abs/path/window.json<span class="w"> </span>vrg-container-run<span class="w"> </span>--<span class="w"> </span>vrg-ci-resolve
 </code></pre></div>
 <h2 id="system-packages"><code>system-packages</code><a class="headerlink" href="#system-packages" title="Permanent link">&para;</a></h2>
 <p>A list of Ubuntu package <strong>names</strong> — nothing more. Vergil's container model
@@ -18504,7 +18535,7 @@ package — for example a repo whose tests shell out to the LilyPond renderer
 shared base images (epic
 <a href="https://github.com/vergil-project/.github/issues/272">vergil-project/.github#272</a>).</p>
 <p>The packages are installed with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>apt-get install -y --no-install-recommends &lt;names&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>apt-get install -y --no-install-recommends &lt;names&gt;
 </code></pre></div>
 <p>from the base image's <strong>existing</strong> apt sources (the Ubuntu 24.04 archive the
 image's sources name). The surface is deliberately narrow — <strong>names only</strong>:</p>
@@ -18539,7 +18570,7 @@ for the mechanism in full.</p>
 the CI runner's arch). If a declared package has <strong>no installation candidate</strong>
 for that architecture, the build and the CI setup step both <strong>fail immediately</strong>,
 naming the package and the architecture:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>system package 'X' is not installable on linux/arm64 (apt: no installation candidate)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>system package 'X' is not installable on linux/arm64 (apt: no installation candidate)
 </code></pre></div>
 <p>There is no silent skip and no degraded image — a missing dependency stops the
 build rather than producing a container that fails mysteriously inside a test.</p>
@@ -18560,8 +18591,8 @@ nonexistent names.</p>
 <p><code>vrg-container-system-packages</code> reads the key through the same single accessor
 the local bake and CI both use (<code>container_system_packages</code> in
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/config.py"><code>config.py</code></a>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-container-system-packages<span class="w">                   </span><span class="c1"># the declared names, one per line</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>vrg-container-system-packages<span class="w"> </span>--install-script<span class="w">  </span><span class="c1"># the exact apt snippet CI runs</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-container-system-packages<span class="w">                   </span><span class="c1"># the declared names, one per line</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>vrg-container-system-packages<span class="w"> </span>--install-script<span class="w">  </span><span class="c1"># the exact apt snippet CI runs</span>
 </code></pre></div>
 <p>The plain-list mode is a human-facing inspection affordance ("what would this
 repo install?"); <code>--install-script</code> emits the single, shared apt speller that
@@ -18655,8 +18686,8 @@ express), and it is what makes it a larger grant.</p>
 <p><code>vrg-container-build-command</code> reads the key through the same single accessor the
 local bake and CI both use (<code>container_build_command</code> in
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/config.py"><code>config.py</code></a>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-container-build-command<span class="w">            </span><span class="c1"># the declared command (nothing if unset)</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>vrg-container-build-command<span class="w"> </span>--script<span class="w">   </span><span class="c1"># the same command, emitted for CI to run</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-container-build-command<span class="w">            </span><span class="c1"># the declared command (nothing if unset)</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-container-build-command<span class="w"> </span>--script<span class="w">   </span><span class="c1"># the same command, emitted for CI to run</span>
 </code></pre></div>
 <p>Both modes print the command verbatim; a repo that declares no <code>build-command</code>
 prints nothing. <code>--script</code> is the CI-consumption entry point — the CI test jobs
