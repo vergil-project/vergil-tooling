@@ -9,7 +9,10 @@ both checks:
   Each repo finds its own staleness.
 * :func:`check_toolchain_selection` reports, as errors, the settings that pick
   the interpreter or toolchain behind Vergil's back (``.python-version``,
-  ``rust-toolchain.toml`` or the legacy ``rust-toolchain``).
+  ``rust-toolchain.toml`` or the legacy ``rust-toolchain``, and TypeScript's
+  ``.nvmrc``, ``.node-version`` and the root ``package.json``'s
+  ``packageManager``, ``volta``, ``engines`` package-manager keys and
+  ``devEngines`` ``runtime`` and ``packageManager`` entries).
 
 The checks themselves are per language, in :mod:`.extensions`; this module only
 dispatches, so it has no language branches.
