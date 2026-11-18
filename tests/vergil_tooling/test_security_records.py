@@ -18,6 +18,7 @@ from vergil_tooling.lib.security_records import (
     Advisory,
     Classification,
     CloseError,
+    GuardResult,
     NoteError,
     PrivateHomeError,
     RetargetError,
@@ -31,6 +32,7 @@ from vergil_tooling.lib.security_records import (
     close_record,
     create_advisory,
     find_duplicate,
+    guard_check,
     list_advisories,
     mark_issue,
     note_header,
@@ -42,6 +44,7 @@ from vergil_tooling.lib.security_records import (
     parse_tracking,
     pending_syncs,
     read_text,
+    records_pass,
     retarget,
     security_issues,
     set_state,
@@ -1194,8 +1197,13 @@ def test_security_issues_reads_every_managed_repo_in_every_state(
     monkeypatch.setattr(epics, "is_managed_repo", lambda repo: repo != "org/unmanaged")
     pages = {
         "org/.github": [
-            {"number": 10, "state": "open", "body": f"x\n{advisory_line(HOME, GHSA)}"},
-            {"number": 11, "state": "closed", "body": ""},
+            {
+                "number": 10,
+                "state": "open",
+                "state_reason": "reopened",
+                "body": f"x\n{advisory_line(HOME, GHSA)}",
+            },
+            {"number": 11, "state": "closed", "state_reason": "NOT_PLANNED", "body": ""},
         ],
         "org/tool": [{"number": 12, "state": "OPEN", "body": None}],
     }
@@ -1205,13 +1213,14 @@ def test_security_issues_reads_every_managed_repo_in_every_state(
         endpoints.append(endpoint)
         assert jq is not None
         assert "pull_request == null" in jq
+        assert "state_reason" in jq
         return list(pages[endpoint.split("/issues")[0].removeprefix("repos/")])
 
     monkeypatch.setattr(github, "read_json_paginated", read)
     assert security_issues("org") == [
-        SecurityIssue(A, open=True, ghsa_ids=(GHSA,)),
-        SecurityIssue(B, open=False, ghsa_ids=()),
-        SecurityIssue(C, open=True, ghsa_ids=()),
+        SecurityIssue(A, open=True, ghsa_ids=(GHSA,), state_reason=None),
+        SecurityIssue(B, open=False, ghsa_ids=(), state_reason="not_planned"),
+        SecurityIssue(C, open=True, ghsa_ids=(), state_reason=None),
     ]
     assert endpoints == [
         "repos/org/.github/issues?state=all&labels=security",
@@ -1228,7 +1237,23 @@ def test_security_issues_returns_every_ghsa_id(monkeypatch: pytest.MonkeyPatch) 
         "read_json_paginated",
         lambda *_a, **_k: [{"number": 12, "state": "open", "body": body}],
     )
-    assert security_issues("org") == [SecurityIssue(C, open=True, ghsa_ids=(OTHER, GHSA))]
+    assert security_issues("org") == [
+        SecurityIssue(C, open=True, ghsa_ids=(OTHER, GHSA), state_reason=None)
+    ]
+
+
+def test_security_issues_makes_no_parent_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    # security_issues serves retarget and close too: the guard's parent and
+    # label reads happen only in guard_check, never in the listing.
+    monkeypatch.setattr(github, "list_org_repos", lambda _org: ["tool"])
+    monkeypatch.setattr(epics, "is_managed_repo", lambda _repo: True)
+    row = {"number": 12, "state": "closed", "state_reason": "completed", "body": ""}
+    monkeypatch.setattr(github, "read_json_paginated", lambda *_a, **_k: [row])
+    for name in ("native_parent_of", "queue_or_archive_kind", "queue_kind", "_labels"):
+        monkeypatch.setattr(epics, name, MagicMock(side_effect=AssertionError(name)))
+    for name in ("graphql", "read_json", "read_output"):
+        monkeypatch.setattr(github, name, MagicMock(side_effect=AssertionError(name)))
+    assert security_issues("org") == [SecurityIssue(C, False, (), "completed")]
 
 
 # --- classification -------------------------------------------------------------
@@ -1240,11 +1265,21 @@ def _adv(
     return Advisory(ghsa, state, "tool", tracking, external=kw.get("external", False))
 
 
+_UNSET = "unset"
+
+
 def _iss(
-    ref: IssueRef = A, ghsa: str | tuple[str, ...] | None = GHSA, *, open_: bool = True
+    ref: IssueRef = A,
+    ghsa: str | tuple[str, ...] | None = GHSA,
+    *,
+    open_: bool = True,
+    reason: str | None = _UNSET,
 ) -> SecurityIssue:
+    """A security issue; a closed one is closed as completed unless *reason* says otherwise."""
     ghsa_ids = () if ghsa is None else (ghsa,) if isinstance(ghsa, str) else ghsa
-    return SecurityIssue(ref, open_, ghsa_ids)
+    if reason == _UNSET:
+        reason = None if open_ else "completed"
+    return SecurityIssue(ref, open_, ghsa_ids, reason)
 
 
 class TestClassifyPairedExternalBroken:
@@ -1336,14 +1371,54 @@ class TestClassifyPairedExternalBroken:
 # --- state sync (the sweep) ---------------------------------------------------
 
 
+DEV_EPIC = IssueRef("org", ".github", 500)
+PLANNING_EPIC = IssueRef("org", ".github", 501)
+PLANNING_ARCHIVE = IssueRef("org", ".github", 502)
+# Each parent epic's labels and title, as epics._labels_and_title reads them.
+EPIC_ROWS: dict[IssueRef, tuple[set[str], str]] = {
+    DEV_EPIC: ({"epic"}, "Epic: build a thing"),
+    PLANNING_EPIC: ({"epic", "planning"}, "Epic (planning): org"),
+    PLANNING_ARCHIVE: ({"archive", "planning"}, "Archive (planning): org — 2026-Q3"),
+}
+
+
+class Parents:
+    """A fake of the guard's reads: each issue's native parent and each epic's row.
+
+    ``queue_or_archive_kind`` runs for real over :data:`EPIC_ROWS`.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.of: dict[IssueRef, IssueRef] = {}
+        self.fail: dict[IssueRef, Exception] = {}
+        self.reads: list[IssueRef] = []
+        monkeypatch.setattr(epics, "native_parent_of", self.native_parent_of)
+        monkeypatch.setattr(epics, "_labels_and_title", lambda ref: EPIC_ROWS[ref])
+
+    def native_parent_of(self, ref: IssueRef) -> IssueRef | None:
+        self.reads.append(ref)
+        if ref in self.fail:
+            raise self.fail[ref]
+        return self.of.get(ref)
+
+
+@pytest.fixture
+def parents(monkeypatch: pytest.MonkeyPatch) -> Parents:
+    return Parents(monkeypatch)
+
+
 def _sync(
     monkeypatch: pytest.MonkeyPatch,
     advisories: list[Advisory],
     issue_list: list[SecurityIssue],
 ) -> tuple[int, MagicMock]:
+    # Every issue is unparented unless a test installs its own Parents first.
+    if not isinstance(getattr(epics.native_parent_of, "__self__", None), Parents):
+        Parents(monkeypatch)
     write = MagicMock()
     monkeypatch.setattr(github, "write_json", write)
-    changed = sync_states(HOME, classify(advisories, issue_list), issue_list)
+    result = classify(advisories, issue_list)
+    changed = sync_states(HOME, result, issue_list, guard_check(result, issue_list))
     return changed, write
 
 
@@ -1407,10 +1482,14 @@ def test_sync_skips_broken_pairs(monkeypatch: pytest.MonkeyPatch) -> None:
     write.assert_not_called()
 
 
+_NO_GUARD = GuardResult(held=[], errors=[])
+
+
 def test_pending_syncs_lists_only_mismatches() -> None:
     issue_list = [_iss(A, open_=False), _iss(C, OTHER)]
     advisories = [_adv(tracking=(A,)), _adv(OTHER, tracking=(C,))]
-    assert pending_syncs(classify(advisories, issue_list), issue_list) == [(GHSA, "closed")]
+    result = classify(advisories, issue_list)
+    assert pending_syncs(result, issue_list, _NO_GUARD) == [(GHSA, "closed")]
 
 
 def test_sync_failure_is_scrubbed_of_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1418,9 +1497,189 @@ def test_sync_failure_is_scrubbed_of_stdout(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(github, "write_json", write)
     issue_list = [_iss(A, open_=False)]
     with pytest.raises(github.GitHubAPIError) as excinfo:
-        sync_states(HOME, classify([_adv()], issue_list), issue_list)
+        sync_states(HOME, classify([_adv()], issue_list), issue_list, _NO_GUARD)
     assert SECRET not in str(excinfo.value)
     assert excinfo.value.stdout is None
+
+
+# --- the sync close guard (spec 6.2) ------------------------------------------
+
+
+def _guarded(
+    advisories: list[Advisory], issue_list: list[SecurityIssue]
+) -> tuple[GuardResult, list[tuple[str, str]]]:
+    result = classify(advisories, issue_list)
+    guard = guard_check(result, issue_list)
+    return guard, list(pending_syncs(result, issue_list, guard))
+
+
+def test_guard_holds_queue_item(parents: Parents) -> None:
+    parents.of[A] = PLANNING_EPIC
+    guard, changes = _guarded([_adv()], [_iss(A, open_=False)])
+    assert changes == []
+    assert guard == GuardResult(held=[(GHSA, (A,))], errors=[])
+
+
+def test_guard_holds_drained_queue_item(parents: Parents) -> None:
+    parents.of[A] = PLANNING_ARCHIVE
+    guard, changes = _guarded([_adv()], [_iss(A, open_=False)])
+    assert changes == []
+    assert guard.held == [(GHSA, (A,))]
+
+
+@pytest.mark.parametrize("reason", ["not_planned", "duplicate", "some_new_reason", None])
+def test_guard_holds_non_completed_reasons(parents: Parents, reason: str | None) -> None:
+    # Review Focus 4: a fix task closed as a duplicate (or with any reason but
+    # completed, or none) was the advisory's last open issue. Its parent is a
+    # development epic, so only the close reason fires the guard, and the
+    # guard needs no parent read for it.
+    parents.of[A] = DEV_EPIC
+    parents.of[C] = DEV_EPIC
+    advisory = _adv(tracking=(A, C))
+    issue_list = [_iss(A, open_=False), _iss(C, open_=False, reason=reason)]
+    guard, changes = _guarded([advisory], issue_list)
+    assert changes == []
+    assert guard == GuardResult(held=[(GHSA, (C,))], errors=[])
+    assert parents.reads == [A]
+
+
+def test_guard_names_every_ref_that_fires_it(parents: Parents) -> None:
+    parents.of[A] = PLANNING_EPIC
+    issue_list = [_iss(A, open_=False), _iss(C, open_=False, reason="not_planned")]
+    guard, _ = _guarded([_adv(tracking=(A, C))], issue_list)
+    assert guard.held == [(GHSA, (A, C))]
+
+
+def test_guard_leaves_closed_advisory_alone(parents: Parents) -> None:
+    # Review Focus 3: a human closed the advisory with close; its tracked
+    # issue is a closed planning item already drained into its archive.
+    parents.of[A] = PLANNING_ARCHIVE
+    issue_list = [_iss(A, open_=False, reason="not_planned")]
+    guard, changes = _guarded([_adv(state="closed")], issue_list)
+    assert changes == []
+    assert guard == _NO_GUARD
+    assert parents.reads == []
+
+
+def test_guard_never_holds_an_advisory_with_an_open_issue(parents: Parents) -> None:
+    # A closed advisory whose queue item reopened still goes back to draft.
+    parents.of[A] = PLANNING_EPIC
+    guard, changes = _guarded([_adv(state="closed")], [_iss(A)])
+    assert changes == [(GHSA, "draft")]
+    assert guard == _NO_GUARD
+    assert parents.reads == []
+
+
+def test_completed_fix_tasks_close_advisory(parents: Parents) -> None:
+    parents.of[A] = DEV_EPIC
+    parents.of[C] = DEV_EPIC
+    issue_list = [_iss(A, open_=False), _iss(C, open_=False)]
+    guard, changes = _guarded([_adv(tracking=(A, C))], issue_list)
+    assert changes == [(GHSA, "closed")]
+    assert guard == _NO_GUARD
+
+
+def test_guard_reads_each_parent_once(parents: Parents) -> None:
+    parents.of[A] = DEV_EPIC
+    issue_list = [_iss(A, (GHSA, OTHER), open_=False)]
+    guard, changes = _guarded([_adv(), _adv(OTHER)], issue_list)
+    assert changes == [(GHSA, "closed"), (OTHER, "closed")]
+    assert guard == _NO_GUARD
+    assert parents.reads == [A]
+
+
+def test_guard_skips_external_reports(parents: Parents) -> None:
+    guard, _ = _guarded([_adv(external=True)], [_iss(A, open_=False, reason="not_planned")])
+    assert guard == _NO_GUARD
+
+
+def test_guard_error_is_scrubbed(parents: Parents) -> None:
+    parents.fail[A] = github.GitHubAPIError(1, ["gh"], SECRET, "HTTP 502\nBad gateway")
+    guard, changes = _guarded([_adv()], [_iss(A, open_=False)])
+    assert changes == []
+    assert guard.held == []
+    [(ghsa_id, ref, error)] = guard.errors
+    assert (ghsa_id, ref) == (GHSA, A)
+    assert SECRET not in error
+    assert "HTTP 502 Bad gateway" in error
+
+
+def test_guard_reports_a_graphql_error(parents: Parents) -> None:
+    parents.fail[A] = RuntimeError("GraphQL errors: [NOT_FOUND]")
+    guard, _ = _guarded([_adv()], [_iss(A, open_=False)])
+    assert guard.errors == [(GHSA, A, "GraphQL errors: [NOT_FOUND]")]
+
+
+def test_guard_lets_a_missing_token_propagate(parents: Parents) -> None:
+    parents.fail[A] = github.MissingGitHubTokenError(1, ["gh"], None, "no token")
+    with pytest.raises(github.MissingGitHubTokenError):
+        _guarded([_adv()], [_iss(A, open_=False)])
+
+
+def _records_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    advisories: list[Advisory],
+    issue_list: list[SecurityIssue],
+    *,
+    apply: bool = True,
+) -> tuple[int, MagicMock]:
+    write = MagicMock()
+    monkeypatch.setattr(security_records, "security_issues", lambda _org: issue_list)
+    monkeypatch.setattr(security_records, "advisory_home", lambda _org: HOME)
+    monkeypatch.setattr(security_records, "list_advisories", lambda _home: advisories)
+    monkeypatch.setattr(github, "write_json", write)
+    return records_pass("org", apply=apply, prog="prog"), write
+
+
+@pytest.mark.parametrize("apply", [True, False])
+def test_records_pass_reports_held_without_failing(
+    monkeypatch: pytest.MonkeyPatch,
+    parents: Parents,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    apply: bool,
+) -> None:
+    parents.of[A] = PLANNING_EPIC
+    rc, write = _records_pass(monkeypatch, [_adv()], [_iss(A, open_=False)], apply=apply)
+    assert rc == 0
+    write.assert_not_called()
+    out = capsys.readouterr().out
+    mode, verb = ("", "synced") if apply else (" (preview)", "would sync")
+    assert (
+        f"Security records{mode}: 0 advisory states {verb}, 0 broken pairs, 1 held, 0 errors."
+        in out
+    )
+    assert (
+        f"- held: {GHSA} (org/.github#10): retarget it to a fix task, "
+        "or close it with vrg-security-record close"
+    ) in out
+    assert "- broken:" not in out
+
+
+def test_parent_read_error_is_per_advisory(
+    monkeypatch: pytest.MonkeyPatch, parents: Parents, capsys: pytest.CaptureFixture[str]
+) -> None:
+    parents.fail[A] = github.GitHubAPIError(1, ["gh"], SECRET, "HTTP 502")
+    parents.of[C] = DEV_EPIC
+    issue_list = [_iss(A, open_=False), _iss(C, OTHER, open_=False)]
+    advisories = [_adv(tracking=(A,)), _adv(OTHER, tracking=(C,))]
+    rc, write = _records_pass(monkeypatch, advisories, issue_list)
+    assert rc == 1
+    assert write.call_args_list == [_patched_state(OTHER, "closed")]
+    out = capsys.readouterr().out
+    assert "1 advisory state synced, 0 broken pairs, 0 held, 1 error." in out
+    assert f"- error: {GHSA} (org/.github#10): reading its parent failed, left unchanged: " in out
+    assert SECRET not in out
+
+
+def test_parent_read_error_preview_exits_zero(
+    monkeypatch: pytest.MonkeyPatch, parents: Parents, capsys: pytest.CaptureFixture[str]
+) -> None:
+    parents.fail[A] = github.GitHubAPIError(1, ["gh"], None, "HTTP 502")
+    rc, write = _records_pass(monkeypatch, [_adv()], [_iss(A, open_=False)], apply=False)
+    assert rc == 0
+    write.assert_not_called()
+    assert f"- error: {GHSA} (org/.github#10)" in capsys.readouterr().out
 
 
 def test_retarget_issue_calls_in_order(issues: Issues) -> None:

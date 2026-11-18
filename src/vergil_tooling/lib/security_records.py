@@ -71,7 +71,11 @@ _DUPLICATE_JQ = (
     "[.[] | {ghsa_id, summary, names: [(.vulnerabilities // [])[] | .package.name // empty]}]"
 )
 _ISSUE_JQ = '{number, repository_url, state, labels: [.labels[].name], body: (.body // "")}'
-_SECURITY_ISSUES_JQ = '[.[] | select(.pull_request == null) | {number, state, body: (.body // "")}]'
+_SECURITY_ISSUES_JQ = (
+    '[.[] | select(.pull_request == null) | {number, state, state_reason, body: (.body // "")}]'
+)
+# The one close reason that lets the sync close an advisory (spec 6.2).
+_COMPLETED = "completed"
 
 
 class PrivateHomeError(RuntimeError):
@@ -115,11 +119,28 @@ class SecurityIssue:
     """One ``security``-labelled issue, open or closed, and every advisory it names.
 
     ``ghsa_ids`` is in body order and empty when the body has no line.
+    ``state_reason`` is GitHub's close reason, lower-cased (``completed``,
+    ``not_planned``, ``duplicate`` or any reason GitHub adds), None while the
+    issue is open or when GitHub records none.
     """
 
     ref: IssueRef
     open: bool
     ghsa_ids: tuple[str, ...]
+    state_reason: str | None
+
+
+@dataclass(frozen=True)
+class GuardResult:
+    """The sync close guard's verdict (:func:`guard_check`), by GHSA ID and issue ref only.
+
+    ``held`` pairs each advisory the guard kept from ``closed`` with the
+    tracked issues that fired it; ``errors`` names each advisory whose guard
+    could not be decided, the issue whose read failed, and the scrubbed error.
+    """
+
+    held: list[tuple[str, tuple[IssueRef, ...]]]
+    errors: list[tuple[str, IssueRef, str]]
 
 
 @dataclass(frozen=True)
@@ -719,11 +740,14 @@ def security_issues(org: str) -> list[SecurityIssue]:
         )
         for row in rows:
             item: Any = row
+            is_open = str(item["state"]).lower() == "open"
+            reason = item.get("state_reason")
             found.append(
                 SecurityIssue(
                     ref=IssueRef(org, bare, int(item["number"])),
-                    open=str(item["state"]).lower() == "open",
+                    open=is_open,
                     ghsa_ids=parse_advisory_refs(str(item.get("body") or "")),
+                    state_reason=None if is_open or reason is None else str(reason).lower(),
                 )
             )
     return found
@@ -803,20 +827,92 @@ def classify(advisories: Sequence[Advisory], issues: Sequence[SecurityIssue]) ->
 _SYNCED_STATES = ("draft", "closed")
 
 
+def _would_close(advisory: Advisory, by_ref: dict[IssueRef, SecurityIssue]) -> bool:
+    """True iff the issue states alone would move *advisory* from ``draft`` to ``closed``."""
+    # classify() pairs an advisory only when every tracked issue is listed.
+    return (
+        not advisory.external
+        and advisory.state == "draft"
+        and not any(by_ref[ref].open for ref in advisory.tracking)
+    )
+
+
+def _parent_queue_kind(ref: IssueRef) -> str | None:
+    """The queue kind of *ref*'s native parent (live queue or queue archive), else None."""
+    parent = epics.native_parent_of(ref)
+    return None if parent is None else epics.queue_or_archive_kind(parent)
+
+
+def guard_check(classification: Classification, issues: Sequence[SecurityIssue]) -> GuardResult:
+    """The sync close guard (spec 6.2): which advisories the sync must not close.
+
+    Only a **paired** ``draft`` advisory whose tracked issues are all closed
+    is checked, since only that one would move to ``closed``. The guard fires
+    when any of its tracked issues was closed with a reason other than
+    ``completed`` (a closed issue with no recorded reason included), or is a
+    queue item: its native parent is a live intake, planning or deferred epic,
+    or a queue archive epic of one (:func:`epics.queue_or_archive_kind`). The
+    parent is read only for a tracked issue closed as completed, once per
+    issue. An advisory already ``closed`` is never checked, so a human's
+    ``vrg-security-record close`` stands and is not reported as held.
+
+    A failed parent read is an error for each advisory that needed it, never
+    a close and never a hold; the other advisories are still decided. A
+    missing token is not one advisory's failure and propagates.
+    """
+    by_ref = {issue.ref: issue for issue in issues}
+    kinds: dict[IssueRef, str | None | Exception] = {}
+    held: list[tuple[str, tuple[IssueRef, ...]]] = []
+    errors: list[tuple[str, IssueRef, str]] = []
+    for advisory in classification.paired:
+        if not _would_close(advisory, by_ref):
+            continue
+        firing: list[IssueRef] = []
+        failed: tuple[IssueRef, str] | None = None
+        for ref in advisory.tracking:
+            if by_ref[ref].state_reason != _COMPLETED:
+                firing.append(ref)
+                continue
+            if ref not in kinds:
+                try:
+                    kinds[ref] = _parent_queue_kind(ref)
+                except github.MissingGitHubTokenError:
+                    raise
+                except github.GitHubAPIError as exc:
+                    kinds[ref] = _scrubbed(exc)
+                except RuntimeError as exc:  # a GraphQL error payload
+                    kinds[ref] = exc
+            kind = kinds[ref]
+            if isinstance(kind, Exception):
+                failed = failed or (ref, " ".join(str(kind).split()))
+            elif kind is not None:
+                firing.append(ref)
+        if failed is not None:
+            errors.append((advisory.ghsa_id, *failed))
+        elif firing:
+            held.append((advisory.ghsa_id, tuple(firing)))
+    return GuardResult(held=held, errors=errors)
+
+
 def pending_syncs(
-    classification: Classification, issues: Sequence[SecurityIssue]
+    classification: Classification, issues: Sequence[SecurityIssue], guard: GuardResult
 ) -> list[tuple[str, Literal["draft", "closed"]]]:
     """The ``(GHSA ID, target state)`` changes the issue-driven sync would make.
 
     For each **paired** advisory the target is ``closed`` when every issue it
     tracks is closed, and ``draft`` while any is open (spec 4.3: the issue
     always wins). Only a mismatch is listed. External reports are never
-    touched, and neither is an advisory outside ``draft``/``closed``.
+    touched, and neither is an advisory outside ``draft``/``closed``. An
+    advisory *guard* (:func:`guard_check`) holds or could not decide gets no
+    change: it stays ``draft``.
     """
+    stopped = {ghsa_id for ghsa_id, _ in guard.held} | {e[0] for e in guard.errors}
     open_by_ref = {issue.ref: issue.open for issue in issues}
     changes: list[tuple[str, Literal["draft", "closed"]]] = []
     for advisory in classification.paired:
         if advisory.external or advisory.state not in _SYNCED_STATES:
+            continue
+        if advisory.ghsa_id in stopped:
             continue
         # classify() pairs an advisory only when every tracked issue is listed.
         any_open = any(open_by_ref[ref] for ref in advisory.tracking)
@@ -826,16 +922,33 @@ def pending_syncs(
     return changes
 
 
-def sync_states(home: str, classification: Classification, issues: Sequence[SecurityIssue]) -> int:
+def sync_states(
+    home: str,
+    classification: Classification,
+    issues: Sequence[SecurityIssue],
+    guard: GuardResult,
+) -> int:
     """Apply :func:`pending_syncs` to *home* and return the number of advisories changed.
 
     Stops at the first failed write, which propagates scrubbed of its stdout;
     the next sync retries whatever is still out of step.
     """
-    changes = pending_syncs(classification, issues)
+    changes = pending_syncs(classification, issues, guard)
     for ghsa_id, state in changes:
         set_state(home, ghsa_id, state)
     return len(changes)
+
+
+def _held_line(ghsa_id: str, refs: Sequence[IssueRef]) -> str:
+    slugs = ", ".join(ref.slug for ref in refs)
+    return (
+        f"- held: {ghsa_id} ({slugs}): retarget it to a fix task, "
+        "or close it with vrg-security-record close"
+    )
+
+
+def _count(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
 
 
 def records_pass(org: str, *, apply: bool, prog: str) -> int:
@@ -855,8 +968,16 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
     skipped: :class:`PrivateHomeError` propagates to the caller, whose message
     already names the program.
 
-    Exit 1 when the pass fails, or, with *apply*, when any pair is broken
-    (after syncing the rest). The preview reports broken pairs without failing.
+    The sync close guard (:func:`guard_check`) keeps an advisory ``draft``
+    while a queue item or a non-completed close is all that ended it. Each
+    advisory it holds is reported on a ``- held:`` line with the next step,
+    and counted apart from broken pairs; a hold waits on a human and does not
+    fail the pass. An advisory whose guard read failed is reported on a
+    ``- error:`` line and left unchanged, and the rest are still synced.
+
+    Exit 1 when the pass fails, or, with *apply*, when any pair is broken or
+    any guard read failed (after syncing the rest). The preview reports both
+    without failing.
     """
     mode = "" if apply else " (preview)"
     try:
@@ -866,22 +987,34 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
             return 0
         home = advisory_home(org)
         result = classify(list_advisories(home), issues)
-        synced = sync_states(home, result, issues) if apply else len(pending_syncs(result, issues))
+        guard = guard_check(result, issues)
+        synced = (
+            sync_states(home, result, issues, guard)
+            if apply
+            else len(pending_syncs(result, issues, guard))
+        )
     except github.MissingGitHubTokenError:
         raise
     except github.GitHubAPIError as exc:
         print(f"{prog}: security records pass failed: {exc}", file=sys.stderr)
         return 1
     verb = "synced" if apply else "would sync"
-    states = "advisory state" if synced == 1 else "advisory states"
-    broken = len(result.broken)
-    pairs = "broken pair" if broken == 1 else "broken pairs"
-    print(f"Security records{mode}: {synced} {states} {verb}, {broken} {pairs}.")
+    print(
+        f"Security records{mode}: {_count(synced, 'advisory state', 'advisory states')} {verb}, "
+        f"{_count(len(result.broken), 'broken pair', 'broken pairs')}, "
+        f"{len(guard.held)} held, {_count(len(guard.errors), 'error', 'errors')}."
+    )
     for line in result.broken:
         print(f"- broken: {line}")
+    for ghsa_id, refs in guard.held:
+        print(_held_line(ghsa_id, refs))
+    for ghsa_id, ref, error in guard.errors:
+        print(
+            f"- error: {ghsa_id} ({ref.slug}): reading its parent failed, left unchanged: {error}"
+        )
     for advisory in result.external:
         print(f"- unpaired external report (left untouched): {advisory.ghsa_id}")
-    return 1 if apply and result.broken else 0
+    return 1 if apply and (result.broken or guard.errors) else 0
 
 
 # --- close ------------------------------------------------------------------

@@ -302,24 +302,45 @@ advisory between `draft` and `closed`: it never changes a `published`,
 it lists as `unpaired external report (left untouched)`. Broken pairs are
 listed as `- broken: <GHSA-id or issue ref>: <problem>`, never repaired.
 
+**The close guard.** A draft advisory whose tracked issues are all closed
+stays `draft` when any of them is a queue item (its native parent is a
+live intake, planning or deferred epic, or a per-quarter archive of one,
+recognized by its `archive` label or its stamped title) or was closed
+with any reason other than completed. The parent is read only for an
+issue closed as completed. Each advisory the guard holds is listed by
+GHSA ID and the issue refs that fired it, with the next step:
+
+```text
+- held: GHSA-xxxx-xxxx-xxxx (org/repo#12): retarget it to a fix task, or close it with vrg-security-record close
+```
+
+A hold does not fail the pass. The guard only stops a move to `closed`:
+an advisory already `closed` (a human closed it with
+[`close`](#close)) is left alone and never reported as held. When an
+issue's parent cannot be read, that advisory is left unchanged and
+listed as `- error: <GHSA-id> (<issue ref>): reading its parent failed,
+left unchanged: <error>`; the rest are still synced.
+
 Its summary line is `Security records: <n> advisory states synced, <m>
-broken pairs.` Each noun agrees with its count, so a count of 1 reads
-`1 advisory state synced` or `1 broken pair`. It exits 1 when any pair is
-broken (after syncing the rest), or when the pass fails, including when
-the org's `.github` is private. An org with no `security` issues and no
-`.github` repo prints `Security records: none.`
+broken pairs, <h> held, <e> errors.` Each noun agrees with its count, so a
+count of 1 reads `1 advisory state synced`, `1 broken pair` or `1 error`.
+It exits 1 when any pair is broken or any parent read failed (after
+syncing the rest), or when the pass fails, including when the org's
+`.github` is private. An org with no `security` issues and no `.github`
+repo prints `Security records: none.`
 
 | Flag | Meaning |
 |---|---|
-| `--dry-run` | Preview: print the pass as `Security records (preview): <n> advisory states would sync, <m> broken pairs.`, change nothing, and exit 0 even on a broken pair. |
+| `--dry-run` | Preview: print the pass as `Security records (preview): <n> advisory states would sync, <m> broken pairs, <h> held, <e> errors.`, change nothing, and exit 0 even on a broken pair or a failed parent read. |
 
 **Permission.** `sync` needs **Repository security advisories: Read and
 write** on `<org>/.github` (`--dry-run` needs Read), so it runs as the
 human's own `gh` login or the user App, never in the scheduled sweep.
 `vrg-epic-audit --close` makes no security-advisory call, so its token
 needs no advisories access (vergil-project/vergil-tooling#4313). Nothing
-runs `sync` on a schedule: run it after closing or reopening a `security`
-issue, and regularly in any case.
+runs `sync` on a schedule: the human or the user agent runs it, after
+closing or reopening a `security` issue and regularly in any case, and
+`vrg-epic-audit` previews it read-only.
 
 ## close
 
@@ -331,7 +352,7 @@ vrg-security-record close GHSA-xxxx-xxxx-xxxx \
 Closes a draft advisory and leaves an audit trail: a public comment with
 the GHSA ID and the reason on every issue the record tracks. It is how an
 agent closes a record that `sync` would not close, such as one in a
-broken pair, or records why a record it closes was dropped. It takes the
+broken pair or one the close guard holds, or records why a record it closes was dropped. It takes the
 org from the current repo's `origin` remote, as `show` and `sync` do.
 
 | Flag | Meaning |
@@ -460,5 +481,5 @@ These commands read or move records as part of their own work:
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Refused (a private `.github`, a duplicate, bad refs, an unreadable file, `--details` under the sweep, a `retarget`, `close` or `note` the checks refuse, a `create` onto an advisory already paired), a partial pair, a failed retarget, close or note, a broken pair found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
+| 1 | Refused (a private `.github`, a duplicate, bad refs, an unreadable file, `--details` under the sweep, a `retarget`, `close` or `note` the checks refuse, a `create` onto an advisory already paired), a partial pair, a failed retarget, close or note, a broken pair or a failed parent read found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
 | 2 | Invalid arguments |
