@@ -2322,6 +2322,24 @@ workflows; `matrix` is also useful locally. See the
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 
+### vrg-npm-audit-gate
+
+Give the TypeScript audit gate's verdict on an `npm audit --json` report:
+drop the advisories a live entry of the repository's
+`.npm-audit-exceptions` covers, list them, and fail on any other advisory
+at high or critical. The TypeScript AUDIT check runs it after `npm audit`.
+See
+[TypeScript audit exceptions](../guides/validation-matrix.md#typescript-audit-exceptions).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_npm_audit_gate` |
+| Args | `REPORT` (positional), `--npm-exit STATUS` (required: the status of the `npm audit --audit-level=high` run), `--exceptions PATH` (default `.npm-audit-exceptions`) |
+| Preconditions | `REPORT` is an `npm audit --json` report (version 2); a missing exceptions file means none |
+| Failure mode | Error on stderr for each advisory at high or critical with no live exception, each expired or malformed exception, an unreadable or error report, or an npm status that disagrees with the report; a warning for each exception that matches no advisory |
+| Exit codes | 0 pass, 1 gate failure or error |
+| Status | Active |
+
 ### vrg-sarif-filter
 
 Write a copy of a SARIF file with every accepted-suppressed result

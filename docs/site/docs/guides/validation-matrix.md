@@ -274,6 +274,55 @@ existing crate or adds Rust sources without one, has lost its manifest
 rather than never had one: its install stage fails, naming the missing
 manifests and the first sources found, and no language stage runs.
 
+### TypeScript audit exceptions
+
+The TypeScript audit stage runs `npm audit --audit-level=high --json`,
+keeps its report as the `npm-audit.json` evidence, and passes it to
+[`vrg-npm-audit-gate`](../reference/cli-tools-overview.md#vrg-npm-audit-gate)
+for the verdict. npm has no ignore list, so the gate reads the
+repository's `.npm-audit-exceptions`, the npm counterpart of
+`.trivyignore`. Each line is one reviewed, time-boxed exception:
+
+```text
+# picomatch ReDoS: no patched release yet. Dev-only, through vitest, vite,
+# tinyglobby and typescript-eslint. Remove once picomatch ships a fix.
+GHSA-fc5q-39xc-vjpf exp:2026-12-31 owner/repo#123 ReDoS in picomatch <=4.0.7 with no patched release; dev-only
+```
+
+The fields, separated by spaces, are:
+
+1. The advisory's GHSA ID, as in its `github.com/advisories` URL. npm's
+   report names advisories only by GHSA ID, so a CVE ID is refused.
+2. The expiry, `exp:YYYY-MM-DD`. The entry is live through that day
+   (UTC), and the expiry may be at most 90 days after the day the gate
+   runs.
+3. The tracking issue: `#N`, `owner/repo#N` or a GitHub issue URL.
+4. The reason: the rest of the line.
+
+Lines starting with `#` and blank lines are ignored, so the longer
+justification and the removal condition go in a comment above the entry,
+as in `.trivyignore`. A repository with no file has no exceptions.
+
+The gate drops every advisory a live entry names, at any severity, and
+fails on any other advisory at high or critical. It prints each
+exception it applied, with its expiry, tracking issue and reason, so an
+acknowledged risk stays in the log. These fail the stage, each named by
+its line:
+
+- an expired entry;
+- a malformed entry: a missing field, an expiry that is not a real
+  `exp:YYYY-MM-DD` date, a bad tracking issue, or an ID that is not a
+  GHSA ID;
+- an expiry more than 90 days ahead;
+- a second entry for the same advisory.
+
+An entry that matches no advisory in the report is reported as a
+warning, so a stale one gets removed. A report the gate cannot read,
+an npm error report, and an npm exit status that disagrees with the
+report also fail the stage. When an exception is allowed, and for how
+long, is in the TypeScript standards'
+[Audit exceptions](../standards/development/typescript/overview.md#audit-exceptions).
+
 ### Semgrep scan
 
 After the language checks, `vrg-validate` runs the scan of PR CI's

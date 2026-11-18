@@ -348,6 +348,11 @@ code, where review sees it. Rules for writing a suppression:
 Other analyzers are honored as long as their SARIF carries a `suppressions`
 entry. Trivy's `.trivyignore` works differently: it drops the finding before
 SARIF is written, so ignored findings never appear in the summary at all.
+The TypeScript audit's `.npm-audit-exceptions` follows the same rules for
+an npm advisory with no fix: each entry names the advisory, an expiry, a
+tracking issue and a reason, and the audit log lists every exception it
+applied (see
+[TypeScript audit exceptions](validation-matrix.md#typescript-audit-exceptions)).
 
 ### CD: release-publishing secrets
 

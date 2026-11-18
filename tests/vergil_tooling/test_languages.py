@@ -1165,14 +1165,26 @@ def test_typescript_test_reports_coverage_on_failure() -> None:
 
 
 def test_typescript_audit_writes_json_and_gates() -> None:
-    """The gating ``npm audit`` run writes ``npm-audit.json`` at the unchanged threshold."""
+    """The ``npm audit`` run writes ``npm-audit.json``; ``vrg-npm-audit-gate`` judges it.
+
+    The report stays the unfiltered evidence, and the gate's verdict honors
+    the repo's ``.npm-audit-exceptions``, with npm's status as a cross-check
+    (#4682).
+    """
     assert NPM_AUDIT_REPORT == "npm-audit.json"
     assert _ts_script(CheckKind.AUDIT) == (
         f"npm audit --audit-level=high --json >{NPM_AUDIT_REPORT}; "
         "rc=$?; "
         f"cat {NPM_AUDIT_REPORT} || exit 1; "
-        'exit "$rc"'
+        f'exec vrg-npm-audit-gate {NPM_AUDIT_REPORT} --npm-exit "$rc"'
     )
+
+
+def test_typescript_audit_gate_is_a_declared_command() -> None:
+    """The audit script's ``vrg-npm-audit-gate`` is this package's console script."""
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    scripts = tomllib.loads(pyproject.read_text())["project"]["scripts"]
+    assert scripts["vrg-npm-audit-gate"] == "vergil_tooling.bin.vrg_npm_audit_gate:main"
 
 
 def test_typescript_report_files() -> None:

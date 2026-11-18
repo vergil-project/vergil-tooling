@@ -80,6 +80,7 @@ Run inside dev containers launched by `vrg-container-run`.
 | [repo-profile](lint/repo-profile.md) | Repository profile attribute validation (a `vrg-validate` common check, not a command) |
 | [vrg-package](cli-tools-overview.md#vrg-package) | Build, install-test and index binary OS packages from `[package]` |
 | [vrg-ci-resolve](cli-tools-overview.md#vrg-ci-resolve) | Resolve the repo's CI versions from the published version window |
+| [vrg-npm-audit-gate](cli-tools-overview.md#vrg-npm-audit-gate) | Gate an `npm audit` report, honoring the repo's `.npm-audit-exceptions` |
 | [vrg-sarif-filter](cli-tools-overview.md#vrg-sarif-filter) | Drop accepted-suppressed results from a SARIF file before upload |
 | [vrg-sarif-evaluate](cli-tools-overview.md#vrg-sarif-evaluate) | Report a SARIF file's findings at the chosen severities |
 | [vrg-semgrep-scan](cli-tools-overview.md#vrg-semgrep-scan) | Run a semgrep scan with language-resolved rulesets and write SARIF |
