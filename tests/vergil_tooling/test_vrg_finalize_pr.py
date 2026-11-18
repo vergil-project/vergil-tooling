@@ -3208,6 +3208,10 @@ def test_exit_4_validate_could_not_run_reports_log(
     assert rc == 4
     out = capsys.readouterr().out
     assert "DID NOT VALIDATE" in out
+    # The settle summary names no exit status: finalize exits 4 here, which a
+    # status fixed before the pipeline ran could not name (#4712).
+    summary = next(line for line in out.splitlines() if line.startswith("PipelineError:"))
+    assert "· exit" not in summary
     log_line = next(line for line in out.splitlines() if "Validate log:" in line)
     log = Path(log_line.split("Validate log:", 1)[1].strip())
     assert log.parent == tmp_path / ".vergil"
