@@ -60,7 +60,14 @@ each PR in turn:
    [Batch PRs](#batch-prs-one-pr-closing-several-issues)).
 2. Push the branch, in the modes that push.
 3. Hold origin's tip to the head the PR must open at, then open the PR
-   with `gh pr create` and record the submission.
+   with `gh pr create` and record the submission. `gh pr create` is
+   never retried blindly, since GitHub can open the PR and still return
+   an error. After a failed attempt submit looks for an open PR from the
+   branch into the base. It adopts one only when it has the same head
+   branch (in this repository), base, title and head commit, and carries
+   on as for a PR it just opened. Any other open PR fails the submit,
+   naming the PR. With none open, a transient error is retried with
+   backoff and any other error fails the submit.
 4. Run the **provenance check**. A violation leaves the PR's auto-merge
    off and counts as a failed submit, unless
    `--allow-provenance-violation` is given. Advisories are printed but
@@ -68,7 +75,10 @@ each PR in turn:
 5. Turn **auto-merge** on, pinned to that head (`expectedHeadOid`): the
    **squash** method for a single-issue PR, **rebase** for a batch PR.
    When GitHub refuses because the PR can already merge, submit merges
-   it directly with the same method and head, and says so.
+   it directly with the same method and head, and says so. When either
+   write returns an error, submit reads the PR back first: auto-merge on
+   with that method, or the PR merged at that head, means the write
+   landed (a retry after a lost response), and counts as done.
 
 Submit **never rebases a branch**: rebasing before handoff is the
 agent's job, and `develop` does not require a branch to be up to date,

@@ -15,6 +15,12 @@ same method and ``--match-head-commit`` set to the same head, and reports
 direct merge that does not leave the PR merged raises
 :class:`AutoMergeError`, naming the PR.
 
+Both writes go through ``gh``'s transient-error retry, so an attempt that
+landed with its response lost can be followed by one that fails. Before
+either error is raised, the PR is read back: auto-merge on with the method
+asked for, or the PR merged at the head asked for, is the write having
+landed, and is reported as success (#4696).
+
 :func:`auto_merge_enabled` reads whether auto-merge is on for a PR.
 
 Every call takes the PR's full URL, so nothing depends on the cwd.
@@ -103,10 +109,20 @@ def _merge_now(pr_url: str, *, head: str, method: MergeMethod) -> None:
     try:
         github.merge(pr_url, strategy=method.lower(), match_head=head)
     except subprocess.CalledProcessError as exc:
+        # The merge is retried on a transient error, so an attempt that landed
+        # with its response lost is followed by one GitHub refuses (#4696): a
+        # PR read back as merged at *head* is that case.
         msg = (
             f"{pr_url}: GitHub refused auto-merge because the PR can already merge, "
             f"and the direct merge failed: {error_text(exc)}"
         )
+        try:
+            landed = _pr_view(pr_url, "state,headRefOid", "reading the state after the error")
+        except AutoMergeError as read_exc:
+            raise AutoMergeError(f"{msg}; {read_exc}") from exc
+        if landed.get("state") == "MERGED" and landed.get("headRefOid") == head:
+            print(f"{pr_url}: the direct merge returned an error, but it merged: {error_text(exc)}")
+            return
         raise AutoMergeError(msg) from exc
     state = _pr_view(pr_url, "state", "reading the state after the direct merge").get("state")
     if state != "MERGED":
@@ -137,7 +153,17 @@ def enable_auto_merge(pr_url: str, *, head: str, method: MergeMethod) -> AutoMer
             print(f"{pr_url}: already mergeable; merging it directly ({method.lower()})")
             _merge_now(pr_url, head=head, method=method)
             return AutoMergeResult(merged_now=True)
+        # The mutation is retried on a transient error, so an attempt that
+        # landed with its response lost is followed by one that can fail
+        # (#4696). Auto-merge read back as on with *method* is that case.
         msg = f"{pr_url}: enabling auto-merge failed: {detail}"
+        try:
+            landed = _auto_merge_request(pr_url, "reading back auto-merge after the error")
+        except AutoMergeError as read_exc:
+            raise AutoMergeError(f"{msg}; {read_exc}") from exc
+        if landed is not None and landed.get("mergeMethod") == method:
+            print(f"{pr_url}: enabling auto-merge returned an error, but it is on: {detail}")
+            return AutoMergeResult(merged_now=False)
         raise AutoMergeError(msg) from exc
     request = _auto_merge_request(pr_url, "reading back auto-merge")
     read_method = request.get("mergeMethod") if request is not None else None
