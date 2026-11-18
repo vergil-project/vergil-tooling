@@ -18413,8 +18413,11 @@ that names a Node or package-manager version: <code>packageManager</code>,
 declared floor that falls below the window's oldest version, or an
 upper bound that excludes its newest (for Python, <code>requires-python</code>;
 for Go, the <code>go.mod</code> <code>go</code> directive; for Rust, the root <code>Cargo.toml</code>'s
-<code>rust-version</code>), is printed as a warning and does not fail. See
-<a href="../../standards/development/python/version-management/#toolchain-selection-in-the-repo">Python version management</a>
+<code>rust-version</code>; for TypeScript, the root <code>package.json</code>'s <code>engines.node</code>
+range), is printed as a warning and does not fail. An <code>engines.node</code>
+that is not an npm semver range, or a range that admits no Node release,
+fails. See
+<a href="../../standards/development/python/version-management/#toolchain-selection-in-the-repo">Python version management</a>,
 the Rust standards'
 <a href="../../standards/development/rust/overview/#toolchain-selection">Toolchain Selection</a>,
 and the TypeScript standards'
