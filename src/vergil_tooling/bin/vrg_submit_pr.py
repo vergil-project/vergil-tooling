@@ -108,6 +108,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -121,6 +122,7 @@ from vergil_tooling.lib import (
     identity_mode,
     planning_close,
     pr_provenance,
+    retry,
     worktrees,
 )
 from vergil_tooling.lib.cli import cli_main
@@ -388,14 +390,105 @@ def _push_branch(branch: str) -> None:
 
 
 def _create_pr(*, target_branch: str, title: str, pr_body: str, head: str | None = None) -> str:
+    """Run ``gh pr create`` once, never retried: :func:`_create_or_adopt` retries it."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(pr_body)
         tmp_path = f.name
     try:
-        pr_url = github.create_pr(base=target_branch, title=title, body_file=tmp_path, head=head)
+        pr_url = github.create_pr(
+            base=target_branch, title=title, body_file=tmp_path, head=head, retry=False
+        )
     finally:
         Path(tmp_path).unlink(missing_ok=True)
     return pr_url
+
+
+def _adoptable(sub: _Submission, error: subprocess.CalledProcessError) -> str | None:
+    """The URL of the open PR a failed create of *sub* left behind, or ``None`` when none is open.
+
+    A ``gh pr create`` that GitHub carried out can still return an error (a
+    gateway timeout on the response), and a blind retry is then refused with
+    "already exists" (#4696). So after every failed create, submit looks for
+    an open PR from *sub*'s branch into its base. It adopts one only when it
+    can show it is the PR this submit opened: a same-repo head on that
+    branch, that base, *sub*'s title, and the head commit submit pushed. Any
+    other open PR raises :class:`_SubmitFailedError` naming it, with *error*.
+    """
+    try:
+        prs = github.open_prs_for_head(sub.branch, base=sub.base)
+    except subprocess.CalledProcessError as exc:
+        msg = (
+            f"creating the PR failed ({error_text(error)}), and looking for an open PR "
+            f"from {sub.branch} into {sub.base} failed too: {error_text(exc)}"
+        )
+        raise _SubmitFailedError(msg) from exc
+    if not prs:
+        return None
+    if len(prs) > 1:
+        urls = ", ".join(pr.url for pr in prs)
+        msg = (
+            f"creating the PR failed ({error_text(error)}), and several PRs are open from "
+            f"{sub.branch} into {sub.base} ({urls}); none was adopted. Inspect them, then "
+            "close the ones that should not be open and submit again."
+        )
+        raise _SubmitFailedError(msg)
+    pr = prs[0]
+    mismatches = [
+        f"its {what} is {got!r}, not {want!r}"
+        for what, got, want in (
+            ("head branch", pr.head_ref, sub.branch),
+            ("base", pr.base_ref, sub.base),
+            ("title", pr.title, sub.title),
+            ("head commit", pr.head_oid, sub.expected_head),
+        )
+        if got != want
+    ]
+    if pr.cross_repo:
+        mismatches.insert(0, "its head is in another repository")
+    if not mismatches:
+        return pr.url
+    msg = (
+        f"creating the PR failed ({error_text(error)}), and {pr.url} is already open from "
+        f"{sub.branch} into {sub.base}, but it is not the PR this submit opened "
+        f"({'; '.join(mismatches)}); it was not adopted. Inspect it, then close it and "
+        "submit again."
+    )
+    raise _SubmitFailedError(msg)
+
+
+def _create_or_adopt(sub: _Submission) -> str:
+    """Open *sub*'s PR and return its URL, adopting the one a failed attempt opened.
+
+    ``gh pr create`` is not idempotent, so it is never retried blindly. After
+    each failed attempt :func:`_adoptable` looks for the open PR: a match is
+    adopted (the create had landed), and any other open PR fails the submit.
+    With none open, a transient error (:func:`retry.is_retryable`) is retried
+    with the shared backoff, up to :data:`retry.MAX_RETRIES` times, and any
+    other error is raised.
+    """
+    for attempt in range(retry.MAX_RETRIES + 1):
+        try:
+            return _create_pr(
+                target_branch=sub.base, title=sub.title, pr_body=sub.pr_body, head=sub.branch
+            )
+        except subprocess.CalledProcessError as exc:
+            adopted = _adoptable(sub, exc)
+            if adopted is not None:
+                print(
+                    f"Creating the PR returned an error ({error_text(exc)}), but GitHub had "
+                    f"opened it: adopting {adopted}."
+                )
+                return adopted
+            if attempt == retry.MAX_RETRIES or not retry.is_retryable(exc):
+                raise
+            delay = retry.compute_delay(attempt)
+            print(
+                f"GitHub API error creating the PR (attempt {attempt + 1}/"
+                f"{retry.MAX_RETRIES + 1}), no PR open; retrying in {delay:.1f}s",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 # vrg-finalize-pr's exit codes (spec §6.3), the ones submit adjusts. Any other
@@ -549,9 +642,7 @@ def _open_one(sub: _Submission) -> str:
         _push_branch(sub.branch)
     _require_origin_head(sub.branch, sub.expected_head)
     print(f"Creating PR for {sub.branch}...")
-    pr_url = _create_pr(
-        target_branch=sub.base, title=sub.title, pr_body=sub.pr_body, head=sub.branch
-    )
+    pr_url = _create_or_adopt(sub)
     print(f"PR created: {pr_url}")
     if sub.record_in is not None:
         submission.record_submission(sub.record_in, pr_url=pr_url)
