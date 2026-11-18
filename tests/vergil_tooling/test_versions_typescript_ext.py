@@ -118,7 +118,10 @@ def test_engines_node_alone_is_not_an_error(tmp_path: Path) -> None:
     ("data", "field"),
     [
         ({"engines": "x"}, "engines"),
+        ({"engines": None}, "engines"),
         ({"devEngines": 1}, "devEngines"),
+        ({"devEngines": None}, "devEngines"),
+        ({"devEngines": {"runtime": None}}, "devEngines.runtime"),
         ({"devEngines": {"runtime": [1]}}, "devEngines.runtime"),
         ({"devEngines": {"os": "linux"}}, "devEngines.os"),
     ],
@@ -126,6 +129,28 @@ def test_engines_node_alone_is_not_an_error(tmp_path: Path) -> None:
 def test_malformed_fields_are_versions_errors(tmp_path: Path, data: object, field: str) -> None:
     _package(tmp_path, data)
     with pytest.raises(VersionsError, match=rf"package\.json: {field} .*Fix: \w+ {field}"):
+        ts_ext.check_toolchain(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("value", "name"),
+    [
+        (None, "null"),
+        (True, "boolean"),
+        (1, "number"),
+        (1.5, "number"),
+        ("x", "string"),
+        ([], "array"),
+        ({}, "object"),
+    ],
+)
+def test_json_type_names(value: object, name: str) -> None:
+    assert ts_ext._json_type(value) == name
+
+
+def test_malformed_field_names_its_json_type(tmp_path: Path) -> None:
+    _package(tmp_path, {"engines": None})
+    with pytest.raises(VersionsError, match=r"engines is a JSON null, not an object"):
         ts_ext.check_toolchain(tmp_path)
 
 

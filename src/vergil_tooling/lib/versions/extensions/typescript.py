@@ -61,14 +61,29 @@ def _package_json(repo_root: Path) -> dict[str, object] | None:
         raise VersionsError(str(exc)) from exc
 
 
-def _object_field(path: Path, data: dict[str, object], field: str) -> dict[str, object]:
-    """*data*'s *field* as an object (empty when absent); anything else is fatal."""
-    value = data.get(field)
+def _json_type(value: object) -> str:
+    """The JSON name of a parsed value's type (``null``, ``string``, ``array`` ...)."""
     if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    return "object"
+
+
+def _object_field(path: Path, data: dict[str, object], field: str) -> dict[str, object]:
+    """*data*'s *field* as an object (empty when absent); anything else, null included, is fatal."""
+    if field not in data:
         return {}
+    value = data[field]
     if not isinstance(value, dict):
         msg = (
-            f"{path}: {field} is a JSON {type(value).__name__}, not an object. "
+            f"{path}: {field} is a JSON {_json_type(value)}, not an object. "
             f"Fix: make {field} an object"
         )
         raise VersionsError(msg)
@@ -82,7 +97,7 @@ def _check_dev_engines(path: Path, dev_engines: dict[str, object]) -> None:
         for entry in entries:
             if not isinstance(entry, dict):
                 msg = (
-                    f"{path}: devEngines.{key} holds a JSON {type(entry).__name__}; npm "
+                    f"{path}: devEngines.{key} holds a JSON {_json_type(entry)}; npm "
                     f"accepts an object or an array of objects. Fix: correct devEngines.{key}"
                 )
                 raise VersionsError(msg)
