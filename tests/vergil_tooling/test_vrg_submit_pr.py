@@ -16,6 +16,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _local_worktree_with_state,
     _metadata_from_state,
     _origin_has_branch,
+    _planning_close,
     _prepare,
     _push_branch,
     _recheck_batch,
@@ -45,6 +46,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
 )
 from vergil_tooling.lib import auto_merge, epics, pr_provenance, worktrees
 from vergil_tooling.lib.linkage import extract_tracking_refs
+from vergil_tooling.lib.planning_close import PlanningClose
 from vergil_tooling.lib.pr_workflow import batch_rules, engine, freeze
 from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
@@ -84,6 +86,7 @@ def _no_epic_link_check() -> Iterator[None]:
         patch(_MOD + "._reject_if_operational_task"),
         patch(_MOD + "._reject_if_queue_item"),
         patch(_MOD + "._task_linkage", side_effect=lambda _ref, requested: (requested, None)),
+        patch(_MOD + "._planning_close", return_value=None),
     ):
         yield
 
@@ -2231,6 +2234,76 @@ def test_task_linkage_keeps_ref_when_parent_not_epic() -> None:
 def test_task_linkage_noop_when_ref_unresolvable() -> None:
     with patch(f"{_MOD}.github.current_repo", return_value=""):
         assert _task_linkage("#42", "Ref") == ("Ref", None)
+
+
+# -- _planning_close (a docs task's PR also closes its planning issue) --------
+
+_DOCS = epics.IssueRef("acme", ".github", 20)
+_PLAN = epics.IssueRef("acme", ".github", 7)
+
+
+def test_planning_close_returns_the_planning_issue_and_says_so(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="acme/.github"),
+        patch(
+            f"{_MOD}.planning_close.find", return_value=PlanningClose(_DOCS, _PLAN, None)
+        ) as find,
+    ):
+        assert _planning_close(["#20"]) == "acme/.github#7"
+    find.assert_called_once_with(_DOCS)
+    assert "the PR also closes it on merge" in capsys.readouterr().out
+
+
+def test_planning_close_skipped_returns_none_and_says_why(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    skipped = PlanningClose(_DOCS, _PLAN, "it is already closed")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="acme/.github"),
+        patch(f"{_MOD}.planning_close.find", return_value=skipped),
+    ):
+        assert _planning_close(["#20"]) is None
+    assert "does not close it: it is already closed." in capsys.readouterr().out
+
+
+def test_planning_close_ordinary_task_is_silent(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="acme/.github"),
+        patch(f"{_MOD}.planning_close.find", return_value=None),
+    ):
+        assert _planning_close(["#20"]) is None
+    assert capsys.readouterr().out == ""
+
+
+def test_planning_close_never_for_a_batch() -> None:
+    with patch(f"{_MOD}.planning_close.find") as find:
+        assert _planning_close(["#20", "#21"]) is None
+    find.assert_not_called()
+
+
+def test_planning_close_failed_read_propagates() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="acme/.github"),
+        patch(f"{_MOD}.planning_close.find", side_effect=subprocess.CalledProcessError(1, ["gh"])),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        _planning_close(["#20"])
+
+
+def test_prepare_body_carries_the_planning_close(tmp_path: Path) -> None:
+    with patch(f"{_MOD}._planning_close", return_value="acme/.github#7"):
+        sub = _prepare(
+            "feature/20-docs",
+            "develop",
+            {"issues": "20", "title": "docs: spec", "summary": "s", "notes": ""},
+            push=False,
+            expected_head="a" * 40,
+            record_in=None,
+        )
+    assert "- Ref #20\n- Planning issue: Closes acme/.github#7\n" in sub.pr_body
+    assert sub.issue_refs == ["#20"]
 
 
 def test_resolve_linkage_announces_closes_upgrade(

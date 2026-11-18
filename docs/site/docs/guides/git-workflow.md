@@ -177,7 +177,9 @@ vrg-submit-pr \
 - Constructs a standards-compliant PR body with issue linkage,
   auto-selecting `Closes #42` for a managed task (so it closes on
   merge) or `Ref #42` for a legacy issue. `Fixes`/`Resolves` are
-  not accepted.
+  not accepted. An epic's documentation-task PR also closes the
+  epic's planning issue (see
+  [the planning issue of a docs task](../reference/dev/submit-pr.md#the-planning-issue-of-a-docs-task)).
 - Creates the PR via `gh pr create` under the hood.
 
 See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).

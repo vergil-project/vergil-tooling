@@ -494,6 +494,30 @@ def _security_planning(
     return items, home, listing
 
 
+def test_tracking_advisories_lists_each_advisory_tracking_the_issue() -> None:
+    advisories = [
+        _advisory(_GHSA, _PLAN),
+        _advisory(_OTHER_GHSA, _FIX),
+        _advisory("GHSA-cccc-cccc-cccc", IssueRef("Org", ".GITHUB", 5)),
+    ]
+    with (
+        patch(f"{_MOD}.security_records.advisory_home", return_value="org/.github") as home,
+        patch(f"{_MOD}.security_records.list_advisories", return_value=advisories),
+    ):
+        held = queue_view.tracking_advisories(_PLAN, _ADVISORY_BODY)
+    assert held == (_GHSA, "GHSA-cccc-cccc-cccc")
+    home.assert_called_once_with("org")
+
+
+def test_tracking_advisories_none_without_a_public_dotgithub() -> None:
+    with (
+        patch(f"{_MOD}.github.repo_exists", return_value=False),
+        patch(f"{_MOD}.security_records.list_advisories") as listing,
+    ):
+        assert queue_view.tracking_advisories(_PLAN, "Neutral body.") == ()
+    listing.assert_not_called()
+
+
 def test_planning_state_held_while_advisory_tracks_it() -> None:
     [item], home, listing = _security_planning({5: _ready_view()}, [_advisory(_GHSA, _PLAN)])
     assert item.state == "in-progress"

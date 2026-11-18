@@ -119,6 +119,7 @@ from vergil_tooling.lib import (
     git,
     github,
     identity_mode,
+    planning_close,
     pr_provenance,
     worktrees,
 )
@@ -833,6 +834,28 @@ def _checked_links(issue_refs: list[str], requested: str) -> list[tuple[str, str
     return links
 
 
+def _planning_close(issue_refs: list[str]) -> str | None:
+    """The planning issue this PR also closes, or None (vergil-project/.github#950).
+
+    Only a single-issue PR whose issue is an epic's documentation task closes
+    its planning issue (:mod:`vergil_tooling.lib.planning_close`); a batch PR
+    never does. When the docs task's planning issue is not closed, the reason
+    is printed. A failed read propagates and aborts the submission, as the
+    other per-issue checks do.
+    """
+    if len(issue_refs) != 1:
+        return None
+    try:
+        task = epics.parse_issue_ref(issue_refs[0], default_repo=github.current_repo())
+    except ValueError:
+        return None
+    result = planning_close.find(task)
+    if result is None:
+        return None
+    print(f"vrg-submit-pr: {planning_close.describe(result)}")
+    return result.planning.slug if result.closes else None
+
+
 def _ready_issue_refs(fields: dict[str, str]) -> list[str]:
     """The canonical refs of every issue a ready-state hands off, in order.
 
@@ -909,7 +932,9 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
     links = _checked_links([issue_ref], args.linkage)
     branch = git.current_branch()
     target = _target_branch(args.base)
-    pr_body = build_pr_body(summary=args.summary, links=links, notes=args.notes)
+    pr_body = build_pr_body(
+        summary=args.summary, links=links, notes=args.notes, planning=_planning_close([issue_ref])
+    )
 
     if args.dry_run:
         print(f"=== PR Title ===\n{args.title}\n")
@@ -1097,7 +1122,10 @@ def _prepare(
         print(f"vrg-submit-pr: {linkage_warning}", file=sys.stderr)
     links = _checked_links(issue_refs, linkage)
     pr_body = build_pr_body(
-        summary=metadata["summary"], links=links, notes=metadata.get("notes", "")
+        summary=metadata["summary"],
+        links=links,
+        notes=metadata.get("notes", ""),
+        planning=_planning_close(issue_refs),
     )
     print(f"=== Submitting {_describe_issues(issue_refs)}: {metadata['title']} ===")
     print(f"    base {base}, branch {branch}")
@@ -1178,7 +1206,9 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     if linkage_warning:
         print(f"vrg-submit-pr: {linkage_warning}", file=sys.stderr)
     links = _checked_links(issue_refs, linkage)
-    pr_body = build_pr_body(summary=fields["summary"], links=links, notes=notes)
+    pr_body = build_pr_body(
+        summary=fields["summary"], links=links, notes=notes, planning=_planning_close(issue_refs)
+    )
 
     print("=== PR from template ===")
     print(f"Title:  {title}")

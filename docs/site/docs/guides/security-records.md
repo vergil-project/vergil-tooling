@@ -351,7 +351,10 @@ of them until the plan exists.
 
   After one of two retargets, the planning issue stays held by the other.
   Don't close the planning issue by hand before every retarget: that
-  would close the remaining advisories with the fix unwritten.
+  would close the remaining advisories with the fix unwritten. The same
+  hold applies to the epic's docs PR, which normally also closes the
+  planning issue: while an advisory still tracks it, `vrg-submit-pr`
+  leaves the `Planning issue: Closes` line out of the body and says why.
 
 ## Recording findings from a review
 
