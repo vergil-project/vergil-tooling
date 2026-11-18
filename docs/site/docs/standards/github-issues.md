@@ -577,13 +577,20 @@ Repository security advisories: Read and write (see
 [Security Records](../guides/security-records.md#managing-a-record-through-its-issue)).
 
 - **State sync.** Each paired advisory follows its `security` issues: closed
-  once every issue it tracks is closed, a draft while any is open. The pass
-  only moves an advisory between `draft` and `closed`, and never touches an
-  unpaired external report.
+  once every issue it tracks is closed as completed and none is a queue item,
+  a draft while any is open. The pass only moves an advisory between `draft`
+  and `closed`, and never touches an unpaired external report.
+- **Close guard.** An advisory whose tracked issues are all closed stays
+  `draft` while any of them is a queue item (live or archived) or was closed
+  with a reason other than completed. Each one is reported on a `held:` line,
+  counted apart from broken pairs; a hold waits on a human step and does not
+  fail the pass (see
+  [Security Records](../guides/security-records.md#managing-a-record-through-its-issue)).
 - **Consistency check.** It reports broken pairs (a `security` issue with a
   missing or wrong advisory reference, or an advisory whose tracking lines are
-  missing or do not point back) and does not repair them; any broken pair
-  makes `sync` exit 1, after it has synced the rest.
+  missing or do not point back) and does not repair them. Any broken pair, or
+  an issue parent the guard could not read, makes `sync` exit 1, after it has
+  synced the rest.
 
 Its output names only GHSA IDs, issue refs, labels and states, never advisory
 text. `vrg-security-record sync --dry-run` and the read-only `vrg-epic-audit`
