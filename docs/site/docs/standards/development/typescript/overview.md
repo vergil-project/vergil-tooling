@@ -34,7 +34,7 @@ matrix:
 Node majors are `[ci].versions` entries with a family prefix (`node-24`). The
 window has one family, so a TypeScript repo needs no pin and follows the window
 as Python and Rust do: an unpinned **library** builds every window major (today
-`node-24` and `node-22`), each a hard CI leg, and an unpinned app builds the
+`node-26`, `node-24` and `node-22`), each a hard CI leg, and an unpinned app builds the
 newest. A `library` may pin any subset of the window. Every other repository
 type resolves as an app and builds exactly one version, so an app that pins
 more than one major fails resolution (see

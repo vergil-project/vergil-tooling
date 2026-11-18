@@ -41,7 +41,7 @@ passes or fails. The console keeps Vitest's own test output and coverage table.
 Coverage is enforced at **100% line coverage, bound per Node version (per image)
 — never on a single merged report**. TEST is the **only** stage that fans out
 across the resolved Node majors (for an unpinned library, every window
-major, today `node-22` and `node-24`; an app builds one), precisely because runtime
+major, today `node-22`, `node-24` and `node-26`; an app builds one), precisely because runtime
 behavior differs across Node majors; TYPECHECK, LINT, and AUDIT run once.
 
 **Why per-Node-version, not merged.** A merged report hides gaps. If a line is
