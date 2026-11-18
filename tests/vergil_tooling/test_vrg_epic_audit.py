@@ -1077,8 +1077,7 @@ def test_report_only_mode_previews_holds(capsys: pytest.CaptureFixture[str]) -> 
     out = capsys.readouterr().out
     assert (
         "Security records (preview): 0 advisory states would sync, 0 broken pairs, "
-        "1 held, 0 errors."
-        in out
+        "1 held, 0 errors." in out
     )
     assert (
         f"- held: {_GHSA} ({_TRACKED.slug}): retarget it to a fix task, "
@@ -1097,8 +1096,7 @@ def test_summary_line_pluralizes_two_broken_pairs(capsys: pytest.CaptureFixture[
     out = capsys.readouterr().out
     assert (
         "Security records (preview): 0 advisory states would sync, 2 broken pairs, "
-        "0 held, 0 errors."
-        in out
+        "0 held, 0 errors." in out
     )
 
 
