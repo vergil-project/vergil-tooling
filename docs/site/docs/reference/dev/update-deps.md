@@ -33,7 +33,7 @@ vrg-update-deps [--only NAME[,NAME] | --skip NAME[,NAME] | --vergil X.Y]
 | `--output-format` | No | Force the renderer: `rich`, `gha` or `plain` |
 
 `--only`, `--skip` and `--vergil` are mutually exclusive. The updater
-names are `python`, `cargo`, `vergil`, `images` and `hook`; an unknown
+names are `python`, `cargo`, `npm`, `vergil`, `images` and `hook`; an unknown
 name is an error. The updaters are described in the
 [dependency-update reference](../dependency-update-config.md).
 
@@ -72,6 +72,58 @@ A failed `cargo update` or `cargo metadata`, an unreadable `Cargo.toml`
 or `Cargo.lock`, and a failed sparse-index read each fail the update as
 an `update` failure. None of them reads as "no change" or as an empty
 held-back report.
+
+## The npm updater
+
+In a repo with `package.json` and `package-lock.json`, the `npm` updater
+runs `npm update --ignore-scripts` in the dev container. It moves every
+locked package to the newest version its `package.json` range allows,
+and no dependency's install script runs. It changes only
+`package-lock.json`: if `package.json` differs by a single byte
+afterwards, as a `save` setting in the repo's `.npmrc` would make it, the
+updater fails, naming it. Its commit and the PR body name each package it
+moved, from and to, nested copies included. When `npm update` rewrites
+`package-lock.json` without moving any version, the commit is
+`chore(deps): refresh package-lock.json`.
+
+Every lockfile entry the update added or moved must carry a `license`
+field, which the license gate reads. One that does not fails the
+updater, naming the package and version, so the cause surfaces in the
+update rather than later on its PR.
+
+It then runs `npm ci --ignore-scripts` and `npm outdated --json`, both
+in the dev container, so npm itself matches every range. Each direct
+dependency in `dependencies`, `devDependencies` or
+`optionalDependencies` whose locked version is below the registry's
+`latest` dist-tag is reported in the held-back report. Each entry's note
+gives the reason:
+
+| Note | Meaning |
+| ---- | ------- |
+| `outside the package.json range` | The newest version the range allows (`wanted`) is below `latest` |
+| `held by the resolver: another requirement in the dependency graph` | The locked version is below `wanted`: a peer requirement or an `overrides` entry, for example, holds it |
+| Both notes, joined by a semicolon | Both of the above |
+
+For a package Vergil pins to one major in
+`configs/typescript/dev-dependencies.json`, the note adds, for example,
+`Vergil accepts typescript 6 only (dev-dependencies.json)`, so a reader
+sees the hold is Vergil's. A locked version at or above `latest` (a
+prerelease ahead of the dist-tag, say) is not reported. When
+`npm outdated` gives no current version (an optional dependency `npm ci`
+skipped on this platform), the version comes from the lockfile's
+`node_modules/<name>` entry. Dependencies declared as `file:`, `link:`,
+git, GitHub or URL specs are not reported, since they have no registry
+release, and neither are peer dependencies.
+
+`npm outdated` exits 1 whenever something is outdated, so the updater
+reads its JSON rather than its exit status: exit 0 with nothing outdated
+and exit 1 with outdated packages are the normal cases. A failed
+`npm update` or `npm ci`, an unreadable `package.json` or
+`package-lock.json`, a lockfile older than v2, a changed `package.json`,
+an added or moved entry with no `license`, and an `npm outdated` run that
+prints no JSON, malformed JSON or an `error` object, or exits otherwise,
+each fail the update as an `update` failure. None of them reads as "no
+change" or as an empty held-back report.
 
 ## Prerequisites
 
@@ -112,7 +164,7 @@ merged.
 | Stage | What it does |
 | ----- | ------------ |
 | `preflight` | Checks the prerequisites and creates the `deps/update-<version>` managed worktree |
-| `update` | Runs each applicable updater in order (`python`, `cargo`, `vergil`, `images`, then `hook`), committing each one's changes separately |
+| `update` | Runs each applicable updater in order (`python`, `cargo`, `npm`, `vergil`, `images`, then `hook`), committing each one's changes separately |
 | `validate` | Runs `vrg-container-run -- vrg-validate` once, if anything changed |
 | `prepare-pr` | Pushes the branch and opens a PR to `develop` labelled `dependency-update`, creating the label if the repo lacks it |
 | `merge` | Waits for the PR's checks and merges it, if validation passed, then deletes its branch on origin (see [Waiting for green](release.md#waiting-for-green)) |

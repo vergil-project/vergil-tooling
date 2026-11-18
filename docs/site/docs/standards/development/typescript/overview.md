@@ -338,6 +338,32 @@ The gate is a forcing function for explicitness, not a claim that every line was
 exercised — see [Testing and Coverage](testing-and-coverage.md) for the 100%
 philosophy and the `/* v8 ignore */` exclusion discipline.
 
+## Dependency updates
+
+`vrg-update-deps`, and every `vrg-release` through its `update-deps`
+stage, runs the `npm` updater in a repository with `package.json` and
+`package-lock.json`. It runs `npm update --ignore-scripts` in the dev
+container, which moves each locked package to the newest version its
+`package.json` range allows. It changes only `package-lock.json`: the
+ranges are the repository's own, and the updater fails if `package.json`
+changes, so never set `save` in a TypeScript repository's `.npmrc`.
+Every entry the update adds or moves must carry a `license` field, the
+one the license gate reads.
+
+What the ranges hold back is reported, not bumped. After the update,
+`npm outdated` lists each direct dependency below its registry `latest`,
+in the held-back report of the update's PR, with the reason: outside the
+`package.json` range, held by the resolver, or both. For a required
+devDependency (see
+[Required devDependencies and their accepted majors](#required-devdependencies-and-their-accepted-majors))
+the note also says that Vergil accepts only its listed major, so a hold
+such as TypeScript at 6 reads as Vergil's, not the repository's. Moving a
+dependency to a new major is a change to its range in `package.json`,
+made by hand, and for a required devDependency only once Vergil accepts
+that major.
+The full behaviour is in the
+[`vrg-update-deps` reference](../../../reference/dev/update-deps.md#the-npm-updater).
+
 ## CI Gates
 
 See [Source Control Guidelines](../../source-control-guidelines.md#ci-gates)

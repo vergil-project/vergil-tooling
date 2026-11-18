@@ -31,6 +31,7 @@ from vergil_tooling.lib.update_deps.orchestrator import (
 from vergil_tooling.lib.update_deps.report import HeldBack
 from vergil_tooling.lib.update_deps.updater import Updater, UpdateResult
 from vergil_tooling.lib.update_deps.updaters.cargo import CargoUpdater
+from vergil_tooling.lib.update_deps.updaters.npm import NpmUpdater
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -84,7 +85,14 @@ def _state() -> tuple[UpdateDepsState, UpdateDepsContext]:
 
 
 def test_default_registry_names() -> None:
-    assert [u.name for u in DEFAULT_REGISTRY] == ["python", "cargo", "vergil", "images", "hook"]
+    assert [u.name for u in DEFAULT_REGISTRY] == [
+        "python",
+        "cargo",
+        "npm",
+        "vergil",
+        "images",
+        "hook",
+    ]
 
 
 def test_require_ctx_raises_when_missing() -> None:
@@ -654,5 +662,74 @@ def test_orchestrator_records_cargo_failures(
     finalize_stage(state)
     out = capsys.readouterr().out
     assert "Held back by declared bounds:" in out
+    assert "| python | p | 1 | 2 |" in out
+    assert "did not land (update)" in out
+
+
+def test_npm_in_default_registry() -> None:
+    names = [u.name for u in DEFAULT_REGISTRY]
+    assert isinstance(DEFAULT_REGISTRY[names.index("npm")], NpmUpdater)
+    assert names.index("cargo") + 1 == names.index("npm") < names.index("hook")
+
+
+_NPM_LOCK = json.dumps(
+    {
+        "lockfileVersion": 3,
+        "packages": {"": {"name": "app"}, "node_modules/x": {"version": "1.0.0", "license": "MIT"}},
+    }
+)
+
+
+def _npm_outdated(cmd: tuple[str, ...]) -> subprocess.CompletedProcess[str]:
+    if "ci" in cmd:
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    return subprocess.CompletedProcess(cmd, 1, '{"error": {"summary": "ENOTFOUND"}}', "")
+
+
+@pytest.mark.parametrize(
+    ("case", "message"),
+    [
+        ("outdated", "npm outdated reported an error"),
+        ("update", "npm update failed (exit 1)"),
+        ("lock", "Cannot read package-lock.json"),
+        ("manifest", "Cannot read package.json"),
+        ("save", "npm update changed package.json"),
+    ],
+)
+def test_orchestrator_records_npm_failures(
+    tmp_path: Path, monkeypatch, capsys, case: str, message: str
+) -> None:
+    npm_mod = "vergil_tooling.lib.update_deps.updaters.npm"
+    (tmp_path / "package.json").write_text('{"name": "app"}\n')
+    (tmp_path / "package-lock.json").write_text(_NPM_LOCK)
+    if case == "manifest":
+        (tmp_path / "package.json").write_text("{")
+
+    def update(cmd: list[str], **kw: object) -> int:
+        if case == "update":
+            raise subprocess.CalledProcessError(1, tuple(cmd), output="", stderr="ETIMEDOUT")
+        if case == "lock":
+            (tmp_path / "package-lock.json").write_text("{")
+        if case == "save":
+            (tmp_path / "package.json").write_text('{"name": "app", "x": 1}\n')
+        return 0
+
+    monkeypatch.setattr(npm_mod + ".progress.run", update)
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: None)
+    monkeypatch.setattr(_MOD + ".pr.cleanup_worktree", lambda ctx: None)  # noqa: ARG005
+    state = UpdateDepsState(repo_root=tmp_path)
+    state.ctx = UpdateDepsContext(repo="o/r", repo_root=tmp_path)
+    state.registry = [_HeldPython(), NpmUpdater(run=_npm_outdated)]
+
+    run_updaters_stage(state)
+    ctx = state.ctx
+    assert ctx.failure is not None
+    assert ctx.failure.kind == "update"
+    assert ctx.failure.updater == "npm"
+    assert message in ctx.failure.message
+    assert [r.updater for r in ctx.results] == ["python"]
+
+    finalize_stage(state)
+    out = capsys.readouterr().out
     assert "| python | p | 1 | 2 |" in out
     assert "did not land (update)" in out
