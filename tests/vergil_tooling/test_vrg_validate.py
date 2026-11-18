@@ -21,6 +21,7 @@ from vergil_tooling.bin.vrg_validate import (
     ValidationError,
     _build_stages,
     _check_custom_validator,
+    _clean_rust_coverage_on_toolchain_change,
     _command_stage,
     _default_test_version,
     _docs_stage,
@@ -39,6 +40,7 @@ from vergil_tooling.bin.vrg_validate import (
     _run_docs_build,
     _run_semgrep,
     _run_trivy,
+    _rust_toolchain_fingerprint,
     _semgrep_rulesets,
     _semgrep_stage,
     _skip_conan_audit_scan,
@@ -53,7 +55,14 @@ from vergil_tooling.bin.vrg_validate import (
 from vergil_tooling.lib import languages
 from vergil_tooling.lib.config import ConfigError, TestConfig
 from vergil_tooling.lib.container_cache import unbootstrapped_manifests
-from vergil_tooling.lib.languages import RUST_DOCTEST_CMD, CheckKind, language_commands
+from vergil_tooling.lib.languages import (
+    RUST_COVERAGE_FULL_CLEAN_CMD,
+    RUST_COVERAGE_TOOLCHAIN_STAMP,
+    RUST_DOCTEST_CMD,
+    RUST_TOOLCHAIN_PROBE_CMDS,
+    CheckKind,
+    language_commands,
+)
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
     render_vergil_toml,
@@ -539,6 +548,47 @@ def test_main_toolchain_selection_fails_validation(
         assert main([]) == 1
     m_pipeline.assert_not_called()
     assert "ERROR: .python-version selects the Python interpreter" in capsys.readouterr().err
+
+
+def _write_typescript_config(tmp_path: Path) -> None:
+    # No [ci].versions pin: the version step resolves the window's Node majors.
+    (tmp_path / "vergil.toml").write_text(
+        '[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
+        'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
+        'primary-language = "typescript"\n[dependencies]\nvergil = "v2.1"\n[ci]\n'
+    )
+
+
+def test_typescript_malformed_package_json_reports_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Review Focus 4: the version step reports the broken file and stops, before
+    # any later stage (which may also read package.json) has run.
+    _write_typescript_config(tmp_path)
+    (tmp_path / "package.json").write_text("[]", encoding="utf-8")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main([]) == 1
+    m_pipeline.assert_not_called()
+    captured = capsys.readouterr()
+    assert f"ERROR: package.json at {tmp_path / 'package.json'} cannot be parsed" in captured.err
+    assert "Traceback" not in captured.out + captured.err
+
+
+def test_typescript_toolchain_setting_fails_validation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_typescript_config(tmp_path)
+    (tmp_path / "package.json").write_text('{"packageManager": "npm@11.6.0"}', encoding="utf-8")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main([]) == 1
+    m_pipeline.assert_not_called()
+    assert 'ERROR: package.json "packageManager" selects' in capsys.readouterr().err
 
 
 def test_main_python_preference_passes_validation(
@@ -1036,6 +1086,7 @@ def test_rust_test_stage_probes_at_stage_time(tmp_path: Path) -> None:
     stdout = _metadata([_package("tool", ["bin"])])
     with (
         _cargo_metadata(stdout),
+        patch(_MOD + "._clean_rust_coverage_on_toolchain_change", return_value=0),
         patch(_MOD + ".progress.run", return_value=0) as m_progress,
     ):
         stages[1].fn(None)
@@ -1074,18 +1125,29 @@ def _run_rust_test_stage(
     export: object = None,
     export_rc: int = 0,
     doctest_rc: int = 0,
+    recorded_toolchain: str | None = "toolchain",
+    clean_rc: int = 0,
 ) -> tuple[list[list[str]], bool]:
     """Run the Rust TEST stage on a library crate; return the commands and whether it failed.
 
     The coverage command exits *coverage_rc*. The JSON export writes *export*
-    (a string as it is, anything else as JSON) and exits *export_rc*.
+    (a string as it is, anything else as JSON) and exits *export_rc*. The
+    toolchain record matches the toolchain unless *recorded_toolchain* names
+    another (None: no record); the full clean then runs and exits
+    *clean_rc*.
     """
     with patch(_MOD + "._find_custom_validator", return_value=None):
         stages = _build_stages("test", "rust", tmp_path)
+    if recorded_toolchain is not None:
+        stamp = tmp_path / RUST_COVERAGE_TOOLCHAIN_STAMP
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(recorded_toolchain, encoding="utf-8")
     ran: list[list[str]] = []
 
     def fake_run(cmd: list[str], **_kw: object) -> int:
         ran.append(list(cmd))
+        if cmd == RUST_COVERAGE_FULL_CLEAN_CMD:
+            return clean_rc
         if cmd == _RUST_COVERAGE_CMD:
             return coverage_rc
         if cmd == RUST_DOCTEST_CMD:
@@ -1099,6 +1161,7 @@ def _run_rust_test_stage(
     failed = False
     with (
         _cargo_metadata(_metadata([_package("lib", ["lib"])])),
+        patch(_MOD + "._rust_toolchain_fingerprint", return_value="toolchain"),
         patch(_MOD + ".progress.run", side_effect=fake_run),
     ):
         try:
@@ -1198,6 +1261,154 @@ def test_failed_coverage_listing_disagreeing_with_totals_is_reported(
         "error: 1 uncovered region(s) listed, but the coverage totals count 3 missed; "
         "the listing is incomplete"
     ) in out
+    # The contradiction names its likely cause and the fix (issue #4684).
+    assert "points to stale build output" in out
+    assert "Run `cargo llvm-cov clean` in the container (or delete target/)" in out
+
+
+def test_agreeing_listing_names_no_stale_build_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, failed = _run_rust_test_stage(tmp_path, export=_coverage_export(tmp_path))
+    assert failed
+    assert "stale build output" not in capsys.readouterr().out
+
+
+# -- the Rust coverage toolchain record (issue #4684) ---------------------------
+
+
+def _probe_results(*outputs: tuple[int, str]) -> list[subprocess.CompletedProcess[str]]:
+    return [
+        subprocess.CompletedProcess(cmd, rc, stdout=out, stderr="boom")
+        for cmd, (rc, out) in zip(RUST_TOOLCHAIN_PROBE_CMDS, outputs, strict=False)
+    ]
+
+
+def test_toolchain_fingerprint_is_every_probe_in_the_repo(tmp_path: Path) -> None:
+    results = _probe_results((0, "rustc 1.100.0\n"), (0, "cargo 1.100.0\n"), (0, "llvm-cov 0.9.1"))
+    with patch(_MOD + ".subprocess.run", side_effect=results) as m_run:
+        fingerprint = _rust_toolchain_fingerprint(tmp_path)
+    assert [c.args[0] for c in m_run.call_args_list] == RUST_TOOLCHAIN_PROBE_CMDS
+    assert all(c.kwargs["cwd"] == tmp_path for c in m_run.call_args_list)
+    assert fingerprint == (
+        "$ rustc -vV\nrustc 1.100.0\n"
+        "$ cargo -vV\ncargo 1.100.0\n"
+        "$ cargo llvm-cov --version\nllvm-cov 0.9.1\n"
+    )
+
+
+def test_toolchain_fingerprint_changes_with_any_probe(tmp_path: Path) -> None:
+    def fingerprint(rustc: str) -> str:
+        results = _probe_results((0, rustc), (0, "cargo 1.100.0"), (0, "llvm-cov 0.9.1"))
+        with patch(_MOD + ".subprocess.run", side_effect=results):
+            return _rust_toolchain_fingerprint(tmp_path)
+
+    assert fingerprint("rustc 1.99.0") != fingerprint("rustc 1.100.0")
+
+
+def test_toolchain_probe_exiting_non_zero_raises(tmp_path: Path) -> None:
+    results = _probe_results((0, "rustc 1.100.0"), (101, ""))
+    with (
+        patch(_MOD + ".subprocess.run", side_effect=results),
+        pytest.raises(
+            ValidationError, match=r"toolchain probe failed: `cargo -vV` exited 101: boom"
+        ),
+    ):
+        _rust_toolchain_fingerprint(tmp_path)
+
+
+def test_toolchain_probe_that_cannot_run_raises(tmp_path: Path) -> None:
+    with (
+        patch(_MOD + ".subprocess.run", side_effect=FileNotFoundError("no rustc")),
+        pytest.raises(
+            ValidationError, match=r"toolchain probe could not run `rustc -vV`: no rustc"
+        ),
+    ):
+        _rust_toolchain_fingerprint(tmp_path)
+
+
+def _clean_on_change(
+    tmp_path: Path, *, fingerprint: str = "new", clean_rc: int = 0
+) -> tuple[int, list[list[str]]]:
+    ran: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kw: object) -> int:
+        ran.append(list(cmd))
+        return clean_rc
+
+    with (
+        patch(_MOD + "._rust_toolchain_fingerprint", return_value=fingerprint),
+        patch(_MOD + ".progress.run", side_effect=fake_run),
+    ):
+        rc = _clean_rust_coverage_on_toolchain_change(tmp_path)
+    return rc, ran
+
+
+def _write_stamp(tmp_path: Path, text: str) -> Path:
+    stamp = tmp_path / RUST_COVERAGE_TOOLCHAIN_STAMP
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(text, encoding="utf-8")
+    return stamp
+
+
+def test_no_toolchain_record_runs_the_full_clean_and_records(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, ran = _clean_on_change(tmp_path)
+    assert (rc, ran) == (0, [RUST_COVERAGE_FULL_CLEAN_CMD])
+    assert (tmp_path / RUST_COVERAGE_TOOLCHAIN_STAMP).read_text(encoding="utf-8") == "new"
+    assert "NOTICE: no record of the toolchain" in capsys.readouterr().out
+
+
+def test_changed_toolchain_runs_the_full_clean_and_records(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stamp = _write_stamp(tmp_path, "old")
+    rc, ran = _clean_on_change(tmp_path)
+    assert (rc, ran) == (0, [RUST_COVERAGE_FULL_CLEAN_CMD])
+    assert stamp.read_text(encoding="utf-8") == "new"
+    assert "NOTICE: the toolchain changed" in capsys.readouterr().out
+
+
+def test_unchanged_toolchain_runs_no_clean(tmp_path: Path) -> None:
+    _write_stamp(tmp_path, "new")
+    assert _clean_on_change(tmp_path) == (0, [])
+
+
+def test_failed_full_clean_leaves_the_record_alone(tmp_path: Path) -> None:
+    stamp = _write_stamp(tmp_path, "old")
+    rc, ran = _clean_on_change(tmp_path, clean_rc=3)
+    assert (rc, ran) == (3, [RUST_COVERAGE_FULL_CLEAN_CMD])
+    assert stamp.read_text(encoding="utf-8") == "old"
+
+
+def test_unreadable_toolchain_record_raises(tmp_path: Path) -> None:
+    (tmp_path / RUST_COVERAGE_TOOLCHAIN_STAMP).mkdir(parents=True)
+    with pytest.raises(ValidationError, match="could not read the Rust coverage toolchain record"):
+        _clean_on_change(tmp_path)
+
+
+def test_unwritable_toolchain_record_raises(tmp_path: Path) -> None:
+    with (
+        patch.object(Path, "write_text", side_effect=PermissionError("denied")),
+        pytest.raises(ValidationError, match="could not write the Rust coverage toolchain record"),
+    ):
+        _clean_on_change(tmp_path)
+
+
+def test_rust_test_stage_cleans_before_coverage_on_a_changed_toolchain(tmp_path: Path) -> None:
+    ran, failed = _run_rust_test_stage(tmp_path, coverage_rc=0, recorded_toolchain="old")
+    assert not failed
+    assert ran == [RUST_COVERAGE_FULL_CLEAN_CMD, _RUST_COVERAGE_CMD, RUST_DOCTEST_CMD]
+
+
+def test_rust_test_stage_failed_clean_skips_the_coverage_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ran, failed = _run_rust_test_stage(tmp_path, recorded_toolchain=None, clean_rc=2)
+    assert failed
+    assert ran == [RUST_COVERAGE_FULL_CLEAN_CMD, RUST_DOCTEST_CMD]
+    assert "error: `cargo llvm-cov clean` exited 2" in capsys.readouterr().out
 
 
 def test_build_stages_drops_audit_when_only_scan_and_no_token() -> None:

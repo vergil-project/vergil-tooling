@@ -12,10 +12,10 @@ see [the worktree convention spec][worktree-spec].
 ## At a glance
 
 ```text
-new issue  →  branch  →  commit  →  PR  →  (human review)  →  merge  →  finalize
-                  │         │        │                                      │
-                  ▼         ▼        ▼                                      ▼
-            feature/<N>  vrg-commit  vrg-submit-pr                    vrg-finalize-pr
+new issue  →  branch  →  commit  →  PR (auto-merge on)  →  merge on green  →  finalize
+                  │         │        │                                             │
+                  ▼         ▼        ▼                                             ▼
+            feature/<N>  vrg-commit  vrg-submit-pr                           vrg-finalize-pr
 ```
 
 - One issue per branch. Branch name encodes the issue number.
@@ -23,14 +23,18 @@ new issue  →  branch  →  commit  →  PR  →  (human review)  →  merge  �
   `git commit` is blocked.**
 - `vrg-submit-pr` creates the PR with issue linkage. **Raw
   `gh pr create` is blocked.**
-- Merging is **manual**. Every repo allows auto-merge
-  (`allow_auto_merge`) so that the mechanized PRs that
-  `vrg-github-repo-config update` and `vrg-upstream-refresh publish`
-  open on `automation/` branches merge on CI alone (epics
-  vergil-project/.github#1064 and #1168). Agents cannot turn
-  auto-merge on for a PR, and the human merges every development PR.
-- After merge, `vrg-finalize-pr` pulls develop, deletes the merged
-  branch and its worktree, and prunes remote refs.
+- Submitting is the human's decision to merge. `vrg-submit-pr` opens
+  each PR against `develop` with GitHub auto-merge on, and GitHub
+  merges it once its required checks pass (epic
+  vergil-project/.github#1218). `develop` does not require a branch to
+  be up to date, so ready PRs merge in parallel; `main` still does.
+  Every repo allows auto-merge (`allow_auto_merge`), which the
+  mechanized PRs on `automation/` branches use too (epics
+  vergil-project/.github#1064 and #1168). Agents cannot turn auto-merge
+  on for a PR, and never submit one.
+- `vrg-submit-pr` then runs `vrg-finalize-pr` by default, which watches
+  the PRs merge, then syncs `develop`, deletes the merged branches and
+  their worktrees, prunes remote refs and validates `develop` once.
 
 For parallel work on multiple issues, use the worktree convention
 (below) — every session starts at the project root, each concurrent
@@ -177,8 +181,15 @@ vrg-submit-pr \
 - Constructs a standards-compliant PR body with issue linkage,
   auto-selecting `Closes #42` for a managed task (so it closes on
   merge) or `Ref #42` for a legacy issue. `Fixes`/`Resolves` are
-  not accepted.
-- Creates the PR via `gh pr create` under the hood.
+  not accepted. An epic's documentation-task PR also closes the
+  epic's planning issue (see
+  [the planning issue of a docs task](../reference/dev/submit-pr.md#the-planning-issue-of-a-docs-task)).
+- Creates the PR via `gh pr create` under the hood, against `develop`
+  only.
+- Runs the provenance check, then turns GitHub auto-merge on, pinned to
+  the pushed head: squash for a single-issue PR, rebase for a batch PR.
+- Runs `vrg-finalize-pr` on the PR by default (see step 5);
+  `--no-finalize` opens it and returns.
 
 See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
 
@@ -222,8 +233,8 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
     subject ending in `(#N)`; later changes to it are made with
     `vrg-commit --fixup` and folded in with `vrg-git rebase -i --autosquash`.
     `report-ready` names every issue in order (`--issue` repeated),
-    `vrg-submit-pr` writes one `Closes` line per issue, and
-    `vrg-finalize-pr` rebase-merges the PR, so `develop` gets one commit and
+    `vrg-submit-pr` writes one `Closes` line per issue and turns the PR's
+    auto-merge on with the rebase method, so `develop` gets one commit and
     one changelog entry per issue. Each stage re-checks one commit per
     issue. The
     [worktree convention](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md#batches)
@@ -242,34 +253,43 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
     The relay ref is world-readable on a public repo, so keep secrets out
     of the `report-ready` title/summary/notes.
 
-### 4. Wait for review, merge manually
+### 4. The PR merges on green
 
-Once CI is green and a reviewer approves, merge through the GitHub
-UI (squash merge for feature PRs; rebase merge for a batch PR, which
-must keep one commit per issue). No automated merge will happen.
+Review happens before submit: the agent's [merge review](merge-review.md)
+and the human's own reading of the change. Once the PR's required checks
+pass, GitHub merges it, with no further human step. A review comment
+after submit does not hold the merge; the agent's `pr-watch` handles it,
+and fixes a failing check or a conflict while the PR is open. To stop a
+merge, turn the PR's auto-merge off.
 
 ### 5. Finalize with `vrg-finalize-pr`
 
+`vrg-submit-pr` runs this for you by default. Run it by hand after
+`vrg-submit-pr --no-finalize`, after a fix to a PR that did not merge,
+or to settle `develop` after something merged on GitHub:
+
 ```bash
-vrg-finalize-pr            # cleanup only, after merging in the UI
-vrg-finalize-pr <PR>       # provenance check, merge, then cleanup
+vrg-finalize-pr <PR>[,<PR>…]   # watch the PRs merge, then settle develop
+vrg-finalize-pr --cleanup-only # settle develop with no PRs
 ```
 
-This:
+Once at least one PR has merged, this:
 
-- Switches back to the integration branch (`develop`).
-- Pulls the latest.
-- Deletes the merged local feature branch and removes its worktree,
+- Switches back to the integration branch (`develop`) and
+  fast-forwards it, under a checkout lock that keeps two runs from
+  cleaning up the same checkout at once.
+- Deletes each merged local feature branch and removes its worktree,
   along with the branch's PR-workflow relay ref
   (`refs/vergil/pr-workflow/<branch>`).
 - Prunes stale remote-tracking refs and sweeps any orphaned relay ref
   whose branch is gone.
-- Runs post-merge validation via `vrg-container-run` to catch any
-  regression introduced by the merge.
+- Runs one validation via `vrg-container-run` to catch any regression
+  the merges introduced.
+- Reports the CD run of the synced head, without waiting on it
+  (`--wait-cd` waits).
 
-Run this immediately after the PR merges. A Stop hook in the plugin
-will remind you if you try to end the session with an unsubmitted
-or unfinalized PR still dangling.
+A Stop hook in the plugin will remind you if you try to end the
+session with an unsubmitted or unfinalized PR still dangling.
 
 A merged worktree the sweep cannot remove (a dirty tree, or a reused
 branch name with unmerged commits) is not deleted silently —

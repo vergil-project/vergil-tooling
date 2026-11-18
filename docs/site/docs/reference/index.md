@@ -23,7 +23,7 @@ the dev-tree override venv.
 | [vrg-resolve-tracking-issue](cli-tools-overview.md#vrg-resolve-tracking-issue) | Print a merge commit's tracking issue |
 | [vrg-vm](cli-tools-overview.md#vrg-vm) | Manage the identity agent VMs |
 | [vrg-vm-resolve-session](cli-tools-overview.md#vrg-vm-resolve-session) | Pick and start a Claude Code session inside an identity VM (run by `vrg-vm session`) |
-| [vrg-submit-pr](dev/submit-pr.md) | Standards-compliant PR submission wrapper |
+| [vrg-submit-pr](dev/submit-pr.md) | Open standards-compliant PRs with auto-merge on, then finalize them by default |
 | [vrg-pr-workflow](cli-tools-overview.md#vrg-pr-workflow) | Record and manage the PR handoff state that `vrg-submit-pr` reads |
 | [vrg-pr-await](cli-tools-overview.md#vrg-pr-await) | Block until a PR merges (exit 0) or cannot merge (exit 1, naming why) |
 | [vrg-pr-review-comments](cli-tools-overview.md#vrg-pr-review-comments) | List a PR's inline review comments, read-only |
@@ -33,7 +33,7 @@ the dev-tree override venv.
 | [vrg-promote](cli-tools-overview.md#vrg-promote) | Move the rolling `vX.Y` tag to a release (human-only) |
 | [vrg-version](cli-tools-overview.md#vrg-version) | Print or bump the repo's version |
 | [vrg-update-deps](dev/update-deps.md) | Update dependencies within their declared bounds and merge the result |
-| [vrg-finalize-pr](dev/finalize-pr.md) | Merge a PR and run post-merge cleanup |
+| [vrg-finalize-pr](dev/finalize-pr.md) | Watch a batch of auto-merging PRs, then settle develop once |
 | [vrg-ruling](dev/ruling.md) | The agent's side of an authenticated ruling: post a request, draft the reply, read it, post the response; also draft a scope change |
 | [vrg-ruling-reply](dev/ruling-reply.md) | Post the human's reply to a ruling request, as the human (human-only) |
 | [vrg-scope-change](dev/scope-change.md) | Post a scope change on a task issue, as the human (human-only) |
@@ -80,6 +80,7 @@ Run inside dev containers launched by `vrg-container-run`.
 | [repo-profile](lint/repo-profile.md) | Repository profile attribute validation (a `vrg-validate` common check, not a command) |
 | [vrg-package](cli-tools-overview.md#vrg-package) | Build, install-test and index binary OS packages from `[package]` |
 | [vrg-ci-resolve](cli-tools-overview.md#vrg-ci-resolve) | Resolve the repo's CI versions from the published version window |
+| [vrg-npm-audit-gate](cli-tools-overview.md#vrg-npm-audit-gate) | Gate an `npm audit` report, honoring the repo's `.npm-audit-exceptions` |
 | [vrg-sarif-filter](cli-tools-overview.md#vrg-sarif-filter) | Drop accepted-suppressed results from a SARIF file before upload |
 | [vrg-sarif-evaluate](cli-tools-overview.md#vrg-sarif-evaluate) | Report a SARIF file's findings at the chosen severities |
 | [vrg-semgrep-scan](cli-tools-overview.md#vrg-semgrep-scan) | Run a semgrep scan with language-resolved rulesets and write SARIF |

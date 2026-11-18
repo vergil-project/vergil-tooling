@@ -4,205 +4,132 @@
 
 **Source:** `src/vergil_tooling/bin/vrg_finalize_pr.py`
 
-Finalizes a pull request and reconciles local state afterwards. Has
-three modes:
+Watches a batch of pull requests until each one has merged, then settles
+`develop` once. [`vrg-submit-pr`](submit-pr.md) opens every PR with GitHub
+auto-merge on, and GitHub merges each one once its required checks pass.
+`vrg-finalize-pr` **never merges a PR** and never turns auto-merge on
+(epic vergil-project/.github#1218). A run has five phases:
 
-- **`vrg-finalize-pr <PR>`** — runs the pre-merge provenance check,
-  waits for checks to go green, merges the PR (or confirms it is
-  already merged), then runs the cleanup below. This replaces a
-  manual web merge followed by a separate cleanup step.
-- **`vrg-finalize-pr`** (no PR) — interactive: infers the PR from the
-  `.worktrees/` worktrees and always confirms before acting (see
-  *Choosing the PR* below). With no candidates, cleanup-only after
-  confirmation: switch to the target branch, fast-forward pull,
-  delete merged local branches, and prune stale remote-tracking
-  references.
-- **`vrg-finalize-pr --cleanup-only`** — non-interactive release path:
-  skips inference and merge entirely, never reads stdin, and runs only
-  the cleanup. This is what `vrg-release` invokes during its
-  close-finalize phase (issue #1448). Mutually exclusive with a PR
-  argument.
+1. **Watch.** It follows every listed PR, holding no lock, until each one
+   has merged, has failed, or the batch deadline has passed.
+2. **Settle.** If at least one PR merged, it closes any issue GitHub left
+   open, then, under the checkout lock, syncs the main worktree to
+   `origin/develop`, cleans up merged branches and worktrees, provisions the
+   dev image and runs one `vrg-container-run -- vrg-validate` on the synced
+   head.
+3. **CD report.** It reports the synced head's CD run without waiting on it.
+   With `--wait-cd`, it waits for that run instead.
+4. **Report.** It lists every PR as merged or not merged, with the reason
+   and what to do next, and gives the validate's result.
+5. **Release.** With `--release`, and only on full success, it chains into
+   `vrg-release`.
 
-Must be run from the **main worktree** — the cleanup removes
-worktrees, which is unsafe when the calling shell's CWD is inside one.
+`vrg-submit-pr` runs finalize itself by default, over every PR it opened,
+so finalize is normally run by hand only to watch PRs opened with
+`vrg-submit-pr --no-finalize`, to watch them again after a fix, or to
+settle `develop` after something merged on GitHub (`--cleanup-only`).
 
-## Choosing the PR
+Must be run from the **main worktree**: the cleanup removes worktrees,
+which is unsafe when the calling shell's CWD is inside one.
 
-- `vrg-finalize-pr <pr-url-or-number>` — no prompts; the explicit
-  argument is the confirmation. This is the scriptable path
-  (`vrg-submit-pr` prints the URL to pass here).
-- `vrg-finalize-pr` (no arguments) — infers candidates by mapping each
-  `.worktrees/` worktree's branch to its open PR, and **always
-  confirms before acting**: one candidate asks `Finalize PR #N?`;
-  several present a menu; none asks before running cleanup-only.
-  Worktrees without an open PR are listed with the reason they were
-  skipped. Inference mode requires an interactive terminal and fails
-  fast unless both stdin and stdout are TTYs — a captured stdout would
-  make the prompts invisible (issue #1448).
-- `vrg-finalize-pr --cleanup-only` — no prompts and no merge; the
-  scriptable path for callers (like `vrg-release`) that only want the
-  cleanup.
+## Choosing the PRs
 
-## Waiting for green
+- `vrg-finalize-pr <pr>[,<pr>…]`: a comma list of PR numbers or URLs; one
+  PR is a list of one. No prompts: the explicit argument is the
+  confirmation. This is the scriptable path, and the one `vrg-submit-pr`
+  runs.
+- `vrg-finalize-pr --all`: every open PR whose branch has a worktree in
+  `.worktrees/`, in branch-name order. A worktree with no open PR is
+  listed with the reason it was skipped.
+- `vrg-finalize-pr` (no arguments): interactive. It maps each `.worktrees/`
+  worktree's branch to its open PR and **always confirms before acting**:
+  one candidate asks `Finalize PR #N?`; several present a menu; none asks
+  before running the settle phase alone. Worktrees without an open PR are
+  listed with the reason they were skipped. It needs an interactive
+  terminal and fails fast unless both stdin and stdout are TTYs, since a
+  captured stdout would make the prompts invisible (issue #1448). `--yes`
+  pre-answers the yes/no prompts, but not the menu.
+- `vrg-finalize-pr --cleanup-only`: no PRs and no watch. It runs the
+  settle phase and the CD report only, never prompts and never reads
+  stdin. `vrg-release` runs it in its `close-finalize` stage, and a human
+  runs it after an automated job merges a PR on GitHub. Its exit codes are
+  a watched run's.
 
-When the PR's checks are not finished, `vrg-finalize-pr` waits for
-them and merges automatically once everything is green and current.
-The wait is **bounded** by a deadline — it never blocks forever — and
-it never merges past a non-terminal check. Doomed outcomes abort
-immediately rather than after the wait: a draft PR, merge conflicts, a
-failed check (named in the error), or a branch still behind after five
-update attempts. A branch that is merely behind the target is updated
-automatically and the wait restarts (a batch PR is updated by rebase: see
-[Batch PRs](#batch-prs-one-pr-closing-several-issues)).
-
-**Orphaned check-runs.** GitHub occasionally leaves a check-run
-non-terminal (`queued`/`in_progress`) even though the workflow run that
-owns it has already completed — an *orphan* that would never go green on
-its own. The waiter detects this **while waiting**, not only at the
-deadline (issue #3358). About every 30 seconds it checks the backing run
-(`gh run view`) of each pending Actions check. Once a run has completed,
-its check gets a one-minute grace period to turn terminal. If the check is
-still pending after that, the backing job's own conclusion decides
-(`GET /repos/{owner}/{repo}/actions/jobs/{job_id}`):
-
-- The job **succeeded** and the check is **not required**: the check is
-  treated as passed and a warning names it (`'test / matrix' check-run
-  stale; backing job succeeded`), so the merge goes ahead instead of waiting
-  out the deadline. Checks that really failed are still caught by the
-  failed-checks gate.
-- The job **succeeded** but the check is one of the target branch's
-  **required** status checks: the check is a **suspected orphan** (issue
-  #3379). GitHub keeps blocking the merge on a required check it reports as
-  pending, so passing it would only move the wait to the merge step. If it
-  is still pending when the grace period below runs out, the error names the
-  check, says GitHub will block the merge until it settles, and gives the
-  same close-and-reopen guidance.
-- The job **succeeded** but the required checks **could not be read** (see
-  *Required checks* below): a **suspected orphan** for the same reason,
-  because finalize cannot tell whether GitHub will block on the stale check.
-  The error, if the grace runs out, says the required-check lookup failed.
-  Without a stale check, a failed lookup still only warns and waits on
-  registered checks.
-- The job **did not succeed**, has no conclusion, or its conclusion **cannot
-  be read**: a **suspected orphan**. If the grace runs out, finalize aborts
-  with recovery guidance: close and reopen the PR to re-run the gate, then
-  re-run `vrg-finalize-pr`. The error names each such check, its job's
-  outcome and its job link.
-
-**Grace period for suspected orphans.** During a GitHub Actions incident,
-GitHub can write job results back minutes late, and at the moment of
-checking that looks exactly like an orphan (issue #3431). Closing and
-reopening the PR then would throw away results that are on their way. So a
-suspected orphan is not declared at once. The waiter prints a warning naming
-the suspects (`… have a completed run but no result yet … GitHub may be
-delayed; re-checking for up to 5m00s …`) and keeps polling, re-reading each
-suspect's job about every 30 seconds. A result that arrives in time lets the
-wait finish normally. Only a check still pending when the grace runs out is
-declared orphaned, and the error says how long each check waited. The grace
-defaults to 5 minutes from when the backing run was first seen completed.
-Set `VRG_ORPHAN_GRACE` (seconds, a positive whole number) to change it; a
-malformed value is an error. `vrg-pr-await` applies the same grace before it
-reports a PR as unable to merge with reason `orphaned_check`.
-
-The deadline is the backstop. When it elapses with checks still pending,
-each one is checked against its backing run again, and a non-terminal check
-over a completed run aborts with the same guidance. Genuinely
-still-running checks are waited on as normal; if the deadline elapses
-with nothing orphaned (for example an app-posted status that is legitimately
-slow), finalize fails with a timeout error that names every still-pending
-check and its run/job link, with the recovery path: re-run the stuck job,
-then re-run the waiting command (`vrg-finalize-pr`, or `vrg-release --resume`).
-
-**Deadline.** The deadline defaults to 30 minutes (about four times the
-longest legitimate CI run, 5–8 minutes) and is shared by every merge wait:
-`vrg-finalize-pr`, `vrg-release` (merge-release, back-merge-bump) and
-`vrg-update-deps`. Set `VRG_CHECKS_TIMEOUT`
-(seconds, a positive whole number) to change it; a malformed value is an
-error, and the deadline cannot be disabled. While waiting, the waiter prints
-each pending check with how long it has been pending, re-reporting whenever
-the pending set changes and at least once a minute.
-
-**Stale check-runs.** GitHub occasionally sets a check-run's `conclusion`
-and `completedAt` but leaves its `status` at `IN_PROGRESS`. `gh pr checks`
-derives its state from `status`, so it reports such a check as pending
-indefinitely. The waiter checks each pending check's `conclusion` in the
-PR's `statusCheckRollup`. A check that has a conclusion is terminal and is
-classified by that conclusion, so a stale success passes and a stale failure
-fails. A warning names the inconsistent check (issue #3170).
-
-**Required checks.** "Green" includes the target branch's *required*
-status checks, read from both classic branch protection
-(`GET /repos/{owner}/{repo}/branches/{branch}`) and repository rulesets
-(`GET /repos/{owner}/{repo}/rules/branches/{branch}`). CI aggregator jobs
-such as `test / evidence` only register as checks once their dependencies
-finish, so every *registered* check can be done while a required one does
-not exist yet. Finalize keeps waiting until each required check is
-registered and terminal, printing what it awaits (for example
-`Awaiting required checks: test / evidence (not registered)`). If the
-merge is still refused with "the base branch policy prohibits the merge"
-and no check has failed, finalize treats it as *not ready*: it polls and
-re-attempts within the same deadline, then fails naming the outstanding
-required checks. A policy block that waiting cannot clear, such as a
-required review (`reviewDecision=REVIEW_REQUIRED`), aborts at once. If the
-required checks cannot be read (permissions or an API error), finalize
-prints a warning and falls back to waiting on registered checks only
-(issue #3061).
-
-A required check can also be one a job's upload creates: `Semgrep OSS`,
-`Trivy` and `CodeQL` are registered by GitHub Advanced Security only once
-the `security / semgrep`, `security / trivy` or `security / codeql` job
-uploads its SARIF results. When that job fails before its upload, the check
-never registers. So when a required check is unregistered and its producing
-job has already failed (or been cancelled), finalize stops waiting at once,
-even with other checks still running. It fails naming the unregistered
-check and the producing job with its result (for example `Required check
-Semgrep OSS was never registered and will not arrive: its producing job
-security / semgrep (failed) ended before uploading it.`), rather than
-waiting out the deadline. A required check with no known producing job
-still gets a fail-fast, only later: once every registered check has
-finished and one has failed, finalize stops waiting for it and names the
-failed checks as its likely cause (issue #4294).
-
-After the merge, the PR's own branch and worktree are cleaned up
-explicitly (a squash merge hides them from `git branch --merged`),
-followed by the usual sweep, pull, and prune.
+A PR list, `--all` and `--cleanup-only` are mutually exclusive.
 
 ## Usage
 
 ```bash
-vrg-finalize-pr [PR | --cleanup-only] [--target-branch BRANCH]
-                [--strategy {merge,squash,rebase}]
-                [--allow-provenance-violation] [--clean-dirty] [--dry-run]
-                [--no-wait-cd]
+vrg-finalize-pr [PR[,PR…] | --all | --cleanup-only]
+                [--target-branch BRANCH] [--wait-cd]
+                [--release [--no-install]]
+                [--allow-provenance-violation] [--clean-dirty]
+                [--dry-run] [--yes]
 ```
 
 ## Arguments
 
 | Argument | Description |
 | -------- | ----------- |
-| `PR` | PR number or URL to merge and finalize. Omit to infer interactively. |
-| `--cleanup-only` | Skip PR inference and merge; run cleanup without prompting or reading stdin (non-interactive release path). Mutually exclusive with `PR`. |
-| `--target-branch` | Branch to switch to (default: `develop`) |
-| `--strategy` | Merge strategy when a PR is given (default: `squash`; `rebase` for a batch PR, `merge` for a `release/*` branch). `squash` is refused on a batch PR |
-| `--allow-provenance-violation` | Leave auto-merge on for an open PR with a provenance violation (conscious human override). It does not cover a violation that has already merged: see *Provenance* below |
+| `PR` | A PR number or URL, or a comma list of them, to watch. Omit to pick interactively. |
+| `--all` | Watch every open PR whose branch has a worktree in `.worktrees/`. |
+| `--cleanup-only` | Settle `develop` with no PRs: the sync, cleanup, provision and validate, then the CD report. Never prompts or reads stdin. |
+| `--target-branch` | The branch to sync and validate (default: `develop`). |
+| `--wait-cd` | Block on the CD run for the synced head and fail if it does not succeed. By default finalize reports that run's link and state without waiting. |
+| `--release` | On full success, chain into `vrg-release`, which installs by default. Refused on a repo that is not released (`[publish] release = true`), before any watch or cleanup. |
+| `--no-install` | With `--release`, run `vrg-release --no-install`. Refused without `--release`. |
+| `--allow-provenance-violation` | Leave auto-merge on for an open PR with a provenance violation (a conscious human override). It does not cover a violation that has already merged: see [Provenance](#provenance). |
 | `--clean-dirty` | Opt-in: clear a merged/closed worktree whose only dirt is untracked build/validation output, after showing what will be deleted and confirming. Never touches modified tracked files or a reused-branch straggler with unmerged commits (issue #2348). |
-| `--dry-run` | Show what would be done without making changes |
-| `--no-wait-cd` | Do not block on the CD workflow run the merge triggers. Blocking (and failing on a non-success run) is the default (issue #2753); this is the conscious opt-out. |
+| `--dry-run` | Say what would be watched and done without changing anything. The settle phase's steps print what they would do. |
+| `--yes` | Pre-answer the interactive yes/no prompts. |
+
+### Removed flags
+
+Each removed flag is refused by name before any side effect, exits 1 and
+names what replaced it:
+
+| Flag | Why it is gone |
+| ---- | -------------- |
+| `--strategy` | Finalize no longer merges. `vrg-submit-pr` chooses the merge method when it turns auto-merge on: squash for a single-issue PR, rebase for a batch PR. |
+| `--no-wait-cd` | Not waiting on CD is the default; `--wait-cd` opts in to waiting. |
+| `--skip-post-checks` | One run watches every listed PR, then settles `develop` once. Pass the PRs as a comma list. |
+| `--install` | `--release` installs by default; `--no-install` opts out. |
 
 ## Behavior
 
-### 1. Provenance Check, Wait, and Merge (PR mode only)
+### 1. Watch
 
-If the PR is already merged, the merge step is skipped and
-finalize goes straight on to the closing-reference check (1a) and
-cleanup. Otherwise the wait-for-green loop runs (see *Waiting for
-green*) and the PR is merged with the selected strategy. `--dry-run`
-skips the wait and prints what it would do.
+The watch reads each open PR once per poll and judges it in this order:
+
+1. **Develop PRs only.** A PR whose base is not `develop`, or whose head is
+   a `release/*` branch, ends as *failed: not a develop PR* and is left
+   untouched. A release PR goes through `vrg-release`.
+2. **Merged.** The PR ends as *merged*. A PR that merged before the run
+   started counts as merged at once, and the watch goes on for the rest.
+3. **Closed** without merging: *failed: closed*.
+4. **Provenance.** See [Provenance](#provenance) below.
+5. **Auto-merge off**, at the start or mid-watch: *failed: auto-merge off*.
+   Finalize never turns it back on: someone turned it off on purpose, or
+   GitHub did, and a human looks first.
+6. **A required check failed:** *failed: CI*, naming the check. A failed
+   check-run of a superseded workflow run does not count. When the base
+   branch's required checks cannot be read, every check counts as
+   required.
+7. **A conflict** with its base: *failed: conflict*.
+
+A PR still pending when the batch deadline passes ends as *timed out*,
+and its auto-merge stays on, so it may still merge later. The deadline
+covers the whole watch: `$VRG_FINALIZE_DEADLINE` seconds, 7200 by default.
+A value that is not a positive whole number is an error before any
+waiting. Any failure to read a PR, to run the provenance check or to turn
+auto-merge off stops the run with exit 1; none is read as a pending or a
+clean PR.
 
 #### Provenance
 
 The watch runs the provenance check on every PR when it starts, and
-again each time a PR's head changes. Advisories are printed but do not
+again each time a PR's head changes. `vrg-submit-pr` ran the same check
+before it turned auto-merge on. Advisories are printed but do not
 block. What a violation does depends on whether the PR has merged:
 
 - **Open PR.** Finalize turns the PR's auto-merge off and reports it
@@ -218,82 +145,131 @@ block. What a violation does depends on whether the PR has merged:
   override does not cover a violation that has already merged, which a
   human must look at before any release (issue #4662).
 
-### 1a. Close Issues GitHub Left Open (PR mode only)
+#### Status table
+
+The watch prints a status table to stdout once at start-up and again
+after every poll, about every 15 seconds (issue #4677). It has one row
+for each PR in the batch:
+
+```text
+Watch status after 0m30s:
+  PR     TITLE                                     STATE               WAITING
+  #4661  feat(finalize): watch a batch of PRs      merged              0m15s
+  #4662  fix(provenance): flag a merged violation  checks pending (2)  0m30s
+  #4663  docs: describe the watch                  failed: CI          0m15s
+  1 merged, 1 pending, 1 failed; 1h59m30s left before the batch deadline
+```
+
+- **PR** and **TITLE**: the PR number and its title, cut to 50
+  characters with `...`.
+- **STATE**: while the PR is pending, `checks pending (<n>)` (checks not
+  finished yet, counting a required check that has not registered),
+  `checks green, merging` (no check left, and GitHub can merge it),
+  `behind develop`, or `waiting (<merge state>)` for any other merge
+  state, such as `waiting (blocked)`. Once the PR has ended, the outcome
+  it ended with: `merged` or a `failed: …` outcome.
+- **WAITING**: how long the PR has waited since the watch started. A PR
+  that has ended keeps its row, its time frozen when it ended, so the PRs
+  can be watched merging one by one.
+
+The last line counts the merged, pending and failed PRs and gives the
+time left before the batch deadline (`$VRG_FINALIZE_DEADLINE`). The table
+is printed as plain lines and never redraws the terminal, so it reads the
+same in a log. The per-PR outcome lines and the final report are as
+before.
+
+### 2. Settle
+
+The settle phase runs once, after the watch, and only when at least one
+PR merged. With no PR merged it is skipped, and the report says so.
+`--cleanup-only` runs it with no PRs.
+
+#### Close issues GitHub left open
 
 GitHub sometimes skips the closing-keyword auto-close, which leaves a
-merged task open and blocks epic rollup (issue #4002). Once the merge is
-confirmed, finalize reads the PR's `closingIssuesReferences`: the issues
-GitHub itself lists as closed by the PR, through a closing keyword or a
+merged task open and blocks epic rollup (issue #4002). For each merged
+PR, finalize reads its `closingIssuesReferences`: the issues GitHub
+itself lists as closed by the PR, through a closing keyword or a
 Development link. It never parses the PR text, so an issue the PR only
 mentions (`Ref` linkage) is never touched. If any listed issue is still
 open, finalize waits 10 seconds for an auto-close still in flight, reads
 again, then closes each one still open with reason `completed` and the
 comment "Completed by PR `<owner>/<repo>#N` (merged `<time>`); GitHub
 did not auto-close it." Each closed issue is reported in the output.
-This also runs when the PR was already merged, so re-running
-`vrg-finalize-pr <PR>` closes an issue an earlier merge left open.
 
-A failure to read the references, or to close any issue, fails the
-stage and finalize exits 1. Every close is tried first, and the error
-names each issue still open. The cleanup below still runs, because the
-PR is already merged. `--dry-run` reads and closes nothing.
+This step touches only GitHub, so it runs before the checkout lock is
+taken. A failure to read the references, or to close any issue, makes
+finalize exit 1. Every merged PR is handled first, and the error names
+each issue still open. The rest of the settle phase still runs, because
+the PRs have merged.
 
-### 1b. Explicit-Target Cleanup (PR mode only)
+#### The checkout lock
 
-The just-merged PR branch and its `.worktrees/` worktree are deleted
-by name. The default squash strategy rewrites history onto the
-target, so the branch is never an ancestor and the merged-branch
-sweep below cannot see it. The branch's PR-workflow relay ref
-(`refs/vergil/pr-workflow/<branch>`, pushed by `report-ready`) is
-deleted alongside it, so a cloud-handoff ref never outlives its
-branch (issue #2369). Deleting a relay ref that was never pushed is a
-no-op.
+The sync, cleanup, provision and validate run under the checkout lock,
+an exclusive lock on `<main clone>/build/.vergil-state/checkout.lock`
+that `vrg-release`'s preflight sync and `vrg-update-deps` also take. Two
+finalize runs, or a finalize and a release, never sync or clean up the
+same checkout at once. A run that finds the lock held waits, and says
+so. The lock is let go before the CD report, so it never covers a wait
+on GitHub, and before any chained release, so the release's preflight
+can take it.
 
-### 2. Switch to Target Branch
+#### Sync and cleanup
 
-Checks out the target branch (default: `develop`).
+1. **Switch** to the target branch (default: `develop`).
+2. **Sync.** Fetch `origin/<target>` with `--tags --force` and
+   fast-forward to it. Finalize records the head before and after, for
+   the CD report and for the report of a develop that did not validate.
+3. **Delete the merged PRs' branches.** Each merged PR's head branch and
+   its `.worktrees/` worktree are deleted by name, since a squash merge
+   hides the branch from `git branch --merged`. The branch's PR-workflow
+   relay ref (`refs/vergil/pr-workflow/<branch>`, pushed by
+   `report-ready`) is deleted with it, so a cloud-handoff ref never
+   outlives its branch (issue #2369). A branch with no local copy is
+   skipped, saying so.
+4. **Sweep merged branches and worktrees.** Every canonical `.worktrees/`
+   worktree whose PR is merged or closed and whose tree is clean is
+   removed, with its branch. Local branches merged into the target are
+   deleted too, with two guards, so the sweep never races a parallel
+   agent session in its creation-to-first-commit window (issue #1445):
+    - **Zero-commit branches are skipped.** A branch whose tip equals the
+      target's carries no merged work, and it is exactly what an in-flight
+      branch looks like before its first commit.
+    - **Merge evidence is required.** A branch is swept only when a closed
+      or merged PR exists for its head; ancestry alone cannot tell a merged
+      branch from one created off an older target tip. A branch skipped for
+      lack of evidence is listed with the reason.
 
-### 3. Fast-Forward Pull
+    Eternal branches are never deleted. Which they are depends on the
+    `branching_model`:
 
-Fetches (`--tags --force`) and fast-forward merges `origin/{target}`.
+    | Branching Model | Protected Branches |
+    | --------------- | ------------------ |
+    | `docs-single-branch` | `develop`, `gh-pages` |
+    | `library-release` | `develop`, `main`, `gh-pages` |
+    | `application-promotion` | `develop`, `release`, `main`, `gh-pages` |
 
-### 4. Delete Merged Branches and Worktrees
+    With no `branching_model`, finalize warns and protects `develop`,
+    `main` and `gh-pages`.
+5. **Prune.** Any relay ref whose branch no longer exists on origin is
+   pruned, as a safety net for a branch deleted outside finalize. Cached
+   container images whose branch is live in no repo of the platform repo
+   set are removed (skipped on the physical host, which has no default
+   repo set); a failed image removal is a warning, never a failure
+   (issue #3566). Then `git remote prune origin`.
+6. **Working-tree cleanliness gate.** Finalize fails if the target
+   branch's working tree is not clean, so leftover files are cleaned up
+   before the next issue.
 
-Deletes local branches merged into the target branch. If a merged
-branch is still checked out in a canonical `.worktrees/` worktree, that
-worktree is removed first (skipped if it has uncommitted changes).
-Cached container images for the branch are cleaned.
+##### Stuck merged worktrees are surfaced, not buried
 
-Two guards keep this sweep from racing parallel agent sessions in
-their creation-to-first-commit window (issue #1445), since
-`git branch --merged` classifies a branch just created from the
-target's tip as merged:
+A merged/closed worktree the sweep cannot remove, because its tree is
+dirty or its branch name was reused after a same-named PR merged
+(issue #1719), is neither live work nor removable cruft. Finalize reports
+every such worktree **prominently after the pipeline**, with the reason,
+so finishing with stuck worktrees is impossible to miss (issue #2348).
 
-- **Zero-commit branches are skipped.** A branch whose tip equals the
-  target's tip carries no merged work, so deleting it saves nothing —
-  and it is exactly what an in-flight issue branch looks like before
-  its first commit.
-- **Merge evidence is required.** A branch is only swept when a closed
-  or merged PR exists for its head; ancestry alone cannot distinguish
-  a merged branch from one created off an older target tip. Branches
-  skipped for lack of evidence are listed with the reason and left for
-  manual cleanup.
-
-Both guards gate the worktree removal as strictly as the branch
-deletion. The explicit-target cleanup (step 1b) is unaffected — the
-just-merged PR branch has merge evidence by construction.
-
-#### Stuck merged worktrees are surfaced, not buried
-
-A merged/closed worktree the sweep cannot remove — its tree is dirty,
-or its branch name was reused after a same-named PR merged
-(issue #1719) — is neither live work nor removable cruft. Rather than leaving
-the skip reason inside the collapsed progress-stage log (where a clean
-`✓ cleanup` summary hides it), finalize reports every such worktree
-**prominently after the pipeline**, with the reason, so finishing with
-stuck worktrees is impossible to miss (issue #2348).
-
-#### `--clean-dirty`: guarded clear of untracked-only dirt
+##### `--clean-dirty`: guarded clear of untracked-only dirt
 
 The common Mac case is a merged worktree whose only "dirt" is
 un-gitignored build or validation output. `--clean-dirty` offers an
@@ -303,173 +279,141 @@ opt-in path to clear exactly that, after the pipeline, on real stdio:
   **untracked** is a candidate. A reused-branch straggler classifies as
   `no-pr`/`draft` (its merged verdict withheld, issue #1719), so it is
   never in a clearable state and its unmerged commits are never at risk.
-- A worktree with **modified tracked files** is refused — those are
-  never discarded — and left surfaced as needing attention.
+- A worktree with **modified tracked files** is refused, since those are
+  never discarded, and is left surfaced as needing attention.
 - Each removal **shows exactly what will be deleted** (the untracked
   paths) and **requires confirmation** before `git worktree remove
   --force` discards the output and deletes the branch.
 
-The default guards are unchanged: without `--clean-dirty`, anything with
-tracked modifications or unmerged commits is protected, as before.
+Without `--clean-dirty`, anything with tracked modifications or unmerged
+commits is protected.
 
 > **Tip:** the cleaner fix is to gitignore your validation output so the
-> worktree is never dirtied in the first place — then it sweeps
-> automatically with no `--clean-dirty` needed. That is repo-specific
-> configuration, out of scope for finalize itself.
+> worktree is never dirtied in the first place. Then it sweeps
+> automatically with no `--clean-dirty` needed.
 
-Eternal branches are protected based on the `branching_model`:
+#### Provision and validate
 
-| Branching Model | Protected Branches |
-| --------------- | ------------------ |
-| `docs-single-branch` | `develop`, `gh-pages` |
-| `library-release` | `develop`, `main`, `gh-pages` |
-| `application-promotion` | `develop`, `release`, `main`, `gh-pages` |
+Finalize provisions the target branch's dev image first, since the sync
+has just moved the branch (issue #2462), then runs one
+`vrg-container-run -- vrg-validate` on the synced head. One validate
+covers every PR the run saw merge, and anything else that merged
+meanwhile.
 
-### 5. Prune Remote References
+When the validate fails, or cannot run (a dev image that could not be
+provisioned included), finalize says so loudly after the report:
+`<branch> DID NOT VALIDATE`, with the head it validated, the commits the
+sync brought in, the validate's full log
+(`.vergil/vrg-finalize-validate-<stamp>.log`) and the last 40 lines of
+each of its output streams. The CD report still runs.
 
-Runs `git remote prune origin` to clean up stale remote-tracking
-branches. As a swept safety net, any PR-workflow relay ref
-(`refs/vergil/pr-workflow/*`) whose branch no longer exists on origin
-is pruned too, so a relay ref stranded by a branch deleted outside
-finalize (or by an earlier failed run) is never left behind
-(issue #2369).
+### 3. CD report
 
-### 6. Working-Tree Cleanliness Gate
+Finalize finds the CD workflow run for the synced head by its commit,
+never as "the latest run on the branch", which can be a stale or
+unrelated run (issue #2753). It polls up to two minutes for the run to
+register.
 
-Fails if the target branch's working tree is not clean, so leftover
-files are cleaned up before the next issue.
+**By default it reports the run and does not wait on it.** It prints one
+line, `CD: <state> <url>`, the state being `queued`, `in progress`,
+`succeeded`, `failed`, `cancelled` or `superseded`. A `failed`,
+`cancelled` or `superseded` state is a warning (⚠), never a failure: the
+release's [develop-CD gate](../../guides/releasing.md#the-develop-cd-gate)
+is what refuses to cut a release from a `develop` whose CD is not green.
+Two other lines are plain:
 
-### 7. Post-Finalization Validation
+- `CD: no CD workflow in this repo`, for a repo whose workflows declare
+  no CD, with no warning;
+- `CD: no CD run for this head`, when no run registered in time (a change
+  CD legitimately skips).
 
-Runs canonical validation via `vrg-container-run` to catch problems on
-the target branch before the next PR is created.
+Any other failure to list the runs is `CD: unknown`, with the reason,
+and a warning.
 
-### 8. CD Workflow Wait
+**With `--wait-cd`, finalize blocks on the run** and fails if it does not
+succeed:
 
-Blocks on the CD workflow run **this merge triggered** — identified by
-the merge commit SHA, not "the latest run on the branch" — and fails if
-that run does not succeed (issue #2753). The base-branch push a merge
-produces dispatches CD asynchronously (docker build/publish, docs,
-release), so finalize polls for the run to register (bounded by a
-dispatch timeout), watches it to completion (bounded by a watch
-timeout), and surfaces the failing run's URL so a post-merge publish
-failure is caught here rather than discovered later. `--no-wait-cd` is
-the conscious opt-out from blocking. When the repo has no CD workflow,
-or no run is dispatched for the merge within the dispatch window (a
-change CD legitimately skips), finalize does not block.
+- **Watch deadline.** The wait defaults to 90 minutes (5400 seconds),
+  about twice the longest known CD: vergil-containers' CD routinely takes
+  around 43 minutes. Set `VRG_CD_TIMEOUT` (seconds, a positive whole
+  number) to change it; a malformed value is an error, and the deadline
+  cannot be disabled.
+- **Failed jobs are judged as the release gate judges them.** A run that
+  failed only in a docs job is a loud warning, not a failure. Any other
+  failure names the failed jobs and fails the run (exit 4).
+- **Timeout is not failure.** A run still going at the deadline gets the
+  headline "CD run still in progress after Ns; result unknown", with the
+  run URL, a `gh run view <id>` command, and a pointer to
+  `vrg-finalize-pr --cleanup-only --wait-cd` to re-confirm once the run
+  has finished. It still fails the run, because an unknown result is not
+  a pass, but it never claims the run failed (issue #3316).
+- **Superseded is not failure.** A run that concluded `cancelled` is
+  checked for a concurrency supersede: every job ended passing or
+  cancelled, and every cancelled job carries GitHub's annotation
+  "Canceling since a higher priority waiting request for `<group>`
+  exists". Such a run ends with a loud warning that this head's CD result
+  is not confirmed, naming the group, since GitHub does not record which
+  run took its place. Any other cancellation, or one whose jobs or
+  annotations cannot be read, is a failure that says why (issue #3834).
 
-**Watch deadline.** The watch defaults to 90 minutes (5400 seconds),
-about twice the longest known CD: vergil-containers' CD routinely takes
-around 43 minutes, because its rust image jobs alone take about 40. Set
-`VRG_CD_TIMEOUT` (seconds, a positive whole number) to change it. It
-mirrors `VRG_CHECKS_TIMEOUT`: a malformed value is an error rather than a
-silent fallback, and the deadline cannot be disabled.
+### 4. Report
 
-**Timeout is not failure.** A run that concludes non-success fails the
-stage with "the CD workflow run triggered by this merge did not
-succeed". A run still going at the deadline gets a different headline:
-"CD run still in progress after Ns; result unknown". It comes with the
-run URL, a `gh run view <id>` command to re-check it, and a pointer to
-`vrg-finalize-pr --cleanup-only` to re-confirm once the run has
-finished. It still fails the stage, because an unknown result is not a
-pass, but it never claims the run failed (issue #3316).
+The report lists every watched PR under **Merged** or **Not merged**,
+each unmerged PR with its reason and the next step:
 
-**Superseded is not failure.** A run that concludes `cancelled` is
-checked for a concurrency supersede: every job ended passing or
-cancelled, and every cancelled job carries GitHub's check-run annotation
-"Canceling since a higher priority waiting request for `<group>`
-exists". Such a run did not fail; a higher-priority run waiting on the
-same concurrency group took its place. The stage then ends with a
-warning (⚠), not a failure, headed "the CD workflow run triggered by
-this merge was superseded, not failed", with the run URL and the group.
-It says that this merge's CD result is not confirmed: GitHub does not
-record which run took the cancelled run's place, and that run may be a
-newer commit's CD or another workflow sharing the group (for example a
-scheduled rebuild), so finalize does not follow it. Any other
-cancellation (by a human, a timeout, or a run with no job to carry the
-annotation) still fails the stage, as does a cancelled run whose jobs or
-annotations cannot be read; that failure says why (issue #3834).
+| Outcome | Next step |
+| ------- | --------- |
+| *failed: CI*, *failed: conflict*, *failed: closed*, *timed out* | Hand it to an agent, then re-run `vrg-finalize-pr <pr>` |
+| *failed: auto-merge off*, *failed: provenance* | Investigate before turning auto-merge back on |
+| *failed: not a develop PR* | Finalize watches develop PRs only; a release PR goes through `vrg-release` |
+
+It then states the validate's result (`Validate: passed on <branch> at
+<sha>`, or why it did not run) and repeats the `CD:` line.
+
+### 5. Release (`--release`)
+
+On **full success** (every PR merged with no provenance violation, the
+validate passed and, with `--wait-cd`, CD did not fail), finalize runs
+`vrg-release`, or `vrg-release --no-install` with `--no-install`. It
+starts after the lock is let go, so the release's preflight takes the
+lock, fast-forwards `develop` itself and cuts from the new head, even if
+another PR merged in between (see
+[The develop sync](../../guides/releasing.md#the-develop-sync)). Short of
+full success, the release is skipped and the run says why. A failed
+release never un-merges a PR: re-run `vrg-release` alone.
 
 ## Batch PRs (one PR closing several issues)
 
-A PR whose body has more than one `Closes` line is a **batch PR** (epic
-vergil-project/.github#1019). It is how `vrg-submit-pr` opens a batch that
-`vrg-pr-workflow report-ready` handed off: 2 to 8 issues of one epic on one
-branch, exactly one commit per issue, each subject ending in its issue's
-`(#N)`, and one `Closes` line per issue. A link added by hand in GitHub's Development sidebar never makes a PR
-a batch. For a batch PR, finalize:
+A PR whose body has more than one `Closes` line is a **batch PR**: 2 to
+8 issues of one epic on one branch, exactly one commit per issue, each
+subject ending in its issue's `(#N)` (epic vergil-project/.github#1019).
+`vrg-submit-pr` re-checks the batch's rules before it opens the PR, and
+turns its auto-merge on with the **rebase** method, pinned to the head it
+pushed, so `develop` receives one commit per issue and the changelog one
+entry per issue. Finalize watches a batch PR like any other.
 
-- cross-checks the body's `Closes` issues against GitHub's closing
-  references, and refuses to merge if any is missing, is in another repo,
-  or is listed twice, or if GitHub lists a closing reference the body does
-  not close (a hand-added Development link, say), since merging would close
-  an issue the batch has no commit for;
-- checks the one-commit-per-issue invariant on the PR's head before it
-  waits, and refuses with the reason when it fails, never falling back to a
-  squash;
-- updates a PR that is behind the target by rebase (GitHub's update-branch
-  with the rebase method, pinned to the head it read), never by merging the
-  target in, which would add a merge commit;
-- re-checks the invariant after every update and right before the merge;
-- merges with `rebase`, pinned to the head it last checked
-  (`--match-head-commit`), so a head pushed after the check is re-checked,
-  never merged unchecked. `develop` receives one commit per issue, and the
-  changelog one entry per issue under its own type.
-
-`--strategy squash` is refused on a batch PR, since it would collapse the
-issues into one commit and one changelog entry; another explicit
-`--strategy` still overrides. A single-issue PR still merges with `squash` by default.
-
-A merge conflict with the target aborts with the commands to resolve it.
-Submitting lifted the branch's freeze, so the agent's `pr-watch` can
-resolve it, or the human can with those commands. For a single-issue PR
-and a batch PR alike they rebase the branch onto the target, validate and
-push with a lease; a batch PR's message also warns against merging the
-target in, which adds a merge commit the batch check refuses. A batch PR
-refused for such a merge commit (GitHub's update-branch button) gets the
-same rebase steps, and the same note that `pr-watch` or the human can fix
-it. Only a `release/*` branch keeps merge-based steps: it merges with a
-merge commit to keep the `develop`/`main` ancestry (issue #1620), so its
-message merges the target in and never rebases, and `pr-watch` never
-handles it.
-
-## Batch mode (comma-list / `--all`)
-
-This batch finalizes several separate PRs in turn. It is unrelated to a
-[batch PR](#batch-prs-one-pr-closing-several-issues), which is one PR.
-
-A comma-separated PR argument (`vrg-finalize-pr 123,124,125`) or `--all`
-(every open PR in `.worktrees/`) finalizes several PRs as a single
-serialized batch (issue #1673). Each item runs
-`vrg-finalize-pr <pr> --skip-post-checks` (merge + cleanup, deferring
-the post-merge checks); after every item merges, one end-of-batch
-`vrg-finalize-pr --cleanup-only` runs validation and the CD check, then
-— with `--release`/`--install` — a single `vrg-release`.
-
-The batch summary reports that end-of-batch step as `post-checks`. Its
-exit code cannot say which of the two checks failed, so a failure reads
-"end-of-batch post-checks (validation + CD check) exited N" and never
-blames validation alone. The `--cleanup-only` stage summary printed just
-above it names the failing stage (issue #3316).
-
-Unlike `vrg-submit-pr`'s batch, these PRs are already open, so each one
-that lands behind another will `update-branch` and re-run its gate
-(the normal serialized-merge cost). For zero-waste CI, submit the batch
-with `vrg-submit-pr --all --finalize` instead, which rebases each branch
-before opening its PR.
-
-The batch asks **one** confirmation up front (skipped with `--yes`) and
-is **fail-fast**: the first failure stops it and prints a
-`merged` / `failed` / `not started` summary. The single-PR modes are
-unchanged.
-
-The `--skip-post-checks` flag (used internally by the batch) finalizes a
-PR but skips the validation and CD-check stages and never chains a
-release — the batch runs those once at the end.
+A batch PR's checks after submit are `vrg-pr-workflow batch-check --pr`'s
+(see the [CLI Tools Overview](../cli-tools-overview.md#vrg-pr-workflow)),
+which `pr-watch` runs before every push to an open batch PR. Never update
+a batch PR by merging `develop` into it (GitHub's update-branch button):
+the merge commit breaks the one-commit-per-issue invariant. Since
+`develop` does not require a branch to be up to date, a batch PR never
+needs that update; a conflict is resolved by rebasing the branch.
 
 ## Exit Codes
 
 | Code | Meaning |
 | ---- | ------- |
-| 0 | Finalization complete, or declined at a confirmation prompt |
-| 1 | Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind, orphaned check-run, or wait timeout), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, a closing-reference issue that could not be read or closed, failed validation, failed CD run, CD watch timeout (result unknown), or a batch item failed |
+| 0 | Full success: every PR merged with no provenance violation, the validate passed and, with `--wait-cd`, CD did not fail. Also a prompt declined, or `--all` with no open PR. |
+| 1 | A tool or usage error: a removed or contradictory flag, not run from the main worktree, non-TTY stdin or stdout in interactive mode, a watch that could not read a PR, or a settle step other than the validate that failed (closing an issue, the sync and cleanup, a dirty working tree) |
+| 3 | Develop is healthy, but not every PR merged, or one merged with a provenance violation |
+| 4 | Develop did not validate: the validate failed or could not run, or, with `--wait-cd`, CD did not succeed. 4 takes precedence over 1 and 3 |
+| 5 | Full success, but the chained release failed |
+| 130 | Interrupted (Ctrl-C) |
+
+## Environment
+
+| Variable | Default | Meaning |
+| -------- | ------- | ------- |
+| `VRG_FINALIZE_DEADLINE` | `7200` | The batch deadline for the watch, in seconds |
+| `VRG_CD_TIMEOUT` | `5400` | With `--wait-cd`, the CD watch deadline, in seconds |

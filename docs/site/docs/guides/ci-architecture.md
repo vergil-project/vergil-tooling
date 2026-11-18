@@ -348,6 +348,11 @@ code, where review sees it. Rules for writing a suppression:
 Other analyzers are honored as long as their SARIF carries a `suppressions`
 entry. Trivy's `.trivyignore` works differently: it drops the finding before
 SARIF is written, so ignored findings never appear in the summary at all.
+The TypeScript audit's `.npm-audit-exceptions` follows the same rules for
+an npm advisory with no fix: each entry names the advisory, an expiry, a
+tracking issue and a reason, and the audit log lists every exception it
+applied (see
+[TypeScript audit exceptions](validation-matrix.md#typescript-audit-exceptions)).
 
 ### CD: release-publishing secrets
 
@@ -417,7 +422,7 @@ the required-check computation and the CI setup step (through
   family must pin, since there is no single default. Today that is C++, whose
   versions carry a compiler family (`clang-20`, `gcc-14`). A family prefix alone
   does not need a pin, so an unpinned TypeScript repo follows the window
-  (`node-24`, `node-22`) as Python and Rust do.
+  (`node-26`, `node-24`, `node-22`) as Python and Rust do.
 - The **primary version** is `[ci].primary-version` when it is set (it must name
   a resolved version), otherwise the newest resolved version.
 
@@ -595,8 +600,9 @@ chosen, and why.
     `node_modules/.bin` (see the
     [Tool Ownership Guideline](../standards/development/tool-ownership.md)).
     The runtime family rides the `ts-node` image
-    suffix and the Node major is the tag (`node-24` → `prod-ts-node:24`);
-    `node-24` is the primary, `node-22` the second (epic
+    suffix and the Node major is the tag (`node-26` → `prod-ts-node:26`);
+    the newest major, `node-26`, is the primary, then `node-24` and
+    `node-22` (epic
     [vergil-project/.github#284](https://github.com/vergil-project/.github/issues/284)).
 
 C++ is the one language with a compiler-family axis: it ships **two**

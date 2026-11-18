@@ -546,7 +546,7 @@ def test_check_wait_deadline_on_a_running_job_says_wait_not_rerun() -> None:
     assert f"{_BUILD} ({_JOB})" in message
     assert f"Still running, not stuck: {_BUILD} (run {_RUN}); the job is in progress." in message
     assert "Wait for the run to finish, then re-run the waiting command" in message
-    assert "vrg-release --resume for a release, vrg-finalize-pr otherwise" in message
+    assert "vrg-release --resume for a release, vrg-update-deps for a dependency update" in message
     assert "$VRG_CHECKS_TIMEOUT" in message
     assert "Re-run the job instead only if its log has stopped making progress" in message
     assert "Re-run the stuck job" not in message

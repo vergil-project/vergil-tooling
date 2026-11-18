@@ -90,7 +90,10 @@ from vergil_tooling.lib.docs import (
 from vergil_tooling.lib.languages import (
     COVERAGE_REPORT,
     JUNIT_REPORT,
+    RUST_COVERAGE_FULL_CLEAN_CMD,
+    RUST_COVERAGE_TOOLCHAIN_STAMP,
     RUST_DOCTEST_CMD,
+    RUST_TOOLCHAIN_PROBE_CMDS,
     CheckKind,
     build_python_test_argv,
     language_commands,
@@ -693,10 +696,98 @@ def _print_uncovered_regions(repo_root: Path) -> None:
             f"error: {len(regions)} uncovered region(s) listed, but the coverage totals "
             f"count {missed} missed; the listing is incomplete"
         )
+        print(
+            "error: the coverage report contradicts itself, which points to stale build "
+            "output: llvm-cov read objects under target/llvm-cov-target that this run did "
+            "not build (an earlier toolchain's, or a host build's). Run `cargo llvm-cov "
+            "clean` in the container (or delete target/) and run vrg-validate again"
+        )
+
+
+def _rust_toolchain_fingerprint(repo_root: Path) -> str:
+    """The output of :data:`RUST_TOOLCHAIN_PROBE_CMDS`, run in *repo_root*.
+
+    Each probe that cannot run or exits non-zero raises
+    :class:`ValidationError`: a coverage run on an unknown toolchain could
+    read stale objects.
+    """
+    parts: list[str] = []
+    for cmd in RUST_TOOLCHAIN_PROBE_CMDS:
+        try:
+            result = subprocess.run(  # noqa: S603
+                cmd,
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=300,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            msg = f"toolchain probe could not run `{' '.join(cmd)}`: {exc}"
+            raise ValidationError(msg) from exc
+        if result.returncode != 0:
+            msg = (
+                f"toolchain probe failed: `{' '.join(cmd)}` exited "
+                f"{result.returncode}: {result.stderr.strip()}"
+            )
+            raise ValidationError(msg)
+        parts.append(f"$ {' '.join(cmd)}\n{result.stdout.strip()}\n")
+    return "".join(parts)
+
+
+def _clean_rust_coverage_on_toolchain_change(repo_root: Path) -> int:
+    """Run the full ``cargo llvm-cov clean`` when the Rust toolchain has changed.
+
+    The toolchain is the output of :data:`RUST_TOOLCHAIN_PROBE_CMDS`; the one
+    the last coverage run used is recorded in
+    :data:`RUST_COVERAGE_TOOLCHAIN_STAMP`. When the two differ, or there is no
+    record, ``target/llvm-cov-target`` is removed whole, so no earlier
+    toolchain's objects reach the report (vergil-project/vergil-tooling#4684).
+    The record is written only after a clean that succeeded. Returns the clean's
+    exit status (0 when none was needed); a probe or record that fails raises
+    :class:`ValidationError`.
+    """
+    fingerprint = _rust_toolchain_fingerprint(repo_root)
+    stamp = repo_root / RUST_COVERAGE_TOOLCHAIN_STAMP
+    try:
+        recorded = stamp.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        recorded = None
+    except OSError as exc:
+        msg = f"could not read the Rust coverage toolchain record {stamp}: {exc}"
+        raise ValidationError(msg) from exc
+    if recorded == fingerprint:
+        return 0
+    reason = "no record of the toolchain" if recorded is None else "the toolchain changed"
+    print(
+        f"NOTICE: {reason} that built target/llvm-cov-target; removing it so no "
+        "stale coverage object reaches the report"
+    )
+    print(f"Running (test): {' '.join(RUST_COVERAGE_FULL_CLEAN_CMD)}")
+    rc = progress.run(RUST_COVERAGE_FULL_CLEAN_CMD, check=False)
+    if rc != 0:
+        return rc
+    try:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(fingerprint, encoding="utf-8")
+    except OSError as exc:
+        msg = f"could not write the Rust coverage toolchain record {stamp}: {exc}"
+        raise ValidationError(msg) from exc
+    return 0
 
 
 def _run_rust_test_command(cmd: list[str], *, coverage_cmd: list[str], repo_root: Path) -> int:
-    """Run one Rust TEST command; after a failed coverage run, list its misses."""
+    """Run one Rust TEST command; after a failed coverage run, list its misses.
+
+    Before the coverage run, a changed toolchain clears the coverage build
+    (:func:`_clean_rust_coverage_on_toolchain_change`); a clean that fails
+    fails the command without running it.
+    """
+    if cmd == coverage_cmd:
+        rc = _clean_rust_coverage_on_toolchain_change(repo_root)
+        if rc != 0:
+            print(f"error: `{' '.join(RUST_COVERAGE_FULL_CLEAN_CMD)}` exited {rc}")
+            return rc
     rc = progress.run(cmd, check=False)
     if rc != 0 and cmd == coverage_cmd:
         _print_uncovered_regions(repo_root)

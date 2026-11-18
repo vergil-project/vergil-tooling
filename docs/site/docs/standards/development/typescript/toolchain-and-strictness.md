@@ -7,7 +7,67 @@ no-standing-suppression rule that governs it. This page **describes** the set; i
 does not choose it. The set is decided and tested in the shareable base tsconfig
 (`src/vergil_tooling/configs/typescript/tsconfig.base.json`) and the language
 registry (`src/vergil_tooling/lib/languages.py`), and this page mirrors that
-single source of truth.
+single source of truth. It also states the rule that Vergil, not the
+repository, selects the Node runtime and the package manager.
+
+## Toolchain Selection
+
+Vergil selects the Node runtime, never the repository, as it selects Python's
+interpreter. Each Vergil TypeScript image carries one Node major, so every CI
+leg and dev container runs the major that Vergil resolved from the version
+window (see the
+[Runtime Version Support Policy](../runtime-version-support-policy.md)), with
+the npm bundled with that major.
+
+- A repository declares at most an `engines.node` range in its root
+  `package.json`. The range should admit every major in the window.
+- Every setting that names a Node or package-manager version is an error in
+  `vrg-validate`, with its fix:
+
+| Setting | Fix |
+| --- | --- |
+| a `.nvmrc` file at the repository root | delete it |
+| a `.node-version` file at the repository root | delete it |
+| a `packageManager` field in the root `package.json`, whatever it names, `npm` included | remove the field |
+| a `volta` field in the root `package.json` (Volta pins Node and package managers) | remove the field |
+| an `npm`, `pnpm` or `yarn` key under `engines` in the root `package.json` | remove the key |
+| a `runtime` or `packageManager` entry under `devEngines` in the root `package.json`, as an object or an array of objects | remove the entry |
+
+`devEngines` is reported because npm acts on it: npm checks it before
+`install`, `ci` and `run`, and by default fails when the running Node or npm
+does not match (see npm's
+[`devEngines` documentation](https://docs.npmjs.com/cli/v11/configuring-npm/package-json#devengines)).
+`devEngines`' `os`, `cpu` and `libc` entries are allowed. An `engines` or
+`devEngines` that is not an object, a `devEngines` entry that is not an object
+or an array of objects, or a root `package.json` that cannot be parsed, is an
+error naming the field or the file.
+
+### The `engines.node` Range
+
+`vrg-validate` checks `engines.node` on two sides against the window, as it
+checks Python's `requires-python`, and prints a warning, with its fix, for
+each side the range misses. A warning does not fail validation.
+
+| The range | Warning | Fix |
+| --- | --- | --- |
+| admits a Node major below the window's oldest (`>=20` against 26/24/22) | `engines.node >=20 admits Node 20, below the oldest supported major 22` | raise it to `>=22` (the oldest major) |
+| admits no release of the window's newest major (`^24` excludes 26) | `engines.node ^24 excludes Node 26` | drop the upper bound, or widen it to admit 26 |
+
+A floor above the window's oldest major is a deliberate restriction and is
+allowed: `>=24` against 26/24/22 gives no warning. A range with `||` is read
+as a whole, so `^22 || ^24` has a floor of 22 and excludes 26. Prerelease
+versions play no part in either test. Only the root `package.json` is read;
+workspaces are not checked, and a `package.json` with no `engines.node` gives
+no warning.
+
+The range is read with npm's grammar (node-semver's
+[range syntax](https://github.com/npm/node-semver#ranges): comparators,
+`x`-ranges, `~`, `^`, hyphen ranges and `||`). Two kinds of value are errors, which
+fail validation:
+
+- an `engines.node` that is not a string, or a string that is not an npm
+  semver range (`latest`, for example);
+- a valid range that admits no Node release (`>=26 <24`, for example).
 
 ## TYPECHECK Is "The Compiler"
 

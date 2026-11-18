@@ -163,7 +163,7 @@ issue and ticks its box in the issue's stage checklist.
 | `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed docs publish is deferred |
 | `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index. A miss is a deferred publish failure, not a halted stage |
 | `promote` | deferred | Moves the rolling `vX.Y` tag to the new release (skipped with `--no-promote`). It runs after `package-index`, so `vX.Y` moves only once the index has the release, and skips when `package-index` deferred (see [A promote held back by the index](#a-promote-held-back-by-the-index)) |
-| `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only --no-wait-cd` |
+| `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only` |
 | `consumer-refresh` | deferred | Prints the `[publish].consumer-refresh` commands |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
 | `publish-status` | deferred | Repeats any deferred publish failure, and any dependency-update failure, so neither is lost |
@@ -184,13 +184,13 @@ release. A resume re-runs `back-merge-bump`, which adopts the existing
 back-merge PR and records its merge commit again. If the merge commit
 can't be found, `confirm-develop` fails. It never falls back to the tip.
 
-`close-finalize` passes `--no-wait-cd` to `vrg-finalize-pr`. Without a
-merge of its own, finalize's CD check would watch the tip of `develop`,
-which has the same problem. `confirm-develop` has already checked the
-right run, and `close-finalize` runs `vrg-finalize-pr` only when every
-earlier stage passed. A second wait would add nothing. It would also
-fail the stage on a docs publish failure that `confirm-develop` has
-already deferred.
+`close-finalize` does not pass `--wait-cd` to `vrg-finalize-pr`, so
+finalize only reports the CD run of `develop`'s tip and never fails on
+it. That tip has the same problem: it may be a later commit's.
+`confirm-develop` has already checked the right run, and
+`close-finalize` runs `vrg-finalize-pr` only when every earlier stage
+passed. A second wait would add nothing. It would also fail the stage on
+a docs publish failure that `confirm-develop` has already deferred.
 
 #### A promote held back by the index
 
@@ -758,7 +758,7 @@ A fresh start (not `--resume`) refuses to cut a release from a
 `develop` whose CD is not green. It is the last preflight check, because
 it may wait. It finds the develop CD run for the `develop` head the
 [develop sync](#the-develop-sync) reached,
-by its commit, the way `vrg-finalize-pr` finds a merge's run:
+by its commit, the way `vrg-finalize-pr` finds the synced head's run:
 
 - **Queued, pending or in progress.** The gate waits for it, up to
   `$VRG_CD_TIMEOUT` seconds (default 5400). A run still not complete at
@@ -790,19 +790,21 @@ the MkDocs site to GitHub Pages on every push to `develop` and
 `dev-base:latest` and uses
 `vergil-project/vergil-actions/actions/docs-deploy`.
 
-**The post-merge publish is awaited, not glanced at.** The CD
+**The post-merge publish is reported, then gated at release.** The CD
 workflow (docker build/publish, docs, release) is dispatched
-asynchronously by the base-branch push the merge produces. To catch
-silent failures, `vrg-finalize-pr` blocks on the CD run **this merge
-triggered** — identified by the merge commit SHA, not "the latest run
-on the branch" — and waits for it to complete. If that run does not
-succeed, finalize prints the failure with a direct link to the log and
-exits non-zero, so you investigate before moving on. The wait is
-bounded by timeouts and `--no-wait-cd` opts out (issue #2753). The watch
-deadline defaults to 90 minutes and can be changed with `VRG_CD_TIMEOUT`
-(seconds). A run still going at the deadline is reported as "still in
-progress; result unknown", with the run URL and how to re-check it, not
-as a failed run. It still fails finalize (issue #3316).
+asynchronously by the base-branch push a merge produces.
+`vrg-finalize-pr` finds the CD run for the `develop` head it synced,
+identified by that commit, not "the latest run on the branch", and
+reports it as `CD: <state> <url>` without waiting on it (epic
+vergil-project/.github#1218). A failed run is a warning there, not a
+failure: the [develop-CD gate](#the-develop-cd-gate) is what refuses to
+cut a release from a `develop` whose CD is not green. `--wait-cd` opts
+in to blocking on that run: finalize then fails (exit 4) if it does not
+succeed, with a direct link to the log. The wait is bounded by
+`VRG_CD_TIMEOUT` (seconds, default 90 minutes). A run still going at the
+deadline is reported as "still in progress; result unknown", with the
+run URL and how to re-check it, not as a failed run. It still fails the
+wait (issue #3316).
 
 For deeper investigation, view recent runs directly:
 

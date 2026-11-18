@@ -305,7 +305,9 @@ RUST_DOCTEST_CMD = ["cargo", "test", "--doc", "--locked", "--workspace"]
 #   and ``report``: cargo-llvm-cov's documented split. ``--no-report`` turns off
 #   the clean a combined run does, so the explicit clean replaces it
 #   (https://github.com/taiki-e/cargo-llvm-cov#basic-usage and
-#   #merge-coverages-generated-under-different-test-conditions). The split writes
+#   #merge-coverages-generated-under-different-test-conditions). When the
+#   toolchain has changed since the last run, vrg-validate first runs the full
+#   ``cargo llvm-cov clean`` (see :data:`RUST_COVERAGE_TOOLCHAIN_STAMP`). The split writes
 #   ``coverage.xml`` even when a test fails, as pytest-cov does; a combined
 #   run writes no report then.
 # * ``NEXTEST_PROFILE=vergil`` and ``--tool-config-file vergil:<file>`` select
@@ -380,6 +382,30 @@ def rust_coverage_export_cmd(output_path: str) -> list[str]:
         "--output-path",
         output_path,
     ]
+
+
+# The Rust coverage build's toolchain record (vergil-project/vergil-tooling#4684).
+# ``cargo llvm-cov clean --workspace`` in ``_RUST_TEST_SCRIPT`` removes only the
+# workspace members' artifacts that the current cargo knows of, and
+# cargo-llvm-cov hands llvm-cov every object it finds under
+# ``target/llvm-cov-target``. A ``target/`` left by an earlier toolchain keeps
+# that toolchain's objects there: cargo 1.100 builds under
+# ``debug/build/<pkg>/<hash>/out/``, so an older cargo's ``debug/deps/`` test
+# binaries survive the partial clean and are read as stale coverage
+# ("functions have mismatched data"), failing the gate on correct code.
+# vrg-validate therefore records the output of :data:`RUST_TOOLCHAIN_PROBE_CMDS`
+# in :data:`RUST_COVERAGE_TOOLCHAIN_STAMP` and, when it differs or is missing,
+# runs :data:`RUST_COVERAGE_FULL_CLEAN_CMD` first, which removes
+# ``target/llvm-cov-target`` whole. The record lives in ``.vergil/``, not under
+# ``target/``: cargo refuses to clean a target directory it did not create
+# (no ``CACHEDIR.TAG``), so a file written there first would break the run.
+RUST_TOOLCHAIN_PROBE_CMDS = [
+    ["rustc", "-vV"],
+    ["cargo", "-vV"],
+    ["cargo", "llvm-cov", "--version"],
+]
+RUST_COVERAGE_TOOLCHAIN_STAMP = ".vergil/rust-coverage-toolchain.txt"
+RUST_COVERAGE_FULL_CLEAN_CMD = ["cargo", "llvm-cov", "clean"]
 
 
 # C++ license allowlist (epic vergil-project/.github#207 §4). C++/Conan has no
@@ -515,14 +541,18 @@ _TYPESCRIPT_TEST_SCRIPT = (
 )
 
 # ``npm audit --json`` writes the report to stdout and keeps the
-# ``--audit-level`` exit status, so the shell writes it to the report, prints
-# it back for the log, and exits with npm's status. ``cat`` failing fails the
-# gate.
+# ``--audit-level`` exit status, so the shell writes it to the report and
+# prints it back for the log; ``cat`` failing fails the gate. The report stays
+# the unfiltered evidence. ``vrg-npm-audit-gate`` then gives the verdict, with
+# npm's status as a cross-check: it drops the advisories a live entry of the
+# repo's ``.npm-audit-exceptions`` covers, lists them, and fails on any other
+# advisory at high or critical, or on an expired or malformed entry
+# (vergil-project/vergil-tooling#4682; see ``lib/npm_audit.py``).
 _TYPESCRIPT_AUDIT_SCRIPT = (
     f"npm audit --audit-level=high --json >{NPM_AUDIT_REPORT}; "
     "rc=$?; "
     f"cat {NPM_AUDIT_REPORT} || exit 1; "
-    'exit "$rc"'
+    f'exec vrg-npm-audit-gate {NPM_AUDIT_REPORT} --npm-exit "$rc"'
 )
 
 # -- C++ warning set (epic vergil-project/.github#207 §3.2, owned by T5) -------
@@ -1161,7 +1191,9 @@ _REGISTRY: dict[str, Language] = {
             # ``--omit=dev``, so a vulnerable docs or test tool fails the gate
             # just as a runtime dependency does (#3552, superseding spec §4
             # caveat 1's prod-only scope) — with an explicit severity threshold
-            # (``--audit-level=high``). Contingency (spec §4 caveat 1): if
+            # (``--audit-level=high``), less the advisories the repo's
+            # reviewed, time-boxed ``.npm-audit-exceptions`` entries cover
+            # (#4682). Contingency (spec §4 caveat 1): if
             # ``npm audit``'s signal/noise is unworkable, fall back to
             # OSV-Scanner over ``package-lock.json`` — the switch is proven or
             # rejected against a known CVE in T10, not asserted here. License

@@ -880,7 +880,7 @@ _PROGRESS_INTERVAL_SECS = 60
 # ceiling only costs time when a check sits queued or a job hangs mid-run. At
 # the deadline, ChecksTimeoutError.running names the checks whose own job is still
 # in progress, so the abort can say "wait, then resume" rather than "re-run". Single
-# source of truth: every check waiter — finalize, release, update-deps — reads
+# source of truth: every check waiter — release, update-deps — reads
 # it via checks_timeout_secs(), so the waiters can never drift apart again
 # (#2809). The release waiter used to stream ``gh pr checks --watch``, which
 # had no deadline at all and hung a release for 12+ hours on one stale
@@ -1572,7 +1572,7 @@ def _read_job(repo: str, job_id: str) -> dict[str, Any]:
 
 _ORPHAN_RECOVERY = (
     "Close and reopen the PR to re-run the gate, then re-run the waiting "
-    "command (vrg-finalize-pr, or vrg-release --resume)."
+    "command (vrg-release --resume, or vrg-update-deps)."
 )
 
 
@@ -2118,8 +2118,8 @@ def wait_for_checks(
 ) -> None:
     """Block until all checks on *pr* reach a terminal state, bounded by a deadline.
 
-    The single check waiter behind every merge path — ``vrg-finalize-pr``,
-    ``vrg-release`` (merge-release, back-merge-bump) and ``vrg-update-deps``.
+    The single check waiter behind every merge path — ``vrg-release``
+    (merge-release, back-merge-bump) and ``vrg-update-deps``.
     Polls :func:`pr_checks` (which re-classifies a
     stale check-run GitHub has already concluded, #3170) until every check is
     terminal **and** every required status check of the base branch is
@@ -2767,8 +2767,8 @@ def merge(pr: str, *, strategy: str, match_head: str | None = None) -> None:
     after the caller checked it is refused, never merged unchecked (a batch
     PR, epic vergil-project/.github#1019).
 
-    Does not pass ``--delete-branch`` — branch cleanup is handled by
-    ``vrg-finalize-pr`` after the merge completes.
+    Does not pass ``--delete-branch`` — branch cleanup is the caller's
+    own step after the merge completes.
     """
     if match_head is None:
         run("pr", "merge", f"--{strategy}", pr)

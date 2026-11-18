@@ -270,7 +270,7 @@ fails:
 | `quality` (typecheck) | `quality-tsc.txt` (text) | the gating `node_modules/.bin/tsc --noEmit --pretty false --diagnostics` run, its stdout |
 | `test`  | `coverage.xml` (Cobertura)        | the gating `node_modules/.bin/vitest run --coverage …` run, copied from `coverage/cobertura-coverage.xml` |
 | `test`  | `junit.xml` (JUnit)               | the same Vitest run, its JUnit reporter |
-| `audit` | `npm-audit.json` (JSON)           | the gating `npm audit --audit-level=high --json` run, its stdout |
+| `audit` | `npm-audit.json` (JSON)           | the gate's `npm audit --audit-level=high --json` run, its stdout, unfiltered (`vrg-npm-audit-gate` judges it) |
 
 The lint gate prints each ESLint finding from the report to the log, as
 `path:line:column: severity message [rule]`. The typecheck report holds

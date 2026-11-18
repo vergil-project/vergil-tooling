@@ -11,6 +11,9 @@ import re
 
 from vergil_tooling.lib.linkage import find_linkage_keyword, freetext_linkage_error
 
+# The label of the PR-body line that closes a documentation task's planning issue.
+PLANNING_CLOSE_LABEL = "Planning issue"
+
 _ISSUE_PLAIN_RE = re.compile(r"^[1-9]\d*$")
 _ISSUE_CROSS_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#[1-9]\d*$")
 
@@ -43,7 +46,9 @@ def resolve_issue_ref(issue: str) -> str:
         raise SystemExit(str(exc)) from exc
 
 
-def build_pr_body(*, summary: str, links: list[tuple[str, str]], notes: str) -> str:
+def build_pr_body(
+    *, summary: str, links: list[tuple[str, str]], notes: str, planning: str | None = None
+) -> str:
     """Render the canonical PR body from validated fields.
 
     *links* is ``[(linkage, issue_ref), ...]`` in order, one ``- <linkage>
@@ -52,6 +57,12 @@ def build_pr_body(*, summary: str, links: list[tuple[str, str]], notes: str) -> 
     ``vrg-finalize-pr`` reads back with ``linkage.extract_tracking_refs``; a
     single-element list renders exactly the single-issue body. An empty
     *links* is refused: a PR body always links at least one issue.
+
+    *planning* is the ref of the planning issue a documentation task's PR also
+    closes (:mod:`vergil_tooling.lib.planning_close`), rendered after the
+    linkage lines as ``- Planning issue: Closes <ref>``. The line does not begin
+    with the keyword, so the task-linkage parsers do not count it and the PR is
+    never read as a batch PR; GitHub still closes the issue on merge.
     """
     if not links:
         msg = "vrg-submit-pr: internal error: a PR body needs at least one issue linkage"
@@ -62,6 +73,8 @@ def build_pr_body(*, summary: str, links: list[tuple[str, str]], notes: str) -> 
             raise SystemExit(freetext_linkage_error(found, links[0][1].lstrip("#")))
     notes_section = notes or "-"
     linkage_lines = "\n".join(f"- {linkage} {issue_ref}" for linkage, issue_ref in links)
+    if planning is not None:
+        linkage_lines += f"\n- {PLANNING_CLOSE_LABEL}: Closes {planning}"
     return (
         f"# Pull Request\n\n"
         f"## Summary\n\n- {summary}\n\n"

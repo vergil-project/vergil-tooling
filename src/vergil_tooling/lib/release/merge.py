@@ -12,9 +12,9 @@ itself (``gh pr create`` or ``gh pr list``), so a 404 on reading it means
 "not readable yet", not "missing" (#3137). :func:`known_pr_state` reads such
 a PR's state under :func:`retry.retry_known_resource`, and
 :func:`wait_and_merge` uses it as a readability gate before handing the PR to
-the shared engine. The gate lives here, not in ``pr_merge``, because that
-engine also serves ``vrg-finalize-pr``, whose PR comes from user input and
-must keep failing fast on a 404.
+the shared engine. The gate lives here, not in ``pr_merge``, because it is
+the release workflow's: the engine's other callers keep failing fast on a
+404.
 
 When the engine updates a BEHIND PR on GitHub, the server adds a merge commit
 the local branch never sees. :func:`sync_local_branch` fast-forwards the local
