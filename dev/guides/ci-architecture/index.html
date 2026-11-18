@@ -18779,7 +18779,7 @@ the required-check computation and the CI setup step (through
   family must pin, since there is no single default. Today that is C++, whose
   versions carry a compiler family (<code>clang-20</code>, <code>gcc-14</code>). A family prefix alone
   does not need a pin, so an unpinned TypeScript repo follows the window
-  (<code>node-24</code>, <code>node-22</code>) as Python and Rust do.</li>
+  (<code>node-26</code>, <code>node-24</code>, <code>node-22</code>) as Python and Rust do.</li>
 <li>The <strong>primary version</strong> is <code>[ci].primary-version</code> when it is set (it must name
   a resolved version), otherwise the newest resolved version.</li>
 </ul>
@@ -18977,8 +18977,9 @@ chosen, and why.</p>
     <code>node_modules/.bin</code> (see the
     <a href="../../standards/development/tool-ownership/">Tool Ownership Guideline</a>).
     The runtime family rides the <code>ts-node</code> image
-    suffix and the Node major is the tag (<code>node-24</code> → <code>prod-ts-node:24</code>);
-    <code>node-24</code> is the primary, <code>node-22</code> the second (epic
+    suffix and the Node major is the tag (<code>node-26</code> → <code>prod-ts-node:26</code>);
+    the newest major, <code>node-26</code>, is the primary, then <code>node-24</code> and
+    <code>node-22</code> (epic
     <a href="https://github.com/vergil-project/.github/issues/284">vergil-project/.github#284</a>).</p>
 <p>C++ is the one language with a compiler-family axis: it ships <strong>two</strong>
 image families (<code>dev-cpp-clang</code> / <code>dev-cpp-gcc</code>, and matching <code>prod-</code>
