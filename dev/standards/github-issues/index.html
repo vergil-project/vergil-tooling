@@ -18946,7 +18946,8 @@ cross-forge fallback.</p>
 <h3 id="finite-vs-perpetual-epics">Finite vs perpetual epics<a class="headerlink" href="#finite-vs-perpetual-epics" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Finite epic</strong> — a bounded initiative with a definite end. It <strong>rolls up</strong>:
-  once every child task is closed, <code>vrg-finalize-pr</code> closes the epic. A <em>managed
+  once every child task is closed, the event-driven rollup (<code>vrg-epic-rollup</code>)
+  closes the epic. A <em>managed
   task</em> (an issue with an <code>epic</code>-labelled parent) links its PR with <code>Closes</code>, so
   the task auto-closes on merge and the final close rolls its epic up.</li>
 <li><strong>Perpetual (ad-hoc) epic</strong> — a standing umbrella for unplanned work in one

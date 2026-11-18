@@ -19909,8 +19909,7 @@ worktree's <code>pr-workflow.json</code> when present, else the relay ref
 recorded <code>head_sha</code> and the PR opens with <code>--head</code> <strong>without pushing</strong>.
 Every mode driven by a ready-state opens the PR only at the <code>head_sha</code> the
 latest <code>report-ready</code> recorded and refuses rather than pick another head
-(#3815): a local worktree's HEAD must be that commit (the serial
-<code>--all</code>/<code>--select</code> batch checks it before its rebase), a named branch reopened by <code>unfreeze</code> and not
+(#3815): a local worktree's HEAD must be that commit, a named branch reopened by <code>unfreeze</code> and not
 re-reported is refused, a local ready-state and relay ref that disagree are
 refused, and origin's tip is checked against the recorded head right before
 <code>gh pr create</code>.
@@ -19927,7 +19926,17 @@ when it cannot, it says why (see
 It refuses an issue whose native parent is an intake, planning or deferred
 epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>). Human-run: agent
 identities are refused, and agents hand off with
-<code>vrg-pr-workflow report-ready</code> instead. PRs merge manually.</p>
+<code>vrg-pr-workflow report-ready</code> instead.</p>
+<p>Every mode takes one path (epic vergil-project/.github#1218): one
+confirmation for the selection, then for each PR the push, <code>gh pr create</code>,
+the provenance check, and GitHub auto-merge turned on, pinned to the pushed
+head (squash for a single-issue PR, rebase for a batch PR; a PR that can
+already merge is merged directly). PRs open against <code>develop</code> only, and
+submit never rebases a branch. A PR whose submit fails is named in a summary
+and the others go on. Then, by default, one <code>vrg-finalize-pr &lt;pr&gt;,&lt;pr&gt;,…</code>
+watches every opened PR merge and settles <code>develop</code> once; <code>--no-finalize</code>
+opens the PRs and returns. <code>--finalize</code> and <code>--install</code> are removed and
+refused by name. See <a href="../dev/submit-pr/">vrg-submit-pr</a>.</p>
 <table>
 <thead>
 <tr>
@@ -19942,7 +19951,7 @@ identities are refused, and agents hand off with
 </tr>
 <tr>
 <td>Args</td>
-<td>positional <code>branches</code> (relay mode); or <code>--issue</code> (required), <code>--summary</code> (required), <code>--linkage</code> (default: Ref; <code>vrg-submit-pr</code> auto-selects <code>Closes</code> for a managed task — <code>Fixes</code>/<code>Resolves</code> are banned), <code>--notes</code>, <code>--title</code>, <code>--dry-run</code></td>
+<td>positional <code>branches</code> (relay mode); or <code>--issue</code> (required), <code>--summary</code> (required), <code>--linkage</code> (default: Ref; <code>vrg-submit-pr</code> auto-selects <code>Closes</code> for a managed task — <code>Fixes</code>/<code>Resolves</code> are banned), <code>--notes</code>, <code>--title</code>; <code>--all</code>/<code>--select</code> (from the repo root), <code>--base</code> (<code>develop</code> only), <code>--no-finalize</code>, <code>--release</code>, <code>--no-install</code>, <code>--allow-provenance-violation</code>, <code>--dry-run</code>, <code>--yes</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -19950,11 +19959,11 @@ identities are refused, and agents hand off with
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Subprocess error from <code>git push</code> or <code>gh pr create</code>; loud refusal on a missing ready-state, a state that is not ready, or any head other than the recorded <code>head_sha</code></td>
+<td>A PR whose push, <code>gh pr create</code>, provenance check or auto-merge fails is named in the summary and the rest go on; loud refusal, with nothing opened, on a missing ready-state, a state that is not ready, any head other than the recorded <code>head_sha</code>, a base other than <code>develop</code>, or a removed flag</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success</td>
+<td>finalize's: 0 full success, 3 not every PR merged (at least 3 when a submit failed), 4 develop did not validate, 5 the release failed; 1 a usage error, a refusal, or a tool error from finalize</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -20631,14 +20640,23 @@ validation or a release. See the
 </tbody>
 </table>
 <h3 id="vrg-finalize-pr">vrg-finalize-pr<a class="headerlink" href="#vrg-finalize-pr" title="Permanent link">&para;</a></h3>
-<p>Finalize a pull request. Given a PR, runs the provenance check, merges
-it, then cleans up; with no PR, runs cleanup only. Cleanup switches to
-the target branch, fast-forward pulls, deletes merged local branches
-(auto-removing worktrees inside <code>.worktrees/</code> when necessary), deletes
+<p>Watch a batch of auto-merging pull requests, then settle <code>develop</code> once
+(epic vergil-project/.github#1218). It never merges a PR: <code>vrg-submit-pr</code>
+turned auto-merge on, and GitHub merges each PR once its required checks
+pass. The watch follows every listed PR until it has merged or failed (CI,
+a conflict, closed, auto-merge off, provenance, not a develop PR), or the
+batch deadline (<code>$VRG_FINALIZE_DEADLINE</code>, default 7200s) passes. If any PR
+merged, the settle phase closes any issue GitHub left open, then, under the
+checkout lock, switches to the target branch, fast-forwards it, deletes the
+merged PRs' branches and worktrees and other merged local branches, deletes
 each merged branch's PR-workflow relay ref
 (<code>refs/vergil/pr-workflow/&lt;branch&gt;</code>) and sweeps any orphaned relay ref
-whose branch is gone (issue #2369), prunes remotes, runs validation, and
-checks the CD workflow status. It also removes each merged branch's
+whose branch is gone (issue #2369), prunes remotes, provisions the dev
+image and runs one validate. It then reports the synced head's CD run
+without waiting (<code>--wait-cd</code> waits), lists every PR as merged or not
+merged with the next step, and, with <code>--release</code>, chains into
+<code>vrg-release</code> on full success. <code>--cleanup-only</code> runs the settle phase with
+no PRs. It also removes each merged branch's
 cached dev images and sweeps cached images whose branch is live in no
 repo of the platform repo set, as <code>vrg-container-cache prune</code> decides it
 (skipped on the physical host, which has no default repo set); a failed
@@ -20650,14 +20668,11 @@ reused branch name with unmerged commits (issue #1719) — is surfaced
 <code>--clean-dirty</code> opt-in clears one whose only dirt is untracked
 build/validation output, after showing the paths and confirming
 (issue #2348).
-A PR whose body has more than one <code>Closes</code> line is a <strong>batch PR</strong>, one commit
-per issue (epic vergil-project/.github#1019). Finalize cross-checks its
-<code>Closes</code> issues against GitHub's closing references, updates it by rebase
-(never by merging the target in) when it is behind, re-checks the
-one-commit-per-issue invariant after every update and right before the merge,
-and rebase-merges it pinned to the head it checked, so <code>develop</code> gets one
-commit and one changelog entry per issue. <code>--strategy squash</code> is refused on a
-batch PR. See <a href="../dev/finalize-pr/#batch-prs-one-pr-closing-several-issues">vrg-finalize-pr</a>.</p>
+A batch PR (more than one <code>Closes</code> line, one commit per issue, epic
+vergil-project/.github#1019) is watched like any other: <code>vrg-submit-pr</code>
+turned its auto-merge on with the rebase method, so <code>develop</code> gets one
+commit and one changelog entry per issue. See
+<a href="../dev/finalize-pr/">vrg-finalize-pr</a>.</p>
 <table>
 <thead>
 <tr>
@@ -20672,7 +20687,7 @@ batch PR. See <a href="../dev/finalize-pr/#batch-prs-one-pr-closing-several-issu
 </tr>
 <tr>
 <td>Args</td>
-<td><code>PR</code> (optional), <code>--target-branch</code> (default: develop), <code>--strategy</code> (default: squash; rebase for a batch PR, merge for a <code>release/*</code> branch), <code>--allow-provenance-violation</code>, <code>--clean-dirty</code>, <code>--dry-run</code></td>
+<td><code>PR</code> (a number or URL, or a comma list of them; optional), <code>--all</code>, <code>--cleanup-only</code>, <code>--target-branch</code> (default: develop), <code>--wait-cd</code>, <code>--release</code>, <code>--no-install</code> (with <code>--release</code>), <code>--allow-provenance-violation</code>, <code>--clean-dirty</code>, <code>--dry-run</code>, <code>--yes</code>. <code>--strategy</code>, <code>--no-wait-cd</code>, <code>--skip-post-checks</code> and <code>--install</code> are removed and are an error</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -20680,11 +20695,11 @@ batch PR. See <a href="../dev/finalize-pr/#batch-prs-one-pr-closing-several-issu
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Provenance violations, a dirty working tree, validation failures, or a failed CD run all return exit 1</td>
+<td>An unmerged PR exits 3 and a develop that did not validate exits 4; a watch that cannot read a PR, a failed close of an issue, a failed sync or cleanup, or a dirty working tree exits 1</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success, 1 provenance/worktree/validation/CD failure or unrecognized branching model</td>
+<td>0 full success, 1 a tool or usage error, 3 develop healthy but not every PR merged (or one merged with a provenance violation), 4 develop did not validate (with <code>--wait-cd</code>, or CD did not succeed), 5 the chained release failed</td>
 </tr>
 <tr>
 <td>Status</td>

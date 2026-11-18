@@ -18830,7 +18830,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>close-finalize</code></td>
 <td>deferred</td>
-<td>Closes the tracking issue with a summary and runs <code>vrg-finalize-pr --cleanup-only --no-wait-cd</code></td>
+<td>Closes the tracking issue with a summary and runs <code>vrg-finalize-pr --cleanup-only</code></td>
 </tr>
 <tr>
 <td><code>consumer-refresh</code></td>
@@ -18863,13 +18863,13 @@ since the back-merge. The tip's CD run then says nothing about the
 release. A resume re-runs <code>back-merge-bump</code>, which adopts the existing
 back-merge PR and records its merge commit again. If the merge commit
 can't be found, <code>confirm-develop</code> fails. It never falls back to the tip.</p>
-<p><code>close-finalize</code> passes <code>--no-wait-cd</code> to <code>vrg-finalize-pr</code>. Without a
-merge of its own, finalize's CD check would watch the tip of <code>develop</code>,
-which has the same problem. <code>confirm-develop</code> has already checked the
-right run, and <code>close-finalize</code> runs <code>vrg-finalize-pr</code> only when every
-earlier stage passed. A second wait would add nothing. It would also
-fail the stage on a docs publish failure that <code>confirm-develop</code> has
-already deferred.</p>
+<p><code>close-finalize</code> does not pass <code>--wait-cd</code> to <code>vrg-finalize-pr</code>, so
+finalize only reports the CD run of <code>develop</code>'s tip and never fails on
+it. That tip has the same problem: it may be a later commit's.
+<code>confirm-develop</code> has already checked the right run, and
+<code>close-finalize</code> runs <code>vrg-finalize-pr</code> only when every earlier stage
+passed. A second wait would add nothing. It would also fail the stage on
+a docs publish failure that <code>confirm-develop</code> has already deferred.</p>
 <h4 id="a-promote-held-back-by-the-index">A promote held back by the index<a class="headerlink" href="#a-promote-held-back-by-the-index" title="Permanent link">&para;</a></h4>
 <p><code>promote</code> runs after <code>package-index</code>, so git-based installs of <code>vX.Y</code>
 (which follow the tag) and packaged installs (which take the newest
@@ -19396,7 +19396,7 @@ lock is released, since it may wait.</p>
 <code>develop</code> whose CD is not green. It is the last preflight check, because
 it may wait. It finds the develop CD run for the <code>develop</code> head the
 <a href="#the-develop-sync">develop sync</a> reached,
-by its commit, the way <code>vrg-finalize-pr</code> finds a merge's run:</p>
+by its commit, the way <code>vrg-finalize-pr</code> finds the synced head's run:</p>
 <ul>
 <li><strong>Queued, pending or in progress.</strong> The gate waits for it, up to
   <code>$VRG_CD_TIMEOUT</code> seconds (default 5400). A run still not complete at
@@ -19425,19 +19425,21 @@ the MkDocs site to GitHub Pages on every push to <code>develop</code> and
 <code>main</code>. It's container-based: the workflow runs inside
 <code>dev-base:latest</code> and uses
 <code>vergil-project/vergil-actions/actions/docs-deploy</code>.</p>
-<p><strong>The post-merge publish is awaited, not glanced at.</strong> The CD
+<p><strong>The post-merge publish is reported, then gated at release.</strong> The CD
 workflow (docker build/publish, docs, release) is dispatched
-asynchronously by the base-branch push the merge produces. To catch
-silent failures, <code>vrg-finalize-pr</code> blocks on the CD run <strong>this merge
-triggered</strong> — identified by the merge commit SHA, not "the latest run
-on the branch" — and waits for it to complete. If that run does not
-succeed, finalize prints the failure with a direct link to the log and
-exits non-zero, so you investigate before moving on. The wait is
-bounded by timeouts and <code>--no-wait-cd</code> opts out (issue #2753). The watch
-deadline defaults to 90 minutes and can be changed with <code>VRG_CD_TIMEOUT</code>
-(seconds). A run still going at the deadline is reported as "still in
-progress; result unknown", with the run URL and how to re-check it, not
-as a failed run. It still fails finalize (issue #3316).</p>
+asynchronously by the base-branch push a merge produces.
+<code>vrg-finalize-pr</code> finds the CD run for the <code>develop</code> head it synced,
+identified by that commit, not "the latest run on the branch", and
+reports it as <code>CD: &lt;state&gt; &lt;url&gt;</code> without waiting on it (epic
+vergil-project/.github#1218). A failed run is a warning there, not a
+failure: the <a href="#the-develop-cd-gate">develop-CD gate</a> is what refuses to
+cut a release from a <code>develop</code> whose CD is not green. <code>--wait-cd</code> opts
+in to blocking on that run: finalize then fails (exit 4) if it does not
+succeed, with a direct link to the log. The wait is bounded by
+<code>VRG_CD_TIMEOUT</code> (seconds, default 90 minutes). A run still going at the
+deadline is reported as "still in progress; result unknown", with the
+run URL and how to re-check it, not as a failed run. It still fails the
+wait (issue #3316).</p>
 <p>For deeper investigation, view recent runs directly:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">"Documentation"</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
