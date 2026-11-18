@@ -400,8 +400,27 @@ succeed:
 
 ### 4. Report
 
-The report lists every watched PR under **Merged** or **Not merged**,
-each unmerged PR with its reason and the next step:
+The report is one table with a row per watched PR, laid out like the PR
+tables of `vrg-repo-status`: **PR**, **BRANCH**, **TYPE** (the
+conventional-commit type, or `deps`, `automation`, `release`,
+`lifecycle`), **OUTCOME** and **TITLE**. OUTCOME is `merged` or the
+outcome the watch ended with (`failed: CI`, `timed out`, …); a merged PR
+with a provenance violation shows `merged, PROVENANCE VIOLATION`:
+
+```text
+vrg-finalize-pr report
+  PR     BRANCH                   TYPE  OUTCOME     TITLE
+  #1173  feature/1170-cache-key   fix   merged      fix(cache): key the image cache by lockfile
+  #1174  feature/1171-docs-links  docs  failed: CI  docs: fix the broken guide links
+
+  #1174 https://github.com/o/r/pull/1174 (failed: CI: required check failed: docs)
+    next: hand it to an agent, then rerun `vrg-finalize-pr https://github.com/o/r/pull/1174`
+  Validate: passed on develop at 51f024e…
+  CD: in progress https://github.com/o/r/actions/runs/44377329305
+```
+
+Beneath the table, each unmerged PR is named with its reason and the next
+step, and a provenance violation is named loudly:
 
 | Outcome | Next step |
 | ------- | --------- |
