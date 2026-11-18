@@ -18385,7 +18385,8 @@ stage per PR</strong>, named after its branch. On a terminal the active stage
 shows a spinner and a rolling window of its output, then collapses to
 one line with its mark, its duration and what it did; piped, each stage
 prints in full (<code>--output-format</code> and <code>--output-window</code> choose, as for
-the other progress commands). Every step's output goes to
+the other progress commands, and are passed on to the chained
+<code>vrg-finalize-pr</code> when given). Every step's output goes to
 <code>.vergil/vrg-submit-pr-&lt;stamp&gt;.log</code> in the main worktree, and the
 summary points at it:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>✓ feature/4709-submit-pr-rollup  1.8s — PR #123 auto-merge on (squash, pinned to 9f8e7d6c5b4a)
@@ -18586,12 +18587,12 @@ orphaned relay ref whose branch no longer exists.</p>
 <tr>
 <td><code>--output-window N</code></td>
 <td>No</td>
-<td>Rolling output window for the terminal renderer of the submit rollup (<code>0</code> streams everything)</td>
+<td>Rolling output window for the terminal renderer of the submit rollup (<code>0</code> streams everything); passed on to the chained <code>vrg-finalize-pr</code></td>
 </tr>
 <tr>
 <td><code>--output-format</code></td>
 <td>No</td>
-<td>Force the submit rollup's renderer: <code>rich</code>, <code>gha</code> or <code>plain</code></td>
+<td>Force the submit rollup's renderer: <code>rich</code>, <code>gha</code> or <code>plain</code>; passed on to the chained <code>vrg-finalize-pr</code></td>
 </tr>
 </tbody>
 </table>
