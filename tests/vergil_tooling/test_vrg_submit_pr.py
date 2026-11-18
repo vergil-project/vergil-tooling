@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -38,6 +39,9 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _verify_origin_tip,
     main,
     parse_args,
+)
+from vergil_tooling.bin.vrg_submit_pr import (
+    _chain_finalize as _real_chain_finalize,
 )
 from vergil_tooling.lib import auto_merge, epics, pr_provenance, worktrees
 from vergil_tooling.lib.linkage import extract_tracking_refs
@@ -167,6 +171,18 @@ def _auto_merge_on() -> Iterator[None]:
         patch(_MOD + ".git.commit_sha", return_value="c0ffee"),
     ):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _finalize_ok() -> Iterator[MagicMock]:
+    """Default every submit's finalize run to a full success, without running it.
+
+    Submit finalizes by default, so every submit-flow test would otherwise
+    start a real ``vrg-finalize-pr``. Tests of the chain itself re-patch the
+    module attribute with the real function and patch ``subprocess.run``.
+    """
+    with patch(_MOD + "._chain_finalize", return_value=0) as chain:
+        yield chain
 
 
 @pytest.fixture(autouse=True)
@@ -465,7 +481,9 @@ def test_main_prints_pr_watch_oneliner_on_success(
             return_value="https://github.com/pr/1",
         ),
     ):
-        result = main(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug"])
+        result = main(
+            ["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug", "--no-finalize"]
+        )
     assert result == 0
     assert "/vergil:pr-watch https://github.com/pr/1" in capsys.readouterr().out
 
@@ -530,7 +548,7 @@ class TestIdentityGate:
         assert exc.value.code == 0
         out = capsys.readouterr().out
         assert "usage:" in out
-        assert "--finalize" in out
+        assert "--no-finalize" in out
         assert "human-only" in out
         assert "vrg-pr-workflow report-ready" in out
 
@@ -543,7 +561,7 @@ class TestIdentityGate:
             main(["--help"])
         out = capsys.readouterr().out
         assert "usage:" in out
-        assert "--finalize" in out
+        assert "--no-finalize" in out
 
     def test_human_mode_allowed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
@@ -752,7 +770,7 @@ class TestTemplateMode:
             ),
             patch("builtins.input", return_value="y"),
         ):
-            result = main([])
+            result = main(["--no-finalize"])
         assert result == 0
         assert "/vergil:pr-watch https://github.com/pr/7" in capsys.readouterr().out
 
@@ -1077,543 +1095,6 @@ class TestRootLaunch:
             main(["--dry-run"])
 
 
-# -- --finalize: chain straight into wait-and-merge (issue #1491) -------------
-
-
-class TestFinalizeFlag:
-    """--finalize hands off to vrg-finalize-pr right after PR creation."""
-
-    @pytest.fixture(autouse=True)
-    def _human_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
-        monkeypatch.delenv("VRG_APP_ID", raising=False)
-
-    def test_parse_args_finalize_defaults_false(self) -> None:
-        args = parse_args(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
-        assert args.finalize is False
-
-    def test_parse_args_finalize_flag(self) -> None:
-        args = parse_args(
-            ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--finalize"]
-        )
-        assert args.finalize is True
-
-    def test_cli_mode_chains_into_finalize(self, tmp_path: Path) -> None:
-        """After PR creation, vrg-finalize-pr runs with the PR URL from
-        the main worktree root."""
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(
-                _MOD + ".github.create_pr",
-                return_value="https://github.com/pr/1",
-            ),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            mock_run.return_value.returncode = 0
-            result = main(
-                ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--finalize"]
-            )
-        assert result == 0
-        mock_run.assert_called_once()
-        call = mock_run.call_args
-        assert call.args[0] == ("vrg-finalize-pr", "https://github.com/pr/1")
-        assert call.kwargs["cwd"] == tmp_path
-
-    def test_finalize_chain_carries_the_provenance_override(self, tmp_path: Path) -> None:
-        """--allow-provenance-violation reaches finalize's own provenance check."""
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            mock_run.return_value.returncode = 0
-            result = main(
-                [
-                    "--issue",
-                    "42",
-                    "--summary",
-                    "Fix",
-                    "--title",
-                    "fix: bug",
-                    "--finalize",
-                    "--allow-provenance-violation",
-                ]
-            )
-        assert result == 0
-        assert mock_run.call_args.args[0] == (
-            "vrg-finalize-pr",
-            "https://github.com/pr/1",
-            "--allow-provenance-violation",
-        )
-
-    def test_failed_submit_never_reaches_finalize(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """A PR whose auto-merge was refused is not finalized; submit exits 1."""
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
-            patch(
-                _MOD + ".auto_merge.enable_auto_merge",
-                side_effect=auto_merge.AutoMergeError("refused"),
-            ),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            result = main(
-                ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--finalize"]
-            )
-        assert result == 1
-        mock_run.assert_not_called()
-        assert "Cascade skipped: 1 PR(s) failed to submit." in capsys.readouterr().err
-
-    def test_cli_mode_finalize_replaces_pr_watch(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Merge-on-green was decided at submit time — the pr-watch loop
-        does not apply."""
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(
-                _MOD + ".github.create_pr",
-                return_value="https://github.com/pr/1",
-            ),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            mock_run.return_value.returncode = 0
-            result = main(
-                ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--finalize"]
-            )
-        assert result == 0
-        assert "pr-watch" not in capsys.readouterr().out
-
-    def test_finalize_failure_reports_created_pr(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """A finalize failure must not obscure that the PR exists; the
-        human re-runs vrg-finalize-pr alone."""
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(
-                _MOD + ".github.create_pr",
-                return_value="https://github.com/pr/1",
-            ),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            mock_run.return_value.returncode = 1
-            result = main(
-                ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--finalize"]
-            )
-        assert result != 0
-        err = capsys.readouterr().err
-        assert "https://github.com/pr/1" in err
-        assert "vrg-finalize-pr https://github.com/pr/1" in err
-
-    def test_submit_failure_never_reaches_finalize(self, tmp_path: Path) -> None:
-        """A submit failure leaves no half-finalized state — finalize
-        only runs after the PR exists."""
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run", side_effect=RuntimeError("push rejected")),
-            patch(_MOD + ".github.create_pr") as mock_pr,
-            patch(_MOD + ".subprocess.run") as mock_run,
-            pytest.raises(RuntimeError, match="push rejected"),
-        ):
-            main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--finalize"])
-        mock_pr.assert_not_called()
-        mock_run.assert_not_called()
-
-    def test_dry_run_notes_finalize_without_running(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            result = main(
-                [
-                    "--issue",
-                    "42",
-                    "--summary",
-                    "Fix",
-                    "--title",
-                    "fix: bug",
-                    "--finalize",
-                    "--dry-run",
-                ]
-            )
-        assert result == 0
-        mock_run.assert_not_called()
-        assert "vrg-finalize-pr" in capsys.readouterr().out
-
-    def test_template_mode_chains_into_finalize(self, tmp_path: Path) -> None:
-        _write_workflow_state(tmp_path, title="fix", summary="Fix")
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(
-                _MOD + ".github.create_pr",
-                return_value="https://github.com/pr/7",
-            ),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-            patch("builtins.input", return_value="y"),
-        ):
-            mock_run.return_value.returncode = 0
-            result = main(["--finalize"])
-        assert result == 0
-        mock_run.assert_called_once()
-        assert mock_run.call_args.args[0] == ("vrg-finalize-pr", "https://github.com/pr/7")
-        assert _state_submitted(tmp_path)
-
-    def test_template_mode_decline_never_reaches_finalize(self, tmp_path: Path) -> None:
-        _write_workflow_state(tmp_path, title="fix", summary="Fix")
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".subprocess.run") as mock_run,
-            patch("builtins.input", return_value="n"),
-        ):
-            result = main(["--finalize"])
-        assert result == 1
-        mock_run.assert_not_called()
-
-    def test_template_dry_run_notes_finalize(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        _write_workflow_state(tmp_path, title="fix", summary="Fix")
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            result = main(["--finalize", "--dry-run"])
-        assert result == 0
-        mock_run.assert_not_called()
-        assert "vrg-finalize-pr" in capsys.readouterr().out
-
-    def test_agent_identity_still_blocked_with_finalize(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """--finalize must not weaken the identity-mode gate."""
-        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
-        with patch(_MOD + ".subprocess.run") as mock_run:
-            result = main(
-                ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--finalize"]
-            )
-        assert result != 0
-        mock_run.assert_not_called()
-        assert "human maintainer" in capsys.readouterr().err.lower()
-
-
-# -- --release: cascade submit -> finalize -> release (issue #1634) ------------
-
-
-class TestReleaseFlag:
-    """--release implies --finalize and passes --release through to the chain."""
-
-    @pytest.fixture(autouse=True)
-    def _human_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
-        monkeypatch.delenv("VRG_APP_ID", raising=False)
-
-    def test_parse_args_release_defaults_false(self) -> None:
-        args = parse_args(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
-        assert args.release is False
-
-    def test_parse_args_release_flag(self) -> None:
-        args = parse_args(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"])
-        assert args.release is True
-
-    def test_cli_mode_chains_into_finalize_with_release(self, tmp_path: Path) -> None:
-        """--release implies --finalize and appends --release to the chain."""
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            mock_run.return_value.returncode = 0
-            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"])
-        assert result == 0
-        mock_run.assert_called_once()
-        call = mock_run.call_args
-        assert call.args[0] == ("vrg-finalize-pr", "https://github.com/pr/1", "--release")
-        assert call.kwargs["cwd"] == tmp_path
-
-    def test_cli_mode_release_prints_three_way_summary(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """On success the final summary reports the full cascade."""
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            mock_run.return_value.returncode = 0
-            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"])
-        assert result == 0
-        out = capsys.readouterr().out
-        assert "submitted, finalized, and released" in out
-        assert "pr-watch" not in out
-
-    def test_finalize_only_prints_two_way_summary(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """--finalize without --release stops the summary at 'finalized'."""
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            mock_run.return_value.returncode = 0
-            result = main(
-                ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--finalize"]
-            )
-        assert result == 0
-        out = capsys.readouterr().out
-        assert "submitted and finalized" in out
-        assert "released" not in out
-
-    def test_release_failure_reports_created_pr_with_release_rerun(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """A cascade failure must not obscure the created PR; the re-run hint
-        carries --release so the human can resume the whole cascade."""
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            mock_run.return_value.returncode = 1
-            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"])
-        assert result != 0
-        err = capsys.readouterr().err
-        assert "https://github.com/pr/1" in err
-        assert "vrg-finalize-pr https://github.com/pr/1 --release" in err
-
-    def test_dry_run_notes_release_chain_without_running(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            result = main(
-                [
-                    "--issue",
-                    "42",
-                    "--summary",
-                    "Fix",
-                    "--title",
-                    "fix: bug",
-                    "--release",
-                    "--dry-run",
-                ]
-            )
-        assert result == 0
-        mock_run.assert_not_called()
-        assert "vrg-finalize-pr --release" in capsys.readouterr().out
-
-    def test_template_mode_chains_into_finalize_with_release(self, tmp_path: Path) -> None:
-        _write_workflow_state(tmp_path, title="fix", summary="Fix")
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/7"),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-            patch("builtins.input", return_value="y"),
-        ):
-            mock_run.return_value.returncode = 0
-            result = main(["--release"])
-        assert result == 0
-        mock_run.assert_called_once()
-        assert mock_run.call_args.args[0] == (
-            "vrg-finalize-pr",
-            "https://github.com/pr/7",
-            "--release",
-        )
-
-    def test_template_mode_chain_failure_propagates_and_skips_summary(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """A failed cascade from template mode returns the child's code and
-        never prints a success summary — the failure helper reported the PR."""
-        _write_workflow_state(tmp_path, title="fix", summary="Fix")
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/7"),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-            patch("builtins.input", return_value="y"),
-        ):
-            mock_run.return_value.returncode = 3
-            result = main(["--release"])
-        assert result == 3
-        out = capsys.readouterr().out
-        assert "submitted, finalized, and released" not in out
-
-    def test_agent_identity_still_blocked_with_release(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """--release must not weaken the identity-mode gate."""
-        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
-        with patch(_MOD + ".subprocess.run") as mock_run:
-            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"])
-        assert result != 0
-        mock_run.assert_not_called()
-        assert "human maintainer" in capsys.readouterr().err.lower()
-
-
-# -- --install: cascade submit -> finalize -> release -> install (issue #1643) -
-
-
-class TestInstallFlag:
-    """--install implies --release (hence --finalize) and passes --install
-    through, so the chain runs vrg-release's consumer-refresh install step."""
-
-    @pytest.fixture(autouse=True)
-    def _human_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
-        monkeypatch.delenv("VRG_APP_ID", raising=False)
-
-    def test_parse_args_install_defaults_false(self) -> None:
-        args = parse_args(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
-        assert args.install is False
-
-    def test_parse_args_install_flag(self) -> None:
-        args = parse_args(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--install"])
-        assert args.install is True
-
-    def test_cli_mode_chains_finalize_with_release_and_install(self, tmp_path: Path) -> None:
-        """--install implies --release and appends both flags to the chain."""
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            mock_run.return_value.returncode = 0
-            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--install"])
-        assert result == 0
-        mock_run.assert_called_once()
-        call = mock_run.call_args
-        assert call.args[0] == (
-            "vrg-finalize-pr",
-            "https://github.com/pr/1",
-            "--release",
-            "--install",
-        )
-        assert call.kwargs["cwd"] == tmp_path
-
-    def test_cli_mode_install_prints_four_way_summary(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """On success the final summary reports the full submit→install cascade."""
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            mock_run.return_value.returncode = 0
-            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--install"])
-        assert result == 0
-        out = capsys.readouterr().out
-        assert "submitted, finalized, released, and installed" in out
-
-    def test_install_failure_reports_created_pr_with_install_rerun(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """A cascade failure must not obscure the created PR; the re-run hint
-        carries --release --install so the human can resume the whole cascade."""
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".git.run"),
-            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
-            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            mock_run.return_value.returncode = 1
-            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--install"])
-        assert result != 0
-        err = capsys.readouterr().err
-        assert "https://github.com/pr/1" in err
-        assert "vrg-finalize-pr https://github.com/pr/1 --release --install" in err
-
-    def test_dry_run_notes_install_chain_without_running(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".subprocess.run") as mock_run,
-        ):
-            result = main(
-                [
-                    "--issue",
-                    "42",
-                    "--summary",
-                    "Fix",
-                    "--title",
-                    "fix: bug",
-                    "--install",
-                    "--dry-run",
-                ]
-            )
-        assert result == 0
-        mock_run.assert_not_called()
-        assert "vrg-finalize-pr --release --install" in capsys.readouterr().out
-
-    def test_agent_identity_still_blocked_with_install(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """--install must not weaken the identity-mode gate."""
-        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
-        with patch(_MOD + ".subprocess.run") as mock_run:
-            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--install"])
-        assert result != 0
-        mock_run.assert_not_called()
-        assert "human maintainer" in capsys.readouterr().err.lower()
-
-
 _UNRELEASED_TOML = """\
 [project]
 repository-type = "library"
@@ -1634,16 +1115,15 @@ release = false
 
 
 class TestUnreleasedRepoRefusal:
-    """--release/--install on a repo that is not released is refused up front,
+    """--release on a repo that is not released is refused up front,
     before any push, PR or merge (issue #4175)."""
 
     @pytest.mark.parametrize(
         "argv",
         [
             ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"],
-            ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--install"],
-            ["--all", "--yes", "--install"],
-            ["feature/a", "--install", "--yes"],
+            ["--all", "--yes", "--release", "--no-install"],
+            ["feature/a", "--release", "--yes"],
             ["feature/a", "--release", "--dry-run"],
         ],
     )
@@ -1664,12 +1144,11 @@ class TestUnreleasedRepoRefusal:
             assert main(argv) == 1
         for m in (m_git_run, m_push, m_create, m_relay, m_batch, mock_run):
             m.assert_not_called()
-        flag = "--install" if "--install" in argv else "--release"
         err = capsys.readouterr().err
-        assert f"vrg-submit-pr {flag}: this repo is not released" in err
+        assert "vrg-submit-pr --release: this repo is not released" in err
 
     def test_submit_without_cascade_ignores_unreleased_repo(self, tmp_path: Path) -> None:
-        """A plain submit (or --finalize) never consults the release gate."""
+        """A plain submit, finalized by default, never consults the release gate."""
         with (
             patch(_MOD + ".gate.unreleased_refusal") as m_gate,
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
@@ -1680,11 +1159,401 @@ class TestUnreleasedRepoRefusal:
             patch(_MOD + ".subprocess.run") as mock_run,
         ):
             mock_run.return_value.returncode = 0
-            result = main(
-                ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--finalize"]
-            )
+            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
         assert result == 0
         m_gate.assert_not_called()
+
+
+# -- finalize by default; --no-finalize opts out (epic .github#1218, spec §6.2) --
+
+
+_CLI = ["--issue", "42", "--summary", "Fix", "--title", "fix: bug"]
+_URL1 = "https://x/pull/1"
+_URL2 = "https://x/pull/2"
+
+
+def _cli_main(argv: list[str], *, finalize_rc: int = 0) -> tuple[int, MagicMock]:
+    """Run the CLI mode with *argv*, the real chain and a finalize exiting *finalize_rc*."""
+    with (
+        patch(_MOD + "._chain_finalize", _real_chain_finalize),
+        patch(_MOD + ".git.current_branch", return_value="feature/x"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".github.create_pr", return_value=_URL1),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + ".subprocess.run") as run,
+    ):
+        run.return_value.returncode = finalize_rc
+        rc = main([*_CLI, *argv])
+    return rc, run
+
+
+def _refuse_first() -> list[object]:
+    """Auto-merge refused on the first PR, turned on for the second."""
+    return [auto_merge.AutoMergeError("refused"), auto_merge.AutoMergeResult(merged_now=False)]
+
+
+class TestFinalizeByDefault:
+    @pytest.fixture(autouse=True)
+    def _human_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_FINALIZE_DEADLINE", raising=False)
+
+    def test_finalize_by_default_one_run_over_opened(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """One vrg-finalize-pr over every opened PR, from the main worktree."""
+        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+        rc, calls = _run_batch([a, b], ["--release"], urls=[_URL1, _URL2])
+        assert rc == 0
+        assert calls == [("vrg-finalize-pr", f"{_URL1},{_URL2}", "--release")]
+        out = capsys.readouterr().out
+        assert "Done: 2 PR(s) submitted, finalized and released." in out
+        assert "pr-watch" not in out
+
+    def test_finalize_runs_from_the_main_worktree(self) -> None:
+        rc, run = _cli_main([])
+        assert rc == 0
+        run.assert_called_once()
+        assert run.call_args.args[0] == ["vrg-finalize-pr", _URL1]
+        assert run.call_args.kwargs["cwd"] == Path("/repo")
+
+    @pytest.mark.parametrize(
+        ("argv", "flags"),
+        [
+            (["--release"], ["--release"]),
+            (["--release", "--no-install"], ["--release", "--no-install"]),
+            (["--allow-provenance-violation"], ["--allow-provenance-violation"]),
+        ],
+    )
+    def test_flags_passed_to_finalize(self, argv: list[str], flags: list[str]) -> None:
+        rc, run = _cli_main(argv)
+        assert rc == 0
+        assert run.call_args.args[0] == ["vrg-finalize-pr", _URL1, *flags]
+
+    def test_all_submits_failed_skips_finalize(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """With nothing opened, finalize never runs (so never prompts): exit 3."""
+        with patch(
+            _MOD + ".auto_merge.enable_auto_merge",
+            side_effect=auto_merge.AutoMergeError("refused"),
+        ):
+            rc, calls = _run_batch([_batch_wt("issue-1-a")], ["--release"], urls=[_URL1])
+        assert rc == 3
+        assert calls == []
+        err = capsys.readouterr().err
+        assert f"{_URL1} — refused" in err
+        assert "No PR opened, so nothing was finalized." in err
+
+    def test_release_skipped_after_failed_submit(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """A failed submit drops --release from finalize and says so; exit at least 3."""
+        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
+            rc, calls = _run_batch([a, b], ["--release", "--no-install"], urls=[_URL1, _URL2])
+        assert rc == 3
+        assert calls == [("vrg-finalize-pr", _URL2)]
+        err = capsys.readouterr().err
+        assert "Release skipped: 1 PR(s) failed to submit." in err
+        assert f"{_URL1} — refused" in err
+
+    def test_failed_submits_printed_after_finalize_report(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+
+        def finalize(_cmd: tuple[str, ...]) -> int:
+            print("FINALIZE REPORT", file=sys.stderr)
+            return 0
+
+        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
+            _run_batch([a, b], [], urls=[_URL1, _URL2], run=finalize)
+        err = capsys.readouterr().err
+        assert err.index("FINALIZE REPORT") < err.index("Failed to submit:")
+
+    def test_no_finalize_prints_command(self, capsys: pytest.CaptureFixture[str]) -> None:
+        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+        rc, calls = _run_batch(
+            [a, b], ["--no-finalize", "--allow-provenance-violation"], urls=[_URL1, _URL2]
+        )
+        assert rc == 0
+        assert calls == []
+        out = capsys.readouterr().out
+        assert (
+            "Not watching. To finalize these PRs: vrg-finalize-pr "
+            f"{_URL1},{_URL2} --allow-provenance-violation"
+        ) in out
+        assert f"/vergil:pr-watch {_URL1}" in out
+        assert f"/vergil:pr-watch {_URL2}" in out
+
+    def test_no_finalize_failed_submit_exits_3(self, capsys: pytest.CaptureFixture[str]) -> None:
+        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
+            rc, calls = _run_batch([a, b], ["--no-finalize"], urls=[_URL1, _URL2])
+        assert rc == 3
+        assert calls == []
+        captured = capsys.readouterr()
+        assert f"To finalize these PRs: vrg-finalize-pr {_URL2}\n" in captured.out
+        assert f"{_URL1} — refused" in captured.err
+
+    def test_no_finalize_nothing_opened_prints_no_command(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch(
+            _MOD + ".auto_merge.enable_auto_merge",
+            side_effect=auto_merge.AutoMergeError("refused"),
+        ):
+            rc, calls = _run_batch([_batch_wt("issue-1-a")], ["--no-finalize"], urls=[_URL1])
+        assert rc == 3
+        assert calls == []
+        captured = capsys.readouterr()
+        assert "Not watching" not in captured.out
+        assert f"{_URL1} — refused" in captured.err
+
+    def test_exit_precedence_tool_error_wins(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Finalize's 1 plus a failed submit is 1, with the rerun command named."""
+        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
+            rc, _calls = _run_batch([a, b], [], urls=[_URL1, _URL2], run=lambda _c: 1)
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "vrg-finalize-pr exited 1" in err
+        assert f"Re-run the finalize alone with: vrg-finalize-pr {_URL2}" in err
+
+    @pytest.mark.parametrize("code", [2, 130])
+    def test_exit_undefined_finalize_code_passes_through(self, code: int) -> None:
+        """A code finalize does not define as an outcome is a tool error and wins too."""
+        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
+            rc, _calls = _run_batch([a, b], [], urls=[_URL1, _URL2], run=lambda _c: code)
+        assert rc == code
+
+    def test_exit_mixed_outcomes_validate_failed(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """A failed submit, a CI failure and a failed validate: 4, the submit named, no release.
+
+        Finalize owns the CI failure and the validate: its 4 ("develop did
+        not validate") takes precedence over its own 3 for the CI failure, so
+        submit sees 4, which wins over the failed submit's 3.
+        """
+        a, b, c = _batch_wt("issue-1-a"), _batch_wt("issue-2-b"), _batch_wt("issue-3-c")
+        enable = [
+            auto_merge.AutoMergeError("refused"),
+            auto_merge.AutoMergeResult(merged_now=False),
+            auto_merge.AutoMergeResult(merged_now=False),
+        ]
+        url3 = "https://x/pull/3"
+        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=enable):
+            rc, calls = _run_batch(
+                [a, b, c], ["--release"], urls=[_URL1, _URL2, url3], run=lambda _c: 4
+            )
+        assert rc == 4
+        assert calls == [("vrg-finalize-pr", f"{_URL2},{url3}")]
+        assert not any("vrg-release" in cmd for cmd in calls)
+        err = capsys.readouterr().err
+        assert "Failed to submit:" in err
+        assert f"{_URL1} — refused" in err
+        assert "Release skipped: 1 PR(s) failed to submit." in err
+
+    @pytest.mark.parametrize(("finalize_rc", "expected"), [(0, 3), (3, 3)])
+    def test_exit_failed_submit_at_least_3(self, finalize_rc: int, expected: int) -> None:
+        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
+            rc, _calls = _run_batch([a, b], [], urls=[_URL1, _URL2], run=lambda _c: finalize_rc)
+        assert rc == expected
+
+    @pytest.mark.parametrize("finalize_rc", [4, 5])
+    def test_exit_finalize_4_wins_over_3(self, finalize_rc: int) -> None:
+        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
+            rc, _calls = _run_batch([a, b], [], urls=[_URL1, _URL2], run=lambda _c: finalize_rc)
+        assert rc == finalize_rc
+
+    @pytest.mark.parametrize("finalize_rc", [0, 3, 4, 5])
+    def test_exit_is_finalize_code_when_every_submit_succeeded(self, finalize_rc: int) -> None:
+        rc, _run = _cli_main([], finalize_rc=finalize_rc)
+        assert rc == finalize_rc
+
+    def test_deadline_checked_before_any_pr_opens(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A malformed $VRG_FINALIZE_DEADLINE exits 1 before the first push."""
+        monkeypatch.setenv("VRG_FINALIZE_DEADLINE", "soon")
+        with (
+            patch(_MOD + "._push_branch") as push,
+            patch(_MOD + ".git.run") as git_run,
+            patch(_MOD + ".github.create_pr") as create,
+            patch(_MOD + "._chain_finalize") as chain,
+        ):
+            assert main(_CLI) == 1
+        for mock in (push, git_run, create, chain):
+            mock.assert_not_called()
+        err = capsys.readouterr().err
+        assert "VRG_FINALIZE_DEADLINE must be a positive whole number" in err
+        assert "no PR was opened" in err
+
+    def test_deadline_not_checked_with_no_finalize(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_FINALIZE_DEADLINE", "soon")
+        rc, run = _cli_main(["--no-finalize"])
+        assert rc == 0
+        run.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("argv", "message"),
+        [
+            (["--finalize"], "--finalize was removed; finalizing is now the default"),
+            (["--install"], "--install was removed; --release now installs by default"),
+            (["--release", "--install"], "--install was removed"),
+            (["--release", "--no-finalize"], "--release cannot be combined with --no-finalize"),
+            (["--no-install"], "--no-install requires --release"),
+            (["--no-finalize", "--no-install"], "--no-install requires --release"),
+        ],
+    )
+    def test_removed_and_invalid_flag_combinations_fatal(
+        self, capsys: pytest.CaptureFixture[str], argv: list[str], message: str
+    ) -> None:
+        """Refused before any side effect, in every mode."""
+        for mode in (_CLI, [], ["--all", "--yes"], ["feature/a", "--yes"]):
+            with (
+                patch(_MOD + ".git.repo_root") as repo_root,
+                patch(_MOD + ".git.run") as git_run,
+                patch(_MOD + ".github.create_pr") as create,
+                patch(_MOD + ".gate.unreleased_refusal") as gate_check,
+                patch(_MOD + "._chain_finalize") as chain,
+            ):
+                assert main([*mode, *argv]) == 1
+            for mock in (repo_root, git_run, create, gate_check, chain):
+                mock.assert_not_called()
+            assert f"vrg-submit-pr: {message}" in capsys.readouterr().err
+
+    def test_removed_flags_hidden_from_help(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit):
+            main(["--help"])
+        out = capsys.readouterr().out
+        assert "--no-finalize" in out
+        assert "--finalize " not in out
+        assert "  --install" not in out
+
+    def test_dry_run_plans_without_side_effects(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """A dry run previews every PR and names the finalize run, opening nothing."""
+        with patch(_MOD + "._submit_all") as submit_all:
+            rc, calls = _run_batch(
+                [_batch_wt("issue-1-a"), _batch_wt("issue-2-b")],
+                ["--dry-run", "--release", "--no-install"],
+                urls=[],
+            )
+            assert rc == 0
+            out = capsys.readouterr().out
+            assert (
+                "[dry-run] would finalize every opened PR in one run: "
+                "vrg-finalize-pr <pr>,… --release --no-install"
+            ) in out
+            rc, calls_nf = _run_batch(
+                [_batch_wt("issue-1-a")], ["--dry-run", "--no-finalize"], urls=[]
+            )
+        assert rc == 0
+        assert calls == calls_nf == []
+        submit_all.assert_not_called()
+        assert "--no-finalize: the PRs would be opened with auto-merge on, not watched" in (
+            capsys.readouterr().out
+        )
+
+    @pytest.mark.parametrize("count", [1, 3])
+    def test_single_confirmation_for_selection(self, count: int) -> None:
+        """One plan and one confirmation for one PR or many; none with --yes."""
+        wts = [_batch_wt(f"issue-{n}-x") for n in range(1, count + 1)]
+        urls = [f"https://x/pull/{n}" for n in range(1, count + 1)]
+        with (
+            patch(_MOD + ".submission.read_pr_fields", side_effect=_batch_fields),
+            patch(_MOD + "._push_branch"),
+            patch(_MOD + "._create_pr", side_effect=urls),
+            patch(_MOD + ".submission.record_submission"),
+            patch(_MOD + ".confirm", return_value=True) as ask,
+        ):
+            assert _run_submit_batch(wts, parse_args(["--all"])) == 0
+        ask.assert_called_once()
+        assert ask.call_args.kwargs == {"assume_yes": False}
+        with (
+            patch(_MOD + ".submission.read_pr_fields", side_effect=_batch_fields),
+            patch(_MOD + "._push_branch"),
+            patch(_MOD + "._create_pr", side_effect=urls),
+            patch(_MOD + ".submission.record_submission"),
+            patch("builtins.input") as typed,
+        ):
+            assert _run_submit_batch(wts, parse_args(["--all", "--yes"])) == 0
+        typed.assert_not_called()
+
+    def test_template_mode_finalizes_the_opened_pr(self, tmp_path: Path) -> None:
+        _write_workflow_state(tmp_path, title="fix", summary="Fix")
+        with (
+            patch(_MOD + "._chain_finalize", _real_chain_finalize),
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/7"),
+            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
+            patch(_MOD + ".subprocess.run") as run,
+        ):
+            run.return_value.returncode = 0
+            assert main(["--yes"]) == 0
+        assert run.call_args.args[0] == ["vrg-finalize-pr", "https://github.com/pr/7"]
+        assert _state_submitted(tmp_path)
+
+    def test_relay_finalizes_every_opened_pr_in_one_run(self) -> None:
+        states = {
+            "feature/a": _ready_state(issue="1", branch="feature/a", head_sha="sha_a"),
+            "feature/b": _ready_state(issue="2", branch="feature/b", head_sha="sha_b"),
+        }
+
+        def fake_read_output(*args: str) -> str:
+            branch = args[-1].removeprefix("refs/heads/")
+            return f"sha_{branch[-1]}\t{args[-1]}"
+
+        def fake_transport(branch: str) -> MagicMock:
+            t = MagicMock()
+            t.read.return_value = states[branch]
+            return t
+
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", side_effect=fake_transport),
+            patch(_MOD + ".git.read_output", side_effect=fake_read_output),
+            patch(_MOD + ".github.create_pr", side_effect=[_URL1, _URL2]),
+            patch(_MOD + "._chain_finalize", return_value=0) as chain,
+        ):
+            assert main(["feature/a", "feature/b", "--release", "--yes"]) == 0
+        chain.assert_called_once_with(["vrg-finalize-pr", f"{_URL1},{_URL2}", "--release"])
+
+    def test_decline_never_reaches_finalize(self, tmp_path: Path) -> None:
+        _write_workflow_state(tmp_path, title="fix", summary="Fix")
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + "._chain_finalize") as chain,
+            patch("builtins.input", return_value="n"),
+        ):
+            assert main([]) == 1
+        chain.assert_not_called()
+
+    def test_submit_failure_raised_never_reaches_finalize(self) -> None:
+        """An unexpected error propagates loudly, with finalize never run."""
+        with (
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run", side_effect=RuntimeError("push rejected")),
+            patch(_MOD + ".github.create_pr") as create,
+            patch(_MOD + "._chain_finalize") as chain,
+            pytest.raises(RuntimeError, match="push rejected"),
+        ):
+            main(_CLI)
+        create.assert_not_called()
+        chain.assert_not_called()
+
+    def test_agent_identity_blocked_before_finalize(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with patch(_MOD + "._chain_finalize") as chain:
+            assert main(_CLI) == 1
+        chain.assert_not_called()
+        assert "human maintainer" in capsys.readouterr().err.lower()
 
 
 def _submission(
@@ -1988,24 +1857,11 @@ def _run_batch(
         patch(_MOD + "._create_pr", side_effect=urls),
         patch(_MOD + ".submission.record_submission"),
         patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._chain_finalize", _real_chain_finalize),
         patch(_MOD + ".subprocess.run", side_effect=fake_run),
     ):
         rc = _run_submit_batch(wts, parse_args(["--all", "--yes", *argv]))
     return rc, calls
-
-
-def test_submit_batch_submits_then_finalizes_each_and_releases_once() -> None:
-    a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
-    rc, calls = _run_batch(
-        [a, b], ["--finalize", "--release"], urls=["https://x/pull/1", "https://x/pull/2"]
-    )
-    assert rc == 0
-    assert calls == [
-        ("vrg-finalize-pr", "https://x/pull/1", "--skip-post-checks"),
-        ("vrg-finalize-pr", "https://x/pull/2", "--skip-post-checks"),
-        ("vrg-finalize-pr", "--cleanup-only"),
-        ("vrg-release", "--no-install"),
-    ]
 
 
 def test_no_rebase_at_submit() -> None:
@@ -2022,78 +1878,6 @@ def test_no_rebase_at_submit() -> None:
     for call in (*git_run.call_args_list, *read_output.call_args_list):
         assert "rebase" not in call.args
     assert [c.kwargs["head"] for c in enable.call_args_list] == ["h1", "h2"]
-
-
-def test_submit_batch_allow_provenance_violation_reaches_finalize() -> None:
-    """--allow-provenance-violation is passed on to each finalize run."""
-    rc, calls = _run_batch(
-        [_batch_wt("issue-1-a")],
-        ["--finalize", "--allow-provenance-violation"],
-        urls=["https://x/pull/1"],
-    )
-    assert rc == 0
-    assert calls[0] == (
-        "vrg-finalize-pr",
-        "https://x/pull/1",
-        "--skip-post-checks",
-        "--allow-provenance-violation",
-    )
-
-
-def test_submit_batch_failed_submit_skips_the_cascade(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """A failed submit skips finalize and release, and names the finalize command."""
-    a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
-    with patch(
-        _MOD + ".auto_merge.enable_auto_merge",
-        side_effect=[
-            auto_merge.AutoMergeError("refused"),
-            auto_merge.AutoMergeResult(merged_now=False),
-        ],
-    ):
-        rc, calls = _run_batch(
-            [a, b], ["--finalize", "--release"], urls=["https://x/pull/1", "https://x/pull/2"]
-        )
-    assert rc == 1
-    assert calls == []
-    err = capsys.readouterr().err
-    assert "Cascade skipped: 1 PR(s) failed to submit." in err
-    assert "vrg-finalize-pr https://x/pull/2 --release" in err
-    assert "https://x/pull/1 — refused" in err
-
-
-def _batch_release_calls(*, install: bool) -> list[tuple[str, ...]]:
-    """Run a one-worktree release cascade; return the vrg-release commands run."""
-    argv = ["--finalize", "--release", *(["--install"] if install else [])]
-    rc, calls = _run_batch([_batch_wt("issue-1-a")], argv, urls=["https://x/pull/1"])
-    assert rc == 0
-    return [cmd for cmd in calls if cmd[0] == "vrg-release"]
-
-
-def test_release_cascade_passes_no_install() -> None:
-    """--release without --install skips the install that vrg-release now
-    runs by default (#1184)."""
-    assert _batch_release_calls(install=False) == [("vrg-release", "--no-install")]
-
-
-def test_install_cascade_runs_plain_release() -> None:
-    """--install runs plain vrg-release, which installs by default (#1184)."""
-    assert _batch_release_calls(install=True) == [("vrg-release",)]
-
-
-def test_release_failure_names_the_command_that_ran(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The batch report names the same command that ran."""
-    rc, _calls = _run_batch(
-        [_batch_wt("issue-1-a")],
-        ["--finalize", "--release"],
-        urls=["https://x/pull/1"],
-        run=lambda cmd: 7 if cmd[0] == "vrg-release" else 0,
-    )
-    assert rc == 1
-    assert "Post-step failed: release: vrg-release --no-install exited 7" in capsys.readouterr().out
 
 
 def test_submit_batch_failure_labels_by_branch_not_dir(
@@ -2113,31 +1897,9 @@ def test_submit_batch_failure_labels_by_branch_not_dir(
         patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
     ):
         rc = _run_submit_batch([wt], parse_args(["--all", "--yes"]))
-    assert rc == 1
+    assert rc == 3
     err = capsys.readouterr().err
     assert "  feature/911-authz-apply-tag — " in err
-
-
-def test_submit_only_batch_prints_pr_watch_for_each_pr(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # Issue #3166: without --finalize nothing is merged, so nothing may say "Merged".
-    a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
-    rc, calls = _run_batch([a, b], [], urls=["https://x/pull/1", "https://x/pull/2"])
-    assert rc == 0
-    assert calls == []
-    out = capsys.readouterr().out
-    assert "/vergil:pr-watch https://x/pull/1" in out
-    assert "/vergil:pr-watch https://x/pull/2" in out
-    assert "Merged" not in out
-
-
-def test_finalize_batch_summary_says_merged(capsys: pytest.CaptureFixture[str]) -> None:
-    rc, _calls = _run_batch([_batch_wt("issue-1-a")], ["--finalize"], urls=["https://x/pull/1"])
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "Merged:" in out
-    assert "Submitted" not in out
 
 
 def test_all_and_select_flags_parse() -> None:
@@ -2241,39 +2003,6 @@ def test_submit_batch_declined_opens_nothing(capsys: pytest.CaptureFixture[str])
     assert "Aborted." in capsys.readouterr().out
 
 
-def test_submit_batch_finalize_failure_stops() -> None:
-    rc, _calls = _run_batch(
-        [_batch_wt("issue-1-a")], ["--finalize"], urls=["https://x/pull/1"], run=lambda _c: 1
-    )
-    assert rc == 1
-
-
-def test_submit_batch_validation_failure_reported() -> None:
-    rc, _calls = _run_batch(
-        [_batch_wt("issue-1-a")],
-        ["--finalize"],
-        urls=["https://x/pull/1"],
-        run=lambda cmd: 1 if cmd[:2] == ("vrg-finalize-pr", "--cleanup-only") else 0,
-    )
-    assert rc == 1
-
-
-def test_submit_batch_release_install_failure_reported() -> None:
-    rc, _calls = _run_batch(
-        [_batch_wt("issue-1-a")],
-        ["--finalize", "--release", "--install"],
-        urls=["https://x/pull/1"],
-        run=lambda cmd: 1 if cmd[0] == "vrg-release" else 0,
-    )
-    assert rc == 1
-
-
-def test_submit_batch_no_finalize_just_submits() -> None:
-    rc, calls = _run_batch([_batch_wt("issue-1-a")], [], urls=["https://x/pull/1"])
-    assert rc == 0
-    assert calls == []  # no finalize, no post-steps
-
-
 def test_submit_batch_dry_run_opens_nothing() -> None:
     """A batch dry run previews every PR and opens nothing."""
     with patch(_MOD + "._submit_all") as submit_all:
@@ -2293,7 +2022,7 @@ def test_main_batch_routes_to_run_submit_batch() -> None:
         patch(_MOD + "._select_batch_worktrees", return_value=["wt"]),
         patch(_MOD + "._run_submit_batch", return_value=0) as run_batch,
     ):
-        rc = main(["--all", "--finalize", "--base", "develop"])
+        rc = main(["--all", "--base", "develop"])
     assert rc == 0
     run_batch.assert_called_once()
 
@@ -2807,7 +2536,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".git.run") as git_run,
             patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5") as create,
         ):
-            rc = main(["feature/x", "--yes"])
+            rc = main(["feature/x", "--no-finalize", "--yes"])
         assert rc == 0
         push.assert_not_called()
         assert not any(c.args and c.args[0] == "push" for c in git_run.call_args_list)
@@ -2944,7 +2673,7 @@ class TestRelayBranchPath:
                 side_effect=subprocess.CalledProcessError(1, ["gh", "pr", "create"]),
             ),
         ):
-            assert main(["feature/x", "--yes"]) == 1
+            assert main(["feature/x", "--yes"]) == 3
         record.assert_not_called()
         assert "feature/x: no PR opened" in capsys.readouterr().err
 
@@ -2987,7 +2716,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".GitHubTransport", return_value=transport),
             patch(_MOD + ".github.create_pr") as create,
         ):
-            rc = main(["feature/x", "--yes"])
+            rc = main(["feature/x", "--no-finalize", "--yes"])
         assert rc == 0
         create.assert_not_called()
         assert "already has a submitted PR" in capsys.readouterr().out
@@ -3064,7 +2793,7 @@ class TestRelayBranchPath:
         ]
         assert submit_all.call_args.kwargs == {"allow_provenance_violation": True}
 
-    def test_relay_failed_submit_exits_1_and_names_it(
+    def test_relay_failed_submit_exits_3_and_names_it(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         state = _ready_state(branch="feature/x", head_sha="abc123")
@@ -3081,7 +2810,7 @@ class TestRelayBranchPath:
                 side_effect=auto_merge.AutoMergeError("https://x/pull/7: refused"),
             ),
         ):
-            assert main(["feature/x", "--yes"]) == 1
+            assert main(["feature/x", "--yes"]) == 3
         err = capsys.readouterr().err
         assert "Failed to submit:" in err
         assert "https://x/pull/7 — https://x/pull/7: refused" in err
@@ -3115,110 +2844,11 @@ class TestRelayBranchPath:
         assert rc == 1
         assert "--issue/--summary/--title" in capsys.readouterr().err
 
-    def test_relay_cascade_finalizes_each_and_releases_once(self) -> None:
-        """--release relays both branches, finalizes each with --skip-post-checks,
-        then validates once and releases exactly once — not once per branch
-        (issue #2398)."""
-        states = {
-            "feature/a": _ready_state(issue="1", branch="feature/a", head_sha="sha_a"),
-            "feature/b": _ready_state(issue="2", branch="feature/b", head_sha="sha_b"),
-        }
-
-        def fake_read_output(*args: str) -> str:
-            branch = args[-1].removeprefix("refs/heads/")
-            return f"sha_{branch[-1]}\t{args[-1]}"
-
-        def fake_transport(branch: str) -> MagicMock:
-            t = MagicMock()
-            t.read.return_value = states[branch]
-            return t
-
-        calls: list[tuple[str, ...]] = []
-
-        def fake_run(cmd: tuple[str, ...], **_kwargs: object) -> MagicMock:
-            calls.append(tuple(cmd))
-            return MagicMock(returncode=0)
-
-        with (
-            patch(_MOD + ".git.repo_root", return_value="/repo"),
-            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
-            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
-            patch(_MOD + ".GitHubTransport", side_effect=fake_transport),
-            patch(_MOD + ".git.read_output", side_effect=fake_read_output),
-            patch(_MOD + "._push_branch"),
-            patch(
-                _MOD + ".github.create_pr",
-                side_effect=["https://x/pull/1", "https://x/pull/2"],
-            ),
-            patch(_MOD + ".subprocess.run", side_effect=fake_run),
-        ):
-            rc = main(["feature/a", "feature/b", "--release", "--yes"])
-        assert rc == 0
-        assert ("vrg-finalize-pr", "https://x/pull/1", "--skip-post-checks") in calls
-        assert ("vrg-finalize-pr", "https://x/pull/2", "--skip-post-checks") in calls
-        assert ("vrg-finalize-pr", "--cleanup-only") in calls
-        # Released once for the whole batch, never per-branch.
-        assert calls.count(("vrg-release", "--no-install")) == 1
-
-    def test_relay_cascade_finalize_only_skips_release(self) -> None:
-        """--finalize (no --release) finalizes each PR and validates once, but
-        never releases."""
-        state = _ready_state(branch="feature/x", head_sha="abc123")
-        transport = MagicMock()
-        transport.read.return_value = state
-        calls: list[tuple[str, ...]] = []
-
-        def fake_run(cmd: tuple[str, ...], **_kwargs: object) -> MagicMock:
-            calls.append(tuple(cmd))
-            return MagicMock(returncode=0)
-
-        with (
-            patch(_MOD + ".git.repo_root", return_value="/repo"),
-            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
-            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
-            patch(_MOD + ".GitHubTransport", return_value=transport),
-            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
-            patch(_MOD + "._push_branch"),
-            patch(_MOD + ".github.create_pr", return_value="https://x/pull/1"),
-            patch(_MOD + ".subprocess.run", side_effect=fake_run),
-        ):
-            rc = main(["feature/x", "--finalize", "--yes"])
-        assert rc == 0
-        assert ("vrg-finalize-pr", "https://x/pull/1", "--skip-post-checks") in calls
-        assert ("vrg-finalize-pr", "--cleanup-only") in calls
-        assert not any(cmd and cmd[0] == "vrg-release" for cmd in calls)
-
-    def test_relay_cascade_install_runs_plain_release(self) -> None:
-        """--install runs the release step as plain `vrg-release`, which
-        installs by default (#1184)."""
-        state = _ready_state(branch="feature/x", head_sha="abc123")
-        transport = MagicMock()
-        transport.read.return_value = state
-        calls: list[tuple[str, ...]] = []
-
-        def fake_run(cmd: tuple[str, ...], **_kwargs: object) -> MagicMock:
-            calls.append(tuple(cmd))
-            return MagicMock(returncode=0)
-
-        with (
-            patch(_MOD + ".git.repo_root", return_value="/repo"),
-            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
-            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
-            patch(_MOD + ".GitHubTransport", return_value=transport),
-            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
-            patch(_MOD + "._push_branch"),
-            patch(_MOD + ".github.create_pr", return_value="https://x/pull/1"),
-            patch(_MOD + ".subprocess.run", side_effect=fake_run),
-        ):
-            rc = main(["feature/x", "--install", "--yes"])
-        assert rc == 0
-        assert [cmd for cmd in calls if cmd and cmd[0] == "vrg-release"] == [("vrg-release",)]
-
-    def test_relay_cascade_already_submitted_branch_aborts(
+    def test_relay_already_submitted_branch_aborts_when_finalizing(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """In the cascade, an already-submitted branch is refused before anything
-        opens: the cascade could not finalize it, so it names the command that can."""
+        """When finalizing, an already-submitted branch is refused before anything
+        opens: this run would not finalize it, so it names the command that can."""
         states = {
             "feature/a": _ready_state(
                 issue="1",
@@ -3243,121 +2873,12 @@ class TestRelayBranchPath:
             patch(_MOD + ".subprocess.run") as run,
             pytest.raises(SystemExit) as excinfo,
         ):
-            main(["feature/a", "feature/b", "--finalize", "--yes"])
+            main(["feature/a", "feature/b", "--yes"])
         create.assert_not_called()
         run.assert_not_called()
         msg = str(excinfo.value.code)
         assert "already has a submitted PR" in msg
         assert "vrg-finalize-pr https://x/pull/9" in msg
-
-    def test_relay_cascade_dry_run_previews_without_side_effects(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """--finalize --dry-run previews each PR and names the cascade, opening no
-        PR and running no finalize/release subprocess."""
-        state = _ready_state(branch="feature/x")
-        transport = MagicMock()
-        transport.read.return_value = state
-        with (
-            patch(_MOD + ".git.repo_root", return_value="/repo"),
-            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
-            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
-            patch(_MOD + ".GitHubTransport", return_value=transport),
-            patch(_MOD + ".git.read_output") as read_output,
-            patch(_MOD + ".github.create_pr") as create,
-            patch(_MOD + ".subprocess.run") as run,
-        ):
-            rc = main(["feature/x", "--finalize", "--dry-run"])
-        assert rc == 0
-        create.assert_not_called()
-        run.assert_not_called()
-        read_output.assert_not_called()
-        assert "would chain into" in capsys.readouterr().out
-
-    def test_relay_cascade_finalize_failure_stops_and_reports(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """A per-PR finalize failure fails the batch and is reported."""
-        state = _ready_state(branch="feature/x", head_sha="abc123")
-        transport = MagicMock()
-        transport.read.return_value = state
-
-        def fake_run(cmd: tuple[str, ...], **_kwargs: object) -> MagicMock:
-            # Fail the per-PR finalize; the end-of-batch validation must not run.
-            return MagicMock(returncode=1)
-
-        with (
-            patch(_MOD + ".git.repo_root", return_value="/repo"),
-            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
-            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
-            patch(_MOD + ".GitHubTransport", return_value=transport),
-            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
-            patch(_MOD + "._push_branch"),
-            patch(_MOD + ".github.create_pr", return_value="https://x/pull/1"),
-            patch(_MOD + ".subprocess.run", side_effect=fake_run),
-        ):
-            rc = main(["feature/x", "--finalize", "--yes"])
-        assert rc == 1
-        assert "Failed" in capsys.readouterr().out
-
-    def test_relay_cascade_validation_failure_reported(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Every PR finalizes, but the end-of-batch post-checks fail: reported as a
-        post-step failure with a non-zero exit."""
-        state = _ready_state(branch="feature/x", head_sha="abc123")
-        transport = MagicMock()
-        transport.read.return_value = state
-
-        def fake_run(cmd: tuple[str, ...], **_kwargs: object) -> MagicMock:
-            # Per-PR finalize passes; the --cleanup-only post-checks fail.
-            failed = tuple(cmd) == ("vrg-finalize-pr", "--cleanup-only")
-            return MagicMock(returncode=1 if failed else 0)
-
-        with (
-            patch(_MOD + ".git.repo_root", return_value="/repo"),
-            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
-            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
-            patch(_MOD + ".GitHubTransport", return_value=transport),
-            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
-            patch(_MOD + "._push_branch"),
-            patch(_MOD + ".github.create_pr", return_value="https://x/pull/1"),
-            patch(_MOD + ".subprocess.run", side_effect=fake_run),
-        ):
-            rc = main(["feature/x", "--finalize", "--yes"])
-        assert rc == 1
-        out = capsys.readouterr().out
-        # Names both checks --cleanup-only runs, never blaming validation alone (#3316).
-        label = "Post-step failed: post-checks: end-of-batch post-checks (validation + CD check)"
-        assert label in out
-        assert "validation exited" not in out
-
-    def test_relay_cascade_release_failure_reported(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Finalize and validation pass, but the single release fails: reported as a
-        post-step failure."""
-        state = _ready_state(branch="feature/x", head_sha="abc123")
-        transport = MagicMock()
-        transport.read.return_value = state
-
-        def fake_run(cmd: tuple[str, ...], **_kwargs: object) -> MagicMock:
-            # Only vrg-release fails.
-            return MagicMock(returncode=1 if tuple(cmd)[0] == "vrg-release" else 0)
-
-        with (
-            patch(_MOD + ".git.repo_root", return_value="/repo"),
-            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
-            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
-            patch(_MOD + ".GitHubTransport", return_value=transport),
-            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
-            patch(_MOD + "._push_branch"),
-            patch(_MOD + ".github.create_pr", return_value="https://x/pull/1"),
-            patch(_MOD + ".subprocess.run", side_effect=fake_run),
-        ):
-            rc = main(["feature/x", "--release", "--yes"])
-        assert rc == 1
-        assert "Post-step failed: release" in capsys.readouterr().out
 
     def test_relay_blocked_for_agent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
@@ -3779,7 +3300,7 @@ class TestBatchSubmit:
             patch(_MOD + "._push_branch") as push,
             patch(_MOD + "._create_pr") as create,
         ):
-            assert main(["--yes"]) == 1
+            assert main(["--yes"]) == 3
         # A submit that pushes fetches only the target: fetching the branch would
         # move the lease ref that --force-with-lease holds (merge review R1).
         git_run.assert_called_once_with("fetch", "origin", "develop")
@@ -3806,7 +3327,7 @@ class TestBatchSubmit:
             patch(_MOD + "._push_branch") as push,
             patch(_MOD + "._create_pr") as create,
         ):
-            assert main(["--yes"]) == 1
+            assert main(["--yes"]) == 3
         # Template mode pushes, so only the target is fetched.
         git_run.assert_called_once_with("fetch", "origin", "develop")
         commits.assert_not_called()
@@ -3916,7 +3437,7 @@ class TestBatchSubmit:
             patch(_MOD + ".batch_rules.check_commit_per_issue", order.check_commit_per_issue),
             patch(_MOD + "._create_pr") as create,
         ):
-            assert main(["feature/10-x", "--yes"]) == 1
+            assert main(["feature/10-x", "--yes"]) == 3
         names = [c[0] for c in order.mock_calls]
         assert names == ["run", "check_hard_rules", "check_commit_per_issue"]
         assert order.run.call_args.args == ("fetch", "origin", "feature/10-x", "develop")
@@ -4137,17 +3658,6 @@ def test_provenance_advisory_is_printed_and_auto_merge_still_turned_on(
     assert "ADVISORY: https://x/pull/1: bot-vergil-audit (audit) performed 'approved'" in (
         capsys.readouterr().err
     )
-
-
-def test_submit_batch_dry_run_names_the_finalize_chain(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    with patch(_MOD + "._submit_all") as submit_all:
-        rc, calls = _run_batch([_batch_wt("issue-1-a")], ["--dry-run", "--finalize"], urls=[])
-    assert rc == 0
-    assert calls == []
-    submit_all.assert_not_called()
-    assert "[dry-run] would chain into: vrg-finalize-pr <pr-url>" in capsys.readouterr().out
 
 
 def test_relay_declined_opens_nothing(capsys: pytest.CaptureFixture[str]) -> None:

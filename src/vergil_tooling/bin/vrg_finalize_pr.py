@@ -68,14 +68,10 @@ job merges on GitHub. Its exit codes are a watched run's.
 - 5: full success, but the chained release failed.
 
 **Removed flags** are refused by name before any side effect:
-``--strategy`` (submit chooses the merge method) and ``--no-wait-cd`` (not
-waiting is the default).
-
-**Kept until ``vrg-submit-pr`` drops its interim cascade** (Task 13b of epic
-vergil-project/.github#1218): ``--skip-post-checks`` watches the PRs and
-reports them, with no settle phase and no release (exit 0 or 3), for
-submit's serial batch cascade; ``--install`` implies ``--release`` and runs a
-plain ``vrg-release``, for submit's single-PR cascade.
+``--strategy`` (submit chooses the merge method), ``--no-wait-cd`` (not
+waiting is the default), ``--skip-post-checks`` (one run watches the whole
+batch, then settles develop once) and ``--install`` (``--release`` installs
+by default; ``--no-install`` opts out).
 
 Output of the settle phase renders through the stage-aware progress framework
 (issue #1479): standalone TTY runs get the live display with collapsed
@@ -166,6 +162,14 @@ STRATEGY_REMOVED = (
     "vrg-submit-pr now chooses the merge method when it turns auto-merge on "
     "(squash for a single-issue PR, rebase for a batch PR)"
 )
+SKIP_POST_CHECKS_REMOVED = (
+    "vrg-finalize-pr: --skip-post-checks was removed; one run now watches every "
+    "listed PR, then settles develop once (pass the PRs as a comma list)"
+)
+INSTALL_REMOVED = (
+    "vrg-finalize-pr: --install was removed; --release now installs by default "
+    "(add --no-install to skip the install)"
+)
 
 # How many trailing lines of a failed validate's output the report repeats.
 VALIDATE_TAIL_LINES = 40
@@ -193,11 +197,6 @@ def main(argv: list[str] | None = None) -> int:
         print(refusal, file=sys.stderr)
         return EXIT_ERROR
 
-    # --install is the interim single-PR cascade of vrg-submit-pr (until Task
-    # 13b): it implies --release and runs a plain vrg-release.
-    if args.install:
-        args.release = True
-
     if not git.is_main_worktree():
         main_root = git.main_worktree_root()
         print(
@@ -215,8 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.release:
         refusal = gate.unreleased_refusal(root)
         if refusal is not None:
-            flag = "--install" if args.install else "--release"
-            print(f"vrg-finalize-pr {flag}: {refusal}", file=sys.stderr)
+            print(f"vrg-finalize-pr --release: {refusal}", file=sys.stderr)
             return EXIT_ERROR
 
     if args.cleanup_only:
@@ -256,12 +254,12 @@ def _flag_refusal(args: argparse.Namespace) -> str | None:
         return NO_WAIT_CD_REMOVED
     if args.strategy is not None:
         return STRATEGY_REMOVED
-    if args.no_install and args.install:
-        return "vrg-finalize-pr: --install and --no-install contradict each other"
+    if args.skip_post_checks:
+        return SKIP_POST_CHECKS_REMOVED
+    if args.install:
+        return INSTALL_REMOVED
     if args.no_install and not args.release:
         return "vrg-finalize-pr: --no-install requires --release"
-    if args.skip_post_checks and (args.release or args.install):
-        return "vrg-finalize-pr: --skip-post-checks runs no settle phase, so it never releases"
     return None
 
 
@@ -321,17 +319,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="With --release, run vrg-release --no-install",
     )
     parser.add_argument(
-        "--install",
-        action="store_true",
-        help="Interim, for vrg-submit-pr's cascade: implies --release and runs a plain vrg-release",
-    )
-    parser.add_argument(
-        "--skip-post-checks",
-        action="store_true",
-        help="Interim, for vrg-submit-pr's batch cascade: watch and report the "
-        "PRs only, with no settle phase and no release",
-    )
-    parser.add_argument(
         "--wait-cd",
         action="store_true",
         help="Block on the CD workflow run for the synced head and fail if it "
@@ -342,6 +329,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # argparse rejecting it as unknown.
     parser.add_argument("--no-wait-cd", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--strategy", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--skip-post-checks", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
     add_yes_argument(parser)
     progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
@@ -372,9 +361,6 @@ def _run_watched(args: argparse.Namespace, root: Path, prs: list[str]) -> int:
     """Watch *prs*, settle develop once if any merged, report, then maybe release."""
     if args.dry_run:
         print(f"[dry-run] would watch until each merges or fails: {', '.join(prs)}")
-        if args.skip_post_checks:
-            print("[dry-run] --skip-post-checks: no settle phase")
-            return EXIT_OK
         print("[dry-run] the settle phase below runs only if at least one PR merges")
         settle = _settle(args, root, merged_prs=list(prs))
         return _maybe_release(args, root, _settle_exit(settle))
@@ -386,10 +372,6 @@ def _run_watched(args: argparse.Namespace, root: Path, prs: list[str]) -> int:
         print(f"vrg-finalize-pr: the watch stopped: {exc}", file=sys.stderr)
         return EXIT_ERROR
     merged = [r.pr for r in results if r.outcome == "merged"]
-    if args.skip_post_checks:
-        _print_pr_report(results)
-        print("\n--skip-post-checks: the settle phase was skipped.")
-        return _watch_exit(results)
     if not merged:
         _print_pr_report(results)
         print("\nNo PR merged: the settle phase was skipped.")
@@ -1892,8 +1874,8 @@ def build_stages(*, close_refs: bool) -> tuple[Stage, ...]:
 def _release_cmd(args: argparse.Namespace) -> tuple[str, ...]:
     """The ``vrg-release`` command the cascade runs, the one source for it.
 
-    ``vrg-release`` installs by default (#1184), so ``--release`` (and the
-    interim ``--install``) run it plain, and ``--no-install`` passes through.
+    ``vrg-release`` installs by default (#1184), so ``--release`` runs it
+    plain, and ``--no-install`` passes through.
     Every hint that names the command prints this same tuple, so a hint
     cannot drift from what runs.
     """

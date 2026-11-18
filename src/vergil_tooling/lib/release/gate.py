@@ -2,8 +2,8 @@
 
 A repo opts in to releasing with ``[publish] release = true`` in
 ``vergil.toml``; the key defaults to false when absent. ``vrg-release`` and
-every command that cascades into it (``vrg-finalize-pr --release/--install``,
-``vrg-submit-pr --release/--install``) check this before any side effect, so a
+every command that cascades into it (``vrg-finalize-pr --release``,
+``vrg-submit-pr --release``) check this before any side effect, so a
 repo that is not released is refused up front with nothing changed, rather
 than discovering it partway through a release, after the release PR has
 merged to ``main`` (issue #4175).

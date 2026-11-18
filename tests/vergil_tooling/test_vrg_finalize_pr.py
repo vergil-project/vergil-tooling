@@ -3456,17 +3456,19 @@ def test_no_install_passes_through(tmp_path: Path) -> None:
     assert run.call_args.args[0] == ("vrg-release", "--no-install")
 
 
-def test_install_still_chains_plain_release(tmp_path: Path) -> None:
-    """vrg-submit-pr's interim single-PR --install cascade still works (until Task 13b)."""
-    run = _release_ok()
+def test_finalize_install_fatal(capsys: pytest.CaptureFixture[str]) -> None:
+    """--install is refused by name before any side effect, naming the new default."""
     with (
-        _settle_env(tmp_path, []),
-        patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged),
-        patch(_MOD + ".subprocess.run", run),
+        patch(_MOD + ".git.repo_root") as repo_root,
+        patch(_MOD + ".finalize_watch.watch") as watch,
+        patch(_MOD + ".subprocess.run") as run,
     ):
-        assert main([_PR_A, "--install"]) == 0
-    run.assert_called_once()
-    assert run.call_args.args[0] == ("vrg-release",)
+        assert main([_PR_A, "--install"]) == 1
+    for mock in (repo_root, watch, run):
+        mock.assert_not_called()
+    err = capsys.readouterr().err
+    assert "vrg-finalize-pr: --install was removed" in err
+    assert "--release now installs by default" in err
 
 
 def test_exit_5_release_failed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -3560,13 +3562,6 @@ def test_merged_violation_with_failed_validate_is_4(tmp_path: Path, flags: list[
     run.assert_not_called()
 
 
-@pytest.mark.parametrize("flags", [[], ["--allow-provenance-violation"]])
-def test_merged_violation_with_skip_post_checks_is_3(tmp_path: Path, flags: list[str]) -> None:
-    watch = _watch_returning(_pr_result(_PR_A, detail="x (audit): closed", violation=True))
-    with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
-        assert main([_PR_A, "--skip-post-checks", *flags]) == 3
-
-
 def test_open_pr_failed_on_provenance_is_3(tmp_path: Path) -> None:
     """Without the flag the watch fails an open PR on provenance: the run is 3."""
     watch = _watch_returning(
@@ -3592,22 +3587,19 @@ def test_allow_provenance_violation_help_names_its_limit(
     assert "does not cover a violation that has already merged" in help_text
 
 
-def test_skip_post_checks_watches_without_settling(tmp_path: Path) -> None:
-    """vrg-submit-pr's interim batch cascade: watch only, no settle (until Task 13b)."""
+def test_skip_post_checks_fatal(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """--skip-post-checks is refused by name before any watch or settle step."""
     calls: list[str] = []
     with (
         _settle_env(tmp_path, calls),
-        patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged) as watch,
+        patch(_MOD + ".finalize_watch.watch") as watch,
     ):
-        assert main([_PR_A, "--skip-post-checks", "--allow-provenance-violation"]) == 0
-    watch.assert_called_once_with([_PR_A], allow_provenance_violation=True)
+        assert main([_PR_A, "--skip-post-checks"]) == 1
+    watch.assert_not_called()
     assert calls == []
-
-
-def test_skip_post_checks_unmerged_is_3(tmp_path: Path) -> None:
-    watch = _watch_returning(_pr_result(_PR_A, "failed: CI"))
-    with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
-        assert main([_PR_A, "--skip-post-checks"]) == 3
+    err = capsys.readouterr().err
+    assert "vrg-finalize-pr: --skip-post-checks was removed" in err
+    assert "settles develop once" in err
 
 
 def test_all_selects_worktree_prs(tmp_path: Path) -> None:
@@ -3694,8 +3686,10 @@ def test_dry_run_watches_and_changes_nothing(
     [
         (["1", "--strategy", "squash"], "--strategy was removed"),
         (["1", "--no-install"], "--no-install requires --release"),
-        (["1", "--install", "--no-install"], "--install and --no-install contradict"),
-        (["1", "--skip-post-checks", "--release"], "--skip-post-checks runs no settle phase"),
+        (["1", "--install"], "--install was removed"),
+        (["1", "--install", "--no-install"], "--install was removed"),
+        (["1", "--skip-post-checks"], "--skip-post-checks was removed"),
+        (["1", "--skip-post-checks", "--release"], "--skip-post-checks was removed"),
     ],
 )
 def test_flag_refusals_before_any_side_effect(
@@ -3737,17 +3731,6 @@ def test_empty_pr_list_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> N
         assert main([" , "]) == 1
     watch.assert_not_called()
     assert "vrg-finalize-pr: no PR in ' , '" in capsys.readouterr().err
-
-
-def test_dry_run_skip_post_checks_settles_nothing(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    calls: list[str] = []
-    with _settle_env(tmp_path, calls), patch(_MOD + ".finalize_watch.watch") as watch:
-        assert main([_PR_A, "--skip-post-checks", "--dry-run"]) == 0
-    watch.assert_not_called()
-    assert calls == []
-    assert "[dry-run] --skip-post-checks: no settle phase" in capsys.readouterr().out
 
 
 def test_interrupted_settle_keeps_its_exit_code(tmp_path: Path) -> None:
@@ -3810,7 +3793,7 @@ def test_merged_branches_reads_each_merged_pr() -> None:
 # -- refuse a release cascade on a repo that is not released (issue #4175) --
 
 
-@pytest.mark.parametrize("flag", ["--release", "--install"])
+@pytest.mark.parametrize("flag", ["--release"])
 def test_release_cascade_refused_when_repo_not_released(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str
 ) -> None:
@@ -3846,13 +3829,16 @@ def test_finalize_without_release_ignores_unreleased_repo(tmp_path: Path) -> Non
 
 def test_parse_args_release_and_install_flags() -> None:
     assert parse_args([]).release is False
-    assert parse_args([]).install is False
     assert parse_args([]).no_install is False
     assert parse_args(["--release", "--no-install"]).no_install is True
 
 
-def test_skip_post_checks_flag_parses() -> None:
-    assert parse_args(["123", "--skip-post-checks"]).skip_post_checks is True
+@pytest.mark.parametrize("flag", ["--install", "--skip-post-checks"])
+def test_removed_flags_hidden_from_help(capsys: pytest.CaptureFixture[str], flag: str) -> None:
+    """A removed flag is still parsed, so it can be refused by name, but not advertised."""
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    assert flag not in capsys.readouterr().out
 
 
 _FIN_MOD = "vergil_tooling.bin.vrg_finalize_pr"
