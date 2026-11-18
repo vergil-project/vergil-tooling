@@ -261,9 +261,7 @@ def test_create_issue_failure_prints_resume_command(
 def test_create_tracking_failure_prints_resume_with_issue(
     env: MagicMock, files: dict[str, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    env.pair.side_effect = RetargetError(
-        f"advisory {GHSA}: rewriting the tracking lines failed"
-    )
+    env.pair.side_effect = RetargetError(f"advisory {GHSA}: rewriting the tracking lines failed")
     assert main(_create_argv(files)) == 1
     err = capsys.readouterr().err
     assert f"writing the tracking line for {ISSUE.slug} failed" in err
@@ -657,10 +655,11 @@ def test_show_issue_refuses_naming_every_missing_advisory(
 
 def test_retarget_cli_moves_tracking(env: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
     second = IssueRef("org", ".github", 400)
-    assert main(["retarget", GHSA, "--from", EXISTING.slug, "--to", ISSUE.slug, "--to", second.slug]) == 0
-    env.retarget.assert_called_once_with(
-        HOME, GHSA, [ISSUE, second], source=EXISTING, drop=[]
+    assert (
+        main(["retarget", GHSA, "--from", EXISTING.slug, "--to", ISSUE.slug, "--to", second.slug])
+        == 0
     )
+    env.retarget.assert_called_once_with(HOME, GHSA, [ISSUE, second], source=EXISTING, drop=[])
     assert f"Retargeted {GHSA} to {ISSUE.slug}, {second.slug}." in capsys.readouterr().out
 
 
@@ -689,7 +688,10 @@ def test_retarget_cli_failure_exits_nonzero(
     [
         (["retarget", "nope", "--from", "org/a#2", "--to", "org/a#1"], "GHSA must be a GHSA ID"),
         (["retarget", GHSA, "--from", EXISTING.slug, "--to", "#1"], "--to must be owner/repo#N"),
-        (["retarget", GHSA, "--from", EXISTING.slug, "--to", "org/a#1", "--to", "other/b#2"], "cross-org"),
+        (
+            ["retarget", GHSA, "--from", EXISTING.slug, "--to", "org/a#1", "--to", "other/b#2"],
+            "cross-org",
+        ),
     ],
 )
 def test_retarget_cli_refuses_bad_input(

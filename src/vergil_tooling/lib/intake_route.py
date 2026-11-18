@@ -966,9 +966,7 @@ def _read_tracked(ref: IssueRef, ghsas: Sequence[str]) -> _Tracked:
     """
     home = security_records.advisory_home(ref.owner)
     others = {
-        ghsa: tuple(
-            issue for issue in security_records.tracked_issues(home, ghsa) if issue != ref
-        )
+        ghsa: tuple(issue for issue in security_records.tracked_issues(home, ghsa) if issue != ref)
         for ghsa in ghsas
     }
     return _Tracked(home=home, others=others)

@@ -296,18 +296,21 @@ def _finish_pair(
         step = "checking the advisory's tracking lines"
         security_records.pair_check(home, ghsa_id, issue)
         if attach is not None:
-            step = f"marking {issue.slug}"
-            security_records.mark_issue(issue, home, ghsa_id)
+            paired = attach
+            step = f"marking {paired.slug}"
+            security_records.mark_issue(paired, home, ghsa_id)
             if args.resume is not None:
-                step = f"linking {issue.slug} under intake epic {intake.slug}"
-                _link_if_unparented(intake, issue)
-        elif issue is None:
+                step = f"linking {paired.slug} under intake epic {intake.slug}"
+                _link_if_unparented(intake, paired)
+        elif issue is not None:
+            paired = issue
+        else:
             step = "creating the issue"
-            issue = _create_issue(args, home, queue_home, ghsa_id, body)
-            step = f"linking {issue.slug} under intake epic {intake.slug}"
-            epics.add_child(intake, issue)
-        step = f"writing the tracking line for {issue.slug}"
-        security_records.pair(home, ghsa_id, issue)
+            paired = issue = _create_issue(args, home, queue_home, ghsa_id, body)
+            step = f"linking {paired.slug} under intake epic {intake.slug}"
+            epics.add_child(intake, paired)
+        step = f"writing the tracking line for {paired.slug}"
+        security_records.pair(home, ghsa_id, paired)
     except security_records.RetargetRefusedError as exc:
         print(f"{_PROG}: {_reason(exc)}", file=sys.stderr)
         return 1
@@ -325,7 +328,7 @@ def _finish_pair(
             file=sys.stderr,
         )
         return 1
-    print(f"Recorded {ghsa_id} in {home}, tracked by {issue.slug}.")
+    print(f"Recorded {ghsa_id} in {home}, tracked by {paired.slug}.")
     return 0
 
 

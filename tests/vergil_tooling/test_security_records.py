@@ -1091,7 +1091,7 @@ def test_retarget_refuses_unrelated_source_when_targets_match(
     with pytest.raises(RetargetRefusedError) as excinfo:
         retarget(HOME, GHSA, (C,), source=B)
     assert "it tracks org/tool#12" in str(excinfo.value)
-    assert f"--from 'org/tool#12' --to 'org/tool#12'" in str(excinfo.value)
+    assert "--from 'org/tool#12' --to 'org/tool#12'" in str(excinfo.value)
     assert issues.writes == []
 
 

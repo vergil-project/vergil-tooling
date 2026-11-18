@@ -679,8 +679,7 @@ def pair_check(home: str, ghsa_id: str, issue: IssueRef | None) -> None:
     else:
         hint = "to move it, run vrg-security-record retarget with --from an issue it tracks"
     raise RetargetRefusedError(
-        f"advisory {ghsa_id} already tracks {_slugs(tracked)}, so its first pair is made; "
-        f"{hint}"
+        f"advisory {ghsa_id} already tracks {_slugs(tracked)}, so its first pair is made; {hint}"
     )
 
 

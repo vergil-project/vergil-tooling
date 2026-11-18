@@ -1884,7 +1884,10 @@ def test_recreate_security_item_retarget_failure_leaves_original_open(env: Env) 
     message = str(excinfo.value)
     assert f"recreated org/.github#352 as org/tool#901, but advisory {GHSA}" in message
     assert "org/.github#352 is left open" in message
-    assert f"vrg-security-record retarget {GHSA} --from 'org/.github#352' --to 'org/tool#901'" in message
+    assert (
+        f"vrg-security-record retarget {GHSA} --from 'org/.github#352' --to 'org/tool#901'"
+        in message
+    )
     env.run.assert_not_called()
     env.add_child.assert_not_called()
 
@@ -1898,7 +1901,9 @@ def test_transfer_security_item_retargets_to_final(env: Env) -> None:
     final = IssueRef("org", "tool", 900)
     assert result == RouteResult(final=final, moved_by="transfer")
     # The old number is the moved issue itself: rewritten away, never unmarked.
-    env.retarget.assert_called_once_with("org/.github", GHSA, (final,), source=ITEM, renamed=(ITEM,))
+    env.retarget.assert_called_once_with(
+        "org/.github", GHSA, (final,), source=ITEM, renamed=(ITEM,)
+    )
     # The settle wait and its confirming wait both come before the retarget.
     assert order == ["settle", "settle", "retarget"]
     # The item was read before the move, while it still had its labels: once
@@ -1930,7 +1935,10 @@ def test_transfer_parent_mismatch_also_names_the_advisory(env: Env) -> None:
     message = str(excinfo.value)
     assert "half-applied" in message
     assert f"also, advisory {GHSA} was not retargeted" in message
-    assert f"vrg-security-record retarget {GHSA} --from 'org/.github#352' --to 'org/tool#900'" in message
+    assert (
+        f"vrg-security-record retarget {GHSA} --from 'org/.github#352' --to 'org/tool#900'"
+        in message
+    )
     env.retarget.assert_not_called()
 
 
@@ -1947,7 +1955,10 @@ def test_transfer_link_error_is_half_applied_and_names_the_advisory(env: Env) ->
         "org/.github#11 or reading its parent back failed (GraphQL errors: [boom])"
     )
     assert f"; also, advisory {GHSA} was not retargeted" in message
-    assert f"vrg-security-record retarget {GHSA} --from 'org/.github#352' --to 'org/tool#900'" in message
+    assert (
+        f"vrg-security-record retarget {GHSA} --from 'org/.github#352' --to 'org/tool#900'"
+        in message
+    )
     env.retarget.assert_not_called()
 
 
@@ -2042,7 +2053,8 @@ def test_transfer_first_retarget_failure_names_both_advisories(env: Env) -> None
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert str(excinfo.value) == (
         f"org/.github#352 moved to org/tool#900, but advisories {GHSA}, {GHSA_B} were not "
-        f"retargeted; run: vrg-security-record retarget {GHSA} --from 'org/.github#352' --to 'org/tool#900', then "
+        f"retargeted; run: vrg-security-record retarget {GHSA} --from 'org/.github#352' "
+        "--to 'org/tool#900', then "
         f"vrg-security-record retarget {GHSA_B} --from 'org/.github#352' --to 'org/tool#900'"
     )
     env.retarget.assert_called_once()
@@ -2055,7 +2067,10 @@ def test_transfer_parent_mismatch_names_every_advisory(env: Env) -> None:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
     assert f"also, advisories {GHSA}, {GHSA_B} were not retargeted" in message
-    assert f"vrg-security-record retarget {GHSA_B} --from 'org/.github#352' --to 'org/tool#900'" in message
+    assert (
+        f"vrg-security-record retarget {GHSA_B} --from 'org/.github#352' --to 'org/tool#900'"
+        in message
+    )
     env.retarget.assert_not_called()
 
 
@@ -2083,7 +2098,10 @@ def test_recreate_second_retarget_failure_leaves_original_open(env: Env) -> None
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
     assert f"recreated org/.github#352 as org/tool#901, but advisory {GHSA_B} was not" in message
-    assert f"vrg-security-record retarget {GHSA_B} --from 'org/.github#352' --to 'org/tool#901'" in message
+    assert (
+        f"vrg-security-record retarget {GHSA_B} --from 'org/.github#352' --to 'org/tool#901'"
+        in message
+    )
     assert f"retarget {GHSA} " not in message
     assert "org/.github#352 is left open" in message
     env.run.assert_not_called()
