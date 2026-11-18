@@ -85,6 +85,39 @@ so ready PRs merge in parallel. A PR whose submit fails is named, with
 its reason, in a summary printed at the end, and the other PRs go on:
 nothing is fail-fast, since one PR no longer waits on another.
 
+### Output
+
+The previews, any refusal, the confirmation and `--dry-run` print
+plainly. Once the selection is confirmed, the steps above run as a
+progress rollup, as in [`vrg-release`](release.md) (issue #4709): **one
+stage per PR**, named after its branch. On a terminal the active stage
+shows a spinner and a rolling window of its output, then collapses to
+one line with its mark, its duration and what it did; piped, each stage
+prints in full (`--output-format` and `--output-window` choose, as for
+the other progress commands). Every step's output goes to
+`.vergil/vrg-submit-pr-<stamp>.log` in the main worktree, and the
+summary points at it:
+
+```text
+✓ feature/4709-submit-pr-rollup  1.8s — PR #123 auto-merge on (squash, pinned to 9f8e7d6c5b4a)
+✓ feature/4710-other  1.2s — PR #124 merged directly (squash)
+✗ feature/4711-batch  0.9s — no PR opened: pushing 'feature/4711-batch' to origin failed.
+─────────────────────────────────────────────
+✗  failures:
+   feature/4711-batch — no PR opened: pushing 'feature/4711-batch' to origin failed.
+
+vrg-submit-pr completed with errors  (total: 00:03)
+PipelineError: 1 stage failed (feature/4711-batch)
+   full log → /path/to/repo/.vergil/vrg-submit-pr-20261118-194502.log
+```
+
+A PR that fails after it opened says so (`PR #123 opened, submit
+failed: …`). An unexpected error (a bug rather than a failed PR) stops
+the rollup: the PRs after it are marked not attempted, and the error is
+raised once the summary is printed. The chained `vrg-finalize-pr` then
+prints its own rollup, and the failed submits are named again after its
+report.
+
 PRs are opened against **`develop` only**. A `--base`, or a base
 recorded by `report-ready`, naming any other branch is refused, since
 releases go through `vrg-release`.
@@ -216,6 +249,8 @@ orphaned relay ref whose branch no longer exists.
 | `--no-install` | No | With `--release`, run `vrg-release --no-install` |
 | `--dry-run` | No | Print what would be done without executing |
 | `--yes` | No | Skip the confirmation |
+| `--output-window N` | No | Rolling output window for the terminal renderer of the submit rollup (`0` streams everything) |
+| `--output-format` | No | Force the submit rollup's renderer: `rich`, `gha` or `plain` |
 
 ### Removed flags
 

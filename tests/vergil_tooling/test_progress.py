@@ -599,6 +599,78 @@ def test_mark_warn_without_session_is_noop() -> None:
     progress.mark_warn("nothing is listening")  # must not raise
 
 
+def test_note_shown_on_ok_stage_and_logged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A note set by a stage that returns normally rides on its ✓ line and in the log."""
+    stages = [
+        Stage("open", lambda ctx: progress.note("PR #12 auto-merge on"), mode="fail_defer"),
+        Stage("plain", lambda ctx: None, mode="fail_defer"),
+    ]
+    assert _pipeline(tmp_path, stages, _args()) == 0
+    out = capsys.readouterr().out
+    assert re.search(r"^✓ open  \d+\.\ds — PR #12 auto-merge on$", out, re.MULTILINE)
+    # The note does not leak into the next stage.
+    assert re.search(r"^✓ plain  \d+\.\ds$", out, re.MULTILINE)
+    log_text = next((tmp_path / ".vergil").glob("test-cmd-*.log")).read_text()
+    assert "=== open: ok (PR #12 auto-merge on, " in log_text
+
+
+def test_note_yields_to_a_warning(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A stage that is marked with mark_warn shows its warning, not its note."""
+
+    def _both(_ctx: object) -> None:
+        progress.note("did a thing")
+        progress.mark_warn("but deferred")
+
+    _pipeline(tmp_path, [Stage("s", _both, mode="fail_defer")], _args())
+    out = capsys.readouterr().out
+    assert "⚠ s" in out
+    assert "but deferred" in out
+    assert "did a thing" not in out
+
+
+def test_note_without_session_is_noop() -> None:
+    progress.note("nothing is listening")  # must not raise
+
+
+def _stage_failed(_ctx: object) -> None:
+    raise progress.StageFailedError("no PR opened: the push was refused")
+
+
+def test_stage_failed_error_reason_has_no_type_prefix(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """StageFailedError fails the stage with its message alone as the reason."""
+    assert _pipeline(tmp_path, [Stage("pr", _stage_failed, mode="fail_defer")], _args()) == 1
+    out = capsys.readouterr().out
+    assert re.search(r"^✗ pr  \d+\.\ds — no PR opened: the push was refused$", out, re.MULTILINE)
+    assert "StageFailedError:" not in out
+
+
+def test_failure_exit_none_names_no_exit_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc = progress.run_pipeline(
+        None,
+        [Stage("bad", _boom, mode="fail_defer")],
+        command="test-cmd",
+        label="test",
+        args=_args(),
+        repo_root=tmp_path,
+        failure_exit=None,
+    )
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "PipelineError: 1 stage failed (bad)\n" in out
+    assert "· exit" not in out
+
+
+def test_build_summary_names_the_given_failure_exit(tmp_path: Path) -> None:
+    text = progress.build_summary("x", _results_mixed(), 1.0, tmp_path / "x.log", failure_exit=3)
+    assert "PipelineError: 1 stage failed (build-images) · exit 3" in text
+
+
 def test_pipeline_skip_flag(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[str] = []
     stages = [
