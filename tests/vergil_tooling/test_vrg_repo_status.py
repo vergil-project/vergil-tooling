@@ -447,6 +447,21 @@ def test_unreadable_merge_state_is_shown_not_hidden(capsys: pytest.CaptureFixtur
     )
 
 
+def test_merge_state_is_not_read_for_a_machinery_pr(capsys: pytest.CaptureFixture[str]) -> None:
+    """A release or deps PR is merged directly, never with auto-merge, so it is
+    never judged by vrg-pr-await's reasons."""
+    statuses = [
+        _status("release/2.1.200", WorktreeState.OPEN_PR, pr=7, ahead=1),
+        _status("deps/update-2.1.200", WorktreeState.OPEN_PR, pr=8, ahead=1),
+    ]
+    rc, mocks = _run(_raws(statuses), gather=statuses, merge=_conflict())
+    out = capsys.readouterr().out
+    assert rc == 0
+    mocks["pr_await.standing_block"].assert_not_called()
+    assert "Release and dependency machinery" in out
+    assert "merge failed" not in out
+
+
 def test_merge_state_is_not_read_for_a_finished_pr(capsys: pytest.CaptureFixture[str]) -> None:
     status = _status("feature/1-a", WorktreeState.MERGED, pr=5)
     rc, mocks = _run(_raws([status]), gather=[status], merge=_conflict())

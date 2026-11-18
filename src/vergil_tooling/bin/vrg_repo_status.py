@@ -35,7 +35,8 @@ for an authoritative merged/closed verdict; a failed lookup is shown as
 ``unknown`` with the reason rather than silently downgraded.
 
 A worktree's open PR is shown whatever its local state, a branch mid-rebase
-included, and is read once more for its merge state (issue #4678). A PR that
+included. A development worktree's open PR, the kind ``vrg-submit-pr`` opens
+with auto-merge on, is read once more for its merge state (issue #4678). A PR that
 cannot merge as it stands shows ``merge failed: <reason>`` in STATE, with the
 reasons ``vrg-pr-await`` defines (``conflict``, ``check_failed``,
 ``auto_merge_off``, ``orphaned_check``), beside any local state such as
@@ -170,7 +171,6 @@ def main(argv: list[str] | None = None) -> int:
                 raise
             vanished.append(raw)
             continue
-        status = _with_merge_state(status)
         # A detached worktree is classified by the branch recovered for it
         # (a paused rebase's head-name, or its issue-<N>-<slug> directory), so
         # a mid-rebase feature worktree stays in Development (issue #2634).
@@ -178,6 +178,11 @@ def main(argv: list[str] | None = None) -> int:
             status.worktree.branch,
             canonical=worktrees.is_canonical_worktree(raw.path, root),
         )
+        # Only issue-branch PRs are opened by vrg-submit-pr with auto-merge on;
+        # a release or deps PR is merged directly and never uses auto-merge,
+        # so its merge state is not judged by vrg-pr-await's reasons.
+        if kind is WorktreeKind.DEVELOPMENT:
+            status = _with_merge_state(status)
         sections[kind].append(status)
 
     gone, gone_error = _lookup_gone(main_status, sections)
