@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import git, github, version
+from vergil_tooling.lib import git, github, pr_create, version
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.merge import known_pr_state, wait_and_merge
 
@@ -80,7 +80,7 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     # _checkout_post_branch has checked is the only remote state it accepts.
     git.run("push", "-u", "origin", branch)
 
-    pr_url = _create_bump_pr(ctx, next_ver)
+    pr_url = _create_bump_pr(ctx, next_ver, branch)
     print(f"Back-merge PR created: {pr_url}")
 
     wait_and_merge(pr_url, phase="back-merge-bump")
@@ -286,7 +286,13 @@ def _merged_pr_version(ctx: ReleaseContext, number: str) -> str:
     return version.show(ctx.repo_root, ref="FETCH_HEAD")
 
 
-def _create_bump_pr(ctx: ReleaseContext, next_ver: str) -> str:
+def _create_bump_pr(ctx: ReleaseContext, next_ver: str, branch: str) -> str:
+    """Open the back-merge PR for the pushed *branch*, adopting one a failed create opened.
+
+    A ``gh pr create`` that GitHub carried out can still fail, and a blind
+    retry is then refused with "already exists" (#4699): the open PR is
+    adopted when it matches, and any other fails the stage, naming it.
+    """
     title = f"chore(release): back-merge {ctx.version} and bump to {next_ver}"
     body = (
         f"## Summary\n\n"
@@ -295,14 +301,20 @@ def _create_bump_pr(ctx: ReleaseContext, next_ver: str) -> str:
         f"Ref #{ctx.issue_number}\n\n"
         f"Generated with `vrg-release`\n"
     )
+    spec = pr_create.PRSpec(
+        head=branch, base="develop", title=title, head_oid=git.read_output("rev-parse", branch)
+    )
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(body)
         tmp_path = f.name
     try:
-        return github.create_pr(
-            base="develop",
-            title=title,
-            body_file=tmp_path,
-        )
+        return pr_create.create_or_adopt(
+            lambda: github.create_pr(base="develop", title=title, body_file=tmp_path, retry=False),
+            spec,
+            opener="this release",
+            rerun="resume the release",
+        ).url
+    except pr_create.PRCreateError as exc:
+        raise ReleaseError(phase=_PHASE, command="gh pr create", message=str(exc)) from exc
     finally:
         Path(tmp_path).unlink(missing_ok=True)

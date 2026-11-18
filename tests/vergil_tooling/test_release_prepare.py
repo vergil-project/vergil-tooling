@@ -1,15 +1,29 @@
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vergil_tooling.lib import github, retry
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
-from vergil_tooling.lib.release.prepare import prepare
+from vergil_tooling.lib.release.prepare import _create_pr, prepare
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _MOD = "vergil_tooling.lib.release.prepare"
+_HEAD = "h0"
+
+
+@pytest.fixture(autouse=True)
+def _pushed_head() -> Iterator[None]:
+    """The release branch's tip, read when the PR is opened; a test may patch its own."""
+    with patch(_MOD + ".git.read_output", return_value=_HEAD):
+        yield
 
 
 def _ctx(*, version_override: str | None = None) -> ReleaseContext:
@@ -423,3 +437,76 @@ def test_generate_changelog_fails_on_no_changes() -> None:
         pytest.raises(ReleaseError, match="No publishable changes"),
     ):
         _generate_changelog(ctx)
+
+
+# --- a gh pr create that failed: adopt the PR it opened, or fail (#4699) ---
+
+_RELEASE_PR = "https://github.com/owner/repo/pull/100"
+_TIMEOUT = github.GitHubAPIError(1, ("gh", "pr", "create"), "", "HTTP 504: Gateway Timeout")
+
+
+_OPEN_RELEASE_PR = github.OpenPR(
+    url=_RELEASE_PR,
+    title="release: 2.1.0",
+    head_ref="release/2.1.0",
+    base_ref="main",
+    head_oid=_HEAD,
+    cross_repo=False,
+)
+
+
+def _prepare_with_create(
+    create_effect: list[object], open_prs: list[object]
+) -> tuple[ReleaseContext, MagicMock, MagicMock, MagicMock]:
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".create_tracking_issue"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + "._generate_changelog"),
+        patch(_MOD + ".github.create_pr", side_effect=create_effect) as create,
+        patch(_MOD + ".github.open_prs_for_head", side_effect=open_prs) as lookup,
+        patch("vergil_tooling.lib.pr_create.time.sleep") as sleep,
+    ):
+        prepare(ctx)
+    return ctx, create, lookup, sleep
+
+
+def test_prepare_opens_the_pr_with_one_gh_attempt_per_try() -> None:
+    _ctx_, create, lookup, _sleep = _prepare_with_create([_RELEASE_PR], [])
+    assert create.call_args.kwargs["retry"] is False
+    assert create.call_args.kwargs["base"] == "main"
+    lookup.assert_not_called()
+
+
+def test_prepare_adopts_the_release_pr_a_failed_create_opened() -> None:
+    ctx, create, lookup, sleep = _prepare_with_create([_TIMEOUT], [[_OPEN_RELEASE_PR]])
+    assert ctx.release_pr_url == _RELEASE_PR
+    create.assert_called_once()
+    lookup.assert_called_once_with("release/2.1.0", base="main")
+    sleep.assert_not_called()
+
+
+def test_prepare_refuses_an_open_pr_it_did_not_open() -> None:
+    other = dataclasses.replace(_OPEN_RELEASE_PR, head_oid="ffff")
+    with pytest.raises(ReleaseError, match="was not adopted") as exc:
+        _prepare_with_create([_TIMEOUT], [[other]])
+    assert exc.value.phase == "prepare"
+    assert _RELEASE_PR in str(exc.value)
+    assert "its head commit is 'ffff', not 'h0'" in str(exc.value)
+
+
+def test_prepare_create_that_really_failed_is_retried_then_raised() -> None:
+    attempts = retry.MAX_RETRIES + 1
+    create = MagicMock(side_effect=[_TIMEOUT] * attempts)
+    with (
+        patch(_MOD + ".github.create_pr", create),
+        patch(_MOD + ".github.open_prs_for_head", return_value=[]) as lookup,
+        patch("vergil_tooling.lib.pr_create.time.sleep") as sleep,
+        pytest.raises(github.GitHubAPIError, match="Gateway Timeout"),
+    ):
+        _create_pr(_ctx(), "release/2.1.0")
+    assert create.call_count == attempts
+    assert lookup.call_count == attempts
+    assert sleep.call_count == retry.MAX_RETRIES

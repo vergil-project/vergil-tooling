@@ -318,6 +318,21 @@ def test_open_prs_for_head_reads_head_and_base() -> None:
     assert args[args.index("--state") + 1] == "open"
 
 
+def test_open_prs_for_head_reads_the_cwd_repo_by_default() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=[]) as mock:
+        github.open_prs_for_head("feature/x", base="develop")
+    assert "--repo" not in mock.call_args.args
+
+
+def test_open_prs_for_head_names_the_repo() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=[_open_pr_row()]) as mock:
+        [pr] = github.open_prs_for_head("feature/x", base="develop", repo="o/r")
+    assert pr.url == "https://github.com/o/r/pull/21"
+    args = mock.call_args.args
+    assert args[args.index("--repo") + 1] == "o/r"
+    assert args[args.index("--json") + 1].endswith("isCrossRepository")
+
+
 def test_open_prs_for_head_empty() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value=[]):
         assert github.open_prs_for_head("feature/x", base="develop") == []

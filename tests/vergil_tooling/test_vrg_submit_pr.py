@@ -1634,7 +1634,7 @@ def _submit_with_create(
         patch(_MOD + "._push_branch"),
         patch(_MOD + "._create_pr", side_effect=create_effect) as create,
         patch(_MOD + ".github.open_prs_for_head", side_effect=open_prs) as lookup,
-        patch(_MOD + ".time.sleep") as sleep,
+        patch("vergil_tooling.lib.pr_create.time.sleep") as sleep,
         patch(_MOD + ".submission.record_submission") as record,
         patch(_MOD + ".pr_provenance.check_pr", return_value=pr_provenance.ProvenanceResult()),
         patch(_MOD + ".auto_merge.enable_auto_merge") as enable,

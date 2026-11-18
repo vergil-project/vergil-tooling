@@ -100,6 +100,8 @@ def gh() -> Iterator[dict[str, MagicMock]]:
         patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
         patch(_MOD + ".github.create_pr", return_value=_PR) as create_pr,
+        # A failed create looks for the PR it may have opened (#4699): none here.
+        patch(_MOD + ".github.open_prs_for_head", return_value=[]),
         patch(_MOD + ".github.merge_commit_sha", return_value="m3rge"),
         patch(_MOD + ".wait_and_merge") as wait_and_merge,
     ):

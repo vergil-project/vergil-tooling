@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import git, github, pr_merge
+from vergil_tooling.lib import git, github, pr_create, pr_merge
 from vergil_tooling.lib.labels import ensure_labels
 from vergil_tooling.lib.managed_worktree import remove_worktree
 from vergil_tooling.lib.process_errors import error_text
@@ -72,18 +72,38 @@ def prepare_pr(ctx: UpdateDepsContext) -> None:
         )
     git.run("push", "-u", "origin", ctx.branch)
     ensure_labels(ctx.repo, (DEPS_LABEL,))
+    title = _pr_title(ctx)
+    spec = pr_create.PRSpec(
+        head=ctx.branch,
+        base="develop",
+        title=title,
+        head_oid=git.read_output("rev-parse", ctx.branch),
+    )
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as handle:
         handle.write(build_pr_body(ctx))
         body_path = Path(handle.name)
     try:
-        ctx.pr_url = github.create_pr(
-            base="develop",
-            title=_pr_title(ctx),
-            body_file=str(body_path),
-            labels=[DEPS_LABEL],
+        created = pr_create.create_or_adopt(
+            lambda: github.create_pr(
+                base="develop",
+                title=title,
+                body_file=str(body_path),
+                labels=[DEPS_LABEL],
+                retry=False,
+            ),
+            spec,
+            opener="this run",
+            rerun="run vrg-update-deps again",
         )
+    except pr_create.PRCreateError as exc:
+        raise UpdateDepsError(phase="prepare-pr", command="gh pr create", message=str(exc)) from exc
     finally:
         body_path.unlink(missing_ok=True)
+    ctx.pr_url = created.url
+    if created.adopted:
+        # gh applies --label in a call after the create, which the failure may
+        # have cut off; the release gate depends on the label (spec §5.3).
+        github.run("pr", "edit", created.url, "--add-label", DEPS_LABEL)
     print(f"Opened PR: {ctx.pr_url}")
 
 

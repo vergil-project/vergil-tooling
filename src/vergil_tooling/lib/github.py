@@ -1333,8 +1333,11 @@ class OpenPR:
 _OPEN_PR_TEXT_FIELDS = ("url", "title", "headRefName", "baseRefName", "headRefOid")
 
 
-def open_prs_for_head(head: str, *, base: str) -> list[OpenPR]:
-    """Every open PR in the cwd's repo whose head branch is *head* and base is *base*.
+def open_prs_for_head(head: str, *, base: str, repo: str | None = None) -> list[OpenPR]:
+    """Every open PR whose head branch is *head* and base is *base*.
+
+    *repo* (``OWNER/REPO``) is passed as ``--repo``, as :func:`create_pr` does;
+    ``None`` leaves ``gh`` to read the cwd's repo.
 
     ``gh pr list --head`` matches the branch name only, so a fork's PR from a
     same-named branch is listed too; ``cross_repo`` tells it apart. A response
@@ -1342,7 +1345,10 @@ def open_prs_for_head(head: str, *, base: str) -> list[OpenPR]:
     rather than read as "no PR" (#4058).
     """
     fields = ",".join((*_OPEN_PR_TEXT_FIELDS, "isCrossRepository"))
-    cmd = ("pr", "list", "--head", head, "--base", base, "--state", "open", "--json", fields)
+    cmd: tuple[str, ...] = ("pr", "list", "--head", head, "--base", base, "--state", "open")
+    if repo is not None:
+        cmd += ("--repo", repo)
+    cmd += ("--json", fields)
     result = read_json(*cmd)
     if not isinstance(result, list):
         raise _shape_error(("gh", *cmd), f"the PR list is {type(result).__name__}")
