@@ -61,7 +61,7 @@ def _resolution(language: str, version: str) -> Resolution:
 
 
 def test_registries() -> None:
-    assert set(FLOOR_CHECKS) == {"python", "go", "rust"}
+    assert set(FLOOR_CHECKS) == {"python", "go", "rust", "typescript"}
     assert set(TOOLCHAIN_CHECKS) == {"python", "rust", "typescript"}
 
 
