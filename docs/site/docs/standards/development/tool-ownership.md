@@ -98,7 +98,11 @@ from it.
 - **TypeScript.** eslint is on the repository side because typescript-eslint
   declares it as a peer dependency. `npm ci` installs a matching eslint in the
   repository anyway, and a global eslint beside it could be a major version
-  typescript-eslint does not support.
+  typescript-eslint does not support. The image still ships license-checker,
+  but no gate runs it: the license gate is Vergil's own
+  `vrg-npm-license-gate`, which reads `package-lock.json` (see the
+  TypeScript standards'
+  [License gate](typescript/overview.md#license-gate)).
 - **Python.** Python repositories still declare ruff, mypy, pip-audit and
   pip-licenses today. Moving them to the image under this guideline is
   pending, tracked by

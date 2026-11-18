@@ -13,7 +13,8 @@ vergil-project/.github#573); it keeps the ``security`` label while any line
 remains.
 
 This module owns the advisories REST API, the two reference lines, pair
-classification, :func:`retarget`, the one way a link moves, and
+classification, :func:`pair`, an advisory's first link, :func:`retarget`, the
+one way a link moves (only from an issue the advisory tracks), and
 :func:`close_record`, which closes an advisory with a public reason, and
 :func:`note_record`, which appends a dated note to an advisory's description.
 
@@ -38,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from vergil_tooling.lib import epics, github, labels
 from vergil_tooling.lib.epics import IssueRef
+from vergil_tooling.lib.shell_ref import quoted_slug
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
@@ -69,7 +71,11 @@ _DUPLICATE_JQ = (
     "[.[] | {ghsa_id, summary, names: [(.vulnerabilities // [])[] | .package.name // empty]}]"
 )
 _ISSUE_JQ = '{number, repository_url, state, labels: [.labels[].name], body: (.body // "")}'
-_SECURITY_ISSUES_JQ = '[.[] | select(.pull_request == null) | {number, state, body: (.body // "")}]'
+_SECURITY_ISSUES_JQ = (
+    '[.[] | select(.pull_request == null) | {number, state, state_reason, body: (.body // "")}]'
+)
+# The one close reason that lets the sync close an advisory (spec 6.2).
+_COMPLETED = "completed"
 
 
 class PrivateHomeError(RuntimeError):
@@ -78,6 +84,15 @@ class PrivateHomeError(RuntimeError):
 
 class RetargetError(RuntimeError):
     """A :func:`retarget` step failed; the message names the GHSA ID and the step."""
+
+
+class RetargetRefusedError(RetargetError):
+    """:func:`retarget`, :func:`pair` or :func:`pair_check` refused before any write.
+
+    The message names the advisory, the issues it tracks and, where one
+    exists, the command that would succeed. A caller tells it apart from a
+    failed step, after which a re-run with the same arguments finishes.
+    """
 
 
 class CloseError(RuntimeError):
@@ -104,11 +119,28 @@ class SecurityIssue:
     """One ``security``-labelled issue, open or closed, and every advisory it names.
 
     ``ghsa_ids`` is in body order and empty when the body has no line.
+    ``state_reason`` is GitHub's close reason, lower-cased (``completed``,
+    ``not_planned``, ``duplicate`` or any reason GitHub adds), None while the
+    issue is open or when GitHub records none.
     """
 
     ref: IssueRef
     open: bool
     ghsa_ids: tuple[str, ...]
+    state_reason: str | None
+
+
+@dataclass(frozen=True)
+class GuardResult:
+    """The sync close guard's verdict (:func:`guard_check`), by GHSA ID and issue ref only.
+
+    ``held`` pairs each advisory the guard kept from ``closed`` with the
+    tracked issues that fired it; ``errors`` names each advisory whose guard
+    could not be decided, the issue whose read failed, and the scrubbed error.
+    """
+
+    held: list[tuple[str, tuple[IssueRef, ...]]]
+    errors: list[tuple[str, IssueRef, str]]
 
 
 @dataclass(frozen=True)
@@ -438,32 +470,161 @@ def _step(ghsa_id: str, step: str, error: type[RuntimeError] = RetargetError) ->
         raise error(f"advisory {ghsa_id}: {step} failed: {exc}") from exc
 
 
-def retarget(
+def retarget_command(ghsa_id: str, source: IssueRef, targets: Sequence[IssueRef]) -> str:
+    """The paste-ready ``vrg-security-record retarget`` command for this move."""
+    words = [f"vrg-security-record retarget {ghsa_id} --from {quoted_slug(source)}"]
+    words += [f"--to {quoted_slug(ref)}" for ref in targets]
+    return " ".join(words)
+
+
+def _slugs(refs: Sequence[IssueRef]) -> str:
+    return ", ".join(ref.slug for ref in refs) or "no issue"
+
+
+def _moved_targets(comments: Sequence[str]) -> list[set[str]]:
+    """The target sets named by every :func:`_moved_comment` among *comments*."""
+    prefix = "Security record moved to "
+    return [
+        {slug.strip() for slug in text[len(prefix) :].split(",")}
+        for text in (comment.strip() for comment in comments)
+        if text.startswith(prefix)
+    ]
+
+
+def _source_tied_to_move(source: IssueRef, ghsa_id: str, wanted: Sequence[IssueRef]) -> bool:
+    """Whether *source* is the source of a move to *wanted* that already rewrote the lines.
+
+    Either its body still names *ghsa_id* (a run interrupted before its
+    unmark finished) or it carries the comment :func:`unmark_issue` posts,
+    naming exactly *wanted* (a run that finished). It is read at its current
+    ref, so a transferred source is judged where it now is.
+    """
+    current, _present, body = _issue_state(source)
+    if ghsa_id in parse_advisory_refs(body):
+        return True
+    comments = github.read_json_paginated(
+        f"{_issue_endpoint(current)}/comments", jq="[.[] | .body]"
+    )
+    names = {ref.slug for ref in wanted}
+    return names in _moved_targets([str(comment) for comment in comments])
+
+
+def _check_source(
+    ghsa_id: str,
+    source: IssueRef,
+    previous: Sequence[IssueRef],
+    wanted: Sequence[IssueRef],
+) -> None:
+    """Refuse a *source* the advisory does not track and that is not tied to this move."""
+    if source in previous:
+        return
+    if previous and set(previous) == set(wanted):
+        with _step(ghsa_id, f"reading {source.slug}"):
+            tied = _source_tied_to_move(source, ghsa_id, wanted)
+        if tied:
+            return
+    if not previous:
+        raise RetargetRefusedError(
+            f"advisory {ghsa_id}: --from {source.slug} is not an issue it tracks, and it "
+            "tracks no issue, so there is nothing to move; make its first pair with "
+            "vrg-security-record create --resume"
+        )
+    raise RetargetRefusedError(
+        f"advisory {ghsa_id}: --from {source.slug} is not an issue it tracks (it tracks "
+        f"{_slugs(previous)}); run: {retarget_command(ghsa_id, previous[0], wanted)}"
+    )
+
+
+def _open_issues(
+    ghsa_id: str, refs: Sequence[IssueRef], listed: dict[IssueRef, SecurityIssue]
+) -> list[IssueRef]:
+    """Every issue of *refs* that is open; one missing from *listed* is read directly."""
+    still_open: list[IssueRef] = []
+    for ref in refs:
+        issue = listed.get(ref)
+        if issue is not None:
+            is_open = issue.open
+        else:
+            with _step(ghsa_id, f"reading the state of {ref.slug}"):
+                is_open = str(_read_issue(ref).get("state") or "").lower() != "closed"
+        if is_open:
+            still_open.append(ref)
+    return still_open
+
+
+def _check_drops(  # noqa: PLR0913 - each input is one part of the one check
+    ghsa_id: str,
+    source: IssueRef,
+    wanted: Sequence[IssueRef],
+    others: Sequence[IssueRef],
+    drop: Sequence[IssueRef],
+    listed: dict[IssueRef, SecurityIssue],
+) -> None:
+    """Refuse to stop tracking an open issue of *others* that *drop* does not name.
+
+    *others* is the dropped set without the source. The refusal's command
+    keeps every open dropped issue and never names the flag that leaves one:
+    leaving an open issue untracked is a human decision, so no tool output
+    suggests it.
+    """
+    still_open = _open_issues(ghsa_id, others, listed)
+    refused = [ref for ref in still_open if ref not in drop]
+    if not refused:
+        return
+    noun = "issue" if len(refused) == 1 else "issues"
+    keep = tuple(dict.fromkeys((*still_open, *wanted)))
+    raise RetargetRefusedError(
+        f"advisory {ghsa_id}: this would stop tracking the open {noun} {_slugs(refused)}; "
+        f"to keep tracking every open issue, run: {retarget_command(ghsa_id, source, keep)}. "
+        "Leaving an open issue untracked is the human's decision"
+    )
+
+
+def retarget(  # noqa: PLR0913 - the move, its source and its two exception lists
     home: str,
     ghsa_id: str,
     targets: Sequence[IssueRef],
     *,
+    source: IssueRef,
+    drop: Sequence[IssueRef] = (),
     renamed: Sequence[IssueRef] = (),
 ) -> tuple[str, ...]:
-    """Move advisory *ghsa_id*'s tracking to *targets*.
+    """Move advisory *ghsa_id*'s tracking from *source* to *targets*.
 
-    In order: mark every target, replace every ``Tracking issue:`` line with
-    one per target, then unmark every dropped issue. Each step only starts when
-    the one before succeeded, so a failure never leaves an advisory tracking an
-    unmarked issue. Any failure raises :class:`RetargetError` naming the
-    advisory and the step; the caller must not close or move the old issue
-    until this returns.
+    It first reads the tracking lines and the org's ``security`` issues and
+    runs two checks. Either raises :class:`RetargetRefusedError` before
+    anything is written, naming the issues the advisory tracks and the
+    command that would succeed:
 
-    A **dropped** issue is one that is not a target and either was named by
-    the tracking lines this run replaced, or is a ``security``-labelled issue
-    in the home's org whose advisory line names *ghsa_id*
-    (:func:`security_issues`, a REST listing, never search). The second source
-    is what makes a re-run with the same arguments finish an interrupted run:
-    once the tracking lines are rewritten they no longer name the dropped
-    issue, but the issue itself still does until it is unmarked. A dropped
-    issue whose body has no line naming *ghsa_id* (it names only other
-    advisories, or none) is never touched (:func:`unmark_issue`); one that also
-    names other advisories loses only this line and keeps its label.
+    - **Source check.** *source* must be an issue a ``Tracking issue:`` line
+      names. A **re-run** of a move whose rewrite already landed is accepted
+      too: when the tracking lines are already exactly *targets* (as a set)
+      and *source* is tied to that move, either because its body still names
+      *ghsa_id* (the run stopped before its unmark finished) or because it
+      carries the comment :func:`unmark_issue` posts naming exactly *targets*
+      (the run finished). Such a re-run moves nothing: it only finishes the
+      unmarks, and writes nothing once they are done. Any other source is
+      refused.
+    - **Drop check.** A **dropped** issue is one that is not a target and not
+      in *renamed*, and either is named by the current tracking lines, or is
+      a ``security``-labelled issue in the home's org whose advisory line
+      names *ghsa_id* (:func:`security_issues`, a REST listing, never search).
+      A dropped issue that is still open, other than *source* (or the issue
+      *source* was transferred to), is refused unless *drop* names it. One
+      the listing does not return has its state read directly; a failed read
+      fails the run.
+
+    Then, in order: mark every target, replace every ``Tracking issue:`` line
+    with one per target (skipped when the description would not change), then
+    unmark every dropped issue, *source* last. Each step only starts when the
+    one before succeeded, so a failure never leaves an advisory tracking an
+    unmarked issue, and a re-run with the same arguments finishes the move.
+    Any failure raises :class:`RetargetError` naming the advisory and the
+    step; the caller must not close or move the old issue until this returns.
+
+    A dropped issue whose body has no line naming *ghsa_id* (it names only
+    other advisories, or none) is never touched (:func:`unmark_issue`); one
+    that also names other advisories loses only this line and keeps its label.
 
     *renamed* names old numbers of issues that are themselves a target (a
     transferred issue): their tracking line is replaced but they are never
@@ -476,28 +637,90 @@ def retarget(
     wanted = tuple(dict.fromkeys(targets))
     if not wanted:
         raise RetargetError(f"advisory {ghsa_id}: no target issues given")
-    for ref in wanted:
-        with _step(ghsa_id, f"marking {ref.slug}"):
-            mark_issue(ref, home, ghsa_id)
     with _step(ghsa_id, "reading the tracking lines"):
         _summary, description = read_text(home, ghsa_id)
     previous = parse_tracking(description)
-    with _step(ghsa_id, "rewriting the tracking lines"):
-        _write_description(home, ghsa_id, _with_tracking(description, wanted))
     with _step(ghsa_id, "listing the security issues"):
-        marked = [
-            issue.ref
-            for issue in security_issues(home.split("/", 1)[0])
-            if ghsa_id in issue.ghsa_ids
-        ]
+        listed = {issue.ref: issue for issue in security_issues(home.split("/", 1)[0])}
+    _check_source(ghsa_id, source, previous, wanted)
+    marked = [ref for ref, issue in listed.items() if ghsa_id in issue.ghsa_ids]
+    dropped = [
+        ref
+        for ref in dict.fromkeys((*previous, *marked))
+        if ref not in wanted and ref not in renamed
+    ]
+    with _step(ghsa_id, f"reading {source.slug}"):
+        source_now = _current_ref(_read_issue(source))
+    others = [ref for ref in dropped if ref not in (source, source_now)]
+    _check_drops(ghsa_id, source, wanted, others, drop, listed)
+    for ref in wanted:
+        with _step(ghsa_id, f"marking {ref.slug}"):
+            mark_issue(ref, home, ghsa_id)
+    rewritten = _with_tracking(description, wanted)
+    if rewritten != description:
+        with _step(ghsa_id, "rewriting the tracking lines"):
+            _write_description(home, ghsa_id, rewritten)
+    # The source goes last, so a run interrupted before then leaves it marked
+    # and a re-run's source check still finds it tied to the move.
+    last = [ref for ref in (source, source_now) if ref in dropped]
     notes: list[str] = []
-    for ref in dict.fromkeys((*previous, *marked)):
-        if ref not in wanted and ref not in renamed:
-            with _step(ghsa_id, f"unmarking {ref.slug}"):
-                note = unmark_issue(ref, ghsa_id, wanted)
-            if note is not None:
-                notes.append(note)
+    for ref in dict.fromkeys((*others, *last)):
+        with _step(ghsa_id, f"unmarking {ref.slug}"):
+            note = unmark_issue(ref, ghsa_id, wanted)
+        if note is not None:
+            notes.append(note)
     return tuple(notes)
+
+
+def tracked_issues(home: str, ghsa_id: str) -> tuple[IssueRef, ...]:
+    """The issues advisory *ghsa_id*'s ``Tracking issue:`` lines name, in order.
+
+    The description is read through :func:`read_text` and only the refs leave
+    this function. A failed read raises :class:`RetargetError`.
+    """
+    with _step(ghsa_id, "reading the tracking lines"):
+        _summary, description = read_text(home, ghsa_id)
+    return parse_tracking(description)
+
+
+def pair_check(home: str, ghsa_id: str, issue: IssueRef | None) -> None:
+    """Refuse a first pairing of *ghsa_id* when it already tracks another issue. Read-only.
+
+    An advisory with no ``Tracking issue:`` line passes, and so does one
+    whose only line names *issue* (a resumed ``create``). With *issue* None
+    (not yet known) any tracking line refuses. The refusal is a
+    :class:`RetargetRefusedError` naming the tracked issues; moving an
+    advisory that is already paired is :func:`retarget`'s job.
+    """
+    tracked = tracked_issues(home, ghsa_id)
+    if not tracked or (issue is not None and tracked == (issue,)):
+        return
+    if issue is not None:
+        hint = f"to move it, run: {retarget_command(ghsa_id, tracked[0], (issue,))}"
+    else:
+        hint = "to move it, run vrg-security-record retarget with --from an issue it tracks"
+    raise RetargetRefusedError(
+        f"advisory {ghsa_id} already tracks {_slugs(tracked)}, so its first pair is made; {hint}"
+    )
+
+
+def pair(home: str, ghsa_id: str, issue: IssueRef) -> None:
+    """Make advisory *ghsa_id*'s first pairing: mark *issue*, then write its tracking line.
+
+    :func:`pair_check` runs first, so an advisory already tracking another
+    issue is refused before any write. One already tracking *issue* alone (a
+    resumed ``create``) only has its mark finished. The mark comes before the
+    line, so the advisory never tracks an unmarked issue.
+    """
+    pair_check(home, ghsa_id, issue)
+    with _step(ghsa_id, f"marking {issue.slug}"):
+        mark_issue(issue, home, ghsa_id)
+    with _step(ghsa_id, "reading the tracking lines"):
+        _summary, description = read_text(home, ghsa_id)
+    rewritten = _with_tracking(description, (issue,))
+    if rewritten != description:
+        with _step(ghsa_id, "writing the tracking line"):
+            _write_description(home, ghsa_id, rewritten)
 
 
 def security_issues(org: str) -> list[SecurityIssue]:
@@ -517,11 +740,14 @@ def security_issues(org: str) -> list[SecurityIssue]:
         )
         for row in rows:
             item: Any = row
+            is_open = str(item["state"]).lower() == "open"
+            reason = item.get("state_reason")
             found.append(
                 SecurityIssue(
                     ref=IssueRef(org, bare, int(item["number"])),
-                    open=str(item["state"]).lower() == "open",
+                    open=is_open,
                     ghsa_ids=parse_advisory_refs(str(item.get("body") or "")),
+                    state_reason=None if is_open or reason is None else str(reason).lower(),
                 )
             )
     return found
@@ -601,20 +827,92 @@ def classify(advisories: Sequence[Advisory], issues: Sequence[SecurityIssue]) ->
 _SYNCED_STATES = ("draft", "closed")
 
 
+def _would_close(advisory: Advisory, by_ref: dict[IssueRef, SecurityIssue]) -> bool:
+    """True iff the issue states alone would move *advisory* from ``draft`` to ``closed``."""
+    # classify() pairs an advisory only when every tracked issue is listed.
+    return (
+        not advisory.external
+        and advisory.state == "draft"
+        and not any(by_ref[ref].open for ref in advisory.tracking)
+    )
+
+
+def _parent_queue_kind(ref: IssueRef) -> str | None:
+    """The queue kind of *ref*'s native parent (live queue or queue archive), else None."""
+    parent = epics.native_parent_of(ref)
+    return None if parent is None else epics.queue_or_archive_kind(parent)
+
+
+def guard_check(classification: Classification, issues: Sequence[SecurityIssue]) -> GuardResult:
+    """The sync close guard (spec 6.2): which advisories the sync must not close.
+
+    Only a **paired** ``draft`` advisory whose tracked issues are all closed
+    is checked, since only that one would move to ``closed``. The guard fires
+    when any of its tracked issues was closed with a reason other than
+    ``completed`` (a closed issue with no recorded reason included), or is a
+    queue item: its native parent is a live intake, planning or deferred epic,
+    or a queue archive epic of one (:func:`epics.queue_or_archive_kind`). The
+    parent is read only for a tracked issue closed as completed, once per
+    issue. An advisory already ``closed`` is never checked, so a human's
+    ``vrg-security-record close`` stands and is not reported as held.
+
+    A failed parent read is an error for each advisory that needed it, never
+    a close and never a hold; the other advisories are still decided. A
+    missing token is not one advisory's failure and propagates.
+    """
+    by_ref = {issue.ref: issue for issue in issues}
+    kinds: dict[IssueRef, str | None | Exception] = {}
+    held: list[tuple[str, tuple[IssueRef, ...]]] = []
+    errors: list[tuple[str, IssueRef, str]] = []
+    for advisory in classification.paired:
+        if not _would_close(advisory, by_ref):
+            continue
+        firing: list[IssueRef] = []
+        failed: tuple[IssueRef, str] | None = None
+        for ref in advisory.tracking:
+            if by_ref[ref].state_reason != _COMPLETED:
+                firing.append(ref)
+                continue
+            if ref not in kinds:
+                try:
+                    kinds[ref] = _parent_queue_kind(ref)
+                except github.MissingGitHubTokenError:
+                    raise
+                except github.GitHubAPIError as exc:
+                    kinds[ref] = _scrubbed(exc)
+                except RuntimeError as exc:  # a GraphQL error payload
+                    kinds[ref] = exc
+            kind = kinds[ref]
+            if isinstance(kind, Exception):
+                failed = failed or (ref, " ".join(str(kind).split()))
+            elif kind is not None:
+                firing.append(ref)
+        if failed is not None:
+            errors.append((advisory.ghsa_id, *failed))
+        elif firing:
+            held.append((advisory.ghsa_id, tuple(firing)))
+    return GuardResult(held=held, errors=errors)
+
+
 def pending_syncs(
-    classification: Classification, issues: Sequence[SecurityIssue]
+    classification: Classification, issues: Sequence[SecurityIssue], guard: GuardResult
 ) -> list[tuple[str, Literal["draft", "closed"]]]:
     """The ``(GHSA ID, target state)`` changes the issue-driven sync would make.
 
     For each **paired** advisory the target is ``closed`` when every issue it
     tracks is closed, and ``draft`` while any is open (spec 4.3: the issue
     always wins). Only a mismatch is listed. External reports are never
-    touched, and neither is an advisory outside ``draft``/``closed``.
+    touched, and neither is an advisory outside ``draft``/``closed``. An
+    advisory *guard* (:func:`guard_check`) holds or could not decide gets no
+    change: it stays ``draft``.
     """
+    stopped = {ghsa_id for ghsa_id, _ in guard.held} | {e[0] for e in guard.errors}
     open_by_ref = {issue.ref: issue.open for issue in issues}
     changes: list[tuple[str, Literal["draft", "closed"]]] = []
     for advisory in classification.paired:
         if advisory.external or advisory.state not in _SYNCED_STATES:
+            continue
+        if advisory.ghsa_id in stopped:
             continue
         # classify() pairs an advisory only when every tracked issue is listed.
         any_open = any(open_by_ref[ref] for ref in advisory.tracking)
@@ -624,16 +922,33 @@ def pending_syncs(
     return changes
 
 
-def sync_states(home: str, classification: Classification, issues: Sequence[SecurityIssue]) -> int:
+def sync_states(
+    home: str,
+    classification: Classification,
+    issues: Sequence[SecurityIssue],
+    guard: GuardResult,
+) -> int:
     """Apply :func:`pending_syncs` to *home* and return the number of advisories changed.
 
     Stops at the first failed write, which propagates scrubbed of its stdout;
     the next sync retries whatever is still out of step.
     """
-    changes = pending_syncs(classification, issues)
+    changes = pending_syncs(classification, issues, guard)
     for ghsa_id, state in changes:
         set_state(home, ghsa_id, state)
     return len(changes)
+
+
+def _held_line(ghsa_id: str, refs: Sequence[IssueRef]) -> str:
+    slugs = ", ".join(ref.slug for ref in refs)
+    return (
+        f"- held: {ghsa_id} ({slugs}): retarget it to a fix task, "
+        "or close it with vrg-security-record close"
+    )
+
+
+def _count(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
 
 
 def records_pass(org: str, *, apply: bool, prog: str) -> int:
@@ -653,8 +968,16 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
     skipped: :class:`PrivateHomeError` propagates to the caller, whose message
     already names the program.
 
-    Exit 1 when the pass fails, or, with *apply*, when any pair is broken
-    (after syncing the rest). The preview reports broken pairs without failing.
+    The sync close guard (:func:`guard_check`) keeps an advisory ``draft``
+    while a queue item or a non-completed close is all that ended it. Each
+    advisory it holds is reported on a ``- held:`` line with the next step,
+    and counted apart from broken pairs; a hold waits on a human and does not
+    fail the pass. An advisory whose guard read failed is reported on a
+    ``- error:`` line and left unchanged, and the rest are still synced.
+
+    Exit 1 when the pass fails, or, with *apply*, when any pair is broken or
+    any guard read failed (after syncing the rest). The preview reports both
+    without failing.
     """
     mode = "" if apply else " (preview)"
     try:
@@ -664,22 +987,34 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
             return 0
         home = advisory_home(org)
         result = classify(list_advisories(home), issues)
-        synced = sync_states(home, result, issues) if apply else len(pending_syncs(result, issues))
+        guard = guard_check(result, issues)
+        synced = (
+            sync_states(home, result, issues, guard)
+            if apply
+            else len(pending_syncs(result, issues, guard))
+        )
     except github.MissingGitHubTokenError:
         raise
     except github.GitHubAPIError as exc:
         print(f"{prog}: security records pass failed: {exc}", file=sys.stderr)
         return 1
     verb = "synced" if apply else "would sync"
-    states = "advisory state" if synced == 1 else "advisory states"
-    broken = len(result.broken)
-    pairs = "broken pair" if broken == 1 else "broken pairs"
-    print(f"Security records{mode}: {synced} {states} {verb}, {broken} {pairs}.")
+    print(
+        f"Security records{mode}: {_count(synced, 'advisory state', 'advisory states')} {verb}, "
+        f"{_count(len(result.broken), 'broken pair', 'broken pairs')}, "
+        f"{len(guard.held)} held, {_count(len(guard.errors), 'error', 'errors')}."
+    )
     for line in result.broken:
         print(f"- broken: {line}")
+    for ghsa_id, refs in guard.held:
+        print(_held_line(ghsa_id, refs))
+    for ghsa_id, ref, error in guard.errors:
+        print(
+            f"- error: {ghsa_id} ({ref.slug}): reading its parent failed, left unchanged: {error}"
+        )
     for advisory in result.external:
         print(f"- unpaired external report (left untouched): {advisory.ghsa_id}")
-    return 1 if apply and result.broken else 0
+    return 1 if apply and (result.broken or guard.errors) else 0
 
 
 # --- close ------------------------------------------------------------------

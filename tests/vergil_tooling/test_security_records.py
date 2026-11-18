@@ -18,9 +18,11 @@ from vergil_tooling.lib.security_records import (
     Advisory,
     Classification,
     CloseError,
+    GuardResult,
     NoteError,
     PrivateHomeError,
     RetargetError,
+    RetargetRefusedError,
     SecurityIssue,
     advisory_home,
     advisory_line,
@@ -30,15 +32,19 @@ from vergil_tooling.lib.security_records import (
     close_record,
     create_advisory,
     find_duplicate,
+    guard_check,
     list_advisories,
     mark_issue,
     note_header,
     note_record,
+    pair,
+    pair_check,
     parse_advisory_lines,
     parse_advisory_refs,
     parse_tracking,
     pending_syncs,
     read_text,
+    records_pass,
     retarget,
     security_issues,
     set_state,
@@ -648,7 +654,7 @@ def test_retarget_marks_targets_before_rewriting_tracking(issues: Issues) -> Non
     issues.add(C, "Neutral.")
     issues.fail_on = "POST repos/org/tool/issues/12/labels"
     with pytest.raises(RetargetError) as excinfo:
-        retarget(HOME, GHSA, (C,))
+        retarget(HOME, GHSA, (C,), source=A)
     message = str(excinfo.value)
     assert message.startswith(f"advisory {GHSA}: marking org/tool#12 failed: ")
     assert SECRET not in message
@@ -664,7 +670,7 @@ def test_retarget_unmarks_dropped_issues(issues: Issues) -> None:
     issues.add(A, f"Neutral.\n\n{advisory_line(HOME, GHSA)}", {"security"})
     issues.add(B, f"Kept.\n\n{advisory_line(HOME, GHSA)}", {"security"})
     issues.add(C, "New task.")
-    retarget(HOME, GHSA, (B, C, C))
+    retarget(HOME, GHSA, (B, C, C), source=A)
     # The dropped issue loses the label and the line and gets the moved comment.
     assert issues.labels[A] == set()
     assert issues.bodies[A] == "Neutral."
@@ -681,24 +687,25 @@ def test_retarget_unmarks_dropped_issues(issues: Issues) -> None:
     )
 
 
-def test_retarget_onto_a_description_with_no_text(issues: Issues) -> None:
+def test_pair_onto_a_description_with_no_text(issues: Issues) -> None:
     issues.description = ""
     issues.add(C, "")
-    retarget(HOME, GHSA, (C,))
+    pair(HOME, GHSA, C)
     assert issues.description == "Tracking issue: org/tool#12"
 
 
 def test_retarget_never_unmarks_a_renamed_issue(issues: Issues) -> None:
     """A transferred issue's old number is rewritten away but never unmarked."""
     issues.add(C, advisory_line(HOME, GHSA), {"security"})
-    retarget(HOME, GHSA, (C,), renamed=(A,))
+    issues.moved[A] = C
+    retarget(HOME, GHSA, (C,), source=A, renamed=(A,))
     assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
     assert not [w for w in issues.writes if "/issues/10" in w[1]]
 
 
 def test_retarget_requires_targets(issues: Issues) -> None:
     with pytest.raises(RetargetError, match=f"advisory {GHSA}: no target issues given"):
-        retarget(HOME, GHSA, ())
+        retarget(HOME, GHSA, (), source=A)
 
 
 @pytest.mark.parametrize(
@@ -719,17 +726,18 @@ def test_retarget_names_the_failed_step(issues: Issues, fail_on: str, step: str)
     issues.add(C, "")
     issues.fail_on = fail_on
     with pytest.raises(RetargetError) as excinfo:
-        retarget(HOME, GHSA, (C,))
+        retarget(HOME, GHSA, (C,), source=A)
     assert str(excinfo.value).startswith(f"advisory {GHSA}: {step} failed: ")
     assert SECRET not in str(excinfo.value)
     assert SECRET not in "".join(traceback.format_exception(excinfo.value))
 
 
 def test_retarget_wraps_a_non_gh_failure(issues: Issues) -> None:
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
     issues.add(C, "")
     issues.ensure_labels.side_effect = labels.UnknownLabelError(["security"])
     with pytest.raises(RetargetError, match="marking org/tool#12 failed") as excinfo:
-        retarget(HOME, GHSA, (C,))
+        retarget(HOME, GHSA, (C,), source=A)
     assert isinstance(excinfo.value.__cause__, labels.UnknownLabelError)
 
 
@@ -765,12 +773,12 @@ def test_retarget_rerun_after_unmark_failure_unmarks_once(issues: Issues, fail_o
     _dropping_a(issues)
     issues.fail_on = fail_on
     with pytest.raises(RetargetError, match="unmarking org/.github#10 failed"):
-        retarget(HOME, GHSA, (C,))
+        retarget(HOME, GHSA, (C,), source=A)
     # The tracking lines already name only C, so only A itself still points here.
     assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
     assert issues.labels[A] == {"security", "bug"}
     issues.fail_on = None
-    retarget(HOME, GHSA, (C,))
+    retarget(HOME, GHSA, (C,), source=A)
     _assert_moved_a_to_c(issues)
     assert len([w for w in issues.writes if w[1].endswith("/10/comments")]) == 1
 
@@ -789,30 +797,28 @@ def test_retarget_rerun_after_an_early_failure_completes(issues: Issues, fail_on
     _dropping_a(issues)
     issues.fail_on = fail_on
     with pytest.raises(RetargetError):
-        retarget(HOME, GHSA, (C,))
+        retarget(HOME, GHSA, (C,), source=A)
     issues.fail_on = None
-    retarget(HOME, GHSA, (C,))
+    retarget(HOME, GHSA, (C,), source=A)
     _assert_moved_a_to_c(issues)
 
 
 def test_retarget_rerun_after_success_changes_nothing(issues: Issues) -> None:
     _dropping_a(issues)
-    retarget(HOME, GHSA, (C,))
+    retarget(HOME, GHSA, (C,), source=A)
     writes = len(issues.writes)
-    retarget(HOME, GHSA, (C,))
-    # Only the idempotent advisory rewrite repeats; no issue is written again.
-    assert [w[1] for w in issues.writes[writes:]] == [
-        f"repos/org/.github/security-advisories/{GHSA}"
-    ]
+    retarget(HOME, GHSA, (C,), source=A)
+    # The source carries the moved-to comment naming C: the re-run writes nothing.
+    assert issues.writes[writes:] == []
     _assert_moved_a_to_c(issues)
 
 
 def test_retarget_unmarks_an_untracked_issue_that_names_the_advisory(issues: Issues) -> None:
     """The dropped set comes from the issues too, not only the old tracking lines."""
-    issues.description = SECRET
+    _dropping_a(issues)
     issues.add(D, f"Stray.\n\n{advisory_line(HOME, GHSA)}", {"security"})
-    issues.add(C, "")
-    retarget(HOME, GHSA, (C,))
+    issues.closed.add(D)
+    retarget(HOME, GHSA, (C,), source=A)
     assert issues.labels[D] == set()
     assert issues.bodies[D] == "Stray."
     assert issues.comments[D] == [MOVED]
@@ -821,7 +827,7 @@ def test_retarget_unmarks_an_untracked_issue_that_names_the_advisory(issues: Iss
 def test_retarget_never_unmarks_a_renamed_issue_that_carries_the_line(issues: Issues) -> None:
     issues.add(A, advisory_line(HOME, GHSA), {"security"})
     issues.add(C, advisory_line(HOME, GHSA), {"security"})
-    retarget(HOME, GHSA, (C,), renamed=(A,))
+    retarget(HOME, GHSA, (C,), source=A, renamed=(A,))
     assert not [w for w in issues.writes if "/issues/10" in w[1]]
     assert issues.labels[A] == {"security"}
     assert issues.comments[A] == []
@@ -834,7 +840,7 @@ def test_retarget_onto_a_transferred_issue_leaves_it_marked(issues: Issues) -> N
     """The old number tracked, the issue moved to the target: nothing to unmark."""
     issues.add(C, "Moved.")
     issues.moved[A] = C
-    notes = retarget(HOME, GHSA, (C,))
+    notes = retarget(HOME, GHSA, (C,), source=A)
     assert notes == (
         "org/.github#10 was transferred to org/tool#12, a target: "
         "nothing left to unmark at org/.github#10",
@@ -851,7 +857,7 @@ def test_retarget_follows_a_transfer_to_an_issue_not_targeted(issues: Issues) ->
     issues.add(D, f"Moved.\n\n{advisory_line(HOME, GHSA)}", {"security", "bug"})
     issues.add(C, "")
     issues.moved[A] = D
-    notes = retarget(HOME, GHSA, (C,))
+    notes = retarget(HOME, GHSA, (C,), source=A)
     assert notes == (
         "org/.github#10 was transferred to org/tool#13: followed the transfer and "
         "unmarked org/tool#13",
@@ -867,7 +873,7 @@ def test_retarget_follows_a_transfer_to_an_issue_with_no_line(issues: Issues) ->
     issues.add(D, "Moved, line removed.", {"bug"})
     issues.add(C, "")
     issues.moved[A] = D
-    notes = retarget(HOME, GHSA, (C,))
+    notes = retarget(HOME, GHSA, (C,), source=A)
     assert notes == (
         "org/.github#10 was transferred to org/tool#13: followed the transfer and "
         "org/tool#13 has no line for this advisory, nothing to unmark",
@@ -877,14 +883,14 @@ def test_retarget_follows_a_transfer_to_an_issue_with_no_line(issues: Issues) ->
 
 def test_retarget_reports_no_notes_without_a_transfer(issues: Issues) -> None:
     _dropping_a(issues)
-    assert retarget(HOME, GHSA, (C,)) == ()
+    assert retarget(HOME, GHSA, (C,), source=A) == ()
 
 
 def test_retarget_never_touches_an_issue_naming_another_advisory(issues: Issues) -> None:
     issues.add(A, advisory_line(HOME, GHSA), {"security"})
     issues.add(D, f"Other.\n\n{advisory_line(HOME, OTHER)}", {"security"})
     issues.add(C, "")
-    retarget(HOME, GHSA, (C,))
+    retarget(HOME, GHSA, (C,), source=A)
     assert not [w for w in issues.writes if "/issues/13" in w[1]]
     assert issues.bodies[D] == f"Other.\n\n{advisory_line(HOME, OTHER)}"
     assert issues.labels[D] == {"security"}
@@ -903,11 +909,11 @@ def test_retarget_two_advisories_off_one_issue_in_either_order(
         OTHER: f"{SECRET}\n\nTracking issue: org/.github#10",
     }
     first, second = order
-    retarget(HOME, first, (C,))
+    retarget(HOME, first, (C,), source=A)
     # After the first: A keeps the other advisory's line and the label.
     assert parse_advisory_refs(issues.bodies[A]) == (second,)
     assert issues.labels[A] == {"security", "bug"}
-    retarget(HOME, second, (C,))
+    retarget(HOME, second, (C,), source=A)
     assert parse_advisory_refs(issues.bodies[A]) == ()
     assert issues.bodies[A] == "Neutral."
     assert issues.labels[A] == {"bug"}
@@ -925,12 +931,260 @@ def test_retarget_never_touches_a_tracked_issue_naming_another_advisory(issues: 
     other = f"Other.\n\n{advisory_line(HOME, OTHER)}"
     issues.add(A, other, {"security"})
     issues.add(C, "")
-    retarget(HOME, GHSA, (C,))
+    retarget(HOME, GHSA, (C,), source=A)
     assert not [w for w in issues.writes if "/issues/10" in w[1]]
     assert issues.bodies[A] == other
     assert issues.labels[A] == {"security"}
     assert issues.comments[A] == []
     assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
+
+
+# --- retarget: the source and drop checks (vergil-tooling#4718) -----------------
+#
+# A is the source (the planning issue, say), C the new fix task, B another
+# tracked issue and D a second dropped one.
+
+TRACKING_A_B = f"{SECRET}\n\nTracking issue: org/.github#10\nTracking issue: org/.github#11"
+
+
+def _issue_writes(issues: Issues) -> list[tuple[str, str, dict[str, object]]]:
+    return [w for w in issues.writes if "security-advisories" not in w[1]]
+
+
+def test_retarget_refuses_untracked_source(issues: Issues) -> None:
+    _dropping_a(issues)
+    issues.add(B, "Not tracked.")
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        retarget(HOME, GHSA, (C,), source=B)
+    message = str(excinfo.value)
+    assert message == (
+        f"advisory {GHSA}: --from org/.github#11 is not an issue it tracks (it tracks "
+        f"org/.github#10); run: vrg-security-record retarget {GHSA} --from 'org/.github#10' "
+        "--to 'org/tool#12'"
+    )
+    assert SECRET not in message
+    # Nothing was marked, rewritten or unmarked.
+    assert issues.writes == []
+    issues.ensure_labels.assert_not_called()
+
+
+def test_retarget_refuses_a_source_when_nothing_is_tracked(issues: Issues) -> None:
+    issues.description = SECRET
+    issues.add(A, "Neutral.")
+    issues.add(C, "")
+    with pytest.raises(RetargetRefusedError, match="it tracks no issue") as excinfo:
+        retarget(HOME, GHSA, (C,), source=A)
+    assert "create --resume" in str(excinfo.value)
+    assert issues.writes == []
+
+
+def test_retarget_refuses_dropping_open_issue(issues: Issues) -> None:
+    issues.description = TRACKING_A_B
+    _dropping_a(issues)
+    issues.add(B, f"Other task.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        retarget(HOME, GHSA, (C,), source=A)
+    message = str(excinfo.value)
+    assert message.startswith(
+        f"advisory {GHSA}: this would stop tracking the open issue org/.github#11; "
+        f"to keep tracking every open issue, run: vrg-security-record retarget {GHSA} "
+        "--from 'org/.github#10' --to 'org/.github#11' --to 'org/tool#12'. "
+    )
+    assert "human's decision" in message
+    assert "--drop" not in message
+    assert issues.writes == []
+    # With B named in drop, the move goes ahead and unmarks B too.
+    retarget(HOME, GHSA, (C,), source=A, drop=(B,))
+    assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
+    assert parse_advisory_refs(issues.bodies[B]) == ()
+    _assert_moved_a_to_c(issues)
+
+
+def test_retarget_keeps_an_open_issue_named_as_a_target(issues: Issues) -> None:
+    issues.description = TRACKING_A_B
+    _dropping_a(issues)
+    issues.add(B, f"Other task.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    retarget(HOME, GHSA, (B, C), source=A)
+    assert issues.description == (
+        f"{SECRET}\n\nTracking issue: org/.github#11\nTracking issue: org/tool#12"
+    )
+    assert not [w for w in issues.writes if "/issues/11" in w[1]]
+
+
+def test_retarget_drops_a_closed_issue_without_drop(issues: Issues) -> None:
+    issues.description = TRACKING_A_B
+    _dropping_a(issues)
+    issues.add(B, f"Done.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    issues.closed.add(B)
+    retarget(HOME, GHSA, (C,), source=A)
+    assert parse_advisory_refs(issues.bodies[B]) == ()
+
+
+def test_retarget_source_may_be_dropped(issues: Issues) -> None:
+    """The open source is the issue being handed on: no drop is needed for it."""
+    _dropping_a(issues)
+    assert A not in issues.closed
+    retarget(HOME, GHSA, (C,), source=A)
+    _assert_moved_a_to_c(issues)
+
+
+def test_retarget_unmarks_source_last(issues: Issues) -> None:
+    issues.description = f"{SECRET}\n\nTracking issue: org/.github#10\nTracking issue: org/tool#13"
+    _dropping_a(issues)
+    issues.add(D, f"Stray.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    retarget(HOME, GHSA, (C,), source=A, drop=(D,))
+    comments = [w[1] for w in issues.writes if w[1].endswith("/comments")]
+    assert comments == ["repos/org/tool/issues/13/comments", "repos/org/.github/issues/10/comments"]
+
+
+def test_retarget_rerun_after_interrupted_unmark(issues: Issues) -> None:
+    """Lines already rewritten to C; A still names the advisory: the re-run unmarks A."""
+    _dropping_a(issues)
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    mark_issue(C, HOME, GHSA)
+    issues.writes.clear()
+    retarget(HOME, GHSA, (C,), source=A)
+    _assert_moved_a_to_c(issues)
+    # Only A's unmark was written: no mark, no rewrite.
+    assert [(w[0], w[1]) for w in issues.writes] == [
+        ("POST", "repos/org/.github/issues/10/comments"),
+        ("PATCH", "repos/org/.github/issues/10"),
+    ]
+
+
+def test_retarget_rerun_after_interrupted_other_unmark(issues: Issues) -> None:
+    """D unmarked already, A (the source, unmarked last) still marked: the re-run finishes."""
+    _dropping_a(issues)
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    mark_issue(C, HOME, GHSA)
+    issues.add(D, "Stray.", set())
+    issues.comments[D] = [MOVED]
+    issues.writes.clear()
+    retarget(HOME, GHSA, (C,), source=A, drop=(D,))
+    _assert_moved_a_to_c(issues)
+    assert not [w for w in issues.writes if "/issues/13" in w[1]]
+
+
+def test_retarget_rerun_after_completed_run(issues: Issues) -> None:
+    _dropping_a(issues)
+    retarget(HOME, GHSA, (C,), source=A)
+    issues.writes.clear()
+    issues.ensure_labels.reset_mock()
+    notes = retarget(HOME, GHSA, (C,), source=A)
+    assert notes == ()
+    assert issues.writes == []
+    _assert_moved_a_to_c(issues)
+
+
+@pytest.mark.parametrize(
+    "comments",
+    [
+        [],
+        ["Security record moved to org/tool#13"],
+        ["Security record moved to org/tool#12, org/tool#13"],
+    ],
+)
+def test_retarget_refuses_unrelated_source_when_targets_match(
+    issues: Issues, comments: list[str]
+) -> None:
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
+    issues.add(B, "Unrelated.")
+    issues.comments[B] = comments
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        retarget(HOME, GHSA, (C,), source=B)
+    assert "it tracks org/tool#12" in str(excinfo.value)
+    assert "--from 'org/tool#12' --to 'org/tool#12'" in str(excinfo.value)
+    assert issues.writes == []
+
+
+def test_retarget_rerun_from_a_transferred_source(issues: Issues) -> None:
+    """A transfer's recovery command: --from the old number, which leads to the target."""
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    issues.add(C, f"Moved.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    issues.moved[A] = C
+    assert retarget(HOME, GHSA, (C,), source=A) == ()
+    assert issues.writes == []
+
+
+def test_transfer_recovery_command_is_accepted(issues: Issues) -> None:
+    """intake-route's recovery after a transfer: --from the old number, keeping B."""
+    issues.description = TRACKING_A_B
+    issues.add(B, f"Other task.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    issues.add(C, f"Moved.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    issues.moved[A] = C
+    notes = retarget(HOME, GHSA, (B, C), source=A)
+    assert notes == (
+        "org/.github#10 was transferred to org/tool#12, a target: "
+        "nothing left to unmark at org/.github#10",
+    )
+    assert issues.description == (
+        f"{SECRET}\n\nTracking issue: org/.github#11\nTracking issue: org/tool#12"
+    )
+    assert issues.comments[B] == []
+
+
+def test_drop_check_reads_unlisted_issue_state(issues: Issues) -> None:
+    """A tracked issue without the security label is absent from the listing."""
+    issues.description = TRACKING_A_B
+    _dropping_a(issues)
+    issues.add(B, "Lost its label.", set())
+    with pytest.raises(RetargetRefusedError, match="the open issue org/.github#11"):
+        retarget(HOME, GHSA, (C,), source=A)
+    assert issues.writes == []
+    # A failed state read refuses too, before any write.
+    issues.fail_on = "GET repos/org/.github/issues/11"
+    with pytest.raises(RetargetError, match="reading the state of org/.github#11 failed"):
+        retarget(HOME, GHSA, (C,), source=A)
+    assert issues.writes == []
+    # Closed, it is dropped without drop.
+    issues.fail_on = None
+    issues.closed.add(B)
+    retarget(HOME, GHSA, (C,), source=A)
+    _assert_moved_a_to_c(issues)
+
+
+# --- pair: the first pairing, for create (vergil-tooling#4718) ------------------
+
+
+def test_pair_marks_then_writes_the_first_tracking_line(issues: Issues) -> None:
+    issues.description = SECRET
+    issues.add(C, "Neutral.")
+    pair(HOME, GHSA, C)
+    assert issues.labels[C] == {"security"}
+    assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
+    kinds = [(w[0], "advisory" if "advisories" in w[1] else w[1]) for w in issues.writes]
+    assert kinds[-1] == ("PATCH", "advisory")
+    assert ("PATCH", "repos/org/tool/issues/12") in kinds[:-1]
+
+
+def test_pair_resumed_finishes_the_mark(issues: Issues) -> None:
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    issues.add(C, "Neutral.")
+    pair(HOME, GHSA, C)
+    assert parse_advisory_refs(issues.bodies[C]) == (GHSA,)
+    assert issues.patches() == []
+
+
+def test_pair_refuses_existing_tracking(issues: Issues) -> None:
+    issues.add(B, "Neutral.")
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        pair(HOME, GHSA, B)
+    assert str(excinfo.value) == (
+        f"advisory {GHSA} already tracks org/.github#10, so its first pair is made; to move "
+        f"it, run: vrg-security-record retarget {GHSA} --from 'org/.github#10' "
+        "--to 'org/.github#11'"
+    )
+    assert issues.writes == []
+    issues.ensure_labels.assert_not_called()
+
+
+def test_pair_check_without_an_issue_refuses_any_tracking(issues: Issues) -> None:
+    with pytest.raises(RetargetRefusedError, match="already tracks org/.github#10"):
+        pair_check(HOME, GHSA, None)
+    issues.description = SECRET
+    pair_check(HOME, GHSA, None)
+    assert issues.writes == []
 
 
 # --- security issues ------------------------------------------------------------
@@ -943,8 +1197,13 @@ def test_security_issues_reads_every_managed_repo_in_every_state(
     monkeypatch.setattr(epics, "is_managed_repo", lambda repo: repo != "org/unmanaged")
     pages = {
         "org/.github": [
-            {"number": 10, "state": "open", "body": f"x\n{advisory_line(HOME, GHSA)}"},
-            {"number": 11, "state": "closed", "body": ""},
+            {
+                "number": 10,
+                "state": "open",
+                "state_reason": "reopened",
+                "body": f"x\n{advisory_line(HOME, GHSA)}",
+            },
+            {"number": 11, "state": "closed", "state_reason": "NOT_PLANNED", "body": ""},
         ],
         "org/tool": [{"number": 12, "state": "OPEN", "body": None}],
     }
@@ -954,13 +1213,14 @@ def test_security_issues_reads_every_managed_repo_in_every_state(
         endpoints.append(endpoint)
         assert jq is not None
         assert "pull_request == null" in jq
+        assert "state_reason" in jq
         return list(pages[endpoint.split("/issues")[0].removeprefix("repos/")])
 
     monkeypatch.setattr(github, "read_json_paginated", read)
     assert security_issues("org") == [
-        SecurityIssue(A, open=True, ghsa_ids=(GHSA,)),
-        SecurityIssue(B, open=False, ghsa_ids=()),
-        SecurityIssue(C, open=True, ghsa_ids=()),
+        SecurityIssue(A, open=True, ghsa_ids=(GHSA,), state_reason=None),
+        SecurityIssue(B, open=False, ghsa_ids=(), state_reason="not_planned"),
+        SecurityIssue(C, open=True, ghsa_ids=(), state_reason=None),
     ]
     assert endpoints == [
         "repos/org/.github/issues?state=all&labels=security",
@@ -977,7 +1237,23 @@ def test_security_issues_returns_every_ghsa_id(monkeypatch: pytest.MonkeyPatch) 
         "read_json_paginated",
         lambda *_a, **_k: [{"number": 12, "state": "open", "body": body}],
     )
-    assert security_issues("org") == [SecurityIssue(C, open=True, ghsa_ids=(OTHER, GHSA))]
+    assert security_issues("org") == [
+        SecurityIssue(C, open=True, ghsa_ids=(OTHER, GHSA), state_reason=None)
+    ]
+
+
+def test_security_issues_makes_no_parent_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    # security_issues serves retarget and close too: the guard's parent and
+    # label reads happen only in guard_check, never in the listing.
+    monkeypatch.setattr(github, "list_org_repos", lambda _org: ["tool"])
+    monkeypatch.setattr(epics, "is_managed_repo", lambda _repo: True)
+    row = {"number": 12, "state": "closed", "state_reason": "completed", "body": ""}
+    monkeypatch.setattr(github, "read_json_paginated", lambda *_a, **_k: [row])
+    for name in ("native_parent_of", "queue_or_archive_kind", "queue_kind", "_labels"):
+        monkeypatch.setattr(epics, name, MagicMock(side_effect=AssertionError(name)))
+    for name in ("graphql", "read_json", "read_output"):
+        monkeypatch.setattr(github, name, MagicMock(side_effect=AssertionError(name)))
+    assert security_issues("org") == [SecurityIssue(C, False, (), "completed")]
 
 
 # --- classification -------------------------------------------------------------
@@ -989,11 +1265,21 @@ def _adv(
     return Advisory(ghsa, state, "tool", tracking, external=kw.get("external", False))
 
 
+_UNSET = "unset"
+
+
 def _iss(
-    ref: IssueRef = A, ghsa: str | tuple[str, ...] | None = GHSA, *, open_: bool = True
+    ref: IssueRef = A,
+    ghsa: str | tuple[str, ...] | None = GHSA,
+    *,
+    open_: bool = True,
+    reason: str | None = _UNSET,
 ) -> SecurityIssue:
+    """A security issue; a closed one is closed as completed unless *reason* says otherwise."""
     ghsa_ids = () if ghsa is None else (ghsa,) if isinstance(ghsa, str) else ghsa
-    return SecurityIssue(ref, open_, ghsa_ids)
+    if reason == _UNSET:
+        reason = None if open_ else "completed"
+    return SecurityIssue(ref, open_, ghsa_ids, reason)
 
 
 class TestClassifyPairedExternalBroken:
@@ -1085,14 +1371,54 @@ class TestClassifyPairedExternalBroken:
 # --- state sync (the sweep) ---------------------------------------------------
 
 
+DEV_EPIC = IssueRef("org", ".github", 500)
+PLANNING_EPIC = IssueRef("org", ".github", 501)
+PLANNING_ARCHIVE = IssueRef("org", ".github", 502)
+# Each parent epic's labels and title, as epics._labels_and_title reads them.
+EPIC_ROWS: dict[IssueRef, tuple[set[str], str]] = {
+    DEV_EPIC: ({"epic"}, "Epic: build a thing"),
+    PLANNING_EPIC: ({"epic", "planning"}, "Epic (planning): org"),
+    PLANNING_ARCHIVE: ({"archive", "planning"}, "Archive (planning): org — 2026-Q3"),
+}
+
+
+class Parents:
+    """A fake of the guard's reads: each issue's native parent and each epic's row.
+
+    ``queue_or_archive_kind`` runs for real over :data:`EPIC_ROWS`.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.of: dict[IssueRef, IssueRef] = {}
+        self.fail: dict[IssueRef, Exception] = {}
+        self.reads: list[IssueRef] = []
+        monkeypatch.setattr(epics, "native_parent_of", self.native_parent_of)
+        monkeypatch.setattr(epics, "_labels_and_title", lambda ref: EPIC_ROWS[ref])
+
+    def native_parent_of(self, ref: IssueRef) -> IssueRef | None:
+        self.reads.append(ref)
+        if ref in self.fail:
+            raise self.fail[ref]
+        return self.of.get(ref)
+
+
+@pytest.fixture
+def parents(monkeypatch: pytest.MonkeyPatch) -> Parents:
+    return Parents(monkeypatch)
+
+
 def _sync(
     monkeypatch: pytest.MonkeyPatch,
     advisories: list[Advisory],
     issue_list: list[SecurityIssue],
 ) -> tuple[int, MagicMock]:
+    # Every issue is unparented unless a test installs its own Parents first.
+    if not isinstance(getattr(epics.native_parent_of, "__self__", None), Parents):
+        Parents(monkeypatch)
     write = MagicMock()
     monkeypatch.setattr(github, "write_json", write)
-    changed = sync_states(HOME, classify(advisories, issue_list), issue_list)
+    result = classify(advisories, issue_list)
+    changed = sync_states(HOME, result, issue_list, guard_check(result, issue_list))
     return changed, write
 
 
@@ -1156,10 +1482,14 @@ def test_sync_skips_broken_pairs(monkeypatch: pytest.MonkeyPatch) -> None:
     write.assert_not_called()
 
 
+_NO_GUARD = GuardResult(held=[], errors=[])
+
+
 def test_pending_syncs_lists_only_mismatches() -> None:
     issue_list = [_iss(A, open_=False), _iss(C, OTHER)]
     advisories = [_adv(tracking=(A,)), _adv(OTHER, tracking=(C,))]
-    assert pending_syncs(classify(advisories, issue_list), issue_list) == [(GHSA, "closed")]
+    result = classify(advisories, issue_list)
+    assert pending_syncs(result, issue_list, _NO_GUARD) == [(GHSA, "closed")]
 
 
 def test_sync_failure_is_scrubbed_of_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1167,16 +1497,196 @@ def test_sync_failure_is_scrubbed_of_stdout(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(github, "write_json", write)
     issue_list = [_iss(A, open_=False)]
     with pytest.raises(github.GitHubAPIError) as excinfo:
-        sync_states(HOME, classify([_adv()], issue_list), issue_list)
+        sync_states(HOME, classify([_adv()], issue_list), issue_list, _NO_GUARD)
     assert SECRET not in str(excinfo.value)
     assert excinfo.value.stdout is None
+
+
+# --- the sync close guard (spec 6.2) ------------------------------------------
+
+
+def _guarded(
+    advisories: list[Advisory], issue_list: list[SecurityIssue]
+) -> tuple[GuardResult, list[tuple[str, str]]]:
+    result = classify(advisories, issue_list)
+    guard = guard_check(result, issue_list)
+    return guard, list(pending_syncs(result, issue_list, guard))
+
+
+def test_guard_holds_queue_item(parents: Parents) -> None:
+    parents.of[A] = PLANNING_EPIC
+    guard, changes = _guarded([_adv()], [_iss(A, open_=False)])
+    assert changes == []
+    assert guard == GuardResult(held=[(GHSA, (A,))], errors=[])
+
+
+def test_guard_holds_drained_queue_item(parents: Parents) -> None:
+    parents.of[A] = PLANNING_ARCHIVE
+    guard, changes = _guarded([_adv()], [_iss(A, open_=False)])
+    assert changes == []
+    assert guard.held == [(GHSA, (A,))]
+
+
+@pytest.mark.parametrize("reason", ["not_planned", "duplicate", "some_new_reason", None])
+def test_guard_holds_non_completed_reasons(parents: Parents, reason: str | None) -> None:
+    # Review Focus 4: a fix task closed as a duplicate (or with any reason but
+    # completed, or none) was the advisory's last open issue. Its parent is a
+    # development epic, so only the close reason fires the guard, and the
+    # guard needs no parent read for it.
+    parents.of[A] = DEV_EPIC
+    parents.of[C] = DEV_EPIC
+    advisory = _adv(tracking=(A, C))
+    issue_list = [_iss(A, open_=False), _iss(C, open_=False, reason=reason)]
+    guard, changes = _guarded([advisory], issue_list)
+    assert changes == []
+    assert guard == GuardResult(held=[(GHSA, (C,))], errors=[])
+    assert parents.reads == [A]
+
+
+def test_guard_names_every_ref_that_fires_it(parents: Parents) -> None:
+    parents.of[A] = PLANNING_EPIC
+    issue_list = [_iss(A, open_=False), _iss(C, open_=False, reason="not_planned")]
+    guard, _ = _guarded([_adv(tracking=(A, C))], issue_list)
+    assert guard.held == [(GHSA, (A, C))]
+
+
+def test_guard_leaves_closed_advisory_alone(parents: Parents) -> None:
+    # Review Focus 3: a human closed the advisory with close; its tracked
+    # issue is a closed planning item already drained into its archive.
+    parents.of[A] = PLANNING_ARCHIVE
+    issue_list = [_iss(A, open_=False, reason="not_planned")]
+    guard, changes = _guarded([_adv(state="closed")], issue_list)
+    assert changes == []
+    assert guard == _NO_GUARD
+    assert parents.reads == []
+
+
+def test_guard_never_holds_an_advisory_with_an_open_issue(parents: Parents) -> None:
+    # A closed advisory whose queue item reopened still goes back to draft.
+    parents.of[A] = PLANNING_EPIC
+    guard, changes = _guarded([_adv(state="closed")], [_iss(A)])
+    assert changes == [(GHSA, "draft")]
+    assert guard == _NO_GUARD
+    assert parents.reads == []
+
+
+def test_completed_fix_tasks_close_advisory(parents: Parents) -> None:
+    parents.of[A] = DEV_EPIC
+    parents.of[C] = DEV_EPIC
+    issue_list = [_iss(A, open_=False), _iss(C, open_=False)]
+    guard, changes = _guarded([_adv(tracking=(A, C))], issue_list)
+    assert changes == [(GHSA, "closed")]
+    assert guard == _NO_GUARD
+
+
+def test_guard_reads_each_parent_once(parents: Parents) -> None:
+    parents.of[A] = DEV_EPIC
+    issue_list = [_iss(A, (GHSA, OTHER), open_=False)]
+    guard, changes = _guarded([_adv(), _adv(OTHER)], issue_list)
+    assert changes == [(GHSA, "closed"), (OTHER, "closed")]
+    assert guard == _NO_GUARD
+    assert parents.reads == [A]
+
+
+def test_guard_skips_external_reports(parents: Parents) -> None:
+    guard, _ = _guarded([_adv(external=True)], [_iss(A, open_=False, reason="not_planned")])
+    assert guard == _NO_GUARD
+
+
+def test_guard_error_is_scrubbed(parents: Parents) -> None:
+    parents.fail[A] = github.GitHubAPIError(1, ["gh"], SECRET, "HTTP 502\nBad gateway")
+    guard, changes = _guarded([_adv()], [_iss(A, open_=False)])
+    assert changes == []
+    assert guard.held == []
+    [(ghsa_id, ref, error)] = guard.errors
+    assert (ghsa_id, ref) == (GHSA, A)
+    assert SECRET not in error
+    assert "HTTP 502 Bad gateway" in error
+
+
+def test_guard_reports_a_graphql_error(parents: Parents) -> None:
+    parents.fail[A] = RuntimeError("GraphQL errors: [NOT_FOUND]")
+    guard, _ = _guarded([_adv()], [_iss(A, open_=False)])
+    assert guard.errors == [(GHSA, A, "GraphQL errors: [NOT_FOUND]")]
+
+
+def test_guard_lets_a_missing_token_propagate(parents: Parents) -> None:
+    parents.fail[A] = github.MissingGitHubTokenError(1, ["gh"], None, "no token")
+    with pytest.raises(github.MissingGitHubTokenError):
+        _guarded([_adv()], [_iss(A, open_=False)])
+
+
+def _records_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    advisories: list[Advisory],
+    issue_list: list[SecurityIssue],
+    *,
+    apply: bool = True,
+) -> tuple[int, MagicMock]:
+    write = MagicMock()
+    monkeypatch.setattr(security_records, "security_issues", lambda _org: issue_list)
+    monkeypatch.setattr(security_records, "advisory_home", lambda _org: HOME)
+    monkeypatch.setattr(security_records, "list_advisories", lambda _home: advisories)
+    monkeypatch.setattr(github, "write_json", write)
+    return records_pass("org", apply=apply, prog="prog"), write
+
+
+@pytest.mark.parametrize("apply", [True, False])
+def test_records_pass_reports_held_without_failing(
+    monkeypatch: pytest.MonkeyPatch,
+    parents: Parents,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    apply: bool,
+) -> None:
+    parents.of[A] = PLANNING_EPIC
+    rc, write = _records_pass(monkeypatch, [_adv()], [_iss(A, open_=False)], apply=apply)
+    assert rc == 0
+    write.assert_not_called()
+    out = capsys.readouterr().out
+    mode, verb = ("", "synced") if apply else (" (preview)", "would sync")
+    assert (
+        f"Security records{mode}: 0 advisory states {verb}, 0 broken pairs, 1 held, 0 errors."
+        in out
+    )
+    assert (
+        f"- held: {GHSA} (org/.github#10): retarget it to a fix task, "
+        "or close it with vrg-security-record close"
+    ) in out
+    assert "- broken:" not in out
+
+
+def test_parent_read_error_is_per_advisory(
+    monkeypatch: pytest.MonkeyPatch, parents: Parents, capsys: pytest.CaptureFixture[str]
+) -> None:
+    parents.fail[A] = github.GitHubAPIError(1, ["gh"], SECRET, "HTTP 502")
+    parents.of[C] = DEV_EPIC
+    issue_list = [_iss(A, open_=False), _iss(C, OTHER, open_=False)]
+    advisories = [_adv(tracking=(A,)), _adv(OTHER, tracking=(C,))]
+    rc, write = _records_pass(monkeypatch, advisories, issue_list)
+    assert rc == 1
+    assert write.call_args_list == [_patched_state(OTHER, "closed")]
+    out = capsys.readouterr().out
+    assert "1 advisory state synced, 0 broken pairs, 0 held, 1 error." in out
+    assert f"- error: {GHSA} (org/.github#10): reading its parent failed, left unchanged: " in out
+    assert SECRET not in out
+
+
+def test_parent_read_error_preview_exits_zero(
+    monkeypatch: pytest.MonkeyPatch, parents: Parents, capsys: pytest.CaptureFixture[str]
+) -> None:
+    parents.fail[A] = github.GitHubAPIError(1, ["gh"], None, "HTTP 502")
+    rc, write = _records_pass(monkeypatch, [_adv()], [_iss(A, open_=False)], apply=False)
+    assert rc == 0
+    write.assert_not_called()
+    assert f"- error: {GHSA} (org/.github#10)" in capsys.readouterr().out
 
 
 def test_retarget_issue_calls_in_order(issues: Issues) -> None:
     """Marking happens, then the advisory PATCH, then the unmark — never out of order."""
     issues.add(A, advisory_line(HOME, GHSA), {"security"})
     issues.add(C, "")
-    retarget(HOME, GHSA, (C,))
+    retarget(HOME, GHSA, (C,), source=A)
     kinds = [(method, "advisory" if "advisories" in ep else ep) for method, ep, _ in issues.writes]
     assert kinds == [
         ("POST", "repos/org/tool/issues/12/labels"),

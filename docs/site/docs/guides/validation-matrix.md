@@ -323,6 +323,85 @@ report also fail the stage. When an exception is allowed, and for how
 long, is in the TypeScript standards'
 [Audit exceptions](../standards/development/typescript/overview.md#audit-exceptions).
 
+### TypeScript license exceptions
+
+After the npm audit, the TypeScript audit stage runs
+[`vrg-npm-license-gate`](../reference/cli-tools-overview.md#vrg-npm-license-gate),
+whatever the audit's result. It reads every package in the committed
+`package-lock.json`, dev dependencies included, and judges the `license`
+field npm records for each as an SPDX license expression against the
+TypeScript allowlist (`_TYPESCRIPT_LICENSES_ALLOWLIST` in
+`lib/languages.py`):
+
+- `OR` is allowed when any branch is, and `AND` only when every branch
+  is. `AND` binds tighter than `OR`.
+- IDs match without regard to case. The operators `AND`, `OR` and `WITH`
+  are upper case only, so `mit or Apache-2.0` does not parse.
+- A `WITH` term is allowed only when the allowlist names the whole term,
+  and an ID with `+` only when an entry is spelled with `+`.
+- The parse checks syntax only. A well-formed ID the allowlist does not
+  name, such as `UNLICENSED`, is disallowed. A string that is not an
+  expression, such as `SEE LICENSE IN LICENSE`, and a legacy object or
+  array value are unparseable.
+
+A package passes when its expression is allowed. One whose license is
+disallowed, unparseable or missing fails, unless a live entry of the
+repository's `.npm-license-exceptions` covers it:
+
+```text
+# The vendor SDK ships under its own terms, reviewed in owner/repo#45.
+vendor-sdk "SEE LICENSE IN LICENSE" exp:2027-06-30 owner/repo#45 vendor terms reviewed; no SPDX ID
+legacy-pkg "{\"type\":\"MIT\"}" exp:2027-06-30 owner/repo#46 MIT, in the legacy object form
+bare-pkg - exp:2027-06-30 owner/repo#47 MIT per its README; package.json records no license
+```
+
+The fields, separated by spaces, are:
+
+1. The package name, as npm locks it (`@scope/name` for a scoped one).
+2. The license value: the lockfile's `license` string exactly as
+   recorded, as a JSON string literal. A non-string value is its compact
+   JSON with sorted keys, also quoted. A bare `-` stands for a package
+   with no `license` field, so it never matches a package that records
+   the string `"-"`.
+3. The expiry, `exp:YYYY-MM-DD`. The entry is live through that day
+   (UTC), and the expiry may be at most 365 days after the day the gate
+   runs.
+4. The tracking issue: `#N`, `owner/repo#N` or a GitHub issue URL.
+5. The reason: the rest of the line.
+
+Lines starting with `#` and blank lines are ignored. An entry covers a
+locked package only when the name matches and the recorded value equals
+the entry's value exactly. It covers every locked version whose license
+is unchanged, so a version move alone needs no new review; a version
+whose license differs is not covered and fails. A package may have one
+entry per excused value.
+
+The gate writes `licenses.json` whenever it can read the lockfile, with
+one object per package: `name`, `version`, `license` (the value an
+exception matches, `null` when absent), `license_canonical` (the parsed
+expression with each ID in the allowlist's spelling, `null` when it does
+not parse), `dev`, `verdict` (`allowed`, `excepted` or `failing`) and,
+when excepted, `exception` (`tracking` and `expires`). It prints each
+exception it applied. These fail the stage:
+
+- a package that fails with no live exception, named with its version,
+  its license value and why, followed by the two fixes:
+  `.npm-license-exceptions` and the allowlist;
+- an expired entry, a malformed one (a missing field, a value that is not
+  a JSON string literal or `-`, an expiry that is not a real date, a bad
+  tracking issue), an expiry more than 365 days ahead, or a second entry
+  for the same package and value, each named by its line. The report is
+  still written, judged against no exceptions, so it shows each
+  package's real standing;
+- a missing, unreadable or pre-v2 lockfile, or an entry with no
+  `version`, naming the file and the fix (`npm install
+  --package-lock-only` with a current npm). No report is written.
+
+An entry that matches no package, or only packages that pass without it,
+is reported as a warning, so a stale one gets removed. When an exception
+is allowed is in the TypeScript standards'
+[License gate](../standards/development/typescript/overview.md#license-gate).
+
 ### Semgrep scan
 
 After the language checks, `vrg-validate` runs the scan of PR CI's

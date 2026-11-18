@@ -59,6 +59,7 @@ what it updates, and each one's changes become a separate commit on the
 |---|---|---|
 | `python` | `pyproject.toml` and `uv.lock` exist | `chore(deps): uv lock --upgrade` |
 | `cargo` | `Cargo.toml` and `Cargo.lock` exist | `chore(deps): cargo update`, listing the crates moved, or `chore(deps): refresh Cargo.lock` |
+| `npm` | `package.json` and `package-lock.json` exist | `chore(deps): npm update`, listing the packages moved, or `chore(deps): refresh package-lock.json` |
 | `vergil` | `vergil.toml` exists | `chore(deps): …` naming what changed |
 | `images` | A Dockerfile, workflow or `action.yml` is tracked | `chore(deps): bump image tags` |
 | `hook` | `[dependency-update].hook` is set | `chore(deps): repo hook` |
@@ -101,6 +102,24 @@ the workspace's requirement. Path and git dependencies, and crates.io
 dependencies patched to a path or git crate, are never reported; a
 dependency from another registry, or patched to one, is an error. See
 [the Cargo updater](dev/update-deps.md#the-cargo-updater).
+
+### `npm`
+
+Runs `npm update --ignore-scripts` in the dev container, which moves
+every package in `package-lock.json` to the newest version its
+`package.json` range allows. It never edits `package.json`, and fails if
+`package.json` changed, as a `save` setting in `.npmrc` would make it.
+Every entry it added or moved must carry a `license`, or it fails.
+
+It then runs `npm ci --ignore-scripts` and `npm outdated --json` in the
+dev container, so npm matches the ranges itself. A direct dependency
+(`dependencies`, `devDependencies` or `optionalDependencies`) locked
+below its `latest` dist-tag is reported as held back, with a note giving
+the reason: `outside the package.json range`, `held by the resolver:
+another requirement in the dependency graph`, or both, plus `Vergil
+accepts <name> <major> only (dev-dependencies.json)` for a package whose
+major Vergil fixes. `file:`, `link:`, git and URL dependencies are never
+reported. See [the npm updater](dev/update-deps.md#the-npm-updater).
 
 ### `vergil`
 
@@ -241,6 +260,9 @@ Each updater takes its list from a machine-readable source:
 - `cargo` diffs the crate versions in the parsed `Cargo.lock` before and
   after `cargo update` the same way. A crate locked at several versions
   shows them comma-joined.
+- `npm` diffs the package versions in the parsed `package-lock.json`
+  before and after `npm update` the same way. A package installed at
+  several versions (nested copies) shows them comma-joined.
 - `vergil` lists the `vergil` version it bumped and the
   `vergil-python<x.y>` runtime pin it moved. Normalizing workflow refs to
   the declared version moves no package.

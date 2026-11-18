@@ -271,15 +271,18 @@ fails:
 | `test`  | `coverage.xml` (Cobertura)        | the gating `node_modules/.bin/vitest run --coverage …` run, copied from `coverage/cobertura-coverage.xml` |
 | `test`  | `junit.xml` (JUnit)               | the same Vitest run, its JUnit reporter |
 | `audit` | `npm-audit.json` (JSON)           | the gate's `npm audit --audit-level=high --json` run, its stdout, unfiltered (`vrg-npm-audit-gate` judges it) |
+| `audit` | `licenses.json` (JSON)            | the gating `vrg-npm-license-gate --output licenses.json` run: one object per package in `package-lock.json`, with its license as recorded, its canonical form and its verdict |
 
 The lint gate prints each ESLint finding from the report to the log, as
 `path:line:column: severity message [rule]`. The typecheck report holds
 `tsc`'s diagnostics, one per line, then the compiler's closing statistics,
 so a clean typecheck still writes real data. The test gate keeps Vitest's
 console output and coverage table; `--coverage.reportOnFailure` makes Vitest
-write the coverage report when a test fails. `TYPESCRIPT_REPORT_FILES` in
-vergil-tooling's `languages.py` names all five, and a TypeScript repository's
-managed `.gitignore` block ignores them, with Vitest's `coverage/` directory, so a
+write the coverage report when a test fails. The license gate writes
+`licenses.json` whenever it can read the lockfile, so a failing run's
+report records the failure. `TYPESCRIPT_REPORT_FILES` in
+vergil-tooling's `languages.py` names all six, and a TypeScript repository's
+managed `.gitignore` ignores them, with Vitest's `coverage/` directory, so a
 second local `vrg-validate` never lints the first run's reports.
 
 `ci-quality.yml`, `ci-test.yml` and `ci-audit.yml` stage each leg's reports

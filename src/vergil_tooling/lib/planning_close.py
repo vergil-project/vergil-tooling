@@ -18,9 +18,10 @@ documentation task and, if so, which planning issue the PR also closes:
    planning issue is public and anyone can comment on it.
 3. The planning issue is closed only when it is in the task's own repo (a PR
    closes only same-repo issues), is open, its native parent is the planning
-   queue epic, and no security advisory still tracks it
-   (:func:`queue_view.tracking_advisories`, the planning view's hold): closing
-   it then would close the advisory with its fix unwritten. Otherwise the
+   queue epic, and no security advisory holds it
+   (:func:`queue_view.read_advisory_hold`, the planning view's own hold
+   rule, which fails closed on an advisory that cannot be read): closing it
+   then would close the advisory with its fix unwritten. Otherwise the
    result says which condition failed, and the caller reports it.
 
 Any other task (no ``Planning:`` line in its epic, or a planning issue whose
@@ -96,7 +97,7 @@ def _view(ref: IssueRef) -> dict[str, Any]:
         "--repo",
         f"{ref.owner}/{ref.repo}",
         "--json",
-        "state,body,comments",
+        "state,body,comments,labels",
     )
     if not isinstance(raw, dict):
         raise RuntimeError(f"unexpected 'gh issue view' response for {ref.slug}: {raw!r}")
@@ -152,16 +153,11 @@ def find(task: IssueRef) -> PlanningClose | None:
     if parent is None or epics.queue_kind(parent) != epics.PLANNING.key:
         where = "no parent" if parent is None else f"parent {parent.slug}"
         return PlanningClose(task, planning, f"it is not in the planning queue ({where})")
-    held = queue_view.tracking_advisories(planning, str(view.get("body") or ""))
-    if held:
-        tracks = "advisory still tracks" if len(held) == 1 else "advisories still track"
-        return PlanningClose(
-            task,
-            planning,
-            f"{len(held)} {tracks} it ({', '.join(held)}); retarget each to the task or "
-            "tasks that fix it with vrg-security-record retarget, then close the planning "
-            "issue by hand",
-        )
+    labels = {str(label.get("name") or "") for label in view.get("labels") or []}
+    hold = queue_view.read_advisory_hold(planning, str(view.get("body") or ""), labels)
+    if hold.held:
+        reason = queue_view.hold_reason(planning, hold, subject="it")
+        return PlanningClose(task, planning, f"{reason}, then close the planning issue by hand")
     return PlanningClose(task, planning, None)
 
 

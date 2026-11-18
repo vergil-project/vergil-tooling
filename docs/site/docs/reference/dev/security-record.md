@@ -19,7 +19,8 @@ vrg-security-record create --repo OWNER/NAME --title TEXT --body-file FILE
                            [--summary TEXT] [--issue OWNER/REPO#N] [--resume GHSA-ID]
 vrg-security-record list [--repo OWNER/NAME] [--state {draft,closed,all}] [--details]
 vrg-security-record show (GHSA-ID | OWNER/REPO#N)
-vrg-security-record retarget GHSA-ID --to 'OWNER/REPO#N' [--to 'OWNER/REPO#N' ...]
+vrg-security-record retarget GHSA-ID --from 'OWNER/REPO#N' --to 'OWNER/REPO#N' [--to 'OWNER/REPO#N' ...]
+                             [--drop 'OWNER/REPO#N' ...]
 vrg-security-record sync [--dry-run]
 vrg-security-record close GHSA-ID --reason TEXT
 vrg-security-record note GHSA-ID --file FILE
@@ -46,7 +47,7 @@ advisory.
 - `--repo` always names the **affected** repo, never where anything is
   created.
 - The advisory is always created in `<org>/.github`, where `<org>` is the
-  owner of `--repo` (or of the `--to` refs for `retarget`). The command
+  owner of `--repo` (or of the `--from`, `--to` and `--drop` refs for `retarget`). The command
   checks that `<org>/.github` is public and otherwise refuses with:
 
   ```text
@@ -124,6 +125,14 @@ completes whatever steps are missing:
 
 Every step is idempotent, so running a resume command twice is safe.
 
+`create` makes the advisory's **first** pairing, on its own path, not
+through `retarget`. Before it creates, marks or links any issue, it
+checks the advisory's tracking lines: an advisory that already tracks
+another issue is refused (exit 1, with no resume command, since resuming
+cannot fix it), naming the issues it tracks. One that already tracks the
+resumed issue alone is a resume of its own pair, and only the missing
+steps run. Move an advisory that is already paired with `retarget`.
+
 ## list
 
 Lists the records in the org's `.github`, one line per advisory, sorted
@@ -171,22 +180,60 @@ vrg-security-record: advisories GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy do not 
 
 ## retarget
 
-Moves an advisory's tracking to new issues. It is the one way a link
-moves; `vrg-intake-route` and the `epic-create` planning handoff both use
-it.
+Moves an advisory's tracking from an issue it tracks to new issues. It is
+the one way a link moves; `vrg-intake-route` and the `epic-create`
+planning handoff both use it.
 
 ```bash
-vrg-security-record retarget GHSA-xxxx-xxxx-xxxx \
+vrg-security-record retarget GHSA-xxxx-xxxx-xxxx --from 'vergil-project/.github#500' \
   --to 'vergil-project/vergil-tooling#101' --to 'vergil-project/vergil-tooling#102'
 ```
 
-Every `--to` must be a full `owner/repo#N` ref, and all of them must be
+| Flag | Meaning |
+|---|---|
+| `--from REF` | Required. The issue the advisory moves from, which it must track now. |
+| `--to REF` | Required, repeatable. The complete set of issues the advisory tracks afterwards. |
+| `--drop REF` | Repeatable. An open tracked issue deliberately left untracked: the human's decision. |
+
+Every ref must be a full `owner/repo#N` ref, and all of them must be
 in one org. The refs are single-quoted so the command pastes into any
 shell: unquoted, the `#` is a glob operator in zsh with `EXTENDED_GLOB`
 set. The `retarget` commands that `vrg-intake-route` prints for an
 advisory it could not retarget are quoted the same way.
 
-The steps run in order, and each starts only once the one before it
+Two checks run first, after the tracking lines and the org's
+`security`-labelled issues are read and before anything is written.
+Each refusal exits 1, names the issues the advisory tracks, and prints
+the command that would succeed:
+
+- **Source check.** `--from` must be an issue a `Tracking issue:` line
+  names:
+
+  ```text
+  vrg-security-record: advisory <GHSA-id>: --from <ref> is not an issue it tracks (it tracks <refs>); run: vrg-security-record retarget <GHSA-id> --from '<tracked ref>' --to '<ref>' …
+  ```
+
+  A re-run of an interrupted or finished retarget is accepted too: when
+  the tracking lines are already exactly the `--to` set and `--from`
+  still names the advisory (an unmark not yet done) or carries the
+  `Security record moved to <refs>` comment for exactly that set (a
+  finished run). Such a re-run moves nothing; it only finishes the
+  unmarks.
+- **Open-issue check.** The **dropped** issues are those that are not a
+  `--to`: the issues in the tracking lines plus every `security`-labelled
+  issue whose line names this advisory. Each one still open, other than
+  `--from` (which is being handed on), is refused unless a `--drop`
+  names it. An issue the listing does not return (one that lost its
+  label) has its state read directly; a failed read fails the run. The
+  refusal's command keeps every open dropped issue as a `--to`, and says
+  that leaving one untracked is the human's decision; it never prints a
+  `--drop`:
+
+  ```text
+  vrg-security-record: advisory <GHSA-id>: this would stop tracking the open issue <ref>; to keep tracking every open issue, run: vrg-security-record retarget <GHSA-id> --from '<ref>' --to '<ref>' --to '<ref>'. Leaving an open issue untracked is the human's decision
+  ```
+
+The steps then run in order, and each starts only once the one before it
 succeeded:
 
 1. **Mark** each target: ensure the `security` label in its repo, add it
@@ -194,6 +241,7 @@ succeeded:
    already present).
 2. **Rewrite** the advisory's description: every `Tracking issue:` line is
    replaced by one line per target. The rest of the description is kept.
+   An unchanged description is not written.
 3. **Unmark** every issue that names this advisory but is no longer a
    target. These are the issues in the old tracking lines, plus every
    `security`-labelled issue in the org whose `Security advisory:` line
@@ -209,6 +257,9 @@ succeeded:
    line and label. Otherwise the unmark follows the transfer and acts on
    the issue at its current ref. Either way a line
    `<GHSA-id>: <old-ref> was transferred to <ref>: …` says which it did.
+   `--from` is unmarked **last**, after every other dropped issue, so a
+   run interrupted before then leaves it naming the advisory, and the
+   re-run's source check accepts it.
 
 An issue naming several advisories needs one `retarget` per advisory.
 Run them one after another, never in parallel: each rewrites the issue's
@@ -219,16 +270,21 @@ A failure at any step exits 1 with a message naming the advisory and the
 step. Because a later step never runs before an earlier one succeeds, an
 advisory never ends up tracking an issue that lacks the label and line.
 After a failure at any step, re-run the same command: it finishes the
-job. An issue that still carries this advisory's line and label is found
+job, and once the job is done a re-run writes nothing. An issue that still carries this advisory's line and label is found
 again by the listing, so an interrupted unmark is completed. The one case
 a re-run cannot reach is an issue whose `security` label was removed by
 hand while its advisory line stayed; `sync` reports it as a broken pair.
 On success it prints `Retargeted <GHSA-id> to <refs>.`
 
-The library's `retarget` also takes a `renamed=` list, which the CLI does
-not expose. `vrg-intake-route` uses it for a transfer: the old number of a
+The library's `retarget` takes the source as `source=` and also takes a
+`renamed=` list, which the CLI does not expose. `vrg-intake-route` passes
+the routed item as the source, and as targets the advisory's other
+tracked issues plus the new issue or issues, so a route never meets the
+open-issue check. It uses `renamed=` for a transfer: the old number of a
 transferred issue is replaced in the tracking lines but never unmarked,
-because the old number now leads to the moved issue itself.
+because the old number now leads to the moved issue itself. Its recovery
+commands name that old number as `--from`; without `renamed=` the old
+number is the source, and its unmark finds the issue already at a target.
 
 ## sync
 
@@ -246,24 +302,45 @@ advisory between `draft` and `closed`: it never changes a `published`,
 it lists as `unpaired external report (left untouched)`. Broken pairs are
 listed as `- broken: <GHSA-id or issue ref>: <problem>`, never repaired.
 
+**The close guard.** A draft advisory whose tracked issues are all closed
+stays `draft` when any of them is a queue item (its native parent is a
+live intake, planning or deferred epic, or a per-quarter archive of one,
+recognized by its `archive` label or its stamped title) or was closed
+with any reason other than completed. The parent is read only for an
+issue closed as completed. Each advisory the guard holds is listed by
+GHSA ID and the issue refs that fired it, with the next step:
+
+```text
+- held: GHSA-xxxx-xxxx-xxxx (org/repo#12): retarget it to a fix task, or close it with vrg-security-record close
+```
+
+A hold does not fail the pass. The guard only stops a move to `closed`:
+an advisory already `closed` (a human closed it with
+[`close`](#close)) is left alone and never reported as held. When an
+issue's parent cannot be read, that advisory is left unchanged and
+listed as `- error: <GHSA-id> (<issue ref>): reading its parent failed,
+left unchanged: <error>`; the rest are still synced.
+
 Its summary line is `Security records: <n> advisory states synced, <m>
-broken pairs.` Each noun agrees with its count, so a count of 1 reads
-`1 advisory state synced` or `1 broken pair`. It exits 1 when any pair is
-broken (after syncing the rest), or when the pass fails, including when
-the org's `.github` is private. An org with no `security` issues and no
-`.github` repo prints `Security records: none.`
+broken pairs, <h> held, <e> errors.` Each noun agrees with its count, so a
+count of 1 reads `1 advisory state synced`, `1 broken pair` or `1 error`.
+It exits 1 when any pair is broken or any parent read failed (after
+syncing the rest), or when the pass fails, including when the org's
+`.github` is private. An org with no `security` issues and no `.github`
+repo prints `Security records: none.`
 
 | Flag | Meaning |
 |---|---|
-| `--dry-run` | Preview: print the pass as `Security records (preview): <n> advisory states would sync, <m> broken pairs.`, change nothing, and exit 0 even on a broken pair. |
+| `--dry-run` | Preview: print the pass as `Security records (preview): <n> advisory states would sync, <m> broken pairs, <h> held, <e> errors.`, change nothing, and exit 0 even on a broken pair or a failed parent read. |
 
 **Permission.** `sync` needs **Repository security advisories: Read and
 write** on `<org>/.github` (`--dry-run` needs Read), so it runs as the
 human's own `gh` login or the user App, never in the scheduled sweep.
 `vrg-epic-audit --close` makes no security-advisory call, so its token
 needs no advisories access (vergil-project/vergil-tooling#4313). Nothing
-runs `sync` on a schedule: run it after closing or reopening a `security`
-issue, and regularly in any case.
+runs `sync` on a schedule: the human or the user agent runs it, after
+closing or reopening a `security` issue and regularly in any case, and
+`vrg-epic-audit` previews it read-only.
 
 ## close
 
@@ -275,7 +352,7 @@ vrg-security-record close GHSA-xxxx-xxxx-xxxx \
 Closes a draft advisory and leaves an audit trail: a public comment with
 the GHSA ID and the reason on every issue the record tracks. It is how an
 agent closes a record that `sync` would not close, such as one in a
-broken pair, or records why a record it closes was dropped. It takes the
+broken pair or one the close guard holds, or records why a record it closes was dropped. It takes the
 org from the current repo's `origin` remote, as `show` and `sync` do.
 
 | Flag | Meaning |
@@ -385,14 +462,23 @@ These commands read or move records as part of their own work:
   An item with the `security` label but no advisory line, or the
   reverse, gets a warning and no retarget.
 - **`vrg-queue planning`** keeps a planning issue at `in-progress` while
-  **any** advisory still tracks it, whether or not its body names that
-  advisory, with a note that counts
-  them and names them by GHSA ID only (`advisory still tracks` for one,
-  `advisories still track` for more):
+  it is held: while **any** advisory still tracks it, whether or not its
+  body names that advisory, or while its body names, with the `security`
+  label on, an advisory the listing does not return (one that cannot be
+  read). The note counts them and names them by GHSA ID only
+  (`advisory still tracks` for one, `advisories still track` for more),
+  and ends with the retarget command:
 
   ```text
-  held: <k> advisories still track this planning issue (<GHSA-id>[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+  held: <k> advisories still track this planning issue (<GHSA-id>[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget <GHSA> --from '<owner>/<repo>#<N>' --to <task>
+  held: <k> advisories this planning issue names cannot be read (<GHSA-id>[, …]): re-run with a token that can read the repository's advisories, or have the human check it — retarget each to the task or tasks that fix it with vrg-security-record retarget <GHSA> --from '<owner>/<repo>#<N>' --to <task>
   ```
+
+  An item held both ways gives both parts, joined by a semicolon. A
+  `Security advisory:` line on an issue without the `security` label,
+  when no advisory tracks the issue, is a broken pair: the note reports it
+  (`broken pair: …`) and the item is not held. The docs PR's planning
+  close applies the same rule and gives the same reason.
 
   It lists each org's advisories once per view, and skips an org whose
   `.github` is absent or not public unless one of its items has an
@@ -404,5 +490,5 @@ These commands read or move records as part of their own work:
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Refused (a private `.github`, a duplicate, bad refs, an unreadable file, `--details` under the sweep, a `close` or `note` the checks refuse), a partial pair, a failed retarget, close or note, a broken pair found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
+| 1 | Refused (a private `.github`, a duplicate, bad refs, an unreadable file, `--details` under the sweep, a `retarget`, `close` or `note` the checks refuse, a `create` onto an advisory already paired), a partial pair, a failed retarget, close or note, a broken pair or a failed parent read found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
 | 2 | Invalid arguments |

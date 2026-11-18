@@ -185,10 +185,38 @@ The scheduled sweep (`vrg-epic-audit --close`) does not run it: the sweep
 makes no security-advisory call, so its token needs no advisories access.
 On each run of `sync`:
 
-- the advisory is **closed** when **every** issue it tracks is closed,
-  whether fixed or dropped as not planned;
+- the advisory is **closed** when **every** issue it tracks is closed as
+  completed and none of them is a queue item;
 - it is a **draft** while **any** of them is open, so reopening an issue
   reopens its advisory.
+
+**The close guard.** Closing an issue does not always mean the fix
+exists, so `sync` keeps a draft advisory `draft`, even with every issue
+it tracks closed, while **any** of those issues:
+
+- is a **queue item**: its native parent is a live intake, planning or
+  deferred epic, or a per-quarter archive of one (by its `archive` label
+  or its stamped title alone), so an item already drained into its
+  archive still counts; or
+- was closed with any reason other than **completed** (not planned,
+  duplicate, no reason recorded, or any reason GitHub adds).
+
+Each advisory the guard holds is reported on its own line, by GHSA ID and
+the issue refs that fired it, with what a human does next:
+
+```text
+- held: GHSA-xxxx-xxxx-xxxx (org/repo#12): retarget it to a fix task, or close it with vrg-security-record close
+```
+
+Retarget it to the task that fixes it, or, when the work is dropped,
+close it with `vrg-security-record close` and a reason (see
+[Closing a record with a reason](#closing-a-record-with-a-reason)). Held
+advisories are counted apart from broken pairs, and a hold does not fail
+`sync`: it waits on a human step and is not a fault. The guard only stops
+a move to `closed`: an advisory a human already closed with `close` is
+left alone and is not reported as held. When an issue's parent cannot be
+read, that advisory is reported on an `- error:` line and left as it is,
+never closed; the rest are still synced, and `sync` exits 1.
 
 A manual state change to a draft or closed advisory is overwritten on the
 next run. `sync` only moves an advisory between `draft` and `closed`.
@@ -237,8 +265,8 @@ vrg-security-record close GHSA-xxxx-xxxx-xxxx \
 It posts `Security record <GHSA-id> closed: <reason>` on every issue the
 record tracks, then sets the advisory to `closed`. Use it when the work a
 record tracks is dropped and `sync` would not close the record, for
-example when its pair is broken, or to put on record why a record was
-closed. The issue still drives the record: `close` refuses while any of
+example when its pair is broken or the close guard holds it, or to put
+on record why a record was closed. The issue still drives the record: `close` refuses while any of
 its issues is open, since the next `sync` would set the advisory back to
 draft. Close the issue first (as not planned, for dropped work), or
 retarget the record to the work that replaces it.
@@ -273,13 +301,18 @@ with a `Tracking issue:` line. See the
 ### When the issue moves
 
 A record's link moves only through `vrg-security-record retarget`, and
-`vrg-intake-route` calls it for you:
+`vrg-intake-route` calls it for you. Each call moves the advisory from the
+routed item and keeps every other issue the advisory tracks, so a route
+never stops tracking another issue:
 
 - **transfer** (`one-off` into another repo): after the move, **every**
   advisory the issue names is retargeted, in body order, so each tracking
   line is rewritten to the issue's new number. If one fails, the move
   stands and the error names every advisory still not retargeted, with
-  one `retarget` command for each, to run in order;
+  one `retarget` command for each, to run in order. Each command names
+  the issue's old number as `--from`, since the tracking line still
+  names it. If the tracked issues can't be read before the move, the
+  route stops with nothing moved;
 - **recreate** (when GitHub refuses the transfer): **every** advisory the
   issue names is retargeted to the copy, in body order, **before** the
   original closes. If one fails, the original stays open, the copy stays
@@ -294,10 +327,12 @@ A record's link moves only through `vrg-security-record retarget`, and
   changes, because which advisory goes to which task can't be inferred:
 
   ```text
-  vrg-intake-route: <owner>/<repo>#<N> names several advisories (<GHSA-id>, <GHSA-id>); retarget each by hand with vrg-security-record retarget, then split
+  vrg-intake-route: <owner>/<repo>#<N> names several advisories (<GHSA-id>, <GHSA-id>); retarget each by hand to the tasks that fix it, keeping every other issue it tracks (vrg-security-record retarget <GHSA-id> --from '<owner>/<repo>#<N>' --to <task> [--to …], then vrg-security-record retarget <GHSA-id> --from '<owner>/<repo>#<N>' --to <task> [--to …]), then split
   ```
 
-  Retarget each advisory to the task or tasks that fix it, one at a time.
+  Retarget each advisory to the task or tasks that fix it, one at a time,
+  with `--from` the item and a `--to` for every other issue it still
+  tracks as well as for each task.
   The last retarget leaves the item with no advisory line and no
   `security` label, so the split that follows is an ordinary one.
 
@@ -305,6 +340,44 @@ An issue an advisory stops tracking loses that advisory's line, and gets
 the neutral comment `Security record moved to <refs>`. It loses its
 `security` label only when that was its last advisory line; while it
 still names another advisory, the label and the other lines stay.
+
+### Retargeting by hand
+
+```bash
+vrg-security-record retarget GHSA-xxxx-xxxx-xxxx \
+  --from 'vergil-project/.github#500' \
+  --to 'vergil-project/vergil-tooling#101' \
+  --to 'vergil-project/vergil-tooling#102'
+```
+
+`--from` is required and names the issue the advisory moves from, which
+it must track now. `--to` names the **complete** set it tracks
+afterwards. Two checks run before anything is written; each refusal
+names the issues the advisory tracks and the command that would succeed:
+
+- **The source check.** A `--from` that no `Tracking issue:` line names
+  is refused: the advisory is not that issue's to hand on. Take the GHSA
+  IDs from `vrg-security-record list` (the advisories whose `tracks:`
+  names the issue), never from an issue body's lines alone.
+- **The open-issue check.** An open issue the advisory tracks, other than
+  `--from`, that the `--to` set leaves out is refused, so a retarget
+  never silently stops tracking work still in flight. The refusal's
+  command keeps every such issue as a `--to`. To add a fix task later,
+  retarget `--from` one of the current tasks with every task, old and
+  new, as `--to`. `--drop <ref>` (repeatable) names an open issue the
+  advisory is **deliberately** left to stop tracking: that is the human's
+  decision, and no tool ever suggests it.
+
+A retarget that fails partway (a step error, not a refusal) is finished
+by running the identical command again: the source check still accepts
+the `--from` once the tracking lines are rewritten, while that issue
+still names the advisory or carries the `Security record moved to`
+comment for the same `--to` set. A re-run after a full success writes
+nothing. `--from` is unmarked last, after every other dropped issue.
+
+`create` makes an advisory's **first** pairing on its own path: it refuses,
+before it creates, marks or links any issue, an advisory that already
+tracks another issue. Move a paired advisory with `retarget`.
 
 ## Security items in planning
 
@@ -323,9 +396,11 @@ of them until the plan exists.
 
   ```bash
   vrg-security-record retarget GHSA-xxxx-xxxx-xxxx \
+    --from 'vergil-project/.github#500' \
     --to 'vergil-project/vergil-tooling#101' \
     --to 'vergil-project/vergil-tooling#102'
   vrg-security-record retarget GHSA-yyyy-yyyy-yyyy \
+    --from 'vergil-project/.github#500' \
     --to 'vergil-project/vergil-tooling#103'
   ```
 
@@ -338,23 +413,46 @@ of them until the plan exists.
   this **only** when the weakness exists only in the design and no
   shipped code has it. A finding about shipped behaviour always goes to a
   fix task that changes the code.
-- **The guard.** `vrg-queue planning` never shows a planning issue as
-  `ready-to-close` while **any** advisory still tracks it, whether or not
-  its body names that advisory. It
-  shows it as `in-progress` with a note that counts the advisories still
-  tracking it and names them by GHSA ID only:
+- **The guard.** One hold rule decides whether a planning issue may
+  close, and it fails closed. It trusts the `security` label and the
+  advisories' own `Tracking issue:` lines, never a `Security advisory:`
+  body line alone:
+  - **Any advisory that tracks it** holds it, whether or not its body
+    names that advisory.
+  - **An advisory that cannot be read** holds it too: an advisory a
+    `security`-labelled planning issue names on a `Security advisory:`
+    line, which the advisory listing does not return. A missing
+    advisory is never read as "not tracking". Re-run with a token that
+    can read the repository's advisories, or have the human check the
+    advisory.
+  - **A `Security advisory:` line on an issue without the `security`
+    label**, with no advisory tracking the issue, is a broken pair. The
+    queue reports it in the item's note (`broken pair: …`, saying to
+    have the human check the pair) and does not hold the item.
+
+  `vrg-queue planning` never shows a held planning issue as
+  `ready-to-close`. It shows it as `in-progress` with a note that names
+  the advisories by GHSA ID only, and ends with the command that hands
+  each one on:
 
   ```text
-  held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget
-  held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+  held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget <GHSA> --from 'vergil-project/.github#500' --to <task>
+  held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget <GHSA> --from 'vergil-project/.github#500' --to <task>
+  held: 1 advisory this planning issue names cannot be read (GHSA-zzzz-zzzz-zzzz): re-run with a token that can read the repository's advisories, or have the human check it — retarget each to the task or tasks that fix it with vrg-security-record retarget <GHSA> --from 'vergil-project/.github#500' --to <task>
   ```
 
+  When an advisory both tracks the planning issue and another one cannot
+  be read, the note gives both, joined by a semicolon.
+
   After one of two retargets, the planning issue stays held by the other.
-  Don't close the planning issue by hand before every retarget: that
-  would close the remaining advisories with the fix unwritten. The same
-  hold applies to the epic's docs PR, which normally also closes the
-  planning issue: while an advisory still tracks it, `vrg-submit-pr`
-  leaves the `Planning issue: Closes` line out of the body and says why.
+  Don't close the planning issue by hand before every retarget: the
+  remaining advisories would be left tracking a closed planning item,
+  with the fix unwritten. `sync`'s close guard keeps them `draft` and
+  reports them as held, but only a retarget hands them on. The same
+  rule holds the epic's docs PR, which normally also closes the planning
+  issue: while the planning issue is held, `vrg-submit-pr` leaves the
+  `Planning issue: Closes` line out of the body and gives the same
+  reason.
 
 ## Recording findings from a review
 
@@ -380,8 +478,11 @@ depends on the decision:
   names (see [Security items in planning](#security-items-in-planning));
 - a **rejected** finding (the human decided it is not a problem) is
   recorded with plain `create`, and the intake issue it creates is then
-  closed as "not planned", so the next `sync` closes the advisory. The human's
-  reason goes into the advisory's details, never into a public record;
+  closed as "not planned", and the advisory is then closed with
+  `vrg-security-record close` and a neutral reason, since `sync`'s close
+  guard holds an advisory whose issue was closed as not planned. The
+  human's reason goes into the advisory's details, never into a public
+  record;
 - a **dropped** finding is recorded with plain `create`, and its intake
   issue stays open, so intake review decides what becomes of it.
 
@@ -440,7 +541,7 @@ hand:
   tracks;
 - `vrg-security-record sync --dry-run` (or the read-only
   `vrg-epic-audit`, which prints the same preview) reports what would sync
-  and every broken pair.
+  and every broken pair and held advisory.
 
 `sync` reports a broken pair and never repairs it, so a human repairs
 each one it reports, by hand.

@@ -560,7 +560,7 @@ commit-to-pulls lookup; `--pr` skips the lookup. Used by the
 
 Update the repo's dependencies to the newest versions their declared
 bounds allow, in a `deps/update-<version>` managed worktree: run the
-applicable updaters (`python`, `cargo`, `vergil`, `images`, then the repo
+applicable updaters (`python`, `cargo`, `npm`, `vergil`, `images`, then the repo
 `hook`), validate once, open a `dependency-update`-labelled PR, and
 merge it. A no-op run opens no PR. A validation or merge failure leaves
 the PR open and files a fix task; an updater or hook failure opens no PR
@@ -962,16 +962,18 @@ Which routes an item allows depends on the container epic it is in:
 | Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when`, a malformed `--date`, a non-integer `--tasks` or an unknown `--confidence`) |
 | Status | Active |
 
-A `security` item keeps its advisory links. A recreate retargets every
-advisory the item names before the original closes, and a transfer
-retargets every one after the move; on a failure, either names every
-advisory still not retargeted. A split retargets an item's one advisory
+A `security` item keeps its advisory links. Every retarget moves the
+advisory from the item and keeps every other issue it tracks. A recreate
+retargets every advisory the item names before the original closes, and a
+transfer retargets every one after the move; on a failure, either names
+every advisory still not retargeted, with a `retarget --from` command for
+each. A split retargets an item's one advisory
 before the original closes. A split of an item naming several advisories
 is refused before any change, because which advisory goes to which task
 can't be inferred:
 
 ```text
-vrg-intake-route: <owner>/<repo>#<N> names several advisories (<GHSA-id>, <GHSA-id>); retarget each by hand with vrg-security-record retarget, then split
+vrg-intake-route: <owner>/<repo>#<N> names several advisories (<GHSA-id>, <GHSA-id>); retarget each by hand to the tasks that fix it, keeping every other issue it tracks (vrg-security-record retarget <GHSA-id> --from '<owner>/<repo>#<N>' --to <task> [--to …], then vrg-security-record retarget <GHSA-id> --from '<owner>/<repo>#<N>' --to <task> [--to …]), then split
 ```
 
 See [Security Records](../guides/security-records.md#when-the-issue-moves).
@@ -982,8 +984,9 @@ Record a security finding as a private draft advisory in `<org>/.github`
 paired with a neutral `security`-labelled intake issue (epic
 vergil-project/.github#517). `create` makes the pair (or attaches an
 advisory to an existing issue, or resumes an unfinished pair), `list` and
-`show` read records, `retarget` moves an advisory's tracking to new
-issues, `sync` sets each paired advisory's state from its issues and
+`show` read records, `retarget` moves an advisory's tracking from an issue
+it tracks (`--from`) to new issues, refusing to stop tracking an open
+issue unless `--drop` names it, `sync` sets each paired advisory's state from its issues and
 reports broken pairs (`--dry-run` previews it), and `close` closes a draft
 advisory whose issues are all closed, posting the GHSA ID and a required
 `--reason` on each of them first, and `note` appends a dated private note
@@ -994,9 +997,9 @@ from a file to an advisory's description (append-only). Advisory text is printed
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_security_record` (library: `lib/security_records.py`) |
-| Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --to REF [--to REF …]`; `sync [--dry-run]`; `close GHSA-ID --reason TEXT`; `note GHSA-ID --file FILE` |
+| Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --from REF --to REF [--to REF …] [--drop REF …]`; `sync [--dry-run]`; `close GHSA-ID --reason TEXT`; `note GHSA-ID --file FILE` |
 | Preconditions | The org's `.github` is public; Repository security advisories: Read and write on the identity's App (or a human `gh` login with access) |
-| Failure mode | A partial pair exits 1 naming what exists and the exact `--resume` command that finishes it; a private `.github`, a duplicate draft, or `--details` under `VRG_EPIC_SWEEP` is refused; `sync` exits 1 on a broken pair after syncing the rest |
+| Failure mode | A partial pair exits 1 naming what exists and the exact `--resume` command that finishes it; a private `.github`, a duplicate draft, or `--details` under `VRG_EPIC_SWEEP` is refused; `retarget` refuses, before any write, a `--from` the advisory does not track and dropping an open tracked issue, printing the command that would succeed; `create` refuses an advisory that already tracks another issue; `sync` exits 1 on a broken pair after syncing the rest |
 | Exit codes | 0 success, 1 refused or error, 2 bad arguments |
 | Status | Active |
 
@@ -1008,12 +1011,14 @@ under the planning epic with their state: **waiting** (no `in-progress`
 label), **in-progress** (labelled, with its latest progress note), or
 **ready-to-close** (labelled, the `Epic:` / `Docs task:` / `Tasks filed: yes`
 markers present, and the docs task closed). A planning item that any security
-advisory still tracks, named in its body or not, is held at **in-progress**
-until every such
+advisory still tracks, named in its body or not, or whose body names (with
+the `security` label on) an advisory that cannot be read, is held at
+**in-progress** until every such
 advisory is retargeted to the task or tasks that fix it, with a note that
 counts them and names them by GHSA ID only (`held: <k> advisory still tracks
 this planning issue (<GHSA-id>) — …` for one, `held: <k> advisories still
-track this planning issue (<GHSA-id>, …) — …` for more; see
+track this planning issue (<GHSA-id>, …) — …` for more, and
+`… cannot be read …` for an unreadable one; see
 [Security Records](../guides/security-records.md#security-items-in-planning)).
 `vrg-queue deferred` lists the
 open items under the deferred epic, all **waiting**, least recently deferred
@@ -2344,6 +2349,25 @@ See
 | Args | `REPORT` (positional), `--npm-exit STATUS` (required: the status of the `npm audit --audit-level=high` run), `--exceptions PATH` (default `.npm-audit-exceptions`) |
 | Preconditions | `REPORT` is an `npm audit --json` report (version 2); a missing exceptions file means none |
 | Failure mode | Error on stderr for each advisory at high or critical with no live exception, each expired or malformed exception, an unreadable or error report, or an npm status that disagrees with the report; a warning for each exception that matches no advisory |
+| Exit codes | 0 pass, 1 gate failure or error |
+| Status | Active |
+
+### vrg-npm-license-gate
+
+Gate the licenses of every package in a TypeScript repository's
+`package-lock.json`, dev dependencies included, against the TypeScript
+license allowlist, honoring the live entries of the repository's
+`.npm-license-exceptions`, and write the `licenses.json` evidence. The
+TypeScript AUDIT check runs it after the npm audit, as
+`vrg-npm-license-gate --output licenses.json`. See
+[TypeScript license exceptions](../guides/validation-matrix.md#typescript-license-exceptions).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_npm_license_gate` |
+| Args | `--lockfile PATH` (default `package-lock.json`), `--output PATH` (default `licenses.json`) |
+| Preconditions | The lockfile is an npm v2 or v3 lockfile; `.npm-license-exceptions` is read from the lockfile's directory, and a missing one means none |
+| Failure mode | Error on stderr for each package whose license is disallowed, unparseable or missing with no live exception, naming its version and license value; for each expired or malformed exception; and for a missing, unreadable or pre-v2 lockfile or an entry with no `version`, naming the file and `npm install --package-lock-only`. A warning for each exception that covers no failing package. The report is written whenever the lockfile is read, judged against no exceptions when the exceptions file is bad |
 | Exit codes | 0 pass, 1 gate failure or error |
 | Status | Active |
 

@@ -10,11 +10,15 @@ neutral ``security``-labelled intake issue carrying only a pointer to it.
   ``Tracking issue:`` line. ``--issue`` attaches the advisory to an existing
   issue instead (attach mode), and ``--resume`` finishes a pair whose advisory
   already exists. A failure after the advisory exists prints the exact command
-  that finishes the pair and exits 1.
+  that finishes the pair and exits 1. ``create`` makes the advisory's first
+  pairing only: one that already tracks another issue is refused before any
+  issue is created, marked or linked.
 - ``list`` names advisories by GHSA ID, state, affected repo and tracked
   issues; ``--details`` adds each summary and is refused under the sweep.
 - ``show`` prints one pair with its details, to the terminal only.
-- ``retarget`` moves an advisory's tracking to new issues.
+- ``retarget`` moves an advisory's tracking from ``--from``, an issue it
+  tracks, to new issues. It refuses an untracked source, and stopping
+  tracking an open issue that no ``--drop`` names, before any write.
 - ``close`` closes a draft advisory whose issues are all closed, with a
   required ``--reason``: it first posts ``Security record <GHSA> closed:
   <reason>`` on every issue the record tracks, the audit trail
@@ -24,9 +28,12 @@ neutral ``security``-labelled intake issue carrying only a pointer to it.
   and prints only ``Noted <GHSA> in <org>/.github.`` (vergil-tooling#3998).
 - ``sync`` runs the security-records pass over the org: it sets each paired
   advisory to ``closed`` or ``draft`` from its issues and reports broken
-  pairs and unpaired external reports; ``--dry-run`` previews it. It needs
+  pairs and unpaired external reports; ``--dry-run`` previews it. Its close
+  guard keeps an advisory ``draft``, reported on a ``held:`` line, while a
+  queue item or an issue closed other than as completed tracks it. It needs
   Repository security advisories read and write on ``<org>/.github``, which
-  the human's login and the user App hold (vergil-tooling#4313).
+  the human's login and the user App hold (vergil-tooling#4313); the human
+  or the user agent runs it, never a schedule.
 
 **Output rule.** An advisory's summary and description reach stdout only
 through ``show`` and ``list --details``. Every other line, and every error,
@@ -277,25 +284,39 @@ def _finish_pair(
     body: str,
     attach: IssueRef | None,
 ) -> int:
-    """Every step after the advisory exists; a failure names the resume command."""
+    """Every step after the advisory exists; a failure names the resume command.
+
+    The advisory's first pairing (:func:`security_records.pair`) is checked
+    first (:func:`security_records.pair_check`): an advisory that already
+    tracks another issue is refused before any issue is created, marked or
+    linked, with no resume command, since resuming cannot fix it.
+    """
     issue = attach
     step = "finding the issue"
     try:
-        if issue is not None:
-            step = f"marking {issue.slug}"
-            security_records.mark_issue(issue, home, ghsa_id)
+        if issue is None and args.resume is not None:
+            issue = _find_resumed_issue(intake, home, ghsa_id)
+        step = "checking the advisory's tracking lines"
+        security_records.pair_check(home, ghsa_id, issue)
+        if attach is not None:
+            paired = attach
+            step = f"marking {paired.slug}"
+            security_records.mark_issue(paired, home, ghsa_id)
             if args.resume is not None:
-                step = f"linking {issue.slug} under intake epic {intake.slug}"
-                _link_if_unparented(intake, issue)
+                step = f"linking {paired.slug} under intake epic {intake.slug}"
+                _link_if_unparented(intake, paired)
+        elif issue is not None:
+            paired = issue
         else:
-            if args.resume is not None:
-                issue = _find_resumed_issue(intake, home, ghsa_id)
-            if issue is None:
-                issue = _create_issue(args, home, queue_home, ghsa_id, body)
-                step = f"linking {issue.slug} under intake epic {intake.slug}"
-                epics.add_child(intake, issue)
-        step = f"writing the tracking line for {issue.slug}"
-        security_records.retarget(home, ghsa_id, (issue,))
+            step = "creating the issue"
+            paired = issue = _create_issue(args, home, queue_home, ghsa_id, body)
+            step = f"linking {paired.slug} under intake epic {intake.slug}"
+            epics.add_child(intake, paired)
+        step = f"writing the tracking line for {paired.slug}"
+        security_records.pair(home, ghsa_id, paired)
+    except security_records.RetargetRefusedError as exc:
+        print(f"{_PROG}: {_reason(exc)}", file=sys.stderr)
+        return 1
     except _RefusedError as exc:
         print(
             f"{_PROG}: advisory {ghsa_id} exists but its pair is unfinished: {exc}. "
@@ -310,7 +331,7 @@ def _finish_pair(
             file=sys.stderr,
         )
         return 1
-    print(f"Recorded {ghsa_id} in {home}, tracked by {issue.slug}.")
+    print(f"Recorded {ghsa_id} in {home}, tracked by {paired.slug}.")
     return 0
 
 
@@ -422,15 +443,17 @@ def _show(args: argparse.Namespace) -> int:
 
 def _retarget(args: argparse.Namespace) -> int:
     ghsa_id = _ghsa(args.ghsa, "GHSA")
+    source = _full_ref(args.source, "--from")
     targets = [_full_ref(text, "--to") for text in args.to]
+    drop = [_full_ref(text, "--drop") for text in args.drop or ()]
     try:
-        org = epics.single_target_org(*targets)
+        org = epics.single_target_org(source, *targets, *drop)
     except ValueError as exc:
         raise _RefusedError(str(exc)) from None
     with github.target_org(org):
         home = security_records.advisory_home(org)
         try:
-            notes = security_records.retarget(home, ghsa_id, targets)
+            notes = security_records.retarget(home, ghsa_id, targets, source=source, drop=drop)
         except security_records.RetargetError as exc:
             print(f"{_PROG}: {_reason(exc)}", file=sys.stderr)
             return 1
@@ -533,10 +556,32 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     show = sub.add_parser("show", help="Show a pair, or every pair an issue names, with details")
     show.add_argument("target", help="A GHSA ID or an issue ref (owner/repo#N)")
 
-    retarget = sub.add_parser("retarget", help="Move an advisory's tracking to new issues")
+    retarget = sub.add_parser(
+        "retarget",
+        help="Move an advisory's tracking from an issue it tracks to new issues",
+        description=(
+            "Move an advisory's tracking from --from, an issue it tracks, to the --to "
+            "set. It refuses, before any write, a --from the advisory does not track, "
+            "and stopping tracking an open issue (other than --from) that no --drop "
+            "names; each refusal prints the command that would succeed. A re-run with "
+            "the same arguments finishes an interrupted retarget. Leaving an open "
+            "issue untracked with --drop is the human's decision."
+        ),
+    )
     retarget.add_argument("ghsa", help="The advisory's GHSA ID")
     retarget.add_argument(
+        "--from",
+        dest="source",
+        required=True,
+        help="The issue the advisory tracks now and moves from, owner/repo#N",
+    )
+    retarget.add_argument(
         "--to", action="append", required=True, help="Target issue owner/repo#N (repeatable)"
+    )
+    retarget.add_argument(
+        "--drop",
+        action="append",
+        help="An open tracked issue deliberately left untracked, owner/repo#N (repeatable)",
     )
 
     close = sub.add_parser(
@@ -582,17 +627,26 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description=(
             "Run the security-records pass over this repo's org: set each paired "
             "draft advisory in <org>/.github to closed when every issue it tracks "
-            "is closed, and back to draft while any is open; report broken pairs "
-            "and unpaired external reports by ID only. Exit 1 if any pair is "
-            "broken (after syncing the rest) or the pass fails. Needs Repository "
-            "security advisories: read and write on <org>/.github (the human's gh "
-            "login or the user App); the scheduled sweep does not run it."
+            "is closed as completed, and back to draft while any is open; report "
+            "broken pairs and unpaired external reports by ID only. An advisory "
+            "that a queue item (an intake, planning or deferred item, live or "
+            "archived) or an issue closed with any other reason still tracks "
+            "stays draft and is reported on a held: line with the next step; a "
+            "hold does not fail the pass. Exit 1 if any pair is broken or any "
+            "issue's parent cannot be read (after syncing the rest) or the pass "
+            "fails. Needs Repository security advisories: read and write on "
+            "<org>/.github. No schedule runs it: the human or the user agent "
+            "runs it (the human's gh login or the user App), and vrg-epic-audit "
+            "previews it read-only."
         ),
     )
     sync.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview: report what would sync and any broken pairs, change nothing, exit 0",
+        help=(
+            "Preview: report what would sync, any broken pairs and any held advisories, "
+            "change nothing, exit 0"
+        ),
     )
     return parser.parse_args(argv)
 

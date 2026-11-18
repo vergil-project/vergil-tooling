@@ -425,6 +425,21 @@ def _labels(ref: IssueRef) -> set[str]:
     return {str(label.get("name", "")) for label in labels}
 
 
+def _labels_and_title(ref: IssueRef) -> tuple[set[str], str]:
+    raw: Any = github.read_json(
+        "issue",
+        "view",
+        str(ref.number),
+        "--repo",
+        f"{ref.owner}/{ref.repo}",
+        "--json",
+        "labels,title",
+    )
+    data = raw if isinstance(raw, dict) else {}
+    labels = data.get("labels") or []
+    return {str(label.get("name", "")) for label in labels}, str(data.get("title") or "")
+
+
 def is_epic(ref: IssueRef) -> bool:
     """True if *ref* carries the ``epic`` label (i.e. it is in the model)."""
     return "epic" in _labels(ref)
@@ -1013,12 +1028,37 @@ def is_standing(labels: set[str]) -> bool:
     return standing_kind_of(labels) is not None
 
 
-def queue_kind(epic: IssueRef) -> str | None:
-    """``"intake"``, ``"planning"`` or ``"deferred"`` for a live queue epic, else None."""
-    kind = standing_kind_of(_labels(epic))
+def _queue_key(labels: set[str]) -> str | None:
+    kind = standing_kind_of(labels)
     if kind in QUEUE_KINDS:
         return kind.key
     return None
+
+
+def queue_kind(epic: IssueRef) -> str | None:
+    """``"intake"``, ``"planning"`` or ``"deferred"`` for a live queue epic, else None."""
+    return _queue_key(_labels(epic))
+
+
+def queue_or_archive_kind(epic: IssueRef) -> str | None:
+    """The queue kind of a live queue epic or of a queue archive epic, else None.
+
+    ``"intake"``, ``"planning"`` or ``"deferred"`` for a live queue epic
+    (:func:`queue_kind`'s rule) or for a per-quarter archive of one, so an item
+    already drained out of its queue still reads as a queue item. An archive is
+    recognized as :func:`is_archive` recognizes it, by its ``archive`` label or
+    its stamped title alone, and its kind comes from its kind label or its
+    title prefix. None for a development epic, an ad-hoc epic or archive, or a
+    non-epic. One read of the labels and title; a failed read raises.
+    """
+    labels, title = _labels_and_title(epic)
+    live = _queue_key(labels)
+    if live is not None or not is_archive(labels, title):
+        return live
+    return next(
+        (kind.key for kind in QUEUE_KINDS if kind.key in labels or archive_re(kind).match(title)),
+        None,
+    )
 
 
 def container_kind(epic: IssueRef) -> str | None:

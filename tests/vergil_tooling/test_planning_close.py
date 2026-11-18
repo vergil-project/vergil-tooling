@@ -7,9 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from vergil_tooling.lib import planning_close
+from vergil_tooling.lib import planning_close, queue_view
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.planning_close import PlanningClose
+from vergil_tooling.lib.queue_view import AdvisoryHold
+from vergil_tooling.lib.security_records import Advisory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -72,7 +74,9 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> Callable[..., _GitHub]:
         planning_close.epics, "queue_kind", lambda ref: "planning" if ref == QUEUE else None
     )
     monkeypatch.setattr(planning_close.epic_size, "trusted_logins", lambda: TRUSTED)
-    monkeypatch.setattr(planning_close.queue_view, "tracking_advisories", lambda _ref, _body: ())
+    monkeypatch.setattr(
+        planning_close.queue_view, "read_advisory_hold", lambda *_args: AdvisoryHold()
+    )
     return install
 
 
@@ -145,25 +149,93 @@ def test_unparented_planning_issue_is_skipped(
     assert result.skipped == "it is not in the planning queue (no parent)"
 
 
+_RETARGET_HINT = (
+    "retarget each to the task or tasks that fix it with vrg-security-record retarget "
+    "<GHSA> --from 'acme/.github#7' --to <task>, then close the planning issue by hand"
+)
+
+
 def test_planning_issue_held_by_an_advisory_is_skipped(
     fake: Callable[..., _GitHub], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     body = "Neutral body.\n\nSecurity advisory: acme/.github GHSA-aaaa-aaaa-aaaa"
-    fake(views={7: {"state": "OPEN", "body": body, "comments": [_docs_marker()]}})
-    seen: list[tuple[IssueRef, str]] = []
+    labels = [{"name": "security"}, {"name": "in-progress"}]
+    fake(views={7: {"state": "OPEN", "body": body, "labels": labels, "comments": [_docs_marker()]}})
+    seen: list[tuple[IssueRef, str, set[str]]] = []
 
-    def tracking(ref: IssueRef, issue_body: str) -> tuple[str, ...]:
-        seen.append((ref, issue_body))
-        return ("GHSA-aaaa-aaaa-aaaa", "GHSA-bbbb-bbbb-bbbb")
+    def hold(ref: IssueRef, issue_body: str, issue_labels: set[str]) -> AdvisoryHold:
+        seen.append((ref, issue_body, issue_labels))
+        return AdvisoryHold(tracking=("GHSA-aaaa-aaaa-aaaa", "GHSA-bbbb-bbbb-bbbb"))
 
-    monkeypatch.setattr(planning_close.queue_view, "tracking_advisories", tracking)
+    monkeypatch.setattr(planning_close.queue_view, "read_advisory_hold", hold)
     result = planning_close.find(TASK)
-    assert seen == [(PLANNING, body)]
+    assert seen == [(PLANNING, body, {"security", "in-progress"})]
     assert result is not None
     assert result.skipped == (
-        "2 advisories still track it (GHSA-aaaa-aaaa-aaaa, GHSA-bbbb-bbbb-bbbb); retarget "
-        "each to the task or tasks that fix it with vrg-security-record retarget, then "
-        "close the planning issue by hand"
+        "2 advisories still track it (GHSA-aaaa-aaaa-aaaa, GHSA-bbbb-bbbb-bbbb) — " + _RETARGET_HINT
+    )
+
+
+def _with_listing(monkeypatch: pytest.MonkeyPatch, advisories: list[Advisory]) -> None:
+    """Run the real hold rule against *advisories*, the org's whole listing."""
+    monkeypatch.setattr(planning_close.queue_view, "read_advisory_hold", _REAL_READ_HOLD)
+    monkeypatch.setattr(queue_view.security_records, "advisory_home", lambda _org: "acme/.github")
+    monkeypatch.setattr(queue_view.security_records, "list_advisories", lambda _home: advisories)
+
+
+_REAL_READ_HOLD = queue_view.read_advisory_hold
+_UNREADABLE_BODY = "Neutral body.\n\nSecurity advisory: acme/.github GHSA-cccc-cccc-cccc"
+
+
+def test_planning_close_skips_unreadable(
+    fake: Callable[..., _GitHub], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review Focus 5: a labelled planning issue names an advisory the listing
+    # does not return; the docs PR does not close it.
+    view = {
+        "state": "OPEN",
+        "body": _UNREADABLE_BODY,
+        "labels": [{"name": "security"}],
+        "comments": [_docs_marker()],
+    }
+    fake(views={7: view})
+    _with_listing(monkeypatch, [])
+    result = planning_close.find(TASK)
+    assert result is not None
+    assert result.skipped == (
+        "1 advisory it names cannot be read (GHSA-cccc-cccc-cccc): re-run with a token that "
+        "can read the repository's advisories, or have the human check it — " + _RETARGET_HINT
+    )
+
+
+def test_planning_close_unlabelled_unreadable_line_is_not_held(
+    fake: Callable[..., _GitHub], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The same body without the label is a broken pair, which does not hold.
+    view = {"state": "OPEN", "body": _UNREADABLE_BODY, "labels": [], "comments": [_docs_marker()]}
+    fake(views={7: view})
+    _with_listing(monkeypatch, [])
+    assert planning_close.find(TASK) == PlanningClose(TASK, PLANNING, None)
+
+
+def test_planning_close_holds_on_a_tracking_line_alone(
+    fake: Callable[..., _GitHub], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake(views={7: {"state": "OPEN", "body": "Neutral.", "comments": [_docs_marker()]}})
+    tracking = Advisory(
+        ghsa_id="GHSA-dddd-dddd-dddd",
+        state="draft",
+        affected=None,
+        tracking=(PLANNING,),
+        external=False,
+    )
+    monkeypatch.setattr(queue_view.github, "repo_exists", lambda _org, _repo: True)
+    monkeypatch.setattr(queue_view.github, "is_public", lambda _repo: True)
+    _with_listing(monkeypatch, [tracking])
+    result = planning_close.find(TASK)
+    assert result is not None
+    assert result.skipped == (
+        "1 advisory still tracks it (GHSA-dddd-dddd-dddd) — " + _RETARGET_HINT
     )
 
 
