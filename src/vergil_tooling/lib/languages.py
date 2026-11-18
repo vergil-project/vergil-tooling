@@ -305,7 +305,9 @@ RUST_DOCTEST_CMD = ["cargo", "test", "--doc", "--locked", "--workspace"]
 #   and ``report``: cargo-llvm-cov's documented split. ``--no-report`` turns off
 #   the clean a combined run does, so the explicit clean replaces it
 #   (https://github.com/taiki-e/cargo-llvm-cov#basic-usage and
-#   #merge-coverages-generated-under-different-test-conditions). The split writes
+#   #merge-coverages-generated-under-different-test-conditions). When the
+#   toolchain has changed since the last run, vrg-validate first runs the full
+#   ``cargo llvm-cov clean`` (see :data:`RUST_COVERAGE_TOOLCHAIN_STAMP`). The split writes
 #   ``coverage.xml`` even when a test fails, as pytest-cov does; a combined
 #   run writes no report then.
 # * ``NEXTEST_PROFILE=vergil`` and ``--tool-config-file vergil:<file>`` select
@@ -380,6 +382,30 @@ def rust_coverage_export_cmd(output_path: str) -> list[str]:
         "--output-path",
         output_path,
     ]
+
+
+# The Rust coverage build's toolchain record (vergil-project/vergil-tooling#4684).
+# ``cargo llvm-cov clean --workspace`` in ``_RUST_TEST_SCRIPT`` removes only the
+# workspace members' artifacts that the current cargo knows of, and
+# cargo-llvm-cov hands llvm-cov every object it finds under
+# ``target/llvm-cov-target``. A ``target/`` left by an earlier toolchain keeps
+# that toolchain's objects there: cargo 1.100 builds under
+# ``debug/build/<pkg>/<hash>/out/``, so an older cargo's ``debug/deps/`` test
+# binaries survive the partial clean and are read as stale coverage
+# ("functions have mismatched data"), failing the gate on correct code.
+# vrg-validate therefore records the output of :data:`RUST_TOOLCHAIN_PROBE_CMDS`
+# in :data:`RUST_COVERAGE_TOOLCHAIN_STAMP` and, when it differs or is missing,
+# runs :data:`RUST_COVERAGE_FULL_CLEAN_CMD` first, which removes
+# ``target/llvm-cov-target`` whole. The record lives in ``.vergil/``, not under
+# ``target/``: cargo refuses to clean a target directory it did not create
+# (no ``CACHEDIR.TAG``), so a file written there first would break the run.
+RUST_TOOLCHAIN_PROBE_CMDS = [
+    ["rustc", "-vV"],
+    ["cargo", "-vV"],
+    ["cargo", "llvm-cov", "--version"],
+]
+RUST_COVERAGE_TOOLCHAIN_STAMP = ".vergil/rust-coverage-toolchain.txt"
+RUST_COVERAGE_FULL_CLEAN_CMD = ["cargo", "llvm-cov", "clean"]
 
 
 # C++ license allowlist (epic vergil-project/.github#207 §4). C++/Conan has no
