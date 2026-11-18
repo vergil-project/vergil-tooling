@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import subprocess
 import sys
@@ -1612,16 +1613,16 @@ _EXISTS = _gh_error(
 )
 
 
-def _open_pr(**overrides: object) -> github.OpenPR:
-    fields: dict[str, Any] = {
-        "url": _PR21,
-        "title": "T",
-        "head_ref": "feature/1673-x",
-        "base_ref": "develop",
-        "head_oid": "h0",
-        "cross_repo": False,
-    }
-    return github.OpenPR(**{**fields, **overrides})
+def _open_pr(**overrides: Any) -> github.OpenPR:
+    pr = github.OpenPR(
+        url=_PR21,
+        title="T",
+        head_ref="feature/1673-x",
+        base_ref="develop",
+        head_oid="h0",
+        cross_repo=False,
+    )
+    return dataclasses.replace(pr, **overrides)
 
 
 def _submit_with_create(

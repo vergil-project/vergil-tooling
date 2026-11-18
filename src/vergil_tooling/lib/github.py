@@ -1308,7 +1308,9 @@ def _read_output_once(*args: str) -> str:
     env = _gh_env()
     if env is not None:
         kwargs["env"] = env
-    result = subprocess.run(cmd, check=False, text=True, capture_output=True, **kwargs)  # noqa: S603
+    result: subprocess.CompletedProcess[str] = subprocess.run(  # noqa: S603
+        cmd, check=False, text=True, capture_output=True, **kwargs
+    )
     if result.returncode != 0:
         missing_token = _is_missing_token_error(result.stderr)
         error_type = MissingGitHubTokenError if missing_token else GitHubAPIError
