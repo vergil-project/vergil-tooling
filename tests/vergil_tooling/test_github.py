@@ -245,6 +245,102 @@ def test_create_pr_omits_repo_by_default() -> None:
     assert "--repo" not in mock_read.call_args.args
 
 
+def test_create_pr_without_retry_runs_once() -> None:
+    """``retry=False`` runs gh pr create once, even on a transient error (#4696)."""
+    failed = subprocess.CompletedProcess(("gh",), 1, stdout="", stderr="HTTP 502: Bad Gateway")
+    with (
+        patch("vergil_tooling.lib.github.read_output") as mock_read,
+        patch("vergil_tooling.lib.github.subprocess.run", return_value=failed) as mock_run,
+        pytest.raises(github.GitHubAPIError, match="Bad Gateway"),
+    ):
+        github.create_pr(base="develop", title="t", body_file="/b", head="h", retry=False)
+    mock_read.assert_not_called()
+    mock_run.assert_called_once()
+    cmd = mock_run.call_args.args[0]
+    assert cmd[:3] == ("gh", "pr", "create")
+    assert cmd[cmd.index("--head") + 1] == "h"
+
+
+def test_create_pr_without_retry_returns_url() -> None:
+    done = subprocess.CompletedProcess(("gh",), 0, stdout="https://github.com/o/r/pull/5\n")
+    with patch("vergil_tooling.lib.github.subprocess.run", return_value=done):
+        url = github.create_pr(base="develop", title="t", body_file="/b", retry=False)
+    assert url == "https://github.com/o/r/pull/5"
+
+
+def test_create_pr_without_retry_passes_the_token_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("vergil_tooling.lib.github._gh_env", lambda: {"GH_TOKEN": "x"})
+    done = subprocess.CompletedProcess(("gh",), 0, stdout="u")
+    with patch("vergil_tooling.lib.github.subprocess.run", return_value=done) as mock_run:
+        github.create_pr(base="develop", title="t", body_file="/b", retry=False)
+    assert mock_run.call_args.kwargs["env"] == {"GH_TOKEN": "x"}
+
+
+def test_create_pr_without_retry_missing_token() -> None:
+    failed = subprocess.CompletedProcess(
+        ("gh",), 4, stdout="", stderr="set the GH_TOKEN environment variable"
+    )
+    with (
+        patch("vergil_tooling.lib.github.subprocess.run", return_value=failed),
+        pytest.raises(github.MissingGitHubTokenError),
+    ):
+        github.create_pr(base="develop", title="t", body_file="/b", retry=False)
+
+
+def _open_pr_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "url": "https://github.com/o/r/pull/21",
+        "title": "T",
+        "headRefName": "feature/x",
+        "baseRefName": "develop",
+        "headRefOid": "abc",
+        "isCrossRepository": False,
+    }
+    return {**row, **overrides}
+
+
+def test_open_prs_for_head_reads_head_and_base() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=[_open_pr_row()]) as mock:
+        prs = github.open_prs_for_head("feature/x", base="develop")
+    assert prs == [
+        github.OpenPR(
+            url="https://github.com/o/r/pull/21",
+            title="T",
+            head_ref="feature/x",
+            base_ref="develop",
+            head_oid="abc",
+            cross_repo=False,
+        )
+    ]
+    args = mock.call_args.args
+    assert args[args.index("--head") + 1] == "feature/x"
+    assert args[args.index("--base") + 1] == "develop"
+    assert args[args.index("--state") + 1] == "open"
+
+
+def test_open_prs_for_head_empty() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
+        assert github.open_prs_for_head("feature/x", base="develop") == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"url": "u"},
+        [_open_pr_row(title="")],
+        [_open_pr_row(headRefOid=None)],
+        [_open_pr_row(isCrossRepository="no")],
+        ["not an object"],
+    ],
+)
+def test_open_prs_for_head_rejects_malformed(payload: object) -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=payload),
+        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
+    ):
+        github.open_prs_for_head("feature/x", base="develop")
+
+
 def test_create_issue_returns_url_and_builds_command() -> None:
     with patch(
         "vergil_tooling.lib.github.read_output",
@@ -340,6 +436,66 @@ def test_run_completed_queries_run_status_in_the_given_repo(
     assert calls == [
         ("run", "view", "999", "--repo", "vergil-project/vergil-tooling", "--json", "status")
     ]
+
+
+def test_head_workflow_runs_reads_every_run_on_the_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runs of the #1324 head: the cancelled run and the newer run that replaced it (#4692)."""
+    calls: list[tuple[str, str | None, str | None]] = []
+
+    def fake_paginated(endpoint: str, key: str | None = None, *, jq: str | None = None) -> list:
+        calls.append((endpoint, key, jq))
+        return [
+            {
+                "id": 44336022050,
+                "workflow_id": 276918787,
+                "event": "pull_request",
+                "status": "queued",
+                "conclusion": "",
+            },
+            {
+                "id": 44335987154,
+                "workflow_id": 276918787,
+                "event": "pull_request",
+                "status": "completed",
+                "conclusion": "cancelled",
+            },
+        ]
+
+    monkeypatch.setattr(github, "read_json_paginated", fake_paginated)
+    runs = github.head_workflow_runs("vergil-project/.github", "5b32ced")
+
+    assert runs == {
+        44336022050: github.WorkflowRun(44336022050, 276918787, "pull_request", "queued", ""),
+        44335987154: github.WorkflowRun(
+            44335987154, 276918787, "pull_request", "completed", "cancelled"
+        ),
+    }
+    [(endpoint, key, jq)] = calls
+    assert endpoint == "repos/vergil-project/.github/actions/runs?head_sha=5b32ced"
+    assert key == "workflow_runs"
+    assert jq is not None
+    assert "workflow_id" in jq
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        None,
+        {"id": "1", "workflow_id": 2, "event": "push", "status": "queued", "conclusion": ""},
+        {"id": 1, "workflow_id": None, "event": "push", "status": "queued", "conclusion": ""},
+        {"id": 1, "workflow_id": 2, "event": "push", "status": None, "conclusion": ""},
+        {"id": 1, "workflow_id": 2, "event": "push", "status": "queued"},
+    ],
+)
+def test_head_workflow_runs_rejects_a_malformed_run(
+    monkeypatch: pytest.MonkeyPatch, item: object
+) -> None:
+    # Never skipped as if the run were not there (#4058).
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [item])
+    with pytest.raises(github.GitHubAPIError, match="a workflow run is"):
+        github.head_workflow_runs("o/r", "abc")
 
 
 def test_actions_run_of_reads_repo_and_run_id() -> None:

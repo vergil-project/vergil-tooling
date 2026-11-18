@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_submit_pr import (
     SubmitSummary,
+    _create_pr,
     _local_worktree_with_state,
     _metadata_from_state,
     _origin_has_branch,
@@ -44,7 +46,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
 from vergil_tooling.bin.vrg_submit_pr import (
     _chain_finalize as _real_chain_finalize,
 )
-from vergil_tooling.lib import auto_merge, epics, pr_provenance, worktrees
+from vergil_tooling.lib import auto_merge, epics, github, pr_provenance, retry, worktrees
 from vergil_tooling.lib.linkage import extract_tracking_refs
 from vergil_tooling.lib.planning_close import PlanningClose
 from vergil_tooling.lib.pr_workflow import batch_rules, engine, freeze
@@ -1226,7 +1228,6 @@ class TestFinalizeByDefault:
         [
             (["--release"], ["--release"]),
             (["--release", "--no-install"], ["--release", "--no-install"]),
-            (["--allow-provenance-violation"], ["--allow-provenance-violation"]),
         ],
     )
     def test_flags_passed_to_finalize(self, argv: list[str], flags: list[str]) -> None:
@@ -1274,16 +1275,11 @@ class TestFinalizeByDefault:
 
     def test_no_finalize_prints_command(self, capsys: pytest.CaptureFixture[str]) -> None:
         a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
-        rc, calls = _run_batch(
-            [a, b], ["--no-finalize", "--allow-provenance-violation"], urls=[_URL1, _URL2]
-        )
+        rc, calls = _run_batch([a, b], ["--no-finalize"], urls=[_URL1, _URL2])
         assert rc == 0
         assert calls == []
         out = capsys.readouterr().out
-        assert (
-            "Not watching. To finalize these PRs: vrg-finalize-pr "
-            f"{_URL1},{_URL2} --allow-provenance-violation"
-        ) in out
+        assert f"Not watching. To finalize these PRs: vrg-finalize-pr {_URL1},{_URL2}\n" in out
         assert f"/vergil:pr-watch {_URL1}" in out
         assert f"/vergil:pr-watch {_URL2}" in out
 
@@ -1404,6 +1400,12 @@ class TestFinalizeByDefault:
             (["--finalize"], "--finalize was removed; finalizing is now the default"),
             (["--install"], "--install was removed; --release now installs by default"),
             (["--release", "--install"], "--install was removed"),
+            (
+                ["--allow-provenance-violation"],
+                "--allow-provenance-violation was removed; a provenance violation always "
+                "fails. Fix its cause, or fix the classifier",
+            ),
+            (["--release", "--allow-provenance-violation"], "--allow-provenance-violation was"),
             (["--release", "--no-finalize"], "--release cannot be combined with --no-finalize"),
             (["--no-install"], "--no-install requires --release"),
             (["--no-finalize", "--no-install"], "--no-install requires --release"),
@@ -1433,6 +1435,7 @@ class TestFinalizeByDefault:
         assert "--no-finalize" in out
         assert "--finalize " not in out
         assert "  --install" not in out
+        assert "--allow-provenance-violation" not in out
 
     def test_dry_run_plans_without_side_effects(self, capsys: pytest.CaptureFixture[str]) -> None:
         """A dry run previews every PR and names the finalize run, opening nothing."""
@@ -1598,6 +1601,172 @@ def test_submit_all_pushes_creates_records_and_turns_auto_merge_on() -> None:
     enable.assert_called_once_with("https://example/pull/9", head="h0", method="SQUASH")
 
 
+_PR21 = "https://github.com/o/r/pull/21"
+
+
+def _gh_error(stderr: str) -> github.GitHubAPIError:
+    return github.GitHubAPIError(1, ("gh", "pr", "create"), output="", stderr=stderr)
+
+
+_TRANSIENT = _gh_error("HTTP 504: Gateway Timeout")
+_EXISTS = _gh_error(
+    'a pull request for branch "feature/1673-x" into branch "develop" already exists:\n' + _PR21
+)
+
+
+def _open_pr(**overrides: Any) -> github.OpenPR:
+    pr = github.OpenPR(
+        url=_PR21,
+        title="T",
+        head_ref="feature/1673-x",
+        base_ref="develop",
+        head_oid="h0",
+        cross_repo=False,
+    )
+    return dataclasses.replace(pr, **overrides)
+
+
+def _submit_with_create(
+    create_effect: list[object], open_prs: list[object]
+) -> tuple[SubmitSummary, MagicMock, MagicMock, MagicMock, MagicMock, MagicMock]:
+    """Run _submit_all on one PR with gh pr create and the open-PR lookup scripted."""
+    with (
+        patch(_MOD + "._push_branch"),
+        patch(_MOD + "._create_pr", side_effect=create_effect) as create,
+        patch(_MOD + ".github.open_prs_for_head", side_effect=open_prs) as lookup,
+        patch(_MOD + ".time.sleep") as sleep,
+        patch(_MOD + ".submission.record_submission") as record,
+        patch(_MOD + ".pr_provenance.check_pr", return_value=pr_provenance.ProvenanceResult()),
+        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+    ):
+        enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
+        summary = _submit_all([_submission()])
+    return summary, create, lookup, record, enable, sleep
+
+
+def test_create_that_landed_is_adopted_not_retried(capsys: pytest.CaptureFixture[str]) -> None:
+    """A create GitHub carried out but answered with an error is adopted (#4696)."""
+    summary, create, lookup, record, enable, sleep = _submit_with_create(
+        [_TRANSIENT], [[_open_pr()]]
+    )
+    assert summary == SubmitSummary(opened=[_PR21], failed=[])
+    create.assert_called_once()
+    lookup.assert_called_once_with("feature/1673-x", base="develop")
+    sleep.assert_not_called()
+    record.assert_called_once_with(Path("/repo/.worktrees/issue-1673-x"), pr_url=_PR21)
+    enable.assert_called_once_with(_PR21, head="h0", method="SQUASH")
+    assert f"adopting {_PR21}" in capsys.readouterr().out
+
+
+def test_already_exists_on_retry_is_adopted() -> None:
+    """The lookup lags the create: the retry's "already exists" is checked and adopted."""
+    summary, create, lookup, _record, enable, sleep = _submit_with_create(
+        [_TRANSIENT, _EXISTS], [[], [_open_pr()]]
+    )
+    assert summary == SubmitSummary(opened=[_PR21], failed=[])
+    assert create.call_count == 2
+    assert lookup.call_count == 2
+    sleep.assert_called_once()
+    enable.assert_called_once_with(_PR21, head="h0", method="SQUASH")
+
+
+@pytest.mark.parametrize(
+    ("other", "reason"),
+    [
+        (_open_pr(head_oid="ffff"), "its head commit is 'ffff', not 'h0'"),
+        (_open_pr(title="Other"), "its title is 'Other', not 'T'"),
+        (_open_pr(base_ref="main"), "its base is 'main', not 'develop'"),
+        (_open_pr(head_ref="Feature/1673-x"), "its head branch is 'Feature/1673-x'"),
+        (_open_pr(cross_repo=True), "its head is in another repository"),
+    ],
+)
+def test_other_open_pr_is_refused_by_name(
+    other: github.OpenPR, reason: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An open PR submit cannot show it opened fails loudly, naming it, and is not adopted."""
+    summary, create, _lookup, record, enable, sleep = _submit_with_create([_EXISTS], [[other]])
+    assert summary.opened == []
+    [(branch, why)] = summary.failed
+    assert branch == "feature/1673-x"
+    assert _PR21 in why
+    assert reason in why
+    assert "not adopted" in why
+    create.assert_called_once()
+    sleep.assert_not_called()
+    record.assert_not_called()
+    enable.assert_not_called()
+    assert "no PR opened" in capsys.readouterr().err
+
+
+def test_several_open_prs_are_refused() -> None:
+    second = _open_pr(url="https://github.com/o/r/pull/22")
+    summary, *_mocks, enable, _sleep = _submit_with_create([_EXISTS], [[_open_pr(), second]])
+    [(_branch, why)] = summary.failed
+    assert "several PRs are open" in why
+    assert _PR21 in why
+    assert "pull/22" in why
+    enable.assert_not_called()
+
+
+def test_create_that_really_failed_is_retried() -> None:
+    """A transient error with no PR open is retried, and the next attempt opens it."""
+    url = "https://github.com/o/r/pull/30"
+    summary, create, lookup, record, enable, sleep = _submit_with_create([_TRANSIENT, url], [[]])
+    assert summary == SubmitSummary(opened=[url], failed=[])
+    assert create.call_count == 2
+    lookup.assert_called_once()
+    sleep.assert_called_once()
+    record.assert_called_once_with(Path("/repo/.worktrees/issue-1673-x"), pr_url=url)
+    enable.assert_called_once_with(url, head="h0", method="SQUASH")
+
+
+def test_non_transient_create_failure_is_not_retried() -> None:
+    refusal = _gh_error("pull request create failed: GraphQL: No commits between develop and x")
+    summary, create, lookup, record, enable, sleep = _submit_with_create([refusal], [[]])
+    assert summary.opened == []
+    [(_branch, why)] = summary.failed
+    assert "No commits between" in why
+    create.assert_called_once()
+    lookup.assert_called_once()
+    sleep.assert_not_called()
+    record.assert_not_called()
+    enable.assert_not_called()
+
+
+def test_transient_create_failure_gives_up_after_the_retries() -> None:
+    attempts = retry.MAX_RETRIES + 1
+    summary, create, lookup, _record, enable, sleep = _submit_with_create(
+        [_TRANSIENT] * attempts, [[]] * attempts
+    )
+    [(_branch, why)] = summary.failed
+    assert "Gateway Timeout" in why
+    assert create.call_count == attempts
+    assert lookup.call_count == attempts
+    assert sleep.call_count == retry.MAX_RETRIES
+    enable.assert_not_called()
+
+
+def test_failed_lookup_after_failed_create_names_both() -> None:
+    lookup_error = _gh_error("HTTP 401: Bad credentials (lookup)")
+    summary, create, _lookup, _record, enable, sleep = _submit_with_create(
+        [_TRANSIENT], [lookup_error]
+    )
+    [(_branch, why)] = summary.failed
+    assert "Gateway Timeout" in why
+    assert "Bad credentials (lookup)" in why
+    create.assert_called_once()
+    sleep.assert_not_called()
+    enable.assert_not_called()
+
+
+def test_create_pr_is_run_once_without_gh_retry() -> None:
+    """_create_pr asks github.create_pr for one attempt: the retry is _create_or_adopt's."""
+    with patch(_MOD + ".github.create_pr", return_value=_PR21) as create:
+        assert _create_pr(target_branch="develop", title="T", pr_body="B", head="b") == _PR21
+    assert create.call_args.kwargs["retry"] is False
+    assert create.call_args.kwargs["head"] == "b"
+
+
 def test_auto_merge_squash_single() -> None:
     """A single-issue PR auto-merges with squash, pinned to its expected head."""
     with (
@@ -1698,24 +1867,6 @@ def test_provenance_violation_fails_pr_others_continue(
     assert "auto-merge was left off" in reason
     enable.assert_called_once_with("https://x/pull/2", head="h0", method="SQUASH")
     assert "https://x/pull/1: submit failed" in capsys.readouterr().err
-
-
-def test_provenance_violation_overridden_turns_auto_merge_on(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """--allow-provenance-violation turns auto-merge on despite a violation, loudly."""
-    with (
-        patch(_MOD + "._push_branch"),
-        patch(_MOD + "._create_pr", return_value="https://x/pull/1"),
-        patch(_MOD + ".submission.record_submission"),
-        patch(_MOD + ".pr_provenance.check_pr", return_value=_violation()),
-        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
-    ):
-        enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
-        summary = _submit_all([_submission()], allow_provenance_violation=True)
-    assert summary.opened == ["https://x/pull/1"]
-    enable.assert_called_once()
-    assert "overriding provenance violations" in capsys.readouterr().err
 
 
 def test_provenance_check_that_cannot_run_fails_pr() -> None:
@@ -2864,7 +3015,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".confirm", return_value=True) as ask,
             patch(_MOD + "._submit_all", return_value=summary) as submit_all,
         ):
-            rc = main(["feature/a", "feature/b", "--allow-provenance-violation"])
+            rc = main(["feature/a", "feature/b"])
         assert rc == 0
         ask.assert_called_once()
         submit_all.assert_called_once()
@@ -2873,7 +3024,7 @@ class TestRelayBranchPath:
             ("feature/a", "sha_a", False),
             ("feature/b", "sha_b", False),
         ]
-        assert submit_all.call_args.kwargs == {"allow_provenance_violation": True}
+        assert submit_all.call_args.kwargs == {}
 
     def test_relay_failed_submit_exits_3_and_names_it(
         self, capsys: pytest.CaptureFixture[str]
@@ -3721,25 +3872,6 @@ def test_batch_checks_the_reported_head_without_rebasing(
     push.assert_called_once_with("feature/10-x")
     create.assert_called_once()
     enable.assert_called_once_with("https://x/pull/1", head=reported, method="REBASE")
-
-
-def test_provenance_advisory_is_printed_and_auto_merge_still_turned_on(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    advisory = pr_provenance.ProvenanceResult(
-        advisories=[pr_provenance.Action("bot-vergil-audit", pr_provenance.Role.AUDIT, "approved")]
-    )
-    with (
-        patch(_MOD + "._push_branch"),
-        patch(_MOD + "._create_pr", return_value="https://x/pull/1"),
-        patch(_MOD + ".submission.record_submission"),
-        patch(_MOD + ".pr_provenance.check_pr", return_value=advisory),
-    ):
-        summary = _submit_all([_submission()])
-    assert summary.opened == ["https://x/pull/1"]
-    assert "ADVISORY: https://x/pull/1: bot-vergil-audit (audit) performed 'approved'" in (
-        capsys.readouterr().err
-    )
 
 
 def test_relay_declined_opens_nothing(capsys: pytest.CaptureFixture[str]) -> None:

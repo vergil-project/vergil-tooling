@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import re
 import subprocess
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -19,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from vergil_tooling.lib import auto_merge, finalize_watch, github, pr_provenance
+from vergil_tooling.lib import auto_merge, finalize_watch, github, pr_provenance, progress
 from vergil_tooling.lib.finalize_watch import (
     DEADLINE_ENV,
     FinalizeWatchError,
@@ -96,6 +97,8 @@ class FakeGitHub:
     sleeps: list[float] = field(default_factory=list)
     auto_merge_off: set[str] = field(default_factory=set)
     last: dict[str, dict[str, Any]] = field(default_factory=dict)
+    run_reads: list[tuple[str, str]] = field(default_factory=list)
+    last_pr: str = ""
 
     def script(self, n: int, *states: dict[str, Any]) -> None:
         self.states[url(n)] = list(states)
@@ -115,7 +118,8 @@ class FakeGitHub:
         if pr in self.auto_merge_off:
             state = {**state, "autoMergeRequest": None}
         self.last[pr] = state
-        return dict(state)
+        self.last_pr = pr
+        return {k: v for k, v in state.items() if not k.startswith("_")}
 
     def check_pr(self, pr: str) -> ProvenanceResult:
         head = str(self._current(pr)["headRefOid"])
@@ -127,7 +131,15 @@ class FakeGitHub:
         return self.required
 
     def failed_check_names(self, pr: str) -> list[str]:
-        return list(self.failed.get(pr, []))
+        """A state's own ``_failed`` list, else the PR's; gh's answer for that read."""
+        return list(self._current(pr).get("_failed", self.failed.get(pr, [])))
+
+    def head_workflow_runs(self, repo: str, sha: str) -> dict[int, github.WorkflowRun]:
+        """The ``_runs`` of the state last read: the Actions runs on its head."""
+        self.run_reads.append((repo, sha))
+        state = self._current(self.last_pr)
+        assert sha == state["headRefOid"]
+        return {run.run_id: run for run in state.get("_runs", [])}
 
     def graphql(self, query: str, **variables: object) -> dict[str, object]:
         self.graphql_queries.append(query)
@@ -154,7 +166,13 @@ class FakeGitHub:
 def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     api = FakeGitHub()
     monkeypatch.delenv(DEADLINE_ENV, raising=False)
-    for name in ("read_json", "graphql", "required_check_names", "failed_check_names"):
+    for name in (
+        "read_json",
+        "graphql",
+        "required_check_names",
+        "failed_check_names",
+        "head_workflow_runs",
+    ):
         monkeypatch.setattr(github, name, getattr(api, name))
     monkeypatch.setattr(pr_provenance, "check_pr", api.check_pr)
     monkeypatch.setattr(auto_merge, "auto_merge_enabled", api.auto_merge_enabled)
@@ -163,8 +181,8 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     return api
 
 
-def run(prs: list[str], *, allow: bool = False, poll: float = 15.0) -> list[PRResult]:
-    return watch(prs, allow_provenance_violation=allow, poll_interval=poll)
+def run(prs: list[str], *, poll: float = 15.0) -> list[PRResult]:
+    return watch(prs, poll_interval=poll)
 
 
 # --- start-up ------------------------------------------------------------------
@@ -324,6 +342,288 @@ def test_failed_status_context_is_ci_failure(fake: FakeGitHub) -> None:
     assert "CodeQL" in result.detail
 
 
+# --- a superseded CI run is not a failure (#4692) ---------------------------------
+#
+# The shapes are those GitHub reported for PR vergil-project/.github#1324 on its
+# head 5b32ced: CI run 44335987154 was cancelled by concurrency when run
+# 44336022050 started on the same head, and the PR merged on the green run.
+
+OLD_RUN = 44335987154
+NEW_RUN = 44336022050
+CI_WORKFLOW = 276918787
+SEMGREP = "security / semgrep"
+EVIDENCE = "quality / evidence"
+
+
+def ci_run(
+    run_id: int, status: str, conclusion: str = "", *, event: str = "pull_request"
+) -> github.WorkflowRun:
+    return github.WorkflowRun(run_id, CI_WORKFLOW, event, status, conclusion)
+
+
+def ci_check(name: str, run_id: int, job: int, conclusion: str = "") -> dict[str, Any]:
+    return {
+        "__typename": "CheckRun",
+        "name": name,
+        "workflowName": "CI",
+        "status": "COMPLETED" if conclusion else "IN_PROGRESS",
+        "conclusion": conclusion,
+        "detailsUrl": f"https://github.com/o/r/actions/runs/{run_id}/job/{job}",
+    }
+
+
+def test_issue_1324_superseded_cancel_then_green_run_merges(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.required = frozenset({SEMGREP, EVIDENCE})
+    cancelled_semgrep = ci_check(SEMGREP, OLD_RUN, 134912726267, "CANCELLED")
+    failed_evidence = ci_check(EVIDENCE, OLD_RUN, 134913028205, "FAILURE")
+    fake.script(
+        1,
+        pr_state(1, statusCheckRollup=[ci_check(SEMGREP, OLD_RUN, 134912726267)]),
+        # 15:28:28: semgrep cancelled; the newer run is queued, with no check-run yet.
+        pr_state(
+            1,
+            statusCheckRollup=[cancelled_semgrep, ci_check(EVIDENCE, OLD_RUN, 134913028205)],
+            _failed=[SEMGREP],
+            _runs=[ci_run(OLD_RUN, "in_progress"), ci_run(NEW_RUN, "queued")],
+        ),
+        # 15:28:49: the cancelled run's evidence job failed as it wound down.
+        pr_state(
+            1,
+            statusCheckRollup=[cancelled_semgrep, failed_evidence],
+            _failed=[SEMGREP, EVIDENCE],
+            _runs=[ci_run(OLD_RUN, "completed", "cancelled"), ci_run(NEW_RUN, "queued")],
+        ),
+        # The newer run's check-runs registered; gh reports the newest of each name.
+        pr_state(
+            1,
+            statusCheckRollup=[
+                cancelled_semgrep,
+                failed_evidence,
+                ci_check(SEMGREP, NEW_RUN, 134913147542),
+                ci_check(EVIDENCE, NEW_RUN, 134914580766),
+            ],
+            _failed=[],
+            _runs=[ci_run(OLD_RUN, "completed", "cancelled"), ci_run(NEW_RUN, "in_progress")],
+        ),
+        merged(1),
+    )
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+    assert ("o/r", HEAD_A) in fake.run_reads
+    assert "failed" not in "".join(
+        line for line in capsys.readouterr().out.splitlines() if line.startswith("  #1")
+    )
+
+
+def test_check_that_fails_between_the_two_reads_waits_for_the_next_snapshot(
+    fake: FakeGitHub,
+) -> None:
+    # The snapshot still shows evidence running on the cancelled run; gh, read a
+    # moment later, already reports it failed. The next snapshot shows it superseded.
+    fake.required = frozenset({SEMGREP, EVIDENCE})
+    runs = [ci_run(OLD_RUN, "in_progress"), ci_run(NEW_RUN, "queued")]
+    cancelled_semgrep = ci_check(SEMGREP, OLD_RUN, 1, "CANCELLED")
+    fake.script(
+        1,
+        pr_state(
+            1,
+            statusCheckRollup=[cancelled_semgrep, ci_check(EVIDENCE, OLD_RUN, 2)],
+            _failed=[SEMGREP, EVIDENCE],
+            _runs=runs,
+        ),
+        pr_state(
+            1,
+            statusCheckRollup=[cancelled_semgrep, ci_check(EVIDENCE, OLD_RUN, 2, "FAILURE")],
+            _failed=[SEMGREP, EVIDENCE],
+            _runs=runs,
+        ),
+        merged(1),
+    )
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+
+
+def test_cancelled_check_with_no_newer_run_ends_after_the_grace(fake: FakeGitHub) -> None:
+    fake.required = frozenset({SEMGREP, EVIDENCE})
+    fake.script(
+        1,
+        pr_state(
+            1,
+            statusCheckRollup=[
+                ci_check(SEMGREP, OLD_RUN, 1, "CANCELLED"),
+                ci_check(EVIDENCE, OLD_RUN, 2, "FAILURE"),
+            ],
+            _failed=[SEMGREP, EVIDENCE],
+            _runs=[ci_run(OLD_RUN, "completed", "cancelled")],
+        ),
+    )
+
+    [result] = watch([url(1)], cancel_grace=60)
+
+    assert result.outcome == "failed: cancelled"
+    assert result.detail == (
+        "required check cancelled: security / semgrep, quality / evidence; "
+        "no newer run started within 1m00s"
+    )
+    # Held pending for the grace, from the first read that saw it.
+    assert fake.sleeps == [15.0] * 4
+
+
+def test_cancelled_check_is_pending_in_the_status_table(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.required = frozenset({SEMGREP})
+    cancelled = pr_state(
+        1,
+        statusCheckRollup=[ci_check(SEMGREP, OLD_RUN, 1, "CANCELLED")],
+        _failed=[SEMGREP],
+        _runs=[ci_run(OLD_RUN, "completed", "cancelled")],
+    )
+    fake.script(1, cancelled, merged(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+    assert "checks cancelled (1), awaiting a re-run" in capsys.readouterr().out
+
+
+def test_cancelled_check_on_a_run_not_yet_completed_is_pending(fake: FakeGitHub) -> None:
+    # A re-run of the cancelled run keeps its run id, and the run is in progress again.
+    fake.required = frozenset({SEMGREP})
+    rerun = pr_state(
+        1,
+        statusCheckRollup=[ci_check(SEMGREP, OLD_RUN, 1, "CANCELLED")],
+        _failed=[SEMGREP],
+        _runs=[ci_run(OLD_RUN, "in_progress")],
+    )
+    fake.script(1, rerun, rerun, rerun, merged(1))
+
+    [result] = watch([url(1)], cancel_grace=1)
+
+    assert result.outcome == "merged"
+
+
+def test_failure_on_the_latest_run_fails_at_once(fake: FakeGitHub) -> None:
+    fake.required = frozenset({EVIDENCE})
+    fake.script(
+        1,
+        pr_state(
+            1,
+            statusCheckRollup=[ci_check(EVIDENCE, NEW_RUN, 1, "FAILURE")],
+            _failed=[EVIDENCE],
+            _runs=[ci_run(OLD_RUN, "completed", "cancelled"), ci_run(NEW_RUN, "in_progress")],
+        ),
+    )
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "failed: CI"
+    assert result.detail == "required check failed: quality / evidence"
+    assert fake.sleeps == []
+
+
+def test_a_newer_run_for_another_event_does_not_supersede(fake: FakeGitHub) -> None:
+    fake.required = frozenset({SEMGREP})
+    fake.script(
+        1,
+        pr_state(
+            1,
+            statusCheckRollup=[ci_check(SEMGREP, OLD_RUN, 1, "FAILURE")],
+            _failed=[SEMGREP],
+            _runs=[
+                ci_run(OLD_RUN, "completed", "failure"),
+                ci_run(NEW_RUN, "queued", event="push"),
+            ],
+        ),
+    )
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "failed: CI"
+
+
+def test_newest_failed_occurrence_of_a_check_decides(fake: FakeGitHub) -> None:
+    # The old run's cancel is superseded, but the newer run failed the same check.
+    fake.required = frozenset({SEMGREP})
+    fake.script(
+        1,
+        pr_state(
+            1,
+            statusCheckRollup=[
+                ci_check(SEMGREP, NEW_RUN, 2, "FAILURE"),
+                ci_check(SEMGREP, OLD_RUN, 1, "CANCELLED"),
+            ],
+            _failed=[SEMGREP],
+            _runs=[ci_run(OLD_RUN, "completed", "cancelled"), ci_run(NEW_RUN, "completed")],
+        ),
+    )
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "failed: CI"
+
+
+def test_unreadable_workflow_runs_raise(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake.script(1, pr_state(1, statusCheckRollup=[failing_check("test / unit")]))
+    fake.failed[url(1)] = ["test / unit"]
+
+    def refused(repo: str, sha: str) -> dict[int, github.WorkflowRun]:
+        raise subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502")
+
+    monkeypatch.setattr(github, "head_workflow_runs", refused)
+
+    with pytest.raises(FinalizeWatchError, match="reading the workflow runs"):
+        run([url(1)])
+
+
+def test_unreadable_actions_link_raises(fake: FakeGitHub) -> None:
+    bad = {**failing_check("test / unit"), "detailsUrl": "https://example.com/actions/runs/2/job/1"}
+    fake.script(1, pr_state(1, statusCheckRollup=[bad]))
+    fake.failed[url(1)] = ["test / unit"]
+
+    with pytest.raises(FinalizeWatchError, match="cannot read the repository"):
+        run([url(1)])
+
+
+def test_unreadable_actions_link_of_a_check_not_required_is_not_read(fake: FakeGitHub) -> None:
+    bad = {**failing_check("lint"), "detailsUrl": "https://example.com/actions/runs/2/job/1"}
+    fake.script(1, pr_state(1, statusCheckRollup=[bad]), merged(1))
+    fake.failed[url(1)] = ["lint"]
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+
+
+def test_a_pr_failed_on_its_checks_that_then_merges_is_merged(fake: FakeGitHub) -> None:
+    fake.script(1, pr_state(1, statusCheckRollup=[failing_check("test / unit")]), merged(1))
+    fake.failed[url(1)] = ["test / unit"]
+    fake.script(2, pr_state(2), pr_state(2), merged(2))
+
+    results = run([url(1), url(2)])
+
+    assert [r.outcome for r in results] == ["merged", "merged"]
+    # The merged read ran the provenance check on it, as for any merged PR.
+    assert fake.provenance_checks.count((url(1), HEAD_A)) == 2
+
+
+def test_a_pr_failed_on_its_checks_that_stays_open_stays_failed(fake: FakeGitHub) -> None:
+    fake.script(1, pr_state(1, statusCheckRollup=[failing_check("test / unit")]))
+    fake.failed[url(1)] = ["test / unit"]
+    fake.script(2, pr_state(2), merged(2))
+
+    results = run([url(1), url(2)])
+
+    assert [r.outcome for r in results] == ["failed: CI", "merged"]
+    assert fake.views.count(url(1)) == 2
+
+
 def test_conflict(fake: FakeGitHub) -> None:
     fake.script(1, pr_state(1), pr_state(1, mergeStateStatus="DIRTY"))
 
@@ -386,23 +686,6 @@ def test_provenance_violation_disables_auto_merge(fake: FakeGitHub) -> None:
     assert fake.disables == [url(1)]
 
 
-def test_merged_pr_with_violation_flagged_alike_with_the_flag(
-    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The override does not cover a PR that has already merged (vergil-tooling#4662)."""
-    fake.script(1, merged(1))
-    fake.violations[url(1), HEAD_A] = [AGENT_ENABLE]
-
-    [result] = run([url(1)], allow=True)
-
-    assert result.outcome == "merged"
-    assert result.provenance_violation is True
-    assert fake.disables == []
-    err = capsys.readouterr().err
-    assert "PROVENANCE VIOLATION" in err
-    assert "investigate before any release" in err
-
-
 def test_violation_found_at_merge_is_flagged(
     fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -448,20 +731,6 @@ def test_violation_with_auto_merge_already_off_is_not_disabled(fake: FakeGitHub)
 
     assert result.outcome == "failed: provenance"
     assert fake.disables == []
-
-
-def test_allow_provenance_violation(fake: FakeGitHub, capsys: pytest.CaptureFixture[str]) -> None:
-    fake.script(1, pr_state(1), merged(1))
-    fake.violations[url(1), HEAD_A] = [AGENT_ENABLE]
-
-    [result] = run([url(1)], allow=True)
-
-    assert result.outcome == "merged"
-    assert result.provenance_violation is True
-    assert fake.disables == []
-    err = capsys.readouterr().err
-    assert "--allow-provenance-violation" in err
-    assert "still not a full success" in err
 
 
 def test_watch_never_enables_auto_merge() -> None:
@@ -587,21 +856,6 @@ def test_null_rollup_is_no_checks(fake: FakeGitHub) -> None:
     assert result.outcome == "merged"
 
 
-def test_advisory_is_printed_not_a_violation(
-    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    fake.script(1, merged(1))
-    advisory = Action("x-vergil-audit", Role.AUDIT, "approved")
-    monkeypatch.setattr(
-        pr_provenance, "check_pr", lambda pr: ProvenanceResult(advisories=[advisory])
-    )
-
-    [result] = run([url(1)])
-
-    assert result.provenance_violation is False
-    assert "ADVISORY" in capsys.readouterr().err
-
-
 def test_disable_read_back_failure_raises(
     fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -630,8 +884,31 @@ def _tables(out: str) -> list[str]:
     return tables
 
 
+@dataclass
+class _Block:
+    lines: list[str]
+    changed: bool
+    heartbeat: str
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self.lines)
+
+
+@pytest.fixture
+def blocks(monkeypatch: pytest.MonkeyPatch) -> list[_Block]:
+    """Every status block the watch sends to the progress display, in order."""
+    sent: list[_Block] = []
+
+    def record(lines: list[str], *, changed: bool, heartbeat: str) -> None:
+        sent.append(_Block(list(lines), changed, heartbeat))
+
+    monkeypatch.setattr(progress, "status_block", record)
+    return sent
+
+
 def test_status_table_for_a_mixed_batch(
-    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, blocks: list[_Block]
 ) -> None:
     monkeypatch.setenv(DEADLINE_ENV, "30")
     fake.script(1, pr_state(1), merged(1))
@@ -643,7 +920,7 @@ def test_status_table_for_a_mixed_batch(
 
     assert [r.outcome for r in results] == ["merged", "timed out", "failed: CI"]
     # One table after start-up and one after each of the two polls.
-    assert _tables(capsys.readouterr().out) == [
+    assert [b.text for b in blocks] == [
         "Watch status after 0m00s:\n"
         "  PR  TITLE           STATE               WAITING\n"
         "  #1  feat: change 1  checks pending (2)  0m00s\n"
@@ -664,6 +941,57 @@ def test_status_table_for_a_mixed_batch(
         "  #3  feat: change 3  failed: CI          0m15s\n"
         "  1 merged, 1 pending, 1 failed; 0m00s left before the batch deadline",
     ]
+    # The last poll changed no PR's state, only the waiting times (issue #4694).
+    assert [b.changed for b in blocks] == [True, True, False]
+    assert blocks[2].heartbeat == (
+        "Watch status after 0m30s: no change; "
+        "1 merged, 1 pending, 1 failed; 0m00s left before the batch deadline"
+    )
+
+
+def test_status_table_change_of_pending_state_is_a_change(
+    fake: FakeGitHub, blocks: list[_Block]
+) -> None:
+    clean = pr_state(
+        1,
+        statusCheckRollup=[
+            {"__typename": "CheckRun", "name": "test / unit", "conclusion": "SUCCESS"},
+            {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SUCCESS"},
+        ],
+        mergeStateStatus="CLEAN",
+    )
+    fake.script(1, pr_state(1), pr_state(1), clean, merged(1))
+
+    run([url(1)])
+
+    states = [re.split(r"\s{2,}", b.lines[2].strip())[2] for b in blocks]
+    assert states == ["checks pending (2)", "checks pending (2)", "checks green, merging", "merged"]
+    assert [b.changed for b in blocks] == [True, False, True, True]
+
+
+def test_status_table_off_a_tty_prints_changes_only(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv(DEADLINE_ENV, "60")
+    fake.script(1, pr_state(1))
+
+    run([url(1)])
+
+    # Five tables were built (start-up and four polls), but no PR's state
+    # changed after the first; outside a progress stage only changes print.
+    assert len(_tables(capsys.readouterr().out)) == 1
+
+
+def test_summarize() -> None:
+    def result(outcome: finalize_watch.Outcome) -> PRResult:
+        return PRResult(pr=url(1), outcome=outcome, detail="", head=HEAD_A)
+
+    assert finalize_watch.summarize([result("merged")] * 4 + [result("failed: CI")]) == (
+        "4 merged, 1 failed"
+    )
+    assert finalize_watch.summarize([result("merged"), result("timed out")]) == (
+        "1 merged, 0 failed, 1 timed out"
+    )
 
 
 @pytest.mark.parametrize(

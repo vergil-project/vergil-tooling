@@ -63,8 +63,7 @@ A PR list, `--all` and `--cleanup-only` are mutually exclusive.
 vrg-finalize-pr [PR[,PR…] | --all | --cleanup-only]
                 [--target-branch BRANCH] [--wait-cd]
                 [--release [--no-install]]
-                [--allow-provenance-violation] [--clean-dirty]
-                [--dry-run] [--yes]
+                [--clean-dirty] [--dry-run] [--yes]
 ```
 
 ## Arguments
@@ -78,7 +77,6 @@ vrg-finalize-pr [PR[,PR…] | --all | --cleanup-only]
 | `--wait-cd` | Block on the CD run for the synced head and fail if it does not succeed. By default finalize reports that run's link and state without waiting. |
 | `--release` | On full success, chain into `vrg-release`, which installs by default. Refused on a repo that is not released (`[publish] release = true`), before any watch or cleanup. |
 | `--no-install` | With `--release`, run `vrg-release --no-install`. Refused without `--release`. |
-| `--allow-provenance-violation` | Leave auto-merge on for an open PR with a provenance violation (a conscious human override). It does not cover a violation that has already merged: see [Provenance](#provenance). |
 | `--clean-dirty` | Opt-in: clear a merged/closed worktree whose only dirt is untracked build/validation output, after showing what will be deleted and confirming. Never touches modified tracked files or a reused-branch straggler with unmerged commits (issue #2348). |
 | `--dry-run` | Say what would be watched and done without changing anything. The settle phase's steps print what they would do. |
 | `--yes` | Pre-answer the interactive yes/no prompts. |
@@ -94,6 +92,7 @@ names what replaced it:
 | `--no-wait-cd` | Not waiting on CD is the default; `--wait-cd` opts in to waiting. |
 | `--skip-post-checks` | One run watches every listed PR, then settles `develop` once. Pass the PRs as a comma list. |
 | `--install` | `--release` installs by default; `--no-install` opts out. |
+| `--allow-provenance-violation` | A provenance violation always fails: fix its cause, or fix the classifier if the violation is a false one. See [Provenance](#provenance). |
 
 ## Behavior
 
@@ -112,10 +111,26 @@ The watch reads each open PR once per poll and judges it in this order:
    Finalize never turns it back on: someone turned it off on purpose, or
    GitHub did, and a human looks first.
 6. **A required check failed:** *failed: CI*, naming the check. A failed
-   check-run of a superseded workflow run does not count. When the base
-   branch's required checks cannot be read, every check counts as
-   required.
-7. **A conflict** with its base: *failed: conflict*.
+   or cancelled check-run of a superseded workflow run does not count (see
+   below). When the base branch's required checks cannot be read, every
+   check counts as required.
+7. **A required check was cancelled** and no newer run of its workflow
+   replaced the cancelled run: *failed: cancelled*, naming the check. The
+   PR stays pending for two minutes first, in case a re-run starts.
+8. **A conflict** with its base: *failed: conflict*.
+
+**A superseded run is not a failure.** A push to an open PR starts a new
+CI run, and the workflow's `concurrency: cancel-in-progress` cancels the
+run in flight on the same head. GitHub keeps the cancelled run's
+check-runs on the PR, and until the new run's jobs start they are the only
+ones there. Finalize judges a failed or cancelled check by its workflow
+run: while a newer run of the same workflow, for the same event, is on the
+PR's head, the check is not a failure and the PR stays pending.
+`vrg-pr-await` and `vrg-repo-status` judge checks the same way.
+
+A PR that ended *failed: CI* or *failed: cancelled* is read again on every
+later poll while the watch goes on. If GitHub has merged it, it is reported
+as *merged*.
 
 A PR still pending when the batch deadline passes ends as *timed out*,
 and its auto-merge stays on, so it may still merge later. The deadline
@@ -129,27 +144,24 @@ clean PR.
 
 The watch runs the provenance check on every PR when it starts, and
 again each time a PR's head changes. `vrg-submit-pr` ran the same check
-before it turned auto-merge on. Advisories are printed but do not
-block. What a violation does depends on whether the PR has merged:
+before it turned auto-merge on. A violation always fails, and there is
+no override (issue #4695): it is either a real problem to investigate or
+a bug in the classifier to fix. What it does depends on whether the PR
+has merged:
 
 - **Open PR.** Finalize turns the PR's auto-merge off and reports it
-  *failed: provenance*. With `--allow-provenance-violation` it leaves
-  auto-merge on, prints the violation loudly and watches the PR on, so
-  the PR may merge. Once it merges, it is a merged PR with a violation,
-  below.
+  *failed: provenance*.
 - **Merged PR**, one that merged before finalize started included.
   Nothing can be disabled. The PR is reported as merged with a loud
   provenance-violation flag, and the run cannot reach full success: it
   exits 3 (or 4, if develop did not validate) and no chained release
-  runs. `--allow-provenance-violation` does not change this: the
-  override does not cover a violation that has already merged, which a
-  human must look at before any release (issue #4662).
+  runs. A human must look at it before any release (issue #4662).
 
 #### Status table
 
-The watch prints a status table to stdout once at start-up and again
-after every poll, about every 15 seconds (issue #4677). It has one row
-for each PR in the batch:
+The watch builds a status table once at start-up and again after every
+poll, about every 15 seconds (issue #4677). It has one row for each PR in
+the batch:
 
 ```text
 Watch status after 0m30s:
@@ -173,10 +185,40 @@ Watch status after 0m30s:
   can be watched merging one by one.
 
 The last line counts the merged, pending and failed PRs and gives the
-time left before the batch deadline (`$VRG_FINALIZE_DEADLINE`). The table
-is printed as plain lines and never redraws the terminal, so it reads the
-same in a log. The per-PR outcome lines and the final report are as
-before.
+time left before the batch deadline (`$VRG_FINALIZE_DEADLINE`).
+
+#### The watch stage
+
+The watch is a stage of finalize's progress display, `watch`, shown
+before the settle phase's stages (issue #4694). How the table appears
+depends on where the output goes:
+
+- **On a terminal**, the table sits under the stage's spinner and is
+  redrawn in place after every poll, never appended. When the watch
+  ends, the stage collapses to one line, `✓` when every PR merged with
+  no provenance violation and `⚠` otherwise:
+
+  ```text
+  ⚠ watch  3m12s — 4 merged, 1 failed
+  ✓ close-refs  1.2s
+  ✓ checkout-lock  0.0s
+  ```
+
+- **Off a terminal** (a pipe, a log, CI), output stays plain and
+  append-only. The table is printed at start-up and then only when some
+  PR's state changes. Between changes, a heartbeat line is printed every
+  five minutes:
+
+  ```text
+  Watch status after 5m15s: no change; 1 merged, 2 pending, 0 failed; 1h54m45s left before the batch deadline
+  ```
+
+The run log, `.vergil/vrg-finalize-pr-<stamp>.log`, is shared by the
+watch and the settle phase. It keeps every table in which some PR's
+state changed, each under a timestamped `status changed:` line, so the
+full history survives the terminal's redraw. When no PR merged, the run
+ends by naming the log. The per-PR outcome lines (`<url>: merged`) go to
+the stage's output and the log, and the final report is unchanged.
 
 ### 2. Settle
 
@@ -364,6 +406,7 @@ each unmerged PR with its reason and the next step:
 | Outcome | Next step |
 | ------- | --------- |
 | *failed: CI*, *failed: conflict*, *failed: closed*, *timed out* | Hand it to an agent, then re-run `vrg-finalize-pr <pr>` |
+| *failed: cancelled* | Re-run its cancelled checks, then re-run `vrg-finalize-pr <pr>` |
 | *failed: auto-merge off*, *failed: provenance* | Investigate before turning auto-merge back on |
 | *failed: not a develop PR* | Finalize watches develop PRs only; a release PR goes through `vrg-release` |
 

@@ -60,15 +60,24 @@ each PR in turn:
    [Batch PRs](#batch-prs-one-pr-closing-several-issues)).
 2. Push the branch, in the modes that push.
 3. Hold origin's tip to the head the PR must open at, then open the PR
-   with `gh pr create` and record the submission.
-4. Run the **provenance check**. A violation leaves the PR's auto-merge
-   off and counts as a failed submit, unless
-   `--allow-provenance-violation` is given. Advisories are printed but
-   do not block. A check that cannot run is a failed submit too.
+   with `gh pr create` and record the submission. `gh pr create` is
+   never retried blindly, since GitHub can open the PR and still return
+   an error. After a failed attempt submit looks for an open PR from the
+   branch into the base. It adopts one only when it has the same head
+   branch (in this repository), base, title and head commit, and carries
+   on as for a PR it just opened. Any other open PR fails the submit,
+   naming the PR. With none open, a transient error is retried with
+   backoff and any other error fails the submit.
+4. Run the **provenance check**. A violation always fails that PR's
+   submit and leaves its auto-merge off; there is no override. A check
+   that cannot run is a failed submit too.
 5. Turn **auto-merge** on, pinned to that head (`expectedHeadOid`): the
    **squash** method for a single-issue PR, **rebase** for a batch PR.
    When GitHub refuses because the PR can already merge, submit merges
-   it directly with the same method and head, and says so.
+   it directly with the same method and head, and says so. When either
+   write returns an error, submit reads the PR back first: auto-merge on
+   with that method, or the PR merged at that head, means the write
+   landed (a retry after a lost response), and counts as done.
 
 Submit **never rebases a branch**: rebasing before handoff is the
 agent's job, and `develop` does not require a branch to be up to date,
@@ -106,9 +115,6 @@ value refuses the run with nothing done.
   default; `--no-install` (which requires `--release`) passes through to
   skip the install. `--release` is refused on a repo that is not
   released, before any push, PR or merge.
-- **`--allow-provenance-violation`** is passed to finalize too. There it
-  covers only an open PR's auto-merge: a PR that merged with a violation
-  still blocks full success, so no release runs.
 - **`--no-finalize`** opens the PRs with auto-merge on and returns
   without watching them. It prints each PR's URL, the
   `/vergil:pr-watch <PR_URL>` line that starts the agent's monitoring,
@@ -208,7 +214,6 @@ orphaned relay ref whose branch no longer exists.
 | `--no-finalize` | No | Open the PRs with auto-merge on and return without watching them |
 | `--release` | No | Pass `--release` to `vrg-finalize-pr`, which chains into `vrg-release` (installing by default) on full success. Not allowed with `--no-finalize` |
 | `--no-install` | No | With `--release`, run `vrg-release --no-install` |
-| `--allow-provenance-violation` | No | Turn auto-merge on even for a PR whose provenance check finds a violation (a conscious human override); also passed to `vrg-finalize-pr`, where it covers only an open PR |
 | `--dry-run` | No | Print what would be done without executing |
 | `--yes` | No | Skip the confirmation |
 
@@ -221,6 +226,7 @@ names the new default:
 | ---- | -------------- |
 | `--finalize` | Finalizing is the default; `--no-finalize` opts out |
 | `--install` | `--release` installs by default; `--no-install` opts out |
+| `--allow-provenance-violation` | A provenance violation always fails: fix its cause, or fix the classifier if the violation is a false one |
 
 ### Linkage Keywords
 

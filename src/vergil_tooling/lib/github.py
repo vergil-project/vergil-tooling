@@ -1264,6 +1264,7 @@ def create_pr(
     head: str | None = None,
     labels: Sequence[str] = (),
     repo: str | None = None,
+    retry: bool = True,
 ) -> str:
     """Create a pull request and return its URL.
 
@@ -1280,6 +1281,13 @@ def create_pr(
 
     *labels* are applied at creation (``--label``, repeatable), so the PR is never
     visible unlabelled — the dependency-update release gate depends on that.
+
+    *retry* ``False`` runs ``gh pr create`` **exactly once**. A transient error
+    can hide a create that landed, and a blind retry is then refused with "a
+    pull request for branch … already exists", so the caller looks for the open
+    PR before it tries again (``vrg-submit-pr``, #4696). Any non-zero exit
+    raises :class:`GitHubAPIError` (:class:`MissingGitHubTokenError` for a
+    missing token).
     """
     args = ["pr", "create", "--base", base, "--title", title, "--body-file", body_file]
     if repo is not None:
@@ -1288,7 +1296,66 @@ def create_pr(
         args += ["--head", head]
     for label in labels:
         args += ["--label", label]
-    return read_output(*args)
+    if retry:
+        return read_output(*args)
+    return _read_output_once(*args)
+
+
+def _read_output_once(*args: str) -> str:
+    """Run a gh command exactly once, never retried, and return stripped stdout."""
+    cmd = ("gh", *args)
+    kwargs: dict[str, Any] = {}
+    env = _gh_env()
+    if env is not None:
+        kwargs["env"] = env
+    result: subprocess.CompletedProcess[str] = subprocess.run(  # noqa: S603
+        cmd, check=False, text=True, capture_output=True, **kwargs
+    )
+    if result.returncode != 0:
+        missing_token = _is_missing_token_error(result.stderr)
+        error_type = MissingGitHubTokenError if missing_token else GitHubAPIError
+        raise error_type(result.returncode, cmd, result.stdout, result.stderr)
+    return result.stdout.strip()
+
+
+@dataclass(frozen=True)
+class OpenPR:
+    """One open PR, as :func:`open_prs_for_head` reads it."""
+
+    url: str
+    title: str
+    head_ref: str
+    base_ref: str
+    head_oid: str
+    cross_repo: bool
+
+
+_OPEN_PR_TEXT_FIELDS = ("url", "title", "headRefName", "baseRefName", "headRefOid")
+
+
+def open_prs_for_head(head: str, *, base: str) -> list[OpenPR]:
+    """Every open PR in the cwd's repo whose head branch is *head* and base is *base*.
+
+    ``gh pr list --head`` matches the branch name only, so a fork's PR from a
+    same-named branch is listed too; ``cross_repo`` tells it apart. A response
+    that is not a list, or a row missing a field, raises :class:`GitHubAPIError`
+    rather than read as "no PR" (#4058).
+    """
+    fields = ",".join((*_OPEN_PR_TEXT_FIELDS, "isCrossRepository"))
+    cmd = ("pr", "list", "--head", head, "--base", base, "--state", "open", "--json", fields)
+    result = read_json(*cmd)
+    if not isinstance(result, list):
+        raise _shape_error(("gh", *cmd), f"the PR list is {type(result).__name__}")
+    prs: list[OpenPR] = []
+    for row in result:
+        pr = _as_obj(row)
+        texts = [pr.get(key) for key in _OPEN_PR_TEXT_FIELDS]
+        cross = pr.get("isCrossRepository")
+        if not isinstance(cross, bool) or not all(isinstance(t, str) and t for t in texts):
+            raise _shape_error(("gh", *cmd), f"a PR row is {row!r}")
+        url, title, head_ref, base_ref, head_oid = cast("list[str]", texts)
+        prs.append(OpenPR(url, title, head_ref, base_ref, head_oid, cross_repo=cross))
+    return prs
 
 
 def create_issue(
@@ -1530,6 +1597,54 @@ def run_completed(repo: str, run_id: str) -> bool:
     if not isinstance(status, str) or not status:
         raise _shape_error(("gh", *cmd), f"no run status in {data!r}")
     return status == "completed"
+
+
+@dataclass(frozen=True)
+class WorkflowRun:
+    """One workflow run on a commit, as the Actions runs API lists it.
+
+    *conclusion* is ``""`` while the run has none. Two runs are runs of the
+    same workflow for the same trigger when *workflow_id* and *event* match.
+    """
+
+    run_id: int
+    workflow_id: int
+    event: str
+    status: str
+    conclusion: str
+
+
+_HEAD_RUNS_JQ = (
+    "{workflow_runs: [.workflow_runs[] | "
+    '{id, workflow_id, event, status, conclusion: (.conclusion // "")}]}'
+)
+
+
+def head_workflow_runs(repo: str, sha: str) -> dict[int, WorkflowRun]:
+    """Every workflow run of *repo* (``owner/repo``) on commit *sha*, by run id.
+
+    It reads every page of ``GET /repos/{repo}/actions/runs?head_sha=<sha>``,
+    so a newer run that has not registered a check-run yet is listed too
+    (#4692). A run that is not an object with an integer ``id`` and
+    ``workflow_id`` and string ``event``, ``status`` and ``conclusion``
+    raises :class:`GitHubAPIError` rather than being skipped (#4058).
+    """
+    endpoint = f"repos/{repo}/actions/runs?head_sha={sha}"
+    runs: dict[int, WorkflowRun] = {}
+    for item in read_json_paginated(endpoint, "workflow_runs", jq=_HEAD_RUNS_JQ):
+        if not isinstance(item, dict):
+            raise _shape_error(("gh", "api", endpoint), f"a workflow run is {item!r}")
+        run_id, workflow_id = item.get("id"), item.get("workflow_id")
+        texts = [item.get(key) for key in ("event", "status", "conclusion")]
+        if (
+            not isinstance(run_id, int)
+            or not isinstance(workflow_id, int)
+            or not all(isinstance(text, str) for text in texts)
+        ):
+            raise _shape_error(("gh", "api", endpoint), f"a workflow run is {item!r}")
+        event, status, conclusion = (str(text) for text in texts)
+        runs[run_id] = WorkflowRun(run_id, workflow_id, event, status, conclusion)
+    return runs
 
 
 # The repo and job id of an Actions job link, for reading the job itself.

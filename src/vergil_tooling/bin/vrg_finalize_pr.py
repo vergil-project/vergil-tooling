@@ -10,8 +10,7 @@ turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
    (``$VRG_FINALIZE_DEADLINE`` seconds, default 7200) passes and it is
    ``timed out``. A PR that merged before the run started counts as merged.
    The watch runs the provenance check on each PR, and turns auto-merge off
-   on an open PR with a violation unless ``--allow-provenance-violation``,
-   which leaves it on so the PR may merge.
+   on an open PR with a violation, which ends ``failed: provenance``.
 2. **Settles** develop once, only if at least one PR merged. ``close-refs``
    closes any issue a merged PR closes that GitHub left open (issue #4002),
    before the lock is taken, since it touches only GitHub. Then, under the
@@ -39,10 +38,9 @@ turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
 
 **Full success** means every PR merged, the validate passed and, with
 ``--wait-cd``, CD is green. A PR that merged with a provenance violation is
-reported loudly and blocks full success, so no chained release runs, with or
-without ``--allow-provenance-violation``: the override covers only an open
-PR's auto-merge, never a violation that has already merged, which a human
-must look at before any release.
+reported loudly and blocks full success, so no chained release runs: a human
+must look at it before any release. A provenance violation always fails;
+there is no override (vergil-tooling#4695).
 
 **Selecting the PRs.** ``vrg-finalize-pr <pr>[,<pr>…]`` takes a comma list of
 PR numbers or URLs (one PR is a list of one); ``--all`` takes every open PR
@@ -70,13 +68,20 @@ job merges on GitHub. Its exit codes are a watched run's.
 **Removed flags** are refused by name before any side effect:
 ``--strategy`` (submit chooses the merge method), ``--no-wait-cd`` (not
 waiting is the default), ``--skip-post-checks`` (one run watches the whole
-batch, then settles develop once) and ``--install`` (``--release`` installs
-by default; ``--no-install`` opts out).
+batch, then settles develop once), ``--install`` (``--release`` installs
+by default; ``--no-install`` opts out) and ``--allow-provenance-violation``
+(a provenance violation always fails; fix its cause or the classifier).
 
-Output of the settle phase renders through the stage-aware progress framework
-(issue #1479): standalone TTY runs get the live display with collapsed
-per-stage status lines and a run log at ``.vergil/vrg-finalize-pr-<stamp>.log``;
-piped runs fall back to the plain renderer. ``vrg-release`` passes
+Output of the watch and the settle phase renders through the stage-aware
+progress framework (issue #1479): standalone TTY runs get the live display
+with collapsed per-stage status lines and a run log at
+``.vergil/vrg-finalize-pr-<stamp>.log``; piped runs fall back to the plain
+renderer. The watch is a stage of its own, ``watch`` (issue #4694): on a TTY
+its status table is redrawn in place each poll and the stage collapses to one
+line such as ``✓ watch  3m12s — 4 merged, 0 failed`` (``⚠`` when not every PR
+merged cleanly); piped, the table is printed only when some PR's state
+changes, with a heartbeat line every few minutes. The run log, shared by the
+watch and the settle phase, keeps every changed table with a timestamp. ``vrg-release`` passes
 ``--output-format plain`` explicitly because two live displays cannot nest
 (issue #1470). The release runs as a subprocess after that display has closed,
 so the two renderers never nest either.
@@ -127,7 +132,7 @@ from vergil_tooling.lib.container_cache import provision_dev_image
 from vergil_tooling.lib.live_branches import RepoSetError, default_repo_roots, discover_repos
 from vergil_tooling.lib.pr_workflow import github_transport
 from vergil_tooling.lib.process_errors import error_text
-from vergil_tooling.lib.progress import Stage, StageResult
+from vergil_tooling.lib.progress import Stage, StageResult, StageStatus
 from vergil_tooling.lib.release import gate
 from vergil_tooling.lib.repo_init import prompt_choice
 from vergil_tooling.lib.versions import VersionsError
@@ -170,6 +175,11 @@ INSTALL_REMOVED = (
     "vrg-finalize-pr: --install was removed; --release now installs by default "
     "(add --no-install to skip the install)"
 )
+ALLOW_PROVENANCE_VIOLATION_REMOVED = (
+    "vrg-finalize-pr: --allow-provenance-violation was removed; a provenance "
+    "violation always fails. Fix its cause, or fix the classifier if the "
+    "violation is a false one"
+)
 
 # How many trailing lines of a failed validate's output the report repeats.
 VALIDATE_TAIL_LINES = 40
@@ -182,6 +192,7 @@ _INVESTIGATE = "investigate before re-enabling auto-merge"
 _NEXT_STEP_BY_OUTCOME: dict[str, str] = {
     "failed: auto-merge off": _INVESTIGATE,
     "failed: provenance": _INVESTIGATE,
+    "failed: cancelled": "re-run its cancelled checks, then rerun `vrg-finalize-pr {pr}`",
     "failed: not a develop PR": (
         "finalize watches develop PRs only; a release PR goes through vrg-release"
     ),
@@ -258,6 +269,8 @@ def _flag_refusal(args: argparse.Namespace) -> str | None:
         return SKIP_POST_CHECKS_REMOVED
     if args.install:
         return INSTALL_REMOVED
+    if args.allow_provenance_violation:
+        return ALLOW_PROVENANCE_VIOLATION_REMOVED
     if args.no_install and not args.release:
         return "vrg-finalize-pr: --no-install requires --release"
     return None
@@ -289,14 +302,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Watch every open PR whose branch has a worktree in .worktrees/.",
     )
     parser.add_argument("--target-branch", default="develop", help="Target branch to switch to")
-    parser.add_argument(
-        "--allow-provenance-violation",
-        action="store_true",
-        help="Leave auto-merge on for an open PR with a provenance violation "
-        "(conscious human override). It does not cover a violation that has "
-        "already merged: that run is still not a full success (exit 3, or 4), "
-        "and no chained release runs.",
-    )
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be done without making changes"
     )
@@ -331,6 +336,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--strategy", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--skip-post-checks", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--allow-provenance-violation", action="store_true", help=argparse.SUPPRESS)
     add_yes_argument(parser)
     progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
@@ -364,19 +370,28 @@ def _run_watched(args: argparse.Namespace, root: Path, prs: list[str]) -> int:
         print("[dry-run] the settle phase below runs only if at least one PR merges")
         settle = _settle(args, root, merged_prs=list(prs))
         return _maybe_release(args, root, _settle_exit(settle))
+    log = progress.RunLog("vrg-finalize-pr", root)
     try:
-        results = finalize_watch.watch(
-            prs, allow_provenance_violation=args.allow_provenance_violation
-        )
-    except (finalize_watch.FinalizeWatchError, ValueError) as exc:
-        print(f"vrg-finalize-pr: the watch stopped: {exc}", file=sys.stderr)
-        return EXIT_ERROR
-    merged = [r.pr for r in results if r.outcome == "merged"]
-    if not merged:
-        _print_pr_report(results)
-        print("\nNo PR merged: the settle phase was skipped.")
-        return _maybe_release(args, root, _watch_exit(results))
-    settle = _settle(args, root, merged_prs=merged)
+        try:
+            results = progress.run_stage(
+                "watch",
+                lambda: finalize_watch.watch(prs),
+                args=args,
+                log=log,
+                describe=_describe_watch,
+            )
+        except (finalize_watch.FinalizeWatchError, ValueError) as exc:
+            print(f"vrg-finalize-pr: the watch stopped: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+        merged = [r.pr for r in results if r.outcome == "merged"]
+        if not merged:
+            _print_pr_report(results)
+            print("\nNo PR merged: the settle phase was skipped.")
+            print(f"   full log → {log.path}")
+            return _maybe_release(args, root, _watch_exit(results))
+        settle = _settle(args, root, merged_prs=merged, log=log)
+    finally:
+        log.close()
     _print_pr_report(results)
     _print_settle_report(settle)
     rc = _settle_exit(settle)
@@ -392,12 +407,17 @@ def _run_settle_only(args: argparse.Namespace, root: Path) -> int:
     return _maybe_release(args, root, _settle_exit(settle))
 
 
+def _describe_watch(results: Sequence[PRResult]) -> tuple[StageStatus, str]:
+    """The watch stage's status line: ``ok`` only when the watch alone allows full success."""
+    status: StageStatus = "ok" if _watch_exit(results) == EXIT_OK else "warn"
+    return status, finalize_watch.summarize(results)
+
+
 def _blocking_violation(result: PRResult) -> bool:
     """Whether *result* merged with a provenance violation, which blocks full success.
 
-    ``--allow-provenance-violation`` does not change this: it covers only an
-    open PR's auto-merge, never a violation that has already merged
-    (vergil-tooling#4662).
+    A violation that has already merged cannot be undone, so a human must
+    look at it before any release (vergil-tooling#4662, #4695).
     """
     return result.outcome == "merged" and result.provenance_violation
 
@@ -419,8 +439,7 @@ def _print_pr_report(results: Sequence[PRResult]) -> None:
         if r.provenance_violation:
             print(
                 f"    {r.pr}  PROVENANCE VIOLATION ({r.detail}): this run is not a full "
-                "success; --allow-provenance-violation does not cover a violation that "
-                "has already merged, so a human must look before any release"
+                "success, and a human must look before any release"
             )
         else:
             print(f"    {r.pr}")
@@ -459,8 +478,17 @@ class SettleOutcome:
         return ""
 
 
-def _settle(args: argparse.Namespace, root: Path, *, merged_prs: list[str]) -> SettleOutcome:
+def _settle(
+    args: argparse.Namespace,
+    root: Path,
+    *,
+    merged_prs: list[str],
+    log: progress.RunLog | None = None,
+) -> SettleOutcome:
     """Run the settle phase's stages and surface any stuck worktrees.
+
+    *log* is the run log the watch wrote to, which the settle phase goes on
+    writing; with none, the pipeline opens its own.
 
     The checkout lock is taken by the ``checkout-lock`` stage, after
     close-refs, and let go by the CD check, or by the ``with`` block here when
@@ -479,6 +507,7 @@ def _settle(args: argparse.Namespace, root: Path, *, merged_prs: list[str]) -> S
             args=args,
             repo_root=root,
             results_sink=results,
+            log=log,
         )
 
     # Surface — and, with --clean-dirty, guardedly clear — any merged/closed

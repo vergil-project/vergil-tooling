@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import re
 import subprocess
 import sys
 from typing import TYPE_CHECKING
@@ -751,3 +752,293 @@ def test_run_keyboard_interrupt_terminates_child() -> None:
         progress.run(("sleep", "60"))
     fake_proc.terminate.assert_called_once_with()
     assert fake_proc.wait.call_count == 2
+
+
+# --- status blocks and the standalone stage (issue #4694) ---------------------------
+
+
+_BLOCK_A = ["Watch status after 0m00s:", "  #1  checks pending (2)", "  0 merged, 1 pending"]
+_BLOCK_B = ["Watch status after 0m15s:", "  #1  merged", "  1 merged, 0 pending"]
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_plain_renderer_status_block_prints_changes_and_heartbeats() -> None:
+    out = io.StringIO()
+    clock = _Clock()
+    r = progress.PlainRenderer(out, clock=clock)
+    r.start_stage("watch")
+    # The first block is printed whatever *changed* says.
+    r.stage_status(_BLOCK_A, changed=False, heartbeat="beat 1")
+    # Unchanged and within the heartbeat interval: nothing.
+    clock.now += progress.STATUS_HEARTBEAT_SECS - 1
+    r.stage_status(_BLOCK_A, changed=False, heartbeat="beat 2")
+    # Unchanged, the interval up: the heartbeat line alone.
+    clock.now += 1
+    r.stage_status(_BLOCK_A, changed=False, heartbeat="beat 3")
+    # The heartbeat restarts the interval.
+    clock.now += 10
+    r.stage_status(_BLOCK_A, changed=False, heartbeat="beat 4")
+    # A change prints the whole block at once.
+    clock.now += 1
+    r.stage_status(_BLOCK_B, changed=True, heartbeat="beat 5")
+    assert out.getvalue() == "\n".join(
+        ["→ watch  starting...", "", *_BLOCK_A, "beat 3", "", *_BLOCK_B, ""]
+    )
+
+
+def test_plain_renderer_status_block_restarts_with_each_stage() -> None:
+    out = io.StringIO()
+    r = progress.PlainRenderer(out, clock=_Clock())
+    r.start_stage("one")
+    r.stage_status(_BLOCK_A, changed=True, heartbeat="beat")
+    r.start_stage("two")
+    r.stage_status(_BLOCK_A, changed=False, heartbeat="beat")
+    assert out.getvalue().count(_BLOCK_A[0]) == 2
+
+
+def test_gha_renderer_status_block_is_append_only() -> None:
+    out = io.StringIO()
+    r = progress.GhaRenderer(out, clock=_Clock())
+    r.start_stage("watch")
+    r.stage_status(_BLOCK_A, changed=True, heartbeat="beat")
+    r.stage_status(_BLOCK_A, changed=False, heartbeat="beat")
+    r.stage_status(_BLOCK_B, changed=True, heartbeat="beat")
+    text = out.getvalue()
+    assert text.count("Watch status after") == 2
+    assert "beat" not in text
+
+
+def _rendered_plain(r: progress.RichRenderer) -> list[str]:
+    return [part.plain for part in r._renderable().renderables if isinstance(part, Text)]
+
+
+def test_rich_renderer_status_block_redraws_in_place() -> None:
+    r = _auto_renderer(height=40)
+    r.start_stage("watch")
+    r.stage_status(_BLOCK_A, changed=True, heartbeat="beat")
+    r.stage_line("https://github.com/o/r/pull/1: merged")
+    r.stage_status(_BLOCK_B, changed=True, heartbeat="beat")
+    rendered = _rendered_plain(r)
+    # The block replaced the last one, between the spinner and the rolling window.
+    assert rendered == [
+        *(f"   {line}" for line in _BLOCK_B),
+        "   https://github.com/o/r/pull/1: merged",
+    ]
+    r.stage_status(_BLOCK_B, changed=False, heartbeat="beat")
+    assert "beat" not in " ".join(_rendered_plain(r))
+    r.close()
+
+
+def test_rich_renderer_status_block_collapses_with_its_stage() -> None:
+    r = _auto_renderer(height=40)
+    r.start_stage("watch")
+    r.stage_status(_BLOCK_A, changed=True, heartbeat="beat")
+    r.end_stage(StageResult("watch", "ok", 192.0, note="4 merged, 0 failed"))
+    assert _rendered_plain(r) == ["✓ watch  3m12s — 4 merged, 0 failed"]
+    r.start_stage("close-refs")
+    assert _rendered_plain(r) == ["✓ watch  3m12s — 4 merged, 0 failed"]
+    r.close()
+
+
+def test_rich_renderer_auto_window_leaves_room_for_the_status_block() -> None:
+    r = _auto_renderer(height=24)
+    r.start_stage("watch")
+    before = r._visible_window()
+    r.stage_status(_BLOCK_A, changed=True, heartbeat="beat")
+    assert r._visible_window() == before - len(_BLOCK_A)
+    r.close()
+
+
+def test_status_line_shows_a_note() -> None:
+    assert progress._status_line(StageResult("watch", "ok", 2.0, note="2 merged")) == (
+        "✓ watch  2.0s — 2 merged"
+    )
+    result = StageResult("watch", "warn", 2.0, "1 merged, 1 failed")
+    assert progress._status_line(result) == "⚠ watch  2.0s — 1 merged, 1 failed"
+
+
+class _StatusRenderer(_FakeRenderer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.blocks: list[tuple[list[str], bool, str]] = []
+
+    def stage_status(self, lines: list[str], *, changed: bool, heartbeat: str) -> None:
+        self.blocks.append((list(lines), changed, heartbeat))
+
+
+def test_status_block_with_session_logs_changes_with_a_timestamp(tmp_path: Path) -> None:
+    renderer = _StatusRenderer()
+    log = progress.RunLog("test-cmd", tmp_path)
+    progress._session = progress._Session(renderer=renderer, log=log)
+    try:
+        progress.status_block(_BLOCK_A, changed=True, heartbeat="beat")
+        progress.status_block(_BLOCK_A, changed=False, heartbeat="beat")
+        progress.status_block(_BLOCK_B, changed=True, heartbeat="beat")
+    finally:
+        progress._session = None
+        log.close()
+    # The renderer sees every update; the log only the changes.
+    assert [changed for _, changed, _ in renderer.blocks] == [True, False, True]
+    lines = log.path.read_text().splitlines()
+    assert len(lines) == 2 * (1 + len(_BLOCK_A))
+    assert re.fullmatch(
+        r"\[\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d\] status changed:", lines[0]
+    )
+    assert lines[1:4] == _BLOCK_A
+    assert lines[4].endswith("] status changed:")
+    assert lines[5:] == _BLOCK_B
+
+
+def test_status_block_without_session_prints_changes_only(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    progress._session = None
+    progress.status_block(_BLOCK_A, changed=True, heartbeat="beat")
+    progress.status_block(_BLOCK_A, changed=False, heartbeat="beat")
+    assert capsys.readouterr().out == "\n" + "".join(f"{line}\n" for line in _BLOCK_A)
+
+
+def _stage_args(fmt: str = "plain") -> argparse.Namespace:
+    return argparse.Namespace(output_window=None, output_format=fmt)
+
+
+def test_run_stage_returns_its_value_and_keeps_the_log_open(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = progress.RunLog("test-cmd", tmp_path)
+
+    def fn() -> list[str]:
+        print("https://github.com/o/r/pull/1: merged")
+        progress.status_block(_BLOCK_B, changed=True, heartbeat="beat")
+        return ["merged"]
+
+    value = progress.run_stage(
+        "watch", fn, args=_stage_args(), log=log, describe=lambda v: ("ok", f"{len(v)} merged")
+    )
+    log.write("after the stage")
+    log.close()
+    assert value == ["merged"]
+    assert progress._session is None
+    out = capsys.readouterr().out
+    assert out.startswith("→ watch  starting...\nhttps://github.com/o/r/pull/1: merged\n")
+    assert "\n".join(_BLOCK_B) in out
+    assert re.search(r"✓ watch  \d+\.\ds — 1 merged\n", out)
+    # No pipeline summary: the caller prints what comes next.
+    assert "complete" not in out
+    text = log.path.read_text()
+    assert "=== watch: started ===" in text
+    assert "https://github.com/o/r/pull/1: merged" in text
+    assert "=== watch: ok (1 merged, " in text
+    assert text.endswith("after the stage\n")
+
+
+def test_run_stage_warn(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    log = progress.RunLog("test-cmd", tmp_path)
+    try:
+        progress.run_stage(
+            "watch",
+            lambda: 1,
+            args=_stage_args(),
+            log=log,
+            describe=lambda _: ("warn", "0 merged, 1 failed"),
+        )
+    finally:
+        log.close()
+    assert re.search(r"⚠ watch  \d+\.\ds — 0 merged, 1 failed\n", capsys.readouterr().out)
+
+
+def test_run_stage_failure_is_shown_and_raised(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = progress.RunLog("test-cmd", tmp_path)
+
+    def fn() -> None:
+        raise RuntimeError("reading the PR failed")
+
+    try:
+        with pytest.raises(RuntimeError, match="reading the PR failed"):
+            progress.run_stage(
+                "watch", fn, args=_stage_args(), log=log, describe=lambda _: ("ok", "")
+            )
+    finally:
+        log.close()
+    assert progress._session is None
+    out = capsys.readouterr().out
+    assert re.search(r"✗ watch  \d+\.\ds — RuntimeError: reading the PR failed\n", out)
+    text = log.path.read_text()
+    assert "=== watch: failed (RuntimeError: reading the PR failed) ===" in text
+    assert "Traceback" in text
+
+
+def test_run_stage_interrupt_is_shown_and_raised(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = progress.RunLog("test-cmd", tmp_path)
+
+    def fn() -> None:
+        raise KeyboardInterrupt
+
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            progress.run_stage(
+                "watch", fn, args=_stage_args(), log=log, describe=lambda _: ("ok", "")
+            )
+    finally:
+        log.close()
+    assert progress._session is None
+    assert "✗ watch" in capsys.readouterr().out
+    assert "=== watch: interrupted ===" in log.path.read_text()
+
+
+def test_run_stage_on_a_tty_ends_on_its_collapsed_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(
+        progress,
+        "_make_renderer",
+        lambda fmt, o, window: progress.RichRenderer(
+            o, window, force_terminal=True, width=80, height=24
+        ),
+    )
+    log = progress.RunLog("test-cmd", tmp_path)
+
+    def fn() -> int:
+        progress.status_block(_BLOCK_A, changed=True, heartbeat="beat")
+        progress.status_block(_BLOCK_B, changed=True, heartbeat="beat")
+        return 0
+
+    try:
+        progress.run_stage(
+            "watch", fn, args=_stage_args("rich"), log=log, describe=lambda _: ("ok", "1 merged")
+        )
+    finally:
+        log.close()
+    # The live display's last frame, left on the terminal, is the collapsed line alone.
+    last_frame = progress._ANSI_RE.sub("", out.getvalue()).rstrip("\n").split("\n")
+    assert re.fullmatch(r"✓ watch  \d+\.\ds — 1 merged", last_frame[-1])
+
+
+def test_pipeline_writes_to_a_given_log_and_leaves_it_open(tmp_path: Path) -> None:
+    log = progress.RunLog("test-cmd", tmp_path)
+    log.write("from the watch")
+    stages = [Stage("one", lambda ctx: print("in one"), mode="fail_fast")]
+    rc = progress.run_pipeline(
+        None, stages, command="test-cmd", label="test", args=_args(), repo_root=tmp_path, log=log
+    )
+    log.write("after the pipeline")
+    log.close()
+    assert rc == 0
+    assert list(tmp_path.joinpath(".vergil").glob("test-cmd-*.log")) == [log.path]
+    text = log.path.read_text()
+    assert text.startswith("from the watch\n=== one: started ===\nin one\n")
+    assert f"full log → {log.path}" in text
+    assert text.endswith("after the pipeline\n")
