@@ -142,6 +142,10 @@ writes one `Closes` line per issue. It re-checks the batch hard rules and the
 one-commit-per-issue invariant against a freshly fetched target, at the head
 the PR opens at, before any push or `gh pr create`. CLI mode stays
 single-issue.
+A single-issue PR whose issue is an epic's documentation task also closes the
+epic's planning issue, on a `- Planning issue: Closes <ref>` line of its own;
+when it cannot, it says why (see
+[the planning issue of a docs task](dev/submit-pr.md#the-planning-issue-of-a-docs-task)).
 It refuses an issue whose native parent is an intake, planning or deferred
 epic (see [`vrg-pr-workflow`](#vrg-pr-workflow)). Human-run: agent
 identities are refused, and agents hand off with
@@ -223,6 +227,15 @@ repo's `#N` refs, the form `batch-start` and `batch-show` print, whatever form
 `--issue` took; the recorded `issues` keep each value as given (`N`, or
 `owner/repo#N`), the form `vrg-submit-pr` reads. A single `--issue` records no
 `issues` key, prints none, and behaves exactly as before.
+
+When the single `--issue` is an epic's documentation task, the response also
+previews what its PR does with the epic's planning issue, as `planning_close`:
+`{"closes": "<ref>"}` when the PR will close it,
+`{"planning": "<ref>", "skipped": "<why>"}` when it will not, or
+`{"unknown": "<why>"}` when the check could not be read. `vrg-submit-pr` makes
+the check again when it builds the body (see
+[the planning issue of a docs task](dev/submit-pr.md#the-planning-issue-of-a-docs-task)).
+Any other issue, and a batch, prints no `planning_close`.
 
 The batch hard rules are: 2 to 8 issues, none listed twice, every one in
 this repo, a task (not an epic, archive or queue item), not operational, not

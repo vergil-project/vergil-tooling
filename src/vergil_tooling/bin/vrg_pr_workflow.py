@@ -35,6 +35,15 @@ removed. The JSON response lists the issues as this repo's ``#N`` refs, the
 form ``batch-start`` and ``batch-show`` print, while the state keeps each one as
 given (#4297). A single ``--issue`` behaves exactly as before.
 
+When the single ``--issue`` is an epic's documentation task, the response
+previews what the PR does with the epic's planning issue
+(:mod:`vergil_tooling.lib.planning_close`, vergil-project/.github#950):
+``planning_close`` is ``{"closes": <ref>}`` when the PR will also close it,
+``{"planning": <ref>, "skipped": <why>}`` when it will not, and
+``{"unknown": <why>}`` when the check could not be read. In that case
+``vrg-submit-pr`` makes it again, authoritatively, when it builds the body. The
+key is absent for any other issue and for a batch.
+
 ``batch-start``, ``batch-extract`` and ``batch-show`` manage the batch marker
 (:mod:`vergil_tooling.lib.pr_workflow.batch_marker`, epic
 vergil-project/.github#1019) in the main clone. ``batch-start`` runs the batch
@@ -63,7 +72,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import epics, git, github, local_settings
+from vergil_tooling.lib import epics, git, github, local_settings, planning_close
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.linkage import (
     find_linkage_keyword,
@@ -76,6 +85,7 @@ from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
@@ -299,6 +309,36 @@ def _reject_operational_issue(issue_ref: str) -> None:
             "is not PR-workable; record the Outcome as a comment (issue-validate / "
             "issue-deploy) instead of preparing a PR."
         )
+
+
+def _planning_close_preview(issue_ref: str) -> dict[str, str] | None:
+    """What the PR will do with the planning issue of a documentation task, or None.
+
+    A preview only: ``vrg-submit-pr`` decides it again when it builds the body,
+    and a failed read there aborts the submission. Here a failed read is
+    reported in the response (``unknown``), never passed over in silence.
+    """
+    try:
+        task = epics.parse_issue_ref(issue_ref, default_repo=github.current_repo())
+        result = planning_close.find(task)
+    except (
+        subprocess.CalledProcessError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        TrustedAuthorsNotConfiguredError,
+    ) as exc:
+        return {
+            "unknown": (
+                f"could not check whether {issue_ref} is an epic's documentation task "
+                f"({error_text(exc)}); vrg-submit-pr checks it when it builds the PR body"
+            )
+        }
+    if result is None:
+        return None
+    if result.closes:
+        return {"closes": result.planning.slug}
+    return {"planning": result.planning.slug, "skipped": str(result.skipped)}
 
 
 def _reject_queue_issue(issue_ref: str) -> None:
@@ -634,6 +674,10 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
         # print, so a reader matches the lists as they are (#4297). The state
         # keeps the values as given: vrg-submit-pr reads them from it.
         response["issues"] = marker_refs
+    else:
+        preview = _planning_close_preview(issue_refs[0])
+        if preview is not None:
+            response["planning_close"] = preview
     if linkage_warning:
         response["warning"] = linkage_warning
     _emit(response)

@@ -6,6 +6,7 @@ import pytest
 
 from vergil_tooling.lib import pr_body
 from vergil_tooling.lib.linkage import extract_tracking_refs
+from vergil_tooling.lib.pr_workflow import batch_rules
 
 
 def test_build_pr_body_full() -> None:
@@ -98,6 +99,17 @@ def test_build_pr_body_one_line_per_issue() -> None:
     assert "## Issue Linkage\n\n- Closes #10\n- Closes #11\n- Closes #12\n\n## Notes" in body
     # vrg-finalize-pr reads the body back with extract_tracking_refs.
     assert extract_tracking_refs(body) == links
+
+
+def test_build_pr_body_planning_close_line() -> None:
+    """A docs task's PR also closes its planning issue, on a line of its own (.github#950)."""
+    body = pr_body.build_pr_body(
+        summary="s", links=[("Closes", "#42")], notes="", planning="acme/.github#7"
+    )
+    assert "## Issue Linkage\n\n- Closes #42\n- Planning issue: Closes acme/.github#7\n\n" in body
+    # The task-linkage parsers see only the task: the PR is never read as a batch.
+    assert extract_tracking_refs(body) == [("Closes", "#42")]
+    assert batch_rules.batch_closes(body) == []
 
 
 def test_build_pr_body_refuses_no_links() -> None:

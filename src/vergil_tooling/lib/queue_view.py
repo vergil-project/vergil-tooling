@@ -384,6 +384,20 @@ def _org_advisories(org: str, *, named: bool) -> list[Advisory]:
     return security_records.list_advisories(security_records.advisory_home(org))
 
 
+def tracking_advisories(ref: IssueRef, body: str) -> tuple[str, ...]:
+    """The GHSA IDs of every advisory that still tracks the planning issue *ref*.
+
+    *body* is the issue's body. The same rule as the planning view's hold:
+    any advisory naming *ref* on a ``Tracking issue:`` line counts, whether or
+    not *body* names it, and a ``Security advisory:`` line naming another org
+    is refused (:class:`AdvisoryLineError`). Any failed GitHub call propagates.
+    """
+    advisories = _org_advisories(ref.owner, named=_names_advisory(ref, body))
+    key = ref.slug.casefold()
+    found = [a.ghsa_id for a in advisories if any(t.slug.casefold() == key for t in a.tracking)]
+    return tuple(dict.fromkeys(found))
+
+
 def _tracking(views: Sequence[tuple[IssueRef, dict[str, Any]]]) -> dict[IssueRef, tuple[str, ...]]:
     """Each item's tracking advisories (GHSA IDs, in listing order), listed once per org."""
     named: dict[str, bool] = {}

@@ -196,6 +196,43 @@ reads the `Closes` lines back and rebase-merges the PR, one commit per
 issue. CLI mode stays single-issue: a batch is handed off only through
 `report-ready`.
 
+## The planning issue of a docs task
+
+An epic's planning is done when its documentation task's PR, the spec and the
+plan, merges. So that PR also closes the epic's **planning issue**
+(vergil-project/.github#950). When the PR closes one issue, `vrg-submit-pr`
+checks whether that issue is an epic's documentation task:
+
+1. Its parent epic's body names the planning issue on a
+   `Planning: <owner>/<repo>#<M>` line.
+2. That planning issue's latest `Docs task:` marker names the PR's issue.
+   Only comments by trusted authors count.
+
+If both hold, the body gets one more line under its issue linkage:
+
+```markdown
+## Issue Linkage
+
+- Closes #20
+- Planning issue: Closes #7
+```
+
+It adds the line only when the planning issue is in the PR's own repo, is
+open, sits under the planning epic, and has no security advisory still
+tracking it. When any of these fails, it prints the reason, adds no line, and
+the planning issue stays open for the human or `epic-review planning` to deal
+with. A failed GitHub read aborts the submit, as the other per-issue checks
+do. Any other issue gets no extra line and no message, and a batch PR is never
+checked.
+
+The line does not begin with the keyword, so the tools that read a body's
+task linkage (batch detection, `batch-check`, merge review, the drift audit)
+see only the task, and the PR stays an ordinary squash-merged PR. GitHub
+closes the planning issue on merge, and
+[`vrg-finalize-pr`](finalize-pr.md) closes any closing reference GitHub left
+open. `vrg-pr-workflow report-ready` previews the result in its response as
+`planning_close`.
+
 ## Chaining into finalize (`--finalize`)
 
 `--finalize` folds the manual two-command sequence

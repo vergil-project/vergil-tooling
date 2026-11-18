@@ -21,7 +21,9 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin import vrg_pr_workflow
+from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.github import ClosingIssue, MissingGitHubTokenError, PRClosingReferences
+from vergil_tooling.lib.planning_close import PlanningClose
 from vergil_tooling.lib.pr_workflow import engine, freeze
 from vergil_tooling.lib.pr_workflow.batch_marker import Marker, read_marker, write_markers
 from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
@@ -322,14 +324,23 @@ def relay() -> Iterator[MagicMock]:
 
 @pytest.fixture()
 def per_issue() -> Iterator[dict[str, MagicMock]]:
-    """The GitHub reads behind report-ready's per-issue refusals, all passing."""
+    """The GitHub reads behind report-ready's per-issue refusals, all passing.
+
+    The planning-close lookup finds no documentation task.
+    """
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="acme/tools"),
         patch(f"{_EPICS}.non_task_ref_kind", return_value=None) as non_task,
         patch(f"{_EPICS}.is_operational_task", return_value=False) as operational,
         patch(f"{_EPICS}.queue_item_kind", return_value=None) as queue,
+        patch(f"{_WF}.planning_close.find", return_value=None) as planning,
     ):
-        yield {"non_task": non_task, "operational": operational, "queue": queue}
+        yield {
+            "non_task": non_task,
+            "operational": operational,
+            "queue": queue,
+            "planning": planning,
+        }
 
 
 def _report(*issues: str) -> int:
@@ -404,6 +415,56 @@ def test_report_ready_batch_records_ordered_issues(
     relayed = relay.return_value.write.call_args.args[0]
     assert json.loads(relayed.to_json())["issues"] == ["12", "10", "acme/tools#11"]
     assert _on_origin(ready_clone)
+    # A batch PR never closes a planning issue, so it is never looked up.
+    per_issue["planning"].assert_not_called()
+
+
+_DOCS_TASK = IssueRef("acme", "tools", 10)
+_PLANNING = IssueRef("acme", "tools", 7)
+
+
+@pytest.mark.parametrize(
+    ("found", "expected"),
+    [
+        (PlanningClose(_DOCS_TASK, _PLANNING, None), {"closes": "acme/tools#7"}),
+        (
+            PlanningClose(_DOCS_TASK, _PLANNING, "it is already closed"),
+            {"planning": "acme/tools#7", "skipped": "it is already closed"},
+        ),
+    ],
+)
+def test_report_ready_previews_the_planning_close(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+    capsys: pytest.CaptureFixture[str],
+    found: PlanningClose,
+    expected: dict[str, str],
+) -> None:
+    _branch(ready_clone, "docs: the spec and plan")
+    per_issue["planning"].return_value = found
+    assert _report("10") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"ok": True, "status": "ready", "planning_close": expected}
+    per_issue["planning"].assert_called_once_with(_DOCS_TASK)
+
+
+def test_report_ready_reports_a_planning_close_it_could_not_check(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _branch(ready_clone, "docs: the spec and plan")
+    per_issue["planning"].side_effect = subprocess.CalledProcessError(1, ["gh"])
+    assert _report("10") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "ready"
+    assert out["planning_close"]["unknown"].startswith(
+        "could not check whether #10 is an epic's documentation task"
+    )
 
 
 def test_report_ready_batch_rerun_with_the_same_list_succeeds(
