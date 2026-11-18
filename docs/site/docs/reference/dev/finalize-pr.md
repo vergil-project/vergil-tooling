@@ -63,8 +63,7 @@ A PR list, `--all` and `--cleanup-only` are mutually exclusive.
 vrg-finalize-pr [PR[,PR…] | --all | --cleanup-only]
                 [--target-branch BRANCH] [--wait-cd]
                 [--release [--no-install]]
-                [--allow-provenance-violation] [--clean-dirty]
-                [--dry-run] [--yes]
+                [--clean-dirty] [--dry-run] [--yes]
 ```
 
 ## Arguments
@@ -78,7 +77,6 @@ vrg-finalize-pr [PR[,PR…] | --all | --cleanup-only]
 | `--wait-cd` | Block on the CD run for the synced head and fail if it does not succeed. By default finalize reports that run's link and state without waiting. |
 | `--release` | On full success, chain into `vrg-release`, which installs by default. Refused on a repo that is not released (`[publish] release = true`), before any watch or cleanup. |
 | `--no-install` | With `--release`, run `vrg-release --no-install`. Refused without `--release`. |
-| `--allow-provenance-violation` | Leave auto-merge on for an open PR with a provenance violation (a conscious human override). It does not cover a violation that has already merged: see [Provenance](#provenance). |
 | `--clean-dirty` | Opt-in: clear a merged/closed worktree whose only dirt is untracked build/validation output, after showing what will be deleted and confirming. Never touches modified tracked files or a reused-branch straggler with unmerged commits (issue #2348). |
 | `--dry-run` | Say what would be watched and done without changing anything. The settle phase's steps print what they would do. |
 | `--yes` | Pre-answer the interactive yes/no prompts. |
@@ -94,6 +92,7 @@ names what replaced it:
 | `--no-wait-cd` | Not waiting on CD is the default; `--wait-cd` opts in to waiting. |
 | `--skip-post-checks` | One run watches every listed PR, then settles `develop` once. Pass the PRs as a comma list. |
 | `--install` | `--release` installs by default; `--no-install` opts out. |
+| `--allow-provenance-violation` | A provenance violation always fails: fix its cause, or fix the classifier if the violation is a false one. See [Provenance](#provenance). |
 
 ## Behavior
 
@@ -145,21 +144,18 @@ clean PR.
 
 The watch runs the provenance check on every PR when it starts, and
 again each time a PR's head changes. `vrg-submit-pr` ran the same check
-before it turned auto-merge on. Advisories are printed but do not
-block. What a violation does depends on whether the PR has merged:
+before it turned auto-merge on. A violation always fails, and there is
+no override (issue #4695): it is either a real problem to investigate or
+a bug in the classifier to fix. What it does depends on whether the PR
+has merged:
 
 - **Open PR.** Finalize turns the PR's auto-merge off and reports it
-  *failed: provenance*. With `--allow-provenance-violation` it leaves
-  auto-merge on, prints the violation loudly and watches the PR on, so
-  the PR may merge. Once it merges, it is a merged PR with a violation,
-  below.
+  *failed: provenance*.
 - **Merged PR**, one that merged before finalize started included.
   Nothing can be disabled. The PR is reported as merged with a loud
   provenance-violation flag, and the run cannot reach full success: it
   exits 3 (or 4, if develop did not validate) and no chained release
-  runs. `--allow-provenance-violation` does not change this: the
-  override does not cover a violation that has already merged, which a
-  human must look at before any release (issue #4662).
+  runs. A human must look at it before any release (issue #4662).
 
 #### Status table
 

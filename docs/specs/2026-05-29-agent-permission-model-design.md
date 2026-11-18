@@ -646,6 +646,10 @@ This tool finalizes a specific PR:
 4. Prune remote references.
 5. Post-merge housekeeping.
 
+(Changed 2026-11-18, vergil-tooling#4695: an audit approval is no
+longer surfaced as an advisory, and there is no override. See "The
+human's override" under "Provenance checks under auto-merge" below.)
+
 The action history is fetched with read-only `gh api` GET calls to
 the PR reviews and issue timeline endpoints. This is available because
 the tool runs in the human context, and the same calls are reachable
@@ -699,13 +703,17 @@ is a violation:
 
 - creating, editing (renaming), closing, reopening or merging the PR,
   for the user and audit identities;
-- approving the PR, for the user identity; an audit approval is an
-  advisory, surfaced but not blocked;
+- approving the PR, for the user identity; an audit approval is
+  allowed;
 - turning auto-merge on, for the user and audit identities, since
   that is now how a PR merges. Every event name GitHub uses for an
   enable counts: `auto_squash_enabled`, `auto_rebase_enabled`, and
   `auto_merge_enabled`; any other `auto_<method>_enabled` name counts
   too, so a renamed or new event fails closed.
+
+Every other action is allowed: the check has two outcomes, allowed
+or a violation. The audit identity is not in use yet; its forbidden
+actions are kept so they are enforced from the day it is.
 
 An agent turning auto-merge off is not a violation. Finalize reports
 any open PR with auto-merge off as *failed: auto-merge off* in any
@@ -716,13 +724,23 @@ fails the check; it never passes silently.
 is on; then for as long as a `vrg-finalize-pr` run watches the PR, at
 the start and at each new head.
 
-**The human's override.** `--allow-provenance-violation` (on both
-`vrg-submit-pr` and `vrg-finalize-pr`) is a conscious override with
-the violation in front of the human. It covers only an open PR: at
-submit, auto-merge is turned on anyway, and in finalize the PR's
-auto-merge is left on. A PR that already merged with a violation
-always exits 3 (or 4) and blocks any chained release, with or without
-the flag.
+**The human's override.** There is none: a provenance violation
+always fails. At submit it fails that PR's submit and leaves its
+auto-merge off. In finalize, an open PR's auto-merge is turned off and
+the PR is reported *failed: provenance*; a PR that already merged
+with a violation exits 3 (or 4) and blocks any chained release.
+
+Removed 2026-11-18 (vergil-tooling#4695). `vrg-submit-pr` and
+`vrg-finalize-pr` once took `--allow-provenance-violation`, a
+conscious override that left an open PR's auto-merge on despite a
+violation, and the check once printed an audit approval as an
+advisory. Both are gone. A violation means an agent did something
+forbidden on a PR: either a real problem to investigate or a bug in
+the classifier to fix, never something to proceed past. The advisory
+could never fire in practice, since the audit identity is not in use,
+and a warning nobody is sure to read and nobody can act on is noise.
+Nothing in the fleet passed the flag. Passing it now is an error,
+raised before any side effect, that names this rule.
 
 **The accepted gap.** The check is not a required status check, and
 it does not run continuously. It does not cover a PR between finalize
