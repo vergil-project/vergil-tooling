@@ -51,6 +51,7 @@ FLOOR_CHECKS: dict[str, FloorCheck] = {
     "python": python.check_floor,
     "go": go.check_floor,
     "rust": rust.check_floor,
+    "typescript": typescript.check_floor,
 }
 
 TOOLCHAIN_CHECKS: dict[str, ToolchainCheck] = {

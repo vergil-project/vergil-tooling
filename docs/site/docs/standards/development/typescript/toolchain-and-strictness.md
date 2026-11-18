@@ -42,6 +42,33 @@ does not match (see npm's
 or an array of objects, or a root `package.json` that cannot be parsed, is an
 error naming the field or the file.
 
+### The `engines.node` Range
+
+`vrg-validate` checks `engines.node` on two sides against the window, as it
+checks Python's `requires-python`, and prints a warning, with its fix, for
+each side the range misses. A warning does not fail validation.
+
+| The range | Warning | Fix |
+| --- | --- | --- |
+| admits a Node major below the window's oldest (`>=20` against 26/24/22) | `engines.node >=20 admits Node 20, below the oldest supported major 22` | raise it to `>=22` (the oldest major) |
+| admits no release of the window's newest major (`^24` excludes 26) | `engines.node ^24 excludes Node 26` | drop the upper bound, or widen it to admit 26 |
+
+A floor above the window's oldest major is a deliberate restriction and is
+allowed: `>=24` against 26/24/22 gives no warning. A range with `||` is read
+as a whole, so `^22 || ^24` has a floor of 22 and excludes 26. Prerelease
+versions play no part in either test. Only the root `package.json` is read;
+workspaces are not checked, and a `package.json` with no `engines.node` gives
+no warning.
+
+The range is read with npm's grammar (node-semver's
+[range syntax](https://github.com/npm/node-semver#ranges): comparators,
+`x`-ranges, `~`, `^`, hyphen ranges and `||`). Two kinds of value are errors, which
+fail validation:
+
+- an `engines.node` that is not a string, or a string that is not an npm
+  semver range (`latest`, for example);
+- a valid range that admits no Node release (`>=26 <24`, for example).
+
 ## TYPECHECK Is "The Compiler"
 
 For TypeScript, the TYPECHECK stage is `tsc --noEmit`, run as the
