@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import subprocess
 import time
 from dataclasses import replace
@@ -23,6 +24,7 @@ from vergil_tooling.bin.vrg_repo_status import (
     main,
 )
 from vergil_tooling.lib.config import ConfigError
+from vergil_tooling.lib.finalize_watch import FinalizeWatchError
 from vergil_tooling.lib.open_prs import OpenPR, OpenPRKind, OpenPRsError
 from vergil_tooling.lib.pending_release import (
     ChangeKind,
@@ -31,6 +33,7 @@ from vergil_tooling.lib.pending_release import (
     PendingReleaseError,
     ReleaseTags,
 )
+from vergil_tooling.lib.pr_await import AwaitResult
 from vergil_tooling.lib.worktrees import (
     MainCheckoutStatus,
     RawWorktree,
@@ -122,13 +125,17 @@ def _run(
     open_prs: tuple[OpenPR, ...] | Exception = (),
     gone: set[str] | Exception | None = None,
     still_present: bool | None = None,
+    merge: Any = None,
     argv: list[str] | None = None,
 ) -> tuple[int, dict[str, MagicMock]]:
     """Run main() against a mocked repo: main checkout at /repo plus *linked*.
 
     ``gather`` / ``detached`` are ``side_effect`` values (a list of results or
     an exception); ``integration`` / ``gone`` / ``pending`` / ``open_prs`` are raised when
-    they are exceptions and returned otherwise. ``integration=None`` means no
+    they are exceptions and returned otherwise. ``merge`` is what each open
+    PR's merge-state read (``pr_await.standing_block``) gives: ``None`` (can
+    still merge, the default), an ``AwaitResult``, or an exception it raises.
+    ``integration=None`` means no
     ``vergil.toml``; a string is the integration branch of a stub branching
     model, whose ``[publish].release`` is ``publish``.
     """
@@ -171,6 +178,10 @@ def _run(
             _patch("worktrees.gone_branches", return_value=gone or set())
         if still_present is not None:
             _patch("worktrees.worktree_still_present", return_value=still_present)
+        if isinstance(merge, Exception):
+            _patch("pr_await.standing_block", side_effect=merge)
+        else:
+            _patch("pr_await.standing_block", return_value=merge)
         rc = main(argv or [])
     return rc, mocks
 
@@ -317,6 +328,146 @@ def test_main_surfaces_rebasing_worktree_in_development(
     assert "feature/2607-resume-attach" in out
     assert "note: feature/2607-resume-attach:" in out
     assert "rebase in progress" in out
+
+
+# -- an open PR's merge state (#4678) -------------------------------------------
+
+_BRANCH_4529 = "feature/4529-docs-review-parallel-merging"
+_REBASE_DETAIL = (
+    "rebase in progress (detached HEAD) — resolve conflicts and run "
+    "'vrg-git rebase --continue', or 'vrg-git rebase --abort' to undo"
+)
+
+
+def _conflict() -> AwaitResult:
+    return AwaitResult(
+        pr="https://github.com/o/r/pull/4673",
+        reason="conflict",
+        detail="the PR has a merge conflict with its base",
+        head_sha="a" * 40,
+        merge_state_status="DIRTY",
+    )
+
+
+def _dev_rows(out: str) -> list[list[str]]:
+    """The Development table's rows, header first, split on column gaps."""
+    lines = out.splitlines()
+    start = lines.index("Development") + 1
+    rows = []
+    for line in lines[start:]:
+        if not line or line.startswith("  note:"):
+            break
+        rows.append(re.split(r"\s{2,}", line.strip()))
+    return rows
+
+
+def test_open_pr_that_conflicts_on_a_clean_worktree(capsys: pytest.CaptureFixture[str]) -> None:
+    status = _status(_BRANCH_4529, WorktreeState.OPEN_PR, pr=4673, ahead=1)
+    rc, mocks = _run(_raws([status]), gather=[status], merge=_conflict())
+    out = capsys.readouterr().out
+    assert rc == 0
+    mocks["pr_await.standing_block"].assert_called_once_with("4673")
+    row = _dev_rows(out)[1]
+    assert row[2:4] == ["#4673", "merge failed: conflict"]
+    assert (
+        f"  note: {_BRANCH_4529}: PR #4673 cannot merge (conflict): "
+        "the PR has a merge conflict with its base\n"
+    ) in out
+    assert "rebase" not in out
+    assert "1 PR cannot merge (see notes above)." in out
+
+
+def test_open_pr_that_conflicts_while_its_branch_is_mid_rebase(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The #4673 case: the PR and both states are shown, and the note names the
+    merge failure instead of how to finish a rebase."""
+    status = _status(_BRANCH_4529, WorktreeState.REBASING, pr=4673, ahead=1, detail=_REBASE_DETAIL)
+    raw = RawWorktree(path=status.worktree.path, branch=None)
+    rc, _ = _run([raw], detached=[status], merge=_conflict())
+    out = capsys.readouterr().out
+    assert rc == 0
+    row = _dev_rows(out)[1]
+    assert row[2:4] == ["#4673", "rebasing, merge failed: conflict"]
+    assert (
+        f"  note: {_BRANCH_4529}: PR #4673 cannot merge (conflict): the PR has a merge "
+        "conflict with its base; pr-watch is resolving it (rebase in progress)\n"
+    ) in out
+    assert "vrg-git rebase --continue" not in out
+
+
+def test_mid_rebase_with_no_pr_keeps_the_rebase_note(capsys: pytest.CaptureFixture[str]) -> None:
+    status = _status(_BRANCH_4529, WorktreeState.REBASING, ahead=1, detail=_REBASE_DETAIL)
+    raw = RawWorktree(path=status.worktree.path, branch=None)
+    rc, mocks = _run([raw], detached=[status])
+    out = capsys.readouterr().out
+    assert rc == 0
+    mocks["pr_await.standing_block"].assert_not_called()
+    row = _dev_rows(out)[1]
+    assert row[2:4] == ["-", "rebasing"]
+    assert f"  note: {_BRANCH_4529}: {_REBASE_DETAIL}\n" in out
+    assert "cannot merge" not in out
+
+
+def test_mid_rebase_with_an_open_pr_that_can_merge(capsys: pytest.CaptureFixture[str]) -> None:
+    status = _status(_BRANCH_4529, WorktreeState.REBASING, pr=4673, ahead=1, detail=_REBASE_DETAIL)
+    raw = RawWorktree(path=status.worktree.path, branch=None)
+    rc, _ = _run([raw], detached=[status])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert _dev_rows(out)[1][2:4] == ["#4673", "rebasing"]
+    assert (
+        f"  note: {_BRANCH_4529}: PR #4673 is open; its branch is mid-rebase "
+        "(pr-watch updating it)\n"
+    ) in out
+    assert "vrg-git rebase --continue" not in out
+    assert "cannot merge" not in out
+
+
+def test_open_pr_that_can_merge_is_plain_open_pr(capsys: pytest.CaptureFixture[str]) -> None:
+    status = _status("feature/1-a", WorktreeState.OPEN_PR, pr=5, ahead=1)
+    rc, _ = _run(_raws([status]), gather=[status])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert _dev_rows(out)[1][2:4] == ["#5", "open-pr"]
+    assert "note:" not in out
+    assert "cannot merge" not in out
+
+
+def test_unreadable_merge_state_is_shown_not_hidden(capsys: pytest.CaptureFixture[str]) -> None:
+    status = _status("feature/1-a", WorktreeState.OPEN_PR, pr=5, ahead=1)
+    rc, _ = _run(
+        _raws([status]), gather=[status], merge=FinalizeWatchError("5: reading the PR failed: 502")
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert _dev_rows(out)[1][2:4] == ["#5", "merge unknown"]
+    assert (
+        "  note: feature/1-a: PR #5: merge state unreadable: 5: reading the PR failed: 502\n" in out
+    )
+
+
+def test_merge_state_is_not_read_for_a_machinery_pr(capsys: pytest.CaptureFixture[str]) -> None:
+    """A release or deps PR is merged directly, never with auto-merge, so it is
+    never judged by vrg-pr-await's reasons."""
+    statuses = [
+        _status("release/2.1.200", WorktreeState.OPEN_PR, pr=7, ahead=1),
+        _status("deps/update-2.1.200", WorktreeState.OPEN_PR, pr=8, ahead=1),
+    ]
+    rc, mocks = _run(_raws(statuses), gather=statuses, merge=_conflict())
+    out = capsys.readouterr().out
+    assert rc == 0
+    mocks["pr_await.standing_block"].assert_not_called()
+    assert "Release and dependency machinery" in out
+    assert "merge failed" not in out
+
+
+def test_merge_state_is_not_read_for_a_finished_pr(capsys: pytest.CaptureFixture[str]) -> None:
+    status = _status("feature/1-a", WorktreeState.MERGED, pr=5)
+    rc, mocks = _run(_raws([status]), gather=[status], merge=_conflict())
+    capsys.readouterr()
+    assert rc == 0
+    mocks["pr_await.standing_block"].assert_not_called()
 
 
 def test_main_surfaces_unknown_detail(capsys: pytest.CaptureFixture[str]) -> None:

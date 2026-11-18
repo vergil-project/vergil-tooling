@@ -192,6 +192,7 @@ def test_gather_detached_status_rebasing_resolves_branch(tmp_path: Path) -> None
         patch(_MOD + ".git.ref_exists", return_value=True),
         patch(_MOD + ".git.commits_ahead", return_value=3),
         patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
     ):
         status = gather_detached_status(raw, target="develop")
     assert status.state is WorktreeState.REBASING
@@ -214,6 +215,7 @@ def test_gather_detached_status_falls_back_to_dir_name(tmp_path: Path) -> None:
         patch(_MOD + ".git.ref_exists", return_value=False),
         patch(_MOD + ".git.commits_ahead") as ahead,
         patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
     ):
         status = gather_detached_status(raw, target="develop")
     assert status.state is WorktreeState.DETACHED
@@ -224,6 +226,72 @@ def test_gather_detached_status_falls_back_to_dir_name(tmp_path: Path) -> None:
     assert status.dirty is True
     assert status.detail is not None
     assert "detached HEAD" in status.detail
+
+
+def _rebasing_git_dir(tmp_path: Path, branch: str) -> Path:
+    git_dir = tmp_path / "gitdir"
+    (git_dir / "rebase-merge").mkdir(parents=True)
+    (git_dir / "rebase-merge" / "head-name").write_text(f"refs/heads/{branch}\n")
+    return git_dir
+
+
+def test_gather_detached_status_keeps_the_open_pr_of_a_branch_mid_rebase(tmp_path: Path) -> None:
+    """A submitted PR whose branch is mid-rebase keeps its PR number (#4678):
+    the open PR of the recovered branch is looked up, not skipped."""
+    branch = "feature/4529-docs-review-parallel-merging"
+    raw = RawWorktree(
+        path=Path("/repo/.worktrees/issue-4529-docs-review-parallel-merging"), branch=None
+    )
+    open_pr = {"number": "4673", "url": "u", "title": "t", "headRefOid": "a" * 40}
+    with (
+        patch(_MOD + ".git.worktree_git_dir", return_value=_rebasing_git_dir(tmp_path, branch)),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".git.commits_ahead", return_value=1),
+        patch(_MOD + "._probe_pr_workflow", return_value=("ready", None, False)),
+        patch(_MOD + ".github.pr_for_branch", return_value=open_pr) as lookup,
+    ):
+        status = gather_detached_status(raw, target="develop")
+    lookup.assert_called_once_with(branch)
+    assert status.state is WorktreeState.REBASING
+    assert status.pr_number == 4673
+
+
+def test_gather_detached_status_pr_lookup_failure_is_in_the_detail(tmp_path: Path) -> None:
+    """A failed open-PR lookup is reported in the detail, never read as no PR."""
+    branch = "feature/7-x"
+    raw = RawWorktree(path=Path("/repo/.worktrees/issue-7-x"), branch=None)
+    failure = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502\n")
+    with (
+        patch(_MOD + ".git.worktree_git_dir", return_value=_rebasing_git_dir(tmp_path, branch)),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".git.commits_ahead", return_value=1),
+        patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
+        patch(_MOD + ".github.pr_for_branch", side_effect=failure),
+    ):
+        status = gather_detached_status(raw, target="develop")
+    assert status.state is WorktreeState.REBASING
+    assert status.pr_number is None
+    assert status.detail is not None
+    assert status.detail.startswith("rebase in progress")
+    assert status.detail.endswith("; open-PR lookup for feature/7-x failed: HTTP 502")
+
+
+def test_gather_detached_status_without_a_branch_looks_up_no_pr(tmp_path: Path) -> None:
+    git_dir = tmp_path / "gitdir"
+    git_dir.mkdir()
+    raw = RawWorktree(path=Path("/repo/.worktrees/scratch"), branch=None)
+    with (
+        patch(_MOD + ".git.worktree_git_dir", return_value=git_dir),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
+        patch(_MOD + ".github.pr_for_branch") as lookup,
+    ):
+        status = gather_detached_status(raw, target="develop")
+    lookup.assert_not_called()
+    assert status.worktree.branch == "(detached)"
+    assert status.pr_number is None
 
 
 def test_gather_detached_status_last_commit_follows_ahead(tmp_path: Path) -> None:
@@ -241,6 +309,7 @@ def test_gather_detached_status_last_commit_follows_ahead(tmp_path: Path) -> Non
             patch(_MOD + ".git.ref_exists", return_value=ref_exists),
             patch(_MOD + ".git.commits_ahead", return_value=ahead),
             patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
+            patch(_MOD + ".github.pr_for_branch", return_value=None),
             patch(_MOD + ".git.committer_timestamp", return_value=1_699_900_000),
             patch(_MOD + "._newest_mtime", return_value=1_699_999_999.0),
         ):

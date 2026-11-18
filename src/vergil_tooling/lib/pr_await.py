@@ -189,6 +189,39 @@ def orphaned_block(snap: finalize_watch.Snapshot) -> list[str]:
     return pending if all(name in orphans for name in pending) else []
 
 
+def standing_block(pr: str) -> AwaitResult | None:
+    """Why *pr* cannot merge as it stands, from one read, or ``None``.
+
+    The one-shot form of :func:`wait_for_merge`, for a status view such as
+    ``vrg-repo-status`` (vergil-tooling#4678). It judges one snapshot in the
+    module docstring's order: ``None`` when the PR merged or can still merge
+    (its checks pending or green), else the result naming the reason. Two
+    things differ from the wait:
+
+    - The base branch's required checks are read only when a check has
+      failed, so a pending or green PR costs no extra call.
+    - An orphaned check is reported from this one read, with no grace
+      period: a single read cannot wait one out, so the detail says that
+      GitHub may only be delayed.
+
+    Every failure to read the PR raises, as in :func:`wait_for_merge`.
+    """
+    snap = finalize_watch.snapshot(pr)
+    result = judge(snap, None)
+    if result is not None and result.reason == "check_failed":
+        result = judge(snap, github.required_check_names(snap.url))
+    if result is not None:
+        return None if result.merged else result
+    orphaned = orphaned_block(snap)
+    if orphaned:
+        detail = (
+            f"no result for {', '.join(orphaned)} although their workflow runs "
+            "completed (orphaned check-runs, or GitHub is delayed)"
+        )
+        return _cannot_merge(snap, "orphaned_check", detail, orphaned=tuple(orphaned))
+    return None
+
+
 def wait_for_merge(
     pr: str,
     *,

@@ -79,6 +79,7 @@ class FakeGitHub:
     views: list[str] = field(default_factory=list)
     sleeps: list[float] = field(default_factory=list)
     orphan_probes: int = 0
+    required_reads: int = 0
 
     def script(self, *states: dict[str, Any]) -> None:
         self.states = list(states)
@@ -91,6 +92,7 @@ class FakeGitHub:
 
     def required_check_names(self, pr: str) -> frozenset[str] | None:
         assert pr == PR
+        self.required_reads += 1
         return self.required
 
     def failed_check_names(self, pr: str) -> list[str]:
@@ -341,6 +343,86 @@ def test_orphan_probe_only_when_blocked(fake: FakeGitHub) -> None:
 
     assert wait_for_merge(PR).merged
     assert fake.orphan_probes == 0
+
+
+# --- standing_block: one read, for a status view (#4678) -------------------------------
+
+
+def test_standing_block_pending_pr_is_none_without_extra_reads(fake: FakeGitHub) -> None:
+    fake.script(pr_state(mergeStateStatus="UNSTABLE"))
+
+    assert pr_await.standing_block("4673") is None
+    assert fake.views == ["4673"]
+    assert fake.required_reads == 0
+    assert fake.orphan_probes == 0
+    assert fake.sleeps == []
+
+
+def test_standing_block_merged_pr_is_none(fake: FakeGitHub) -> None:
+    fake.script(merged())
+
+    assert pr_await.standing_block(PR) is None
+
+
+def test_standing_block_conflict(fake: FakeGitHub) -> None:
+    fake.script(pr_state(mergeStateStatus="DIRTY"))
+
+    result = pr_await.standing_block(PR)
+
+    assert result is not None
+    assert result.reason == "conflict"
+    assert result.detail == "the PR has a merge conflict with its base"
+    assert fake.required_reads == 0
+
+
+def test_standing_block_auto_merge_off(fake: FakeGitHub) -> None:
+    fake.script(pr_state(autoMergeRequest=None))
+
+    result = pr_await.standing_block(PR)
+
+    assert result is not None
+    assert result.reason == "auto_merge_off"
+
+
+def test_standing_block_required_check_failed(fake: FakeGitHub) -> None:
+    fake.script(pr_state(statusCheckRollup=[check_run("test / unit", "FAILURE")]))
+    fake.failed = ["test / unit"]
+
+    result = pr_await.standing_block(PR)
+
+    assert result is not None
+    assert result.reason == "check_failed"
+    assert result.failed_checks == ("test / unit",)
+    assert fake.required_reads == 1
+
+
+def test_standing_block_non_required_failure_is_none(fake: FakeGitHub) -> None:
+    failing = [check_run("lint / optional", "FAILURE"), check_run("test / unit", n=2)]
+    fake.script(pr_state(statusCheckRollup=failing, mergeStateStatus="UNSTABLE"))
+    fake.failed = ["lint / optional"]
+
+    assert pr_await.standing_block(PR) is None
+    assert fake.required_reads == 1
+
+
+def test_standing_block_orphaned_check_from_one_read(fake: FakeGitHub) -> None:
+    fake.script(pr_state())
+    fake.orphans = ["test / unit"]
+
+    result = pr_await.standing_block(PR)
+
+    assert result is not None
+    assert result.reason == "orphaned_check"
+    assert result.orphaned_checks == ("test / unit",)
+    assert "GitHub is delayed" in result.detail
+    assert fake.sleeps == []
+
+
+def test_standing_block_unreadable_pr_raises(fake: FakeGitHub) -> None:
+    fake.script(pr_state(state="WEIRD"))
+
+    with pytest.raises(FinalizeWatchError, match="unknown state"):
+        pr_await.standing_block(PR)
 
 
 # --- configuration and read errors ------------------------------------------------------

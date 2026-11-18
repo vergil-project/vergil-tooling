@@ -94,6 +94,14 @@ class WorktreeStatus:
     # None for the finalize sweep, which neither needs nor pays for them.
     last_commit_ts: float | None = None
     last_modified_ts: float | None = None
+    # Why the worktree's open PR cannot merge as it stands, attached by
+    # vrg-repo-status (vergil-tooling#4678): one of pr_await.Reason, with its
+    # words in merge_detail. merge_error is set instead when the PR's merge
+    # state could not be read. All None for a PR that can still merge, or
+    # for a worktree with no open PR.
+    merge_reason: str | None = None
+    merge_detail: str | None = None
+    merge_error: str | None = None
 
     @property
     def removable(self) -> bool:
@@ -559,9 +567,13 @@ def gather_detached_status(
     vanished (issue #2634). The intended branch is recovered from the paused
     rebase's ``head-name`` metadata, falling back to the ``issue-<N>-<slug>``
     directory name, and the state is ``REBASING`` when a rebase is in progress
-    or ``DETACHED`` otherwise. A PR lookup is deliberately skipped: the point is
-    to *surface* the in-flight worktree with an actionable note, not to derive a
-    lifecycle it does not yet have.
+    or ``DETACHED`` otherwise: the local state, never a PR lifecycle.
+
+    The recovered branch's **open** PR is still looked up, so a submitted PR
+    whose branch is mid-rebase (pr-watch rebasing it onto a moved base) keeps
+    its PR number (vergil-tooling#4678); the lookup used to be skipped, which
+    showed such a PR as ``-``. A failed lookup is added to ``detail``, never
+    read as "no PR".
 
     Freshness timestamps mirror ``gather_worktree_status`` — gathered only when
     ``with_freshness`` is set (``vrg-repo-status``).
@@ -598,10 +610,20 @@ def gather_detached_status(
     else:
         detail = "detached HEAD — no branch checked out; check out a branch to resume work"
 
+    pr_number: int | None = None
+    if branch:
+        try:
+            open_pr = github.pr_for_branch(branch)
+        except subprocess.CalledProcessError as exc:
+            reason = (exc.stderr or failure_message(exc)).strip()
+            detail += f"; open-PR lookup for {branch} failed: {reason}"
+        else:
+            pr_number = int(open_pr["number"]) if open_pr is not None else None
+
     return WorktreeStatus(
         worktree=worktree,
         state=WorktreeState.REBASING if rebasing else WorktreeState.DETACHED,
-        pr_number=None,
+        pr_number=pr_number,
         ahead=ahead,
         dirty=dirty,
         detail=detail,
