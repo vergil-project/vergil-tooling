@@ -161,7 +161,8 @@ Where GitHub's permission model is too coarse to *prevent* an unwanted
 agent action (the documented gaps), the human-run tool at the
 chokepoint can *detect* it before the irreversible step and refuse to
 proceed. Each destructive operation thus becomes a sanity-check
-opportunity: the merge gate verifies a PR's provenance, a release gate
+opportunity: the submit and finalize gates verify a PR's provenance
+(see "Provenance checks under auto-merge"), a release gate
 could verify a release's, and so on. This is the architectural answer
 to gaps that cannot be closed server-side — and it complements CI
 gates, which check the *content* of a change, by adding host-side
@@ -204,11 +205,13 @@ were bypassed, whether hard gates caught the attempt, and whether
 any gaps were exploited. This is the ultimate safety net. Even when
 all hard gates are working, auditing confirms they are working and
 surfaces patterns that indicate drift or attack. Detection need not
-be purely retrospective: at a human-run chokepoint (such as merge), a
+be purely retrospective: at a human-run chokepoint (such as submit), a
 detection check can be promoted into a *synchronous gate* that runs
-before the irreversible operation and refuses to proceed — see
-`vrg-finalize-pr`'s pre-merge provenance check. This is how Layer 3
-closes specific gaps that Layer 2 cannot.
+before the irreversible operation and refuses to proceed — see the
+provenance checks in `vrg-submit-pr` and in `vrg-finalize-pr`'s watch
+phase ("Provenance checks under auto-merge"). This is how Layer 3
+closes specific gaps that Layer 2 cannot, within the windows that
+section names.
 
 ### Documented gaps
 
@@ -223,10 +226,11 @@ spec documents it explicitly. Known gaps:
   server-side the permission also permits PR creation, editing, and
   closing. Mitigation: the audit App holds `contents: read`, and
   merging a PR through the API requires `contents: write` — so the
-  audit identity cannot merge anything it creates, and
-  `vrg-finalize-pr`'s pre-merge provenance check detects and blocks
-  any out-of-role audit action on a PR before the human merges it (see
-  that section). This is the sharpest known hard-gate gap — and because audit is the identity we
+  audit identity cannot merge anything it creates, and the provenance
+  checks in `vrg-submit-pr` and `vrg-finalize-pr`'s watch phase detect
+  any out-of-role audit action on a PR within the windows they run in
+  (see "Provenance checks under auto-merge", which also records the
+  accepted gap outside those windows). This is the sharpest known hard-gate gap — and because audit is the identity we
   most want to run with minimal human attention, it warrants the most
   Mimir scrutiny. It is also a candidate for upstream infrastructure
   advocacy: the correct fix is for GitHub to expose finer-grained PR
@@ -237,6 +241,12 @@ spec documents it explicitly. Known gaps:
   identity-aware tool rejection. The hard gate is `pull_requests:
   read` on the user App, which causes the underlying `gh pr create`
   to fail server-side. This gap is fully covered by a hard gate.
+
+- **The provenance check does not watch a PR continuously.** It runs
+  at submit and while a `vrg-finalize-pr` run watches the PR, and is
+  not a required status check. An agent action outside those windows
+  is not caught before auto-merge lands the PR. This is an accepted
+  gap: see "Provenance checks under auto-merge".
 
 Additional gaps will be documented as they are discovered. Mimir
 testing is specifically designed to find and exploit undocumented
@@ -480,9 +490,10 @@ Agent                              Human (Chief Steward)
 4. Write .vergil/pr-template.yml
 5. Signal: "ready for PR"
                                    6. Review template, edit if needed
-                                   7. Run vrg-submit-pr (push + PR)
-                                   8. Review PR + CI results
-                                   9. Merge (vrg-finalize-pr)
+                                   7. Run vrg-submit-pr (push + PR
+                                      + auto-merge on)
+                                   8. vrg-finalize-pr watches the
+                                      merge, then settles develop
 ```
 
 The agent's boundary is step 5. Everything after that is a human
@@ -594,6 +605,13 @@ about subcommands or identity.)
 
 ## `vrg-finalize-pr` (Consolidates merge + cleanup, formerly `vrg-finalize-repo`)
 
+> **Updated (2026-11-17, vergil-project/.github#1218):** `vrg-finalize-pr`
+> no longer merges, and its pre-merge provenance stage is gone. The human's
+> `vrg-submit-pr` turns auto-merge on, and that is now how a PR merges.
+> The provenance check moved to the two points where a PR can still be
+> stopped: see "Provenance checks under auto-merge" below. The rest of this
+> section is the record of the earlier design.
+
 This is not a rename — it is a consolidation. Previously two separate
 human actions finished a PR: the human merged it by hand (on the web),
 then ran `vrg-finalize-repo` to clean up the branch and prune refs.
@@ -643,6 +661,78 @@ gap that GitHub's permission model cannot. It generalizes beyond
 audit — the check verifies that *no* agent identity performed an
 action its role forbids on the PR being merged.
 
+### Provenance checks under auto-merge
+
+Added 2026-11-17 (vergil-project/.github#1218; the design is
+`epics/1218-parallel-pr-merging/spec.md` in `vergil-project/.github`,
+§6.2, §6.3 and §6.7). A PR into `develop` now merges through
+auto-merge, which `vrg-submit-pr` turns on under the human's
+credentials. The chokepoint is no longer a merge step the human runs,
+so the provenance check (`lib/pr_provenance.py`) runs where a PR can
+still be stopped before auto-merge lands it.
+
+**The checks.**
+
+- **At submit.** `vrg-submit-pr` opens PRs against `develop` only. It
+  runs the check on each PR immediately before turning auto-merge on.
+  A violation leaves auto-merge off and fails that PR's submit.
+- **In `vrg-finalize-pr`'s watch phase.** `vrg-submit-pr` runs
+  finalize by default (`--no-finalize` opts out). Finalize watches and
+  settles the PRs; it never merges one, and never turns auto-merge on.
+  It runs the check on every listed PR when the watch starts, and again
+  each time it sees a new head on a PR.
+  - **An open PR with a violation:** finalize turns its auto-merge
+    off, confirms it by reading it back, and reports the PR
+    *failed: provenance*. This is the one case where the tooling turns
+    auto-merge off, and nothing turns it back on: finalize never
+    enables auto-merge.
+  - **A PR that already merged with a violation:** nothing can be
+    undone. Finalize reports it as merged with a provenance-violation
+    flag, the run exits 3 (or 4, if `develop` did not validate), and
+    no chained release runs.
+
+**The actions it reads.** The check reads the PR's author, and its
+reviews and issue timeline through paginated read-only API calls, in
+the human context. GitHub attributes each action to the identity that
+performed it. For an agent identity, a forbidden action
+is a violation:
+
+- creating, editing (renaming), closing, reopening or merging the PR,
+  for the user and audit identities;
+- approving the PR, for the user identity; an audit approval is an
+  advisory, surfaced but not blocked;
+- turning auto-merge on, for the user and audit identities, since
+  that is now how a PR merges. Every event name GitHub uses for an
+  enable counts: `auto_squash_enabled`, `auto_rebase_enabled`, and
+  `auto_merge_enabled`; any other `auto_<method>_enabled` name counts
+  too, so a renamed or new event fails closed.
+
+An agent turning auto-merge off is not a violation. Finalize reports
+any open PR with auto-merge off as *failed: auto-merge off* in any
+case, for the human to investigate. A failure to fetch the history
+fails the check; it never passes silently.
+
+**The windows it runs in.** At submit, once per PR, before auto-merge
+is on; then for as long as a `vrg-finalize-pr` run watches the PR, at
+the start and at each new head.
+
+**The human's override.** `--allow-provenance-violation` (on both
+`vrg-submit-pr` and `vrg-finalize-pr`) is a conscious override with
+the violation in front of the human. It covers only an open PR: at
+submit, auto-merge is turned on anyway, and in finalize the PR's
+auto-merge is left on. A PR that already merged with a violation
+always exits 3 (or 4) and blocks any chained release, with or without
+the flag.
+
+**The accepted gap.** The check is not a required status check, and
+it does not run continuously. It does not cover a PR between finalize
+runs, after a finalize run stops watching it, or one submitted with
+`--no-finalize` once submit returns. An agent action on such a PR is
+not caught before auto-merge lands it; the next finalize run that
+lists it reports it. This gap is accepted. It is to be revisited if
+any agent identity is given server-side rights to act on PRs beyond
+those this spec records under "GitHub App Configuration".
+
 ## `vrg-gh` Restriction Changes
 
 ### User Identity Subcommand Allowlist
@@ -665,7 +755,7 @@ action its role forbids on the PR being merged.
 | `pr review --approve` | **blocked** | Chief Steward or Officials operation |
 | `pr create` | **blocked** | Chief Steward operation via `vrg-submit-pr` |
 | `pr edit` | **blocked** | Chief Steward operation |
-| `pr merge` | **blocked** | Chief Steward operation via `vrg-finalize-pr` — no agent merges, period |
+| `pr merge` | **blocked** | Chief Steward operation: a PR merges through the auto-merge the human's `vrg-submit-pr` turns on — no agent merges or turns auto-merge on, period |
 | `pr close` | **blocked** | Chief Steward operation |
 | `run view` | allowed | Read operation |
 | `run list` | allowed | Read operation |
@@ -719,9 +809,9 @@ fixed list:
   access safe to grant here but not to the user.
 - **Human** — full, as with every other subcommand.
 
-This identity-aware allowance is what lets the pre-merge provenance
-check in `vrg-finalize-pr` query GitHub's review and timeline
-endpoints (see that section). The check runs in the human context,
+This identity-aware allowance is what lets the provenance checks in
+`vrg-submit-pr` and `vrg-finalize-pr` query GitHub's review and
+timeline endpoints (see "Provenance checks under auto-merge"). The check runs in the human context,
 where the API is available; the same endpoints are reachable from
 the audit context for review tooling without granting the user
 agent a write-capable escape hatch.
@@ -882,9 +972,9 @@ The slot is instantiated only when a concrete elevated-access use
 case appears, and its design must pair the elevated rights with
 heightened human involvement.
 
-**Programmatic PR review at the merge gate.** The pre-merge
-provenance check in `vrg-finalize-pr` establishes a host-side
-insertion point that runs before merge. Today the PR-quality strategy
+**Programmatic PR review at the merge gate.** The provenance check
+at submit, before `vrg-submit-pr` turns auto-merge on, establishes a
+host-side insertion point that runs before merge. Today the PR-quality strategy
 relies almost entirely on CI gates; the PR *review* process is not yet
 leveraged for substantive review of AI-authored changes. The same
 chokepoint is the natural home for future programmatic or agentic
