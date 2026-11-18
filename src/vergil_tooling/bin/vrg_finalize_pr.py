@@ -544,6 +544,10 @@ def _settle(
             repo_root=root,
             results_sink=results,
             log=log,
+            # A failed settle exits 1, 4 or 130, depending on which stage
+            # failed (see _settle_exit). One status given before any stage
+            # runs cannot say which, so the summary names none (#4712).
+            failure_exit=None,
         )
 
     # Surface — and, with --clean-dirty, guardedly clear — any merged/closed
