@@ -298,7 +298,11 @@ prepare worked in. In order, it:
    run commits as the human;
 7. hands the clone to the mechanized-PR building block, which closes an
    earlier run's open PR and deletes its branch, pushes the new branch,
-   opens the PR with squash auto-merge, and waits until it merges. When
+   opens the PR with squash auto-merge, and waits until it merges. A
+   `gh pr create` that returns an error is never retried blindly: the
+   open PR from the branch is adopted when its branch, base, title and
+   head commit match what was pushed, and any other open PR fails the
+   run, naming it. When
    GitHub refuses auto-merge because the PR can already merge, it
    merges the PR directly, with the same method and pinned to the
    pushed commit, and does not wait.
