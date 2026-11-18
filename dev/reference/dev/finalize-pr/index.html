@@ -18584,11 +18584,25 @@ names what replaced it:</p>
    Finalize never turns it back on: someone turned it off on purpose, or
    GitHub did, and a human looks first.</li>
 <li><strong>A required check failed:</strong> <em>failed: CI</em>, naming the check. A failed
-   check-run of a superseded workflow run does not count. When the base
-   branch's required checks cannot be read, every check counts as
-   required.</li>
+   or cancelled check-run of a superseded workflow run does not count (see
+   below). When the base branch's required checks cannot be read, every
+   check counts as required.</li>
+<li><strong>A required check was cancelled</strong> and no newer run of its workflow
+   replaced the cancelled run: <em>failed: cancelled</em>, naming the check. The
+   PR stays pending for two minutes first, in case a re-run starts.</li>
 <li><strong>A conflict</strong> with its base: <em>failed: conflict</em>.</li>
 </ol>
+<p><strong>A superseded run is not a failure.</strong> A push to an open PR starts a new
+CI run, and the workflow's <code>concurrency: cancel-in-progress</code> cancels the
+run in flight on the same head. GitHub keeps the cancelled run's
+check-runs on the PR, and until the new run's jobs start they are the only
+ones there. Finalize judges a failed or cancelled check by its workflow
+run: while a newer run of the same workflow, for the same event, is on the
+PR's head, the check is not a failure and the PR stays pending.
+<code>vrg-pr-await</code> and <code>vrg-repo-status</code> judge checks the same way.</p>
+<p>A PR that ended <em>failed: CI</em> or <em>failed: cancelled</em> is read again on every
+later poll while the watch goes on. If GitHub has merged it, it is reported
+as <em>merged</em>.</p>
 <p>A PR still pending when the batch deadline passes ends as <em>timed out</em>,
 and its auto-merge stays on, so it may still merge later. The deadline
 covers the whole watch: <code>$VRG_FINALIZE_DEADLINE</code> seconds, 7200 by default.
@@ -18838,6 +18852,10 @@ each unmerged PR with its reason and the next step:</p>
 <tr>
 <td><em>failed: CI</em>, <em>failed: conflict</em>, <em>failed: closed</em>, <em>timed out</em></td>
 <td>Hand it to an agent, then re-run <code>vrg-finalize-pr &lt;pr&gt;</code></td>
+</tr>
+<tr>
+<td><em>failed: cancelled</em></td>
+<td>Re-run its cancelled checks, then re-run <code>vrg-finalize-pr &lt;pr&gt;</code></td>
 </tr>
 <tr>
 <td><em>failed: auto-merge off</em>, <em>failed: provenance</em></td>
