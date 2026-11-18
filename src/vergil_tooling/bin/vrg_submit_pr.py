@@ -3,7 +3,8 @@
 Supports three modes:
 - **Template mode** (no args): reads the PR workflow state file
   (``.vergil/pr-workflow.json``); shows a summary, prompts for
-  confirmation, pushes the branch, and creates the PR.
+  confirmation, pushes the branch, and creates the PR. From the repo root,
+  ``--all``/``--select`` submit several ready worktrees at once (#1673).
 - **CLI argument mode** (``--issue``/``--summary``/``--title``): existing
   direct invocation for human emergency use.
 - **Named branch mode** (positional ``branches``): opens PRs for one or
@@ -20,10 +21,23 @@ Supports three modes:
   against the recorded ``head_sha`` and the PR is opened **without**
   pushing (``--head`` names the source branch) — the Mac-side of the
   cloud→Mac relay handoff, where the branch and its metadata already rode
-  GitHub. With a cascade flag (``--finalize``/``--release``/``--install``)
-  it also carries the branches through the cascade locally, using the same
-  batch semantics as the local worktree batch — finalize each PR, then a
-  single validation and **one** release (issue #2398).
+  GitHub.
+
+**One path** (epic vergil-project/.github#1218, spec §6.2). Every mode gates
+and previews its PRs, asks for one confirmation (the CLI emergency mode asks
+none), then hands the whole selection to :func:`_submit_all`. For each PR it
+re-checks a batch PR's rules, pushes the branch when the mode pushes, holds
+origin's tip to the head the PR must open at, opens the PR and records the
+submission, runs the provenance check, and turns auto-merge on, pinned to
+that head: the rebase method for a batch PR, squash otherwise. A PR whose
+submit fails is named in the final summary and the other PRs continue; a
+provenance violation leaves its auto-merge off unless
+``--allow-provenance-violation`` is given. Submit never rebases a branch:
+rebasing before handoff stays the agent's job.
+
+PRs are opened against ``develop`` only: a ``--base``, or a recorded base,
+naming any other branch is refused, since releases go through
+``vrg-release``.
 
 Every mode driven by a ``report-ready`` state (template, batch and named
 branch) opens the PR only at the ``head_sha`` the latest ``report-ready``
@@ -32,16 +46,15 @@ the checked-out HEAD of a local worktree must be that commit, a named
 branch reopened by ``vrg-pr-workflow unfreeze`` and not re-reported is
 refused, a local state and relay ref that disagree are refused, and
 origin's tip is held to the recorded head immediately before ``gh pr
-create``. The batch checks each worktree before its rebase onto the base,
-since the rebase rewrites the reported commits onto the new base.
+create``. Auto-merge is pinned to that same head (``expectedHeadOid``).
 
 A ``report-ready`` state may hand off a batch: 2 to 8 issues on one branch,
 one commit per issue (epic vergil-project/.github#1019). Every mode driven by
 such a state runs the per-issue refusals on every issue, writes one
 ``Closes`` line per issue, and re-checks the batch's hard rules and
-commit-per-issue invariant on the head the PR opens at (the rebased head in
-the serial batch), against a freshly fetched ``origin/<target>``, before any
-push or ``gh pr create``. The CLI emergency mode stays single-issue.
+commit-per-issue invariant on the head the PR opens at, against a freshly
+fetched ``origin/develop``, before any push or ``gh pr create``. The CLI
+emergency mode stays single-issue.
 
 The template and CLI modes push the branch using the human's host
 credentials before creating the PR. Because the human is the superset
@@ -54,25 +67,37 @@ already on origin.
 Agent identities are blocked — PR submission is a Chief Steward
 (human) operation.
 
-``--finalize`` chains straight into the ``vrg-finalize-pr``
-wait-and-merge flow after the PR is created (issue #1491) — for cases
-where the human has already decided to merge on green. The chain runs
-only after the PR exists, so a submit failure leaves no half-finalized
-state, and a finalize failure reports the created PR so the human can
-re-run ``vrg-finalize-pr`` alone.
+**Finalize by default** (spec §6.2). Once every PR in the selection has been
+tried, submit runs **one** ``vrg-finalize-pr <pr>,<pr>,…`` over the PRs whose
+submit succeeded: it watches them merge, then settles develop once. A PR
+whose submit failed is left out of that list and named in a summary printed
+after finalize's report. When no PR opened, finalize is not run at all.
+Finalize runs as a subprocess from the main worktree (not ``exec``), so
+control returns here for that summary. ``$VRG_FINALIZE_DEADLINE`` is checked
+before any PR opens, so a malformed value refuses the run with nothing done.
 
-``--release`` extends that one step further (issue #1634): it implies
-``--finalize`` and passes ``--release`` through, so a clean finalize
-cascades into ``vrg-release`` — the whole submit -> finalize -> release
-sequence from one command. ``--install`` extends it one link further still
-(issue #1643): it implies ``--release`` and passes ``--install`` through, so
-``vrg-release`` runs the consumer-refresh install commands rather than only
-printing them — submit -> finalize -> release -> install. ``vrg-release``
-installs by default (#1184), so ``--release`` alone runs it with
-``--no-install``. Each hop runs as a
-subprocess (not ``exec``) so control returns here for the final summary,
-which states how far the cascade got: submitted, submitted and finalized,
-submitted/finalized/released, or submitted/finalized/released/installed.
+- ``--release`` is passed to finalize, which chains into ``vrg-release`` only
+  on full success. It is dropped when any PR failed to submit, and the
+  summary says the release was skipped. ``vrg-release`` installs by default;
+  ``--no-install`` (which requires ``--release``) passes through to skip it.
+- ``--allow-provenance-violation`` is passed to finalize too. There it covers
+  only an open PR's auto-merge: a PR that merged with a violation still
+  blocks full success, so no release runs.
+- ``--no-finalize`` opens the PRs with auto-merge on and returns without
+  watching; it prints the ``vrg-finalize-pr`` command that would have
+  watched them. The PRs still merge on their own. It cannot be combined
+  with ``--release``.
+
+**Exit status.** Submit returns finalize's exit status (0 full success, 3
+not every PR merged, 4 develop did not validate, 5 the release failed), with
+two adjustments: when any PR failed to submit it returns at least 3, and a
+tool error from finalize (1, or any code finalize does not define) always
+wins. With ``--no-finalize``, or when no PR opened, a failed submit exits 3.
+A usage error, or a refusal before anything opened, exits 1.
+
+**Removed flags** are refused by name before any side effect: ``--finalize``
+(finalizing is the default) and ``--install`` (``--release`` installs by
+default).
 """
 
 from __future__ import annotations
@@ -83,15 +108,25 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import epics, git, github, identity_mode, worktrees
+from vergil_tooling.lib import (
+    auto_merge,
+    epics,
+    finalize_watch,
+    git,
+    github,
+    identity_mode,
+    pr_provenance,
+    worktrees,
+)
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES, normalize_linkage
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
-from vergil_tooling.lib.pr_workflow import batch, batch_rules, freeze, submission
+from vergil_tooling.lib.pr_workflow import batch_rules, freeze, submission
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
@@ -119,18 +154,19 @@ def main(argv: list[str] | None = None) -> int:
         print(_AGENT_REFUSAL, file=sys.stderr)
         return 1
 
-    # Capture the cascade intent before normalization mutates the flags — the
-    # relay path guard below needs to know what the caller actually passed.
-    cascade_requested = args.finalize or args.release or args.install
+    refusal = _flag_refusal(args)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 1
 
-    # --install extends the cascade one link past --release, which itself
-    # implies --finalize; normalize once (install ⇒ release ⇒ finalize) so
-    # every downstream branch (dry-run notes, chain, summary) sees the right
-    # flags (issues #1634, #1643).
-    if args.install:
-        args.release = True
-    if args.release:
-        args.finalize = True
+    # The finalize run's batch deadline is checked before any PR opens, so a
+    # malformed $VRG_FINALIZE_DEADLINE refuses the run with nothing done.
+    if not args.no_finalize:
+        try:
+            finalize_watch.deadline_secs()
+        except ValueError as exc:
+            print(f"vrg-submit-pr: {exc}; no PR was opened.", file=sys.stderr)
+            return 1
 
     # A release cascade on a repo that is not released is refused before any
     # push, PR or merge, so nothing changes (issue #4175). The check reads the
@@ -138,16 +174,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.release:
         refusal = gate.unreleased_refusal()
         if refusal is not None:
-            flag = "--install" if args.install else "--release"
-            print(f"vrg-submit-pr {flag}: {refusal}", file=sys.stderr)
+            print(f"vrg-submit-pr --release: {refusal}", file=sys.stderr)
             return 1
 
     if args.branches:
         # Relay path: branches identify the submit. It opens PRs worktree-free
-        # (from the branch's relayed ready-state), and — when a cascade flag is
-        # passed — carries them through finalize/release/install locally, exactly
-        # like the local worktree batch (issue #2398). It still rejects the
-        # worktree-selection and single-PR CLI flags, which name a different path.
+        # (from the branch's relayed ready-state), then finalizes them locally
+        # like every other mode. It still rejects the worktree-selection and
+        # single-PR CLI flags, which name a different path.
         if args.all_worktrees or args.select is not None:
             print(
                 "vrg-submit-pr: branch arguments select the submit directly and "
@@ -162,10 +196,6 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        if cascade_requested:
-            return _run_relay_cascade(
-                args.branches, args, release=args.release, install=args.install
-            )
         return _run_relay(args.branches, args)
 
     cli_fields = [args.issue, args.summary, args.title]
@@ -222,26 +252,43 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--notes", default="", help="Additional notes")
     parser.add_argument("--title", default=None, help="PR title")
     parser.add_argument("--dry-run", action="store_true", help="Print without executing")
-    parser.add_argument("--base", default=None, help="Override auto-detected target branch")
     parser.add_argument(
-        "--finalize",
+        "--base",
+        default=None,
+        help="Target branch. PRs are opened against develop only (the default); "
+        "any other branch is refused, since releases go through vrg-release.",
+    )
+    parser.add_argument(
+        "--allow-provenance-violation",
         action="store_true",
-        help="After creating the PR, chain straight into vrg-finalize-pr "
-        "(wait for checks, merge, post-merge cleanup)",
+        help="Turn auto-merge on even for a PR whose provenance check finds a "
+        "violation (a conscious human override); also passed to vrg-finalize-pr, "
+        "where it covers only an open PR: a PR that merged with a violation "
+        "still blocks the release.",
+    )
+    parser.add_argument(
+        "--no-finalize",
+        action="store_true",
+        help="Open the PRs with auto-merge on and return without watching them; "
+        "prints the vrg-finalize-pr command that would have. By default one "
+        "vrg-finalize-pr run watches every opened PR, then settles develop once.",
     )
     parser.add_argument(
         "--release",
         action="store_true",
-        help="After creating the PR, run the full cascade: finalize (implies "
-        "--finalize) and then vrg-release",
+        help="Pass --release to vrg-finalize-pr, which chains into vrg-release "
+        "(installing by default) only on full success. Dropped when any PR "
+        "failed to submit; not allowed with --no-finalize.",
     )
     parser.add_argument(
-        "--install",
+        "--no-install",
         action="store_true",
-        help="Run the full cascade through the install step: implies --release "
-        "(hence --finalize) and passes --install through so vrg-release runs the "
-        "consumer-refresh install commands (issue #1643)",
+        help="With --release, run vrg-release --no-install.",
     )
+    # Removed flags. Kept hidden so main can refuse each by name, naming the
+    # new default, rather than argparse rejecting it as unknown (spec §6.10).
+    parser.add_argument("--finalize", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--all",
         dest="all_worktrees",
@@ -258,24 +305,61 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _target_branch(base_override: str | None, oracle_base: str | None = None) -> str:
-    """Resolve the PR's target branch.
+FINALIZE_REMOVED = (
+    "vrg-submit-pr: --finalize was removed; finalizing is now the default "
+    "(use --no-finalize to open the PRs without watching them)"
+)
+INSTALL_REMOVED = (
+    "vrg-submit-pr: --install was removed; --release now installs by default "
+    "(add --no-install to skip the install)"
+)
 
-    Precedence: an explicit ``--base`` always wins; otherwise the base the
-    oracle recorded (``oracle_base``, ``origin/`` stripped) is honored; failing
-    that, default to ``develop``.
+
+def _flag_refusal(args: argparse.Namespace) -> str | None:
+    """The refusal for a removed flag or a contradictory set of flags, or ``None``.
+
+    Checked before any side effect, so a caller still passing a removed flag
+    is told what replaced it rather than having it silently accepted (spec
+    §6.10).
+    """
+    if args.finalize:
+        return FINALIZE_REMOVED
+    if args.install:
+        return INSTALL_REMOVED
+    if args.release and args.no_finalize:
+        return (
+            "vrg-submit-pr: --release cannot be combined with --no-finalize; "
+            "the release runs only after finalize's full success"
+        )
+    if args.no_install and not args.release:
+        return "vrg-submit-pr: --no-install requires --release"
+    return None
+
+
+_DEVELOP = "develop"
+
+_BASE_REFUSAL = (
+    "vrg-submit-pr: PRs are opened against develop only; releases go through vrg-release"
+)
+
+
+def _target_branch(base_override: str | None, oracle_base: str | None = None) -> str:
+    """Resolve the PR's target branch, which is always ``develop``.
+
+    An explicit ``--base`` (*base_override*) or the base the oracle recorded
+    (*oracle_base*, ``origin/`` stripped) naming any other branch is refused
+    (exit 1) before anything is pushed or opened (spec §6.2), each checked on
+    its own, so ``--base develop`` cannot open a PR whose ready-state
+    recorded another base. Release PRs are opened by ``vrg-release``, never
+    this path.
 
     There is deliberately no branch-name inference here. The legacy
-    ``release/`` → ``main`` special-case predated ``vrg-submit-pr`` becoming a
-    human-only command and silently retargeted PRs (issue #1609); release→main
-    PRs are created by the release tooling via ``github.create_pr``, never this
-    path. A genuine manual release PR uses an explicit ``--base main``.
+    ``release/`` → ``main`` special-case silently retargeted PRs (issue #1609).
     """
-    if base_override:
-        return base_override
-    if oracle_base:
-        return oracle_base.removeprefix("origin/")
-    return "develop"
+    for named in (base_override, oracle_base):
+        if named and named.removeprefix("origin/") != _DEVELOP:
+            raise SystemExit(_BASE_REFUSAL)
+    return _DEVELOP
 
 
 def _push_branch(branch: str) -> None:
@@ -313,78 +397,64 @@ def _create_pr(*, target_branch: str, title: str, pr_body: str, head: str | None
     return pr_url
 
 
-def _chain_finalize(pr_url: str, *, release: bool = False, install: bool = False) -> int:
-    """Hand off to ``vrg-finalize-pr`` right after PR creation (issue #1491).
+# vrg-finalize-pr's exit codes (spec §6.3), the ones submit adjusts. Any other
+# code from finalize (1, a tool or usage error, included) is passed through
+# unchanged: a tool error always wins.
+EXIT_OK = 0
+EXIT_NOT_ALL_MERGED = 3
+_FINALIZE_OUTCOMES = frozenset({EXIT_OK, EXIT_NOT_ALL_MERGED, 4, 5})
 
-    Equivalent to running ``vrg-finalize-pr <pr-url>`` by hand: same
-    merge-strategy default, same post-merge cleanup. With *release*, passes
-    ``--release`` through so a clean finalize cascades into ``vrg-release``
-    (issue #1634); with *install*, also passes ``--install`` so the cascade
-    runs vrg-release's consumer-refresh install step (issue #1643). Runs as a
-    subprocess from the main worktree root because vrg-finalize-pr refuses to
-    run from a secondary worktree (it removes worktrees during cleanup) and
-    template mode chdir'd into one. The child inherits the TTY so its live
-    progress display and prompts behave exactly as a manual run.
 
-    A failure here never un-creates the PR — report the PR clearly so
-    the human can re-run the finalize (or the cascade) alone.
+def _finalize_cmd(opened: list[str], args: argparse.Namespace, *, release: bool) -> list[str]:
+    """The one ``vrg-finalize-pr`` command over every opened PR.
+
+    *release* is whether ``--release`` (and, with it, ``--no-install``) is
+    passed: the caller drops it when any PR failed to submit.
     """
-    main_root = git.main_worktree_root()
-    cmd: tuple[str, ...] = ("vrg-finalize-pr", pr_url)
+    cmd = ["vrg-finalize-pr", ",".join(opened)]
     if release:
-        cmd = (*cmd, "--release")
-    if install:
-        cmd = (*cmd, "--install")
-    stage = "install" if install else "release" if release else "finalize"
-    print()
-    print(f"--{stage}: handing off to {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=main_root, check=False)  # noqa: S603
-    if result.returncode != 0:
-        flags = f"{' --release' if release else ''}{' --install' if install else ''}"
-        rerun = f"vrg-finalize-pr {pr_url}{flags}"
-        print(
-            f"vrg-submit-pr: cascade failed (exit {result.returncode}); "
-            "the PR was created and is unaffected:\n"
-            f"  {pr_url}\n"
-            f"  Re-run the rest of the cascade alone with: {rerun}",
-            file=sys.stderr,
-        )
-        return result.returncode
-    return 0
+        cmd.append("--release")
+        if args.no_install:
+            cmd.append("--no-install")
+    if args.allow_provenance_violation:
+        cmd.append("--allow-provenance-violation")
+    return cmd
 
 
-def _print_cascade_summary(pr_url: str, *, released: bool, installed: bool) -> None:
-    """Final summary owned by vrg-submit-pr stating how far the cascade got.
+def _chain_finalize(cmd: list[str]) -> int:
+    """Run *cmd*, the one ``vrg-finalize-pr`` over the opened PRs, and return its exit code.
 
-    Reached only after a successful chain, so it always reports completed
-    work (issue #1634, extended for --install in issue #1643). The
-    submitted-only outcome is reported separately by the pr-watch one-liner.
+    Runs as a subprocess from the main worktree root, because vrg-finalize-pr
+    refuses to run from a secondary worktree (it removes worktrees during
+    cleanup) and template mode chdir'd into one. The child inherits the TTY,
+    so its live progress display behaves exactly as a manual run.
     """
     print()
-    if installed:
-        print(f"Done: PR submitted, finalized, released, and installed.\n  {pr_url}")
-    elif released:
-        print(f"Done: PR submitted, finalized, and released.\n  {pr_url}")
-    else:
-        print(f"Done: PR submitted and finalized.\n  {pr_url}")
+    print(f"Finalizing: {shlex.join(cmd)}")
+    result = subprocess.run(cmd, cwd=git.main_worktree_root(), check=False)  # noqa: S603
+    return result.returncode
 
 
-def _release_cmd(install: bool) -> tuple[str, ...]:
-    """The ``vrg-release`` command a batch cascade runs, the one source for it.
+def _submit_exit(finalize_rc: int, *, any_failed: bool) -> int:
+    """Submit's exit code from finalize's and whether any PR failed to submit (spec §6.2).
 
-    ``vrg-release`` installs by default (#1184), so ``--install`` runs it
-    plain and ``--release`` alone passes ``--no-install``. Every message that
-    names the command prints this same tuple, so it cannot drift from what
-    runs.
+    A code finalize does not define as an outcome (1, a tool error, above
+    all) always wins. Otherwise a failed submit makes it at least 3 ("not
+    every PR merged"), and a higher code from finalize (4 or 5) wins.
     """
-    return ("vrg-release",) if install else ("vrg-release", "--no-install")
+    if finalize_rc not in _FINALIZE_OUTCOMES:
+        return finalize_rc
+    if any_failed:
+        return max(finalize_rc, EXIT_NOT_ALL_MERGED)
+    return finalize_rc
 
 
-def _dry_run_chain_note(*, release: bool, install: bool) -> str:
-    """The ``[dry-run]`` line naming the chain command that would run."""
-    flags = f"{' --release' if release else ''}{' --install' if install else ''}"
-    cmd = f"vrg-finalize-pr{flags} <pr-url>"
-    return f"\n[dry-run] would chain into: {cmd}"
+def _dry_run_plan(args: argparse.Namespace) -> str:
+    """The ``[dry-run]`` line naming what would follow the submit."""
+    if args.no_finalize:
+        return "\n[dry-run] --no-finalize: the PRs would be opened with auto-merge on, not watched"
+    cmd = " ".join(_finalize_cmd(["<pr>,…"], args, release=args.release))
+    return f"\n[dry-run] would finalize every opened PR in one run: {cmd}"
 
 
 def _print_pr_watch(pr_url: str) -> None:
@@ -397,6 +467,231 @@ def _print_pr_watch(pr_url: str) -> None:
     print("Next — monitor the PR through CI:")
     print()
     print(f"    /vergil:pr-watch {pr_url}")
+
+
+@dataclass(frozen=True)
+class SubmitSummary:
+    """What one submit run did (epic vergil-project/.github#1218, spec §6.2).
+
+    *opened* holds the URL of every PR opened with auto-merge on, or merged
+    at once because it could already merge. *failed* holds a ``(branch or
+    PR, reason)`` pair for every PR whose submit failed: the branch when it
+    failed before the PR opened, the PR's URL once it had.
+    """
+
+    opened: list[str]
+    failed: list[tuple[str, str]]
+
+
+@dataclass(frozen=True)
+class _Submission:
+    """One gated, previewed PR for :func:`_submit_all` to open.
+
+    *expected_head* is the commit the PR must open at; auto-merge is pinned to
+    it too. *push* says whether the branch is pushed first (the relay path's
+    branch is already on origin). *record_in* is the worktree whose
+    ``pr-workflow.json`` records the submission, ``None`` when there is none.
+    """
+
+    branch: str
+    base: str
+    title: str
+    pr_body: str
+    issue_refs: list[str]
+    expected_head: str
+    push: bool
+    record_in: Path | None
+
+
+class _SubmitFailedError(Exception):
+    """One PR's submit failed in a way :func:`_submit_all` reports and moves past."""
+
+
+# The failures that end one PR's submit without stopping the others: a refusal
+# from this module's checks (SystemExit with its message), a failed git or gh
+# call, a malformed GitHub payload, and auto-merge that could not be turned on.
+_PER_PR_ERRORS = (
+    SystemExit,
+    subprocess.CalledProcessError,
+    ValueError,
+    auto_merge.AutoMergeError,
+    _SubmitFailedError,
+)
+
+
+def _failure_reason(exc: BaseException) -> str:
+    """The reason a per-PR failure is reported with."""
+    if isinstance(exc, SystemExit):
+        return str(exc.code).removeprefix("vrg-submit-pr: ")
+    return error_text(exc)
+
+
+def _merge_method(issue_refs: list[str]) -> auto_merge.MergeMethod:
+    """Rebase for a batch PR (one commit per issue), squash otherwise (spec §6.2)."""
+    return "REBASE" if batch_rules.is_batch(issue_refs) else "SQUASH"
+
+
+def _open_one(sub: _Submission) -> str:
+    """Open *sub*'s PR at its expected head, record the submission, return the URL.
+
+    A batch is re-checked at the head first, before anything is pushed; then
+    the branch is pushed (when *sub.push*), origin's tip is held to the head,
+    and the PR is opened. The submission is recorded as soon as the PR
+    exists, so a later step that fails leaves the worktree marked with the
+    PR it opened rather than ready for a second one.
+    """
+    _recheck_batch(
+        sub.issue_refs, branch=sub.branch, target=sub.base, head=sub.expected_head, push=sub.push
+    )
+    if sub.push:
+        print(f"Ensuring branch '{sub.branch}' is pushed to origin...")
+        _push_branch(sub.branch)
+    _require_origin_head(sub.branch, sub.expected_head)
+    print(f"Creating PR for {sub.branch}...")
+    pr_url = _create_pr(
+        target_branch=sub.base, title=sub.title, pr_body=sub.pr_body, head=sub.branch
+    )
+    print(f"PR created: {pr_url}")
+    if sub.record_in is not None:
+        submission.record_submission(sub.record_in, pr_url=pr_url)
+    return pr_url
+
+
+def _check_provenance(pr_url: str, *, allow_violation: bool) -> None:
+    """Run the provenance check on *pr_url* before auto-merge is turned on.
+
+    Advisories are printed. A violation raises :class:`_SubmitFailedError`,
+    so auto-merge stays off, unless *allow_violation* (the human's conscious
+    override). A check that cannot run raises too, as
+    :func:`pr_provenance.check_pr` does, and auto-merge stays off.
+    """
+    result = pr_provenance.check_pr(pr_url)
+    for adv in result.advisories:
+        print(
+            f"  ADVISORY: {pr_url}: {adv.login} ({adv.role.value}) performed "
+            f"'{adv.action}' (permitted but advisory)",
+            file=sys.stderr,
+        )
+    if not result.violations:
+        return
+    found = ", ".join(f"{v.login} ({v.role.value}): {v.action}" for v in result.violations)
+    if not allow_violation:
+        msg = (
+            f"provenance violations found ({found}); auto-merge was left off. "
+            "Re-run with --allow-provenance-violation to override consciously."
+        )
+        raise _SubmitFailedError(msg)
+    print(
+        f"  {pr_url}: overriding provenance violations ({found}) per --allow-provenance-violation.",
+        file=sys.stderr,
+    )
+
+
+def _submit_all(
+    selection: list[_Submission], *, allow_provenance_violation: bool = False
+) -> SubmitSummary:
+    """Open every PR in *selection* and turn its auto-merge on: the one submit path.
+
+    Every mode reaches this loop with its PRs already gated (ready state,
+    freeze, recorded head) and confirmed. For each PR: open it
+    (:func:`_open_one`), run the provenance check, then turn auto-merge on
+    pinned to the expected head, with the rebase method for a batch PR and
+    squash otherwise. GitHub refuses auto-merge on a PR that can already
+    merge; :func:`auto_merge.enable_auto_merge` then merges it directly.
+
+    A PR whose submit fails is named in the summary with its reason and the
+    loop moves on to the next PR: nothing here is fail-fast, since one PR
+    no longer waits on another.
+    """
+    opened: list[str] = []
+    failed: list[tuple[str, str]] = []
+    for sub in selection:
+        try:
+            pr_url = _open_one(sub)
+        except _PER_PR_ERRORS as exc:
+            reason = _failure_reason(exc)
+            print(f"vrg-submit-pr: {sub.branch}: no PR opened: {reason}", file=sys.stderr)
+            failed.append((sub.branch, reason))
+            continue
+        try:
+            _check_provenance(pr_url, allow_violation=allow_provenance_violation)
+            method = _merge_method(sub.issue_refs)
+            result = auto_merge.enable_auto_merge(pr_url, head=sub.expected_head, method=method)
+        except _PER_PR_ERRORS as exc:
+            reason = _failure_reason(exc)
+            print(f"vrg-submit-pr: {pr_url}: submit failed: {reason}", file=sys.stderr)
+            failed.append((pr_url, reason))
+            continue
+        if result.merged_now:
+            print(f"{pr_url}: merged directly ({method.lower()}); it could already merge.")
+        else:
+            print(
+                f"{pr_url}: auto-merge on ({method.lower()}, pinned to {sub.expected_head[:12]})."
+            )
+        opened.append(pr_url)
+    return SubmitSummary(opened=opened, failed=failed)
+
+
+def _print_failed(summary: SubmitSummary) -> None:
+    """Name every PR whose submit failed, with its reason."""
+    if not summary.failed:
+        return
+    print()
+    print("Failed to submit:", file=sys.stderr)
+    for label, reason in summary.failed:
+        print(f"  {label} — {reason}", file=sys.stderr)
+
+
+def _confirm_selection(selection: list[_Submission], *, assume_yes: bool) -> bool:
+    """The one confirmation for a selection: one prompt for one PR or many."""
+    question = (
+        "\nSubmit this PR?" if len(selection) == 1 else f"\nSubmit these {len(selection)} PRs?"
+    )
+    if confirm(question, assume_yes=assume_yes):
+        return True
+    print("Aborted.")
+    return False
+
+
+def _finish(summary: SubmitSummary, args: argparse.Namespace) -> int:
+    """Finalize the opened PRs in one run, report the failed submits; return the exit code.
+
+    With ``--no-finalize``, each opened PR gets its pr-watch line and the
+    ``vrg-finalize-pr`` command that would have watched them is printed.
+    Otherwise one ``vrg-finalize-pr`` runs over every opened PR, with
+    ``--release`` dropped when any PR failed to submit; when none opened, it
+    is not run at all. The failed submits are named after finalize's report.
+    """
+    if args.no_finalize:
+        for pr_url in summary.opened:
+            print(f"Done. PR URL: {pr_url}")
+            _print_pr_watch(pr_url)
+        if summary.opened:
+            watch_cmd = shlex.join(_finalize_cmd(summary.opened, args, release=False))
+            print(f"\nNot watching. To finalize these PRs: {watch_cmd}")
+        _print_failed(summary)
+        return EXIT_NOT_ALL_MERGED if summary.failed else EXIT_OK
+    if not summary.opened:
+        _print_failed(summary)
+        print("\nNo PR opened, so nothing was finalized.", file=sys.stderr)
+        return EXIT_NOT_ALL_MERGED
+    release = args.release and not summary.failed
+    cmd = _finalize_cmd(summary.opened, args, release=release)
+    rc = _chain_finalize(cmd)
+    _print_failed(summary)
+    if args.release and summary.failed:
+        print(f"Release skipped: {len(summary.failed)} PR(s) failed to submit.", file=sys.stderr)
+    if rc not in _FINALIZE_OUTCOMES:
+        print(
+            f"vrg-submit-pr: vrg-finalize-pr exited {rc}; the PRs are open with "
+            "auto-merge on and are unaffected.\n"
+            f"  Re-run the finalize alone with: {shlex.join(cmd)}",
+            file=sys.stderr,
+        )
+    elif rc == EXIT_OK and not summary.failed:
+        done = "submitted, finalized and released" if release else "submitted and finalized"
+        print(f"\nDone: {len(summary.opened)} PR(s) {done}.")
+    return _submit_exit(rc, any_failed=bool(summary.failed))
 
 
 def _reject_if_cross_repo(issue_ref: str) -> None:
@@ -620,25 +915,25 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
         print(f"=== PR Title ===\n{args.title}\n")
         print(f"=== Target Branch ===\n{target}\n")
         print(f"=== PR Body ===\n{pr_body}")
-        if args.finalize:
-            print(_dry_run_chain_note(release=args.release, install=args.install))
+        print(_dry_run_plan(args))
         return 0
 
-    print(f"Pushing branch '{branch}' to origin...")
-    _push_branch(branch)
-
-    print("Creating PR...")
-    pr_url = _create_pr(target_branch=target, title=args.title, pr_body=pr_body)
-    print(f"PR created: {pr_url}")
-    if args.finalize:
-        rc = _chain_finalize(pr_url, release=args.release, install=args.install)
-        if rc != 0:
-            return rc
-        _print_cascade_summary(pr_url, released=args.release, installed=args.install)
-        return 0
-    print(f"Done. PR URL: {pr_url}")
-    _print_pr_watch(pr_url)
-    return 0
+    # No ready-state records a head here, so the PR (and its auto-merge) is
+    # pinned to the commit the push publishes: the local HEAD.
+    selection = [
+        _Submission(
+            branch=branch,
+            base=target,
+            title=args.title,
+            pr_body=pr_body,
+            issue_refs=[issue_ref],
+            expected_head=git.commit_sha("HEAD"),
+            push=True,
+            record_in=None,
+        )
+    ]
+    summary = _submit_all(selection, allow_provenance_violation=args.allow_provenance_violation)
+    return _finish(summary, args)
 
 
 def _ready_worktrees(root: Path) -> list[tuple[worktrees.Worktree, dict[str, str]]]:
@@ -730,97 +1025,35 @@ def _select_batch_worktrees(root: Path, args: argparse.Namespace) -> list[worktr
     )
 
 
-def _run_submit_batch(
-    selected: list[worktrees.Worktree],
-    *,
-    base: str,
-    finalize: bool,
-    release: bool,
-    install: bool,
-    assume_yes: bool,
-) -> int:
-    """Submit (and optionally finalize) *selected* worktrees as a serial batch.
+def _run_submit_batch(selected: list[worktrees.Worktree], args: argparse.Namespace) -> int:
+    """Submit *selected* worktrees through the one submit path (#1673, spec §6.2).
 
-    Per item: rebase the branch on the latest *base* (the zero-waste-CI step),
-    chdir in, submit, chdir back, and — when *finalize* — shell out to
-    ``vrg-finalize-pr <url> --skip-post-checks``. On full success, one
-    end-of-batch post-checks (validation + CD check) and a single release run
-    if requested (#1673).
-
-    A branch carrying merge commits is refused rather than rebased (a rebase
-    would drop them), and the summary reports each item as Submitted — or
-    Merged only when *finalize* actually merged it (#3166).
+    Each worktree is held to the head its latest ``report-ready`` recorded
+    (issue #3815) and previewed; then one confirmation covers the whole
+    selection, and :func:`_submit_all` opens every PR with auto-merge on.
+    No branch is rebased: the PR opens at exactly the reported head.
     """
-    main_root = git.main_worktree_root()
-
-    def _process(wt: worktrees.Worktree) -> None:
-        # Hold the worktree to the head report-ready recorded *before* the
-        # rebase rewrites it: the rebase replays exactly the reported commits
-        # onto the new base, so checking afterwards could not tell a reported
-        # branch from one that moved after report-ready (issue #3815).
-        try:
-            _require_reported_head(wt)
-        except SystemExit as exc:
-            raise batch.BatchAbortError(str(exc.code)) from exc
-        try:
-            worktrees.rebase_onto(wt, base)
-        except worktrees.MergeCommitsError as exc:
-            raise batch.BatchAbortError(f"refusing to rebase: {exc}") from exc
-        except subprocess.CalledProcessError as exc:
-            msg = f"rebase onto origin/{base} failed: {error_text(exc)}"
-            raise batch.BatchAbortError(msg) from exc
-        os.chdir(wt.path)
-        try:
-            pr_url = _submit_one(wt.path, base_override=base, assume_yes=True)
-        finally:
-            os.chdir(main_root)
-        if finalize:
-            result = subprocess.run(  # noqa: S603
-                ("vrg-finalize-pr", pr_url, "--skip-post-checks"),  # noqa: S607
-                cwd=main_root,
-                check=False,
+    selection: list[_Submission] = []
+    for wt in selected:
+        _require_reported_head(wt)
+        fields = submission.read_pr_fields(wt.path)
+        selection.append(
+            _prepare(
+                wt.branch,
+                _target_branch(args.base, fields.get("base")),
+                fields,
+                push=True,
+                expected_head=fields.get("head_sha", ""),
+                record_in=wt.path,
             )
-            if result.returncode != 0:
-                raise batch.BatchAbortError(
-                    f"vrg-finalize-pr {pr_url} --skip-post-checks exited {result.returncode}"
-                )
-
-    def _release() -> None:
-        cmd = _release_cmd(install)
-        result = subprocess.run(cmd, cwd=main_root, check=False)  # noqa: S603,S607
-        if result.returncode != 0:
-            raise batch.BatchAbortError(f"{shlex.join(cmd)} exited {result.returncode}")
-
-    post_steps: list[batch.PostStep] = []
-    if finalize:
-        post_steps.append(batch.finalize_post_checks_step(main_root))
-        if release:
-            post_steps.append(batch.PostStep("release", _release))
-
-    plan = [
-        f"rebase + submit {wt.path.name}" + (" + finalize" if finalize else "") for wt in selected
-    ]
-    if finalize:
-        plan.append(batch.POST_CHECKS_PLAN_LINE + (", then release" if release else ""))
-
-    report = batch.run_batch(
-        selected,
-        _process,
-        # Label the batch summary by the full branch name, not the worktree
-        # directory name. The directory name can be a bare slug that hides the
-        # issue number (e.g. `authz-apply-tag`), making a correct merge look
-        # unattributable; the branch (`feature/<N>-<slug>`) is unambiguous and
-        # round-trippable back to the issue (issue #2550).
-        label=lambda wt: wt.branch,
-        plan=plan,
-        assume_yes=assume_yes,
-        # Report what each item actually did: without --finalize the batch
-        # only opens PRs, so nothing may be labelled merged (issue #3166).
-        completed=batch.ItemOutcome.MERGED if finalize else batch.ItemOutcome.SUBMITTED,
-        post_steps=post_steps,
-    )
-    print(batch.format_report(report))
-    return 0 if report.all_completed and report.post_failure is None else 1
+        )
+    if args.dry_run:
+        print(_dry_run_plan(args))
+        return 0
+    if not _confirm_selection(selection, assume_yes=args.yes):
+        return 1
+    summary = _submit_all(selection, allow_provenance_violation=args.allow_provenance_violation)
+    return _finish(summary, args)
 
 
 def _require_reported_head(wt: worktrees.Worktree) -> None:
@@ -834,73 +1067,26 @@ def _require_reported_head(wt: worktrees.Worktree) -> None:
     _require_local_head(wt.branch, fields.get("head_sha", ""), worktree=wt.path)
 
 
-def _push_create_record(
-    *,
-    worktree_root: Path,
-    branch: str,
-    target: str,
-    title: str,
-    pr_body: str,
-    expected_head: str,
-    issue_refs: list[str],
-) -> str:
-    """Push the branch, check origin holds *expected_head*, create the PR,
-    record submission, return the URL.
-
-    The single-PR template mode's submit tail. A batch (*issue_refs* of more
-    than one) is re-checked at *expected_head* first, before anything is
-    pushed. Pushes with the human's host credentials (the superset of any
-    agent's rights) so a branch touching ``.github/workflows/`` still pushes,
-    then refuses to open the PR unless origin's tip is the recorded head
-    (issue #3815).
-    """
-    _recheck_batch(issue_refs, branch=branch, target=target, head=expected_head, push=True)
-    print(f"Ensuring branch '{branch}' is pushed to origin...")
-    _push_branch(branch)
-    _require_origin_head(branch, expected_head)
-    print("Creating PR...")
-    pr_url = _create_pr(target_branch=target, title=title, pr_body=pr_body)
-    submission.record_submission(worktree_root, pr_url=pr_url)
-    print(f"PR created: {pr_url}")
-    return pr_url
-
-
-def _open_pr(
+def _prepare(
     branch: str,
     base: str,
     metadata: dict[str, str],
     *,
     push: bool,
     expected_head: str,
-    dry_run: bool = False,
-    assume_yes: bool = False,
-) -> str | None:
-    """Shared PR-open core: run the standards/provenance guards on the issue,
-    resolve the linkage, build the body, optionally push the branch, and open
-    the PR against *base*. Returns the PR URL (``None`` on a dry run).
+    record_in: Path | None,
+) -> _Submission:
+    """Gate and preview one PR from its ready-state *metadata*; return its submission.
 
-    This is the seam both the local worktree batch and the worktree-free relay
-    path build on. It takes *branch* / *base* / *metadata* as given — it never
-    reads ``git.current_branch()`` nor looks a worktree up — so the relay path
-    can drive it for a branch that is not checked out anywhere locally. *push*
-    is the one behavioral fork: the local path pushes the branch first
-    (``push=True``); the relay path skips it (``push=False``) because the branch
-    is already on origin, and passes ``--head`` so ``gh`` opens the PR for the
-    right branch from outside its worktree.
+    Runs the standards guards on every issue (``issues``, comma-joined in
+    order, is required), resolves each linkage, builds the body and prints
+    the preview. It takes *branch* / *base* / *metadata* as given — it never
+    reads ``git.current_branch()`` nor looks a worktree up — so the relay
+    path can drive it for a branch that is not checked out anywhere locally.
+    Nothing is pushed or opened here: :func:`_submit_all` does that once the
+    selection is confirmed.
 
-    *expected_head* is the commit the PR must open at. Immediately before
-    ``gh pr create`` (after any push and after the confirm prompt) origin's tip
-    is held to it, since the PR opens at whatever origin holds: a mismatch is
-    refused, never opened (issue #3815).
-
-    *metadata* must carry ``issues`` (every issue, comma-joined in order); the
-    guards run on each and the body gets one linkage line per issue. A batch
-    is re-checked (:func:`_recheck_batch`) at *expected_head* after the
-    confirm and before any push, so the head the PR opens at is the head
-    checked: in the serial batch mode that is the rebased head.
-
-    Raises ``SystemExit`` on a forbidden linkage, a declined confirm, a batch
-    that fails its re-check, or an origin tip other than *expected_head*.
+    Raises ``SystemExit`` on a forbidden linkage or a refused issue.
     """
     issue_refs = _ready_issue_refs(metadata)
     try:
@@ -916,53 +1102,16 @@ def _open_pr(
     print(f"=== Submitting {_describe_issues(issue_refs)}: {metadata['title']} ===")
     print(f"    base {base}, branch {branch}")
     print(f"\n=== Body Preview ===\n{pr_body}")
-    if dry_run:
-        return None
-    if not confirm("\nSubmit this PR?", assume_yes=assume_yes):
-        raise SystemExit("vrg-submit-pr: submission declined at the per-PR confirm")
-    _recheck_batch(issue_refs, branch=branch, target=base, head=expected_head, push=push)
-    if push:
-        print(f"Ensuring branch '{branch}' is pushed to origin...")
-        _push_branch(branch)
-    _require_origin_head(branch, expected_head)
-    print("Creating PR...")
-    pr_url = _create_pr(target_branch=base, title=metadata["title"], pr_body=pr_body, head=branch)
-    print(f"PR created: {pr_url}")
-    return pr_url
-
-
-def _submit_one(worktree_root: Path, *, base_override: str | None, assume_yes: bool) -> str:
-    """Read the worktree's PR fields, push, create the PR, record it, return URL.
-
-    Self-contained submit for one worktree, used by the batch orchestrator. The
-    push/create/guard flow is the shared :func:`_open_pr` core (``push=True``);
-    this wrapper adds the worktree-specific parts — reading the fields and
-    recording the submission on the local state file. Propagates
-    ``AlreadySubmittedError`` / ``FileNotFoundError`` / ``WorkflowError`` from the
-    field reader and raises ``SystemExit`` on a forbidden linkage or a declined
-    confirm. The per-PR confirm is pre-answered when *assume_yes* — the batch
-    path passes True so the single up-front batch confirm is the only gate
-    (issue #1673).
-
-    The batch has already held the worktree to its recorded head and rebased
-    it onto the base, so the head the PR must open at is the rebased local
-    HEAD this call pushes: :func:`_open_pr` refuses if origin does not hold it.
-    """
-    fields = submission.read_pr_fields(worktree_root)
-    branch = git.current_branch()
-    target = _target_branch(base_override, fields.get("base"))
-    pr_url = _open_pr(
-        branch,
-        target,
-        fields,
-        push=True,
-        expected_head=git.commit_sha("HEAD"),
-        assume_yes=assume_yes,
+    return _Submission(
+        branch=branch,
+        base=base,
+        title=metadata["title"],
+        pr_body=pr_body,
+        issue_refs=issue_refs,
+        expected_head=expected_head,
+        push=push,
+        record_in=record_in,
     )
-    if pr_url is None:  # pragma: no cover - the batch path never dry-runs
-        raise SystemExit("vrg-submit-pr: internal error: _open_pr returned no URL")
-    submission.record_submission(worktree_root, pr_url=pr_url)
-    return pr_url
 
 
 def _run_template_mode(args: argparse.Namespace) -> int:
@@ -977,16 +1126,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
         # no-flag multi-select is a deliberate follow-up: the no-flag path
         # stays single-select via _choose_submit_worktree.
         if args.all_worktrees or args.select is not None:
-            selected = _select_batch_worktrees(root, args)
-            base = _target_branch(args.base) if args.base else "develop"
-            return _run_submit_batch(
-                selected,
-                base=base,
-                finalize=args.finalize,
-                release=args.release,
-                install=args.install,
-                assume_yes=args.yes,
-            )
+            return _run_submit_batch(_select_batch_worktrees(root, args), args)
         wt_path = _choose_submit_worktree(root)
         os.chdir(wt_path)
         root = wt_path
@@ -996,7 +1136,8 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     except AlreadySubmittedError as exc:
         print(
             f"vrg-submit-pr: this worktree's PR is already submitted — {exc}.\n"
-            "  Nothing to do; the PR is in flight. Use vrg-finalize-pr to merge it.",
+            "  Nothing to do; the PR is in flight. Run vrg-finalize-pr on it to "
+            "watch it merge and settle develop.",
         )
         return 0
     except FileNotFoundError:
@@ -1051,32 +1192,25 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     print(f"=== Body Preview ===\n{pr_body}")
 
     if args.dry_run:
-        if args.finalize:
-            print(_dry_run_chain_note(release=args.release, install=args.install))
+        print(_dry_run_plan(args))
         return 0
 
-    if not confirm("\nSubmit this PR?", assume_yes=args.yes):
-        print("Aborted.")
+    selection = [
+        _Submission(
+            branch=branch,
+            base=target,
+            title=title,
+            pr_body=pr_body,
+            issue_refs=issue_refs,
+            expected_head=expected_head,
+            push=True,
+            record_in=root,
+        )
+    ]
+    if not _confirm_selection(selection, assume_yes=args.yes):
         return 1
-
-    pr_url = _push_create_record(
-        worktree_root=root,
-        branch=branch,
-        target=target,
-        title=title,
-        pr_body=pr_body,
-        expected_head=expected_head,
-        issue_refs=issue_refs,
-    )
-    if args.finalize:
-        rc = _chain_finalize(pr_url, release=args.release, install=args.install)
-        if rc != 0:
-            return rc
-        _print_cascade_summary(pr_url, released=args.release, installed=args.install)
-        return 0
-    print(f"Done. PR URL: {pr_url}")
-    _print_pr_watch(pr_url)
-    return 0
+    summary = _submit_all(selection, allow_provenance_violation=args.allow_provenance_violation)
+    return _finish(summary, args)
 
 
 def _metadata_from_state(state: WorkflowState, branch: str) -> dict[str, str]:
@@ -1216,8 +1350,7 @@ def _require_local_head(branch: str, expected: str, *, worktree: Path | None = N
             f"vrg-submit-pr: refusing to submit '{branch}': its checked-out HEAD"
             f"{location} ({actual[:12]}) is not the head the latest report-ready "
             f"recorded ({expected[:12]}). The branch moved after report-ready, or "
-            "the ready-state is stale (a batch item that failed after its rebase "
-            "leaves the worktree rebased). The freeze refuses a plain report-ready "
+            "the ready-state is stale. The freeze refuses a plain report-ready "
             "re-run on a moved HEAD, so recover from the branch's worktree with "
             "`vrg-pr-workflow unfreeze`, then `vrg-pr-workflow report-ready` at "
             "the commit to submit. Nothing was pushed or opened."
@@ -1290,18 +1423,15 @@ def _origin_has_branch(branch: str) -> bool:
     return bool(listing)
 
 
-def _relay_open(
-    root: Path, branch: str, args: argparse.Namespace, *, assume_yes: bool
-) -> tuple[str | None, str | None]:
-    """Resolve, verify, and open the PR for one named *branch*.
+def _relay_prepare(root: Path, branch: str, args: argparse.Namespace) -> _Submission | None:
+    """Resolve, verify and preview the PR for one named *branch*.
 
-    Returns ``(pr_url, submitted_url)``: exactly one is non-``None`` on a live
-    run — the new PR URL when the branch was opened, or the already-submitted
-    PR's URL when the branch already carries one. A dry run returns
-    ``(None, None)`` (``_open_pr`` previewed without opening). Resolves the
-    ready-state (local file preferred, else the relay ref) and classifies an
-    already-submitted branch identically for the plain relay loop and the relay
-    cascade.
+    Returns the branch's submission, or ``None`` for a branch that already
+    carries a submitted PR, reported and skipped with ``--no-finalize``.
+    Otherwise such a branch is refused, before anything opens, since this
+    run would not finalize it: the refusal names the ``vrg-finalize-pr``
+    command to run.
+    Resolves the ready-state (local file preferred, else the relay ref).
 
     The local-vs-relay choice is made from **actual state**, not from the mere
     fact that a branch was named on the command line (issue #2794). The relay
@@ -1317,13 +1447,12 @@ def _relay_open(
     run merely previews the body (push vs no-push does not change it) and never
     touches origin, so it stays on the relay preview.
 
-    Whenever the named branch has a local ready worktree, a successful live open
-    records the submission in that worktree's ``pr-workflow.json`` — on the
+    Whenever the named branch has a local ready worktree, the open records the
+    submission in that worktree's ``pr-workflow.json`` (*record_in*) — on the
     relay path as well as the push fallback (issue #3525). Without it a branch
     that was pushed before ``report-ready`` and submitted by name would keep
     ``status == "ready"`` with no submission, so the freeze would refuse every
-    pr-watch fix. A branch with no local worktree has nothing to mark, and a
-    failed open raises before anything is recorded.
+    pr-watch fix. A branch with no local worktree has nothing to mark.
 
     The PR opens only at the ``head_sha`` the latest ``report-ready``
     recorded (issue #3815). A state that is not ``ready`` (reopened by
@@ -1334,7 +1463,18 @@ def _relay_open(
     """
     state = _resolve_ready_state(root, branch)
     if state.submitted is not None:
-        return None, state.submitted.get("pr_url", "")
+        submitted_url = state.submitted.get("pr_url", "")
+        if not args.no_finalize:
+            raise SystemExit(
+                f"vrg-submit-pr: branch '{branch}' already has a submitted PR "
+                f"({submitted_url}); finalize it directly with: vrg-finalize-pr "
+                f"{submitted_url}, or pass --no-finalize to skip it. No PR was opened."
+            )
+        print(
+            f"vrg-submit-pr: branch '{branch}' already has a submitted PR "
+            f"({submitted_url}); skipping."
+        )
+        return None
     # The PR may only open at the head the latest report-ready recorded, and
     # every way the resolved state could be stale is refused here rather than
     # silently submitted (issue #3815): a branch reopened by unfreeze and not
@@ -1349,133 +1489,41 @@ def _relay_open(
         _require_local_head(branch, expected_head, worktree=wt_path)
         _require_relay_agrees(branch, state)
 
-    if args.dry_run:
-        return (
-            _open_pr(branch, base, metadata, push=False, expected_head=expected_head, dry_run=True),
-            None,
-        )
-
-    push = wt_path is not None and not _origin_has_branch(branch)
-    if not push:
-        _verify_origin_tip(branch, state)
-    pr_url = _open_pr(
-        branch, base, metadata, push=push, expected_head=expected_head, assume_yes=assume_yes
+    push = False
+    if not args.dry_run:
+        push = wt_path is not None and not _origin_has_branch(branch)
+        if not push:
+            _verify_origin_tip(branch, state)
+    return _prepare(
+        branch, base, metadata, push=push, expected_head=expected_head, record_in=wt_path
     )
-    if pr_url is None:  # pragma: no cover - a live open always yields a URL
-        raise SystemExit("vrg-submit-pr: internal error: live submit returned no PR URL")
-    if wt_path is not None:
-        # A branch with a local ready worktree is marked submitted on either
-        # path, so the freeze lifts for pr-watch fixes (issue #3525).
-        submission.record_submission(wt_path, pr_url=pr_url)
-    return pr_url, None
 
 
 def _run_relay(branches: list[str], args: argparse.Namespace) -> int:
-    """Open PRs for each named *branch*, worktree-free.
+    """Open PRs for each named *branch*, worktree-free, through the one submit path.
 
-    For every branch, :func:`_relay_open` resolves its ready-state (local file
-    preferred, else the relay ref) and picks the path from actual state: the
-    relay path (verify origin's tip against the recorded ``head_sha``, open with
-    ``push=False``) for a branch already on origin, or the local push+open path
-    for a branch with a local ready worktree that never reached origin
-    (issue #2794). Branches already carrying a submitted PR are reported and
-    skipped. Standards/provenance run against the resolved metadata, exactly as
-    the local path runs them against the worktree's file. The
-    finalize/release/install cascade is handled separately by
-    :func:`_run_relay_cascade`.
+    :func:`_relay_prepare` resolves, verifies and previews every branch first
+    (a refusal stops the run with nothing opened); then one confirmation
+    covers them all, and :func:`_submit_all` opens each PR with auto-merge on.
+    With ``--no-finalize``, branches already carrying a submitted PR are
+    reported and skipped. Then :func:`_finish` finalizes the opened PRs in
+    one run.
     """
     root = Path(git.repo_root())
+    selection: list[_Submission] = []
     for branch in branches:
-        pr_url, submitted_url = _relay_open(root, branch, args, assume_yes=args.yes)
-        if submitted_url is not None:
-            print(
-                f"vrg-submit-pr: branch '{branch}' already has a submitted PR "
-                f"({submitted_url}); skipping."
-            )
-            continue
-        if pr_url is None:  # dry run — _open_pr previewed only
-            continue
-        print(f"Done. PR URL: {pr_url}")
-        _print_pr_watch(pr_url)
-    return 0
-
-
-def _run_relay_cascade(
-    branches: list[str], args: argparse.Namespace, *, release: bool, install: bool
-) -> int:
-    """Relay-submit *branches* and run the finalize (→ release → install) cascade.
-
-    The worktree-free counterpart of :func:`_run_submit_batch`, and it borrows
-    the same batch semantics because they are the *correct* ones for multiple
-    PRs: each branch is opened and finalized (``vrg-finalize-pr <url>
-    --skip-post-checks``) in turn, then — only if every branch merged — a single
-    end-of-batch post-checks run (validation + CD check), followed by **one**
-    ``vrg-release`` (never one per branch). It differs from
-    ``_run_submit_batch`` only in the parts a worktree provided: there is no
-    local branch to rebase, and the PR is opened via the relay core
-    (``push=False``) rather than from a checked-out worktree.
-    ``vrg-finalize-pr`` already merges and cleans up a branch that is not checked
-    out locally — the cloud→Mac case the relay exists for — so no local fetch is
-    needed here.
-
-    Reached only when a cascade flag was passed (``--finalize`` is implied by
-    ``--release``/``--install``), so finalize always runs.
-    """
-    root = Path(git.repo_root())
-    main_root = git.main_worktree_root()
-
-    # Dry run: preview every PR and name the cascade, without touching origin.
+        sub = _relay_prepare(root, branch, args)
+        if sub is not None:
+            selection.append(sub)
     if args.dry_run:
-        for branch in branches:
-            _relay_open(root, branch, args, assume_yes=args.yes)
-        print(_dry_run_chain_note(release=release, install=install))
+        print(_dry_run_plan(args))
         return 0
-
-    def _process(branch: str) -> None:
-        pr_url, submitted_url = _relay_open(root, branch, args, assume_yes=True)
-        if submitted_url is not None:
-            raise batch.BatchAbortError(
-                f"branch already has a submitted PR ({submitted_url}); "
-                f"finalize it directly with: vrg-finalize-pr {submitted_url}"
-            )
-        # A live, non-submitted relay open always yields a URL (never a dry run);
-        # the guard narrows the type and defends the invariant.
-        if pr_url is None:  # pragma: no cover - unreachable on a live relay open
-            raise SystemExit("vrg-submit-pr: internal error: relay open returned no PR URL")
-        result = subprocess.run(  # noqa: S603
-            ("vrg-finalize-pr", pr_url, "--skip-post-checks"),  # noqa: S607
-            cwd=main_root,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise batch.BatchAbortError(
-                f"vrg-finalize-pr {pr_url} --skip-post-checks exited {result.returncode}"
-            )
-
-    def _release() -> None:
-        cmd = _release_cmd(install)
-        result = subprocess.run(cmd, cwd=main_root, check=False)  # noqa: S603,S607
-        if result.returncode != 0:
-            raise batch.BatchAbortError(f"{shlex.join(cmd)} exited {result.returncode}")
-
-    post_steps: list[batch.PostStep] = [batch.finalize_post_checks_step(main_root)]
-    if release:
-        post_steps.append(batch.PostStep("release", _release))
-
-    plan = [f"relay-submit + finalize {branch}" for branch in branches]
-    plan.append(batch.POST_CHECKS_PLAN_LINE + (", then release" if release else ""))
-
-    report = batch.run_batch(
-        branches,
-        _process,
-        label=lambda branch: branch,
-        plan=plan,
-        assume_yes=args.yes,
-        completed=batch.ItemOutcome.MERGED,
-        post_steps=post_steps,
-    )
-    print(batch.format_report(report))
-    return 0 if report.all_completed and report.post_failure is None else 1
+    if not selection:
+        return 0
+    if not _confirm_selection(selection, assume_yes=args.yes):
+        return 1
+    summary = _submit_all(selection, allow_provenance_violation=args.allow_provenance_violation)
+    return _finish(summary, args)
 
 
 if __name__ == "__main__":

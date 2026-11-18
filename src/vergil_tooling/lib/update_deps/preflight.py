@@ -7,9 +7,14 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import branch_sweep, config, git, github, version
+from vergil_tooling.lib.checkout_lock import checkout_lock
 from vergil_tooling.lib.managed_worktree import ManagedWorktreeError, create_worktree
 from vergil_tooling.lib.process_errors import error_text
-from vergil_tooling.lib.release.preflight import check_gh_auth
+from vergil_tooling.lib.release.preflight import (
+    DevelopDivergedError,
+    check_gh_auth,
+    fast_forward_develop,
+)
 from vergil_tooling.lib.update_deps.context import UpdateDepsContext, UpdateDepsError
 
 if TYPE_CHECKING:
@@ -121,11 +126,13 @@ def _delete_stale_branch(
         print(f"Deleted stale local branch {branch}: PR {url} was closed without merging.")
 
 
-def preflight(*, repo_root: Path) -> UpdateDepsContext:
-    """Validate preconditions and create the managed worktree."""
-    repo = check_gh_auth()
-    config.read_config(repo_root)
+def _check_develop(*, fast_forward: bool) -> None:
+    """Require a clean ``develop`` at ``origin/develop``, fetching first.
 
+    With *fast_forward*, a local ``develop`` behind ``origin/develop`` is
+    fast-forwarded and only a diverged one refuses; the caller holds the
+    checkout lock. Without it, any difference refuses.
+    """
     branch_now = git.current_branch()
     if branch_now != "develop":
         raise UpdateDepsError(
@@ -140,6 +147,16 @@ def preflight(*, repo_root: Path) -> UpdateDepsContext:
             message="Working tree is not clean.",
         )
     git.run("fetch", "origin", "develop")
+    if fast_forward:
+        try:
+            fast_forward_develop()
+        except DevelopDivergedError as exc:
+            raise UpdateDepsError(
+                phase="preflight",
+                command="git merge-base --is-ancestor HEAD origin/develop",
+                message=str(exc),
+            ) from exc
+        return
     local_sha = git.read_output("rev-parse", "HEAD")
     remote_sha = git.read_output("rev-parse", "origin/develop")
     if local_sha != remote_sha:
@@ -151,6 +168,26 @@ def preflight(*, repo_root: Path) -> UpdateDepsContext:
                 f"origin/develop ({remote_sha[:8]}). Pull latest first."
             ),
         )
+
+
+def preflight(*, repo_root: Path, fast_forward: bool = False) -> UpdateDepsContext:
+    """Validate preconditions and create the managed worktree.
+
+    Standalone (``vrg-update-deps``), a local ``develop`` that differs from
+    ``origin/develop`` refuses. vrg-release's update-deps stage passes
+    *fast_forward*: a merge can land between its own sync and this fetch, so
+    a ``develop`` that is behind is fast-forwarded under the checkout lock
+    (spec §6.6 of epic vergil-project/.github#1218), and only a diverged one
+    refuses.
+    """
+    repo = check_gh_auth()
+    config.read_config(repo_root)
+
+    if fast_forward:
+        with checkout_lock(repo_root, purpose="vrg-release update-deps preflight"):
+            _check_develop(fast_forward=True)
+    else:
+        _check_develop(fast_forward=False)
 
     develop_version = version.show(repo_root)
     # deps/ is deliberately not an issue-branch prefix (lib/branch_names.py):

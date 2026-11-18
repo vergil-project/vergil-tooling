@@ -1,362 +1,384 @@
-"""Tests for vergil_tooling.lib.pr_await."""
+"""Tests for vergil_tooling.lib.pr_await.
+
+A fake GitHub scripts the PR's state sequence: every ``gh pr view`` snapshot
+read takes the next scripted state, and the last one repeats. It also stands
+in for the required-check lookup, the failed-check confirmation and the
+orphan probe. A fake clock replaces ``time.monotonic`` and ``time.sleep``, so a
+deadline or a grace period passes without waiting.
+"""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-from unittest.mock import patch
+import ast
+import inspect
+from dataclasses import dataclass, field
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from vergil_tooling.lib import github, pr_await
-from vergil_tooling.lib.pr_await import PrMergedError, PrState, settle_reason, to_output
+from vergil_tooling.lib import finalize_watch, github, pr_await
+from vergil_tooling.lib.finalize_watch import DEADLINE_ENV, FinalizeWatchError
+from vergil_tooling.lib.pr_await import PrAwaitError, wait_for_merge
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
-_MOD = "vergil_tooling.lib.pr_await"
-
-
-@pytest.fixture(autouse=True)
-def _no_grace_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(github.ORPHAN_GRACE_ENV, raising=False)
+PR = "https://github.com/o/r/pull/1"
+HEAD_A = "a" * 40
+HEAD_B = "b" * 40
+MERGE_SHA = "m" * 40
+REQUIRED = frozenset({"test / unit", "CodeQL"})
 
 
-def _checks(*buckets: str) -> list[dict[str, str]]:
-    return [{"name": f"check-{i}", "bucket": b, "state": b.upper()} for i, b in enumerate(buckets)]
+def check_run(name: str, conclusion: str = "", n: int = 1) -> dict[str, Any]:
+    return {
+        "__typename": "CheckRun",
+        "name": name,
+        "status": "COMPLETED" if conclusion else "IN_PROGRESS",
+        "conclusion": conclusion,
+        "detailsUrl": f"https://github.com/o/r/actions/runs/1/job/{n}",
+    }
 
 
-def test_state_has_checks() -> None:
-    assert PrState("sha", _checks("pass"), []).has_checks
-    assert not PrState("sha", [], []).has_checks
+def pr_state(**overrides: Any) -> dict[str, Any]:
+    """One ``gh pr view`` snapshot: an open develop PR, auto-merge on, checks pending."""
+    state: dict[str, Any] = {
+        "id": "PR_1",
+        "url": PR,
+        "state": "OPEN",
+        "baseRefName": "develop",
+        "headRefName": "feature/1-thing",
+        "headRefOid": HEAD_A,
+        "autoMergeRequest": {"mergeMethod": "SQUASH"},
+        "mergeStateStatus": "BLOCKED",
+        "statusCheckRollup": [check_run("test / unit")],
+        "mergeCommit": None,
+    }
+    state.update(overrides)
+    return state
 
 
-def test_state_checks_pending() -> None:
-    assert PrState("sha", _checks("pass", "pending"), []).checks_pending
-    assert not PrState("sha", _checks("pass", "skipping"), []).checks_pending
+def merged(**overrides: Any) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "state": "MERGED",
+        "autoMergeRequest": None,
+        "mergeStateStatus": "UNKNOWN",
+        "mergeCommit": {"oid": MERGE_SHA},
+        "statusCheckRollup": [check_run("test / unit", "SUCCESS")],
+    }
+    return pr_state(**{**fields, **overrides})
 
 
-def test_state_failed_checks() -> None:
-    state = PrState("sha", _checks("pass", "fail", "cancel"), [])
-    assert state.failed_checks == ["check-1", "check-2"]
+@dataclass
+class FakeGitHub:
+    """The PR's scripted states, the GitHub answers, and every call made."""
 
+    states: list[dict[str, Any]] = field(default_factory=list)
+    required: frozenset[str] | None = REQUIRED
+    failed: list[str] = field(default_factory=list)
+    orphans: list[str] = field(default_factory=list)
+    clock: float = 0.0
+    views: list[str] = field(default_factory=list)
+    sleeps: list[float] = field(default_factory=list)
+    orphan_probes: int = 0
 
-def test_state_all_checks_passed() -> None:
-    assert PrState("sha", _checks("pass", "skipping"), []).all_checks_passed
-    assert not PrState("sha", _checks("pass", "fail"), []).all_checks_passed
-    assert not PrState("sha", _checks("pass", "pending"), []).all_checks_passed
-    # No checks at all is not "passed".
-    assert not PrState("sha", [], []).all_checks_passed
+    def script(self, *states: dict[str, Any]) -> None:
+        self.states = list(states)
 
+    def read_json(self, *args: str) -> object:
+        assert args[:2] == ("pr", "view"), args
+        self.views.append(args[2])
+        state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+        return dict(state)
 
-def test_state_pending_check_names() -> None:
-    state = PrState("sha", _checks("pass", "pending", "pending"), [])
-    assert state.pending_check_names == ["check-1", "check-2"]
+    def required_check_names(self, pr: str) -> frozenset[str] | None:
+        assert pr == PR
+        return self.required
 
+    def failed_check_names(self, pr: str) -> list[str]:
+        assert pr == PR
+        return list(self.failed)
 
-def test_state_blocked() -> None:
-    assert PrState("sha", [], [], merge_state_status="BLOCKED").blocked
-    assert not PrState("sha", [], [], merge_state_status="CLEAN").blocked
-    assert not PrState("sha", [], []).blocked
-
-
-def test_settle_reason_new_commit() -> None:
-    state = PrState("new-sha", _checks("pending"), [])
-    assert settle_reason(state, since_sha="old-sha", since_reviews=None) == "new_commit"
-
-
-def test_settle_reason_no_commit_change_without_baseline() -> None:
-    state = PrState("sha", _checks("pending"), [])
-    assert settle_reason(state, since_sha=None, since_reviews=None) is None
-
-
-def test_settle_reason_new_review() -> None:
-    state = PrState("sha", _checks("pending"), [{"id": "r1"}, {"id": "r2"}])
-    assert settle_reason(state, since_sha=None, since_reviews=1) == "new_review"
-
-
-def test_settle_reason_no_new_review_when_count_unchanged() -> None:
-    state = PrState("sha", _checks("pending"), [{"id": "r1"}])
-    assert settle_reason(state, since_sha=None, since_reviews=1) is None
-
-
-def test_settle_reason_checks_terminal() -> None:
-    state = PrState("sha", _checks("pass", "fail"), [])
-    assert settle_reason(state, since_sha="sha", since_reviews=0) == "checks_terminal"
-
-
-def test_settle_reason_none_while_pending() -> None:
-    state = PrState("sha", _checks("pass", "pending"), [])
-    assert settle_reason(state, since_sha="sha", since_reviews=0) is None
-
-
-def test_settle_reason_none_when_no_checks_registered_yet() -> None:
-    state = PrState("sha", [], [])
-    assert settle_reason(state, since_sha="sha", since_reviews=0) is None
-
-
-def test_settle_reason_new_commit_takes_priority_over_terminal() -> None:
-    state = PrState("new-sha", _checks("pass"), [])
-    assert settle_reason(state, since_sha="old-sha", since_reviews=0) == "new_commit"
-
-
-def test_wait_for_settle_blocks_until_settled() -> None:
-    pending = PrState("sha", _checks("pending"), [])
-    terminal = PrState("sha", _checks("pass"), [])
-    with (
-        patch(f"{_MOD}.gather_state", side_effect=[pending, terminal]),
-        patch(f"{_MOD}.time.sleep") as slept,
-    ):
-        state, reason = pr_await.wait_for_settle("PR", since_sha=None, since_reviews=None)
-    assert reason == "checks_terminal"
-    assert state is terminal
-    slept.assert_called_once()
-
-
-def test_wait_for_settle_returns_immediately_when_already_settled() -> None:
-    terminal = PrState("sha", _checks("pass"), [])
-    with (
-        patch(f"{_MOD}.gather_state", return_value=terminal),
-        patch(f"{_MOD}.time.sleep") as slept,
-    ):
-        _, reason = pr_await.wait_for_settle("PR", since_sha=None, since_reviews=None)
-    assert reason == "checks_terminal"
-    slept.assert_not_called()
-
-
-def test_gather_state_reads_github() -> None:
-    checks = [{"name": "build", "bucket": "pass", "state": "SUCCESS"}]
-    reviews = [{"id": "r1", "state": "APPROVED"}]
-    with (
-        patch(f"{_MOD}.github.head_sha", return_value="abc123"),
-        patch(f"{_MOD}.github.pr_checks", return_value=checks),
-        patch(f"{_MOD}.github.pr_reviews", return_value=reviews),
-        patch(f"{_MOD}.github.pr_state", return_value="OPEN"),
-        patch(f"{_MOD}.github.merge_state_status", return_value="CLEAN"),
-    ):
-        state = pr_await.gather_state("PR")
-    assert state.head_sha == "abc123"
-    assert state.checks == checks
-    assert state.reviews == reviews
-    assert state.pr_state == "OPEN"
-    assert state.merge_state_status == "CLEAN"
-
-
-def test_wait_for_settle_aborts_when_merged_at_start() -> None:
-    merged = PrState("sha", _checks("pass"), [], pr_state="MERGED")
-    with (
-        patch(f"{_MOD}.gather_state", return_value=merged),
-        patch(f"{_MOD}.time.sleep") as slept,
-        pytest.raises(PrMergedError, match="already merged"),
-    ):
-        pr_await.wait_for_settle("PR", since_sha=None, since_reviews=None)
-    slept.assert_not_called()
-
-
-def test_wait_for_settle_aborts_when_merged_mid_watch() -> None:
-    pending = PrState("sha", _checks("pending"), [])
-    merged = PrState("sha", _checks("pending"), [], pr_state="MERGED")
-    with (
-        patch(f"{_MOD}.gather_state", side_effect=[pending, merged]),
-        patch(f"{_MOD}.time.sleep") as slept,
-        pytest.raises(PrMergedError),
-    ):
-        pr_await.wait_for_settle("PR", since_sha=None, since_reviews=None)
-    slept.assert_called_once()
-
-
-def test_wait_for_settle_merged_abort_wins_over_settle() -> None:
-    # Even when a settle reason exists (new commit, checks terminal), a
-    # merged PR aborts instead of settling.
-    merged = PrState("new-sha", _checks("pass"), [], pr_state="MERGED")
-    with (
-        patch(f"{_MOD}.gather_state", return_value=merged),
-        patch(f"{_MOD}.time.sleep"),
-        pytest.raises(PrMergedError),
-    ):
-        pr_await.wait_for_settle("PR", since_sha="old-sha", since_reviews=0)
-
-
-def test_to_output_shape() -> None:
-    state = PrState("abc123", _checks("pass", "fail"), [{"id": "r1"}], merge_state_status="DIRTY")
-    out = to_output(state, "checks_terminal")
-    assert out["reason"] == "checks_terminal"
-    assert out["head_sha"] == "abc123"
-    assert out["review_count"] == 1
-    assert out["failed_checks"] == ["check-1"]
-    assert out["all_checks_passed"] is False
-    assert out["merge_state_status"] == "DIRTY"
-    # Only an orphaned_check settle populates orphaned_checks.
-    assert out["orphaned_checks"] == []
-
-
-def test_to_output_orphaned_checks_lists_pending_checks() -> None:
-    checks = _checks("pass", "pending", "pending")
-    state = PrState("abc123", checks, [], merge_state_status="BLOCKED")
-    out = to_output(state, "orphaned_check")
-    assert out["reason"] == "orphaned_check"
-    assert out["orphaned_checks"] == ["check-1", "check-2"]
-    assert out["merge_state_status"] == "BLOCKED"
-
-
-def test_is_orphaned_block_true_when_blocked_and_all_pending_orphaned() -> None:
-    state = PrState("sha", _checks("pass", "pending", "pending"), [], merge_state_status="BLOCKED")
-    orphans = ["check-1", "check-2"]
-    with patch(f"{_MOD}.github.orphaned_check_names", return_value=orphans) as detect:
-        assert pr_await.is_orphaned_block(state, "PR") is True
-    detect.assert_called_once_with("PR")
-
-
-def test_is_orphaned_block_false_when_not_blocked() -> None:
-    state = PrState("sha", _checks("pending"), [], merge_state_status="CLEAN")
-    with patch(f"{_MOD}.github.orphaned_check_names") as detect:
-        assert pr_await.is_orphaned_block(state, "PR") is False
-    # No API call when the cheap local predicate already fails.
-    detect.assert_not_called()
-
-
-def test_is_orphaned_block_false_when_no_pending_checks() -> None:
-    state = PrState("sha", _checks("pass"), [], merge_state_status="BLOCKED")
-    with patch(f"{_MOD}.github.orphaned_check_names") as detect:
-        assert pr_await.is_orphaned_block(state, "PR") is False
-    detect.assert_not_called()
-
-
-def test_is_orphaned_block_false_when_a_pending_check_is_not_orphaned() -> None:
-    # One pending check is a genuinely-running app status (not in the orphan
-    # set); the watch must keep waiting rather than declare a false orphan.
-    state = PrState("sha", _checks("pending", "pending"), [], merge_state_status="BLOCKED")
-    with patch(f"{_MOD}.github.orphaned_check_names", return_value=["check-0"]):
-        assert pr_await.is_orphaned_block(state, "PR") is False
-
-
-class _Clock:
-    """A fake monotonic clock that ``time.sleep`` advances."""
-
-    def __init__(self) -> None:
-        self.now = 0.0
+    def orphaned_check_names(self, pr: str) -> list[str]:
+        assert pr == PR
+        self.orphan_probes += 1
+        return list(self.orphans)
 
     def monotonic(self) -> float:
-        return self.now
+        return self.clock
 
     def sleep(self, secs: float) -> None:
-        self.now += secs
+        self.sleeps.append(secs)
+        self.clock += secs
 
 
 @pytest.fixture
-def clock() -> Iterator[_Clock]:
-    fake = _Clock()
-    with (
-        patch(f"{_MOD}.time.monotonic", side_effect=fake.monotonic),
-        patch(f"{_MOD}.time.sleep", side_effect=fake.sleep),
-    ):
-        yield fake
+def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
+    api = FakeGitHub()
+    monkeypatch.delenv(DEADLINE_ENV, raising=False)
+    monkeypatch.delenv(github.ORPHAN_GRACE_ENV, raising=False)
+    for name in ("read_json", "required_check_names", "failed_check_names", "orphaned_check_names"):
+        monkeypatch.setattr(github, name, getattr(api, name))
+    monkeypatch.setattr(pr_await, "time", SimpleNamespace(monotonic=api.monotonic, sleep=api.sleep))
+    return api
 
 
-def test_wait_for_settle_returns_orphaned_check_reason_after_grace(
-    clock: _Clock, capsys: pytest.CaptureFixture[str]
-) -> None:
-    blocked = PrState("sha", _checks("pass", "pending"), [], merge_state_status="BLOCKED")
-    with (
-        patch(f"{_MOD}.gather_state", return_value=blocked),
-        patch(f"{_MOD}.github.orphaned_check_names", return_value=["check-1"]),
-    ):
-        state, reason = pr_await.wait_for_settle(
-            "PR", since_sha="sha", since_reviews=0, poll_interval=15, orphan_grace=300
-        )
-    assert reason == "orphaned_check"
-    assert state is blocked
-    assert clock.now == 300
+# --- merged: exit 0 --------------------------------------------------------------
+
+
+def test_merged_before_the_wait_starts(fake: FakeGitHub) -> None:
+    fake.script(merged())
+
+    result = wait_for_merge(PR)
+
+    assert result.merged
+    assert result.merge_commit == MERGE_SHA
+    assert result.to_output() == {
+        "pr": PR,
+        "outcome": "merged",
+        "reason": None,
+        "detail": "",
+        "head_sha": HEAD_A,
+        "merge_commit": MERGE_SHA,
+        "merge_state_status": "UNKNOWN",
+        "failed_checks": [],
+        "orphaned_checks": [],
+    }
+    assert fake.views == [PR]
+    assert fake.sleeps == []
+
+
+def test_waits_until_merged(fake: FakeGitHub) -> None:
+    fake.script(pr_state(), pr_state(), merged())
+
+    result = wait_for_merge(PR, poll_interval=15)
+
+    assert result.merged
+    assert result.merge_commit == MERGE_SHA
+    assert fake.sleeps == [15, 15]
+
+
+def test_merged_with_no_merge_commit_is_an_error(fake: FakeGitHub) -> None:
+    fake.script(merged(mergeCommit=None))
+
+    with pytest.raises(PrAwaitError, match="names no merge commit"):
+        wait_for_merge(PR)
+
+
+def test_malformed_merge_commit_is_an_error(fake: FakeGitHub) -> None:
+    fake.script(merged(mergeCommit={"oid": ""}))
+
+    with pytest.raises(FinalizeWatchError, match="mergeCommit"):
+        wait_for_merge(PR)
+
+
+# --- reviews and commits never end the wait ----------------------------------------
+
+
+def test_new_commit_does_not_end_the_wait(fake: FakeGitHub) -> None:
+    fake.script(pr_state(), pr_state(headRefOid=HEAD_B), merged(headRefOid=HEAD_B))
+
+    result = wait_for_merge(PR)
+
+    assert result.merged
+    assert result.head_sha == HEAD_B
+    assert len(fake.views) == 3
+
+
+def test_reviews_are_never_read() -> None:
+    source = inspect.getsource(pr_await)
+    attrs = {n.attr for n in ast.walk(ast.parse(source)) if isinstance(n, ast.Attribute)}
+    assert "pr_reviews" not in attrs
+    assert "reviews" not in finalize_watch._VIEW_FIELDS  # noqa: SLF001
+
+
+def test_all_checks_green_but_not_yet_merged_keeps_waiting(fake: FakeGitHub) -> None:
+    green = [check_run("test / unit", "SUCCESS"), check_run("CodeQL", "SUCCESS", 2)]
+    fake.script(pr_state(statusCheckRollup=green, mergeStateStatus="CLEAN"), merged())
+
+    assert wait_for_merge(PR).merged
+
+
+# --- cannot merge: exit 1 ------------------------------------------------------------
+
+
+def test_closed_without_merging(fake: FakeGitHub) -> None:
+    fake.script(pr_state(), pr_state(state="CLOSED", autoMergeRequest=None))
+
+    result = wait_for_merge(PR)
+
+    assert result.reason == "closed"
+    assert result.to_output()["outcome"] == "cannot_merge"
+    assert result.to_output()["merge_commit"] is None
+
+
+def test_auto_merge_off_at_start(fake: FakeGitHub) -> None:
+    fake.script(pr_state(autoMergeRequest=None))
+
+    result = wait_for_merge(PR)
+
+    assert result.reason == "auto_merge_off"
+    assert fake.sleeps == []
+
+
+def test_push_that_turns_auto_merge_off(fake: FakeGitHub) -> None:
+    fake.script(pr_state(), pr_state(headRefOid=HEAD_B, autoMergeRequest=None))
+
+    result = wait_for_merge(PR)
+
+    assert result.reason == "auto_merge_off"
+    assert result.head_sha == HEAD_B
+
+
+def test_required_check_failed_is_named(fake: FakeGitHub) -> None:
+    failing = [check_run("test / unit", "FAILURE"), check_run("CodeQL", n=2)]
+    fake.script(pr_state(), pr_state(statusCheckRollup=failing))
+    fake.failed = ["test / unit"]
+
+    result = wait_for_merge(PR)
+
+    assert result.reason == "check_failed"
+    assert result.failed_checks == ("test / unit",)
+    assert result.to_output()["failed_checks"] == ["test / unit"]
+    assert "test / unit" in result.detail
+
+
+def test_non_required_failure_keeps_waiting(fake: FakeGitHub) -> None:
+    failing = [check_run("lint / optional", "FAILURE"), check_run("test / unit", n=2)]
+    fake.script(pr_state(statusCheckRollup=failing), merged())
+    fake.failed = ["lint / optional"]
+
+    assert wait_for_merge(PR).merged
+
+
+def test_conflict(fake: FakeGitHub) -> None:
+    fake.script(pr_state(), pr_state(mergeStateStatus="DIRTY"))
+
+    result = wait_for_merge(PR)
+
+    assert result.reason == "conflict"
+    assert result.merge_state_status == "DIRTY"
+
+
+def test_deadline_passes_with_pr_pending(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(DEADLINE_ENV, "40")
+    fake.script(pr_state())
+
+    result = wait_for_merge(PR, poll_interval=15)
+
+    assert result.reason == "timed_out"
+    assert "40s" in result.detail
+    assert DEADLINE_ENV in result.detail
+    assert fake.sleeps == [15, 15, 10]
+    assert fake.clock == 40
+
+
+def test_orphaned_check_after_grace(fake: FakeGitHub, capsys: pytest.CaptureFixture[str]) -> None:
+    fake.script(pr_state())
+    fake.orphans = ["test / unit"]
+
+    result = wait_for_merge(PR, poll_interval=15, orphan_grace=300)
+
+    assert result.reason == "orphaned_check"
+    assert result.orphaned_checks == ("test / unit",)
+    assert fake.clock == 300
     err = capsys.readouterr().err
     assert err.count("GitHub may be delayed") == 1  # announced once, not per poll
-    assert "1 check-run(s) have a completed run but no result yet (check-1)" in err
     assert "re-checking for up to 5m00s" in err
-    assert "Still no result for check-1 after 5m00s; reporting orphaned" in err
 
 
-def test_wait_for_settle_late_result_within_grace_settles_normally(clock: _Clock) -> None:
-    # Replay of the 2026-10-22 Actions incident: the check looked orphaned, then
-    # GitHub wrote its result back a few minutes later. No orphan verdict.
-    blocked = PrState("sha", _checks("pass", "pending"), [], merge_state_status="BLOCKED")
-    clean = PrState("sha", _checks("pass", "pass"), [], merge_state_status="CLEAN")
+def test_orphan_grace_defaults_from_env(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(github.ORPHAN_GRACE_ENV, "30")
+    fake.script(pr_state())
+    fake.orphans = ["test / unit"]
 
-    def gather(pr: str) -> PrState:
-        return clean if clock.now >= 120 else blocked
+    result = wait_for_merge(PR, poll_interval=15)
 
-    with (
-        patch(f"{_MOD}.gather_state", side_effect=gather),
-        patch(f"{_MOD}.github.orphaned_check_names", return_value=["check-1"]),
-    ):
-        state, reason = pr_await.wait_for_settle(
-            "PR", since_sha="sha", since_reviews=0, poll_interval=15, orphan_grace=300
-        )
-    assert reason == "checks_terminal"
-    assert state is clean
-    assert clock.now == 120
+    assert result.reason == "orphaned_check"
+    assert fake.clock == 30
 
 
-def test_wait_for_settle_grace_restarts_when_the_orphan_set_changes(clock: _Clock) -> None:
-    # A suspect cleared (not orphaned) and a different pending set both restart
-    # the grace, so every check reported orphaned has waited the full period.
-    one = PrState("sha", _checks("pass", "pending"), [], merge_state_status="BLOCKED")
-    two = PrState("sha", _checks("pending", "pending"), [], merge_state_status="BLOCKED")
-    timeline = [(0, one, ["check-1"]), (100, one, []), (150, one, ["check-1"]), (250, two, None)]
+def test_late_result_within_grace_merges(fake: FakeGitHub) -> None:
+    fake.script(pr_state(), pr_state(), merged())
+    fake.orphans = ["test / unit"]
 
-    def current() -> tuple[PrState, list[str] | None]:
-        return next((s, o) for t, s, o in reversed(timeline) if clock.now >= t)
-
-    def orphans(pr: str) -> list[str]:
-        names = current()[1]
-        return ["check-0", "check-1"] if names is None else names
-
-    with (
-        patch(f"{_MOD}.gather_state", side_effect=lambda pr: current()[0]),
-        patch(f"{_MOD}.github.orphaned_check_names", side_effect=orphans),
-    ):
-        state, reason = pr_await.wait_for_settle(
-            "PR", since_sha="sha", since_reviews=0, poll_interval=10, orphan_grace=200
-        )
-    assert reason == "orphaned_check"
-    assert state is two
-    assert clock.now == 450
+    assert wait_for_merge(PR, poll_interval=15, orphan_grace=300).merged
 
 
-def test_wait_for_settle_default_grace_comes_from_github(clock: _Clock) -> None:
-    blocked = PrState("sha", _checks("pass", "pending"), [], merge_state_status="BLOCKED")
-    with (
-        patch(f"{_MOD}.gather_state", return_value=blocked),
-        patch(f"{_MOD}.github.orphaned_check_names", return_value=["check-1"]),
-        patch(f"{_MOD}.github.orphan_grace_secs", return_value=60) as grace,
-    ):
-        _, reason = pr_await.wait_for_settle("PR", since_sha="sha", since_reviews=0)
-    assert reason == "orphaned_check"
-    assert clock.now == 60
-    grace.assert_called_once_with()
+def test_grace_restarts_when_the_orphan_set_changes(fake: FakeGitHub) -> None:
+    two = [check_run("test / unit"), check_run("CodeQL", n=2)]
+    fake.script(pr_state(), pr_state(), pr_state(statusCheckRollup=two))
+    fake.orphans = ["test / unit", "CodeQL"]
+
+    result = wait_for_merge(PR, poll_interval=15, orphan_grace=60)
+
+    assert result.reason == "orphaned_check"
+    assert result.orphaned_checks == ("test / unit", "CodeQL")
+    # The set changed at t=30, so the grace ran from there.
+    assert fake.clock == 90
 
 
-def test_wait_for_settle_keeps_waiting_when_pending_but_not_orphaned() -> None:
-    # First poll: blocked with a pending non-orphan → keep waiting.
-    # Second poll: checks terminal → settle normally.
-    blocked = PrState("sha", _checks("pass", "pending"), [], merge_state_status="BLOCKED")
-    terminal = PrState("sha", _checks("pass", "pass"), [], merge_state_status="CLEAN")
-    with (
-        patch(f"{_MOD}.gather_state", side_effect=[blocked, terminal]),
-        patch(f"{_MOD}.github.orphaned_check_names", return_value=[]),
-        patch(f"{_MOD}.time.sleep") as slept,
-    ):
-        state, reason = pr_await.wait_for_settle("PR", since_sha="sha", since_reviews=0)
-    assert reason == "checks_terminal"
-    assert state is terminal
-    slept.assert_called_once()
+def test_pending_check_not_orphaned_keeps_waiting(fake: FakeGitHub) -> None:
+    status = {"__typename": "StatusContext", "context": "app/status", "state": "PENDING"}
+    rollup = [check_run("test / unit"), status]
+    fake.script(pr_state(statusCheckRollup=rollup), pr_state(statusCheckRollup=rollup), merged())
+    fake.orphans = ["test / unit"]  # the app status has no backing run
+
+    assert wait_for_merge(PR, poll_interval=15, orphan_grace=1).merged
 
 
-def test_wait_for_settle_normal_reason_wins_over_orphan_check() -> None:
-    # A new commit settles before the orphan detector is even consulted.
-    blocked = PrState("new-sha", _checks("pending"), [], merge_state_status="BLOCKED")
-    with (
-        patch(f"{_MOD}.gather_state", return_value=blocked),
-        patch(f"{_MOD}.github.orphaned_check_names") as detect,
-        patch(f"{_MOD}.time.sleep"),
-    ):
-        _, reason = pr_await.wait_for_settle("PR", since_sha="old-sha", since_reviews=0)
-    assert reason == "new_commit"
-    detect.assert_not_called()
+def test_blocked_with_nothing_pending_keeps_waiting_without_a_probe(fake: FakeGitHub) -> None:
+    # A required check not registered yet: BLOCKED, but no check is pending.
+    green = [check_run("test / unit", "SUCCESS")]
+    fake.script(pr_state(statusCheckRollup=green), merged())
+    fake.orphans = ["test / unit"]
+
+    assert wait_for_merge(PR).merged
+    assert fake.orphan_probes == 0
+
+
+def test_orphan_probe_only_when_blocked(fake: FakeGitHub) -> None:
+    fake.script(pr_state(mergeStateStatus="UNSTABLE"), merged())
+    fake.orphans = ["test / unit"]
+
+    assert wait_for_merge(PR).merged
+    assert fake.orphan_probes == 0
+
+
+# --- configuration and read errors ------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw", ["0", "-5", "soon"])
+def test_malformed_deadline_fails_before_any_read(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    monkeypatch.setenv(DEADLINE_ENV, raw)
+    fake.script(merged())
+
+    with pytest.raises(ValueError, match=DEADLINE_ENV):
+        wait_for_merge(PR)
+    assert fake.views == []
+
+
+def test_malformed_grace_fails_before_any_read(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(github.ORPHAN_GRACE_ENV, "0")
+    fake.script(merged())
+
+    with pytest.raises(ValueError, match=github.ORPHAN_GRACE_ENV):
+        wait_for_merge(PR)
+    assert fake.views == []
+
+
+def test_non_positive_poll_interval_fails_before_any_read(fake: FakeGitHub) -> None:
+    fake.script(merged())
+
+    with pytest.raises(ValueError, match="poll_interval"):
+        wait_for_merge(PR, poll_interval=0)
+    assert fake.views == []
+
+
+def test_unreadable_pr_raises(fake: FakeGitHub) -> None:
+    fake.script(pr_state(state="WEIRD"))
+
+    with pytest.raises(FinalizeWatchError, match="unknown state"):
+        wait_for_merge(PR)

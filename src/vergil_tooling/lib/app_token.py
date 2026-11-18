@@ -150,7 +150,7 @@ def _load_key(pem: str) -> rsa.RSAPrivateKey:
     """The RSA private key in *pem*; an unusable key raises without echoing it."""
     try:
         key = serialization.load_pem_private_key(pem.encode(), password=None)
-    except (ValueError, TypeError, UnsupportedAlgorithm):
+    except ValueError, TypeError, UnsupportedAlgorithm:
         # ``from None``: the parser's own error is not shown, so nothing about
         # the key's content can reach a message or a traceback.
         msg = f"${PRIVATE_KEY_ENV} is not a usable unencrypted PEM private key"
@@ -201,7 +201,7 @@ def _http_error_text(exc: urllib.error.HTTPError) -> str:
         base += f" (request ID {request_id})"
     try:
         body = exc.read()
-    except (OSError, http.client.HTTPException):
+    except OSError, http.client.HTTPException:
         return f"{base} (response body unreadable)"
     finally:
         exc.close()

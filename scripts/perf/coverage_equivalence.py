@@ -51,16 +51,18 @@ import argparse
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+
 # defusedxml hardens XML parsing against entity-expansion / external-entity
 # attacks (the Semgrep security gate rejects stdlib xml.etree). Its parse()
 # returns standard ElementTree objects, so downstream navigation is unchanged.
-import defusedxml.ElementTree as ET
+from defusedxml import ElementTree
 
 # --------------------------------------------------------------------------- #
 # Pure logic (the only unit-tested surface).
@@ -82,7 +84,7 @@ def _collect_misses(report: Path) -> set[str]:
     and branch namespaces are kept distinct so an uncovered line and a partial
     branch on the same physical line never collide.
     """
-    tree = ET.parse(report)
+    tree = ElementTree.parse(report)
     root = tree.getroot()
     misses: set[str] = set()
     for cls in root.iter("class"):
@@ -128,6 +130,20 @@ def diff_reports(a: Path, b: Path) -> list[str]:
 BASE_ARGS: list[str] = ["--cov=src", "--cov-branch"]
 
 
+def _uv() -> str:
+    """Return the absolute path of ``uv``, failing loudly when it is not on ``PATH``.
+
+    Resolving the executable up front, rather than handing a bare ``"uv"`` to
+    ``subprocess.run``, pins which binary runs and turns a missing ``uv`` into a
+    clear error instead of an opaque ``FileNotFoundError`` mid-run.
+    """
+    path = shutil.which("uv")
+    if path is None:
+        msg = "uv is not on PATH; this script drives the suite through `uv run`"
+        raise SystemExit(msg)
+    return path
+
+
 @dataclass(frozen=True)
 class ProofConfig:
     """One configuration to run and export a ``coverage.xml`` for."""
@@ -145,7 +161,7 @@ def _run_and_export(config: ProofConfig, xml_out: Path) -> int:
     deterministic regardless of any inherited environment.
     """
     cmd = [
-        "uv",
+        _uv(),
         "run",
         "pytest",
         *BASE_ARGS,
@@ -176,7 +192,11 @@ def proof_configs() -> tuple[ProofConfig, ProofConfig, ProofConfig]:
     sysmon = {"COVERAGE_CORE": "sysmon"}
     return (
         ProofConfig("C-tracer serial", ["-n0"], ctrace),
-        ProofConfig("C-tracer parallel (-n auto --dist worksteal)", ["-n", "auto", "--dist", "worksteal"], ctrace),
+        ProofConfig(
+            "C-tracer parallel (-n auto --dist worksteal)",
+            ["-n", "auto", "--dist", "worksteal"],
+            ctrace,
+        ),
         ProofConfig("sysmon serial (falls back to C tracer under --cov-branch)", ["-n0"], sysmon),
     )
 
@@ -192,7 +212,7 @@ def render_evidence(
     test_count: int,
 ) -> str:
     """Render the coverage-equivalence evidence markdown (MD013 relaxed prose)."""
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     parallel_ok = not parallel_diff
     sysmon_ok = not sysmon_diff
 
@@ -293,7 +313,8 @@ def render_evidence(
         f"{'xdist safe to ship' if parallel_ok else 'BLOCKS Phase 2'} |"
     )
     lines.append(
-        f"| serial vs sysmon | C tracer (sysmon fell back) | {'empty' if sysmon_ok else 'NON-EMPTY'} | "
+        "| serial vs sysmon | C tracer (sysmon fell back) | "
+        f"{'empty' if sysmon_ok else 'NON-EMPTY'} | "
         "corroborates baseline Finding 1 (not a gate) |"
     )
     lines.append("")
@@ -302,7 +323,7 @@ def render_evidence(
 
 def _count_tests() -> int:
     proc = subprocess.run(  # noqa: S603
-        ["uv", "run", "pytest", "-n0", "--co", "-q"],
+        [_uv(), "run", "pytest", "-n0", "--co", "-q"],
         check=False,
         capture_output=True,
         text=True,
@@ -353,7 +374,10 @@ def emit_evidence(out_path: Path) -> int:
     print(f"Wrote evidence to {out_path}", flush=True)
 
     if parallel_diff:
-        print("!! LOAD-BEARING serial-vs-parallel diff is NON-EMPTY — this BLOCKS Phase 2:", flush=True)
+        print(
+            "!! LOAD-BEARING serial-vs-parallel diff is NON-EMPTY — this BLOCKS Phase 2:",
+            flush=True,
+        )
         for entry in parallel_diff:
             print(f"   {entry}", flush=True)
         return 1

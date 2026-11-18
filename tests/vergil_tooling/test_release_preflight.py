@@ -10,11 +10,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib.cd_runs import CDRunLookupError
+from vergil_tooling.lib.checkout_lock import CheckoutLockError, checkout_lock
 from vergil_tooling.lib.managed_worktree import ManagedWorktreeError
 from vergil_tooling.lib.release import preflight as preflight_module
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.preflight import (
     PendingDepsPr,
+    _check_branch_and_tree,
     _compute_release_version,
     check_develop_cd,
     fix_task_status,
@@ -210,39 +212,6 @@ def testcheck_gh_auth_fails() -> None:
         check_gh_auth()
 
 
-def test_check_branch_wrong_branch() -> None:
-    from vergil_tooling.lib.release.preflight import _check_branch_and_tree
-
-    with (
-        patch(_MOD + ".git.current_branch", return_value="main"),
-        pytest.raises(ReleaseError, match="Must be on develop"),
-    ):
-        _check_branch_and_tree()
-
-
-def test_check_branch_dirty_tree() -> None:
-    from vergil_tooling.lib.release.preflight import _check_branch_and_tree
-
-    with (
-        patch(_MOD + ".git.current_branch", return_value="develop"),
-        patch(_MOD + ".git.read_output", return_value="M file.py"),
-        pytest.raises(ReleaseError, match="not clean"),
-    ):
-        _check_branch_and_tree()
-
-
-def test_check_branch_not_synced() -> None:
-    from vergil_tooling.lib.release.preflight import _check_branch_and_tree
-
-    with (
-        patch(_MOD + ".git.current_branch", return_value="develop"),
-        patch(_MOD + ".git.read_output", side_effect=["", "abc1234", "def5678"]),
-        patch(_MOD + ".git.run"),
-        pytest.raises(ReleaseError, match="does not match"),
-    ):
-        _check_branch_and_tree()
-
-
 def testaudit_repo_config_fails() -> None:
     from subprocess import CompletedProcess
 
@@ -400,17 +369,6 @@ def test_read_and_validate_config(tmp_path: Path) -> None:
         'vergil = "v2.0"\n'
     )
     _read_and_validate_config(tmp_path)
-
-
-def test_check_branch_and_tree_success() -> None:
-    from vergil_tooling.lib.release.preflight import _check_branch_and_tree
-
-    with (
-        patch(_MOD + ".git.current_branch", return_value="develop"),
-        patch(_MOD + ".git.read_output", side_effect=["", "abc1234", "abc1234"]),
-        patch(_MOD + ".git.run"),
-    ):
-        _check_branch_and_tree()
 
 
 def testaudit_repo_config_success() -> None:
@@ -1742,8 +1700,11 @@ def test_develop_cd_gate_timed_out_refuses(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("VRG_CD_TIMEOUT", "60")
     with _gate(run=_cd_run(3), states=["timed_out"]), pytest.raises(ReleaseError) as exc:
         check_develop_cd(_REPO, _CD_HEAD)
-    assert "still not complete after 60s" in str(exc.value)
-    assert "actions/runs/3" in str(exc.value)
+    assert (
+        "The develop CD run is still not complete after 60s; result unknown. "
+        "Re-run vrg-release once it finishes, or raise VRG_CD_TIMEOUT. "
+        "Run: https://github.com/owner/repo/actions/runs/3"
+    ) in str(exc.value)
 
 
 def test_develop_cd_gate_no_run_uses_green_ancestor() -> None:
@@ -1779,6 +1740,27 @@ def test_develop_cd_gate_no_run_red_ancestor_refuses() -> None:
         check_develop_cd(_REPO, _CD_HEAD)
     assert "build" in str(exc.value)
     assert "actions/runs/5" in str(exc.value)
+
+
+def test_develop_cd_gate_no_run_unfinished_ancestor_refuses_without_a_wait() -> None:
+    # The ancestor run is judged with no wait, so an unfinished one says so
+    # rather than reporting a timeout that never ran.
+    with (
+        _gate(run=None, states=["timed_out"], runs=[_cd_run(5, sha="d" * 40)]) as watch,
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".git.is_ancestor", return_value=True),
+        pytest.raises(ReleaseError) as exc,
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+    watch.assert_called_once_with("5", timeout=0)
+    message = str(exc.value)
+    assert (
+        f"The develop CD run on ancestor {'d' * 12} of {_CD_HEAD[:12]} is not finished; "
+        "result unknown. Re-run vrg-release once it finishes. "
+        "Run: https://github.com/owner/repo/actions/runs/5"
+    ) in message
+    assert "after" not in message
+    assert "VRG_CD_TIMEOUT" not in message
 
 
 def test_develop_cd_gate_no_run_and_no_ancestor_refuses() -> None:
@@ -1860,12 +1842,13 @@ def test_develop_cd_gate_malformed_timeout_refuses_before_waiting(
     find.assert_not_called()
 
 
-def _preflight_patches(stack: contextlib.ExitStack) -> None:
+def _preflight_patches(stack: contextlib.ExitStack, *, real_sync: bool = False) -> None:
+    """Stub every preflight check; with *real_sync*, keep the develop sync real."""
     wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
     for name in (
         "_check_host_prerequisites",
         "_read_and_validate_config",
-        "_check_branch_and_tree",
+        *(() if real_sync else ("_check_branch_and_tree",)),
         "_check_version_not_tagged",
         "_check_main_not_ahead_of_develop",
         "_check_no_existing_tracking_issue",
@@ -1929,3 +1912,183 @@ def test_develop_cd_gate_unreadable_jobs_refuse() -> None:
         pytest.raises(ReleaseError, match="jobs could not be read"),
     ):
         check_develop_cd(_REPO, _CD_HEAD)
+
+
+# --- The develop sync (_check_branch_and_tree, spec §6.6 of epic #1218) ---
+
+_OLD = "1111111111111111111111111111111111111111"
+_NEW = "2222222222222222222222222222222222222222"
+
+
+class _FakeGit:
+    """The root checkout's git, as the develop sync sees it.
+
+    ``head`` is local develop and ``origin`` the fetched origin/develop. A
+    ``merge --ff-only`` moves ``head`` to ``origin``. ``locked`` records
+    whether the checkout lock of *root* was held at each git call.
+    """
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        head: str = _OLD,
+        origin: str = _NEW,
+        branch: str = "develop",
+        status: str = "",
+        ancestor: bool = True,
+    ) -> None:
+        self.root = root
+        self.head = head
+        self.origin = origin
+        self.branch = branch
+        self.status = status
+        self.ancestor = ancestor
+        self.runs: list[tuple[str, ...]] = []
+        self.locked: list[bool] = []
+
+    def _record_lock(self) -> None:
+        try:
+            with checkout_lock(self.root, purpose="probe"):
+                self.locked.append(False)
+        except CheckoutLockError:
+            self.locked.append(True)
+
+    def current_branch(self) -> str:
+        self._record_lock()
+        return self.branch
+
+    def read_output(self, *args: str) -> str:
+        self._record_lock()
+        if args == ("status", "--porcelain"):
+            return self.status
+        if args == ("rev-parse", "HEAD"):
+            return self.head
+        if args == ("rev-parse", "origin/develop"):
+            return self.origin
+        msg = f"unexpected git read {args}"
+        raise AssertionError(msg)
+
+    def run(self, *args: str) -> None:
+        self._record_lock()
+        self.runs.append(args)
+        if args == ("merge", "--ff-only", "origin/develop"):
+            self.head = self.origin
+
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        self._record_lock()
+        assert (ancestor, descendant) == (self.head, self.origin)
+        return self.ancestor
+
+    @contextlib.contextmanager
+    def patched(self) -> Generator[None]:
+        with (
+            patch(_MOD + ".git.current_branch", self.current_branch),
+            patch(_MOD + ".git.read_output", self.read_output),
+            patch(_MOD + ".git.run", self.run),
+            patch(_MOD + ".git.is_ancestor", self.is_ancestor),
+        ):
+            yield
+
+
+_FETCH = ("fetch", "--tags", "--force", "origin", "develop")
+_MERGE = ("merge", "--ff-only", "origin/develop")
+
+
+def test_preflight_fast_forwards(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    fake = _FakeGit(tmp_path)
+    with fake.patched():
+        _check_branch_and_tree(tmp_path)
+    assert fake.runs == [_FETCH, _MERGE]
+    assert fake.head == _NEW
+    assert "Fast-forwarded develop 11111111..22222222" in capsys.readouterr().out
+    # Every step of the sync ran under the checkout lock.
+    assert fake.locked
+    assert all(fake.locked)
+
+
+def test_preflight_up_to_date_no_change(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    fake = _FakeGit(tmp_path, head=_NEW, origin=_NEW)
+    with fake.patched():
+        _check_branch_and_tree(tmp_path)
+    assert fake.runs == [_FETCH]
+    assert "Fast-forwarded" not in capsys.readouterr().out
+
+
+def test_preflight_diverged_refuses(tmp_path: Path) -> None:
+    fake = _FakeGit(tmp_path, ancestor=False)
+    with (
+        fake.patched(),
+        pytest.raises(ReleaseError) as excinfo,
+    ):
+        _check_branch_and_tree(tmp_path)
+    assert str(excinfo.value) == (
+        "Local develop (11111111) has diverged from origin/develop (22222222); resolve it first."
+    )
+    assert fake.runs == [_FETCH]
+    assert fake.head == _OLD
+    # The refusal released the lock.
+    with checkout_lock(tmp_path, purpose="after"):
+        pass
+
+
+def test_preflight_dirty_refuses(tmp_path: Path) -> None:
+    fake = _FakeGit(tmp_path, status=" M file.py")
+    with (
+        fake.patched(),
+        pytest.raises(ReleaseError, match="not clean") as excinfo,
+    ):
+        _check_branch_and_tree(tmp_path)
+    assert excinfo.value.detail == " M file.py"
+    assert fake.runs == []
+
+
+def test_preflight_wrong_branch_refuses(tmp_path: Path) -> None:
+    fake = _FakeGit(tmp_path, branch="main")
+    with (
+        fake.patched(),
+        pytest.raises(ReleaseError, match="Must be on develop"),
+    ):
+        _check_branch_and_tree(tmp_path)
+    assert fake.runs == []
+
+
+def test_preflight_fetch_keeps_tags(tmp_path: Path) -> None:
+    """The fetch still brings remote tags, so the already-tagged check sees them."""
+    fake = _FakeGit(tmp_path, head=_NEW, origin=_NEW)
+    with fake.patched():
+        _check_branch_and_tree(tmp_path)
+    assert fake.runs[0] == _FETCH
+
+
+def test_preflight_holds_lock_only_for_sync(tmp_path: Path, develop_cd_gate: MagicMock) -> None:
+    """The lock is free when the develop-CD gate, which may wait, runs."""
+    fake = _FakeGit(tmp_path)
+    gate_saw_lock: list[bool] = []
+
+    def gate(_repo: str) -> None:
+        try:
+            with checkout_lock(tmp_path, purpose="gate probe"):
+                gate_saw_lock.append(False)
+        except CheckoutLockError:
+            gate_saw_lock.append(True)
+
+    develop_cd_gate.side_effect = gate
+    with contextlib.ExitStack() as stack:
+        _preflight_patches(stack, real_sync=True)
+        stack.enter_context(fake.patched())
+        preflight(version_override=None, repo_root=tmp_path)
+    assert all(fake.locked)
+    assert gate_saw_lock == [False]
+
+
+def test_cd_gate_checks_new_head(tmp_path: Path, develop_cd_gate: MagicMock) -> None:
+    """The develop-CD gate judges the head preflight fast-forwarded to."""
+    fake = _FakeGit(tmp_path)
+    develop_cd_gate.side_effect = _real_develop_cd_gate
+    with contextlib.ExitStack() as stack:
+        _preflight_patches(stack, real_sync=True)
+        stack.enter_context(fake.patched())
+        checked = stack.enter_context(patch(_MOD + ".check_develop_cd"))
+        preflight(version_override=None, repo_root=tmp_path)
+    checked.assert_called_once_with(_REPO, _NEW)

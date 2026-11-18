@@ -231,8 +231,8 @@ def test_main_reports_missing_installation() -> None:
     assert rc == 1
 
 
-@pytest.mark.parametrize("sentinel", ["adhoc", "intake", "planning"])
-def test_main_accepts_every_standing_sentinel(sentinel: str) -> None:
+@pytest.mark.parametrize("epic_sentinel", ["adhoc", "intake", "planning"])
+def test_main_accepts_every_standing_sentinel(epic_sentinel: str) -> None:
     """Every standing sentinel passes the cross-org guard and resolves (#3514)."""
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
@@ -241,9 +241,9 @@ def test_main_accepts_every_standing_sentinel(sentinel: str) -> None:
         patch(f"{_MOD}.epics.parent_of", return_value=None),
         patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
-        rc = main(["--task", "#42", "--epic", sentinel])
+        rc = main(["--task", "#42", "--epic", epic_sentinel])
     assert rc == 0
-    mock_resolve.assert_called_once_with(sentinel, repo="org/repo")
+    mock_resolve.assert_called_once_with(epic_sentinel, repo="org/repo")
     mock_add.assert_called_once_with(NEW, TASK)
 
 
@@ -271,8 +271,8 @@ def test_epic_help_names_every_standing_sentinel(capsys: pytest.CaptureFixture[s
     with pytest.raises(SystemExit):
         parse_args(["--help"])
     out = " ".join(capsys.readouterr().out.split())
-    for sentinel in ("adhoc", "intake", "planning"):
-        assert f"'{sentinel}'" in out
+    for epic_sentinel in ("adhoc", "intake", "planning"):
+        assert f"'{epic_sentinel}'" in out
 
 
 # -- Deferred queue: entered and left only through vrg-intake-route (#3673) ---

@@ -377,9 +377,9 @@ such as `develop` or a feature branch):
 vrg-vm update --tag develop
 ```
 
-- This runs `uv tool install` from git into `~/.local/bin`, which
-  takes precedence over the packaged `/usr/bin` copy on the VM user's
-  `PATH`, and records the ref in `~/.config/vergil/tooling-dev-ref`.
+- This runs `uv tool install --python 3.15` from git into
+  `~/.local/bin`, which takes precedence over the packaged `/usr/bin`
+  copy on the VM user's `PATH`, and records the ref in `~/.config/vergil/tooling-dev-ref`.
 - You only get a dev install by passing a dev ref. A failed packaged
   install never falls back to one.
 - While it is in place, every `vrg-vm` command that touches the VM

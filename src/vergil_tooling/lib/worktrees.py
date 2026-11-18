@@ -31,16 +31,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-class MergeCommitsError(Exception):
-    """A branch to rebase contains merge commits; a plain rebase would drop them.
-
-    ``git rebase`` linearizes history and drops merge commits together with
-    any content that exists only in their conflict resolutions or in edits
-    made during the merge. Rather than silently lose that content, the
-    rebase is refused (issue #3166).
-    """
-
-
 @dataclass(frozen=True)
 class Worktree:
     """A canonical worktree and the branch it has checked out."""
@@ -803,37 +793,3 @@ def match_worktrees(candidates: list[Worktree], tokens: list[str]) -> list[Workt
             parts.append(f"ambiguous (multiple worktrees): {', '.join(ambiguous)}")
         raise ValueError("; ".join(parts))
     return selected
-
-
-def rebase_onto(worktree: Worktree, base: str) -> None:
-    """Fetch *base* from origin and rebase *worktree*'s branch onto it.
-
-    Run via ``git -C`` so the batch orchestrator can process each worktree
-    without changing the process CWD. This is the step that makes a batch's
-    CI gate run exactly once: rebasing onto the current ``develop`` before
-    the PR opens means the gate runs against the final state and the later
-    merge is not ``BEHIND``. A rebase conflict raises
-    ``subprocess.CalledProcessError`` for the caller to convert to a
-    ``BatchAbortError``.
-
-    A branch carrying merge commits in ``origin/<base>..HEAD`` is refused
-    with ``MergeCommitsError`` before any rebase runs: a plain rebase would
-    silently drop those merges and any content that lives only in their
-    conflict resolution (issue #3166). ``--rebase-merges`` is not a safe
-    substitute — it recreates the merges but does not carry over their
-    conflict resolutions or manual amendments.
-    """
-    path = str(worktree.path)
-    git.run("-C", path, "fetch", "origin", base)
-    merges = git.read_output("-C", path, "rev-list", "--merges", f"origin/{base}..HEAD").split()
-    if merges:
-        shas = ", ".join(sha[:12] for sha in merges)
-        msg = (
-            f"{worktree.branch} contains {len(merges)} merge commit(s) not on "
-            f"origin/{base} ({shas}); a rebase would drop them and any content "
-            f"only in their conflict resolution. Update the branch with a merge "
-            f"instead of a rebase, or submit it individually with vrg-submit-pr "
-            f"from its worktree."
-        )
-        raise MergeCommitsError(msg)
-    git.run("-C", path, "rebase", f"origin/{base}")

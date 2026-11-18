@@ -160,7 +160,7 @@ def _current_head(worktree_root: Path) -> str | None:
     """
     try:
         return git.read_output("-C", str(worktree_root), "rev-parse", "HEAD")
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return None
 
 
@@ -172,7 +172,7 @@ def _current_branch(worktree_root: Path) -> str | None:
     """
     try:
         return git.read_output("-C", str(worktree_root), "rev-parse", "--abbrev-ref", "HEAD")
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return None
 
 

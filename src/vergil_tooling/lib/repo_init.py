@@ -142,7 +142,7 @@ def cwd_repo_slug() -> str | None:
     """
     try:
         slug = github.current_repo()
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return None
     return slug or None
 

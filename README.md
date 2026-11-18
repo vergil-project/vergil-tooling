@@ -27,18 +27,11 @@ export PATH="$(pwd)/.venv/bin:$PATH"
 
 ### CI (GitHub Actions)
 
-```yaml
-- uses: actions/checkout@v4
-  with:
-    repository: vergil-project/vergil-tooling
-    ref: v1.2
-    path: .vergil-tooling
-
-- name: Set up vergil-tooling
-  run: |
-    cd .vergil-tooling && uv sync --frozen
-    echo "$GITHUB_WORKSPACE/.vergil-tooling/.venv/bin" >> "$GITHUB_PATH"
-```
+The vergil-actions reusable workflows install vergil-tooling themselves,
+through the
+[`shared/setup/vergil`](https://github.com/vergil-project/vergil-actions/blob/develop/docs/site/docs/actions/shared-setup-vergil.md)
+action, at the version `[dependencies].vergil` in `vergil.toml` names, on
+Python 3.15. A consuming repo adds no install step of its own.
 
 ## CLI tools
 

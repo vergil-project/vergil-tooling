@@ -10,7 +10,8 @@ letting a pointless CI run finish:
 
 - MERGED: the caller's premise is wrong. What "already merged" means
   is a caller-level decision (finalize pre-checks and skips to
-  cleanup; ``vrg-pr-await`` aborts per #1420), so the engine raises.
+  cleanup), so the engine raises. ``vrg-pr-await`` does not use this
+  engine: it waits on auto-merge and reports a merge as success.
 - Draft: can go green but ``gh pr merge`` refuses it.
 - CONFLICTING: cannot merge no matter what CI says. Re-checked every
   iteration — a conflict can arise mid-loop when another PR merges.

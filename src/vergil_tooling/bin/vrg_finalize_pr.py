@@ -1,58 +1,91 @@
-"""Finalize a pull request: provenance check, merge, and cleanup.
+"""Finalize a batch of pull requests: watch them merge, then settle develop once.
 
-Three modes:
+``vrg-submit-pr`` opens each PR with auto-merge on, and GitHub merges it once
+its required checks pass. ``vrg-finalize-pr`` never merges a PR and never
+turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
 
-- ``vrg-finalize-pr <PR>`` — run the pre-merge provenance check, merge
-  the PR (or confirm it is already merged), then run the cleanup below.
-  This replaces the manual web merge + post-merge repo cleanup.
-- ``vrg-finalize-pr`` (no PR) — interactive: infer which PR to finalize
-  from open PRs in ``.worktrees/`` worktrees, confirm via prompts, then
-  run the cleanup. Requires a real terminal on both stdin and stdout.
-- ``vrg-finalize-pr --cleanup-only`` — non-interactive release path:
-  skip inference and merge entirely, never read stdin, and run only the
-  cleanup: switch to the target branch, fast-forward sync, delete
-  merged local branches, and prune stale remote-tracking references.
-  This is what ``vrg-release`` invokes (issue #1448).
+1. **Watches** every listed PR (``lib/finalize_watch.py``), holding no lock,
+   until each ends ``merged`` or ``failed: …`` (CI, conflict, closed,
+   auto-merge off, provenance, not a develop PR), or the batch deadline
+   (``$VRG_FINALIZE_DEADLINE`` seconds, default 7200) passes and it is
+   ``timed out``. A PR that merged before the run started counts as merged.
+   The watch runs the provenance check on each PR, and turns auto-merge off
+   on an open PR with a violation unless ``--allow-provenance-violation``,
+   which leaves it on so the PR may merge.
+2. **Settles** develop once, only if at least one PR merged. ``close-refs``
+   closes any issue a merged PR closes that GitHub left open (issue #4002),
+   before the lock is taken, since it touches only GitHub. Then, under the
+   checkout lock (``lib/checkout_lock.py``, spec §6.4), it syncs the main
+   worktree to ``origin/develop``, cleans up merged branches and worktrees,
+   provisions the dev image, and runs one ``vrg-container-run --
+   vrg-validate`` on the synced head. The lock is let go before the CD
+   report, so it never covers a wait on GitHub.
+3. **Reports** the synced head's CD run as ``CD: <state> <url>``, without
+   waiting on it (spec §6.5). ``--wait-cd`` blocks on that run instead,
+   bounded by ``$VRG_CD_TIMEOUT`` (default 5400s), judging its failed jobs as
+   the release's develop-CD gate does (a docs-only failure is a warning). A
+   run still in progress at the deadline is "result unknown", never a failed
+   run, and still fails the CD check (issue #3316); a run cancelled by a
+   concurrency supersede is "superseded", a loud warning, never a failure
+   (issue #3834).
+4. **Reports** every PR under *merged* or *not merged (reason)*, with what to
+   do next for each unmerged PR, and the validate's result. A develop that
+   did not validate is said loudly, with its head SHA, the commits the sync
+   brought in, the validate's log path and its last lines.
+5. **Releases**, with ``--release``, only on full success: ``vrg-release``,
+   or ``vrg-release --no-install`` with ``--no-install``. It starts after the
+   lock is let go, so the release's own preflight can take it, and it
+   fast-forwards develop itself (spec §6.6).
 
-A PR whose body has more than one ``Closes`` line is a *batch PR*, one
-commit per issue (epic vergil-project/.github#1019). Finalize cross-checks
-its ``Closes`` issues against GitHub's closing references, checks the
-commit-per-issue invariant, updates it by rebase (never by merging the base
-in) when it is behind, re-checks it after every update and right before the
-merge, and rebase-merges it pinned to the head it checked. ``--strategy
-squash`` is refused on a batch PR. Every other PR merges as before.
+**Full success** means every PR merged, the validate passed and, with
+``--wait-cd``, CD is green. A PR that merged with a provenance violation is
+reported loudly and blocks full success, so no chained release runs, with or
+without ``--allow-provenance-violation``: the override covers only an open
+PR's auto-merge, never a violation that has already merged, which a human
+must look at before any release.
 
-Output renders through the stage-aware progress framework
+**Selecting the PRs.** ``vrg-finalize-pr <pr>[,<pr>…]`` takes a comma list of
+PR numbers or URLs (one PR is a list of one); ``--all`` takes every open PR
+whose branch has a worktree in ``.worktrees/``; with neither, the run picks
+interactively from those PRs (a real terminal is needed) and offers the
+settle phase alone when there are none.
+
+**``--cleanup-only``** settles develop with no PRs and no watch: the sync,
+cleanup, provision and validate under the lock, then the CD report. It never
+reads stdin. ``vrg-release`` runs it, and so does a human after an automated
+job merges on GitHub. Its exit codes are a watched run's.
+
+**Exit status:**
+
+- 0: full success;
+- 1: a tool or usage error, including a settle step other than the validate
+  that failed (close-refs, the sync and cleanup), or a removed flag;
+- 3: develop is healthy, but not every PR merged (or one merged with a
+  provenance violation);
+- 4: develop did not validate: the validate failed or could not run (the dev
+  image could not be provisioned included), or, with ``--wait-cd``, CD did
+  not succeed. 4 takes precedence over 1 and 3;
+- 5: full success, but the chained release failed.
+
+**Removed flags** are refused by name before any side effect:
+``--strategy`` (submit chooses the merge method), ``--no-wait-cd`` (not
+waiting is the default), ``--skip-post-checks`` (one run watches the whole
+batch, then settles develop once) and ``--install`` (``--release`` installs
+by default; ``--no-install`` opts out).
+
+Output of the settle phase renders through the stage-aware progress framework
 (issue #1479): standalone TTY runs get the live display with collapsed
-per-stage status lines and a run log at
-``.vergil/vrg-finalize-pr-<stamp>.log``; piped runs fall back to the
-plain renderer. ``vrg-release`` passes ``--output-format plain``
-explicitly because two live displays cannot nest (issue #1470).
-
-After cleanup succeeds, validation runs in the dev container, then
-finalize blocks on the CD workflow run its merge triggered — identified
-by the merge commit SHA, not "latest run on branch" — and fails if that
-run does not succeed (issue #2753; supersedes the non-blocking #303
-check). The watch is bounded by ``$VRG_CD_TIMEOUT`` (default 5400s); a run
-still in progress at the deadline is reported as "result unknown", never as a
-failed run, and still fails the stage (issue #3316). A run cancelled because a
-concurrency group gave its place to a higher-priority run is reported as
-"superseded", a loud non-fatal warning, never as a failure; any other
-cancellation still fails (issue #3834). ``--no-wait-cd`` is the
-conscious opt-out from blocking.
-
-``--release`` chains straight into ``vrg-release`` after the finalize
-pipeline completes **successfully** (issue #1634) — the fast-turnaround
-cascade that merges, cleans up, and cuts a release in one command. The
-chain runs only on success, and only after ``run_pipeline`` has torn down
-its live display, so the two renderers never nest (cf. issue #1470). It
-runs as a subprocess, not ``exec``, so the caller (e.g. ``vrg-submit-pr``)
-regains control to report how far the cascade got.
+per-stage status lines and a run log at ``.vergil/vrg-finalize-pr-<stamp>.log``;
+piped runs fall back to the plain renderer. ``vrg-release`` passes
+``--output-format plain`` explicitly because two live displays cannot nest
+(issue #1470). The release runs as a subprocess after that display has closed,
+so the two renderers never nest either.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import shlex
 import subprocess
 import sys
@@ -60,14 +93,13 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import yaml
+
 from vergil_tooling.lib import (
-    branch_names,
     config,
+    finalize_watch,
     git,
     github,
-    linkage,
-    pr_merge,
-    pr_provenance,
     progress,
     worktrees,
 )
@@ -76,6 +108,7 @@ from vergil_tooling.lib.cd_runs import (
     _CD_DISPATCH_TIMEOUT_SECS,
     _CD_PASSING_CONCLUSIONS,
     _CD_POLL_INTERVAL_SECS,
+    _CD_WORKFLOW_NAME,
     CD_TIMEOUT_ENV,
     CDRunLookupError,
     CDRunProblem,
@@ -83,23 +116,27 @@ from vergil_tooling.lib.cd_runs import (
     _poll_for_run,
     _supersede_group,
     cd_timeout_secs,
+    classify_jobs,
     wait_completed,
 )
+from vergil_tooling.lib.checkout_lock import checkout_lock
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container import PackageJsonError, resolve_language
 from vergil_tooling.lib.container_cache import provision_dev_image
 from vergil_tooling.lib.live_branches import RepoSetError, default_repo_roots, discover_repos
-from vergil_tooling.lib.pr_workflow import batch, batch_rules, github_transport
+from vergil_tooling.lib.pr_workflow import github_transport
 from vergil_tooling.lib.process_errors import error_text
-from vergil_tooling.lib.progress import Stage
+from vergil_tooling.lib.progress import Stage, StageResult
 from vergil_tooling.lib.release import gate
 from vergil_tooling.lib.repo_init import prompt_choice
 from vergil_tooling.lib.versions import VersionsError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Sequence
     from pathlib import Path
+
+    from vergil_tooling.lib.finalize_watch import PRResult
 
 _ETERNAL_BY_MODEL: dict[str, list[str]] = {
     "docs-single-branch": ["develop"],
@@ -107,15 +144,58 @@ _ETERNAL_BY_MODEL: dict[str, list[str]] = {
     "application-promotion": ["develop", "release", "main"],
 }
 
+# Exit codes (spec §6.3).
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_NOT_ALL_MERGED = 3
+EXIT_DEVELOP_BROKEN = 4
+EXIT_RELEASE_FAILED = 5
+# What progress.run_pipeline returns when the run is interrupted.
+EXIT_INTERRUPTED = 130
+
+NO_WAIT_CD_REMOVED = (
+    "vrg-finalize-pr: --no-wait-cd was removed; not waiting on CD is now the "
+    "default (use --wait-cd to wait)"
+)
+STRATEGY_REMOVED = (
+    "vrg-finalize-pr: --strategy was removed; finalize no longer merges. "
+    "vrg-submit-pr now chooses the merge method when it turns auto-merge on "
+    "(squash for a single-issue PR, rebase for a batch PR)"
+)
+SKIP_POST_CHECKS_REMOVED = (
+    "vrg-finalize-pr: --skip-post-checks was removed; one run now watches every "
+    "listed PR, then settles develop once (pass the PRs as a comma list)"
+)
+INSTALL_REMOVED = (
+    "vrg-finalize-pr: --install was removed; --release now installs by default "
+    "(add --no-install to skip the install)"
+)
+
+# How many trailing lines of a failed validate's output the report repeats.
+VALIDATE_TAIL_LINES = 40
+
+# The run log a failed validate's full output is written to, under .vergil/.
+_VALIDATE_LOG_COMMAND = "vrg-finalize-validate"
+
+_NEXT_STEP = "hand it to an agent, then rerun `vrg-finalize-pr {pr}`"
+_INVESTIGATE = "investigate before re-enabling auto-merge"
+_NEXT_STEP_BY_OUTCOME: dict[str, str] = {
+    "failed: auto-merge off": _INVESTIGATE,
+    "failed: provenance": _INVESTIGATE,
+    "failed: not a develop PR": (
+        "finalize watches develop PRs only; a release PR goes through vrg-release"
+    ),
+}
+
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
-    # --install extends the cascade one step past --release; normalize once so
-    # the release-chain logic below sees release on (issue #1643).
-    if args.install:
-        args.release = True
+    refusal = _flag_refusal(args)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return EXIT_ERROR
 
     if not git.is_main_worktree():
         main_root = git.main_worktree_root()
@@ -125,130 +205,97 @@ def main(argv: list[str] | None = None) -> int:
             "  and cannot safely do so when the calling shell's CWD is inside one.",
             file=sys.stderr,
         )
-        return 1
+        return EXIT_ERROR
 
     root = git.repo_root()
 
     # A release cascade on a repo that is not released is refused before any
-    # merge or cleanup, so nothing changes (issue #4175).
+    # watch or cleanup, so nothing changes (issue #4175).
     if args.release:
         refusal = gate.unreleased_refusal(root)
         if refusal is not None:
-            flag = "--install" if args.install else "--release"
-            print(f"vrg-finalize-pr {flag}: {refusal}", file=sys.stderr)
-            return 1
+            print(f"vrg-finalize-pr --release: {refusal}", file=sys.stderr)
+            return EXIT_ERROR
 
-    # Batch mode (issue #1673): an explicit comma-list or --all finalizes
-    # several PRs serially. A single PR (or none) falls through to the
-    # unchanged single-PR pipeline below.
+    if args.cleanup_only:
+        return _run_settle_only(args, root)
+
     if args.all_prs:
         prs = _resolve_open_prs(root)
         if not prs:
             print("vrg-finalize-pr --all: no open PRs found in worktrees.")
-            return 0
-        return _run_finalize_batch(
-            prs, root=root, release=args.release, install=args.install, assume_yes=args.yes
-        )
-    if args.pr is not None and "," in args.pr:
+            return EXIT_OK
+    elif args.pr is not None:
         prs = _parse_pr_list(args.pr)
-        return _run_finalize_batch(
-            prs, root=root, release=args.release, install=args.install, assume_yes=args.yes
-        )
-
-    # --cleanup-only is the scriptable release path: no inference, no
-    # prompts, no stdin reads — args.pr stays None and only the
-    # cleanup/validation/cd-check stages run (issue #1448).
-    if args.pr is None and not args.cleanup_only:
+        if not prs:
+            print(f"vrg-finalize-pr: no PR in {args.pr!r}", file=sys.stderr)
+            return EXIT_ERROR
+    else:
         try:
-            args.pr = _infer_pr(root, args.target_branch, assume_yes=args.yes)
+            picked = _infer_pr(root, args.target_branch, assume_yes=args.yes)
         except SystemExit as exc:
             if exc.code == 0:
-                return 0
+                return EXIT_OK
             raise
+        if picked is None:
+            return _run_settle_only(args, root)
+        prs = [picked]
+    return _run_watched(args, root, prs)
 
-    # Inference and its prompts above need the real TTY; everything
-    # below runs under the progress pipeline, which owns stdout/stderr
-    # (issue #1479).
-    ctx = FinalizeContext(args=args, root=root)
-    rc = progress.run_pipeline(
-        ctx,
-        build_stages(
-            include_pr=args.pr is not None,
-            include_post_checks=not args.skip_post_checks,
-        ),
-        command="vrg-finalize-pr",
-        label="vrg-finalize-pr",
-        args=args,
-        repo_root=root,
-    )
 
-    # Surface — and, with --clean-dirty, guardedly clear — any merged/closed
-    # worktrees the sweep could not remove (issue #2348). Runs after the
-    # pipeline has torn down its live display so the report (and the
-    # confirmation prompt) reaches the human on real stdio, and regardless of
-    # rc so a stuck worktree is never hidden behind a failed later stage.
-    _handle_stuck_worktrees(ctx)
+def _flag_refusal(args: argparse.Namespace) -> str | None:
+    """The refusal for a removed flag or a contradictory set of flags, or ``None``.
 
-    # Task closure and epic rollup are event-driven now (epic
-    # vergil-project/.github#75): the PR's `Closes #N` linkage closes the task on
-    # merge, and the on: issues.closed rollup Action closes the parent epic. The
-    # old post-pipeline `_close_managed_task` call was removed here in T4. The
-    # close-refs stage is the backstop for an auto-close GitHub skipped
-    # (issue #4002).
-
-    # --release cascade (issue #1634): chain into vrg-release only after a
-    # clean finalize. A non-zero pipeline must not trigger a release, and the
-    # hand-off happens here — after run_pipeline has closed its live display —
-    # so the two renderers never nest (cf. issue #1470). --skip-post-checks
-    # never chains: release is the batch orchestrator's single end-of-batch
-    # step (issue #1673).
-    if rc != 0 or not args.release or args.skip_post_checks:
-        return rc
-    if args.dry_run:
-        print(f"\n[dry-run] would chain into: {shlex.join(_release_cmd(args.install))}")
-        return 0
-    return _chain_release(root, install=args.install)
+    Checked before any side effect, so a caller still passing a removed flag
+    is told what replaced it rather than having it silently accepted (spec
+    §6.10).
+    """
+    if args.no_wait_cd:
+        return NO_WAIT_CD_REMOVED
+    if args.strategy is not None:
+        return STRATEGY_REMOVED
+    if args.skip_post_checks:
+        return SKIP_POST_CHECKS_REMOVED
+    if args.install:
+        return INSTALL_REMOVED
+    if args.no_install and not args.release:
+        return "vrg-finalize-pr: --no-install requires --release"
+    return None
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Finalize a pull request.")
-    # A PR argument and --cleanup-only contradict each other: the flag
-    # promises no merge and no prompts, the argument requests a merge.
+    parser = argparse.ArgumentParser(
+        description="Watch a batch of auto-merging PRs, then settle develop once."
+    )
+    # A PR list, --all and --cleanup-only each name what the run settles.
     target = parser.add_mutually_exclusive_group()
     target.add_argument(
         "pr",
         nargs="?",
         default=None,
-        help="PR number or URL to merge and finalize. Omit to infer interactively.",
+        help="PR number or URL, or a comma list of them, to watch. Omit to pick interactively.",
     )
     target.add_argument(
         "--cleanup-only",
         action="store_true",
-        help="Skip PR inference and merge; run cleanup without prompting "
-        "or reading stdin (non-interactive release path).",
+        help="Settle develop with no PRs: sync, cleanup, provision and validate, "
+        "then the CD report. Never prompts or reads stdin.",
     )
     target.add_argument(
         "--all",
         dest="all_prs",
         action="store_true",
-        help="Finalize every open PR found in .worktrees/ as a serial batch (issue #1673).",
+        help="Watch every open PR whose branch has a worktree in .worktrees/.",
     )
     parser.add_argument("--target-branch", default="develop", help="Target branch to switch to")
     parser.add_argument(
-        "--strategy",
-        default=None,
-        choices=["merge", "squash", "rebase"],
-        help=(
-            "Merge strategy for the PR. Default by branch prefix: 'release/*' "
-            "branches merge with a merge commit (preserve develop<->main "
-            "ancestry); all others squash."
-        ),
-    )
-    parser.add_argument(
         "--allow-provenance-violation",
         action="store_true",
-        help="Proceed despite provenance violations (conscious human override)",
+        help="Leave auto-merge on for an open PR with a provenance violation "
+        "(conscious human override). It does not cover a violation that has "
+        "already merged: that run is still not a full success (exit 3, or 4), "
+        "and no chained release runs.",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be done without making changes"
@@ -264,31 +311,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--release",
         action="store_true",
-        help="After a successful finalize, chain straight into vrg-release "
-        "(the full submit-finalize-release cascade)",
+        help="On full success, chain into vrg-release, which installs by default",
     )
     parser.add_argument(
-        "--install",
+        "--no-install",
         action="store_true",
-        help="Extend the cascade one step further: implies --release and lets "
-        "vrg-release run its consumer-refresh install step (issue #1643). "
-        "--release alone runs vrg-release --no-install",
+        help="With --release, run vrg-release --no-install",
     )
     parser.add_argument(
-        "--skip-post-checks",
+        "--wait-cd",
         action="store_true",
-        help="Skip the post-merge validation and CD-status stages (and any "
-        "release chain). Used by the batch orchestrator, which runs those "
-        "once at the end of the batch (issue #1673).",
+        help="Block on the CD workflow run for the synced head and fail if it "
+        "does not succeed. By default finalize reports that run's link and "
+        "state without waiting.",
     )
-    parser.add_argument(
-        "--no-wait-cd",
-        action="store_true",
-        help="Do not block on the CD workflow run the merge triggers. By "
-        "default finalize waits for that run to complete and fails if it does "
-        "not succeed (issue #2753); this is the conscious opt-out for the rare "
-        "case where blocking on the post-merge publish is not wanted.",
-    )
+    # Removed flags. Kept hidden so main can refuse each by name, rather than
+    # argparse rejecting it as unknown.
+    parser.add_argument("--no-wait-cd", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--strategy", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--skip-post-checks", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
     add_yes_argument(parser)
     progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
@@ -315,57 +357,233 @@ def _resolve_open_prs(root: Path) -> list[str]:
     return urls
 
 
-def _run_finalize_batch(
-    prs: list[str],
-    *,
-    root: Path,
-    release: bool,
-    install: bool,
-    assume_yes: bool,
-) -> int:
-    """Finalize *prs* serially, fail-fast, then validate + release once.
-
-    Each item shells out to ``vrg-finalize-pr <pr> --skip-post-checks`` (merge
-    + cleanup, no validation). On full success, one end-of-batch
-    ``vrg-finalize-pr --cleanup-only`` runs validation + the CD check, then a
-    single ``vrg-release`` if requested (issue #1673), built by
-    ``_release_cmd``.
-    """
-
-    def _finalize_item(pr: str) -> None:
-        result = subprocess.run(  # noqa: S603
-            ("vrg-finalize-pr", pr, "--skip-post-checks"),  # noqa: S607
-            cwd=root,
-            check=False,
+def _run_watched(args: argparse.Namespace, root: Path, prs: list[str]) -> int:
+    """Watch *prs*, settle develop once if any merged, report, then maybe release."""
+    if args.dry_run:
+        print(f"[dry-run] would watch until each merges or fails: {', '.join(prs)}")
+        print("[dry-run] the settle phase below runs only if at least one PR merges")
+        settle = _settle(args, root, merged_prs=list(prs))
+        return _maybe_release(args, root, _settle_exit(settle))
+    try:
+        results = finalize_watch.watch(
+            prs, allow_provenance_violation=args.allow_provenance_violation
         )
-        if result.returncode != 0:
-            msg = f"vrg-finalize-pr {pr} --skip-post-checks exited {result.returncode}"
-            raise batch.BatchAbortError(msg)
+    except (finalize_watch.FinalizeWatchError, ValueError) as exc:
+        print(f"vrg-finalize-pr: the watch stopped: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    merged = [r.pr for r in results if r.outcome == "merged"]
+    if not merged:
+        _print_pr_report(results)
+        print("\nNo PR merged: the settle phase was skipped.")
+        return _maybe_release(args, root, _watch_exit(results))
+    settle = _settle(args, root, merged_prs=merged)
+    _print_pr_report(results)
+    _print_settle_report(settle)
+    rc = _settle_exit(settle)
+    if rc == EXIT_OK:
+        rc = _watch_exit(results)
+    return _maybe_release(args, root, rc)
 
-    def _release() -> None:
-        cmd = _release_cmd(install)
-        result = subprocess.run(cmd, cwd=root, check=False)  # noqa: S603,S607
-        if result.returncode != 0:
-            raise batch.BatchAbortError(f"{shlex.join(cmd)} exited {result.returncode}")
 
-    post_steps = [batch.finalize_post_checks_step(root)]
-    if release:
-        post_steps.append(batch.PostStep("release", _release))
+def _run_settle_only(args: argparse.Namespace, root: Path) -> int:
+    """Settle develop with no PRs and no watch (``--cleanup-only``), then maybe release."""
+    settle = _settle(args, root, merged_prs=[])
+    _print_settle_report(settle)
+    return _maybe_release(args, root, _settle_exit(settle))
 
-    plan = [f"finalize PR {pr}" for pr in prs]
-    plan.append(batch.POST_CHECKS_PLAN_LINE + (", then release" if release else ""))
 
-    report = batch.run_batch(
-        prs,
-        _finalize_item,
-        label=lambda pr: f"PR {pr}",
-        plan=plan,
-        assume_yes=assume_yes,
-        completed=batch.ItemOutcome.MERGED,
-        post_steps=post_steps,
-    )
-    print(batch.format_report(report))
-    return 0 if report.all_completed and report.post_failure is None else 1
+def _blocking_violation(result: PRResult) -> bool:
+    """Whether *result* merged with a provenance violation, which blocks full success.
+
+    ``--allow-provenance-violation`` does not change this: it covers only an
+    open PR's auto-merge, never a violation that has already merged
+    (vergil-tooling#4662).
+    """
+    return result.outcome == "merged" and result.provenance_violation
+
+
+def _watch_exit(results: Sequence[PRResult]) -> int:
+    """0 when every PR merged with no provenance violation, else 3."""
+    if all(r.outcome == "merged" and not _blocking_violation(r) for r in results):
+        return EXIT_OK
+    return EXIT_NOT_ALL_MERGED
+
+
+def _print_pr_report(results: Sequence[PRResult]) -> None:
+    """List every watched PR under *merged* or *not merged (reason)*, with next steps."""
+    merged = [r for r in results if r.outcome == "merged"]
+    unmerged = [r for r in results if r.outcome != "merged"]
+    print("\nvrg-finalize-pr report")
+    print(f"  Merged ({len(merged)}):")
+    for r in merged:
+        if r.provenance_violation:
+            print(
+                f"    {r.pr}  PROVENANCE VIOLATION ({r.detail}): this run is not a full "
+                "success; --allow-provenance-violation does not cover a violation that "
+                "has already merged, so a human must look before any release"
+            )
+        else:
+            print(f"    {r.pr}")
+    if not merged:
+        print("    (none)")
+    print(f"  Not merged ({len(unmerged)}):")
+    for r in unmerged:
+        reason = f"{r.outcome}: {r.detail}" if r.detail else r.outcome
+        step = _NEXT_STEP_BY_OUTCOME.get(r.outcome, _NEXT_STEP).format(pr=r.pr)
+        print(f"    {r.pr} ({reason})")
+        print(f"      next: {step}")
+    if not unmerged:
+        print("    (none)")
+
+
+@dataclass(frozen=True)
+class SettleOutcome:
+    """How the settle phase ended: its stages' results and what they recorded."""
+
+    ctx: FinalizeContext
+    results: tuple[StageResult, ...]
+    rc: int
+
+    def status(self, stage: str) -> str | None:
+        """The status of the stage named *stage*, or ``None`` when it never ran."""
+        for result in self.results:
+            if result.name == stage:
+                return result.status
+        return None
+
+    def error(self, stage: str) -> str:
+        """The recorded error of the stage named *stage*, or ``""``."""
+        for result in self.results:
+            if result.name == stage:
+                return result.error or ""
+        return ""
+
+
+def _settle(args: argparse.Namespace, root: Path, *, merged_prs: list[str]) -> SettleOutcome:
+    """Run the settle phase's stages and surface any stuck worktrees.
+
+    The checkout lock is taken by the ``checkout-lock`` stage, after
+    close-refs, and let go by the CD check, or by the ``with`` block here when
+    a stage before it stops the pipeline. Either way it is let go before this
+    returns, so a chained release can take it.
+    """
+    purpose = "vrg-finalize-pr settle" if merged_prs else "vrg-finalize-pr --cleanup-only"
+    ctx = FinalizeContext(args=args, root=root, merged_prs=merged_prs, lock_purpose=purpose)
+    results: list[StageResult] = []
+    with ctx.lock_stack:
+        rc = progress.run_pipeline(
+            ctx,
+            build_stages(close_refs=bool(merged_prs)),
+            command="vrg-finalize-pr",
+            label="vrg-finalize-pr",
+            args=args,
+            repo_root=root,
+            results_sink=results,
+        )
+
+    # Surface — and, with --clean-dirty, guardedly clear — any merged/closed
+    # worktrees the sweep could not remove (issue #2348). Runs after the
+    # pipeline has torn down its live display so the report (and the
+    # confirmation prompt) reaches the human on real stdio, and regardless of
+    # rc so a stuck worktree is never hidden behind a failed later stage.
+    _handle_stuck_worktrees(ctx)
+    return SettleOutcome(ctx=ctx, results=tuple(results), rc=rc)
+
+
+def _validate_failed(settle: SettleOutcome) -> bool:
+    """Whether the validate failed or could not run (a provision failure stops it)."""
+    return settle.status("validation") == "failed" or settle.status("provision") == "failed"
+
+
+def _develop_broken(settle: SettleOutcome) -> bool:
+    """Whether nothing has shown develop healthy: the validate failed or could not run.
+
+    A provision failure stops the pipeline before the validate, so it could
+    not run. With ``--wait-cd``, a CD check that failed counts too.
+    """
+    if _validate_failed(settle):
+        return True
+    return bool(settle.ctx.args.wait_cd) and settle.status("cd-check") == "failed"
+
+
+def _settle_exit(settle: SettleOutcome) -> int:
+    """The settle phase's exit code: 4 when develop is broken, 1 for any other failure."""
+    if settle.rc == EXIT_INTERRUPTED:
+        return settle.rc
+    if _develop_broken(settle):
+        return EXIT_DEVELOP_BROKEN
+    if settle.rc != 0:
+        return EXIT_ERROR
+    return EXIT_OK
+
+
+def _print_settle_report(settle: SettleOutcome) -> None:
+    """State the validate's result and the CD run; say loudly when develop is broken."""
+    ctx = settle.ctx
+    branch = ctx.args.target_branch
+    if ctx.args.dry_run:
+        return
+    validation = settle.status("validation")
+    if validation == "ok":
+        print(f"  Validate: passed on {branch} at {ctx.synced_to or '(unknown head)'}")
+    elif validation is None:
+        why = settle.error("provision") or "an earlier settle stage failed"
+        print(f"  Validate: did not run ({why})")
+    if ctx.cd_line:
+        print(f"  {ctx.cd_line.strip()}")
+    if not _develop_broken(settle):
+        return
+    print()
+    if _validate_failed(settle):
+        print(f"ERROR: {branch} DID NOT VALIDATE. Fix it before anything else merges or releases.")
+    else:
+        print(
+            f"ERROR: {branch}'s CD did not succeed (--wait-cd). "
+            "Fix it before anything else merges or releases."
+        )
+    print(f"  Head: {ctx.synced_to or '(unknown)'}")
+    print("  Commits the sync brought in:")
+    for line in _synced_commits(ctx):
+        print(f"    {line}")
+    if settle.status("validation") == "failed":
+        print(f"  Validate: {settle.error('validation')}")
+    elif settle.status("provision") == "failed":
+        print(f"  Validate could not run: {settle.error('provision')}")
+    if settle.status("cd-check") == "failed" and ctx.args.wait_cd:
+        print(f"  CD: {settle.error('cd-check')}")
+    if ctx.validate_log is not None:
+        print(f"  Validate log: {ctx.validate_log}")
+    for label, tail in ctx.validate_tails:
+        print(f"  Last {len(tail)} lines of the validate's {label}:")
+        for line in tail:
+            print(f"    {line}")
+
+
+def _synced_commits(ctx: FinalizeContext) -> list[str]:
+    """The commits the sync brought in, one ``<sha> <subject>`` line each."""
+    if not ctx.synced_from or not ctx.synced_to:
+        return ["(unknown: the sync did not record its range)"]
+    if ctx.synced_from == ctx.synced_to:
+        return [f"(none: {ctx.args.target_branch} was already at this head)"]
+    try:
+        log = git.read_output("log", "--oneline", f"{ctx.synced_from}..{ctx.synced_to}")
+    except subprocess.CalledProcessError as exc:
+        return [f"(could not list them: {error_text(exc)})"]
+    return log.splitlines() or ["(none)"]
+
+
+def _maybe_release(args: argparse.Namespace, root: Path, rc: int) -> int:
+    """Chain into the release on full success with ``--release``; 5 when it fails."""
+    if rc != EXIT_OK or not args.release:
+        if args.release and rc != EXIT_OK:
+            print(f"\nRelease skipped: the run is not a full success (exit {rc}).")
+        return rc
+    if args.dry_run:
+        print(f"\n[dry-run] would chain into: {shlex.join(_release_cmd(args))}")
+        return EXIT_OK
+    if _chain_release(root, _release_cmd(args)) != 0:
+        return EXIT_RELEASE_FAILED
+    return EXIT_OK
 
 
 class FinalizeError(Exception):
@@ -378,16 +596,18 @@ class FinalizeError(Exception):
 
 @dataclass
 class FinalizeContext:
-    """State threaded through the pipeline stages."""
+    """State threaded through the settle phase's stages."""
 
     args: argparse.Namespace
     root: Path
-    merged_branch: str | None = None
-    # SHA of the commit this merge produced on the target branch (mergeCommit
-    # oid). The CD workflow the merge triggers runs on this SHA, so the cd-check
-    # stage waits on exactly that run rather than "latest run on branch"
-    # (issue #2753). None until _stage_merge records it (and on dry-run).
-    merge_commit_sha: str | None = None
+    # The PRs the watch saw merge, whose closing references and branches the
+    # settle phase handles. Empty for --cleanup-only.
+    merged_prs: list[str] = field(default_factory=list)
+    lock_purpose: str = "vrg-finalize-pr --cleanup-only"
+    # The target branch's head before and after the sync, for the CD check
+    # and for the report of a develop that did not validate.
+    synced_from: str = ""
+    synced_to: str = ""
     deleted: list[str] = field(default_factory=list)
     # Merged/closed worktrees the sweep could not remove — dirty, or a
     # reused branch name with unmerged commits (issue #1719). Collected in
@@ -395,6 +615,16 @@ class FinalizeContext:
     # tears down its live display, so the skip reason is impossible to miss
     # instead of buried in the collapsed stage log (issue #2348).
     stuck: list[worktrees.WorktreeStatus] = field(default_factory=list)
+    # The CD line the cd-check stage reported, repeated in the final report.
+    cd_line: str = ""
+    # A failed validate's full output log and its last lines.
+    validate_log: Path | None = None
+    # One (label, lines) pair per stream that had output, stdout first.
+    validate_tails: list[tuple[str, list[str]]] = field(default_factory=list)
+    # The checkout lock, taken by the checkout-lock stage. _settle closes it
+    # after the pipeline; cd-check closes it first, so the lock never covers
+    # a wait on CD (spec §6.4).
+    lock_stack: contextlib.ExitStack = field(default_factory=contextlib.ExitStack)
 
 
 def _run(args: list[str], *, dry_run: bool) -> None:
@@ -765,10 +995,41 @@ def _infer_pr(root: Path, target_branch: str, *, assume_yes: bool = False) -> st
     return pr["url"]
 
 
+NO_CD_WORKFLOW_LINE = "  CD: no CD workflow in this repo"
+NO_CD_RUN_LINE = "  CD: no CD run for this head"
+
+
+def _declares_cd_workflow(root: Path) -> bool | None:
+    """Whether a workflow under *root*'s ``.github/workflows`` is named ``CD``.
+
+    ``True`` when a ``*.yml`` or ``*.yaml`` there declares ``name: CD``, the
+    workflow ``gh run list --workflow CD`` looks up; ``False`` when none does
+    (no such directory included). ``None`` when a workflow file cannot be read
+    or parsed and none read declares it, so the answer is not known: the
+    caller then reports the failed lookup as it is rather than reading it as
+    a repo with no CD.
+    """
+    workflows = root / ".github" / "workflows"
+    if not workflows.is_dir():
+        return False
+    files = sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")])
+    unknown = False
+    for path in files:
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except OSError, UnicodeDecodeError, yaml.YAMLError:
+            unknown = True
+            continue
+        if isinstance(data, dict) and data.get("name") == _CD_WORKFLOW_NAME:
+            return True
+    return None if unknown else False
+
+
 def _wait_for_cd_run(
     target_branch: str,
     head_sha: str,
     *,
+    root: Path,
     dispatch_timeout: float = _CD_DISPATCH_TIMEOUT_SECS,
     watch_timeout: float | None = None,
     poll_interval: float = _CD_POLL_INTERVAL_SECS,
@@ -777,7 +1038,7 @@ def _wait_for_cd_run(
 
     The merge's base-branch push dispatches CD asynchronously, so this first
     polls ``gh run list`` (up to ``dispatch_timeout``) for the run whose
-    ``headSha`` matches the merge commit — not "latest run on branch," which
+    ``headSha`` matches the synced head — not "latest run on branch," which
     can be a stale or unrelated run (issue #2753). Once the run registers it
     watches it (up to ``watch_timeout``, default :func:`cd_timeout_secs` —
     resolved up front so a malformed ``$VRG_CD_TIMEOUT`` fails before any
@@ -790,7 +1051,10 @@ def _wait_for_cd_run(
     any other cancel, or one that cannot be checked, is a
     :class:`CDRunProblem` (issue #3834). Returns ``None`` — do not fail
     finalize — when:
-      - the CD workflow does not exist / cannot be queried,
+      - the CD runs cannot be listed: a repo with no CD workflow
+        (:func:`_declares_cd_workflow` on *root*) is reported as
+        ``CD: no CD workflow in this repo``, any other failure as
+        ``CD: unknown`` and marked ⚠ (:func:`_report_cd_lookup_failure`),
       - no run was dispatched for this SHA within ``dispatch_timeout``
         (a change CD legitimately skips, e.g. path filters), or
       - the run concluded success / skipped / neutral.
@@ -806,9 +1070,10 @@ def _wait_for_cd_run(
             dispatch_timeout=dispatch_timeout,
             poll_interval=poll_interval,
         )
-    except CDRunLookupError:
-        # No CD workflow in this repo, or it cannot be queried — nothing
-        # to block on. Preserves graceful behavior for repos without CD.
+    except CDRunLookupError as exc:
+        # Nothing to block on: a repo with no CD workflow passes quietly, as
+        # it always has; any other failed lookup is said, not hidden.
+        _report_cd_lookup_failure(exc, head_sha, root=root)
         return None
     if run is None:
         print(
@@ -852,315 +1117,101 @@ def _wait_for_cd_run(
     )
 
 
-def _stage_provenance(ctx: FinalizeContext) -> None:
-    """Pre-merge provenance check (issue #1289)."""
-    args = ctx.args
-    print(f"Checking provenance for PR {args.pr}...")
-    result = pr_provenance.check_pr(args.pr)
+def _classify_failed_jobs(run_id: object) -> tuple[list[str], list[str]]:
+    """Split failed CD run *run_id*'s jobs into ``(blocking, deferred)`` failures.
 
-    for adv in result.advisories:
-        print(
-            f"  ADVISORY: {adv.login} ({adv.role.value}) performed '{adv.action}' "
-            "— permitted but advisory.",
-            file=sys.stderr,
-        )
-
-    if result.violations:
-        print(f"ERROR: PR {args.pr} has provenance violations:", file=sys.stderr)
-        for v in result.violations:
-            print(
-                f"  {v.login} ({v.role.value}) performed forbidden action '{v.action}'.",
-                file=sys.stderr,
-            )
-        if not args.allow_provenance_violation:
-            msg = (
-                "provenance violations found — re-run with "
-                "--allow-provenance-violation to override consciously"
-            )
-            raise FinalizeError(msg)
-        print(
-            "  Overriding provenance violations per --allow-provenance-violation.",
-            file=sys.stderr,
-        )
-
-
-_RELEASE_BRANCH_PREFIX = "release/"
-
-
-def _resolve_strategy(branch: str, override: str | None, *, batch: bool) -> str:
-    """Merge strategy for *branch*.
-
-    An explicit ``--strategy`` wins, except that ``squash`` on a batch PR is
-    refused: it would collapse the batch's one commit per issue into one
-    commit and one changelog entry, the anti-goal of epic
-    vergil-project/.github#1019. Otherwise a batch PR rebase-merges, so the
-    base receives every issue's commit. A non-batch PR's default is driven by
-    the branch prefix: ``release/*`` branches (release PRs and back-merges)
-    merge with a merge commit to preserve the develop<->main ancestry the
-    release model relies on; squashing them silently breaks that ancestry and
-    makes later release branches conflict (issue #1620). Every other branch
-    squashes, as before.
+    The split is :func:`classify_jobs`'s, the one the release's develop-CD gate
+    uses. A ``gh`` failure (``subprocess.CalledProcessError``) or a payload of
+    the wrong shape (``ValueError``) propagates.
     """
-    if batch and override == "squash":
-        msg = (
-            "--strategy squash is refused on a batch PR (more than one Closes line): "
-            "a squash collapses its one commit per issue into a single commit and a "
-            "single changelog entry. Re-run without --strategy to rebase-merge it."
-        )
-        raise FinalizeError(msg)
-    if override is not None:
-        return override
-    if batch:
-        return "rebase"
-    return "merge" if branch.startswith(_RELEASE_BRANCH_PREFIX) else "squash"
+    data = github.read_json("run", "view", str(run_id), "--json", "jobs")
+    jobs = data.get("jobs") if isinstance(data, dict) else None
+    if not isinstance(jobs, list):
+        msg = f"gh run view {run_id} returned no jobs list"
+        raise ValueError(msg)
+    return classify_jobs(jobs)
 
 
-def _enter_worktree(head: str, root: Path) -> str:
-    """The command lines that put the human in *head*'s worktree, creating it if needed."""
-    wt = worktrees.worktree_for_branch(head, root)
-    if wt is not None:
-        return f"  cd {wt}"
-    dirname = branch_names.expected_worktree_dirname(head) or head.replace("/", "-")
-    wt = root / ".worktrees" / dirname
-    return (
-        f"  cd {root} && git fetch origin && git worktree add .worktrees/{dirname} {head}\n"
-        f"  cd {wt}"
-    )
+def _report_cd_lookup_failure(exc: CDRunLookupError, head_sha: str, *, root: Path) -> str:
+    """Report a CD runs listing that failed; return the line reported.
 
-
-def _rebase_steps(pr: str, head: str, base: str, root: Path) -> str:
-    """The commands that rebase *pr*'s branch onto *base* and update the PR.
-
-    They are ``pr-watch``'s steps in raw git: rebase onto *base*, validate,
-    force-push with a lease. The ``--ff-only`` step first picks up the branch
-    as origin has it, and the rebase drops any merge commit GitHub's
-    update-branch button added. The push names the branch, because a worktree
-    created with ``-b … origin/<base>`` tracks the base, not itself, and uses
-    a lease, so it replaces only the head last fetched.
+    A repo whose workflows declare no CD (:func:`_declares_cd_workflow`) has
+    no CD to report: one plain line, no warning. Any other failure is
+    ``CD: unknown`` with the reason, and marks the stage ⚠.
     """
-    return (
-        f"{_enter_worktree(head, root)}\n"
-        f"  git fetch origin\n"
-        f"  git merge --ff-only origin/{head}\n"
-        f"  git rebase origin/{base}\n"
-        f"  vrg-container-run -- vrg-validate\n"
-        f"  git push --force-with-lease origin {head}\n"
-        f"  cd {root} && vrg-finalize-pr {pr}"
-    )
+    if _declares_cd_workflow(root) is False:
+        print(NO_CD_WORKFLOW_LINE)
+        return NO_CD_WORKFLOW_LINE
+    line = f"  CD: unknown (the CD runs could not be listed: {exc})"
+    print(line, file=sys.stderr)
+    progress.mark_warn(f"CD state of {head_sha[:7]} unknown: the CD runs could not be listed")
+    return line
 
 
-def _conflict_resolution_msg(pr: str, head: str, base: str, root: Path, *, batch: bool) -> str:
-    """The exact commands that resolve *pr*'s conflict with *base*.
+def _report_cd_run(
+    target_branch: str,
+    head_sha: str,
+    *,
+    root: Path,
+    dispatch_timeout: float = _CD_DISPATCH_TIMEOUT_SECS,
+    poll_interval: float = _CD_POLL_INTERVAL_SECS,
+) -> str:
+    """Print the CD run for *head_sha* and its state now, without waiting on it.
 
-    Submitting lifts the freeze (``freeze.is_frozen``; spec §5.10), so the
-    agent's ``pr-watch`` can resolve the conflict, or the human can, with the
-    raw-git form of ``pr-watch``'s steps: rebase onto *base*, validate and
-    force-push with a lease. The commands carry no inline ``#`` comments
-    because interactive zsh does not treat them as comments.
-
-    A batch PR must also keep one commit per issue and no merge commit, so
-    its message warns against merging *base* in (epic
-    vergil-project/.github#1019).
-
-    A ``release/*`` branch (a release PR or a back-merge) is the exception:
-    it merges with a merge commit to keep the develop<->main ancestry
-    (issue #1620), which a rebase would break, and it is no PR-workflow
-    branch, so ``pr-watch`` never resolves it. The human merges *base* in
-    with raw git instead. The ``--ff-only`` step first picks up any commits
-    GitHub added to the branch (update-branch) so the push fast-forwards,
-    and ``--no-commit`` stops the merge for validation before the commit.
+    The default CD check (spec §6.5 of epic vergil-project/.github#1218). The
+    run is found by its commit, polling up to *dispatch_timeout* for it to
+    register, and reported as one line, ``CD: <state> <url>``, the state being
+    queued, in progress, succeeded, failed, cancelled or superseded. No run
+    registered in time is ``CD: no CD run for this head``, and a repo with no
+    CD workflow (*root* declares none) is ``CD: no CD workflow in this repo``.
+    A state that is not green, and any other lookup that fails, marks the
+    stage ⚠ and never fails it: the release's develop-CD gate is what
+    refuses a develop whose CD is not green. Returns the ``CD:`` line it
+    printed.
     """
-    if not batch and head.startswith(_RELEASE_BRANCH_PREFIX):
-        return (
-            f"PR {pr} has merge conflicts with {base}. It is a release branch, which "
-            f"merges with a merge commit, so merge {base} in — do not rebase it — then "
-            f"validate, commit and push with raw git. After the --no-commit merge stops, "
-            f"resolve each conflicted file and git add it:\n"
-            f"{_enter_worktree(head, root)}\n"
-            f"  git fetch origin\n"
-            f"  git merge --ff-only origin/{head}\n"
-            f"  git merge --no-commit origin/{base}\n"
-            f"  vrg-container-run -- vrg-validate\n"
-            f"  git commit --no-edit\n"
-            f"  git push origin {head}\n"
-            f"  cd {root} && vrg-finalize-pr {pr}"
-        )
-    intro = (
-        f"PR {pr} has merge conflicts with {base}. Submitting lifted the branch's "
-        f"freeze, so the agent's pr-watch can resolve it (it rebases onto {base} and "
-        f"pushes with a lease), or you can, with the commands below."
-    )
-    if batch:
-        return (
-            f"{intro} It is a batch PR, one commit per issue, so rebase it onto {base} — "
-            f"do not merge {base} in, which adds a merge commit the batch check refuses. "
-            f"When the rebase stops on a conflict, resolve each conflicted file, git add "
-            f"it and run git rebase --continue:\n"
-            f"{_rebase_steps(pr, head, base, root)}"
-        )
-    return (
-        f"{intro} Rebase it onto {base}; when the rebase stops on a conflict, resolve "
-        f"each conflicted file, git add it and run git rebase --continue:\n"
-        f"{_rebase_steps(pr, head, base, root)}"
-    )
-
-
-def _read_pr_body(pr: str) -> str:
-    """Return *pr*'s body; a failed or malformed read refuses."""
     try:
-        info = github.read_json("pr", "view", pr, "--json", "body")
-    except (subprocess.CalledProcessError, ValueError) as exc:
-        msg = f"could not read the body of PR {pr}: {error_text(exc)}"
-        raise FinalizeError(msg) from exc
-    body = info.get("body") if isinstance(info, dict) else None
-    if not isinstance(body, str):
-        msg = f"could not read the body of PR {pr}: no body in the response: {info!r}"
-        raise FinalizeError(msg)
-    return body
-
-
-def _batch_closes(body: str) -> list[str]:
-    """The body's ``Closes`` refs, in body order, when it has more than one; else ``[]``.
-
-    A PR whose body has more than one ``Closes`` line is a batch PR (epic
-    vergil-project/.github#1019). ``Ref`` lines never count, and nor do
-    manual links in GitHub's Development sidebar, which are not in the body.
-    """
-    closes = [ref for keyword, ref in linkage.extract_tracking_refs(body) if keyword == "Closes"]
-    return closes if len(closes) > 1 else []
-
-
-def _batch_issues(pr: str, closes: list[str]) -> list[str]:
-    """Cross-check a batch PR's ``Closes`` refs against GitHub; return them as ``#N``.
-
-    Each ref must be in the PR's own repo, listed once, and among GitHub's
-    closing references for the PR, so GitHub closes every issue the commits
-    are checked against. Anything else refuses, naming both lists.
-    """
-    refs = _read_closing_refs(pr)
-    repo = refs.repo
-    numbers: list[int] = []
-    for ref in closes:
-        ref_repo, _, number = ref.rpartition("#")
-        if ref_repo and ref_repo.lower() != repo.lower():
-            msg = (
-                f"batch PR {refs.ref} closes {ref}, an issue in another repo; every "
-                f"issue in a batch is in the PR's repo ({repo})"
-            )
-            raise FinalizeError(msg)
-        if int(number) in numbers:
-            msg = f"batch PR {refs.ref} lists Closes #{number} more than once"
-            raise FinalizeError(msg)
-        numbers.append(int(number))
-    listed = {issue.ref.lower() for issue in refs.issues}
-    missing = [f"{repo}#{n}" for n in numbers if f"{repo}#{n}".lower() not in listed]
-    if missing:
-        body_refs = ", ".join(f"{repo}#{n}" for n in numbers)
-        github_refs = ", ".join(issue.ref for issue in refs.issues) or "none"
-        msg = (
-            f"batch PR {refs.ref}: its body closes {body_refs}, but GitHub's closing "
-            f"references are {github_refs}; missing {', '.join(missing)}. GitHub would "
-            "not close every issue of the batch, so it is not merged. Fix the PR body's "
-            "Closes lines, then re-run."
+        run = _poll_for_run(
+            target_branch,
+            head_sha,
+            repo=None,
+            dispatch_timeout=dispatch_timeout,
+            poll_interval=poll_interval,
         )
-        raise FinalizeError(msg)
-    return [f"#{n}" for n in numbers]
+    except CDRunLookupError as exc:
+        return _report_cd_lookup_failure(exc, head_sha, root=root)
+    if run is None:
+        print(NO_CD_RUN_LINE)
+        return NO_CD_RUN_LINE
 
-
-# The batch rule whose fix is a rebase onto the base (batch_rules.check_commit_per_issue).
-_MERGE_COMMIT_RULE = "no merge commits"
-
-
-def _make_batch_check(
-    pr: str, issues: list[str], *, head: str, base: str, root: Path
-) -> Callable[[], str]:
-    """The batch check ``wait_and_merge`` runs: fetch, check the invariant, return the SHA.
-
-    Each run fetches *base* and *head* from origin, so it checks the PR's head
-    as it is now, then runs the commit-per-issue check from *base* to that
-    head. A refusal names the rule and the commit; a merge commit (GitHub's
-    update-branch button) also names the rebase that fixes it. Submitting
-    lifted the freeze (``freeze.is_frozen``; spec §5.10), so that message
-    names the agent's ``pr-watch`` or the human as the one to run it.
-    """
-
-    def check() -> str:
+    url = str(run.get("url") or "")
+    status = str(run.get("status") or "")
+    conclusion = str(run.get("conclusion") or "")
+    note = ""
+    if status != "completed":
+        # Every status short of in_progress (queued, pending, waiting,
+        # requested) reads as queued.
+        state = "in progress" if status == "in_progress" else "queued"
+    elif conclusion in _CD_PASSING_CONCLUSIONS:
+        state = "succeeded"
+    elif conclusion == "cancelled":
         try:
-            git.run(
-                "fetch",
-                "origin",
-                f"+refs/heads/{base}:refs/remotes/origin/{base}",
-                f"+refs/heads/{head}:refs/remotes/origin/{head}",
+            group = _supersede_group(run.get("databaseId"), url)
+        except (subprocess.CalledProcessError, ValueError) as exc:
+            group = None
+            note = (
+                "finalize could not tell whether a concurrency supersede "
+                f"cancelled it: {error_text(exc)}"
             )
-            sha = git.read_output("rev-parse", "--verify", f"refs/remotes/origin/{head}^{{commit}}")
-        except (subprocess.CalledProcessError, OSError) as exc:
-            msg = (
-                f"could not fetch batch PR {pr}'s head {head} for its batch check: "
-                f"{error_text(exc)}"
-            )
-            raise FinalizeError(msg) from exc
-        try:
-            batch_rules.check_commit_per_issue(issues, base=f"origin/{base}", head=sha)
-        except batch_rules.BatchRuleError as exc:
-            msg = f"PR {pr} is not merged: {exc}"
-            if exc.rule == _MERGE_COMMIT_RULE:
-                msg += (
-                    f". Submitting lifted the branch's freeze, so the agent's pr-watch "
-                    f"can fix it (it rebases onto {base} and pushes with a lease), or you "
-                    f"can, with the commands below:\n"
-                    f"{_rebase_steps(pr, head, base, root)}"
-                )
-            raise FinalizeError(msg) from exc
-        print(f"Batch check passed at {sha}: one commit per issue ({', '.join(issues)}).")
-        return sha
-
-    return check
-
-
-def _stage_merge(ctx: FinalizeContext) -> None:
-    """Merge the PR (or confirm it is already merged) and record its branch.
-
-    A batch PR (more than one ``Closes`` line in its body) is cross-checked
-    against GitHub's closing references, checked one commit per issue,
-    updated by rebase when behind, re-checked after every update and right
-    before the merge, and rebase-merged at the head it checked (epic
-    vergil-project/.github#1019). Every other PR merges as before.
-    """
-    args = ctx.args
-    branch = github.head_ref(args.pr)
-    closes = _batch_closes(_read_pr_body(args.pr))
-    is_batch = bool(closes)
-    strategy = _resolve_strategy(branch, args.strategy, batch=is_batch)
-    if github.pr_state(args.pr) == "MERGED":
-        print(f"PR {args.pr} already merged.")
-    elif args.dry_run:
-        kind = f"batch PR ({', '.join(closes)}) " if is_batch else "PR "
-        print(f"  [dry-run] wait for green, then merge {kind}{args.pr} (--{strategy})")
+        state = "cancelled" if group is None else "superseded"
     else:
-        base: str | None = None
-        try:
-            if is_batch:
-                base = github.base_ref(args.pr)
-                issues = _batch_issues(args.pr, closes)
-                batch_check = _make_batch_check(
-                    args.pr, issues, head=branch, base=base, root=ctx.root
-                )
-                batch_check()
-                pr_merge.wait_and_merge(args.pr, strategy=strategy, batch_check=batch_check)
-            else:
-                pr_merge.wait_and_merge(args.pr, strategy=strategy)
-        except pr_merge.MergeConflictError as exc:
-            target = base if base is not None else github.base_ref(args.pr)
-            msg = _conflict_resolution_msg(args.pr, branch, target, ctx.root, batch=is_batch)
-            raise FinalizeError(msg) from exc
-        except pr_merge.MergeAbortError as exc:
-            raise FinalizeError(str(exc)) from exc
-    ctx.merged_branch = branch
-    # Record the merge commit SHA so the cd-check stage waits on exactly the
-    # CD run this merge triggered (issue #2753). Skipped on dry-run, where no
-    # merge commit exists.
-    if not args.dry_run:
-        ctx.merge_commit_sha = github.merge_commit_sha(args.pr) or None
+        state = "failed"
+    line = f"  CD: {state} {url}".rstrip()
+    print(line)
+    if note:
+        print(f"  {note}", file=sys.stderr)
+    if state in ("failed", "cancelled", "superseded"):
+        progress.mark_warn(f"CD run {run.get('databaseId')} {state} for {head_sha[:7]}")
+    return line
 
 
 # GitHub closes a PR's closing-reference issues asynchronously after the merge,
@@ -1179,22 +1230,32 @@ def _read_closing_refs(pr: str) -> github.PRClosingReferences:
 
 
 def _stage_close_refs(ctx: FinalizeContext) -> None:
-    """Close any issue the merged PR closes that GitHub left open (issue #4002).
+    """Close any issue a merged PR closes that GitHub left open (issue #4002).
 
     GitHub sometimes skips the closing-keyword auto-close, leaving a merged
     task open, which blocks epic rollup. Only the issues GitHub itself lists
-    as the PR's closing references are touched, never ones it merely
-    mentions. Each issue closed is reported; a failed read or close fails the
-    stage, after every close has been tried.
+    as a PR's closing references are touched, never ones it merely mentions.
+    Each issue closed is reported. Every merged PR is handled, then any
+    failed read or close fails the stage, naming each PR it failed on. It
+    runs before the checkout lock is taken: it touches only GitHub.
     """
-    args = ctx.args
-    if args.dry_run:
-        print(
-            f"  [dry-run] after the merge, close any closing-reference issue of PR {args.pr} "
-            "that GitHub left open"
-        )
+    failures: list[str] = []
+    for pr in ctx.merged_prs:
+        try:
+            _close_refs_of(pr, dry_run=ctx.args.dry_run)
+        except FinalizeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            failures.append(str(exc))
+    if failures:
+        raise FinalizeError("; ".join(failures))
+
+
+def _close_refs_of(pr: str, *, dry_run: bool) -> None:
+    """Close the closing-reference issues of merged *pr* that GitHub left open."""
+    if dry_run:
+        print(f"  [dry-run] close any closing-reference issue of PR {pr} that GitHub left open")
         return
-    refs = _read_closing_refs(args.pr)
+    refs = _read_closing_refs(pr)
     if refs.state != "MERGED":
         msg = f"PR {refs.ref} is {refs.state}, not MERGED; its closing references were not checked"
         raise FinalizeError(msg)
@@ -1203,7 +1264,7 @@ def _stage_close_refs(ctx: FinalizeContext) -> None:
         return
     if any(issue.state == "OPEN" for issue in refs.issues):
         time.sleep(_AUTO_CLOSE_GRACE_SECS)
-        refs = _read_closing_refs(args.pr)
+        refs = _read_closing_refs(pr)
     still_open = [issue for issue in refs.issues if issue.state == "OPEN"]
     for issue in refs.issues:
         if issue.state != "OPEN":
@@ -1227,9 +1288,49 @@ def _stage_close_refs(ctx: FinalizeContext) -> None:
         raise FinalizeError(msg)
 
 
+def _head_of(branch: str) -> str:
+    """The commit *branch* points at; a failed read fails the stage."""
+    try:
+        return git.read_output("rev-parse", branch).strip()
+    except subprocess.CalledProcessError as exc:
+        msg = f"could not read the head of {branch}: {error_text(exc)}"
+        raise FinalizeError(msg) from exc
+
+
+def _merged_branches(ctx: FinalizeContext) -> list[str]:
+    """The head branch names of the PRs the watch saw merge; a failed read fails the stage."""
+    if ctx.args.dry_run:
+        if ctx.merged_prs:
+            print("  [dry-run] delete each merged PR's local branch and worktree")
+        return []
+    branches: list[str] = []
+    for pr in ctx.merged_prs:
+        try:
+            branches.append(github.head_ref(pr).strip())
+        except subprocess.CalledProcessError as exc:
+            msg = f"could not read the head branch of merged PR {pr}: {error_text(exc)}"
+            raise FinalizeError(msg) from exc
+    return [b for b in branches if b]
+
+
+def _stage_lock(ctx: FinalizeContext) -> None:
+    """Take the checkout lock for the sync, cleanup, provision and validate (spec §6.4).
+
+    Waits, saying so, while another run holds it. The lock goes on
+    ``ctx.lock_stack``: the CD check lets go of it, or ``_settle`` does when a
+    stage before the CD check stops the pipeline.
+    """
+    ctx.lock_stack.enter_context(checkout_lock(ctx.root, purpose=ctx.lock_purpose))
+
+
 def _stage_cleanup(ctx: FinalizeContext) -> None:
     """Switch to the target branch, sync, and prune merged branches,
-    worktrees, and remote-tracking references."""
+    worktrees, and remote-tracking references.
+
+    Records the target branch's head before and after the sync on *ctx*.
+    The checkout-lock stage before it holds the lock (``lib/checkout_lock.py``)
+    around this stage; the stage never takes it itself.
+    """
     args = ctx.args
     root = ctx.root
 
@@ -1256,27 +1357,33 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
         print(f"Already on {args.target_branch}.")
 
     print(f"Pulling latest from origin/{args.target_branch}...")
+    if not args.dry_run:
+        ctx.synced_from = _head_of(args.target_branch)
     _run(["fetch", "--tags", "--force", "origin", args.target_branch], dry_run=args.dry_run)
     # ff-merge the remote-tracking ref instead of `pull`: FETCH_HEAD is
     # written non-atomically, so a `pull` racing a concurrent fetch can
     # see two merge candidates and abort (issue #1499). The
     # remote-tracking ref is updated atomically.
     _run(["merge", "--ff-only", f"origin/{args.target_branch}"], dry_run=args.dry_run)
+    if not args.dry_run:
+        ctx.synced_to = _head_of(args.target_branch)
+        print(f"  {args.target_branch} is at {ctx.synced_to or '(unknown head)'}")
 
     deleted = ctx.deleted
 
-    # Explicit-target cleanup: the just-merged PR branch. The default
-    # squash strategy rewrites history onto the target, so the branch is
-    # never an ancestor and `git branch --merged` cannot see it — without
-    # this step the flagship flow would merge and then silently fail to
-    # clean up the very worktree it inferred the PR from.
-    if ctx.merged_branch and ctx.merged_branch not in eternal:
-        if git.read_output("branch", "--list", ctx.merged_branch):
-            print(f"Cleaning up merged PR branch {ctx.merged_branch}...")
-            if _delete_branch_and_worktree(ctx.merged_branch, root, dry_run=args.dry_run):
-                deleted.append(ctx.merged_branch)
+    # Explicit-target cleanup: the merged PRs' branches. A squash merge
+    # rewrites history onto the target, so such a branch is never an
+    # ancestor and `git branch --merged` cannot see it, and a branch with no
+    # canonical worktree is not seen by the worktree arm below either.
+    for branch in _merged_branches(ctx):
+        if branch in eternal:
+            continue
+        if git.read_output("branch", "--list", branch):
+            print(f"Cleaning up merged PR branch {branch}...")
+            if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
+                deleted.append(branch)
         else:
-            print(f"  Merged PR branch {ctx.merged_branch} has no local branch — skipping.")
+            print(f"  Merged PR branch {branch} has no local branch — skipping.")
 
     # Straggler sweep. Candidates come from two sources, because a squash
     # merge rewrites the branch's work onto the target as a new commit:
@@ -1385,6 +1492,9 @@ def _stage_provision(ctx: FinalizeContext) -> None:
     of triggering a cold rebuild *inside* an operation. That lazy just-in-time
     rebuild — late, and possibly under parallel load — is what let a build-time
     glitch masquerade as "validation failed after a clean merge" (issue #2462).
+
+    The checkout-lock stage holds the lock (``lib/checkout_lock.py``) around
+    this stage; the stage never takes it itself.
     """
     args = ctx.args
     if args.dry_run:
@@ -1501,6 +1611,54 @@ def _stage_validation(ctx: FinalizeContext) -> None:
     """Run canonical validation to catch problems on the target branch
     before the next PR is created.
 
+    Any failure, a gate that failed or a validate that could not run, is
+    recorded for the report before the stage fails: the full output goes to
+    its own run log (``.vergil/vrg-finalize-validate-<stamp>.log``) and its
+    last :data:`VALIDATE_TAIL_LINES` lines of each stream onto *ctx* (spec §6.3).
+
+    The checkout-lock stage holds the lock (``lib/checkout_lock.py``) around
+    this stage; the stage never takes it itself.
+    """
+    try:
+        _run_validation(ctx)
+    except (FinalizeError, OSError) as exc:
+        _record_validate_failure(ctx, exc)
+        raise
+
+
+def _record_validate_failure(ctx: FinalizeContext, exc: BaseException) -> None:
+    """Write a failed validate's output to its own run log and keep its tails on *ctx*.
+
+    ``progress.run`` captures stdout and stderr apart, so their interleaving
+    is lost. Each stream is therefore kept, logged and tailed under its own
+    label, so stderr's warnings never push the end of stdout, where a failing
+    gate reports, out of the tail. With no output at all, the tail is the
+    failure's own message.
+    """
+    streams: list[tuple[str, list[str]]] = []
+    cause = exc.__cause__
+    if isinstance(cause, subprocess.CalledProcessError):
+        for label, stream in (("stdout", cause.output), ("stderr", cause.stderr)):
+            if stream:
+                streams.append((label, str(stream).splitlines()))
+    if not streams:
+        streams.append(("failure", str(exc).splitlines()))
+    log = progress.RunLog(_VALIDATE_LOG_COMMAND, ctx.root)
+    try:
+        log.write(str(exc))
+        for label, lines in streams:
+            log.write(f"=== {label} ===")
+            for line in lines:
+                log.write(line)
+    finally:
+        log.close()
+    ctx.validate_log = log.path
+    ctx.validate_tails = [(label, lines[-VALIDATE_TAIL_LINES:]) for label, lines in streams]
+
+
+def _run_validation(ctx: FinalizeContext) -> None:
+    """Run ``vrg-validate`` in the dev container; raise :class:`FinalizeError` on failure.
+
     Streams through ``progress.run`` — a bare ``subprocess.run`` with
     inherited stdout would write raw lines under the live display and
     strand stale frames (issue #1470).
@@ -1547,28 +1705,35 @@ def _stage_validation(ctx: FinalizeContext) -> None:
 
 
 def _stage_cd_check(ctx: FinalizeContext) -> None:
-    """Block on the CD workflow run this merge triggered (issue #2753).
+    """Report the CD workflow run for the synced head; with ``--wait-cd``, block on it.
 
     The base-branch push a merge produces dispatches CD asynchronously
     (docker build/publish, docs, release). Rather than glance at the latest
     run — which may be a stale or unrelated one — this identifies the run by
-    the merge commit SHA, waits for it to complete, and fails finalize if it
-    concludes non-success so a post-merge publish failure is caught here
-    rather than discovered later. ``--no-wait-cd`` is the conscious opt-out.
+    the synced head's SHA (issue #2753).
+
+    By default it prints the run's link and its state at that moment and does
+    not wait (spec §6.5 of epic vergil-project/.github#1218): the release's
+    develop-CD gate is what refuses to cut from a develop whose CD is not
+    green. With ``--wait-cd`` it waits for the run to complete and fails
+    finalize if it concludes non-success, judging the failed jobs with
+    :func:`classify_jobs` as the release gate does.
+
+    It first lets go of the checkout lock: the lock covers local checkout
+    work only, never a wait on CD (spec §6.4). The ``CD:`` line it reports is
+    kept on ``ctx.cd_line`` for the final report.
     """
+    ctx.lock_stack.close()
     args = ctx.args
     if args.dry_run:
-        print("  [dry-run] wait on the CD workflow run triggered by the merge")
-        return
-    if args.no_wait_cd:
-        print("  Skipping CD wait (--no-wait-cd).")
+        verb = "wait on" if args.wait_cd else "report"
+        print(f"  [dry-run] {verb} the CD workflow run for the synced head")
         return
 
-    # In the PR path the merge stage recorded the exact merge commit. In the
-    # cleanup-only path (release / batch tail) no merge happened in this
-    # invocation, so the CD run to watch is the one on the current tip of the
-    # target branch, which cleanup has just switched to and synced.
-    head_sha = ctx.merge_commit_sha
+    # The CD run to report is the one on the head the cleanup stage synced:
+    # every PR this run saw merge is in it, and so is anything merged by
+    # anyone else.
+    head_sha = ctx.synced_to
     if not head_sha:
         try:
             head_sha = git.read_output("rev-parse", args.target_branch).strip()
@@ -1577,16 +1742,22 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
     if not head_sha:
         # Could not resolve the SHA to associate a CD run with — cleanup has
         # already succeeded, so warn loudly rather than fail finalize over the
-        # post-merge wait, and do not silently pretend CD passed.
+        # CD check, and do not silently pretend CD passed.
         print(
             f"  WARNING: could not resolve the tip of {args.target_branch} to "
-            "wait on its CD run — skipping the post-merge CD wait.",
+            "find its CD run — skipping the CD check.",
             file=sys.stderr,
         )
+        ctx.cd_line = f"CD: unknown (could not resolve the tip of {args.target_branch})"
         return
 
-    problem = _wait_for_cd_run(args.target_branch, head_sha)
+    if not args.wait_cd:
+        ctx.cd_line = _report_cd_run(args.target_branch, head_sha, root=ctx.root)
+        return
+
+    problem = _wait_for_cd_run(args.target_branch, head_sha, root=ctx.root)
     if problem is None:
+        ctx.cd_line = f"CD: no CD failure for {head_sha[:7]} (--wait-cd; the run is named above)"
         return
     if isinstance(problem, CDRunSuperseded):
         # Superseded is not failed, but it is not a pass: this run published
@@ -1608,6 +1779,7 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
             f"CD run {problem.run_id} superseded (concurrency group "
             f"'{problem.group}'); this merge's CD not confirmed"
         )
+        ctx.cd_line = f"CD: superseded, not confirmed: {problem.describe()}"
         return
     if problem.timed_out:
         # Still running is not failed: say so, and say how to find out. The
@@ -1623,18 +1795,49 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
             "a CD failure.\n"
             f"  Re-check the run with: gh run view {problem.run_id}  (or open the "
             "URL above).\n"
-            "  Once it has succeeded, re-run: vrg-finalize-pr --cleanup-only\n"
+            "  Once it has succeeded, re-run: vrg-finalize-pr --cleanup-only --wait-cd\n"
             f"  If this CD is legitimately slower, raise the watch limit with "
             f"{CD_TIMEOUT_ENV}=<seconds> (currently {secs}s).",
             file=sys.stderr,
         )
         msg = f"CD run still in progress after {secs}s; result unknown"
         raise FinalizeError(msg)
+    blocking: list[str] = []
+    if problem.conclusion != "cancelled":
+        # Judge the failed jobs as the release's develop-CD gate does: a
+        # failure only of a deferred (docs) job is a loud warning, not a stop.
+        try:
+            blocking, deferred = _classify_failed_jobs(problem.run_id)
+        except (subprocess.CalledProcessError, ValueError) as exc:
+            # The run failed either way; say why its jobs could not be judged.
+            print(
+                f"  Could not read the jobs of CD run {problem.run_id} to classify "
+                f"the failure: {error_text(exc)}",
+                file=sys.stderr,
+            )
+        else:
+            if deferred and not blocking:
+                print(
+                    f"WARNING: CD run {problem.run_id} failed only in deferred publish "
+                    f"job(s): {', '.join(deferred)}.",
+                    file=sys.stderr,
+                )
+                print(f"  {problem.describe()}", file=sys.stderr)
+                progress.mark_warn(
+                    f"CD run {problem.run_id} failed only in deferred job(s): {', '.join(deferred)}"
+                )
+                ctx.cd_line = (
+                    f"CD: failed only in deferred job(s) {', '.join(deferred)}: "
+                    f"{problem.describe()}"
+                )
+                return
     print(
         "ERROR: the CD workflow run triggered by this merge did not succeed.",
         file=sys.stderr,
     )
     print(f"  {problem.describe()}", file=sys.stderr)
+    if blocking:
+        print(f"  Failed job(s): {', '.join(blocking)}", file=sys.stderr)
     print(
         "  The post-merge publish did not complete — investigate the run above.",
         file=sys.stderr,
@@ -1642,69 +1845,60 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
     raise FinalizeError("CD workflow run triggered by the merge did not succeed")
 
 
-def build_stages(*, include_pr: bool, include_post_checks: bool = True) -> tuple[Stage, ...]:
-    """Assemble the pipeline for the resolved mode.
+def build_stages(*, close_refs: bool) -> tuple[Stage, ...]:
+    """Assemble the settle phase's pipeline (spec §6.3).
 
-    provenance/merge run only when a PR was given or inferred; cleanup always
-    runs. provision, validation, and cd-check run unless *include_post_checks*
-    is False (the batch path defers them to one end-of-batch run, issue #1673).
-    provision warms the target-branch image (fail_fast, before it is used);
-    validation is fail_defer so a validation failure still lets cd-check run and
-    surface the CD status. cd-check is fail_fast: a post-merge CD run that did
-    not succeed is a hard finalize failure (issue #2753), and it is the last
-    stage so nothing is lost by stopping there.
+    close-refs runs only when the watch saw a PR merge (*close_refs*), before
+    the checkout lock is taken: it touches only GitHub. fail_defer: an issue
+    left open must fail finalize, but the PRs are merged, so develop is still
+    settled (issue #4002). checkout-lock then takes the lock (spec §6.4) for
+    cleanup (the sync included), provision and validation. provision warms the
+    target-branch image (fail_fast, before it is used: issue #2462);
+    validation is fail_defer so a validation failure still lets cd-check run
+    and surface the CD status. cd-check lets go of the lock first, and is
+    fail_fast: with ``--wait-cd``, a CD run that did not succeed is a hard
+    finalize failure (issue #2753), and it is the last stage so nothing is
+    lost by stopping there.
     """
     stages: list[Stage] = []
-    if include_pr:
-        stages.append(Stage("provenance", _stage_provenance, "fail_fast"))
-        stages.append(Stage("merge", _stage_merge, "fail_fast"))
-        # fail_defer: an issue left open must fail finalize, but the PR is
-        # merged by now, so its cleanup still runs (issue #4002).
+    if close_refs:
         stages.append(Stage("close-refs", _stage_close_refs, "fail_defer"))
+    stages.append(Stage("checkout-lock", _stage_lock, "fail_fast"))
     stages.append(Stage("cleanup", _stage_cleanup, "fail_fast"))
-    if include_post_checks:
-        # Provision the environment before it is used. fail_fast: if the image
-        # cannot be built there is no point running validation against a broken
-        # or absent one (issue #2462).
-        stages.append(Stage("provision", _stage_provision, "fail_fast"))
-        stages.append(Stage("validation", _stage_validation, "fail_defer"))
-        stages.append(Stage("cd-check", _stage_cd_check, "fail_fast"))
+    stages.append(Stage("provision", _stage_provision, "fail_fast"))
+    stages.append(Stage("validation", _stage_validation, "fail_defer"))
+    stages.append(Stage("cd-check", _stage_cd_check, "fail_fast"))
     return tuple(stages)
 
 
-def _release_cmd(install: bool) -> tuple[str, ...]:
+def _release_cmd(args: argparse.Namespace) -> tuple[str, ...]:
     """The ``vrg-release`` command the cascade runs, the one source for it.
 
-    ``vrg-release`` installs by default (#1184), so ``--install`` runs it
-    plain and ``--release`` alone passes ``--no-install``. Every hint that
-    names the command prints this same tuple, so a hint cannot drift from
-    what runs.
+    ``vrg-release`` installs by default (#1184), so ``--release`` runs it
+    plain, and ``--no-install`` passes through.
+    Every hint that names the command prints this same tuple, so a hint
+    cannot drift from what runs.
     """
-    return ("vrg-release",) if install else ("vrg-release", "--no-install")
+    return ("vrg-release", "--no-install") if args.no_install else ("vrg-release",)
 
 
-def _chain_release(root: Path, *, install: bool = False) -> int:
-    """Hand off to ``vrg-release`` after a successful finalize (issue #1634).
+def _chain_release(root: Path, cmd: tuple[str, ...]) -> int:
+    """Hand off to ``vrg-release`` after a fully successful finalize (issue #1634).
 
-    Runs only when the finalize pipeline succeeded. By the time
-    ``run_pipeline`` returns it has closed its live display (its ``finally``
-    block calls ``renderer.close()``), so ``vrg-release`` starts a fresh
-    renderer with no nesting — the two live displays never overlap
-    (cf. issue #1470). Run as a subprocess inheriting the TTY, not ``exec``,
-    so a caller like ``vrg-submit-pr`` regains control to report the
-    cascade outcome.
+    By the time it runs, the settle phase's pipeline has closed its live
+    display (``run_pipeline``'s ``finally`` block calls ``renderer.close()``),
+    so ``vrg-release`` starts a fresh renderer with no nesting (cf. issue
+    #1470), and the checkout lock has been let go, so the release's preflight
+    can take it (spec §6.4). Run as a subprocess inheriting the TTY, not
+    ``exec``, so a caller like ``vrg-submit-pr`` regains control to report
+    the cascade outcome.
 
-    With *install*, ``vrg-release`` also runs the consumer-refresh install
-    step (issue #1643); without it, the install is skipped (see
-    ``_release_cmd``).
-
-    A failure here never un-merges the PR — it was already merged and
-    cleaned up — so report it clearly and let the human re-run vrg-release
-    alone.
+    A failure here never un-merges a PR — they were already merged and
+    develop settled — so report it clearly and let the human re-run
+    vrg-release alone.
     """
-    cmd = _release_cmd(install)
     print()
-    print(f"--{'install' if install else 'release'}: handing off to {shlex.join(cmd)}")
+    print(f"--release: handing off to {shlex.join(cmd)}")
     result = subprocess.run(  # noqa: S603
         cmd,  # noqa: S607
         cwd=root,
@@ -1713,7 +1907,7 @@ def _chain_release(root: Path, *, install: bool = False) -> int:
     if result.returncode != 0:
         print(
             f"vrg-finalize-pr: release failed (exit {result.returncode}); "
-            "the PR was already merged and cleaned up and is unaffected.\n"
+            "the merged PRs and the settled develop are unaffected.\n"
             f"  Re-run the release alone with: {shlex.join(cmd)}",
             file=sys.stderr,
         )

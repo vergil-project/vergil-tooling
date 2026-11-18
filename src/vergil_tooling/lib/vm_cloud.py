@@ -227,7 +227,7 @@ def _tofu_version_ok(stdout: str) -> bool:
         data = json.loads(stdout)
         raw = str(data["terraform_version"])
         parts = tuple(int(p) for p in raw.split("."))
-    except (json.JSONDecodeError, KeyError, ValueError):
+    except json.JSONDecodeError, KeyError, ValueError:
         return False
     return parts >= _TOFU_MIN
 
@@ -252,7 +252,7 @@ def preflight(provider: str = "gcp") -> None:
             capture_output=True,
             text=True,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.CalledProcessError, FileNotFoundError:
         print(
             "ERROR: could not query OpenTofu version — install OpenTofu >= 1.8.0",
             file=sys.stderr,
@@ -1114,7 +1114,7 @@ def parse_volume_state(state_file: Path, provider: str = "gcp") -> VolumeState |
 
     try:
         data = json.loads(state_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return None
     if not isinstance(data, dict):
         return None
@@ -1155,7 +1155,7 @@ def parse_vm_machine_type(state_file: Path) -> str | None:
     """
     try:
         data = json.loads(state_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return None
     if not isinstance(data, dict):
         return None

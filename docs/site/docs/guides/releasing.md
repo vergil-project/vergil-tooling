@@ -23,7 +23,8 @@ uv tool install --python 3.15 'vergil-tooling @ git+https://github.com/vergil-pr
 ```
 
 On an agent VM, a dev ref (`vrg-vm update --tag develop`, or any non-release
-ref) is an explicit `uv tool install` from git that shadows the packaged copy,
+ref) is an explicit `uv tool install --python 3.15` from git that shadows the
+packaged copy,
 and every `vrg-vm` command that touches the VM prints a `DEV tooling` banner
 while it is in place. A plain `vrg-vm update` returns the VM to the package.
 See [vergil-tooling inside the VM](../reference/vm-spec.md#vergil-tooling-inside-the-vm).
@@ -153,7 +154,7 @@ issue and ticks its box in the issue's stage checklist.
 | Stage | Mode | What it does |
 |---|---|---|
 | `audit` | fail-fast | Runs `vrg-github-repo-config audit` on the repo. Releasing vergil-tooling itself adds `--in-tree-templates`, so its managed files are checked against the templates being released, not the installed release's (see the [config audit reference](../reference/config-audit.md#auditing-vergil-tooling-against-its-own-templates)). `--skip-audit` skips it |
-| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop` matching `origin/develop`. On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it |
+| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop`, then [brings it up to `origin/develop`](#the-develop-sync). On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it |
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
@@ -554,7 +555,11 @@ never affect the release itself. Pass `--without-deps` to skip it.
 
 The stage brings the root checkout's `develop` up to date with
 `origin/develop` (the root checkout must be on `develop`), then runs the
-same pipeline as [`vrg-update-deps`](../reference/dev/update-deps.md):
+same pipeline as [`vrg-update-deps`](../reference/dev/update-deps.md).
+Both syncs hold the [checkout lock](#the-develop-sync). A merge can land
+between them, so the pipeline's own preflight, which run standalone
+refuses a `develop` that differs from `origin/develop`, fast-forwards
+one that is behind when the release runs it. The pipeline:
 
 1. Create the `deps/update-<version>` branch in a managed worktree,
    where `<version>` is the new `develop` version. If that branch
@@ -726,11 +731,33 @@ any other fresh-start check, when `origin/main` has commits not on
 If preflight cannot fetch `main` or compare the branches, it refuses
 rather than skipping.
 
+### The develop sync
+
+Preflight does not refuse a root checkout that is merely behind
+`origin/develop`: another PR may well have merged since you last pulled,
+or between `vrg-finalize-pr`'s validate and the release it chains. It
+holds the checkout lock (`build/.vergil-state/checkout.lock`, the one
+`vrg-finalize-pr` holds while it syncs and cleans up) for just this
+sync:
+
+1. It refuses a branch other than `develop`, or a dirty tree.
+2. It fetches `origin develop` with `--tags --force`, so the
+   already-tagged check sees the remote tags.
+3. If local `develop` is behind `origin/develop`, it fast-forwards it
+   and prints `Fast-forwarded develop <old>..<new>`. A local `develop`
+   that has diverged, or carries commits `origin/develop` lacks, is
+   refused: resolve it first.
+
+It then releases the lock, and the release is cut from the new head.
+The [develop-CD gate](#the-develop-cd-gate) checks that head, after the
+lock is released, since it may wait.
+
 ### The develop-CD gate
 
 A fresh start (not `--resume`) refuses to cut a release from a
 `develop` whose CD is not green. It is the last preflight check, because
-it may wait. It finds the develop CD run for the local `develop` head,
+it may wait. It finds the develop CD run for the `develop` head the
+[develop sync](#the-develop-sync) reached,
 by its commit, the way `vrg-finalize-pr` finds a merge's run:
 
 - **Queued, pending or in progress.** The gate waits for it, up to

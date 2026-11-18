@@ -120,7 +120,7 @@ class GcpStrategy:
                 capture_output=True,
                 text=True,
             )
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except subprocess.CalledProcessError, FileNotFoundError:
             print(
                 "ERROR: no application-default credentials — run: "
                 "gcloud auth application-default login",
@@ -299,7 +299,7 @@ class AzureStrategy:
                     check=True,
                 )
                 sub = result.stdout.strip()
-            except (subprocess.CalledProcessError, FileNotFoundError):
+            except subprocess.CalledProcessError, FileNotFoundError:
                 sub = ""
         if not sub:
             print(
@@ -326,7 +326,7 @@ class AzureStrategy:
                 capture_output=True,
                 text=True,
             )
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except subprocess.CalledProcessError, FileNotFoundError:
             print(
                 "ERROR: no Azure credentials — run: az login",
                 file=sys.stderr,
@@ -471,7 +471,7 @@ class AzureStrategy:
                 text=True,
                 check=True,
             )
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except subprocess.CalledProcessError, FileNotFoundError:
             return ""
         raw = result.stdout.strip()
         if raw == "PowerState/running":

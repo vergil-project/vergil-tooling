@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from vergil_tooling.lib import cd_runs, config, git, github, progress, version
+from vergil_tooling.lib.checkout_lock import checkout_lock
 from vergil_tooling.lib.managed_worktree import (
     ManagedWorktreeError,
     adopt_worktree,
@@ -80,6 +81,11 @@ def preflight(
 ) -> ReleaseContext:
     """Run all preflight checks and return an initialized ReleaseContext.
 
+    Every run first brings the root checkout's clean ``develop`` up to
+    ``origin/develop`` under the checkout lock (:func:`_check_branch_and_tree`),
+    so a release is cut from the newest head rather than refused when a merge
+    landed since the last pull (spec §6.6 of epic vergil-project/.github#1218).
+
     On *resume* (#1612), the version comes from the adopted tracking issue
     (*resume_version*) rather than the develop VERSION file (which may already
     be bumped); the checks that assume a fresh start are skipped — the version
@@ -110,7 +116,7 @@ def preflight(
     _check_host_prerequisites()
     repo = check_gh_auth()
     _read_and_validate_config(repo_root)
-    _check_branch_and_tree()
+    _check_branch_and_tree(repo_root)
 
     if resume and resume_version is not None:
         release_version = resume_version
@@ -642,34 +648,75 @@ def _read_and_validate_config(repo_root: Path) -> None:
     config.read_config(repo_root)
 
 
-def _check_branch_and_tree() -> None:
-    branch = git.current_branch()
-    if branch != "develop":
-        raise ReleaseError(
-            phase="preflight",
-            command="git rev-parse --abbrev-ref HEAD",
-            message=f"Must be on develop branch (currently on '{branch}').",
+class DevelopDivergedError(Exception):
+    """Local ``develop`` cannot fast-forward to ``origin/develop``."""
+
+    def __init__(self, local_sha: str, remote_sha: str) -> None:
+        self.local_sha = local_sha
+        self.remote_sha = remote_sha
+        super().__init__(
+            f"Local develop ({local_sha[:8]}) has diverged from "
+            f"origin/develop ({remote_sha[:8]}); resolve it first."
         )
-    status = git.read_output("status", "--porcelain")
-    if status:
-        raise ReleaseError(
-            phase="preflight",
-            command="git status --porcelain",
-            message="Working tree is not clean.",
-            detail=status,
-        )
-    git.run("fetch", "--tags", "--force", "origin", "develop")
+
+
+def fast_forward_develop() -> None:
+    """Fast-forward the checked-out ``develop`` to the fetched ``origin/develop``.
+
+    Does nothing when the two are equal. When local ``develop`` is an
+    ancestor of ``origin/develop`` it runs ``git merge --ff-only`` and prints
+    ``Fast-forwarded develop <old8>..<new8>``. Otherwise (diverged, or
+    carrying local commits) it raises :class:`DevelopDivergedError`.
+
+    The caller has checked that the tree is a clean ``develop``, has fetched
+    ``origin develop``, and holds the checkout lock (spec §6.6 of epic
+    vergil-project/.github#1218).
+    """
     local_sha = git.read_output("rev-parse", "HEAD")
     remote_sha = git.read_output("rev-parse", "origin/develop")
-    if local_sha != remote_sha:
-        raise ReleaseError(
-            phase="preflight",
-            command="git rev-parse HEAD vs origin/develop",
-            message=(
-                f"Local develop ({local_sha[:8]}) does not match "
-                f"origin/develop ({remote_sha[:8]}). Pull latest first."
-            ),
-        )
+    if local_sha == remote_sha:
+        return
+    if not git.is_ancestor(local_sha, remote_sha):
+        raise DevelopDivergedError(local_sha, remote_sha)
+    git.run("merge", "--ff-only", "origin/develop")
+    print(f"Fast-forwarded develop {local_sha[:8]}..{remote_sha[:8]}")
+
+
+def _check_branch_and_tree(repo_root: Path) -> None:
+    """Bring the root checkout's clean ``develop`` up to ``origin/develop``.
+
+    Holds the checkout lock (spec §6.4) for just this sync. It refuses a
+    branch other than ``develop`` or a dirty tree, fetches ``--tags --force``
+    (so the already-tagged check sees remote tags), and fast-forwards a local
+    ``develop`` that is behind, refusing one that has diverged. The lock is
+    released before the develop-CD gate, which may wait on a CD run, checks
+    the new ``HEAD``.
+    """
+    with checkout_lock(repo_root, purpose="vrg-release preflight"):
+        branch = git.current_branch()
+        if branch != "develop":
+            raise ReleaseError(
+                phase="preflight",
+                command="git rev-parse --abbrev-ref HEAD",
+                message=f"Must be on develop branch (currently on '{branch}').",
+            )
+        status = git.read_output("status", "--porcelain")
+        if status:
+            raise ReleaseError(
+                phase="preflight",
+                command="git status --porcelain",
+                message="Working tree is not clean.",
+                detail=status,
+            )
+        git.run("fetch", "--tags", "--force", "origin", "develop")
+        try:
+            fast_forward_develop()
+        except DevelopDivergedError as exc:
+            raise ReleaseError(
+                phase="preflight",
+                command="git merge-base --is-ancestor HEAD origin/develop",
+                message=str(exc),
+            ) from exc
 
 
 def audit_repo_config(repo: str, *, in_tree_templates: bool = False) -> None:
@@ -816,7 +863,7 @@ _MAX_SUPERSEDES = 10
 
 
 def _develop_cd_gate(repo: str) -> None:
-    """Run :func:`check_develop_cd` on the local develop head preflight checked."""
+    """Run :func:`check_develop_cd` on the develop head preflight fast-forwarded to."""
     check_develop_cd(repo, git.read_output("rev-parse", "HEAD"))
 
 
@@ -858,7 +905,11 @@ def check_develop_cd(repo: str, head_sha: str) -> None:
         print(f"  Develop CD run: {url}")
         state = _watch(run, timeout=max(0.0, deadline - time.monotonic()))
         if state != "superseded":
-            _judge_run(repo, run, state, timeout=timeout)
+            unfinished = (
+                f"The develop CD run is still not complete after {timeout}s; result unknown. "
+                f"Re-run vrg-release once it finishes, or raise {cd_runs.CD_TIMEOUT_ENV}."
+            )
+            _judge_run(repo, run, state, unfinished=unfinished)
             return
         newer = _next_run(repo, run)
         if newer is None:
@@ -931,7 +982,13 @@ def _judge_ancestor_run(repo: str, head_sha: str) -> None:
             f"completed run on an ancestor ({sha[:12]}): {_run_url(repo, run)}"
         )
         state = _watch(run, timeout=0)
-        _judge_run(repo, run, state, timeout=0)
+        # The ancestor run is judged as it stands, with no wait, so an
+        # unfinished one is reported as such, never as a timeout.
+        unfinished = (
+            f"The develop CD run on ancestor {sha[:12]} of {head_sha[:12]} is not finished; "
+            "result unknown. Re-run vrg-release once it finishes."
+        )
+        _judge_run(repo, run, state, unfinished=unfinished)
         return
     raise ReleaseError(
         phase="preflight",
@@ -944,8 +1001,14 @@ def _judge_ancestor_run(repo: str, head_sha: str) -> None:
     )
 
 
-def _judge_run(repo: str, run: dict[str, object], state: cd_runs.RunState, *, timeout: int) -> None:
-    """Pass a green run, warn on a docs-only failure, refuse anything else."""
+def _judge_run(
+    repo: str, run: dict[str, object], state: cd_runs.RunState, *, unfinished: str
+) -> None:
+    """Pass a green run, warn on a docs-only failure, refuse anything else.
+
+    *unfinished* is the refusal for a run that did not finish (``timed_out``),
+    which only the caller can word: it alone knows whether it waited.
+    """
     run_id = str(run.get("databaseId"))
     url = _run_url(repo, run)
     if state == "success":
@@ -975,10 +1038,7 @@ def _judge_run(repo: str, run: dict[str, object], state: cd_runs.RunState, *, ti
         failed = ", ".join(blocking) or "no failed job identified"
         message = f"The develop CD run failed ({failed}). Run: {url}"
     elif state == "timed_out":
-        message = (
-            f"The develop CD run is still not complete after {timeout}s; result unknown. "
-            f"Re-run vrg-release once it finishes, or raise {cd_runs.CD_TIMEOUT_ENV}. Run: {url}"
-        )
+        message = f"{unfinished} Run: {url}"
     else:
         how = {
             "superseded": "was superseded by a concurrency group, so it published nothing",

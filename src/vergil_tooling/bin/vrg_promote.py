@@ -100,7 +100,7 @@ def main() -> int:
             print(f"vrg-promote: {p.rolling_tag} not moved.", file=sys.stderr)
             return 1
         promote_confirmed(p)
-    except (github.AppAuthError, github.NoInstallationError, github.MissingGitHubTokenError):
+    except github.AppAuthError, github.NoInstallationError, github.MissingGitHubTokenError:
         raise  # cli_main prints the guided remediation message
     except Exception as exc:
         print(f"Error: {error_text(exc)}", file=sys.stderr)
@@ -127,7 +127,7 @@ def _confirmed(p: Promotion) -> bool:
     print(f"Move {p.rolling_tag} on {p.origin_repo}? [y/N] ", end="", file=sys.stderr, flush=True)
     try:
         answer = input()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError, KeyboardInterrupt:
         print(file=sys.stderr)
         answer = ""
     return answer.strip().lower() in ("y", "yes")

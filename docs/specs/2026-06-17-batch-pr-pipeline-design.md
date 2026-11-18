@@ -1,5 +1,18 @@
 # Batch PR pipeline: submit → finalize → release in one pass
 
+> **Superseded in part (2026-11-17, vergil-project/.github#1218):** the
+> zero-waste serial design below (rebase each branch on the latest
+> `develop`, then gate and merge one PR at a time) is replaced. `develop` no
+> longer requires branches to be up to date, so a batch merges in parallel:
+> `vrg-submit-pr` opens every PR against `develop` with auto-merge on
+> (squash for a single-issue PR, rebase for a batch PR, pinned to the pushed
+> head), never rebases at submit, and finalizes by default
+> (`--no-finalize` opts out). `vrg-finalize-pr` watches the PRs until each
+> one has merged or failed, and never merges one itself; it then syncs,
+> cleans up and validates `develop` once. The "Why not a merge queue" research still stands. See
+> `epics/1218-parallel-pr-merging/spec.md` in `vergil-project/.github`
+> (§6.2, §6.3 and §6.9).
+
 - **Issue:** [#1673](https://github.com/vergil-project/vergil-tooling/issues/1673)
 - **Status:** Design (approved in brainstorming; pending implementation plan)
 - **Date:** 2026-06-17

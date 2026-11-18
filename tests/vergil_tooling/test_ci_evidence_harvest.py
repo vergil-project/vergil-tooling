@@ -807,7 +807,7 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
 
     monkeypatch.setattr(ci_evidence, "resolved_integration_versions", fake_integration)
 
-    sentinel = (EvidenceGate(name="test", checks=("test / unit",)),)
+    expected_gates = (EvidenceGate(name="test", checks=("test / unit",)),)
 
     def fake_required(
         project: Any,
@@ -819,13 +819,13 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
         integration_versions: tuple[str, ...],
     ) -> Any:
         captured["derivation_args"] = (project, ci, ghas, docs, package, integration_versions)
-        return sentinel
+        return expected_gates
 
     monkeypatch.setattr(ci_evidence, "required_evidence_gates", fake_required)
 
     result = ci_evidence.resolve_required_gates("o/r", "cafef00d")
 
-    assert result is sentinel
+    assert result is expected_gates
     # The config is the --repo target's, fetched at the given ref (#3226).
     assert captured["config_at"] == ("o/r", "cafef00d")
     assert captured["ghas_config"] is cfg

@@ -480,7 +480,7 @@ def assert_runtime_available(runtime: str) -> None:
         )
         if result.returncode != 0:
             _runtime_unavailable(runtime)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError, subprocess.TimeoutExpired:
         _runtime_unavailable(runtime)
 
 

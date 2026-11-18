@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -11,6 +13,9 @@ from vergil_tooling.lib.release.update_deps_stage import update_deps
 from vergil_tooling.lib.update_deps.context import DepsFailure, UpdateDepsContext, UpdateDepsError
 from vergil_tooling.lib.update_deps.report import EMPTY_REPORT, HeldBack
 from vergil_tooling.lib.update_deps.updater import UpdateResult
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 _MOD = "vergil_tooling.lib.release.update_deps_stage"
 
@@ -53,6 +58,21 @@ class _Recorder:
         self.gits: list[tuple[str, ...]] = []
         self.chdirs: list[Path] = []
         self.run_update_roots: list[Path] = []
+        self.run_update_fast_forwards: list[bool] = []
+        # Every lock, branch, git and run_update event, in order.
+        self.events: list[str] = []
+
+
+def _patch_lock(monkeypatch: pytest.MonkeyPatch, rec: _Recorder) -> None:
+    @contextlib.contextmanager
+    def fake_lock(main_root: Path, *, purpose: str) -> Generator[None]:
+        rec.events.append(f"lock {main_root} {purpose}")
+        try:
+            yield
+        finally:
+            rec.events.append("unlock")
+
+    monkeypatch.setattr(_MOD + ".checkout_lock", fake_lock)
 
 
 def _patch(
@@ -62,18 +82,51 @@ def _patch(
     branch: str = "develop",
 ) -> _Recorder:
     rec = _Recorder()
+    _patch_lock(monkeypatch, rec)
     monkeypatch.setattr(_MOD + ".os.chdir", rec.chdirs.append)
-    monkeypatch.setattr(_MOD + ".git.current_branch", lambda: branch)
-    monkeypatch.setattr(_MOD + ".git.run", lambda *a: rec.gits.append(a))
 
-    def fake_run_update(*, repo_root: Path) -> UpdateDepsContext:
+    def fake_branch() -> str:
+        rec.events.append("current-branch")
+        return branch
+
+    def fake_git(*a: str) -> None:
+        rec.events.append(f"git {a[0]}")
+        rec.gits.append(a)
+
+    monkeypatch.setattr(_MOD + ".git.current_branch", fake_branch)
+    monkeypatch.setattr(_MOD + ".git.run", fake_git)
+
+    def fake_run_update(*, repo_root: Path, fast_forward: bool) -> UpdateDepsContext:
+        rec.events.append("run_update")
         rec.run_update_roots.append(repo_root)
+        rec.run_update_fast_forwards.append(fast_forward)
         if isinstance(deps, BaseException):
             raise deps
         return deps
 
     monkeypatch.setattr(_MOD + ".run_update", fake_run_update)
     return rec
+
+
+def test_update_deps_fast_forward_takes_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The branch check and the fast-forward hold the lock; run_update runs after it."""
+    rec = _patch(monkeypatch, _deps(pr_url="https://x/pull/9", any_changes=True))
+    update_deps(_rctx())
+    assert rec.events == [
+        "lock /r vrg-release update-deps",
+        "current-branch",
+        "git fetch",
+        "git merge",
+        "unlock",
+        "run_update",
+    ]
+
+
+def test_update_deps_lock_released_on_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+    rec = _patch(monkeypatch, AssertionError("must not run"), branch="feature/1-x")
+    with pytest.raises(ReleaseError):
+        update_deps(_rctx())
+    assert rec.events == ["lock /r vrg-release update-deps", "current-branch", "unlock"]
 
 
 def test_without_deps_skips_everything(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -95,6 +148,7 @@ def test_syncs_root_develop_before_running(monkeypatch: pytest.MonkeyPatch) -> N
     assert rec.chdirs == [Path("/r")]
     assert rec.gits == [("fetch", "origin", "develop"), ("merge", "--ff-only", "origin/develop")]
     assert rec.run_update_roots == [Path("/r")]
+    assert rec.run_update_fast_forwards == [True]
 
 
 def test_refuses_when_root_checkout_not_on_develop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -190,6 +244,8 @@ def test_update_failure_records_no_pr(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_sync_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    rec = _Recorder()
+    _patch_lock(monkeypatch, rec)
     monkeypatch.setattr(_MOD + ".os.chdir", lambda _p: None)
     monkeypatch.setattr(_MOD + ".git.current_branch", lambda: "develop")
 
@@ -200,6 +256,7 @@ def test_sync_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_MOD + ".git.run", boom)
     with pytest.raises(RuntimeError, match="fast-forward"):
         update_deps(_rctx())
+    assert rec.events == ["lock /r vrg-release update-deps", "unlock"]
 
 
 def test_preflight_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:

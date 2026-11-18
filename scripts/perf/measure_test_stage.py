@@ -30,11 +30,12 @@ import argparse
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import median
 
@@ -65,6 +66,20 @@ BASE_ARGS: list[str] = [
 ]
 
 
+def _uv() -> str:
+    """Return the absolute path of ``uv``, failing loudly when it is not on ``PATH``.
+
+    Resolving the executable up front, rather than handing a bare ``"uv"`` to
+    ``subprocess.run``, pins which binary runs and turns a missing ``uv`` into a
+    clear error instead of an opaque ``FileNotFoundError`` mid-run.
+    """
+    path = shutil.which("uv")
+    if path is None:
+        msg = "uv is not on PATH; this script drives the suite through `uv run`"
+        raise SystemExit(msg)
+    return path
+
+
 @dataclass(frozen=True)
 class MeasureConfig:
     """One cumulative configuration to time."""
@@ -88,7 +103,7 @@ class MeasureResult:
 
 def _run_once(pytest_args: list[str], env_overlay: dict[str, str]) -> tuple[float, int]:
     """Time a single ``uv run pytest`` invocation; return (seconds, returncode)."""
-    cmd = ["uv", "run", "pytest", *BASE_ARGS, *pytest_args]
+    cmd = [_uv(), "run", "pytest", *BASE_ARGS, *pytest_args]
     run_env = {**os.environ, **env_overlay}
     start = time.perf_counter()
     proc = subprocess.run(cmd, env=run_env, check=False)  # noqa: S603
@@ -123,7 +138,9 @@ def cumulative_configs(runs: int, warmup: int) -> list[MeasureConfig]:
     return [
         # C-tracer forced explicitly so the baseline is deterministic regardless
         # of any inherited COVERAGE_CORE; ``-n0`` overrides this repo's addopts.
-        MeasureConfig("baseline (serial, C-tracer)", ["-n0"], {"COVERAGE_CORE": "ctrace"}, runs, warmup),
+        MeasureConfig(
+            "baseline (serial, C-tracer)", ["-n0"], {"COVERAGE_CORE": "ctrace"}, runs, warmup
+        ),
         MeasureConfig("+sysmon (serial)", ["-n0"], sysmon, runs, warmup),
         MeasureConfig("+xdist -n auto", ["-n", "auto"], sysmon, runs, warmup),
         MeasureConfig("+worksteal", ["-n", "auto", "--dist", "worksteal"], sysmon, runs, warmup),
@@ -194,7 +211,7 @@ def count_subprocess_sites(tests_dir: Path) -> list[tuple[int, int, str]]:
 
 def _capture_durations(top: int) -> str:
     proc = subprocess.run(  # noqa: S603
-        ["uv", "run", "pytest", "-n0", f"--durations={top}", "-q", *BASE_ARGS],
+        [_uv(), "run", "pytest", "-n0", f"--durations={top}", "-q", *BASE_ARGS],
         check=False,
         capture_output=True,
         text=True,
@@ -204,7 +221,7 @@ def _capture_durations(top: int) -> str:
 
 def _capture_importtime() -> str:
     proc = subprocess.run(  # noqa: S603
-        ["uv", "run", "python", "-X", "importtime", "-m", "pytest", "-n0", "--co", "-q"],
+        [_uv(), "run", "python", "-X", "importtime", "-m", "pytest", "-n0", "--co", "-q"],
         check=False,
         capture_output=True,
         text=True,
@@ -219,7 +236,7 @@ def _capture_importtime() -> str:
 
 def _count_tests() -> int:
     proc = subprocess.run(  # noqa: S603
-        ["uv", "run", "pytest", "-n0", "--co", "-q"],
+        [_uv(), "run", "pytest", "-n0", "--co", "-q"],
         check=False,
         capture_output=True,
         text=True,
@@ -242,7 +259,7 @@ def render_evidence(
     warmup: int,
 ) -> str:
     """Render the baseline evidence markdown (prose-scope, MD013 relaxed)."""
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     baseline_median = results[0].median_seconds if results else 0.0
 
     lines: list[str] = []
@@ -261,7 +278,9 @@ def render_evidence(
     lines.append(f"- Interpreter: CPython {platform.python_version()} ({platform.machine()})")
     lines.append(f"- Platform: {platform.system()} {platform.release()}")
     lines.append(f"- Tests collected: {test_count}")
-    lines.append(f"- Sampling: median of {runs} timed warm run(s) after {warmup} discarded warm-up(s)")
+    lines.append(
+        f"- Sampling: median of {runs} timed warm run(s) after {warmup} discarded warm-up(s)"
+    )
     lines.append(
         "- Invocation: `uv run pytest --cov=src --cov-branch --cov-report=term-missing` "
         "plus each config's argv/env, run inside the dev container"
@@ -335,8 +354,8 @@ def render_evidence(
         "Per test file: `real calls` counts inline "
         "`subprocess.run/Popen/call/check_call/check_output(` invocations; "
         "`mentions` counts every textual reference including "
-        "`patch(\"subprocess.run\")` mock targets (the metric behind the spec's "
-        "\"~551 sites\" figure). Cross-referenced with the slowest-tests table, the "
+        '`patch("subprocess.run")` mock targets (the metric behind the spec\'s '
+        '"~551 sites" figure). Cross-referenced with the slowest-tests table, the '
         "top `real calls` rows are Task 11's refactor work-list — inline calls that "
         "exercise *our* argv-construction/parsing logic (not genuine integration) "
         "are the candidates to replace with argv-asserting fakes."
@@ -390,10 +409,16 @@ def emit_evidence(out_path: Path, *, runs: int, warmup: int, durations_top: int)
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--emit-evidence", action="store_true", help="run all configs and write the evidence file")
+    parser.add_argument(
+        "--emit-evidence", action="store_true", help="run all configs and write the evidence file"
+    )
     parser.add_argument("--runs", type=int, default=5, help="timed runs per config (default: 5)")
-    parser.add_argument("--warmup", type=int, default=1, help="discarded warm-up runs per config (default: 1)")
-    parser.add_argument("--durations-top", type=int, default=25, help="rows for --durations (default: 25)")
+    parser.add_argument(
+        "--warmup", type=int, default=1, help="discarded warm-up runs per config (default: 1)"
+    )
+    parser.add_argument(
+        "--durations-top", type=int, default=25, help="rows for --durations (default: 25)"
+    )
     parser.add_argument(
         "--out",
         type=Path,
@@ -403,7 +428,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.emit_evidence:
-        return emit_evidence(args.out, runs=args.runs, warmup=args.warmup, durations_top=args.durations_top)
+        return emit_evidence(
+            args.out, runs=args.runs, warmup=args.warmup, durations_top=args.durations_top
+        )
 
     parser.print_help()
     return 0

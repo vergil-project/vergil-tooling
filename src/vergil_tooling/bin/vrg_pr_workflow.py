@@ -43,6 +43,13 @@ or ``owner/repo#N``, and exits 2 when a qualified ref names another repo than
 this clone's (or this clone's repo cannot be told), so a wrong clone is never
 read as "no marker". ``batch-show`` exits 0 with the marker, 1 when there is
 none, and 2 on any other failure.
+
+``batch-check --pr <url> [--head <sha>]`` checks a submitted batch PR before
+a push to it (epic vergil-project/.github#1218, spec §6.8): its body's
+``Closes`` refs against GitHub's closing references, and one commit per issue
+from the PR's base to ``--head`` (or the PR's head). It never runs the hard
+rules, writes nothing and makes no freeze check. It exits 0 when the PR passes
+or is not a batch PR, and 1 otherwise.
 """
 
 from __future__ import annotations
@@ -186,6 +193,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p_bshow.add_argument("--issue", required=True, help=issue_help)
     p_bshow.set_defaults(func=cmd_batch_show, failure_exit=2)
 
+    p_bcheck = sub.add_parser(
+        "batch-check",
+        help="Check a submitted batch PR: one commit per issue and its closing references",
+        description=(
+            "Read the PR's body and base. A batch PR (more than one Closes line) "
+            "must close exactly the issues GitHub lists as its closing references, "
+            "and its branch must hold one commit per issue, in the body's order, "
+            "since the base. The hard rules are not run. Exits 0 when the PR "
+            "passes or is not a batch PR, 1 with the rule's message otherwise. It "
+            "only reads, so it runs on a submitted, frozen branch, and it never "
+            "moves the branch's remote-tracking ref, so a later leased push still "
+            "checks against what it last saw."
+        ),
+    )
+    p_bcheck.add_argument("--pr", required=True, help="The PR's URL (or number, in its clone)")
+    p_bcheck.add_argument(
+        "--head",
+        help=(
+            "The commit to check, present in this clone (default: the PR's head on "
+            "GitHub). pr-watch passes the head it is about to push."
+        ),
+    )
+    p_bcheck.set_defaults(func=cmd_batch_check)
+
     return parser.parse_args(argv)
 
 
@@ -213,7 +244,7 @@ def _reject_cross_repo_issue(issue_ref: str) -> None:
     """
     try:
         current = github.current_repo()
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return
     if not current:
         return
@@ -242,7 +273,7 @@ def _reject_non_task_issue(issue_ref: str) -> None:
     """
     try:
         kind = epics.non_task_ref_kind(issue_ref, default_repo=github.current_repo())
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return
     if kind is not None:
         raise WorkflowError(epics.non_task_refusal_message("--issue", issue_ref, kind))
@@ -260,7 +291,7 @@ def _reject_operational_issue(issue_ref: str) -> None:
     """
     try:
         is_operational = epics.is_operational_task(issue_ref, default_repo=github.current_repo())
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return
     if is_operational:
         raise WorkflowError(
@@ -771,6 +802,115 @@ def cmd_batch_show(args: argparse.Namespace, _transport: LocalFileTransport) -> 
         print(f"{issue} has no batch marker", file=sys.stderr)
         return 1
     _emit({"issues": marker.issues, "base_sha": marker.base_sha})
+    return 0
+
+
+_SHA_RE = re.compile(r"[0-9a-f]{40}")
+
+
+def _check_pr_fields(pr: str) -> tuple[str, str, str]:
+    """The PR's body, base branch and head commit; a failed or malformed read refuses."""
+    try:
+        info = github.read_json("pr", "view", pr, "--json", "body,baseRefName,headRefOid")
+    except github.MissingGitHubTokenError:
+        raise
+    except (subprocess.CalledProcessError, OSError, ValueError) as exc:
+        raise WorkflowError(f"batch-check: cannot read PR {pr}: {error_text(exc)}") from exc
+    fields = info if isinstance(info, dict) else {}
+    body, base, head = fields.get("body"), fields.get("baseRefName"), fields.get("headRefOid")
+    if not isinstance(body, str) or not isinstance(base, str) or not base:
+        raise WorkflowError(f"batch-check: cannot read PR {pr}: no body or base in {info!r}")
+    if not isinstance(head, str) or _SHA_RE.fullmatch(head) is None:
+        raise WorkflowError(f"batch-check: cannot read PR {pr}: no head commit in {info!r}")
+    return body, base, head
+
+
+def _check_closing_refs(pr: str, body: str) -> str:
+    """Hold the body's ``Closes`` refs to GitHub's closing references; return the PR's repo."""
+    try:
+        refs = github.pr_closing_references(pr)
+    except github.MissingGitHubTokenError:
+        raise
+    except (subprocess.CalledProcessError, OSError, RuntimeError, ValueError) as exc:
+        raise WorkflowError(
+            f"batch-check: cannot read the closing issue references of PR {pr}: {error_text(exc)}"
+        ) from exc
+    try:
+        batch_rules.check_closing_refs(body, [issue.ref for issue in refs.issues], repo=refs.repo)
+    except batch_rules.BatchRuleError as exc:
+        raise WorkflowError(f"batch-check: PR {refs.ref}: {exc}") from exc
+    return refs.repo
+
+
+def _check_commits_at(pr: str, base: str, head: str) -> tuple[str, str]:
+    """Fetch the base, and *head* when it is not here; return both as commit SHAs.
+
+    The base is fetched into its own remote-tracking ref. The head is fetched
+    by its SHA alone, so the PR branch's remote-tracking ref, the one a
+    ``--force-with-lease`` push checks against, never moves.
+    """
+    try:
+        git.run("fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}")
+        base_sha = _commit_sha(f"refs/remotes/origin/{base}")
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise WorkflowError(
+            f"batch-check: cannot fetch PR {pr}'s base {base}: {error_text(exc)}"
+        ) from exc
+    try:
+        if not git.ref_exists(f"{head}^{{commit}}") and _SHA_RE.fullmatch(head) is not None:
+            git.run("fetch", "origin", head)
+        return base_sha, _commit_sha(head)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise WorkflowError(
+            f"batch-check: cannot find the commit {head} to check for PR {pr}: {error_text(exc)}"
+        ) from exc
+
+
+def _commit_sha(rev: str) -> str:
+    return git.read_output("rev-parse", "--verify", "--end-of-options", f"{rev}^{{commit}}")
+
+
+def cmd_batch_check(args: argparse.Namespace, _transport: LocalFileTransport) -> int:
+    """Check a submitted batch PR; exit 0 when it passes or is not a batch PR.
+
+    The checks are :func:`batch_rules.check_closing_refs` against GitHub's
+    closing references, then :func:`batch_rules.check_commit_per_issue` from
+    the PR's base, as fetched now, to ``--head`` (or the PR's head), the
+    issues in the body's ``Closes`` order. The hard rules are not run: they
+    read issue state a push cannot change, and submit checked them (epic
+    vergil-project/.github#1218, spec §6.8). It writes no state and makes no
+    freeze check, so it runs on a submitted, frozen branch.
+    """
+    pr = str(args.pr)
+    if args.head is not None and (not args.head or args.head.startswith("-")):
+        raise WorkflowError(f"batch-check: --head is not a git revision: {args.head!r}")
+    body, base, pr_head = _check_pr_fields(pr)
+    closes = batch_rules.batch_closes(body)
+    if not closes:
+        print(
+            f"PR {pr} is not a batch PR (its body has one Closes line or none); nothing to check."
+        )
+        return 0
+    repo = _check_closing_refs(pr, body)
+    try:
+        clone = _clone_repo()
+    except WrongCloneError as exc:
+        raise WorkflowError(f"batch-check: {exc}") from exc
+    if clone.lower() != repo.lower():
+        raise WorkflowError(
+            f"batch-check: PR {pr} is in {repo}, but this is a clone of {clone}; "
+            f"run it from a clone of {repo}"
+        )
+    base_sha, head_sha = _check_commits_at(pr, base, args.head or pr_head)
+    issues = [f"#{ref.rpartition('#')[2]}" for ref in closes]
+    try:
+        batch_rules.check_commit_per_issue(issues, base=base_sha, head=head_sha)
+    except batch_rules.BatchRuleError as exc:
+        raise WorkflowError(f"batch-check: PR {pr} at {head_sha[:12]}: {exc}") from exc
+    print(
+        f"Batch check passed for PR {pr} at {head_sha}: it closes {', '.join(issues)}, "
+        f"one commit per issue since {base} ({base_sha[:12]})."
+    )
     return 0
 
 

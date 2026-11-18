@@ -252,10 +252,22 @@ takes `--issue` as `N`, `#N` or `owner/repo#N` for this clone's repo:
   state included. It refuses while a `security-*.md` details file is under
   that directory.
 
+`batch-check --pr <url> [--head <sha>]` checks a submitted batch PR before a
+push to it, from a clone of the PR's repo (pr-watch runs it on the head it is
+about to push). It reads the PR's body and base. A PR whose body has one
+`Closes` line or none is not a batch PR and passes. A batch PR's `Closes` refs
+must be exactly the issues GitHub lists as its closing references, and its
+branch must hold one commit per issue, in the body's order, from the base as
+fetched now to `--head` (default: the PR's head, fetched by its SHA so the
+branch's remote-tracking ref never moves). The hard rules are not run. It
+writes nothing and makes no freeze check, so it runs on a frozen branch. It
+exits 0 when the PR passes or is not a batch PR, and 1 with the rule's message
+otherwise.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_pr_workflow` |
-| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref), `unfreeze`, `status`, `batch-start`, `batch-extract`, `batch-show`; global `--base` (default: origin/develop) |
+| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref), `unfreeze`, `status`, `batch-start`, `batch-extract`, `batch-show`, `batch-check` (`--pr` required, `--head`); global `--base` (default: origin/develop) |
 | Preconditions | Git repo; run from the worktree whose branch is being staged |
 | Failure mode | `WorkflowError` on stderr (e.g. unfreeze after submit, nothing to unfreeze, or a relay ref unfreeze could not update) |
 | Exit codes | 0 success, 1 error |
@@ -263,20 +275,36 @@ takes `--issue` as `N`, `#N` or `owner/repo#N` for this clone's repo:
 
 ### vrg-pr-await
 
-Block until a pull request settles, then print its state as JSON. It settles
-when every check reaches a terminal conclusion, the head SHA moves, a new
-review appears, or the PR is wedged by an orphaned check-run (grace period
-`$VRG_ORPHAN_GRACE`, default 300s). `--since-sha` and `--since-reviews` carry
-the caller's last-seen baseline. Used by the `pr-watch` skill; it blocks
-indefinitely by design.
+Block until a pull request submitted with auto-merge on merges, or can no
+longer merge as it stands, then print the outcome as JSON. Used by the
+`pr-watch` skill. A PR that merged before the wait started counts as merged.
+A new review or a new commit does not end the wait: a review after submit
+never holds the merge, and auto-merge stays pinned to the head submit pushed.
+
+On exit 0 or 1 it prints one JSON object with `pr`, `outcome` (`merged` or
+`cannot_merge`), `reason` (`null` when merged), `detail`, `head_sha`,
+`merge_commit` (`null` unless merged), `merge_state_status`, `failed_checks`
+and `orphaned_checks`. On exit 1 the reason is also printed on stderr. The
+reasons are:
+
+- `check_failed`: a required check concluded in failure; `failed_checks`
+  names it.
+- `conflict`: the PR has a merge conflict with its base.
+- `auto_merge_off`: auto-merge is off, at the start or after a push.
+- `closed`: the PR was closed without merging.
+- `orphaned_check`: every pending check is stuck after its workflow run
+  completed, for longer than `$VRG_ORPHAN_GRACE` (default 300s);
+  `orphaned_checks` names them.
+- `timed_out`: the deadline passed with the PR still pending. The deadline is
+  `$VRG_FINALIZE_DEADLINE` seconds, default 7200, as for `vrg-finalize-pr`.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_pr_await` |
-| Args | `pr` (positional, URL or number), `--since-sha`, `--since-reviews` |
+| Args | `pr` (positional, URL or number). `--since-sha` and `--since-reviews` are removed and are an error |
 | Preconditions | GitHub App credentials for the PR's org |
-| Failure mode | Exits 1 with an error if the PR is already merged or the PR cannot be read |
-| Exit codes | 0 settled, 1 error |
+| Failure mode | Exit 1 only when the PR cannot merge. A malformed `$VRG_FINALIZE_DEADLINE` or `$VRG_ORPHAN_GRACE` (checked before any waiting), a GitHub API or permission failure, an unreadable PR or bad arguments exit 2 with a message on stderr and nothing on stdout |
+| Exit codes | 0 merged, 1 cannot merge, 2 any other error |
 | Status | Active |
 
 ### vrg-pr-review-comments
@@ -765,8 +793,8 @@ quarter-named epics to that form; both are dry runs unless `--apply`.
 |---|---|
 | Source | `vergil_tooling.bin.vrg_adhoc_epic` |
 | Args | `ensure [--repo]`; `archive --repo` or `archive --all-in ORG`, each with optional `--apply`; `normalize --all-in ORG [--apply]` |
-| Preconditions | GitHub App credentials for the target org |
-| Failure mode | Error on stderr |
+| Preconditions | GitHub App credentials for the target org; `--all-in` also needs an identity that sees every repo in ORG |
+| Failure mode | Error on stderr; `--all-in` refuses before any read when the identity may not see every repo in ORG |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 

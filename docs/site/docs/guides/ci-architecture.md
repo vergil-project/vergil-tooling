@@ -74,17 +74,13 @@ repository with no language uses the base image. On top of that image,
 vergil-tooling installed. Set `DOCKER_DEV_IMAGE` to use a different
 image.
 
-The image chooses how vergil-tooling is installed, by two checks: the
-vergil apt source (`/etc/apt/sources.list.d/vergil.sources`) and a core
-vergil-python (`/opt/vergil/python/*/bin/python3`). With both, a release
-version installs the vergil-tooling package at that release, and a `vX.Y`
-line resolves first to the newest release on the line, so a new release
-rebuilds the cached image (see
+For a release version, the cached image installs the vergil-tooling package
+at that release, and a `vX.Y` line resolves first to the newest release on the line, so a new
+release rebuilds the cached image (see
 [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)).
-The build checks that `vrg-*` runs from `/usr/bin`
-on vergil-python; a branch is `uv tool install` from git on the core
-Python. With neither, it is `uv tool install` from git. An image with only
-one of the two fails the build. The build log names the path it took.
+The build checks that `vrg-*` runs from `/usr/bin` on vergil-python. A
+branch is `uv tool install` from git on the image's core vergil-python
+(`/opt/vergil/python/*/bin/python3`). The build log names the path it took.
 
 `vrg-validate` first runs the common checks: the
 [repo-profile](../reference/lint/repo-profile.md) check, markdownlint,
@@ -174,13 +170,14 @@ The workflow file is `.github/workflows/ci.yml`. It runs on
     3.15, the newest window version), so its `--cov-fail-under=100` gate proves 100% coverage on that
     one interpreter only. PR-CI re-runs the test-and-coverage gate
     **independently in a separate container per resolved matrix version**
-    (currently 3.12, 3.13, 3.14 and 3.15: this repo is a `library` with no
-    `[ci].versions` pin, so it tests the whole version window). Because
+    (a `library` tests the whole version window; this repo is a `tooling`
+    repo with no `[ci].versions` pin, so it resolves as an app and tests
+    only 3.15 today). Because
     branch coverage (`--cov-branch`) can
     legitimately differ across CPython versions — a branch reachable on one
     version may be dead on another, or a version-guarded code path may only
     execute on some interpreters — code that measures 100% locally can still
-    fall below 100% on a 3.12, 3.13 or 3.14 leg and fail CI. The default
+    fall below 100% on another version's leg and fail CI. The default
     local validate covers a single interpreter, trading the matrix away for
     speed. For Python, `vrg-container-run -- vrg-validate --all-versions`
     closes the gap on demand: inside the same one container it runs the

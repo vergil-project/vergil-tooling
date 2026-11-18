@@ -102,7 +102,7 @@ declared orphaned, and the error says how long each check waited. The grace
 defaults to 5 minutes from when the backing run was first seen completed.
 Set `VRG_ORPHAN_GRACE` (seconds, a positive whole number) to change it; a
 malformed value is an error. `vrg-pr-await` applies the same grace before it
-settles with `orphaned_check`.
+reports a PR as unable to merge with reason `orphaned_check`.
 
 The deadline is the backstop. When it elapses with checks still pending,
 each one is checked against its backing run again, and a non-terminal check
@@ -184,7 +184,7 @@ vrg-finalize-pr [PR | --cleanup-only] [--target-branch BRANCH]
 | `--cleanup-only` | Skip PR inference and merge; run cleanup without prompting or reading stdin (non-interactive release path). Mutually exclusive with `PR`. |
 | `--target-branch` | Branch to switch to (default: `develop`) |
 | `--strategy` | Merge strategy when a PR is given (default: `squash`; `rebase` for a batch PR, `merge` for a `release/*` branch). `squash` is refused on a batch PR |
-| `--allow-provenance-violation` | Proceed despite provenance violations (conscious human override) |
+| `--allow-provenance-violation` | Leave auto-merge on for an open PR with a provenance violation (conscious human override). It does not cover a violation that has already merged: see *Provenance* below |
 | `--clean-dirty` | Opt-in: clear a merged/closed worktree whose only dirt is untracked build/validation output, after showing what will be deleted and confirming. Never touches modified tracked files or a reused-branch straggler with unmerged commits (issue #2348). |
 | `--dry-run` | Show what would be done without making changes |
 | `--no-wait-cd` | Do not block on the CD workflow run the merge triggers. Blocking (and failing on a non-success run) is the default (issue #2753); this is the conscious opt-out. |
@@ -193,14 +193,30 @@ vrg-finalize-pr [PR | --cleanup-only] [--target-branch BRANCH]
 
 ### 1. Provenance Check, Wait, and Merge (PR mode only)
 
-Runs the pre-merge provenance check first, so violations surface
-before any waiting. Advisories are printed but do not block.
-Violations abort the merge unless `--allow-provenance-violation`
-is given. If the PR is already merged, the merge step is skipped and
+If the PR is already merged, the merge step is skipped and
 finalize goes straight on to the closing-reference check (1a) and
 cleanup. Otherwise the wait-for-green loop runs (see *Waiting for
 green*) and the PR is merged with the selected strategy. `--dry-run`
 skips the wait and prints what it would do.
+
+#### Provenance
+
+The watch runs the provenance check on every PR when it starts, and
+again each time a PR's head changes. Advisories are printed but do not
+block. What a violation does depends on whether the PR has merged:
+
+- **Open PR.** Finalize turns the PR's auto-merge off and reports it
+  *failed: provenance*. With `--allow-provenance-violation` it leaves
+  auto-merge on, prints the violation loudly and watches the PR on, so
+  the PR may merge. Once it merges, it is a merged PR with a violation,
+  below.
+- **Merged PR**, one that merged before finalize started included.
+  Nothing can be disabled. The PR is reported as merged with a loud
+  provenance-violation flag, and the run cannot reach full success: it
+  exits 3 (or 4, if develop did not validate) and no chained release
+  runs. `--allow-provenance-violation` does not change this: the
+  override does not cover a violation that has already merged, which a
+  human must look at before any release (issue #4662).
 
 ### 1a. Close Issues GitHub Left Open (PR mode only)
 
@@ -385,7 +401,9 @@ a batch. For a batch PR, finalize:
 
 - cross-checks the body's `Closes` issues against GitHub's closing
   references, and refuses to merge if any is missing, is in another repo,
-  or is listed twice;
+  or is listed twice, or if GitHub lists a closing reference the body does
+  not close (a hand-added Development link, say), since merging would close
+  an issue the batch has no commit for;
 - checks the one-commit-per-issue invariant on the PR's head before it
   waits, and refuses with the reason when it fails, never falling back to a
   squash;

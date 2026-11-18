@@ -79,11 +79,26 @@ def test_close_and_finalize_streams_through_progress() -> None:
     assert cmd == (
         "vrg-finalize-pr",
         "--cleanup-only",
-        "--no-wait-cd",
         "--output-format",
         "plain",
     )
     assert run.call_args.kwargs["stdin"] == subprocess.DEVNULL
+
+
+def test_release_cleanup_call_has_no_no_wait_cd() -> None:
+    """vrg-finalize-pr refuses --no-wait-cd now that not waiting on CD is its
+    default (epic vergil-project/.github#1218, spec §6.5), so the release's
+    cleanup call must not pass it, and must not opt into --wait-cd either:
+    confirm-develop has already judged the release's develop CD run."""
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".close_tracking_issue"),
+        patch(_MOD + ".progress.run", return_value=0) as run,
+    ):
+        close_and_finalize(ctx)
+    (cmd,) = run.call_args.args
+    assert "--no-wait-cd" not in cmd
+    assert "--wait-cd" not in cmd
 
 
 def test_build_summary_omits_none_fields() -> None:

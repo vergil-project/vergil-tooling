@@ -889,7 +889,7 @@ def _check_worktree_add(args: list[str]) -> str | None:
         return None
     try:
         root = main_worktree_root()
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return None
     target = Path(path)
     if not target.is_absolute():

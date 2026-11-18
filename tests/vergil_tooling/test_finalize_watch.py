@@ -385,6 +385,23 @@ def test_provenance_violation_disables_auto_merge(fake: FakeGitHub) -> None:
     assert fake.disables == [url(1)]
 
 
+def test_merged_pr_with_violation_flagged_alike_with_the_flag(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The override does not cover a PR that has already merged (vergil-tooling#4662)."""
+    fake.script(1, merged(1))
+    fake.violations[url(1), HEAD_A] = [AGENT_ENABLE]
+
+    [result] = run([url(1)], allow=True)
+
+    assert result.outcome == "merged"
+    assert result.provenance_violation is True
+    assert fake.disables == []
+    err = capsys.readouterr().err
+    assert "PROVENANCE VIOLATION" in err
+    assert "investigate before any release" in err
+
+
 def test_violation_found_at_merge_is_flagged(
     fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -441,7 +458,9 @@ def test_allow_provenance_violation(fake: FakeGitHub, capsys: pytest.CaptureFixt
     assert result.outcome == "merged"
     assert result.provenance_violation is True
     assert fake.disables == []
-    assert "--allow-provenance-violation" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "--allow-provenance-violation" in err
+    assert "still not a full success" in err
 
 
 def test_watch_never_enables_auto_merge() -> None:
