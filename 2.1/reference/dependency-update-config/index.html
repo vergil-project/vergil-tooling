@@ -1450,6 +1450,8 @@
       
         
       
+        
+      
     
     
     
@@ -1502,6 +1504,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.327/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.327
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14524,6 +14554,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#npm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        npm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vergil" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18123,6 +18164,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#npm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        npm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vergil" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18297,6 +18349,11 @@ what it updates, and each one's changes become a separate commit on the
 <td><code>chore(deps): cargo update</code>, listing the crates moved, or <code>chore(deps): refresh Cargo.lock</code></td>
 </tr>
 <tr>
+<td><code>npm</code></td>
+<td><code>package.json</code> and <code>package-lock.json</code> exist</td>
+<td><code>chore(deps): npm update</code>, listing the packages moved, or <code>chore(deps): refresh package-lock.json</code></td>
+</tr>
+<tr>
 <td><code>vergil</code></td>
 <td><code>vergil.toml</code> exists</td>
 <td><code>chore(deps): …</code> naming what changed</td>
@@ -18345,6 +18402,21 @@ the workspace's requirement. Path and git dependencies, and crates.io
 dependencies patched to a path or git crate, are never reported; a
 dependency from another registry, or patched to one, is an error. See
 <a href="../dev/update-deps/#the-cargo-updater">the Cargo updater</a>.</p>
+<h3 id="npm"><code>npm</code><a class="headerlink" href="#npm" title="Permanent link">&para;</a></h3>
+<p>Runs <code>npm update --ignore-scripts</code> in the dev container, which moves
+every package in <code>package-lock.json</code> to the newest version its
+<code>package.json</code> range allows. It never edits <code>package.json</code>, and fails if
+<code>package.json</code> changed, as a <code>save</code> setting in <code>.npmrc</code> would make it.
+Every entry it added or moved must carry a <code>license</code>, or it fails.</p>
+<p>It then runs <code>npm ci --ignore-scripts</code> and <code>npm outdated --json</code> in the
+dev container, so npm matches the ranges itself. A direct dependency
+(<code>dependencies</code>, <code>devDependencies</code> or <code>optionalDependencies</code>) locked
+below its <code>latest</code> dist-tag is reported as held back, with a note giving
+the reason: <code>outside the package.json range</code>, <code>held by the resolver:
+another requirement in the dependency graph</code>, or both, plus <code>Vergil
+accepts &lt;name&gt; &lt;major&gt; only (dev-dependencies.json)</code> for a package whose
+major Vergil fixes. <code>file:</code>, <code>link:</code>, git and URL dependencies are never
+reported. See <a href="../dev/update-deps/#the-npm-updater">the npm updater</a>.</p>
 <h3 id="vergil"><code>vergil</code><a class="headerlink" href="#vergil" title="Permanent link">&para;</a></h3>
 <p>Keeps the vergil ecosystem references consistent with
 <code>[dependencies].vergil</code> in <code>vergil.toml</code>:</p>
@@ -18502,6 +18574,9 @@ count, and every package it moved is a row in one table:</p>
 <li><code>cargo</code> diffs the crate versions in the parsed <code>Cargo.lock</code> before and
   after <code>cargo update</code> the same way. A crate locked at several versions
   shows them comma-joined.</li>
+<li><code>npm</code> diffs the package versions in the parsed <code>package-lock.json</code>
+  before and after <code>npm update</code> the same way. A package installed at
+  several versions (nested copies) shows them comma-joined.</li>
 <li><code>vergil</code> lists the <code>vergil</code> version it bumped and the
   <code>vergil-python&lt;x.y&gt;</code> runtime pin it moved. Normalizing workflow refs to
   the declared version moves no package.</li>

@@ -1450,6 +1450,8 @@
       
         
       
+        
+      
     
     
     
@@ -1502,6 +1504,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.327/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.327
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17836,6 +17866,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#retargeting-by-hand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retargeting by hand
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18295,6 +18336,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#retargeting-by-hand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retargeting by hand
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18568,11 +18620,35 @@ The scheduled sweep (<code>vrg-epic-audit --close</code>) does not run it: the s
 makes no security-advisory call, so its token needs no advisories access.
 On each run of <code>sync</code>:</p>
 <ul>
-<li>the advisory is <strong>closed</strong> when <strong>every</strong> issue it tracks is closed,
-  whether fixed or dropped as not planned;</li>
+<li>the advisory is <strong>closed</strong> when <strong>every</strong> issue it tracks is closed as
+  completed and none of them is a queue item;</li>
 <li>it is a <strong>draft</strong> while <strong>any</strong> of them is open, so reopening an issue
   reopens its advisory.</li>
 </ul>
+<p><strong>The close guard.</strong> Closing an issue does not always mean the fix
+exists, so <code>sync</code> keeps a draft advisory <code>draft</code>, even with every issue
+it tracks closed, while <strong>any</strong> of those issues:</p>
+<ul>
+<li>is a <strong>queue item</strong>: its native parent is a live intake, planning or
+  deferred epic, or a per-quarter archive of one (by its <code>archive</code> label
+  or its stamped title alone), so an item already drained into its
+  archive still counts; or</li>
+<li>was closed with any reason other than <strong>completed</strong> (not planned,
+  duplicate, no reason recorded, or any reason GitHub adds).</li>
+</ul>
+<p>Each advisory the guard holds is reported on its own line, by GHSA ID and
+the issue refs that fired it, with what a human does next:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>- held: GHSA-xxxx-xxxx-xxxx (org/repo#12): retarget it to a fix task, or close it with vrg-security-record close
+</code></pre></div>
+<p>Retarget it to the task that fixes it, or, when the work is dropped,
+close it with <code>vrg-security-record close</code> and a reason (see
+<a href="#closing-a-record-with-a-reason">Closing a record with a reason</a>). Held
+advisories are counted apart from broken pairs, and a hold does not fail
+<code>sync</code>: it waits on a human step and is not a fault. The guard only stops
+a move to <code>closed</code>: an advisory a human already closed with <code>close</code> is
+left alone and is not reported as held. When an issue's parent cannot be
+read, that advisory is reported on an <code>- error:</code> line and left as it is,
+never closed; the rest are still synced, and <code>sync</code> exits 1.</p>
 <p>A manual state change to a draft or closed advisory is overwritten on the
 next run. <code>sync</code> only moves an advisory between <code>draft</code> and <code>closed</code>.
 It never touches an advisory in any other state (published, withdrawn, or
@@ -18605,14 +18681,14 @@ it names only GHSA IDs, issue refs, labels and states, never advisory text.</p>
 <h3 id="closing-a-record-with-a-reason">Closing a record with a reason<a class="headerlink" href="#closing-a-record-with-a-reason" title="Permanent link">&para;</a></h3>
 <p>An agent, or a human, may close a record directly, as long as the close
 is visible and explained:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-security-record<span class="w"> </span>close<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"the work it tracked was dropped with its epic"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-security-record<span class="w"> </span>close<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"the work it tracked was dropped with its epic"</span>
 </code></pre></div>
 <p>It posts <code>Security record &lt;GHSA-id&gt; closed: &lt;reason&gt;</code> on every issue the
 record tracks, then sets the advisory to <code>closed</code>. Use it when the work a
 record tracks is dropped and <code>sync</code> would not close the record, for
-example when its pair is broken, or to put on record why a record was
-closed. The issue still drives the record: <code>close</code> refuses while any of
+example when its pair is broken or the close guard holds it, or to put
+on record why a record was closed. The issue still drives the record: <code>close</code> refuses while any of
 its issues is open, since the next <code>sync</code> would set the advisory back to
 draft. Close the issue first (as not planned, for dropped work), or
 retarget the record to the work that replaces it.</p>
@@ -18627,7 +18703,7 @@ human's decision. See the
 superseded, the work is retargeted, a fix lands elsewhere. Keep it
 accurate with <code>note</code>, which appends a dated note and never rewrites what
 is there:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-security-record<span class="w"> </span>note<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span>--file<span class="w"> </span>note.md
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-security-record<span class="w"> </span>note<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span>--file<span class="w"> </span>note.md
 </code></pre></div>
 <p>The note goes under a <code>Note (&lt;YYYY-MM-DD&gt;):</code> header at the end of the
 description, before the <code>Tracking issue:</code> lines, which stay last. The
@@ -18639,13 +18715,18 @@ with a <code>Tracking issue:</code> line. See the
 <a href="../../reference/dev/security-record/#note">CLI reference</a>.</p>
 <h3 id="when-the-issue-moves">When the issue moves<a class="headerlink" href="#when-the-issue-moves" title="Permanent link">&para;</a></h3>
 <p>A record's link moves only through <code>vrg-security-record retarget</code>, and
-<code>vrg-intake-route</code> calls it for you:</p>
+<code>vrg-intake-route</code> calls it for you. Each call moves the advisory from the
+routed item and keeps every other issue the advisory tracks, so a route
+never stops tracking another issue:</p>
 <ul>
 <li><strong>transfer</strong> (<code>one-off</code> into another repo): after the move, <strong>every</strong>
   advisory the issue names is retargeted, in body order, so each tracking
   line is rewritten to the issue's new number. If one fails, the move
   stands and the error names every advisory still not retargeted, with
-  one <code>retarget</code> command for each, to run in order;</li>
+  one <code>retarget</code> command for each, to run in order. Each command names
+  the issue's old number as <code>--from</code>, since the tracking line still
+  names it. If the tracked issues can't be read before the move, the
+  route stops with nothing moved;</li>
 <li><strong>recreate</strong> (when GitHub refuses the transfer): <strong>every</strong> advisory the
   issue names is retargeted to the copy, in body order, <strong>before</strong> the
   original closes. If one fails, the original stays open, the copy stays
@@ -18658,15 +18739,50 @@ with a <code>Tracking issue:</code> line. See the
 </ul>
 <p>An item naming <strong>several</strong> advisories is refused before anything
   changes, because which advisory goes to which task can't be inferred:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand to the tasks that fix it, keeping every other issue it tracks (vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt; [--to …], then vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt; [--to …]), then split
 </code></pre></div>
-<p>Retarget each advisory to the task or tasks that fix it, one at a time.
+<p>Retarget each advisory to the task or tasks that fix it, one at a time,
+  with <code>--from</code> the item and a <code>--to</code> for every other issue it still
+  tracks as well as for each task.
   The last retarget leaves the item with no advisory line and no
   <code>security</code> label, so the split that follows is an ordinary one.</p>
 <p>An issue an advisory stops tracking loses that advisory's line, and gets
 the neutral comment <code>Security record moved to &lt;refs&gt;</code>. It loses its
 <code>security</code> label only when that was its last advisory line; while it
 still names another advisory, the label and the other lines stay.</p>
+<h3 id="retargeting-by-hand">Retargeting by hand<a class="headerlink" href="#retargeting-by-hand" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--from<span class="w"> </span><span class="s1">'vergil-project/.github#500'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#101'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#102'</span>
+</code></pre></div>
+<p><code>--from</code> is required and names the issue the advisory moves from, which
+it must track now. <code>--to</code> names the <strong>complete</strong> set it tracks
+afterwards. Two checks run before anything is written; each refusal
+names the issues the advisory tracks and the command that would succeed:</p>
+<ul>
+<li><strong>The source check.</strong> A <code>--from</code> that no <code>Tracking issue:</code> line names
+  is refused: the advisory is not that issue's to hand on. Take the GHSA
+  IDs from <code>vrg-security-record list</code> (the advisories whose <code>tracks:</code>
+  names the issue), never from an issue body's lines alone.</li>
+<li><strong>The open-issue check.</strong> An open issue the advisory tracks, other than
+  <code>--from</code>, that the <code>--to</code> set leaves out is refused, so a retarget
+  never silently stops tracking work still in flight. The refusal's
+  command keeps every such issue as a <code>--to</code>. To add a fix task later,
+  retarget <code>--from</code> one of the current tasks with every task, old and
+  new, as <code>--to</code>. <code>--drop &lt;ref&gt;</code> (repeatable) names an open issue the
+  advisory is <strong>deliberately</strong> left to stop tracking: that is the human's
+  decision, and no tool ever suggests it.</li>
+</ul>
+<p>A retarget that fails partway (a step error, not a refusal) is finished
+by running the identical command again: the source check still accepts
+the <code>--from</code> once the tracking lines are rewritten, while that issue
+still names the advisory or carries the <code>Security record moved to</code>
+comment for the same <code>--to</code> set. A re-run after a full success writes
+nothing. <code>--from</code> is unmarked last, after every other dropped issue.</p>
+<p><code>create</code> makes an advisory's <strong>first</strong> pairing on its own path: it refuses,
+before it creates, marks or links any issue, an advisory that already
+tracks another issue. Move a paired advisory with <code>retarget</code>.</p>
 <h2 id="security-items-in-planning">Security items in planning<a class="headerlink" href="#security-items-in-planning" title="Permanent link">&para;</a></h2>
 <p>A security item can go through planning like any other. Planning
 discusses the problem in general terms; the details stay in the advisory.
@@ -18681,11 +18797,13 @@ of them until the plan exists.</p>
   back a line the other removed. Post <code>Tasks filed: yes</code> only after every
   retarget has succeeded:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#101'</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#102'</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-yyyy-yyyy-yyyy<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#103'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>--from<span class="w"> </span><span class="s1">'vergil-project/.github#500'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#101'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#102'</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>vrg-security-record<span class="w"> </span>retarget<span class="w"> </span>GHSA-yyyy-yyyy-yyyy<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span>--from<span class="w"> </span><span class="s1">'vergil-project/.github#500'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#103'</span>
 </code></pre></div>
 <p>From then on, the PRs that close those tasks are what close each
   advisory.
@@ -18696,20 +18814,41 @@ of them until the plan exists.</p>
   this <strong>only</strong> when the weakness exists only in the design and no
   shipped code has it. A finding about shipped behaviour always goes to a
   fix task that changes the code.
-- <strong>The guard.</strong> <code>vrg-queue planning</code> never shows a planning issue as
-  <code>ready-to-close</code> while <strong>any</strong> advisory still tracks it, whether or not
-  its body names that advisory. It
-  shows it as <code>in-progress</code> with a note that counts the advisories still
-  tracking it and names them by GHSA ID only:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget
+- <strong>The guard.</strong> One hold rule decides whether a planning issue may
+  close, and it fails closed. It trusts the <code>security</code> label and the
+  advisories' own <code>Tracking issue:</code> lines, never a <code>Security advisory:</code>
+  body line alone:
+  - <strong>Any advisory that tracks it</strong> holds it, whether or not its body
+    names that advisory.
+  - <strong>An advisory that cannot be read</strong> holds it too: an advisory a
+    <code>security</code>-labelled planning issue names on a <code>Security advisory:</code>
+    line, which the advisory listing does not return. A missing
+    advisory is never read as "not tracking". Re-run with a token that
+    can read the repository's advisories, or have the human check the
+    advisory.
+  - <strong>A <code>Security advisory:</code> line on an issue without the <code>security</code>
+    label</strong>, with no advisory tracking the issue, is a broken pair. The
+    queue reports it in the item's note (<code>broken pair: …</code>, saying to
+    have the human check the pair) and does not hold the item.</p>
+<p><code>vrg-queue planning</code> never shows a held planning issue as
+  <code>ready-to-close</code>. It shows it as <code>in-progress</code> with a note that names
+  the advisories by GHSA ID only, and ends with the command that hands
+  each one on:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>held: 1 advisory still tracks this planning issue (GHSA-xxxx-xxxx-xxxx) — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from 'vergil-project/.github#500' --to &lt;task&gt;
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>held: 2 advisories still track this planning issue (GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy) — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from 'vergil-project/.github#500' --to &lt;task&gt;
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>held: 1 advisory this planning issue names cannot be read (GHSA-zzzz-zzzz-zzzz): re-run with a token that can read the repository's advisories, or have the human check it — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from 'vergil-project/.github#500' --to &lt;task&gt;
 </code></pre></div>
+<p>When an advisory both tracks the planning issue and another one cannot
+  be read, the note gives both, joined by a semicolon.</p>
 <p>After one of two retargets, the planning issue stays held by the other.
-  Don't close the planning issue by hand before every retarget: that
-  would close the remaining advisories with the fix unwritten. The same
-  hold applies to the epic's docs PR, which normally also closes the
-  planning issue: while an advisory still tracks it, <code>vrg-submit-pr</code>
-  leaves the <code>Planning issue: Closes</code> line out of the body and says why.</p>
+  Don't close the planning issue by hand before every retarget: the
+  remaining advisories would be left tracking a closed planning item,
+  with the fix unwritten. <code>sync</code>'s close guard keeps them <code>draft</code> and
+  reports them as held, but only a retarget hands them on. The same
+  rule holds the epic's docs PR, which normally also closes the planning
+  issue: while the planning issue is held, <code>vrg-submit-pr</code> leaves the
+  <code>Planning issue: Closes</code> line out of the body and gives the same
+  reason.</p>
 <h2 id="recording-findings-from-a-review">Recording findings from a review<a class="headerlink" href="#recording-findings-from-a-review" title="Permanent link">&para;</a></h2>
 <p>Security findings can surface while the work is still being designed or
 built. Three recipes cover the findings raised inside the epic/task
@@ -18732,8 +18871,11 @@ depends on the decision:</p>
   names (see <a href="#security-items-in-planning">Security items in planning</a>);</li>
 <li>a <strong>rejected</strong> finding (the human decided it is not a problem) is
   recorded with plain <code>create</code>, and the intake issue it creates is then
-  closed as "not planned", so the next <code>sync</code> closes the advisory. The human's
-  reason goes into the advisory's details, never into a public record;</li>
+  closed as "not planned", and the advisory is then closed with
+  <code>vrg-security-record close</code> and a neutral reason, since <code>sync</code>'s close
+  guard holds an advisory whose issue was closed as not planned. The
+  human's reason goes into the advisory's details, never into a public
+  record;</li>
 <li>a <strong>dropped</strong> finding is recorded with plain <code>create</code>, and its intake
   issue stays open, so intake review decides what becomes of it.</li>
 </ul>
@@ -18789,7 +18931,7 @@ hand:</p>
   tracks;</li>
 <li><code>vrg-security-record sync --dry-run</code> (or the read-only
   <code>vrg-epic-audit</code>, which prints the same preview) reports what would sync
-  and every broken pair.</li>
+  and every broken pair and held advisory.</li>
 </ul>
 <p><code>sync</code> reports a broken pair and never repairs it, so a human repairs
 each one it reports, by hand.</p>

@@ -1450,6 +1450,8 @@
       
         
       
+        
+      
     
     
     
@@ -1502,6 +1504,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.327/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.327
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18672,6 +18702,11 @@ fails:</p>
 <td><code>npm-audit.json</code> (JSON)</td>
 <td>the gate's <code>npm audit --audit-level=high --json</code> run, its stdout, unfiltered (<code>vrg-npm-audit-gate</code> judges it)</td>
 </tr>
+<tr>
+<td><code>audit</code></td>
+<td><code>licenses.json</code> (JSON)</td>
+<td>the gating <code>vrg-npm-license-gate --output licenses.json</code> run: one object per package in <code>package-lock.json</code>, with its license as recorded, its canonical form and its verdict</td>
+</tr>
 </tbody>
 </table>
 <p>The lint gate prints each ESLint finding from the report to the log, as
@@ -18679,9 +18714,11 @@ fails:</p>
 <code>tsc</code>'s diagnostics, one per line, then the compiler's closing statistics,
 so a clean typecheck still writes real data. The test gate keeps Vitest's
 console output and coverage table; <code>--coverage.reportOnFailure</code> makes Vitest
-write the coverage report when a test fails. <code>TYPESCRIPT_REPORT_FILES</code> in
-vergil-tooling's <code>languages.py</code> names all five, and a TypeScript repository's
-managed <code>.gitignore</code> block ignores them, with Vitest's <code>coverage/</code> directory, so a
+write the coverage report when a test fails. The license gate writes
+<code>licenses.json</code> whenever it can read the lockfile, so a failing run's
+report records the failure. <code>TYPESCRIPT_REPORT_FILES</code> in
+vergil-tooling's <code>languages.py</code> names all six, and a TypeScript repository's
+managed <code>.gitignore</code> ignores them, with Vitest's <code>coverage/</code> directory, so a
 second local <code>vrg-validate</code> never lints the first run's reports.</p>
 <p><code>ci-quality.yml</code>, <code>ci-test.yml</code> and <code>ci-audit.yml</code> stage each leg's reports
 with version-suffixed names, as for Python and Rust:

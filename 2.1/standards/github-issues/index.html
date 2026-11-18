@@ -1452,6 +1452,8 @@
       
         
       
+        
+      
     
     
     
@@ -1504,6 +1506,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.327/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.327
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19500,13 +19530,20 @@ Repository security advisories: Read and write (see
 <a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).</p>
 <ul>
 <li><strong>State sync.</strong> Each paired advisory follows its <code>security</code> issues: closed
-  once every issue it tracks is closed, a draft while any is open. The pass
-  only moves an advisory between <code>draft</code> and <code>closed</code>, and never touches an
-  unpaired external report.</li>
+  once every issue it tracks is closed as completed and none is a queue item,
+  a draft while any is open. The pass only moves an advisory between <code>draft</code>
+  and <code>closed</code>, and never touches an unpaired external report.</li>
+<li><strong>Close guard.</strong> An advisory whose tracked issues are all closed stays
+  <code>draft</code> while any of them is a queue item (live or archived) or was closed
+  with a reason other than completed. Each one is reported on a <code>held:</code> line,
+  counted apart from broken pairs; a hold waits on a human step and does not
+  fail the pass (see
+  <a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).</li>
 <li><strong>Consistency check.</strong> It reports broken pairs (a <code>security</code> issue with a
   missing or wrong advisory reference, or an advisory whose tracking lines are
-  missing or do not point back) and does not repair them; any broken pair
-  makes <code>sync</code> exit 1, after it has synced the rest.</li>
+  missing or do not point back) and does not repair them. Any broken pair, or
+  an issue parent the guard could not read, makes <code>sync</code> exit 1, after it has
+  synced the rest.</li>
 </ul>
 <p>Its output names only GHSA IDs, issue refs, labels and states, never advisory
 text. <code>vrg-security-record sync --dry-run</code> and the read-only <code>vrg-epic-audit</code>

@@ -1450,6 +1450,8 @@
       
         
       
+        
+      
     
     
     
@@ -1502,6 +1504,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.327/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.327
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14972,6 +15002,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-npm-license-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-npm-license-gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-sarif-filter" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19583,6 +19624,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-npm-license-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-npm-license-gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-sarif-filter" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -20666,7 +20718,7 @@ commit-to-pulls lookup; <code>--pr</code> skips the lookup. Used by the
 <h3 id="vrg-update-deps">vrg-update-deps<a class="headerlink" href="#vrg-update-deps" title="Permanent link">&para;</a></h3>
 <p>Update the repo's dependencies to the newest versions their declared
 bounds allow, in a <code>deps/update-&lt;version&gt;</code> managed worktree: run the
-applicable updaters (<code>python</code>, <code>cargo</code>, <code>vergil</code>, <code>images</code>, then the repo
+applicable updaters (<code>python</code>, <code>cargo</code>, <code>npm</code>, <code>vergil</code>, <code>images</code>, then the repo
 <code>hook</code>), validate once, open a <code>dependency-update</code>-labelled PR, and
 merge it. A no-op run opens no PR. A validation or merge failure leaves
 the PR open and files a fix task; an updater or hook failure opens no PR
@@ -21383,14 +21435,16 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
 </tr>
 </tbody>
 </table>
-<p>A <code>security</code> item keeps its advisory links. A recreate retargets every
-advisory the item names before the original closes, and a transfer
-retargets every one after the move; on a failure, either names every
-advisory still not retargeted. A split retargets an item's one advisory
+<p>A <code>security</code> item keeps its advisory links. Every retarget moves the
+advisory from the item and keeps every other issue it tracks. A recreate
+retargets every advisory the item names before the original closes, and a
+transfer retargets every one after the move; on a failure, either names
+every advisory still not retargeted, with a <code>retarget --from</code> command for
+each. A split retargets an item's one advisory
 before the original closes. A split of an item naming several advisories
 is refused before any change, because which advisory goes to which task
 can't be inferred:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand with vrg-security-record retarget, then split
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand to the tasks that fix it, keeping every other issue it tracks (vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt; [--to …], then vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt; [--to …]), then split
 </code></pre></div>
 <p>See <a href="../../guides/security-records/#when-the-issue-moves">Security Records</a>.</p>
 <h3 id="vrg-security-record">vrg-security-record<a class="headerlink" href="#vrg-security-record" title="Permanent link">&para;</a></h3>
@@ -21398,8 +21452,9 @@ can't be inferred:</p>
 paired with a neutral <code>security</code>-labelled intake issue (epic
 vergil-project/.github#517). <code>create</code> makes the pair (or attaches an
 advisory to an existing issue, or resumes an unfinished pair), <code>list</code> and
-<code>show</code> read records, <code>retarget</code> moves an advisory's tracking to new
-issues, <code>sync</code> sets each paired advisory's state from its issues and
+<code>show</code> read records, <code>retarget</code> moves an advisory's tracking from an issue
+it tracks (<code>--from</code>) to new issues, refusing to stop tracking an open
+issue unless <code>--drop</code> names it, <code>sync</code> sets each paired advisory's state from its issues and
 reports broken pairs (<code>--dry-run</code> previews it), and <code>close</code> closes a draft
 advisory whose issues are all closed, posting the GHSA ID and a required
 <code>--reason</code> on each of them first, and <code>note</code> appends a dated private note
@@ -21420,7 +21475,7 @@ from a file to an advisory's description (append-only). Advisory text is printed
 </tr>
 <tr>
 <td>Args</td>
-<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --to REF [--to REF …]</code>; <code>sync [--dry-run]</code>; <code>close GHSA-ID --reason TEXT</code>; <code>note GHSA-ID --file FILE</code></td>
+<td><code>create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]</code>; <code>list [--repo] [--state draft\|closed\|all] [--details]</code>; <code>show GHSA-ID\|OWNER/REPO#N</code>; <code>retarget GHSA-ID --from REF --to REF [--to REF …] [--drop REF …]</code>; <code>sync [--dry-run]</code>; <code>close GHSA-ID --reason TEXT</code>; <code>note GHSA-ID --file FILE</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -21428,7 +21483,7 @@ from a file to an advisory's description (append-only). Advisory text is printed
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A partial pair exits 1 naming what exists and the exact <code>--resume</code> command that finishes it; a private <code>.github</code>, a duplicate draft, or <code>--details</code> under <code>VRG_EPIC_SWEEP</code> is refused; <code>sync</code> exits 1 on a broken pair after syncing the rest</td>
+<td>A partial pair exits 1 naming what exists and the exact <code>--resume</code> command that finishes it; a private <code>.github</code>, a duplicate draft, or <code>--details</code> under <code>VRG_EPIC_SWEEP</code> is refused; <code>retarget</code> refuses, before any write, a <code>--from</code> the advisory does not track and dropping an open tracked issue, printing the command that would succeed; <code>create</code> refuses an advisory that already tracks another issue; <code>sync</code> exits 1 on a broken pair after syncing the rest</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -21447,12 +21502,14 @@ under the planning epic with their state: <strong>waiting</strong> (no <code>in-
 label), <strong>in-progress</strong> (labelled, with its latest progress note), or
 <strong>ready-to-close</strong> (labelled, the <code>Epic:</code> / <code>Docs task:</code> / <code>Tasks filed: yes</code>
 markers present, and the docs task closed). A planning item that any security
-advisory still tracks, named in its body or not, is held at <strong>in-progress</strong>
-until every such
+advisory still tracks, named in its body or not, or whose body names (with
+the <code>security</code> label on) an advisory that cannot be read, is held at
+<strong>in-progress</strong> until every such
 advisory is retargeted to the task or tasks that fix it, with a note that
 counts them and names them by GHSA ID only (<code>held: &lt;k&gt; advisory still tracks
 this planning issue (&lt;GHSA-id&gt;) — …</code> for one, <code>held: &lt;k&gt; advisories still
-track this planning issue (&lt;GHSA-id&gt;, …) — …</code> for more; see
+track this planning issue (&lt;GHSA-id&gt;, …) — …</code> for more, and
+<code>… cannot be read …</code> for an unreadable one; see
 <a href="../../guides/security-records/#security-items-in-planning">Security Records</a>).
 <code>vrg-queue deferred</code> lists the
 open items under the deferred epic, all <strong>waiting</strong>, least recently deferred
@@ -23491,6 +23548,48 @@ See
 <tr>
 <td>Failure mode</td>
 <td>Error on stderr for each advisory at high or critical with no live exception, each expired or malformed exception, an unreadable or error report, or an npm status that disagrees with the report; a warning for each exception that matches no advisory</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 pass, 1 gate failure or error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-npm-license-gate">vrg-npm-license-gate<a class="headerlink" href="#vrg-npm-license-gate" title="Permanent link">&para;</a></h3>
+<p>Gate the licenses of every package in a TypeScript repository's
+<code>package-lock.json</code>, dev dependencies included, against the TypeScript
+license allowlist, honoring the live entries of the repository's
+<code>.npm-license-exceptions</code>, and write the <code>licenses.json</code> evidence. The
+TypeScript AUDIT check runs it after the npm audit, as
+<code>vrg-npm-license-gate --output licenses.json</code>. See
+<a href="../../guides/validation-matrix/#typescript-license-exceptions">TypeScript license exceptions</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_npm_license_gate</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--lockfile PATH</code> (default <code>package-lock.json</code>), <code>--output PATH</code> (default <code>licenses.json</code>)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>The lockfile is an npm v2 or v3 lockfile; <code>.npm-license-exceptions</code> is read from the lockfile's directory, and a missing one means none</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Error on stderr for each package whose license is disallowed, unparseable or missing with no live exception, naming its version and license value; for each expired or malformed exception; and for a missing, unreadable or pre-v2 lockfile or an entry with no <code>version</code>, naming the file and <code>npm install --package-lock-only</code>. A warning for each exception that covers no failing package. The report is written whenever the lockfile is read, judged against no exceptions when the exceptions file is bad</td>
 </tr>
 <tr>
 <td>Exit codes</td>

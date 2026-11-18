@@ -1450,6 +1450,8 @@
       
         
       
+        
+      
     
     
     
@@ -1502,6 +1504,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.327/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.327
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14953,6 +14983,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-npm-updater" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The npm updater
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#prerequisites" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18068,6 +18109,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-npm-updater" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The npm updater
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#prerequisites" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18193,7 +18245,7 @@ run under an agent identity.</p>
 </tbody>
 </table>
 <p><code>--only</code>, <code>--skip</code> and <code>--vergil</code> are mutually exclusive. The updater
-names are <code>python</code>, <code>cargo</code>, <code>vergil</code>, <code>images</code> and <code>hook</code>; an unknown
+names are <code>python</code>, <code>cargo</code>, <code>npm</code>, <code>vergil</code>, <code>images</code> and <code>hook</code>; an unknown
 name is an error. The updaters are described in the
 <a href="../../dependency-update-config/">dependency-update reference</a>.</p>
 <h2 id="the-cargo-updater">The Cargo updater<a class="headerlink" href="#the-cargo-updater" title="Permanent link">&para;</a></h2>
@@ -18246,6 +18298,68 @@ the updater rather than go unchecked.</p>
 or <code>Cargo.lock</code>, and a failed sparse-index read each fail the update as
 an <code>update</code> failure. None of them reads as "no change" or as an empty
 held-back report.</p>
+<h2 id="the-npm-updater">The npm updater<a class="headerlink" href="#the-npm-updater" title="Permanent link">&para;</a></h2>
+<p>In a repo with <code>package.json</code> and <code>package-lock.json</code>, the <code>npm</code> updater
+runs <code>npm update --ignore-scripts</code> in the dev container. It moves every
+locked package to the newest version its <code>package.json</code> range allows,
+and no dependency's install script runs. It changes only
+<code>package-lock.json</code>: if <code>package.json</code> differs by a single byte
+afterwards, as a <code>save</code> setting in the repo's <code>.npmrc</code> would make it, the
+updater fails, naming it. Its commit and the PR body name each package it
+moved, from and to, nested copies included. When <code>npm update</code> rewrites
+<code>package-lock.json</code> without moving any version, the commit is
+<code>chore(deps): refresh package-lock.json</code>.</p>
+<p>Every lockfile entry the update added or moved must carry a <code>license</code>
+field, which the license gate reads. One that does not fails the
+updater, naming the package and version, so the cause surfaces in the
+update rather than later on its PR.</p>
+<p>It then runs <code>npm ci --ignore-scripts</code> and <code>npm outdated --json</code>, both
+in the dev container, so npm itself matches every range. Each direct
+dependency in <code>dependencies</code>, <code>devDependencies</code> or
+<code>optionalDependencies</code> whose locked version is below the registry's
+<code>latest</code> dist-tag is reported in the held-back report. Each entry's note
+gives the reason:</p>
+<table>
+<thead>
+<tr>
+<th>Note</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>outside the package.json range</code></td>
+<td>The newest version the range allows (<code>wanted</code>) is below <code>latest</code></td>
+</tr>
+<tr>
+<td><code>held by the resolver: another requirement in the dependency graph</code></td>
+<td>The locked version is below <code>wanted</code>: a peer requirement or an <code>overrides</code> entry, for example, holds it</td>
+</tr>
+<tr>
+<td>Both notes, joined by a semicolon</td>
+<td>Both of the above</td>
+</tr>
+</tbody>
+</table>
+<p>For a package Vergil pins to one major in
+<code>configs/typescript/dev-dependencies.json</code>, the note adds, for example,
+<code>Vergil accepts typescript 6 only (dev-dependencies.json)</code>, so a reader
+sees the hold is Vergil's. A locked version at or above <code>latest</code> (a
+prerelease ahead of the dist-tag, say) is not reported. When
+<code>npm outdated</code> gives no current version (an optional dependency <code>npm ci</code>
+skipped on this platform), the version comes from the lockfile's
+<code>node_modules/&lt;name&gt;</code> entry. Dependencies declared as <code>file:</code>, <code>link:</code>,
+git, GitHub or URL specs are not reported, since they have no registry
+release, and neither are peer dependencies.</p>
+<p><code>npm outdated</code> exits 1 whenever something is outdated, so the updater
+reads its JSON rather than its exit status: exit 0 with nothing outdated
+and exit 1 with outdated packages are the normal cases. A failed
+<code>npm update</code> or <code>npm ci</code>, an unreadable <code>package.json</code> or
+<code>package-lock.json</code>, a lockfile older than v2, a changed <code>package.json</code>,
+an added or moved entry with no <code>license</code>, and an <code>npm outdated</code> run that
+prints no JSON, malformed JSON or an <code>error</code> object, or exits otherwise,
+each fail the update as an <code>update</code> failure. None of them reads as "no
+change" or as an empty held-back report.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Run from the root checkout, on <code>develop</code>, with a clean working tree
@@ -18310,7 +18424,7 @@ merged.</p>
 </tr>
 <tr>
 <td><code>update</code></td>
-<td>Runs each applicable updater in order (<code>python</code>, <code>cargo</code>, <code>vergil</code>, <code>images</code>, then <code>hook</code>), committing each one's changes separately</td>
+<td>Runs each applicable updater in order (<code>python</code>, <code>cargo</code>, <code>npm</code>, <code>vergil</code>, <code>images</code>, then <code>hook</code>), committing each one's changes separately</td>
 </tr>
 <tr>
 <td><code>validate</code></td>

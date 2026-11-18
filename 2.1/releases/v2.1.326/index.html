@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.327/">
       
       
         <link rel="next" href="../v2.1.325/">
@@ -1457,6 +1457,8 @@
       
         
       
+        
+      
     
     
     
@@ -1512,6 +1514,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.327/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.327
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18019,6 +18049,7 @@
 <li>feat(submit-pr): run the per-PR submit as a progress rollup, one stage per PR</li>
 </ul>
 <p>After the confirmation, vrg-submit-pr now opens its PRs through the shared progress rollup that vrg-release uses: one stage per PR, named after its branch, covering the batch recheck, push, origin-tip check, open or adopt, submission record, provenance check and auto-merge. Each stage ends on one line with its mark, duration and outcome (for example 'PR #123 auto-merge on (squash, pinned to <sha12>)'), the steps' output goes to .vergil/vrg-submit-pr-<stamp>.log in the main worktree, and the summary points at it. Previews, refusals, the confirmation and --dry-run stay plain; the chained vrg-finalize-pr and the post-rollup guidance are unchanged. A failed PR fails its stage and the next PR still runs; SubmitSummary and the exit codes are unchanged. An unexpected error or an interrupt stops the rollup and is raised after its summary. The progress library gains note() for an ok stage's status line, StageFailedError for a reason without a type prefix, and a failure_exit option so the summary does not claim an exit status the command decides later. vrg-submit-pr takes --output-format and --output-window.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.326/v2.1.326-ci-evidence.tar.gz">Download →</a></p>
 
 
 
