@@ -39,6 +39,8 @@ judge it in this order:
 7. **Conflict** (``mergeStateStatus`` ``DIRTY``): ``failed: conflict``.
 
 A PR still pending at the deadline is ``timed out``; its auto-merge stays on.
+Every failure to read a PR, to run the provenance check or to turn auto-merge
+off raises; none is read as a pending or a clean PR.
 
 **A status table** is printed to stdout after start-up and after every poll
 (issue #4677): one row per PR in the batch, a PR that has ended included,
@@ -48,8 +50,6 @@ or the outcome it ended with) and how long it has waited since the watch
 started, frozen when it ended. A totals line closes it: merged, pending and
 failed, and the time left before the batch deadline. It is plain lines,
 never a terminal redraw, so it reads the same in a log.
-Every failure to read a PR, to run the provenance check or to turn auto-merge
-off raises; none is read as a pending or a clean PR.
 """
 
 from __future__ import annotations
