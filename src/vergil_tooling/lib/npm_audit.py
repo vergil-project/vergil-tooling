@@ -30,6 +30,29 @@ import datetime
 import re
 from dataclasses import dataclass
 
+# ExceptionFileError is re-exported: the audit gate and its callers import it
+# from here.
+from vergil_tooling.lib.exception_file import (
+    ExceptionFileError,
+    content_lines,
+    is_tracking_ref,
+    parse_expiry,
+    window_problem,
+)
+
+__all__ = [
+    "EXCEPTIONS_FILE",
+    "GATING_SEVERITIES",
+    "MAX_EXCEPTION_DAYS",
+    "Advisory",
+    "AuditException",
+    "ExceptionFileError",
+    "Verdict",
+    "evaluate",
+    "parse_exceptions",
+    "parse_report",
+]
+
 EXCEPTIONS_FILE = ".npm-audit-exceptions"
 
 # The longest an exception may run, counted from the day the gate runs: a
@@ -43,11 +66,6 @@ _SEVERITIES = frozenset({"info", "low", "moderate", "high", "critical"})
 
 _GHSA_ID = re.compile(r"^GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}$")
 _CVE_ID = re.compile(r"^CVE-\d{4}-\d{4,}$", re.IGNORECASE)
-_EXPIRY = re.compile(r"^exp:(\d{4}-\d{2}-\d{2})$")
-_TRACKING = re.compile(
-    r"^(?:(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#\d+"
-    r"|https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/\d+)$"
-)
 _ADVISORY_URL = re.compile(r"^https://github\.com/advisories/(GHSA(?:-[0-9a-z]{4}){3})$")
 
 
@@ -86,14 +104,6 @@ class Verdict:
     failing: tuple[Advisory, ...]
 
 
-class ExceptionFileError(ValueError):
-    """The exceptions file has entries the gate refuses; ``problems`` names each."""
-
-    def __init__(self, source: str, problems: list[str]) -> None:
-        self.problems = problems
-        super().__init__(f"{source}: " + "; ".join(problems))
-
-
 def parse_exceptions(text: str, *, today: datetime.date, source: str) -> list[AuditException]:
     """Parse the exceptions file, refusing every bad entry at once.
 
@@ -103,11 +113,7 @@ def parse_exceptions(text: str, *, today: datetime.date, source: str) -> list[Au
     entries: list[AuditException] = []
     problems: list[str] = []
     seen: dict[str, int] = {}
-    latest = today + datetime.timedelta(days=MAX_EXCEPTION_DAYS)
-    for number, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
+    for number, line in content_lines(text):
         entry = _parse_entry(line, number)
         if isinstance(entry, str):
             problems.append(f"line {number}: {entry}: {line!r}")
@@ -119,19 +125,15 @@ def parse_exceptions(text: str, *, today: datetime.date, source: str) -> list[Au
             )
             continue
         seen[entry.advisory_id] = number
-        if entry.expires < today:
-            problems.append(
-                f"line {number}: the exception for {entry.advisory_id} expired on "
-                f"{entry.expires.isoformat()} (tracked in {entry.tracking}): fix the "
-                "dependency, or review the risk again and set a new expiry"
-            )
-            continue
-        if entry.expires > latest:
-            problems.append(
-                f"line {number}: the exception for {entry.advisory_id} expires on "
-                f"{entry.expires.isoformat()}, more than {MAX_EXCEPTION_DAYS} days "
-                f"ahead (latest allowed: {latest.isoformat()})"
-            )
+        window = window_problem(
+            key=entry.advisory_id,
+            expires=entry.expires,
+            tracking=entry.tracking,
+            today=today,
+            max_days=MAX_EXCEPTION_DAYS,
+        )
+        if window is not None:
+            problems.append(f"line {number}: {window}")
             continue
         entries.append(entry)
     if problems:
@@ -155,14 +157,10 @@ def _parse_entry(line: str, number: int) -> AuditException | str:
         )
     if not _GHSA_ID.match(advisory_id):
         return f"{advisory_id!r} is not a GHSA ID (GHSA-xxxx-xxxx-xxxx, lower case)"
-    expiry_match = _EXPIRY.match(expiry)
-    if expiry_match is None:
-        return f"{expiry!r} is not an expiry (exp:YYYY-MM-DD)"
-    try:
-        expires = datetime.date.fromisoformat(expiry_match.group(1))
-    except ValueError:
-        return f"{expiry!r} is not a real date"
-    if not _TRACKING.match(tracking):
+    expires = parse_expiry(expiry)
+    if isinstance(expires, str):
+        return expires
+    if not is_tracking_ref(tracking):
         return f"{tracking!r} is not a tracking issue (#N, owner/repo#N or a GitHub issue URL)"
     return AuditException(advisory_id, expires, tracking, reason.strip(), number)
 
