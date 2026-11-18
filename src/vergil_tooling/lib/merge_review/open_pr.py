@@ -9,8 +9,8 @@ itself and, on a batch PR, carries each issue's scope and maps each commit
 to its issue (``docs/specs/merge-review-protocol.md``, "A batch PR").
 
 The issues come from the PR's body, never from the agent: a PR whose body
-has more than one ``Closes`` line is a batch PR, as ``vrg-finalize-pr`` and
-the ``merge-review`` skill read it. Every refusal is the builder's
+has more than one ``Closes`` line is a batch PR, as ``vrg-pr-workflow
+batch-check --pr`` and the ``merge-review`` skill read it. Every refusal is the builder's
 :class:`~vergil_tooling.lib.merge_review.request.RequestError`.
 """
 

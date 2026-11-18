@@ -36,7 +36,8 @@ Python 3.15. A consuming repo adds no install step of its own.
 ## CLI tools
 
 - `vrg-commit` — Standards-compliant conventional commits
-- `vrg-submit-pr` — Standards-compliant PR creation (manual merge)
+- `vrg-submit-pr` — Standards-compliant PR creation with auto-merge on,
+  finalizing by default
 - `vrg-release` — Mechanized end-to-end release workflow, ending with
   the dependency update
 - `vrg-update-deps` — Update dependencies within their declared bounds,
@@ -44,7 +45,8 @@ Python 3.15. A consuming repo adds no install step of its own.
 - `vrg-upstream-refresh` — Run the repo's `[upstream-refresh]` hook, check
   the patch against its path fence, and open a PR that merges itself once
   CI passes (run on a schedule)
-- `vrg-finalize-pr` — Merge a PR and run post-merge cleanup
+- `vrg-finalize-pr` — Watch a batch of auto-merging PRs until they merge,
+  then sync, clean up and validate develop once
 - `vrg-validate` — Unified validation driver (via vrg-container-run)
 - `vrg-ensure-label` — Idempotent GitHub label creation
 - `vrg-package` — Build, install-test and index binary OS packages

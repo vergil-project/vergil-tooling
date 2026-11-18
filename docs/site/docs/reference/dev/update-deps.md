@@ -115,7 +115,7 @@ merged.
 | `update` | Runs each applicable updater in order (`python`, `cargo`, `vergil`, `images`, then `hook`), committing each one's changes separately |
 | `validate` | Runs `vrg-container-run -- vrg-validate` once, if anything changed |
 | `prepare-pr` | Pushes the branch and opens a PR to `develop` labelled `dependency-update`, creating the label if the repo lacks it |
-| `merge` | Waits for the PR's checks and merges it, if validation passed, then deletes its branch on origin |
+| `merge` | Waits for the PR's checks and merges it, if validation passed, then deletes its branch on origin (see [Waiting for green](release.md#waiting-for-green)) |
 | `fix-task` | After any failure, files the fix task; after a validation or merge failure, also links it from the PR body |
 | `finalize` | Prints the held-back report and removes the worktree and local branch |
 | `status` | Exits non-zero if a failure was recorded |

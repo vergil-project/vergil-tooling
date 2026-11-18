@@ -298,14 +298,18 @@ prepare worked in. In order, it:
    run commits as the human;
 7. hands the clone to the mechanized-PR building block, which closes an
    earlier run's open PR and deletes its branch, pushes the new branch,
-   opens the PR with squash auto-merge, and waits until it merges.
+   opens the PR with squash auto-merge, and waits until it merges. When
+   GitHub refuses auto-merge because the PR can already merge, it
+   merges the PR directly, with the same method and pinned to the
+   pushed commit, and does not wait.
 
 The PR's commit is parented on the recorded commit, so the patch lands
-on exactly the tree the hook ran against. If `develop` has moved since,
-the wait updates the PR's branch from `develop` and CI decides. The
-wait merges the PR itself once its checks are green on an up-to-date
-branch; a failed check, a conflict, a closed PR, the branch-update cap
-or the deadline ends it unmerged. Under a token source the deadline is
+on exactly the tree the hook ran against. `develop` does not require a
+branch to be up to date, so the PR merges from that base once its own
+checks pass, even if `develop` has moved since. The wait merges the PR
+itself once its checks are green, if auto-merge has not merged it
+first; a failed check, a conflict, a closed PR, the branch-update cap
+(see the permissions below) or the deadline ends it unmerged. Under a token source the deadline is
 7200 seconds, counted from publish's own start: the clone and the patch
 come out of it, and the wait gets what is left. Closing an earlier
 run's PR, the push and opening the PR come after that is worked out,
@@ -402,9 +406,13 @@ minting paths never mix.
 With the credentials, publish mints installation tokens limited to the
 one target repo, with `contents: write`, `pull_requests: write`,
 `workflows: write` and `metadata: read`. Workflows write is needed only
-for the wait's branch update, which merges `develop` into the PR
-branch: GitHub refuses that merge from an App token without it whenever
-`develop` has changed a workflow file. The path fence keeps every
+if the wait has to update the PR's branch, which merges `develop` into
+it: GitHub refuses that merge from an App token without it whenever
+`develop` has changed a workflow file. The `CI gates (develop)` ruleset
+does not require a branch to be up to date, so the wait updates a branch
+only on a repo whose `develop` still requires it, such as one whose
+classic protection has not yet been brought in line by
+`vrg-github-repo-config update`. The path fence keeps every
 patch out of `.github/**`. Each token is checked against
 `<VRG_AUTOMATION_APP>[bot]` before use. The token is renewed once it is
 older than 1800 seconds, and the replaced token is revoked at once.

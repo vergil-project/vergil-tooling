@@ -149,7 +149,8 @@ in priority order:
 2. **Branch protection** — rulesets require a pull request (no direct
    pushes to protected branches) and require CI to pass. They
    require no approving review: the mechanized `automation/` PRs
-   merge on CI alone, and the human merges every development PR.
+   merge on CI alone, and a development PR merges through the
+   auto-merge the human's `vrg-submit-pr` turns on.
 3. **`vrg-gh` / `vrg-git` wrappers** — gate which operations an agent
    may attempt and surface clear errors. A soft ergonomic layer,
    bypassable by root, not the security boundary.

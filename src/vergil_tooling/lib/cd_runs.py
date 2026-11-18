@@ -1,6 +1,7 @@
 """Find, watch and classify CD workflow runs.
 
-Shared by ``vrg-finalize-pr`` (its post-merge CD check) and ``vrg-release``
+Shared by ``vrg-finalize-pr`` (its CD report, and its wait with
+``--wait-cd``) and ``vrg-release``
 (its develop-CD gate and its confirm stages), so every command judges a CD
 run the same way (epic vergil-project/.github#1218, spec §6.5 and §6.6).
 

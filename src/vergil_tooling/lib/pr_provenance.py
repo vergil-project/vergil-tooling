@@ -1,8 +1,13 @@
-"""Pre-merge provenance verification for vrg-finalize-pr.
+"""Provenance verification for auto-merging PRs.
+
+``vrg-submit-pr`` runs it on each PR before it turns auto-merge on, and
+``vrg-finalize-pr``'s watch phase (``lib/finalize_watch.py``) runs it when
+the watch starts and again each time a PR's head changes. Neither command
+merges a PR itself: GitHub merges it through auto-merge.
 
 Fetches a PR's action history (reviews and timeline events) from
 GitHub and verifies that no agent identity performed an action its
-role forbids on the PR being merged. Agent identities are recognized
+role forbids on the PR. Agent identities are recognized
 by the account naming convention (``*-vergil-user`` and
 ``*-vergil-audit``); everything else is treated as human and is never
 forbidden — the human holds every right.
@@ -20,7 +25,8 @@ Read-only ``gh api`` GET calls back this check. They run in the human
 context where the API is available; the same endpoints are reachable
 from the audit context under the identity-aware API allowance. A fetch
 failure propagates (``github.read_output`` raises on nonzero exit) so a
-broken check aborts the merge rather than silently passing.
+broken check fails its caller rather than silently passing: submit leaves
+the PR's auto-merge off, and the watch stops.
 """
 
 from __future__ import annotations
