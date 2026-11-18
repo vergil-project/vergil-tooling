@@ -26,9 +26,9 @@ a finding and is rejected with that reason.
 
 from __future__ import annotations
 
-import datetime
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 # ExceptionFileError is re-exported: the audit gate and its callers import it
 # from here.
@@ -39,6 +39,9 @@ from vergil_tooling.lib.exception_file import (
     parse_expiry,
     window_problem,
 )
+
+if TYPE_CHECKING:
+    import datetime
 
 __all__ = [
     "EXCEPTIONS_FILE",
