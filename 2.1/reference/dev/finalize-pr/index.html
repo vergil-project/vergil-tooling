@@ -1442,6 +1442,8 @@
       
         
       
+        
+      
     
     
     
@@ -1494,6 +1496,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.323/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.323
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14892,6 +14922,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="1. Provenance Check, Wait, and Merge (PR mode only)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provenance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -18123,6 +18170,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="1. Provenance Check, Wait, and Merge (PR mode only)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provenance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -18405,7 +18469,7 @@ declared orphaned, and the error says how long each check waited. The grace
 defaults to 5 minutes from when the backing run was first seen completed.
 Set <code>VRG_ORPHAN_GRACE</code> (seconds, a positive whole number) to change it; a
 malformed value is an error. <code>vrg-pr-await</code> applies the same grace before it
-settles with <code>orphaned_check</code>.</p>
+reports a PR as unable to merge with reason <code>orphaned_check</code>.</p>
 <p>The deadline is the backstop. When it elapses with checks still pending,
 each one is checked against its backing run again, and a non-terminal check
 over a completed run aborts with the same guidance. Genuinely
@@ -18496,7 +18560,7 @@ followed by the usual sweep, pull, and prune.</p>
 </tr>
 <tr>
 <td><code>--allow-provenance-violation</code></td>
-<td>Proceed despite provenance violations (conscious human override)</td>
+<td>Leave auto-merge on for an open PR with a provenance violation (conscious human override). It does not cover a violation that has already merged: see <em>Provenance</em> below</td>
 </tr>
 <tr>
 <td><code>--clean-dirty</code></td>
@@ -18514,14 +18578,29 @@ followed by the usual sweep, pull, and prune.</p>
 </table>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
 <h3 id="1-provenance-check-wait-and-merge-pr-mode-only">1. Provenance Check, Wait, and Merge (PR mode only)<a class="headerlink" href="#1-provenance-check-wait-and-merge-pr-mode-only" title="Permanent link">&para;</a></h3>
-<p>Runs the pre-merge provenance check first, so violations surface
-before any waiting. Advisories are printed but do not block.
-Violations abort the merge unless <code>--allow-provenance-violation</code>
-is given. If the PR is already merged, the merge step is skipped and
+<p>If the PR is already merged, the merge step is skipped and
 finalize goes straight on to the closing-reference check (1a) and
 cleanup. Otherwise the wait-for-green loop runs (see <em>Waiting for
 green</em>) and the PR is merged with the selected strategy. <code>--dry-run</code>
 skips the wait and prints what it would do.</p>
+<h4 id="provenance">Provenance<a class="headerlink" href="#provenance" title="Permanent link">&para;</a></h4>
+<p>The watch runs the provenance check on every PR when it starts, and
+again each time a PR's head changes. Advisories are printed but do not
+block. What a violation does depends on whether the PR has merged:</p>
+<ul>
+<li><strong>Open PR.</strong> Finalize turns the PR's auto-merge off and reports it
+  <em>failed: provenance</em>. With <code>--allow-provenance-violation</code> it leaves
+  auto-merge on, prints the violation loudly and watches the PR on, so
+  the PR may merge. Once it merges, it is a merged PR with a violation,
+  below.</li>
+<li><strong>Merged PR</strong>, one that merged before finalize started included.
+  Nothing can be disabled. The PR is reported as merged with a loud
+  provenance-violation flag, and the run cannot reach full success: it
+  exits 3 (or 4, if develop did not validate) and no chained release
+  runs. <code>--allow-provenance-violation</code> does not change this: the
+  override does not cover a violation that has already merged, which a
+  human must look at before any release (issue #4662).</li>
+</ul>
 <h3 id="1a-close-issues-github-left-open-pr-mode-only">1a. Close Issues GitHub Left Open (PR mode only)<a class="headerlink" href="#1a-close-issues-github-left-open-pr-mode-only" title="Permanent link">&para;</a></h3>
 <p>GitHub sometimes skips the closing-keyword auto-close, which leaves a
 merged task open and blocks epic rollup (issue #4002). Once the merge is
@@ -18693,7 +18772,9 @@ a batch. For a batch PR, finalize:</p>
 <ul>
 <li>cross-checks the body's <code>Closes</code> issues against GitHub's closing
   references, and refuses to merge if any is missing, is in another repo,
-  or is listed twice;</li>
+  or is listed twice, or if GitHub lists a closing reference the body does
+  not close (a hand-added Development link, say), since merging would close
+  an issue the batch has no commit for;</li>
 <li>checks the one-commit-per-issue invariant on the PR's head before it
   waits, and refuses with the reason when it fails, never falling back to a
   squash;</li>

@@ -1442,6 +1442,8 @@
       
         
       
+        
+      
     
     
     
@@ -1494,6 +1496,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.323/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.323
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -20021,6 +20051,17 @@ takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/rep
   state included. It refuses while a <code>security-*.md</code> details file is under
   that directory.</li>
 </ul>
+<p><code>batch-check --pr &lt;url&gt; [--head &lt;sha&gt;]</code> checks a submitted batch PR before a
+push to it, from a clone of the PR's repo (pr-watch runs it on the head it is
+about to push). It reads the PR's body and base. A PR whose body has one
+<code>Closes</code> line or none is not a batch PR and passes. A batch PR's <code>Closes</code> refs
+must be exactly the issues GitHub lists as its closing references, and its
+branch must hold one commit per issue, in the body's order, from the base as
+fetched now to <code>--head</code> (default: the PR's head, fetched by its SHA so the
+branch's remote-tracking ref never moves). The hard rules are not run. It
+writes nothing and makes no freeze check, so it runs on a frozen branch. It
+exits 0 when the PR passes or is not a batch PR, and 1 with the rule's message
+otherwise.</p>
 <table>
 <thead>
 <tr>
@@ -20035,7 +20076,7 @@ takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/rep
 </tr>
 <tr>
 <td>Args</td>
-<td><code>report-ready</code> (<code>--issue</code>, repeatable for a batch, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref), <code>unfreeze</code>, <code>status</code>, <code>batch-start</code>, <code>batch-extract</code>, <code>batch-show</code>; global <code>--base</code> (default: origin/develop)</td>
+<td><code>report-ready</code> (<code>--issue</code>, repeatable for a batch, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref), <code>unfreeze</code>, <code>status</code>, <code>batch-start</code>, <code>batch-extract</code>, <code>batch-show</code>, <code>batch-check</code> (<code>--pr</code> required, <code>--head</code>); global <code>--base</code> (default: origin/develop)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -20056,12 +20097,28 @@ takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/rep
 </tbody>
 </table>
 <h3 id="vrg-pr-await">vrg-pr-await<a class="headerlink" href="#vrg-pr-await" title="Permanent link">&para;</a></h3>
-<p>Block until a pull request settles, then print its state as JSON. It settles
-when every check reaches a terminal conclusion, the head SHA moves, a new
-review appears, or the PR is wedged by an orphaned check-run (grace period
-<code>$VRG_ORPHAN_GRACE</code>, default 300s). <code>--since-sha</code> and <code>--since-reviews</code> carry
-the caller's last-seen baseline. Used by the <code>pr-watch</code> skill; it blocks
-indefinitely by design.</p>
+<p>Block until a pull request submitted with auto-merge on merges, or can no
+longer merge as it stands, then print the outcome as JSON. Used by the
+<code>pr-watch</code> skill. A PR that merged before the wait started counts as merged.
+A new review or a new commit does not end the wait: a review after submit
+never holds the merge, and auto-merge stays pinned to the head submit pushed.</p>
+<p>On exit 0 or 1 it prints one JSON object with <code>pr</code>, <code>outcome</code> (<code>merged</code> or
+<code>cannot_merge</code>), <code>reason</code> (<code>null</code> when merged), <code>detail</code>, <code>head_sha</code>,
+<code>merge_commit</code> (<code>null</code> unless merged), <code>merge_state_status</code>, <code>failed_checks</code>
+and <code>orphaned_checks</code>. On exit 1 the reason is also printed on stderr. The
+reasons are:</p>
+<ul>
+<li><code>check_failed</code>: a required check concluded in failure; <code>failed_checks</code>
+  names it.</li>
+<li><code>conflict</code>: the PR has a merge conflict with its base.</li>
+<li><code>auto_merge_off</code>: auto-merge is off, at the start or after a push.</li>
+<li><code>closed</code>: the PR was closed without merging.</li>
+<li><code>orphaned_check</code>: every pending check is stuck after its workflow run
+  completed, for longer than <code>$VRG_ORPHAN_GRACE</code> (default 300s);
+  <code>orphaned_checks</code> names them.</li>
+<li><code>timed_out</code>: the deadline passed with the PR still pending. The deadline is
+  <code>$VRG_FINALIZE_DEADLINE</code> seconds, default 7200, as for <code>vrg-finalize-pr</code>.</li>
+</ul>
 <table>
 <thead>
 <tr>
@@ -20076,7 +20133,7 @@ indefinitely by design.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>pr</code> (positional, URL or number), <code>--since-sha</code>, <code>--since-reviews</code></td>
+<td><code>pr</code> (positional, URL or number). <code>--since-sha</code> and <code>--since-reviews</code> are removed and are an error</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -20084,11 +20141,11 @@ indefinitely by design.</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Exits 1 with an error if the PR is already merged or the PR cannot be read</td>
+<td>Exit 1 only when the PR cannot merge. A malformed <code>$VRG_FINALIZE_DEADLINE</code> or <code>$VRG_ORPHAN_GRACE</code> (checked before any waiting), a GitHub API or permission failure, an unreadable PR or bad arguments exit 2 with a message on stderr and nothing on stdout</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 settled, 1 error</td>
+<td>0 merged, 1 cannot merge, 2 any other error</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -20972,11 +21029,11 @@ quarter-named epics to that form; both are dry runs unless <code>--apply</code>.
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>GitHub App credentials for the target org</td>
+<td>GitHub App credentials for the target org; <code>--all-in</code> also needs an identity that sees every repo in ORG</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Error on stderr</td>
+<td>Error on stderr; <code>--all-in</code> refuses before any read when the identity may not see every repo in ORG</td>
 </tr>
 <tr>
 <td>Exit codes</td>

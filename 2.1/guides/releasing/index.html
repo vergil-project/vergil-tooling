@@ -1440,6 +1440,8 @@
       
         
       
+        
+      
     
     
     
@@ -1492,6 +1494,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.323/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.323
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18089,6 +18119,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-develop-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The develop sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-develop-cd-gate" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18486,6 +18527,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-develop-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The develop sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-develop-cd-gate" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18578,7 +18630,8 @@ old <code>standard-tooling</code>/<code>st-*</code> naming):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.15<span class="w"> </span><span class="s1">'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'</span>
 </code></pre></div>
 <p>On an agent VM, a dev ref (<code>vrg-vm update --tag develop</code>, or any non-release
-ref) is an explicit <code>uv tool install</code> from git that shadows the packaged copy,
+ref) is an explicit <code>uv tool install --python 3.15</code> from git that shadows the
+packaged copy,
 and every <code>vrg-vm</code> command that touches the VM prints a <code>DEV tooling</code> banner
 while it is in place. A plain <code>vrg-vm update</code> returns the VM to the package.
 See <a href="../../reference/vm-spec/#vergil-tooling-inside-the-vm">vergil-tooling inside the VM</a>.</p>
@@ -18732,7 +18785,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>preflight</code></td>
 <td>fail-fast</td>
-<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code> matching <code>origin/develop</code>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, runs the <a href="#the-dependency-update-gate">dependency-update gate</a>, and last runs the <a href="#the-develop-cd-gate">develop-CD gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it</td>
+<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code>, then <a href="#the-develop-sync">brings it up to <code>origin/develop</code></a>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, runs the <a href="#the-dependency-update-gate">dependency-update gate</a>, and last runs the <a href="#the-develop-cd-gate">develop-CD gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it</td>
 </tr>
 <tr>
 <td><code>prepare</code></td>
@@ -19167,7 +19220,11 @@ and it is the first change on the new <code>develop</code> version. It runs afte
 never affect the release itself. Pass <code>--without-deps</code> to skip it.</p>
 <p>The stage brings the root checkout's <code>develop</code> up to date with
 <code>origin/develop</code> (the root checkout must be on <code>develop</code>), then runs the
-same pipeline as <a href="../../reference/dev/update-deps/"><code>vrg-update-deps</code></a>:</p>
+same pipeline as <a href="../../reference/dev/update-deps/"><code>vrg-update-deps</code></a>.
+Both syncs hold the <a href="#the-develop-sync">checkout lock</a>. A merge can land
+between them, so the pipeline's own preflight, which run standalone
+refuses a <code>develop</code> that differs from <code>origin/develop</code>, fast-forwards
+one that is behind when the release runs it. The pipeline:</p>
 <ol>
 <li>Create the <code>deps/update-&lt;version&gt;</code> branch in a managed worktree,
    where <code>&lt;version&gt;</code> is the new <code>develop</code> version. If that branch
@@ -19315,10 +19372,30 @@ any other fresh-start check, when <code>origin/main</code> has commits not on
   <code>develop</code>, and the check keeps refusing. Then re-run <code>vrg-release</code>.</p>
 <p>If preflight cannot fetch <code>main</code> or compare the branches, it refuses
 rather than skipping.</p>
+<h3 id="the-develop-sync">The develop sync<a class="headerlink" href="#the-develop-sync" title="Permanent link">&para;</a></h3>
+<p>Preflight does not refuse a root checkout that is merely behind
+<code>origin/develop</code>: another PR may well have merged since you last pulled,
+or between <code>vrg-finalize-pr</code>'s validate and the release it chains. It
+holds the checkout lock (<code>build/.vergil-state/checkout.lock</code>, the one
+<code>vrg-finalize-pr</code> holds while it syncs and cleans up) for just this
+sync:</p>
+<ol>
+<li>It refuses a branch other than <code>develop</code>, or a dirty tree.</li>
+<li>It fetches <code>origin develop</code> with <code>--tags --force</code>, so the
+   already-tagged check sees the remote tags.</li>
+<li>If local <code>develop</code> is behind <code>origin/develop</code>, it fast-forwards it
+   and prints <code>Fast-forwarded develop &lt;old&gt;..&lt;new&gt;</code>. A local <code>develop</code>
+   that has diverged, or carries commits <code>origin/develop</code> lacks, is
+   refused: resolve it first.</li>
+</ol>
+<p>It then releases the lock, and the release is cut from the new head.
+The <a href="#the-develop-cd-gate">develop-CD gate</a> checks that head, after the
+lock is released, since it may wait.</p>
 <h3 id="the-develop-cd-gate">The develop-CD gate<a class="headerlink" href="#the-develop-cd-gate" title="Permanent link">&para;</a></h3>
 <p>A fresh start (not <code>--resume</code>) refuses to cut a release from a
 <code>develop</code> whose CD is not green. It is the last preflight check, because
-it may wait. It finds the develop CD run for the local <code>develop</code> head,
+it may wait. It finds the develop CD run for the <code>develop</code> head the
+<a href="#the-develop-sync">develop sync</a> reached,
 by its commit, the way <code>vrg-finalize-pr</code> finds a merge's run:</p>
 <ul>
 <li><strong>Queued, pending or in progress.</strong> The gate waits for it, up to
