@@ -19,14 +19,26 @@ Its note is the latest deferral comment (``Deferred <day>: <reason>`` with its
 refreshed item sinks to the bottom. An item with no deferral comment (moved by
 hand, or legacy) has an empty note and sorts first.
 
-A planning issue is never ``ready-to-close`` while any advisory still tracks
-it (names it on a ``Tracking issue:`` line), whether or not its body names
-that advisory: it stays ``in-progress``, with a note naming those advisories
-(by GHSA ID only) and saying to retarget each to the fix task(s) first. The
-``security`` label plays no part: an item is a security item by its body's
-``Security advisory:`` line alone, since holding is the safe direction and
-``vrg-epic-audit`` reports a line without its label as a broken pair. A line
-naming an org other than the issue's own is refused
+A planning issue is never ``ready-to-close`` while an advisory holds it:
+it stays ``in-progress``, with a note naming those advisories (by GHSA ID
+only) and the ``vrg-security-record retarget … --from <issue>`` command
+that hands each to its fix task. :func:`advisory_hold` is the one hold
+rule, used by this view and by the docs-PR close
+(:mod:`vergil_tooling.lib.planning_close`). It trusts the ``security``
+label and the advisories' own ``Tracking issue:`` lines, never a body line
+alone, and fails closed:
+
+- any advisory naming the issue on a ``Tracking issue:`` line holds it,
+  whether or not its body names that advisory;
+- an advisory a ``security``-labelled issue's ``Security advisory:`` line
+  names that the listing does not return cannot be read, and holds it too:
+  absence is never "not tracking". The note says to re-run with a token
+  that can read the repository's advisories, or have the human check it;
+- a ``Security advisory:`` line on an issue without the ``security``
+  label, with nothing tracking the issue, is a broken pair: the note
+  reports it, and it does not hold the issue.
+
+A line naming an org other than the issue's own is refused
 (:class:`AdvisoryLineError`), never ignored.
 
 Advisories are listed once per org per view. An org with no public
@@ -338,17 +350,32 @@ def _planning_state(
     return "ready-to-close", False
 
 
-def _held_note(ghsa_ids: tuple[str, ...]) -> str:
-    tracks = "advisory still tracks" if len(ghsa_ids) == 1 else "advisories still track"
-    return (
-        f"held: {len(ghsa_ids)} {tracks} this planning issue "
-        f"({', '.join(ghsa_ids)}) — retarget each to the task or tasks "
-        "that fix it with vrg-security-record retarget"
-    )
+@dataclass(frozen=True)
+class AdvisoryHold:
+    """Whether security advisories hold a planning issue back from closing, and why.
+
+    - ``tracking``: the GHSA IDs of every listed advisory whose ``Tracking
+      issue:`` lines name the issue, whether or not its body names them.
+    - ``unreadable``: the GHSA IDs a ``security``-labelled issue's
+      ``Security advisory:`` lines name that the advisory listing does not
+      return. The advisory cannot be read, so it counts as tracking: absence
+      is never "not tracking".
+    - ``broken``: a note for an issue with ``Security advisory:`` lines but
+      no ``security`` label, when nothing tracks it. A body line alone never
+      holds; the pair is reported as broken instead.
+    """
+
+    tracking: tuple[str, ...] = ()
+    unreadable: tuple[str, ...] = ()
+    broken: str | None = None
+
+    @property
+    def held(self) -> bool:
+        return bool(self.tracking or self.unreadable)
 
 
-def _names_advisory(ref: IssueRef, body: str) -> bool:
-    """Whether *body* has a ``Security advisory:`` line; refuse one naming another org.
+def _named_advisories(ref: IssueRef, body: str) -> tuple[str, ...]:
+    """The GHSA IDs *body*'s ``Security advisory:`` lines name; refuse one naming another org.
 
     The line always names an advisory in the issue's own org's ``.github``;
     one naming any other org is refused with :class:`AdvisoryLineError`,
@@ -364,7 +391,63 @@ def _names_advisory(ref: IssueRef, body: str) -> bool:
             f"not an advisory in {ref.owner}/.github, the issue's own org; "
             "correct the line before the planning queue can be read"
         )
-    return bool(lines)
+    return tuple(dict.fromkeys(ghsa for _org, ghsa in lines))
+
+
+def advisory_hold(
+    ref: IssueRef, body: str, labels: set[str], advisories: Sequence[Advisory]
+) -> AdvisoryHold:
+    """The one planning-hold rule, for the issue *ref* with *body* and *labels*.
+
+    *advisories* is the listing of *ref*'s org's advisory home. The rule
+    trusts the ``security`` label and the advisories' own ``Tracking issue:``
+    lines, never a body line alone (see :class:`AdvisoryHold`). A
+    ``Security advisory:`` line naming another org is refused
+    (:class:`AdvisoryLineError`). Pure: it reads nothing from GitHub.
+    """
+    named = _named_advisories(ref, body)
+    key = ref.slug.casefold()
+    tracking = tuple(
+        dict.fromkeys(
+            a.ghsa_id for a in advisories if any(t.slug.casefold() == key for t in a.tracking)
+        )
+    )
+    labelled = security_records.SECURITY_LABEL in labels
+    listed = {a.ghsa_id.casefold() for a in advisories}
+    unreadable = tuple(ghsa for ghsa in named if ghsa.casefold() not in listed) if labelled else ()
+    broken = None
+    if named and not labelled and not tracking:
+        broken = (
+            f"broken pair: the issue names {', '.join(named)} on a Security advisory: line "
+            "but has no security label, so no advisory holds it — have the human check the pair"
+        )
+    return AdvisoryHold(tracking=tracking, unreadable=unreadable, broken=broken)
+
+
+def hold_reason(ref: IssueRef, hold: AdvisoryHold, *, subject: str) -> str:
+    """What holds *ref* (*subject* names it in the text) and the command that hands it on."""
+    parts: list[str] = []
+    if hold.tracking:
+        n = len(hold.tracking)
+        tracks = "advisory still tracks" if n == 1 else "advisories still track"
+        parts.append(f"{n} {tracks} {subject} ({', '.join(hold.tracking)})")
+    if hold.unreadable:
+        n = len(hold.unreadable)
+        what = "advisory" if n == 1 else "advisories"
+        parts.append(
+            f"{n} {what} {subject} names cannot be read ({', '.join(hold.unreadable)}): "
+            "re-run with a token that can read the repository's advisories, or have the "
+            "human check it"
+        )
+    command = security_records.retarget_command("<GHSA>", ref, ())
+    return (
+        f"{'; '.join(parts)} — retarget each to the task or tasks that fix it with "
+        f"{command} --to <task>"
+    )
+
+
+def _held_note(ref: IssueRef, hold: AdvisoryHold) -> str:
+    return f"held: {hold_reason(ref, hold, subject='this planning issue')}"
 
 
 def _org_advisories(org: str, *, named: bool) -> list[Advisory]:
@@ -384,62 +467,64 @@ def _org_advisories(org: str, *, named: bool) -> list[Advisory]:
     return security_records.list_advisories(security_records.advisory_home(org))
 
 
-def tracking_advisories(ref: IssueRef, body: str) -> tuple[str, ...]:
-    """The GHSA IDs of every advisory that still tracks the planning issue *ref*.
+def read_advisory_hold(ref: IssueRef, body: str, labels: set[str]) -> AdvisoryHold:
+    """:func:`advisory_hold` for one issue, listing its org's advisories itself.
 
-    *body* is the issue's body. The same rule as the planning view's hold:
-    any advisory naming *ref* on a ``Tracking issue:`` line counts, whether or
-    not *body* names it, and a ``Security advisory:`` line naming another org
-    is refused (:class:`AdvisoryLineError`). Any failed GitHub call propagates.
+    The docs-PR close (:func:`vergil_tooling.lib.planning_close.find`) uses it,
+    so the close and the planning view apply the same rule. Any failed GitHub
+    call propagates.
     """
-    advisories = _org_advisories(ref.owner, named=_names_advisory(ref, body))
-    key = ref.slug.casefold()
-    found = [a.ghsa_id for a in advisories if any(t.slug.casefold() == key for t in a.tracking)]
-    return tuple(dict.fromkeys(found))
+    advisories = _org_advisories(ref.owner, named=bool(_named_advisories(ref, body)))
+    return advisory_hold(ref, body, labels, advisories)
 
 
-def _tracking(views: Sequence[tuple[IssueRef, dict[str, Any]]]) -> dict[IssueRef, tuple[str, ...]]:
-    """Each item's tracking advisories (GHSA IDs, in listing order), listed once per org."""
+def _holds(views: Sequence[tuple[IssueRef, dict[str, Any]]]) -> dict[IssueRef, AdvisoryHold]:
+    """Each item's :func:`advisory_hold`, with each org's advisories listed once."""
     named: dict[str, bool] = {}
     for ref, view in views:
-        names = _names_advisory(ref, str(view.get("body") or ""))
+        names = bool(_named_advisories(ref, str(view.get("body") or "")))
         named[ref.owner] = named.get(ref.owner, False) or names
-    held: dict[IssueRef, list[str]] = {}
-    for org, any_named in named.items():
-        for advisory in _org_advisories(org, named=any_named):
-            for ref in advisory.tracking:
-                held.setdefault(ref, []).append(advisory.ghsa_id)
-    return {ref: tuple(dict.fromkeys(ghsas)) for ref, ghsas in held.items()}
+    listings = {org: _org_advisories(org, named=any_named) for org, any_named in named.items()}
+    return {
+        ref: advisory_hold(ref, str(view.get("body") or ""), _labels(view), listings[ref.owner])
+        for ref, view in views
+    }
 
 
 def planning_items(home: str, name: str) -> list[QueueItem]:
     """The open planning items under *home*'s planning epic for *name*, oldest first.
 
-    An item is held back from ``ready-to-close`` while any advisory still
-    tracks it, whether or not its body names that advisory (spec 4.4b of epic
-    vergil-project/.github#517, spec 4.2 of #573; #3826).
+    An item is held back from ``ready-to-close`` while :func:`advisory_hold`
+    holds it (spec 4.4b of epic vergil-project/.github#517, spec 4.2 of #573,
+    spec 6.3 of #1331; #3826, #3996). A broken pair replaces the item's
+    latest-comment note but does not hold it.
     """
     trusted = epic_size.trusted_logins()
     views = [
         (ref, _view(ref, "title,createdAt,labels,comments,body"))
         for ref in _open_children(epics.PLANNING, home, name)
     ]
-    tracking = _tracking(views)
+    holds = _holds(views)
     items: list[QueueItem] = []
     for ref, view in views:
         comments = _comment_bodies(view)
         markers = parse_planning_markers(comments)
-        holding = tracking.get(ref, ())
-        state, demoted = _planning_state(_labels(view), markers, advisory_held=bool(holding))
+        hold = holds[ref]
+        state, demoted = _planning_state(_labels(view), markers, advisory_held=hold.held)
         size = _size_record(view, trusted)
-        note = _held_note(holding) if demoted else _latest_note(comments)
+        if demoted:
+            note = _held_note(ref, hold)
+        elif hold.broken is not None:
+            note = hold.broken
+        else:
+            note = _latest_note(comments)
         items.append(
             QueueItem(
                 ref=ref,
                 title=str(view.get("title") or ""),
                 created_at=str(view.get("createdAt") or ""),
                 state=state,
-                note=_with_size_error(note, size, keep_note=demoted),
+                note=_with_size_error(note, size, keep_note=demoted or hold.broken is not None),
                 epic=markers.epic,
                 size=size,
             )
