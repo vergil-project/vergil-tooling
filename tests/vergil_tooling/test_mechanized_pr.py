@@ -16,7 +16,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import auto_merge, develop_clone, github, mechanized_pr, pr_merge
+from vergil_tooling.lib import (
+    auto_merge,
+    develop_clone,
+    github,
+    mechanized_pr,
+    pr_create,
+    pr_merge,
+    retry,
+)
 from vergil_tooling.lib.develop_clone import clone_develop
 from vergil_tooling.lib.mechanized_pr import (
     AUTOMATION_BRANCH_PREFIX,
@@ -50,6 +58,8 @@ class _PR:
     owner: str = "o"
     name: str = "r"
     state: str = "open"
+    title: str = "chore: sync"
+    head_oid: str = ""
 
     @property
     def url(self) -> str:
@@ -70,6 +80,13 @@ class FakeGitHub:
     merges: list[tuple[str, str, str | None]] = field(default_factory=list)
     waits: list[tuple[str, str, int]] = field(default_factory=list)
     wait_failure: BaseException | None = None
+    # Errors the next ``gh pr create`` calls raise, in turn; with *create_lands*
+    # the first one is raised after GitHub opened the PR (a lost response).
+    create_errors: list[BaseException] = field(default_factory=list)
+    create_lands: bool = False
+    create_calls: int = 0
+    # The head commit a landed PR has, when it is not the pushed one.
+    landed_oid: str | None = None
 
     def branches(self) -> list[str]:
         out = _git(self.origin, "for-each-ref", "--format=%(refname:short)", "refs/heads/")
@@ -88,17 +105,23 @@ class FakeGitHub:
     def read_json(self, *args: str) -> object:
         self.calls.append(args)
         if args[:2] == ("pr", "list"):
+            assert args[args.index("--repo") + 1] == REPO
             head = args[args.index("--head") + 1]
+            base = args[args.index("--base") + 1] if "--base" in args else None
             return [
                 {
                     "number": pr.number,
                     "url": pr.url,
+                    "title": pr.title,
+                    "headRefName": pr.head,
+                    "baseRefName": "develop",
+                    "headRefOid": pr.head_oid or "0" * 40,
                     "isCrossRepository": pr.cross,
                     "headRepository": {"name": pr.name},
                     "headRepositoryOwner": {"login": pr.owner},
                 }
                 for pr in self.prs
-                if pr.head == head and pr.state == "open"
+                if pr.head == head and pr.state == "open" and base in {None, "develop"}
             ]
         if args[:2] == ("pr", "view"):
             fields = args[args.index("--json") + 1]
@@ -125,12 +148,25 @@ class FakeGitHub:
         _git(self.origin, "update-ref", "-d", f"refs/heads/{branch}")
         return True
 
-    def create_pr(self, **kwargs: str) -> str:
-        self.calls.append(("pr", "create", "--repo", kwargs["repo"], "--head", kwargs["head"]))
+    def create_pr(self, **kwargs: str | bool) -> str:
+        repo, head, title = str(kwargs["repo"]), str(kwargs["head"]), str(kwargs["title"])
+        self.calls.append(("pr", "create", "--repo", repo, "--head", head))
+        self.create_calls += 1
+        assert kwargs["retry"] is False, "the retry is pr_create's, never gh's"
         assert kwargs["base"] == "develop"
-        assert Path(kwargs["body_file"]).read_text() == "the body"
-        pr = _PR(number=100 + len(self.prs), head=kwargs["head"])
+        assert Path(str(kwargs["body_file"])).read_text() == "the body"
+        if self.create_errors and not self.create_lands:
+            raise self.create_errors.pop(0)
+        pr = _PR(
+            number=100 + len(self.prs),
+            head=head,
+            title=title,
+            head_oid=self.landed_oid or _git(self.origin, "rev-parse", head),
+        )
         self.prs.append(pr)
+        if self.create_errors:
+            self.create_lands = False
+            raise self.create_errors.pop(0)
         return pr.url
 
     def graphql(self, query: str, **variables: object) -> dict[str, object]:
@@ -565,19 +601,83 @@ def _api_error(*args: object) -> github.GitHubAPIError:
     return github.GitHubAPIError(1, ("gh", *map(str, args)), "", "HTTP 502")
 
 
-def test_create_pr_failure_raises(
-    fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def fail(**_kwargs: str) -> str:
-        raise _api_error("pr", "create")
+@pytest.fixture
+def sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """The retry backoff of a failed ``gh pr create``, recorded instead of slept."""
+    slept: list[float] = []
+    monkeypatch.setattr(pr_create.time, "sleep", slept.append)
+    return slept
 
-    monkeypatch.setattr(github, "create_pr", fail)
+
+def test_create_pr_failure_raises(fake: FakeGitHub, clone: Path, sleep: list[float]) -> None:
+    """A create that really failed, with no PR open, is retried and then fails the run."""
+    fake.create_errors = [_api_error("pr", "create")] * (retry.MAX_RETRIES + 1)
     (clone / "vergil.toml").write_text("v2\n")
 
     with pytest.raises(MechanizedPRError, match="opening the PR failed"):
         _sync(clone)
 
+    assert fake.create_calls == retry.MAX_RETRIES + 1
+    assert len(sleep) == retry.MAX_RETRIES
+    assert fake.prs == []
+    assert fake.mutations == []
     assert BRANCH in fake.branches()
+
+
+def test_create_that_really_failed_once_is_retried(
+    fake: FakeGitHub, clone: Path, sleep: list[float]
+) -> None:
+    fake.create_errors = [_api_error("pr", "create")]
+    (clone / "vergil.toml").write_text("v2\n")
+
+    result = _sync(clone)
+
+    assert fake.create_calls == 2
+    assert len(sleep) == 1
+    assert result.status == "merged"
+    assert result.pr_url == fake.prs[0].url
+
+
+def test_create_that_landed_is_adopted_and_auto_merged(
+    fake: FakeGitHub, origin: Path, clone: Path, sleep: list[float]
+) -> None:
+    """GitHub opened the PR but the response was lost: it is adopted, then auto-merged (#4699)."""
+    fake.create_errors = [github.GitHubAPIError(1, ("gh",), "", "HTTP 504: Gateway Timeout")]
+    fake.create_lands = True
+    (clone / "vergil.toml").write_text("v2\n")
+
+    result = _sync(clone)
+
+    [pr] = fake.prs
+    assert fake.create_calls == 1
+    assert sleep == []
+    assert result == SyncResult(status="merged", pr_url=pr.url, closed=[])
+    [mutation] = fake.mutations
+    assert mutation["id"] == f"PR_{pr.number}"
+    assert mutation["head"] == _git(origin, "rev-parse", BRANCH)
+    assert fake.waits == [(pr.url, "squash", 2400)]
+
+
+def test_open_pr_that_is_not_this_runs_is_refused_by_name(
+    fake: FakeGitHub, clone: Path, sleep: list[float]
+) -> None:
+    """An open PR from the branch whose head is not the pushed commit is never adopted."""
+    exists = github.GitHubAPIError(1, ("gh",), "", "a pull request for branch already exists")
+    fake.create_errors = [exists]
+    fake.create_lands = True
+    fake.landed_oid = "f" * 40
+    (clone / "vergil.toml").write_text("v2\n")
+
+    with pytest.raises(MechanizedPRError, match="opening the PR failed") as exc:
+        _sync(clone)
+
+    message = str(exc.value)
+    assert fake.prs[0].url in message
+    assert "it was not adopted" in message
+    assert f"its head commit is '{'f' * 40}'" in message
+    assert fake.create_calls == 1
+    assert sleep == []
+    assert fake.mutations == []
 
 
 def test_create_pr_without_url_raises(

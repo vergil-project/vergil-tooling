@@ -297,6 +297,15 @@ An open back-merge PR from the earlier run is adopted and merged, and a
 merged one is skipped. A PR closed without merging is not adopted: the
 resume opens a new PR from the reused branch.
 
+Within a run, `prepare`, `back-merge-bump` and the dependency update never
+retry a failed `gh pr create` blindly, since GitHub can open the PR and
+still return an error. After a failed attempt the stage looks for an open
+PR from its branch into the base. It adopts one only when it has the same
+head branch (in this repository), base, title and head commit, and carries
+on as for a PR it just opened; an adopted dependency-update PR gets its
+`dependency-update` label again. Any other open PR fails the stage, naming
+the PR. With none open, a transient error is retried with backoff.
+
 ### Stale job records
 
 The confirm stages wait a bounded time for every CD job to reach

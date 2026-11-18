@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -7,8 +8,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vergil_tooling.lib import github
 from vergil_tooling.lib.release.bump import back_merge_and_bump
-from vergil_tooling.lib.release.context import ReleaseContext
+from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -465,3 +467,74 @@ def test_back_merge_records_none_when_no_merge_commit(_merge_commit: MagicMock) 
     ):
         back_merge_and_bump(ctx)
     assert ctx.bump_merge_sha is None
+
+
+# --- a gh pr create that failed: adopt the PR it opened, or fail (#4699) ---
+
+_BUMP_PR = "https://github.com/owner/repo/pull/101"
+_BUMP_BRANCH = "release/post-2.1.0"
+_BUMP_HEAD = "b0mp"
+_TIMEOUT = github.GitHubAPIError(1, ("gh", "pr", "create"), "", "HTTP 504: Gateway Timeout")
+_OPEN_BUMP_PR = github.OpenPR(
+    url=_BUMP_PR,
+    title="chore(release): back-merge 2.1.0 and bump to 2.1.1",
+    head_ref=_BUMP_BRANCH,
+    base_ref="develop",
+    head_oid=_BUMP_HEAD,
+    cross_repo=False,
+)
+
+
+def _bump_with_create(
+    create: MagicMock, open_prs: list[object]
+) -> tuple[ReleaseContext, MagicMock, MagicMock, MagicMock]:
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.read_output", return_value=_BUMP_HEAD),
+        patch(_MOD + "._checkout_post_branch", return_value=None),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".version.bump", return_value="2.1.1"),
+        patch(_MOD + ".github.create_pr", create),
+        patch(_MOD + ".github.open_prs_for_head", side_effect=open_prs) as lookup,
+        patch("vergil_tooling.lib.pr_create.time.sleep") as sleep,
+        patch(_MOD + ".wait_and_merge") as wait,
+    ):
+        back_merge_and_bump(ctx)
+    return ctx, lookup, sleep, wait
+
+
+def test_back_merge_opens_the_pr_with_one_gh_attempt_per_try() -> None:
+    create = MagicMock(return_value=_BUMP_PR)
+    _ctx_, lookup, _sleep, _wait = _bump_with_create(create, [])
+    assert create.call_args.kwargs["retry"] is False
+    lookup.assert_not_called()
+
+
+def test_back_merge_adopts_the_pr_a_failed_create_opened() -> None:
+    create = MagicMock(side_effect=[_TIMEOUT])
+    ctx, lookup, sleep, wait = _bump_with_create(create, [[_OPEN_BUMP_PR]])
+    assert ctx.bump_pr_url == _BUMP_PR
+    create.assert_called_once()
+    lookup.assert_called_once_with(_BUMP_BRANCH, base="develop")
+    sleep.assert_not_called()
+    wait.assert_called_once_with(_BUMP_PR, phase="back-merge-bump")
+
+
+def test_back_merge_refuses_an_open_pr_it_did_not_open() -> None:
+    other = dataclasses.replace(_OPEN_BUMP_PR, title="something else")
+    with pytest.raises(ReleaseError, match="was not adopted") as exc:
+        _bump_with_create(MagicMock(side_effect=[_TIMEOUT]), [[other]])
+    assert exc.value.phase == "back-merge-bump"
+    assert _BUMP_PR in str(exc.value)
+    assert "its title is 'something else'" in str(exc.value)
+
+
+def test_back_merge_create_that_really_failed_is_retried() -> None:
+    create = MagicMock(side_effect=[_TIMEOUT, _BUMP_PR])
+    ctx, lookup, sleep, wait = _bump_with_create(create, [[]])
+    assert ctx.bump_pr_url == _BUMP_PR
+    assert create.call_count == 2
+    lookup.assert_called_once()
+    sleep.assert_called_once()
+    wait.assert_called_once_with(_BUMP_PR, phase="back-merge-bump")

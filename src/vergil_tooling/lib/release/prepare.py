@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import changelog, git, github, version
+from vergil_tooling.lib import changelog, git, github, pr_create, version
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.merge import known_pr_state
 from vergil_tooling.lib.release.tracking import create_tracking_issue
@@ -70,7 +70,7 @@ def prepare(ctx: ReleaseContext) -> None:
     print(f"Pushing branch: {branch}")
     git.run("push", "-u", "origin", branch)
 
-    ctx.release_pr_url = _create_pr(ctx)
+    ctx.release_pr_url = _create_pr(ctx, branch)
     print(f"Release PR created: {ctx.release_pr_url}")
 
 
@@ -153,17 +153,28 @@ def _generate_changelog(ctx: ReleaseContext) -> None:
     git.run("commit", "-m", f"chore(release): prepare {ctx.version}")
 
 
-def _create_pr(ctx: ReleaseContext) -> str:
+def _create_pr(ctx: ReleaseContext, branch: str) -> str:
+    """Open the release PR for the pushed *branch*, adopting one a failed create opened (#4699)."""
     title = f"release: {ctx.version}"
     body = (
         f"## Summary\n\nRelease {ctx.version}\n\n"
         f"Ref #{ctx.issue_number}\n\n"
         f"Generated with `vrg-release`\n"
     )
+    spec = pr_create.PRSpec(
+        head=branch, base="main", title=title, head_oid=git.read_output("rev-parse", branch)
+    )
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(body)
         tmp_path = f.name
     try:
-        return github.create_pr(base="main", title=title, body_file=tmp_path)
+        return pr_create.create_or_adopt(
+            lambda: github.create_pr(base="main", title=title, body_file=tmp_path, retry=False),
+            spec,
+            opener="this release",
+            rerun="resume the release",
+        ).url
+    except pr_create.PRCreateError as exc:
+        raise ReleaseError(phase="prepare", command="gh pr create", message=str(exc)) from exc
     finally:
         Path(tmp_path).unlink(missing_ok=True)

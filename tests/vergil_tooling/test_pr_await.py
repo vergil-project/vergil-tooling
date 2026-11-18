@@ -50,6 +50,7 @@ def pr_state(**overrides: Any) -> dict[str, Any]:
         "headRefOid": HEAD_A,
         "autoMergeRequest": {"mergeMethod": "SQUASH"},
         "mergeStateStatus": "BLOCKED",
+        "labels": [],
         "statusCheckRollup": [check_run("test / unit")],
         "mergeCommit": None,
     }

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from vergil_tooling.lib import pr_merge
+from vergil_tooling.lib import github, pr_create, pr_merge
 from vergil_tooling.lib.update_deps import pr
 from vergil_tooling.lib.update_deps.changes import PackageChange
 from vergil_tooling.lib.update_deps.context import (
@@ -132,16 +133,85 @@ def test_prepare_pr_pushes_ensures_label_and_labels_pr(monkeypatch) -> None:
         return "https://github.com/o/r/pull/9"
 
     monkeypatch.setattr(_MOD + ".github.create_pr", fake_create)
+    monkeypatch.setattr(_MOD + ".git.read_output", lambda *a: "h0")
     ctx = _ctx()
     pr.prepare_pr(ctx)
     assert git_runs == [("push", "-u", "origin", "deps/update-2.1.243")]
     assert runs == [["o/r", "dependency-update"]]
+    assert created["retry"] is False
     assert created["labels"] == ["dependency-update"]
     assert created["base"] == "develop"
     assert created["title"] == "chore(deps): dependency update for 2.1.243"
     assert "uv lock --upgrade" in str(created["body"])
     assert not Path(str(created["body_file"])).exists()
     assert ctx.pr_url == "https://github.com/o/r/pull/9"
+
+
+_DEPS_PR = "https://github.com/o/r/pull/9"
+_TIMEOUT = github.GitHubAPIError(1, ("gh", "pr", "create"), "", "HTTP 504: Gateway Timeout")
+_OPEN_DEPS_PR = github.OpenPR(
+    url=_DEPS_PR,
+    title="chore(deps): dependency update for 2.1.243",
+    head_ref="deps/update-2.1.243",
+    base_ref="develop",
+    head_oid="h0",
+    cross_repo=False,
+)
+
+
+def _prepare_with_create(
+    monkeypatch: pytest.MonkeyPatch, create_effect: list[object], open_prs: list[object]
+) -> tuple[UpdateDepsContext, list[dict[str, object]], list[tuple[str, ...]], list[float]]:
+    """Run prepare_pr with gh pr create and the open-PR lookup scripted (#4699)."""
+    monkeypatch.setattr(_MOD + ".ensure_labels", lambda _repo, _names: None)
+    monkeypatch.setattr(_MOD + ".git.run", lambda *_a: None)
+    monkeypatch.setattr(_MOD + ".git.read_output", lambda *_a: "h0")
+    creates: list[dict[str, object]] = []
+    effects = iter(create_effect)
+
+    def fake_create(**kw: object) -> str:
+        creates.append(kw)
+        effect = next(effects)
+        if isinstance(effect, BaseException):
+            raise effect
+        return str(effect)
+
+    lookups = iter(open_prs)
+    gh_runs: list[tuple[str, ...]] = []
+    slept: list[float] = []
+    monkeypatch.setattr(_MOD + ".github.create_pr", fake_create)
+    monkeypatch.setattr(_MOD + ".github.open_prs_for_head", lambda *_a, **_kw: next(lookups))
+    monkeypatch.setattr(_MOD + ".github.run", lambda *a: gh_runs.append(a))
+    monkeypatch.setattr(pr_create.time, "sleep", slept.append)
+    ctx = _ctx()
+    pr.prepare_pr(ctx)
+    return ctx, creates, gh_runs, slept
+
+
+def test_prepare_pr_adopts_the_pr_a_failed_create_opened_and_labels_it(monkeypatch) -> None:
+    """The label is added after the create, so an adopted PR is labelled again."""
+    ctx, creates, gh_runs, slept = _prepare_with_create(monkeypatch, [_TIMEOUT], [[_OPEN_DEPS_PR]])
+    assert ctx.pr_url == _DEPS_PR
+    assert len(creates) == 1
+    assert gh_runs == [("pr", "edit", _DEPS_PR, "--add-label", "dependency-update")]
+    assert slept == []
+
+
+def test_prepare_pr_refuses_an_open_pr_it_did_not_open(monkeypatch) -> None:
+    other = dataclasses.replace(_OPEN_DEPS_PR, cross_repo=True)
+    with pytest.raises(UpdateDepsError, match="was not adopted") as exc:
+        _prepare_with_create(monkeypatch, [_TIMEOUT], [[other]])
+    assert exc.value.phase == "prepare-pr"
+    assert _DEPS_PR in str(exc.value)
+    assert "its head is in another repository" in str(exc.value)
+
+
+def test_prepare_pr_create_that_really_failed_is_retried(monkeypatch) -> None:
+    ctx, creates, gh_runs, slept = _prepare_with_create(monkeypatch, [_TIMEOUT, _DEPS_PR], [[]])
+    assert ctx.pr_url == _DEPS_PR
+    assert len(creates) == 2
+    assert gh_runs == []
+    assert len(slept) == 1
 
 
 def test_prepare_pr_raises_without_branch() -> None:

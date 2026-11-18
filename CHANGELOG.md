@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.326] - 2026-11-18
+
+### Bug fixes
+
+- adopt the PR a failed gh pr create opened in mechanized, release and update-deps PRs (#4705)
+- forward --output-format and --output-window to the chained vrg-finalize-pr (#4711)
+- stop naming a fixed exit 1 in the settle summary (#4712)
+
+### Features
+
+- show the final report as one PR table like vrg-repo-status (#4713)
+- run the per-PR submit as a step rollup like vrg-release (#4714)
+
 ## [2.1.325] - 2026-11-18
 
 ### Bug fixes

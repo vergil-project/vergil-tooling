@@ -112,7 +112,7 @@ _RELEASE_PREFIX = "release/"
 _STATES = frozenset({"OPEN", "MERGED", "CLOSED"})
 _VIEW_FIELDS = (
     "id,url,title,state,baseRefName,headRefName,headRefOid,autoMergeRequest,"
-    "mergeStateStatus,statusCheckRollup,mergeCommit"
+    "mergeStateStatus,statusCheckRollup,mergeCommit,labels"
 )
 # A status context's failing states; a check-run is judged by
 # github.check_run_bucket.
@@ -148,14 +148,19 @@ class PRResult:
 
     *pr* is the PR's URL and *head* its head commit when it ended. *detail*
     names the failed check, the provenance actions, or why the PR was not
-    watched. *provenance_violation* is true whenever the watch found a
-    provenance violation on the PR, whatever its outcome.
+    watched. *title*, *branch* (the head branch) and *labels* are the PR's
+    as last read, for the report's PR table. *provenance_violation* is true
+    whenever the watch found a provenance violation on the PR, whatever its
+    outcome.
     """
 
     pr: str
     outcome: Outcome
     detail: str
     head: str
+    title: str
+    branch: str
+    labels: tuple[str, ...]
     provenance_violation: bool = False
 
 
@@ -183,8 +188,9 @@ class Snapshot:
     """One ``gh pr view`` read of a PR.
 
     *merge_commit* is the merge commit's SHA, or ``""`` while GitHub reports
-    none. ``vrg-pr-await`` and ``vrg-repo-status`` read a PR through
-    :func:`snapshot` and judge its checks with :func:`check_failures` too.
+    none. *labels* are the PR's label names. ``vrg-pr-await`` and
+    ``vrg-repo-status`` read a PR through :func:`snapshot` and judge its
+    checks with :func:`check_failures` too.
     """
 
     node_id: str
@@ -198,6 +204,7 @@ class Snapshot:
     merge_state: str
     rollup: tuple[dict[str, object], ...]
     merge_commit: str
+    labels: tuple[str, ...]
 
 
 def _field(data: dict[str, object], name: str, pr: str) -> str:
@@ -244,6 +251,12 @@ def snapshot(pr: str) -> Snapshot:
     else:
         msg = f"{pr}: mergeCommit is neither null nor an object with an oid: {commit!r}"
         raise FinalizeWatchError(msg)
+    labels = data.get("labels")
+    if not isinstance(labels, list) or not all(
+        isinstance(n, dict) and isinstance(n.get("name"), str) for n in labels
+    ):
+        msg = f"{pr}: labels is not a list of objects with a name: {labels!r}"
+        raise FinalizeWatchError(msg)
     return Snapshot(
         node_id=_field(data, "id", pr),
         url=_field(data, "url", pr),
@@ -256,6 +269,7 @@ def snapshot(pr: str) -> Snapshot:
         merge_state=merge_state,
         rollup=tuple(rollup),
         merge_commit=merge_commit,
+        labels=tuple(str(n["name"]) for n in labels),
     )
 
 
@@ -462,6 +476,9 @@ def _result(snap: Snapshot, outcome: Outcome, detail: str, watched: _Watched) ->
         outcome=outcome,
         detail=detail,
         head=snap.head,
+        title=snap.title,
+        branch=snap.head_ref,
+        labels=snap.labels,
         provenance_violation=bool(watched.violation),
     )
 

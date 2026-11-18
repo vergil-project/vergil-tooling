@@ -20,7 +20,11 @@ the way a person would, with plain git in that checkout:
    commit its hook ran against). ``develop`` does not require a branch to be
    up to date, so the PR merges from that base once its own checks pass. Git
    records content and file mode, so an executable bit the job set survives.
-4. The PR is opened against ``develop`` and GitHub auto-merge is turned on
+4. The PR is opened against ``develop`` through
+   :func:`vergil_tooling.lib.pr_create.create_or_adopt`: when ``gh pr create``
+   fails, the open PR from the branch is adopted if its head, base, title and
+   head commit match what was pushed, and any other open PR fails the run,
+   naming it (#4699). GitHub auto-merge is then turned on
    through the shared helper
    (:func:`vergil_tooling.lib.auto_merge.enable_auto_merge`) with the squash
    method and the pushed commit as the expected head, then read back to
@@ -72,7 +76,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
-from vergil_tooling.lib import auto_merge, git, github, pr_merge
+from vergil_tooling.lib import auto_merge, git, github, pr_create, pr_merge
 from vergil_tooling.lib.develop_clone import DEVELOP_BRANCH
 from vergil_tooling.lib.process_errors import error_text
 
@@ -296,15 +300,27 @@ def _commit_and_push(repo: str, clone: Path, branch: str, title: str) -> str:
     return sha
 
 
-def _open_pr(repo: str, branch: str, title: str, body: str) -> str:
+def _open_pr(repo: str, branch: str, title: str, body: str, head: str) -> str:
+    """Open the PR for *branch*, pushed at *head*, adopting one a failed create opened."""
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as handle:
         handle.write(body)
         body_path = Path(handle.name)
+    spec = pr_create.PRSpec(head=branch, base=DEVELOP_BRANCH, title=title, head_oid=head, repo=repo)
     try:
-        url = github.create_pr(
-            repo=repo, base=DEVELOP_BRANCH, head=branch, title=title, body_file=str(body_path)
-        )
-    except subprocess.CalledProcessError as exc:
+        url = pr_create.create_or_adopt(
+            lambda: github.create_pr(
+                repo=repo,
+                base=DEVELOP_BRANCH,
+                head=branch,
+                title=title,
+                body_file=str(body_path),
+                retry=False,
+            ),
+            spec,
+            opener="this run",
+            rerun="let the next run open it",
+        ).url
+    except (subprocess.CalledProcessError, pr_create.PRCreateError) as exc:
         raise _fail("opening the PR", repo, exc) from exc
     finally:
         body_path.unlink(missing_ok=True)
@@ -383,7 +399,7 @@ def open_sync_pr(  # noqa: PLR0913 - the PR's parts and its deadline, all keywor
     if not _git(repo, clone, "status", "status", "--porcelain"):
         return SyncResult(status="in_sync", pr_url=None, closed=closed)
     head = _commit_and_push(repo, clone, branch, title)
-    pr_url = _open_pr(repo, branch, title, body)
+    pr_url = _open_pr(repo, branch, title, body, head)
     print(f"{repo}: opened {pr_url}; waiting up to {deadline}s for it to merge")
     if _enable_auto_merge(repo, pr_url, head):
         print(f"{repo}: {pr_url} was already mergeable and merged directly")

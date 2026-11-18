@@ -54,7 +54,7 @@ import sys
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import config, finalize_watch, pr_await, worktrees
+from vergil_tooling.lib import config, finalize_watch, pr_await, text_table, worktrees
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.open_prs import OpenPR, OpenPRKind, OpenPRsError, gather_open_prs
 from vergil_tooling.lib.pending_release import (
@@ -124,7 +124,7 @@ _OPEN_HEADING = "Open PRs on origin with no local worktree"
 
 # A longer TITLE is cut to this width, its last character an ellipsis, to
 # keep each pending-release row on one line.
-_TITLE_WIDTH = 72
+_TITLE_WIDTH = text_table.TITLE_WIDTH
 
 # A rolling tag's target is a release tag (vX.Y.Z) or a short SHA; only a
 # release tag can lag the latest release.
@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     now = datetime.datetime.now(tz=datetime.UTC).timestamp()
 
     print(f"Main checkout (integration branch: {integration})")
-    print(_render_table(_MAIN_COLUMNS, [_main_row(main_status, now, gone=gone)]))
+    print(text_table.render(_MAIN_COLUMNS, [_main_row(main_status, now, gone=gone)]))
     for note in integration_notes:
         print(f"  note: {note}")
     for note in main_status.notes:
@@ -206,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
             _row(s, now, label=label, gone=s.worktree.branch in gone)
             for s, label in zip(statuses, labels, strict=True)
         ]
-        print(_render_table(_COLUMNS, rows))
+        print(text_table.render(_COLUMNS, rows))
         _print_notes(statuses, labels)
 
     # A failed open-PR or pending-release lookup still lets the rest print,
@@ -341,14 +341,6 @@ def _main_row(status: MainCheckoutStatus, now: float, *, gone: set[str]) -> tupl
     )
 
 
-def _render_table(columns: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:
-    cells = [columns, *rows]
-    widths = [max(len(row[i]) for row in cells) for i in range(len(columns))]
-    return "\n".join(
-        "  ".join(row[i].ljust(widths[i]) for i in range(len(columns))).rstrip() for row in cells
-    )
-
-
 def _print_notes(statuses: list[WorktreeStatus], labels: list[str]) -> None:
     # Surface any captured detail so neither a failed lookup (UNKNOWN) nor a
     # reused-branch-name mismatch (issue #1719) is silently hidden. An
@@ -451,12 +443,6 @@ def _release_line(tags: ReleaseTags, main_moved_ts: float, now: float) -> str:
     return line
 
 
-def _title_cell(title: str) -> str:
-    if len(title) <= _TITLE_WIDTH:
-        return title
-    return title[: _TITLE_WIDTH - 1] + "…"
-
-
 def _pending_rows(changes: Sequence[PendingChange], now: float) -> list[tuple[str, ...]]:
     return [
         (
@@ -464,7 +450,7 @@ def _pending_rows(changes: Sequence[PendingChange], now: float) -> list[tuple[st
             c.branch if c.branch is not None else "-",
             c.type_label,
             _format_age(c.merged_ts, now),
-            _title_cell(c.title),
+            text_table.truncate(c.title),
         )
         for c in changes
     ]
@@ -506,7 +492,7 @@ def _print_pending(integration: str, now: float) -> bool:
     if not pending.changes:
         print(f"Nothing pending release: {integration} and {RELEASE_BRANCH} are level.")
         return True
-    print(_render_table(_PENDING_COLUMNS, _pending_rows(pending.changes, now)))
+    print(text_table.render(_PENDING_COLUMNS, _pending_rows(pending.changes, now)))
     for change in pending.changes:
         if change.kind is ChangeKind.NO_PR:
             sha7 = change.shas[0][:_SHORT_SHA]
@@ -538,7 +524,7 @@ def _open_rows(prs: Sequence[OpenPR], now: float) -> list[tuple[str, ...]]:
             pr.author,
             pr.ci,
             _format_age(pr.created_ts, now),
-            _title_cell(f"[draft] {pr.title}" if pr.draft else pr.title),
+            text_table.truncate(f"[draft] {pr.title}" if pr.draft else pr.title),
         )
         for pr in prs
     ]
@@ -580,7 +566,7 @@ def _print_open_prs(sections: dict[WorktreeKind, list[WorktreeStatus]], now: flo
         else:
             print("None: origin has no open PRs.")
         return True
-    print(_render_table(_OPEN_COLUMNS, _open_rows(unbacked, now)))
+    print(text_table.render(_OPEN_COLUMNS, _open_rows(unbacked, now)))
     print(_open_summary(unbacked))
     return True
 

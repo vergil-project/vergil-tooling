@@ -27,8 +27,9 @@ turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
    run, and still fails the CD check (issue #3316); a run cancelled by a
    concurrency supersede is "superseded", a loud warning, never a failure
    (issue #3834).
-4. **Reports** every PR under *merged* or *not merged (reason)*, with what to
-   do next for each unmerged PR, and the validate's result. A develop that
+4. **Reports** every PR as one row of a table (PR, branch, type, outcome,
+   title), then the reason and what to do next for each unmerged PR, and the
+   validate's result. A develop that
    did not validate is said loudly, with its head SHA, the commits the sync
    brought in, the validate's log path and its last lines.
 5. **Releases**, with ``--release``, only on full success: ``vrg-release``,
@@ -106,6 +107,7 @@ from vergil_tooling.lib import (
     git,
     github,
     progress,
+    text_table,
     worktrees,
 )
 from vergil_tooling.lib.cache_prune import clean_branch_images, prune_orphan_branch_images
@@ -130,6 +132,7 @@ from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container import PackageJsonError, resolve_language
 from vergil_tooling.lib.container_cache import provision_dev_image
 from vergil_tooling.lib.live_branches import RepoSetError, default_repo_roots, discover_repos
+from vergil_tooling.lib.open_prs import classify_open
 from vergil_tooling.lib.pr_workflow import github_transport
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.progress import Stage, StageResult, StageStatus
@@ -186,6 +189,9 @@ VALIDATE_TAIL_LINES = 40
 
 # The run log a failed validate's full output is written to, under .vergil/.
 _VALIDATE_LOG_COMMAND = "vrg-finalize-validate"
+
+# The report's PR table, laid out like vrg-repo-status's PR tables (issue #4708).
+_REPORT_COLUMNS = ("PR", "BRANCH", "TYPE", "OUTCOME", "TITLE")
 
 _NEXT_STEP = "hand it to an agent, then rerun `vrg-finalize-pr {pr}`"
 _INVESTIGATE = "investigate before re-enabling auto-merge"
@@ -429,30 +435,60 @@ def _watch_exit(results: Sequence[PRResult]) -> int:
     return EXIT_NOT_ALL_MERGED
 
 
+def _pr_number(result: PRResult) -> str:
+    """The PR cell: ``#<n>`` from the PR's URL."""
+    return f"#{result.pr.rstrip('/').rsplit('/', 1)[-1]}"
+
+
+def _outcome_cell(result: PRResult) -> str:
+    """The OUTCOME cell: the watch's outcome, flagged when a merged PR broke provenance."""
+    if _blocking_violation(result):
+        return "merged, PROVENANCE VIOLATION"
+    return result.outcome
+
+
+def _pr_row(result: PRResult) -> tuple[str, ...]:
+    """One report row: PR, BRANCH, TYPE, OUTCOME and TITLE, typed as ``vrg-repo-status`` does."""
+    _, type_label = classify_open(result.title, result.branch, result.labels)
+    return (
+        _pr_number(result),
+        result.branch,
+        type_label,
+        _outcome_cell(result),
+        text_table.truncate(result.title),
+    )
+
+
+def _pr_notes(result: PRResult) -> list[str]:
+    """The lines under the table for *result*: why it did not merge and what to do next."""
+    number = _pr_number(result)
+    if _blocking_violation(result):
+        return [
+            f"{number} PROVENANCE VIOLATION ({result.detail}): this run is not a full "
+            "success, and a human must look before any release"
+        ]
+    if result.outcome == "merged":
+        return []
+    reason = f"{result.outcome}: {result.detail}" if result.detail else result.outcome
+    step = _NEXT_STEP_BY_OUTCOME.get(result.outcome, _NEXT_STEP).format(pr=result.pr)
+    return [f"{number} {result.pr} ({reason})", f"  next: {step}"]
+
+
 def _print_pr_report(results: Sequence[PRResult]) -> None:
-    """List every watched PR under *merged* or *not merged (reason)*, with next steps."""
-    merged = [r for r in results if r.outcome == "merged"]
-    unmerged = [r for r in results if r.outcome != "merged"]
+    """One table row per watched PR, then a note for each PR that needs a human.
+
+    The table follows ``vrg-repo-status``'s PR tables (issue #4708): PR,
+    BRANCH, TYPE, OUTCOME and TITLE. Each PR that did not merge gets its
+    reason and next step beneath it, and a merged PR with a provenance
+    violation is named loudly.
+    """
     print("\nvrg-finalize-pr report")
-    print(f"  Merged ({len(merged)}):")
-    for r in merged:
-        if r.provenance_violation:
-            print(
-                f"    {r.pr}  PROVENANCE VIOLATION ({r.detail}): this run is not a full "
-                "success, and a human must look before any release"
-            )
-        else:
-            print(f"    {r.pr}")
-    if not merged:
-        print("    (none)")
-    print(f"  Not merged ({len(unmerged)}):")
-    for r in unmerged:
-        reason = f"{r.outcome}: {r.detail}" if r.detail else r.outcome
-        step = _NEXT_STEP_BY_OUTCOME.get(r.outcome, _NEXT_STEP).format(pr=r.pr)
-        print(f"    {r.pr} ({reason})")
-        print(f"      next: {step}")
-    if not unmerged:
-        print("    (none)")
+    print(text_table.render(_REPORT_COLUMNS, [_pr_row(r) for r in results], indent="  "))
+    notes = [line for r in results for line in _pr_notes(r)]
+    if notes:
+        print()
+        for line in notes:
+            print(f"  {line}")
 
 
 @dataclass(frozen=True)
@@ -508,6 +544,10 @@ def _settle(
             repo_root=root,
             results_sink=results,
             log=log,
+            # A failed settle exits 1, 4 or 130, depending on which stage
+            # failed (see _settle_exit). One status given before any stage
+            # runs cannot say which, so the summary names none (#4712).
+            failure_exit=None,
         )
 
     # Surface — and, with --clean-dirty, guardedly clear — any merged/closed

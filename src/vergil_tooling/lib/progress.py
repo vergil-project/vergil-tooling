@@ -82,6 +82,17 @@ class StageResult:
     note: str | None = None
 
 
+class StageFailedError(Exception):
+    """Raise from a stage to fail it with exactly this message as its reason.
+
+    Any other exception fails the stage with ``<Type>: <message>``; this one
+    is shown as its message alone, for a stage whose reason already reads
+    as a sentence (e.g. ``vrg-submit-pr``'s ``no PR opened: …``). Chain the
+    underlying error (``raise StageFailedError(...) from exc``) so the log's
+    traceback still names it.
+    """
+
+
 class PipelineError(Exception):
     """One or more pipeline stages failed."""
 
@@ -162,6 +173,7 @@ def build_summary(
     log_path: Path,
     *,
     success_label: str | None = None,
+    failure_exit: int | None = 1,
 ) -> str:
     """Build the plain-text final summary shared by all renderers.
 
@@ -169,6 +181,10 @@ def build_summary(
     line only (e.g. ``vrg-release v2.1.44``); the with-errors line always
     uses the plain *label* so a failed run never names what it did not
     finish (issue #3753).
+
+    *failure_exit* is the exit status the failure line names (``· exit 1``).
+    ``None`` leaves it off, for a command whose exit status is decided after
+    the pipeline (``vrg-submit-pr`` goes on to finalize the PRs it opened).
     """
     warnings = [r for r in results if r.status in ("warn", "skipped")]
     failures = [r for r in results if r.status in ("failed", "interrupted")]
@@ -182,7 +198,8 @@ def build_summary(
         lines.extend(f"   {r.name} — {r.error}" for r in failures)
         lines.append("")
         lines.append(f"{label} completed with errors  (total: {format_total(total_elapsed)})")
-        lines.append(f"PipelineError: {PipelineError(failures)} · exit 1")
+        suffix = f" · exit {failure_exit}" if failure_exit is not None else ""
+        lines.append(f"PipelineError: {PipelineError(failures)}{suffix}")
     else:
         done = success_label or label
         lines.append(f"✓  {done} complete  (total: {format_total(total_elapsed)})")
@@ -398,6 +415,9 @@ class _Session:
     # reads and clears it per stage to downgrade a normally-returning stage's
     # status from ``ok`` to ``warn``.
     pending_warn: str | None = None
+    # Text set by ``note`` during the current stage, shown on its ``ok``
+    # status line; read and cleared per stage like ``pending_warn``.
+    pending_note: str | None = None
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
@@ -473,6 +493,21 @@ def mark_warn(reason: str) -> None:
     session = _session
     if session is not None:
         session.pending_warn = reason
+
+
+def note(text: str) -> None:
+    """Set the short account shown on the current stage's ``ok`` status line.
+
+    A pipeline stage that returns normally is shown as ``✓ <name>  <elapsed>``;
+    calling this while it runs adds ``— <text>`` (e.g. ``PR #12 auto-merge
+    on``), as :func:`run_stage`'s *describe* does for a stage of its own. A
+    stage that fails or is marked with :func:`mark_warn` shows its reason
+    instead. Outside a running pipeline it is a harmless no-op; the last call
+    in a stage wins.
+    """
+    session = _session
+    if session is not None:
+        session.pending_note = text
 
 
 class _EmitWriter(io.TextIOBase):
@@ -669,6 +704,7 @@ def run_pipeline(
     success_label: Callable[[], str | None] | None = None,
     results_sink: list[StageResult] | None = None,
     log: RunLog | None = None,
+    failure_exit: int | None = 1,
 ) -> int:
     """Run *stages* in order with progress rendering and full logging.
 
@@ -683,6 +719,9 @@ def run_pipeline(
     *log*, when given, is the run log to write to instead of a new one (a
     :func:`run_stage` before the pipeline wrote to it too); the caller owns
     it and closes it.
+
+    *failure_exit* is passed to :func:`build_summary`: the exit status its
+    failure line names, or ``None`` to name none.
 
     Returns 0 on success, 1 if any fail_defer/fail_fast stage failed,
     130 on KeyboardInterrupt.
@@ -711,6 +750,7 @@ def run_pipeline(
             renderer.start_stage(stage.name)
             log.write(f"=== {stage.name}: started ===")
             session.pending_warn = None
+            session.pending_note = None
             start = time.monotonic()
             try:
                 with (
@@ -730,7 +770,11 @@ def run_pipeline(
             # SystemExit included: a stage calling sys.exit() is a stage
             # failure to record and summarize, not a silent process exit.
             except (Exception, SystemExit) as exc:  # noqa: BLE001 — the pipeline is the failure boundary
-                cause = f"{type(exc).__name__}: {exc}"
+                cause = (
+                    str(exc)
+                    if isinstance(exc, StageFailedError)
+                    else f"{type(exc).__name__}: {exc}"
+                )
                 status: StageStatus = "warn" if stage.mode == "warn" else "failed"
                 result = StageResult(stage.name, status, time.monotonic() - start, cause)
                 log.write(f"=== {stage.name}: {status} ({cause}) ===")
@@ -754,8 +798,11 @@ def run_pipeline(
                     result = StageResult(stage.name, "warn", elapsed, warn_reason)
                     log.write(f"=== {stage.name}: warn ({warn_reason}) ===")
                 else:
-                    result = StageResult(stage.name, "ok", elapsed)
-                    log.write(f"=== {stage.name}: ok ({format_elapsed(elapsed)}) ===")
+                    result = StageResult(stage.name, "ok", elapsed, note=session.pending_note)
+                    done = format_elapsed(elapsed)
+                    if session.pending_note is not None:
+                        done = f"{session.pending_note}, {done}"
+                    log.write(f"=== {stage.name}: ok ({done}) ===")
                 renderer.end_stage(result)
                 results.append(result)
     finally:
@@ -768,6 +815,7 @@ def run_pipeline(
             time.monotonic() - start_total,
             log.path,
             success_label=success_label() if success_label is not None else None,
+            failure_exit=failure_exit,
         )
         renderer.summary(text)
         renderer.close()

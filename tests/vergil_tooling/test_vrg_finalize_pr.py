@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from subprocess import CompletedProcess
 from typing import TYPE_CHECKING
@@ -24,6 +25,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     _head_of,
     _merged_branches,
     _parse_pr_list,
+    _pr_row,
     _prune_orphan_branch_images,
     _prune_orphan_relay_refs,
     _report_cd_run,
@@ -39,6 +41,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     main,
     parse_args,
 )
+from vergil_tooling.lib import text_table
 from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cd_runs import (
     CDRunProblem,
@@ -200,9 +203,20 @@ def _synced_head() -> Iterator[None]:
 def _pr_result(
     pr: str, outcome: Outcome = "merged", detail: str = "", *, violation: bool = False
 ) -> PRResult:
-    """A watch result for *pr*, as lib/finalize_watch.py reports it."""
+    """A watch result for *pr*, as lib/finalize_watch.py reports it.
+
+    PR ``…/pull/<n>`` is titled ``feat: change <n>`` on ``feature/<n>-thing``.
+    """
+    n = pr.rsplit("/", 1)[-1]
     return PRResult(
-        pr=pr, outcome=outcome, detail=detail, head="headsha", provenance_violation=violation
+        pr=pr,
+        outcome=outcome,
+        detail=detail,
+        head="headsha",
+        title=f"feat: change {n}",
+        branch=f"feature/{n}-thing",
+        labels=(),
+        provenance_violation=violation,
     )
 
 
@@ -3194,6 +3208,10 @@ def test_exit_4_validate_could_not_run_reports_log(
     assert rc == 4
     out = capsys.readouterr().out
     assert "DID NOT VALIDATE" in out
+    # The settle summary names no exit status: finalize exits 4 here, which a
+    # status fixed before the pipeline ran could not name (#4712).
+    summary = next(line for line in out.splitlines() if line.startswith("PipelineError:"))
+    assert "· exit" not in summary
     log_line = next(line for line in out.splitlines() if "Validate log:" in line)
     log = Path(log_line.split("Validate log:", 1)[1].strip())
     assert log.parent == tmp_path / ".vergil"
@@ -3375,12 +3393,57 @@ def test_report_lists_merged_and_unmerged_with_reasons(
         main([f"{_PR_A},{_PR_B},{_PR_C}"])
     out = capsys.readouterr().out
     report = out[out.index("vrg-finalize-pr report") :]
-    assert f"  Merged (1):\n    {_PR_A}\n" in report
-    assert "  Not merged (2):" in report
-    assert f"    {_PR_B} (failed: CI: required check failed: test)" in report
-    assert f"    {_PR_C} (failed: conflict: the PR can no longer merge cleanly)" in report
+    table = (
+        "vrg-finalize-pr report\n"
+        "  PR  BRANCH           TYPE  OUTCOME           TITLE\n"
+        "  #1  feature/1-thing  feat  merged            feat: change 1\n"
+        "  #2  feature/2-thing  feat  failed: CI        feat: change 2\n"
+        "  #3  feature/3-thing  feat  failed: conflict  feat: change 3\n"
+        "\n"
+    )
+    assert report.startswith(table)
+    assert f"  #2 {_PR_B} (failed: CI: required check failed: test)\n" in report
+    assert f"  #3 {_PR_C} (failed: conflict: the PR can no longer merge cleanly)\n" in report
+    # One table, no per-outcome groups and no placeholder rows.
+    assert "Merged (" not in report
+    assert "Not merged" not in report
+    assert "(none)" not in report
     assert "Validate: passed on develop" in report
     assert _CD_LINE.strip() in report
+
+
+def test_report_all_merged_has_no_notes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """With every PR merged cleanly, the table is followed straight by the settle lines."""
+    watch = _watch_returning(_pr_result(_PR_A), _pr_result(_PR_B))
+    with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
+        main([f"{_PR_A},{_PR_B}"])
+    out = capsys.readouterr().out
+    report = out[out.index("vrg-finalize-pr report") :]
+    assert report.startswith(
+        "vrg-finalize-pr report\n"
+        "  PR  BRANCH           TYPE  OUTCOME  TITLE\n"
+        "  #1  feature/1-thing  feat  merged   feat: change 1\n"
+        "  #2  feature/2-thing  feat  merged   feat: change 2\n"
+        "  Validate: passed on develop"
+    )
+    assert "next:" not in report
+
+
+def test_report_types_rows_like_repo_status() -> None:
+    """TYPE comes from the branch, the dependency-update label or the title's type."""
+    rows = [
+        _pr_row(replace(_pr_result(_PR_A), title="fix(x): y")),
+        _pr_row(replace(_pr_result(_PR_B), branch="deps/update-2026-11-18")),
+        _pr_row(replace(_pr_result(_PR_C), branch="x", labels=("dependency-update",))),
+        _pr_row(replace(_pr_result(_PR_A), title="no conventional type")),
+    ]
+    assert [row[2] for row in rows] == ["fix", "deps", "deps", "-"]
+
+
+def test_report_title_is_truncated() -> None:
+    row = _pr_row(replace(_pr_result(_PR_A), title="feat: " + "x" * 100))
+    assert len(row[4]) == text_table.TITLE_WIDTH
+    assert row[4].endswith("…")
 
 
 @pytest.mark.parametrize(
@@ -3405,7 +3468,7 @@ def test_report_names_next_step_per_unmerged_pr(
     watch = _watch_returning(_pr_result(_PR_A), _pr_result(_PR_B, outcome, "why"))
     with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
         main([f"{_PR_A},{_PR_B}"])
-    assert f"      next: {step}" in capsys.readouterr().out
+    assert f"\n    next: {step}" in capsys.readouterr().out
 
 
 def _release_ok() -> MagicMock:
@@ -3526,7 +3589,8 @@ def test_merged_violation_blocks_release(
     assert calls == _SETTLED  # develop still settles: the PR is merged
     run.assert_not_called()
     out = capsys.readouterr().out
-    assert f"{_PR_A}  PROVENANCE VIOLATION (x (audit): closed)" in out
+    assert "  #1  feature/1-thing  feat  merged, PROVENANCE VIOLATION  feat: change 1\n" in out
+    assert "  #1 PROVENANCE VIOLATION (x (audit): closed)" in out
     assert "not a full success" in out
     assert "--allow-provenance-violation" not in out
     assert "a human must look before any release" in out
