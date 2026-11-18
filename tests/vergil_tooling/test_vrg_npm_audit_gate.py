@@ -16,6 +16,11 @@ if TYPE_CHECKING:
 
 PICOMATCH = "GHSA-fc5q-39xc-vjpf"
 OTHER = "GHSA-2222-3333-4444"
+_REAL_TODAY = vrg_npm_audit_gate._today
+
+
+def test_today_is_the_utc_date() -> None:
+    assert _REAL_TODAY() == datetime.datetime.now(datetime.UTC).date()
 
 
 @pytest.fixture(autouse=True)

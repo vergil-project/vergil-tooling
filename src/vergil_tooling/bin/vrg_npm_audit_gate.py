@@ -29,10 +29,6 @@ from vergil_tooling.lib.npm_audit import (
 from vergil_tooling.lib.output import emit_error, emit_warning
 
 
-def _today() -> datetime.date:
-    return datetime.datetime.now(datetime.UTC).date()
-
-
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
@@ -112,6 +108,11 @@ def main(argv: list[str] | None = None) -> int:
         f"{len(verdict.unmatched)} unmatched exception(s)"
     )
     return 1 if verdict.failing else 0
+
+
+def _today() -> datetime.date:
+    """The day the gate runs, in UTC, against which every expiry is checked."""
+    return datetime.datetime.now(datetime.UTC).date()
 
 
 def _describe(advisory: Advisory) -> str:
