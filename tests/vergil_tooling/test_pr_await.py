@@ -43,6 +43,7 @@ def pr_state(**overrides: Any) -> dict[str, Any]:
     state: dict[str, Any] = {
         "id": "PR_1",
         "url": PR,
+        "title": "feat: change 1",
         "state": "OPEN",
         "baseRefName": "develop",
         "headRefName": "feature/1-thing",

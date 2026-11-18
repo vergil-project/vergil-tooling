@@ -41,6 +41,15 @@ judge it in this order:
 A PR still pending at the deadline is ``timed out``; its auto-merge stays on.
 Every failure to read a PR, to run the provenance check or to turn auto-merge
 off raises; none is read as a pending or a clean PR.
+
+**A status table** is printed to stdout after start-up and after every poll
+(issue #4677): one row per PR in the batch, a PR that has ended included,
+with its number, its shortened title, its state (``checks pending (<n>)``,
+``checks green, merging``, ``behind develop``, ``waiting (<merge state>)``,
+or the outcome it ended with) and how long it has waited since the watch
+started, frozen when it ended. A totals line closes it: merged, pending and
+failed, and the time left before the batch deadline. It is plain lines,
+never a terminal redraw, so it reads the same in a log.
 """
 
 from __future__ import annotations
@@ -79,13 +88,18 @@ _DEVELOP = "develop"
 _RELEASE_PREFIX = "release/"
 _STATES = frozenset({"OPEN", "MERGED", "CLOSED"})
 _VIEW_FIELDS = (
-    "id,url,state,baseRefName,headRefName,headRefOid,autoMergeRequest,"
+    "id,url,title,state,baseRefName,headRefName,headRefOid,autoMergeRequest,"
     "mergeStateStatus,statusCheckRollup,mergeCommit"
 )
 # A status context's failing states; a check-run is judged by
 # github.check_run_bucket.
 _FAILED_CONTEXT_STATES = frozenset({"FAILURE", "ERROR"})
 _FAILED_BUCKETS = frozenset({"fail", "cancel"})
+_PENDING_CONTEXT_STATES = frozenset({"PENDING", "EXPECTED"})
+_PENDING_BUCKET = "pending"
+# The merge states in which GitHub merges an auto-merge PR with no check left.
+_MERGING_STATES = frozenset({"CLEAN", "HAS_HOOKS", "UNSTABLE"})
+_TITLE_WIDTH = 50
 
 _DISABLE_AUTO_MERGE_MUTATION = """
 mutation($id: ID!) {
@@ -147,6 +161,7 @@ class Snapshot:
 
     node_id: str
     url: str
+    title: str
     state: str
     base: str
     head_ref: str
@@ -204,6 +219,7 @@ def snapshot(pr: str) -> Snapshot:
     return Snapshot(
         node_id=_field(data, "id", pr),
         url=_field(data, "url", pr),
+        title=_field(data, "title", pr),
         state=state,
         base=_field(data, "baseRefName", pr),
         head_ref=_field(data, "headRefName", pr),
@@ -354,6 +370,89 @@ def _judge(snap: Snapshot, watched: _Watched, *, allow: bool) -> PRResult | None
     return None
 
 
+def _pending_checks(snap: Snapshot, required: frozenset[str] | None) -> int:
+    """How many of *snap*'s checks have not finished, unregistered required checks included."""
+    seen: set[str] = set()
+    count = 0
+    for node in snap.rollup:
+        if node.get("__typename") == "StatusContext":
+            name = str(node.get("context") or "")
+            pending = str(node.get("state") or "").upper() in _PENDING_CONTEXT_STATES
+        else:
+            name = str(node.get("name") or "")
+            bucket = github.check_run_bucket(
+                str(node.get("status") or ""), str(node.get("conclusion") or "")
+            )
+            pending = bucket == _PENDING_BUCKET
+        seen.add(name)
+        count += pending
+    if required is not None:
+        count += len(required - seen)
+    return count
+
+
+def _pending_state(snap: Snapshot, watched: _Watched) -> str:
+    """The status table's state for *snap*'s PR while it is still pending."""
+    checks = _pending_checks(snap, watched.required)
+    if checks:
+        return f"checks pending ({checks})"
+    if snap.merge_state in _MERGING_STATES:
+        return "checks green, merging"
+    if snap.merge_state == "BEHIND":
+        return f"behind {_DEVELOP}"
+    return f"waiting ({snap.merge_state.lower() or 'no merge state'})"
+
+
+@dataclass(frozen=True)
+class _Row:
+    """One PR's row in the status table; *waited* is in seconds since the watch started."""
+
+    number: str
+    title: str
+    state: str
+    waited: float
+
+
+def _row(snap: Snapshot, state: str, waited: float) -> _Row:
+    number = f"#{snap.url.rsplit('/', 1)[-1]}"
+    return _Row(number=number, title=snap.title, state=state, waited=waited)
+
+
+def _duration(secs: float) -> str:
+    """*secs* as ``1h02m03s`` or ``2m03s``, rounded down to the second."""
+    hours, rest = divmod(max(int(secs), 0), 3600)
+    minutes, seconds = divmod(rest, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{seconds:02d}s"
+    return f"{minutes}m{seconds:02d}s"
+
+
+def _shorten(title: str) -> str:
+    """*title* cut to the table's title width, ending ``...`` when cut."""
+    if len(title) <= _TITLE_WIDTH:
+        return title
+    return title[: _TITLE_WIDTH - 3].rstrip() + "..."
+
+
+def _print_status(
+    rows: Sequence[_Row], results: Collection[PRResult], pending: int, elapsed: float, left: float
+) -> None:
+    """Print the status table: one line per PR, then the totals and the time left."""
+    table = [("PR", "TITLE", "STATE", "WAITING")]
+    table += [(r.number, _shorten(r.title), r.state, _duration(r.waited)) for r in rows]
+    widths = [max(len(line[i]) for line in table) for i in range(3)]
+    print(f"\nWatch status after {_duration(elapsed)}:")
+    for line in table:
+        cells = [cell.ljust(width) for cell, width in zip(line[:3], widths, strict=True)]
+        print(f"  {'  '.join([*cells, line[3]])}")
+    merged = sum(r.outcome == "merged" for r in results)
+    failed = sum(r.outcome.startswith("failed") for r in results)
+    print(
+        f"  {merged} merged, {pending} pending, {failed} failed; "
+        f"{_duration(left)} left before the batch deadline"
+    )
+
+
 def watch(
     prs: Sequence[str], *, allow_provenance_violation: bool, poll_interval: float = 15.0
 ) -> list[PRResult]:
@@ -361,7 +460,8 @@ def watch(
 
     Returns one :class:`PRResult` per distinct PR, in the order given. The
     deadline (:func:`deadline_secs`) and *poll_interval* are checked before any
-    PR is read. Each open PR is read once at start-up and once per interval.
+    PR is read. Each open PR is read once at start-up and once per interval,
+    and the status table is printed after start-up and after each poll.
     """
     deadline = deadline_secs()
     if poll_interval <= 0:
@@ -369,7 +469,9 @@ def watch(
         raise ValueError(msg)
     results: dict[str, PRResult] = {}
     pending: dict[str, tuple[_Watched, Snapshot]] = {}
+    rows: dict[str, _Row] = {}
     order: list[str] = []
+    start = time.monotonic()
     for pr in prs:
         snap = snapshot(pr)
         if snap.url in order:
@@ -378,12 +480,17 @@ def watch(
         watchable = snap.state == "OPEN" and _not_develop(snap) is None
         watched = _Watched(required=github.required_check_names(snap.url) if watchable else None)
         result = _judge(snap, watched, allow=allow_provenance_violation)
+        waited = time.monotonic() - start
         if result is None:
             pending[snap.url] = (watched, snap)
+            rows[snap.url] = _row(snap, _pending_state(snap, watched), waited)
         else:
             results[snap.url] = result
+            rows[snap.url] = _row(snap, result.outcome, waited)
 
     end = time.monotonic() + deadline
+    rows_now = [rows[u] for u in order]
+    _print_status(rows_now, list(results.values()), len(pending), 0.0, float(deadline))
     while pending:
         remaining = end - time.monotonic()
         if remaining <= 0:
@@ -392,11 +499,17 @@ def watch(
         for url, (watched, _) in list(pending.items()):
             snap = snapshot(url)
             result = _judge(snap, watched, allow=allow_provenance_violation)
+            waited = time.monotonic() - start
             if result is None:
                 pending[url] = (watched, snap)
+                rows[url] = _row(snap, _pending_state(snap, watched), waited)
             else:
                 results[url] = result
+                rows[url] = _row(snap, result.outcome, waited)
                 del pending[url]
+        now = time.monotonic()
+        rows_now = [rows[u] for u in order]
+        _print_status(rows_now, list(results.values()), len(pending), now - start, end - now)
 
     for url, (watched, snap) in pending.items():
         detail = f"still pending at the {deadline}s batch deadline ({DEADLINE_ENV})"
