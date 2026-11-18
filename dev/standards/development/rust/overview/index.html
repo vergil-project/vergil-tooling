@@ -18106,7 +18106,17 @@ maintainability, and long-term survivability across repositories.</p>
     <code>vrg-validate</code> also lists every uncovered region as
     <code>&lt;file&gt;:&lt;line&gt;:&lt;col&gt;: uncovered region</code>, from the same report's JSON
     export. The list counts regions as cargo-llvm-cov's region total does: for
-    a generic function, only its best-covered instantiation counts.</li>
+    a generic function, only its best-covered instantiation counts. If that
+    list disagrees with the report's own totals, the report read stale build
+    output, and <code>vrg-validate</code> says so and names the fix.</li>
+<li><code>vrg-validate</code> records the toolchain that built the coverage objects
+    (<code>rustc -vV</code>, <code>cargo -vV</code> and <code>cargo llvm-cov --version</code>) in
+    <code>.vergil/rust-coverage-toolchain.txt</code>. When the toolchain changes, or
+    there is no record, it removes <code>target/llvm-cov-target</code> whole with
+    <code>cargo llvm-cov clean</code> before the tests run. The usual clean covers only
+    the workspace's own artifacts as the current cargo lays them out, so an
+    earlier toolchain's objects would otherwise reach the report and fail
+    the gate on correct code.</li>
 <li>Nothing can be excluded from coverage. An unreachable region is a design
     signal: remove it or make it testable.</li>
 <li>Release build: <code>vrg-validate</code> builds the release profile in its build
