@@ -52,6 +52,7 @@ def pr_state(n: int, **overrides: Any) -> dict[str, Any]:
         "headRefOid": HEAD_A,
         "autoMergeRequest": {"mergeMethod": "SQUASH"},
         "mergeStateStatus": "BLOCKED",
+        "labels": [],
         "statusCheckRollup": [
             {
                 "__typename": "CheckRun",
@@ -68,6 +69,11 @@ def pr_state(n: int, **overrides: Any) -> dict[str, Any]:
 
 def merged(n: int, **overrides: Any) -> dict[str, Any]:
     return pr_state(n, state="MERGED", autoMergeRequest=None, **overrides)
+
+
+def _meta(n: int) -> dict[str, Any]:
+    """The title, branch and labels a :class:`PRResult` for :func:`pr_state` PR *n* carries."""
+    return {"title": f"feat: change {n}", "branch": f"feature/{n}-thing", "labels": ()}
 
 
 def failing_check(name: str, n: int = 1) -> dict[str, Any]:
@@ -195,8 +201,8 @@ def test_already_merged_counts(fake: FakeGitHub) -> None:
     results = run([url(1), url(2)])
 
     assert results == [
-        PRResult(pr=url(1), outcome="merged", detail="", head=HEAD_A),
-        PRResult(pr=url(2), outcome="merged", detail="", head=HEAD_A),
+        PRResult(pr=url(1), outcome="merged", detail="", head=HEAD_A, **_meta(1)),
+        PRResult(pr=url(2), outcome="merged", detail="", head=HEAD_A, **_meta(2)),
     ]
     # The merged PR ended at start-up; only the open one was polled.
     assert fake.views.count(url(1)) == 1
@@ -262,6 +268,7 @@ def test_startup_violation_disables_and_fails(fake: FakeGitHub) -> None:
         outcome="failed: provenance",
         detail="x-vergil-user (user): auto_merge_enabled",
         head=HEAD_A,
+        **_meta(1),
         provenance_violation=True,
     )
     assert fake.disables == [url(1)]
@@ -832,6 +839,8 @@ def test_unreadable_snapshot_raises(fake: FakeGitHub, monkeypatch: pytest.Monkey
         ("autoMergeRequest", "on"),
         ("statusCheckRollup", {"x": 1}),
         ("mergeStateStatus", 3),
+        ("labels", None),
+        ("labels", [{"id": "L_1"}]),
     ],
 )
 def test_malformed_snapshot_raises(fake: FakeGitHub, field_name: str, value: object) -> None:
@@ -839,6 +848,19 @@ def test_malformed_snapshot_raises(fake: FakeGitHub, field_name: str, value: obj
 
     with pytest.raises(FinalizeWatchError, match=field_name):
         run([url(1)])
+
+
+def test_result_carries_title_branch_and_labels(fake: FakeGitHub) -> None:
+    labels = [{"id": "L_1", "name": "dependency-update"}, {"id": "L_2", "name": "x"}]
+    fake.script(1, merged(1, labels=labels))
+
+    [result] = run([url(1)])
+
+    assert (result.title, result.branch, result.labels) == (
+        "feat: change 1",
+        "feature/1-thing",
+        ("dependency-update", "x"),
+    )
 
 
 def test_non_object_snapshot_raises(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -984,7 +1006,7 @@ def test_status_table_off_a_tty_prints_changes_only(
 
 def test_summarize() -> None:
     def result(outcome: finalize_watch.Outcome) -> PRResult:
-        return PRResult(pr=url(1), outcome=outcome, detail="", head=HEAD_A)
+        return PRResult(pr=url(1), outcome=outcome, detail="", head=HEAD_A, **_meta(1))
 
     assert finalize_watch.summarize([result("merged")] * 4 + [result("failed: CI")]) == (
         "4 merged, 1 failed"
