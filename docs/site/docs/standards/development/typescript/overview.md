@@ -386,10 +386,10 @@ gate makes are in
 [TypeScript audit exceptions](../../../guides/validation-matrix.md#typescript-audit-exceptions).
 
 - **Only when no fix exists.** An exception is allowed only when no
-  patched version of the package is available, or none that the
-  dependency path can take (`npm audit` reports `fixAvailable: false`).
-  When a fix exists, upgrade or add an `overrides` entry in
-  `package.json` instead.
+  patched version of the vulnerable package has been released. npm's
+  `fixAvailable` can still name a breaking downgrade of a package that
+  depends on it, which is not a fix. When a patched version exists,
+  upgrade, or add an `overrides` entry in `package.json`, instead.
 - **At most 90 days.** The expiry is a date at most 90 days after the
   day the entry is written; the gate refuses a later one. When it
   expires, the gate fails: fix the dependency if a patch has shipped, or
