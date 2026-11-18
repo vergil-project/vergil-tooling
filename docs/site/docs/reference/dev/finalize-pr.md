@@ -112,10 +112,26 @@ The watch reads each open PR once per poll and judges it in this order:
    Finalize never turns it back on: someone turned it off on purpose, or
    GitHub did, and a human looks first.
 6. **A required check failed:** *failed: CI*, naming the check. A failed
-   check-run of a superseded workflow run does not count. When the base
-   branch's required checks cannot be read, every check counts as
-   required.
-7. **A conflict** with its base: *failed: conflict*.
+   or cancelled check-run of a superseded workflow run does not count (see
+   below). When the base branch's required checks cannot be read, every
+   check counts as required.
+7. **A required check was cancelled** and no newer run of its workflow
+   replaced the cancelled run: *failed: cancelled*, naming the check. The
+   PR stays pending for two minutes first, in case a re-run starts.
+8. **A conflict** with its base: *failed: conflict*.
+
+**A superseded run is not a failure.** A push to an open PR starts a new
+CI run, and the workflow's `concurrency: cancel-in-progress` cancels the
+run in flight on the same head. GitHub keeps the cancelled run's
+check-runs on the PR, and until the new run's jobs start they are the only
+ones there. Finalize judges a failed or cancelled check by its workflow
+run: while a newer run of the same workflow, for the same event, is on the
+PR's head, the check is not a failure and the PR stays pending.
+`vrg-pr-await` and `vrg-repo-status` judge checks the same way.
+
+A PR that ended *failed: CI* or *failed: cancelled* is read again on every
+later poll while the watch goes on. If GitHub has merged it, it is reported
+as *merged*.
 
 A PR still pending when the batch deadline passes ends as *timed out*,
 and its auto-merge stays on, so it may still merge later. The deadline
@@ -364,6 +380,7 @@ each unmerged PR with its reason and the next step:
 | Outcome | Next step |
 | ------- | --------- |
 | *failed: CI*, *failed: conflict*, *failed: closed*, *timed out* | Hand it to an agent, then re-run `vrg-finalize-pr <pr>` |
+| *failed: cancelled* | Re-run its cancelled checks, then re-run `vrg-finalize-pr <pr>` |
 | *failed: auto-merge off*, *failed: provenance* | Investigate before turning auto-merge back on |
 | *failed: not a develop PR* | Finalize watches develop PRs only; a release PR goes through `vrg-release` |
 

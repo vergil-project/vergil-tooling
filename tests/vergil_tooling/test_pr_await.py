@@ -81,6 +81,7 @@ class FakeGitHub:
     sleeps: list[float] = field(default_factory=list)
     orphan_probes: int = 0
     required_reads: int = 0
+    last: dict[str, Any] = field(default_factory=dict)
 
     def script(self, *states: dict[str, Any]) -> None:
         self.states = list(states)
@@ -89,7 +90,8 @@ class FakeGitHub:
         assert args[:2] == ("pr", "view"), args
         self.views.append(args[2])
         state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
-        return dict(state)
+        self.last = state
+        return {k: v for k, v in state.items() if not k.startswith("_")}
 
     def required_check_names(self, pr: str) -> frozenset[str] | None:
         assert pr == PR
@@ -97,8 +99,14 @@ class FakeGitHub:
         return self.required
 
     def failed_check_names(self, pr: str) -> list[str]:
+        """The last read state's own ``_failed`` list, else the scripted one."""
         assert pr == PR
-        return list(self.failed)
+        return list(self.last.get("_failed", self.failed))
+
+    def head_workflow_runs(self, repo: str, sha: str) -> dict[int, github.WorkflowRun]:
+        """The ``_runs`` of the state last read: the Actions runs on its head."""
+        assert (repo, sha) == ("o/r", self.last["headRefOid"])
+        return {run.run_id: run for run in self.last.get("_runs", [])}
 
     def orphaned_check_names(self, pr: str) -> list[str]:
         assert pr == PR
@@ -118,7 +126,13 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     api = FakeGitHub()
     monkeypatch.delenv(DEADLINE_ENV, raising=False)
     monkeypatch.delenv(github.ORPHAN_GRACE_ENV, raising=False)
-    for name in ("read_json", "required_check_names", "failed_check_names", "orphaned_check_names"):
+    for name in (
+        "read_json",
+        "required_check_names",
+        "failed_check_names",
+        "orphaned_check_names",
+        "head_workflow_runs",
+    ):
         monkeypatch.setattr(github, name, getattr(api, name))
     monkeypatch.setattr(pr_await, "time", SimpleNamespace(monotonic=api.monotonic, sleep=api.sleep))
     return api
@@ -242,6 +256,95 @@ def test_required_check_failed_is_named(fake: FakeGitHub) -> None:
     assert result.failed_checks == ("test / unit",)
     assert result.to_output()["failed_checks"] == ["test / unit"]
     assert "test / unit" in result.detail
+
+
+def run_check(name: str, run_id: int, conclusion: str = "") -> dict[str, Any]:
+    """A CI check-run of Actions run *run_id*."""
+    return {
+        **check_run(name, conclusion),
+        "detailsUrl": f"https://github.com/o/r/actions/runs/{run_id}/job/{run_id + 1}",
+    }
+
+
+def ci_run(run_id: int, status: str, conclusion: str = "") -> github.WorkflowRun:
+    return github.WorkflowRun(run_id, 276918787, "pull_request", status, conclusion)
+
+
+OLD_RUN = 44335987154
+NEW_RUN = 44336022050
+
+
+def test_issue_1324_superseded_cancel_keeps_waiting_until_merged(fake: FakeGitHub) -> None:
+    # A push cancelled the run in flight; its newer run on the same head goes green (#4692).
+    fake.script(
+        pr_state(
+            statusCheckRollup=[run_check("test / unit", OLD_RUN, "CANCELLED")],
+            _failed=["test / unit"],
+            _runs=[ci_run(OLD_RUN, "completed", "cancelled"), ci_run(NEW_RUN, "queued")],
+        ),
+        pr_state(
+            statusCheckRollup=[
+                run_check("test / unit", OLD_RUN, "CANCELLED"),
+                run_check("test / unit", NEW_RUN),
+            ],
+            _failed=[],
+            _runs=[ci_run(OLD_RUN, "completed", "cancelled"), ci_run(NEW_RUN, "in_progress")],
+        ),
+        merged(),
+    )
+
+    result = wait_for_merge(PR)
+
+    assert result.merged
+    assert fake.sleeps == [15, 15]
+
+
+def test_cancelled_check_with_no_newer_run_after_the_grace(fake: FakeGitHub) -> None:
+    fake.script(
+        pr_state(
+            statusCheckRollup=[run_check("test / unit", OLD_RUN, "CANCELLED")],
+            _failed=["test / unit"],
+            _runs=[ci_run(OLD_RUN, "completed", "cancelled")],
+        )
+    )
+
+    result = wait_for_merge(PR, cancel_grace=30)
+
+    assert result.reason == "check_cancelled"
+    assert result.failed_checks == ("test / unit",)
+    assert result.detail == (
+        "required check cancelled: test / unit; no newer run started within 30s"
+    )
+    assert fake.sleeps == [15, 15]
+
+
+def test_standing_block_cancelled_check_from_one_read(fake: FakeGitHub) -> None:
+    fake.script(
+        pr_state(
+            statusCheckRollup=[run_check("test / unit", OLD_RUN, "CANCELLED")],
+            _failed=["test / unit"],
+            _runs=[ci_run(OLD_RUN, "completed", "cancelled")],
+        )
+    )
+
+    result = pr_await.standing_block(PR)
+
+    assert result is not None
+    assert result.reason == "check_cancelled"
+    assert "a re-run may still start" in result.detail
+    assert fake.required_reads == 1
+
+
+def test_standing_block_superseded_cancel_is_none(fake: FakeGitHub) -> None:
+    fake.script(
+        pr_state(
+            statusCheckRollup=[run_check("test / unit", OLD_RUN, "CANCELLED")],
+            _failed=["test / unit"],
+            _runs=[ci_run(OLD_RUN, "completed", "cancelled"), ci_run(NEW_RUN, "queued")],
+        )
+    )
+
+    assert pr_await.standing_block(PR) is None
 
 
 def test_non_required_failure_keeps_waiting(fake: FakeGitHub) -> None:

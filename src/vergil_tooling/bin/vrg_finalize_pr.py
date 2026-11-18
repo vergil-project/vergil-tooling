@@ -182,6 +182,7 @@ _INVESTIGATE = "investigate before re-enabling auto-merge"
 _NEXT_STEP_BY_OUTCOME: dict[str, str] = {
     "failed: auto-merge off": _INVESTIGATE,
     "failed: provenance": _INVESTIGATE,
+    "failed: cancelled": "re-run its cancelled checks, then rerun `vrg-finalize-pr {pr}`",
     "failed: not a develop PR": (
         "finalize watches develop PRs only; a release PR goes through vrg-release"
     ),

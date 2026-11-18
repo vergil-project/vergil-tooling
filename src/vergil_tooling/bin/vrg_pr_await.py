@@ -9,9 +9,11 @@ merge from a failure:
 - **0, merged.** The PR merged, during the wait or before it started.
 - **1, cannot merge.** The PR cannot merge as it stands. The JSON's
   ``reason`` names why: ``check_failed`` (``failed_checks`` names the
-  required checks), ``conflict``, ``auto_merge_off``, ``closed``,
-  ``orphaned_check`` (``orphaned_checks`` names them) or ``timed_out``
-  (``$VRG_FINALIZE_DEADLINE`` passed with the PR still pending). The same
+  required checks), ``check_cancelled`` (a required check was cancelled
+  and no newer run replaced it; ``failed_checks`` names it), ``conflict``,
+  ``auto_merge_off``, ``closed``, ``orphaned_check`` (``orphaned_checks``
+  names them) or ``timed_out`` (``$VRG_FINALIZE_DEADLINE`` passed with the
+  PR still pending). The same
   reason is printed on stderr. The agent running pr-watch deals with it.
 - **2, any other error.** Bad arguments, a malformed ``$VRG_FINALIZE_DEADLINE``
   or ``$VRG_ORPHAN_GRACE`` (checked before any waiting), a GitHub API or

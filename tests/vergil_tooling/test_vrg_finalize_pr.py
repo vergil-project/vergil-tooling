@@ -3386,6 +3386,10 @@ def test_report_lists_merged_and_unmerged_with_reasons(
     ("outcome", "step"),
     [
         ("failed: CI", f"hand it to an agent, then rerun `vrg-finalize-pr {_PR_B}`"),
+        (
+            "failed: cancelled",
+            f"re-run its cancelled checks, then rerun `vrg-finalize-pr {_PR_B}`",
+        ),
         ("failed: conflict", f"hand it to an agent, then rerun `vrg-finalize-pr {_PR_B}`"),
         ("failed: closed", f"hand it to an agent, then rerun `vrg-finalize-pr {_PR_B}`"),
         ("timed out", f"hand it to an agent, then rerun `vrg-finalize-pr {_PR_B}`"),

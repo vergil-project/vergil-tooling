@@ -311,6 +311,10 @@ and `orphaned_checks`. On exit 1 the reason is also printed on stderr. The
 reasons are:
 
 - `check_failed`: a required check concluded in failure; `failed_checks`
+  names it. A failed or cancelled check-run of a workflow run that a newer
+  run of the same workflow superseded on the PR's head does not count.
+- `check_cancelled`: a required check was cancelled, and no newer run of its
+  workflow replaced the cancelled run within two minutes; `failed_checks`
   names it.
 - `conflict`: the PR has a merge conflict with its base.
 - `auto_merge_off`: auto-merge is off, at the start or after a push.
