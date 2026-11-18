@@ -21,6 +21,7 @@ from vergil_tooling.lib.security_records import (
     NoteError,
     PrivateHomeError,
     RetargetError,
+    RetargetRefusedError,
     SecurityIssue,
     advisory_home,
     advisory_line,
@@ -34,6 +35,8 @@ from vergil_tooling.lib.security_records import (
     mark_issue,
     note_header,
     note_record,
+    pair,
+    pair_check,
     parse_advisory_lines,
     parse_advisory_refs,
     parse_tracking,
@@ -648,7 +651,7 @@ def test_retarget_marks_targets_before_rewriting_tracking(issues: Issues) -> Non
     issues.add(C, "Neutral.")
     issues.fail_on = "POST repos/org/tool/issues/12/labels"
     with pytest.raises(RetargetError) as excinfo:
-        retarget(HOME, GHSA, (C,))
+        retarget(HOME, GHSA, (C,), source=A)
     message = str(excinfo.value)
     assert message.startswith(f"advisory {GHSA}: marking org/tool#12 failed: ")
     assert SECRET not in message
@@ -664,7 +667,7 @@ def test_retarget_unmarks_dropped_issues(issues: Issues) -> None:
     issues.add(A, f"Neutral.\n\n{advisory_line(HOME, GHSA)}", {"security"})
     issues.add(B, f"Kept.\n\n{advisory_line(HOME, GHSA)}", {"security"})
     issues.add(C, "New task.")
-    retarget(HOME, GHSA, (B, C, C))
+    retarget(HOME, GHSA, (B, C, C), source=A)
     # The dropped issue loses the label and the line and gets the moved comment.
     assert issues.labels[A] == set()
     assert issues.bodies[A] == "Neutral."
@@ -681,24 +684,25 @@ def test_retarget_unmarks_dropped_issues(issues: Issues) -> None:
     )
 
 
-def test_retarget_onto_a_description_with_no_text(issues: Issues) -> None:
+def test_pair_onto_a_description_with_no_text(issues: Issues) -> None:
     issues.description = ""
     issues.add(C, "")
-    retarget(HOME, GHSA, (C,))
+    pair(HOME, GHSA, C)
     assert issues.description == "Tracking issue: org/tool#12"
 
 
 def test_retarget_never_unmarks_a_renamed_issue(issues: Issues) -> None:
     """A transferred issue's old number is rewritten away but never unmarked."""
     issues.add(C, advisory_line(HOME, GHSA), {"security"})
-    retarget(HOME, GHSA, (C,), renamed=(A,))
+    issues.moved[A] = C
+    retarget(HOME, GHSA, (C,), source=A, renamed=(A,))
     assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
     assert not [w for w in issues.writes if "/issues/10" in w[1]]
 
 
 def test_retarget_requires_targets(issues: Issues) -> None:
     with pytest.raises(RetargetError, match=f"advisory {GHSA}: no target issues given"):
-        retarget(HOME, GHSA, ())
+        retarget(HOME, GHSA, (), source=A)
 
 
 @pytest.mark.parametrize(
@@ -719,17 +723,18 @@ def test_retarget_names_the_failed_step(issues: Issues, fail_on: str, step: str)
     issues.add(C, "")
     issues.fail_on = fail_on
     with pytest.raises(RetargetError) as excinfo:
-        retarget(HOME, GHSA, (C,))
+        retarget(HOME, GHSA, (C,), source=A)
     assert str(excinfo.value).startswith(f"advisory {GHSA}: {step} failed: ")
     assert SECRET not in str(excinfo.value)
     assert SECRET not in "".join(traceback.format_exception(excinfo.value))
 
 
 def test_retarget_wraps_a_non_gh_failure(issues: Issues) -> None:
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
     issues.add(C, "")
     issues.ensure_labels.side_effect = labels.UnknownLabelError(["security"])
     with pytest.raises(RetargetError, match="marking org/tool#12 failed") as excinfo:
-        retarget(HOME, GHSA, (C,))
+        retarget(HOME, GHSA, (C,), source=A)
     assert isinstance(excinfo.value.__cause__, labels.UnknownLabelError)
 
 
@@ -765,12 +770,12 @@ def test_retarget_rerun_after_unmark_failure_unmarks_once(issues: Issues, fail_o
     _dropping_a(issues)
     issues.fail_on = fail_on
     with pytest.raises(RetargetError, match="unmarking org/.github#10 failed"):
-        retarget(HOME, GHSA, (C,))
+        retarget(HOME, GHSA, (C,), source=A)
     # The tracking lines already name only C, so only A itself still points here.
     assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
     assert issues.labels[A] == {"security", "bug"}
     issues.fail_on = None
-    retarget(HOME, GHSA, (C,))
+    retarget(HOME, GHSA, (C,), source=A)
     _assert_moved_a_to_c(issues)
     assert len([w for w in issues.writes if w[1].endswith("/10/comments")]) == 1
 
@@ -789,30 +794,28 @@ def test_retarget_rerun_after_an_early_failure_completes(issues: Issues, fail_on
     _dropping_a(issues)
     issues.fail_on = fail_on
     with pytest.raises(RetargetError):
-        retarget(HOME, GHSA, (C,))
+        retarget(HOME, GHSA, (C,), source=A)
     issues.fail_on = None
-    retarget(HOME, GHSA, (C,))
+    retarget(HOME, GHSA, (C,), source=A)
     _assert_moved_a_to_c(issues)
 
 
 def test_retarget_rerun_after_success_changes_nothing(issues: Issues) -> None:
     _dropping_a(issues)
-    retarget(HOME, GHSA, (C,))
+    retarget(HOME, GHSA, (C,), source=A)
     writes = len(issues.writes)
-    retarget(HOME, GHSA, (C,))
-    # Only the idempotent advisory rewrite repeats; no issue is written again.
-    assert [w[1] for w in issues.writes[writes:]] == [
-        f"repos/org/.github/security-advisories/{GHSA}"
-    ]
+    retarget(HOME, GHSA, (C,), source=A)
+    # The source carries the moved-to comment naming C: the re-run writes nothing.
+    assert issues.writes[writes:] == []
     _assert_moved_a_to_c(issues)
 
 
 def test_retarget_unmarks_an_untracked_issue_that_names_the_advisory(issues: Issues) -> None:
     """The dropped set comes from the issues too, not only the old tracking lines."""
-    issues.description = SECRET
+    _dropping_a(issues)
     issues.add(D, f"Stray.\n\n{advisory_line(HOME, GHSA)}", {"security"})
-    issues.add(C, "")
-    retarget(HOME, GHSA, (C,))
+    issues.closed.add(D)
+    retarget(HOME, GHSA, (C,), source=A)
     assert issues.labels[D] == set()
     assert issues.bodies[D] == "Stray."
     assert issues.comments[D] == [MOVED]
@@ -821,7 +824,7 @@ def test_retarget_unmarks_an_untracked_issue_that_names_the_advisory(issues: Iss
 def test_retarget_never_unmarks_a_renamed_issue_that_carries_the_line(issues: Issues) -> None:
     issues.add(A, advisory_line(HOME, GHSA), {"security"})
     issues.add(C, advisory_line(HOME, GHSA), {"security"})
-    retarget(HOME, GHSA, (C,), renamed=(A,))
+    retarget(HOME, GHSA, (C,), source=A, renamed=(A,))
     assert not [w for w in issues.writes if "/issues/10" in w[1]]
     assert issues.labels[A] == {"security"}
     assert issues.comments[A] == []
@@ -834,7 +837,7 @@ def test_retarget_onto_a_transferred_issue_leaves_it_marked(issues: Issues) -> N
     """The old number tracked, the issue moved to the target: nothing to unmark."""
     issues.add(C, "Moved.")
     issues.moved[A] = C
-    notes = retarget(HOME, GHSA, (C,))
+    notes = retarget(HOME, GHSA, (C,), source=A)
     assert notes == (
         "org/.github#10 was transferred to org/tool#12, a target: "
         "nothing left to unmark at org/.github#10",
@@ -851,7 +854,7 @@ def test_retarget_follows_a_transfer_to_an_issue_not_targeted(issues: Issues) ->
     issues.add(D, f"Moved.\n\n{advisory_line(HOME, GHSA)}", {"security", "bug"})
     issues.add(C, "")
     issues.moved[A] = D
-    notes = retarget(HOME, GHSA, (C,))
+    notes = retarget(HOME, GHSA, (C,), source=A)
     assert notes == (
         "org/.github#10 was transferred to org/tool#13: followed the transfer and "
         "unmarked org/tool#13",
@@ -867,7 +870,7 @@ def test_retarget_follows_a_transfer_to_an_issue_with_no_line(issues: Issues) ->
     issues.add(D, "Moved, line removed.", {"bug"})
     issues.add(C, "")
     issues.moved[A] = D
-    notes = retarget(HOME, GHSA, (C,))
+    notes = retarget(HOME, GHSA, (C,), source=A)
     assert notes == (
         "org/.github#10 was transferred to org/tool#13: followed the transfer and "
         "org/tool#13 has no line for this advisory, nothing to unmark",
@@ -877,14 +880,14 @@ def test_retarget_follows_a_transfer_to_an_issue_with_no_line(issues: Issues) ->
 
 def test_retarget_reports_no_notes_without_a_transfer(issues: Issues) -> None:
     _dropping_a(issues)
-    assert retarget(HOME, GHSA, (C,)) == ()
+    assert retarget(HOME, GHSA, (C,), source=A) == ()
 
 
 def test_retarget_never_touches_an_issue_naming_another_advisory(issues: Issues) -> None:
     issues.add(A, advisory_line(HOME, GHSA), {"security"})
     issues.add(D, f"Other.\n\n{advisory_line(HOME, OTHER)}", {"security"})
     issues.add(C, "")
-    retarget(HOME, GHSA, (C,))
+    retarget(HOME, GHSA, (C,), source=A)
     assert not [w for w in issues.writes if "/issues/13" in w[1]]
     assert issues.bodies[D] == f"Other.\n\n{advisory_line(HOME, OTHER)}"
     assert issues.labels[D] == {"security"}
@@ -903,11 +906,11 @@ def test_retarget_two_advisories_off_one_issue_in_either_order(
         OTHER: f"{SECRET}\n\nTracking issue: org/.github#10",
     }
     first, second = order
-    retarget(HOME, first, (C,))
+    retarget(HOME, first, (C,), source=A)
     # After the first: A keeps the other advisory's line and the label.
     assert parse_advisory_refs(issues.bodies[A]) == (second,)
     assert issues.labels[A] == {"security", "bug"}
-    retarget(HOME, second, (C,))
+    retarget(HOME, second, (C,), source=A)
     assert parse_advisory_refs(issues.bodies[A]) == ()
     assert issues.bodies[A] == "Neutral."
     assert issues.labels[A] == {"bug"}
@@ -925,12 +928,260 @@ def test_retarget_never_touches_a_tracked_issue_naming_another_advisory(issues: 
     other = f"Other.\n\n{advisory_line(HOME, OTHER)}"
     issues.add(A, other, {"security"})
     issues.add(C, "")
-    retarget(HOME, GHSA, (C,))
+    retarget(HOME, GHSA, (C,), source=A)
     assert not [w for w in issues.writes if "/issues/10" in w[1]]
     assert issues.bodies[A] == other
     assert issues.labels[A] == {"security"}
     assert issues.comments[A] == []
     assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
+
+
+# --- retarget: the source and drop checks (vergil-tooling#4718) -----------------
+#
+# A is the source (the planning issue, say), C the new fix task, B another
+# tracked issue and D a second dropped one.
+
+TRACKING_A_B = f"{SECRET}\n\nTracking issue: org/.github#10\nTracking issue: org/.github#11"
+
+
+def _issue_writes(issues: Issues) -> list[tuple[str, str, dict[str, object]]]:
+    return [w for w in issues.writes if "security-advisories" not in w[1]]
+
+
+def test_retarget_refuses_untracked_source(issues: Issues) -> None:
+    _dropping_a(issues)
+    issues.add(B, "Not tracked.")
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        retarget(HOME, GHSA, (C,), source=B)
+    message = str(excinfo.value)
+    assert message == (
+        f"advisory {GHSA}: --from org/.github#11 is not an issue it tracks (it tracks "
+        f"org/.github#10); run: vrg-security-record retarget {GHSA} --from 'org/.github#10' "
+        "--to 'org/tool#12'"
+    )
+    assert SECRET not in message
+    # Nothing was marked, rewritten or unmarked.
+    assert issues.writes == []
+    issues.ensure_labels.assert_not_called()
+
+
+def test_retarget_refuses_a_source_when_nothing_is_tracked(issues: Issues) -> None:
+    issues.description = SECRET
+    issues.add(A, "Neutral.")
+    issues.add(C, "")
+    with pytest.raises(RetargetRefusedError, match="it tracks no issue") as excinfo:
+        retarget(HOME, GHSA, (C,), source=A)
+    assert "create --resume" in str(excinfo.value)
+    assert issues.writes == []
+
+
+def test_retarget_refuses_dropping_open_issue(issues: Issues) -> None:
+    issues.description = TRACKING_A_B
+    _dropping_a(issues)
+    issues.add(B, f"Other task.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        retarget(HOME, GHSA, (C,), source=A)
+    message = str(excinfo.value)
+    assert message.startswith(
+        f"advisory {GHSA}: this would stop tracking the open issue org/.github#11; "
+        f"to keep tracking every open issue, run: vrg-security-record retarget {GHSA} "
+        "--from 'org/.github#10' --to 'org/.github#11' --to 'org/tool#12'. "
+    )
+    assert "human's decision" in message
+    assert "--drop" not in message
+    assert issues.writes == []
+    # With B named in drop, the move goes ahead and unmarks B too.
+    retarget(HOME, GHSA, (C,), source=A, drop=(B,))
+    assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
+    assert parse_advisory_refs(issues.bodies[B]) == ()
+    _assert_moved_a_to_c(issues)
+
+
+def test_retarget_keeps_an_open_issue_named_as_a_target(issues: Issues) -> None:
+    issues.description = TRACKING_A_B
+    _dropping_a(issues)
+    issues.add(B, f"Other task.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    retarget(HOME, GHSA, (B, C), source=A)
+    assert issues.description == (
+        f"{SECRET}\n\nTracking issue: org/.github#11\nTracking issue: org/tool#12"
+    )
+    assert not [w for w in issues.writes if "/issues/11" in w[1]]
+
+
+def test_retarget_drops_a_closed_issue_without_drop(issues: Issues) -> None:
+    issues.description = TRACKING_A_B
+    _dropping_a(issues)
+    issues.add(B, f"Done.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    issues.closed.add(B)
+    retarget(HOME, GHSA, (C,), source=A)
+    assert parse_advisory_refs(issues.bodies[B]) == ()
+
+
+def test_retarget_source_may_be_dropped(issues: Issues) -> None:
+    """The open source is the issue being handed on: no drop is needed for it."""
+    _dropping_a(issues)
+    assert A not in issues.closed
+    retarget(HOME, GHSA, (C,), source=A)
+    _assert_moved_a_to_c(issues)
+
+
+def test_retarget_unmarks_source_last(issues: Issues) -> None:
+    issues.description = f"{SECRET}\n\nTracking issue: org/.github#10\nTracking issue: org/tool#13"
+    _dropping_a(issues)
+    issues.add(D, f"Stray.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    retarget(HOME, GHSA, (C,), source=A, drop=(D,))
+    comments = [w[1] for w in issues.writes if w[1].endswith("/comments")]
+    assert comments == ["repos/org/tool/issues/13/comments", "repos/org/.github/issues/10/comments"]
+
+
+def test_retarget_rerun_after_interrupted_unmark(issues: Issues) -> None:
+    """Lines already rewritten to C; A still names the advisory: the re-run unmarks A."""
+    _dropping_a(issues)
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    mark_issue(C, HOME, GHSA)
+    issues.writes.clear()
+    retarget(HOME, GHSA, (C,), source=A)
+    _assert_moved_a_to_c(issues)
+    # Only A's unmark was written: no mark, no rewrite.
+    assert [(w[0], w[1]) for w in issues.writes] == [
+        ("POST", "repos/org/.github/issues/10/comments"),
+        ("PATCH", "repos/org/.github/issues/10"),
+    ]
+
+
+def test_retarget_rerun_after_interrupted_other_unmark(issues: Issues) -> None:
+    """D unmarked already, A (the source, unmarked last) still marked: the re-run finishes."""
+    _dropping_a(issues)
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    mark_issue(C, HOME, GHSA)
+    issues.add(D, "Stray.", set())
+    issues.comments[D] = [MOVED]
+    issues.writes.clear()
+    retarget(HOME, GHSA, (C,), source=A, drop=(D,))
+    _assert_moved_a_to_c(issues)
+    assert not [w for w in issues.writes if "/issues/13" in w[1]]
+
+
+def test_retarget_rerun_after_completed_run(issues: Issues) -> None:
+    _dropping_a(issues)
+    retarget(HOME, GHSA, (C,), source=A)
+    issues.writes.clear()
+    issues.ensure_labels.reset_mock()
+    notes = retarget(HOME, GHSA, (C,), source=A)
+    assert notes == ()
+    assert issues.writes == []
+    _assert_moved_a_to_c(issues)
+
+
+@pytest.mark.parametrize(
+    "comments",
+    [
+        [],
+        ["Security record moved to org/tool#13"],
+        ["Security record moved to org/tool#12, org/tool#13"],
+    ],
+)
+def test_retarget_refuses_unrelated_source_when_targets_match(
+    issues: Issues, comments: list[str]
+) -> None:
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
+    issues.add(B, "Unrelated.")
+    issues.comments[B] = comments
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        retarget(HOME, GHSA, (C,), source=B)
+    assert "it tracks org/tool#12" in str(excinfo.value)
+    assert "--from 'org/tool#12' --to 'org/tool#12'" in str(excinfo.value)
+    assert issues.writes == []
+
+
+def test_retarget_rerun_from_a_transferred_source(issues: Issues) -> None:
+    """A transfer's recovery command: --from the old number, which leads to the target."""
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    issues.add(C, f"Moved.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    issues.moved[A] = C
+    assert retarget(HOME, GHSA, (C,), source=A) == ()
+    assert issues.writes == []
+
+
+def test_transfer_recovery_command_is_accepted(issues: Issues) -> None:
+    """intake-route's recovery after a transfer: --from the old number, keeping B."""
+    issues.description = TRACKING_A_B
+    issues.add(B, f"Other task.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    issues.add(C, f"Moved.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    issues.moved[A] = C
+    notes = retarget(HOME, GHSA, (B, C), source=A)
+    assert notes == (
+        "org/.github#10 was transferred to org/tool#12, a target: "
+        "nothing left to unmark at org/.github#10",
+    )
+    assert issues.description == (
+        f"{SECRET}\n\nTracking issue: org/.github#11\nTracking issue: org/tool#12"
+    )
+    assert issues.comments[B] == []
+
+
+def test_drop_check_reads_unlisted_issue_state(issues: Issues) -> None:
+    """A tracked issue without the security label is absent from the listing."""
+    issues.description = TRACKING_A_B
+    _dropping_a(issues)
+    issues.add(B, "Lost its label.", set())
+    with pytest.raises(RetargetRefusedError, match="the open issue org/.github#11"):
+        retarget(HOME, GHSA, (C,), source=A)
+    assert issues.writes == []
+    # A failed state read refuses too, before any write.
+    issues.fail_on = "GET repos/org/.github/issues/11"
+    with pytest.raises(RetargetError, match="reading the state of org/.github#11 failed"):
+        retarget(HOME, GHSA, (C,), source=A)
+    assert issues.writes == []
+    # Closed, it is dropped without drop.
+    issues.fail_on = None
+    issues.closed.add(B)
+    retarget(HOME, GHSA, (C,), source=A)
+    _assert_moved_a_to_c(issues)
+
+
+# --- pair: the first pairing, for create (vergil-tooling#4718) ------------------
+
+
+def test_pair_marks_then_writes_the_first_tracking_line(issues: Issues) -> None:
+    issues.description = SECRET
+    issues.add(C, "Neutral.")
+    pair(HOME, GHSA, C)
+    assert issues.labels[C] == {"security"}
+    assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
+    kinds = [(w[0], "advisory" if "advisories" in w[1] else w[1]) for w in issues.writes]
+    assert kinds[-1] == ("PATCH", "advisory")
+    assert ("PATCH", "repos/org/tool/issues/12") in kinds[:-1]
+
+
+def test_pair_resumed_finishes_the_mark(issues: Issues) -> None:
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    issues.add(C, "Neutral.")
+    pair(HOME, GHSA, C)
+    assert parse_advisory_refs(issues.bodies[C]) == (GHSA,)
+    assert issues.patches() == []
+
+
+def test_pair_refuses_existing_tracking(issues: Issues) -> None:
+    issues.add(B, "Neutral.")
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        pair(HOME, GHSA, B)
+    assert str(excinfo.value) == (
+        f"advisory {GHSA} already tracks org/.github#10, so its first pair is made; to move "
+        f"it, run: vrg-security-record retarget {GHSA} --from 'org/.github#10' "
+        "--to 'org/.github#11'"
+    )
+    assert issues.writes == []
+    issues.ensure_labels.assert_not_called()
+
+
+def test_pair_check_without_an_issue_refuses_any_tracking(issues: Issues) -> None:
+    with pytest.raises(RetargetRefusedError, match="already tracks org/.github#10"):
+        pair_check(HOME, GHSA, None)
+    issues.description = SECRET
+    pair_check(HOME, GHSA, None)
+    assert issues.writes == []
 
 
 # --- security issues ------------------------------------------------------------
@@ -1176,7 +1427,7 @@ def test_retarget_issue_calls_in_order(issues: Issues) -> None:
     """Marking happens, then the advisory PATCH, then the unmark — never out of order."""
     issues.add(A, advisory_line(HOME, GHSA), {"security"})
     issues.add(C, "")
-    retarget(HOME, GHSA, (C,))
+    retarget(HOME, GHSA, (C,), source=A)
     kinds = [(method, "advisory" if "advisories" in ep else ep) for method, ep, _ in issues.writes]
     assert kinds == [
         ("POST", "repos/org/tool/issues/12/labels"),

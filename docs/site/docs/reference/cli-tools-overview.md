@@ -962,16 +962,18 @@ Which routes an item allows depends on the container epic it is in:
 | Exit codes | 0 routed, 1 refused or error, 2 bad arguments (including a missing `--revisit-when`, a malformed `--date`, a non-integer `--tasks` or an unknown `--confidence`) |
 | Status | Active |
 
-A `security` item keeps its advisory links. A recreate retargets every
-advisory the item names before the original closes, and a transfer
-retargets every one after the move; on a failure, either names every
-advisory still not retargeted. A split retargets an item's one advisory
+A `security` item keeps its advisory links. Every retarget moves the
+advisory from the item and keeps every other issue it tracks. A recreate
+retargets every advisory the item names before the original closes, and a
+transfer retargets every one after the move; on a failure, either names
+every advisory still not retargeted, with a `retarget --from` command for
+each. A split retargets an item's one advisory
 before the original closes. A split of an item naming several advisories
 is refused before any change, because which advisory goes to which task
 can't be inferred:
 
 ```text
-vrg-intake-route: <owner>/<repo>#<N> names several advisories (<GHSA-id>, <GHSA-id>); retarget each by hand with vrg-security-record retarget, then split
+vrg-intake-route: <owner>/<repo>#<N> names several advisories (<GHSA-id>, <GHSA-id>); retarget each by hand to the tasks that fix it, keeping every other issue it tracks (vrg-security-record retarget <GHSA-id> --from '<owner>/<repo>#<N>' --to <task> [--to …], then vrg-security-record retarget <GHSA-id> --from '<owner>/<repo>#<N>' --to <task> [--to …]), then split
 ```
 
 See [Security Records](../guides/security-records.md#when-the-issue-moves).
@@ -982,8 +984,9 @@ Record a security finding as a private draft advisory in `<org>/.github`
 paired with a neutral `security`-labelled intake issue (epic
 vergil-project/.github#517). `create` makes the pair (or attaches an
 advisory to an existing issue, or resumes an unfinished pair), `list` and
-`show` read records, `retarget` moves an advisory's tracking to new
-issues, `sync` sets each paired advisory's state from its issues and
+`show` read records, `retarget` moves an advisory's tracking from an issue
+it tracks (`--from`) to new issues, refusing to stop tracking an open
+issue unless `--drop` names it, `sync` sets each paired advisory's state from its issues and
 reports broken pairs (`--dry-run` previews it), and `close` closes a draft
 advisory whose issues are all closed, posting the GHSA ID and a required
 `--reason` on each of them first, and `note` appends a dated private note
@@ -994,9 +997,9 @@ from a file to an advisory's description (append-only). Advisory text is printed
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_security_record` (library: `lib/security_records.py`) |
-| Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --to REF [--to REF …]`; `sync [--dry-run]`; `close GHSA-ID --reason TEXT`; `note GHSA-ID --file FILE` |
+| Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --from REF --to REF [--to REF …] [--drop REF …]`; `sync [--dry-run]`; `close GHSA-ID --reason TEXT`; `note GHSA-ID --file FILE` |
 | Preconditions | The org's `.github` is public; Repository security advisories: Read and write on the identity's App (or a human `gh` login with access) |
-| Failure mode | A partial pair exits 1 naming what exists and the exact `--resume` command that finishes it; a private `.github`, a duplicate draft, or `--details` under `VRG_EPIC_SWEEP` is refused; `sync` exits 1 on a broken pair after syncing the rest |
+| Failure mode | A partial pair exits 1 naming what exists and the exact `--resume` command that finishes it; a private `.github`, a duplicate draft, or `--details` under `VRG_EPIC_SWEEP` is refused; `retarget` refuses, before any write, a `--from` the advisory does not track and dropping an open tracked issue, printing the command that would succeed; `create` refuses an advisory that already tracks another issue; `sync` exits 1 on a broken pair after syncing the rest |
 | Exit codes | 0 success, 1 refused or error, 2 bad arguments |
 | Status | Active |
 

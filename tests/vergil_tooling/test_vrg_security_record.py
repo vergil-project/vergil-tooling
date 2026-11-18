@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import DEFAULT, MagicMock, call, patch
 
 import pytest
 
@@ -13,8 +13,15 @@ from vergil_tooling.bin import vrg_security_record
 from vergil_tooling.bin.vrg_security_record import main
 from vergil_tooling.lib import github, security_records
 from vergil_tooling.lib.epics import IssueRef
-from vergil_tooling.lib.security_records import Advisory, RetargetError, SecurityIssue
+from vergil_tooling.lib.security_records import (
+    Advisory,
+    RetargetError,
+    RetargetRefusedError,
+    SecurityIssue,
+)
 from vergil_tooling.lib.security_records import advisory_home as real_advisory_home
+from vergil_tooling.lib.security_records import pair as real_pair
+from vergil_tooling.lib.security_records import pair_check as real_pair_check
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -55,6 +62,7 @@ def env() -> Iterator[MagicMock]:
         patch(f"{_SR}.create_advisory", return_value=GHSA) as create_adv,
         patch(f"{_SR}.mark_issue") as mark,
         patch(f"{_SR}.retarget") as retarget,
+        patch.multiple(_SR, pair=DEFAULT, pair_check=DEFAULT) as pairing,
         patch(f"{_SR}.list_advisories", return_value=[]) as list_adv,
         patch(f"{_SR}.read_text", return_value=(SECRET, f"{SECRET} details")) as read_text,
         patch(f"{_EP}.queue_home", return_value=(HOME, "org")) as queue_home,
@@ -76,6 +84,8 @@ def env() -> Iterator[MagicMock]:
             "create_advisory": create_adv,
             "mark_issue": mark,
             "retarget": retarget,
+            "pair": pairing["pair"],
+            "pair_check": pairing["pair_check"],
             "list_advisories": list_adv,
             "read_text": read_text,
             "queue_home": queue_home,
@@ -134,7 +144,7 @@ def test_create_full_pair_order(
             "ensure_labels",
             "create_issue",
             "add_child",
-            "retarget",
+            "pair",
         }
     ]
     assert order == [
@@ -143,7 +153,7 @@ def test_create_full_pair_order(
         "ensure_labels",
         "create_issue",
         "add_child",
-        "retarget",
+        "pair",
     ]
     env.find_duplicate.assert_called_once_with(HOME, summary=SECRET, affected_repo="org/tool")
     adv = env.create_advisory.call_args
@@ -161,7 +171,7 @@ def test_create_full_pair_order(
     assert SECRET not in issue["body"]
     assert SECRET not in issue["title"]
     env.add_child.assert_called_once_with(INTAKE, ISSUE)
-    env.retarget.assert_called_once_with(HOME, GHSA, (ISSUE,))
+    env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
     env.ensure_intake_epic.assert_called_once_with("org/tool")
     captured = capsys.readouterr()
     assert f"Recorded {GHSA} in {HOME}, tracked by {ISSUE.slug}." in captured.out
@@ -194,7 +204,7 @@ def test_create_add_child_failure_prints_resume_with_issue(
     assert f"--resume {GHSA}" in err
     assert f"--issue '{ISSUE.slug}'" in err
     assert SECRET not in err
-    env.retarget.assert_not_called()
+    env.pair.assert_not_called()
 
 
 def test_resume_with_issue_links_under_intake_idempotently(
@@ -207,16 +217,16 @@ def test_resume_with_issue_links_under_intake_idempotently(
     env.create_issue.assert_not_called()
     env.mark_issue.assert_called_once_with(ISSUE, HOME, GHSA)
     env.add_child.assert_called_once_with(INTAKE, ISSUE)
-    env.retarget.assert_called_once_with(HOME, GHSA, (ISSUE,))
+    env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
     names = _names(env)
-    assert names.index("add_child") < names.index("retarget")
+    assert names.index("add_child") < names.index("pair")
 
     # Already linked: the re-run is a no-op for the link, then the PATCH.
     env.reset_mock()
     env.native_parent_of.return_value = INTAKE
     assert main(argv) == 0
     env.add_child.assert_not_called()
-    env.retarget.assert_called_once_with(HOME, GHSA, (ISSUE,))
+    env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
 
 
 def test_create_attach_mode_marks_existing_issue(
@@ -230,7 +240,7 @@ def test_create_attach_mode_marks_existing_issue(
     # Attach mode keeps the existing issue's current parent.
     env.add_child.assert_not_called()
     env.native_parent_of.assert_not_called()
-    env.retarget.assert_called_once_with(HOME, GHSA, (EXISTING,))
+    env.pair.assert_called_once_with(HOME, GHSA, EXISTING)
     assert f"tracked by {EXISTING.slug}" in capsys.readouterr().out
 
 
@@ -251,9 +261,7 @@ def test_create_issue_failure_prints_resume_command(
 def test_create_tracking_failure_prints_resume_with_issue(
     env: MagicMock, files: dict[str, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    env.retarget.side_effect = RetargetError(
-        f"advisory {GHSA}: rewriting the tracking lines failed"
-    )
+    env.pair.side_effect = RetargetError(f"advisory {GHSA}: rewriting the tracking lines failed")
     assert main(_create_argv(files)) == 1
     err = capsys.readouterr().err
     assert f"writing the tracking line for {ISSUE.slug} failed" in err
@@ -280,7 +288,7 @@ def test_create_resume_finds_issue_among_intake_children(
     search.assert_not_called()
     env.create_issue.assert_not_called()
     env.add_child.assert_not_called()
-    env.retarget.assert_called_once_with(HOME, GHSA, (ISSUE,))
+    env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
 
 
 def test_create_resume_creates_issue_when_none_found(env: MagicMock, files: dict[str, str]) -> None:
@@ -403,6 +411,86 @@ def test_create_no_installation_is_reported(
     env.advisory_home.side_effect = github.NoInstallationError("org", ["other"])
     assert main(_create_argv(files)) == 1
     assert "vrg-security-record:" in capsys.readouterr().err
+
+
+# --- create: the first pairing (vergil-tooling#4718) -------------------------
+
+TRACKED = IssueRef("org", ".github", 99)
+
+
+class _Advisory:
+    """The advisory's description behind the real pair and pair_check."""
+
+    def __init__(self, env: MagicMock, description: str) -> None:
+        self.description = description
+        env.read_text.side_effect = lambda _home, _ghsa: (SECRET, self.description)
+        env.pair.side_effect = real_pair
+        env.pair_check.side_effect = real_pair_check
+
+    def write(self, _home: str, _ghsa: str, description: str) -> None:
+        self.description = description
+
+
+@pytest.fixture
+def advisory(env: MagicMock) -> Iterator[_Advisory]:
+    state = _Advisory(env, SECRET)
+    with patch(f"{_SR}._write_description", side_effect=state.write) as write:
+        env.attach_mock(write, "write_description")
+        yield state
+
+
+def _tracks(advisory: _Advisory) -> tuple[IssueRef, ...]:
+    return security_records.parse_tracking(advisory.description)
+
+
+def test_create_pairs_new_advisory(
+    env: MagicMock, files: dict[str, str], advisory: _Advisory
+) -> None:
+    assert main(_create_argv(files)) == 0
+    assert _tracks(advisory) == (ISSUE,)
+    env.mark_issue.assert_called_once_with(ISSUE, HOME, GHSA)
+    names = _names(env)
+    assert names.index("pair_check") < names.index("create_issue")
+    assert names.index("mark_issue") < names.index("write_description")
+
+
+def test_create_attach_pairs(env: MagicMock, files: dict[str, str], advisory: _Advisory) -> None:
+    assert main(_create_argv(files, "--issue", EXISTING.slug)) == 0
+    assert _tracks(advisory) == (EXISTING,)
+    assert call(EXISTING, HOME, GHSA) in env.mark_issue.call_args_list
+
+
+def test_create_resume_finishes_pair(
+    env: MagicMock, files: dict[str, str], advisory: _Advisory
+) -> None:
+    # The earlier run wrote the tracking line; the resume finishes the mark only.
+    advisory.description = f"{SECRET}\n\n{security_records.tracking_line(ISSUE)}"
+    argv = _create_argv(files, "--resume", GHSA, "--issue", ISSUE.slug)
+    assert main(argv) == 0
+    assert _tracks(advisory) == (ISSUE,)
+    assert call(ISSUE, HOME, GHSA) in env.mark_issue.call_args_list
+    env.write_description.assert_not_called()
+
+
+@pytest.mark.parametrize("extra", [(), ("--issue", ISSUE.slug)])
+def test_create_resume_onto_tracked_advisory_writes_nothing(
+    env: MagicMock,
+    files: dict[str, str],
+    advisory: _Advisory,
+    capsys: pytest.CaptureFixture[str],
+    extra: tuple[str, ...],
+) -> None:
+    advisory.description = f"{SECRET}\n\n{security_records.tracking_line(TRACKED)}"
+    assert main(_create_argv(files, "--resume", GHSA, *extra)) == 1
+    err = capsys.readouterr().err
+    assert f"advisory {GHSA} already tracks {TRACKED.slug}" in err
+    assert "--resume" not in err
+    assert SECRET not in err
+    env.create_issue.assert_not_called()
+    env.mark_issue.assert_not_called()
+    env.add_child.assert_not_called()
+    env.write_description.assert_not_called()
+    assert _tracks(advisory) == (TRACKED,)
 
 
 # --- list -------------------------------------------------------------------
@@ -567,8 +655,11 @@ def test_show_issue_refuses_naming_every_missing_advisory(
 
 def test_retarget_cli_moves_tracking(env: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
     second = IssueRef("org", ".github", 400)
-    assert main(["retarget", GHSA, "--to", ISSUE.slug, "--to", second.slug]) == 0
-    env.retarget.assert_called_once_with(HOME, GHSA, [ISSUE, second])
+    assert (
+        main(["retarget", GHSA, "--from", EXISTING.slug, "--to", ISSUE.slug, "--to", second.slug])
+        == 0
+    )
+    env.retarget.assert_called_once_with(HOME, GHSA, [ISSUE, second], source=EXISTING, drop=[])
     assert f"Retargeted {GHSA} to {ISSUE.slug}, {second.slug}." in capsys.readouterr().out
 
 
@@ -580,7 +671,7 @@ def test_retarget_cli_prints_each_transfer_note(
         "nothing left to unmark at org/.github#10"
     )
     env.retarget.return_value = (note,)
-    assert main(["retarget", GHSA, "--to", ISSUE.slug]) == 0
+    assert main(["retarget", GHSA, "--from", EXISTING.slug, "--to", ISSUE.slug]) == 0
     assert capsys.readouterr().out == f"{GHSA}: {note}.\nRetargeted {GHSA} to {ISSUE.slug}.\n"
 
 
@@ -588,22 +679,68 @@ def test_retarget_cli_failure_exits_nonzero(
     env: MagicMock, capsys: pytest.CaptureFixture[str]
 ) -> None:
     env.retarget.side_effect = RetargetError(f"advisory {GHSA}: marking {ISSUE.slug} failed")
-    assert main(["retarget", GHSA, "--to", ISSUE.slug]) == 1
+    assert main(["retarget", GHSA, "--from", EXISTING.slug, "--to", ISSUE.slug]) == 1
     assert f"advisory {GHSA}: marking {ISSUE.slug} failed" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
     ("argv", "message"),
     [
-        (["retarget", "nope", "--to", "org/a#1"], "GHSA must be a GHSA ID"),
-        (["retarget", GHSA, "--to", "#1"], "--to must be owner/repo#N"),
-        (["retarget", GHSA, "--to", "org/a#1", "--to", "other/b#2"], "cross-org"),
+        (["retarget", "nope", "--from", "org/a#2", "--to", "org/a#1"], "GHSA must be a GHSA ID"),
+        (["retarget", GHSA, "--from", EXISTING.slug, "--to", "#1"], "--to must be owner/repo#N"),
+        (
+            ["retarget", GHSA, "--from", EXISTING.slug, "--to", "org/a#1", "--to", "other/b#2"],
+            "cross-org",
+        ),
     ],
 )
 def test_retarget_cli_refuses_bad_input(
     env: MagicMock, capsys: pytest.CaptureFixture[str], argv: list[str], message: str
 ) -> None:
     assert main(argv) == 1
+    assert message in capsys.readouterr().err
+    env.retarget.assert_not_called()
+
+
+def test_cli_retarget_requires_from(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(["retarget", GHSA, "--to", ISSUE.slug])
+    assert excinfo.value.code == 2
+    assert "--from" in capsys.readouterr().err
+
+
+def test_cli_retarget_passes_each_drop(env: MagicMock) -> None:
+    second = IssueRef("org", ".github", 400)
+    argv = ["retarget", GHSA, "--from", EXISTING.slug, "--to", ISSUE.slug]
+    assert main([*argv, "--drop", second.slug, "--drop", TRACKED.slug]) == 0
+    env.retarget.assert_called_once_with(
+        HOME, GHSA, [ISSUE], source=EXISTING, drop=[second, TRACKED]
+    )
+
+
+def test_cli_retarget_refusal_exits_nonzero(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env.retarget.side_effect = RetargetRefusedError(
+        f"advisory {GHSA}: --from {EXISTING.slug} is not an issue it tracks"
+    )
+    assert main(["retarget", GHSA, "--from", EXISTING.slug, "--to", ISSUE.slug]) == 1
+    assert "is not an issue it tracks" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["--from", "#1", "--to", "org/a#1"], "--from must be owner/repo#N"),
+        (["--from", "org/a#2", "--to", "org/a#1", "--drop", "#3"], "--drop must be owner/repo#N"),
+        (["--from", "other/b#2", "--to", "org/a#1"], "cross-org"),
+        (["--from", "org/a#2", "--to", "org/a#1", "--drop", "other/b#3"], "cross-org"),
+    ],
+)
+def test_cli_retarget_refuses_a_bad_source_or_drop(
+    env: MagicMock, capsys: pytest.CaptureFixture[str], argv: list[str], message: str
+) -> None:
+    assert main(["retarget", GHSA, *argv]) == 1
     assert message in capsys.readouterr().err
     env.retarget.assert_not_called()
 
@@ -900,7 +1037,7 @@ def test_sync_help_names_its_permission(capsys: pytest.CaptureFixture[str]) -> N
         ["list", "--repo", "org/tool"],
         ["show", GHSA],
         ["show", ISSUE.slug],
-        ["retarget", GHSA, "--to", ISSUE.slug],
+        ["retarget", GHSA, "--from", EXISTING.slug, "--to", ISSUE.slug],
         ["sync"],
         ["sync", "--dry-run"],
         ["close", GHSA, "--reason", "dropped"],

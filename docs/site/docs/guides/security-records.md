@@ -273,13 +273,18 @@ with a `Tracking issue:` line. See the
 ### When the issue moves
 
 A record's link moves only through `vrg-security-record retarget`, and
-`vrg-intake-route` calls it for you:
+`vrg-intake-route` calls it for you. Each call moves the advisory from the
+routed item and keeps every other issue the advisory tracks, so a route
+never stops tracking another issue:
 
 - **transfer** (`one-off` into another repo): after the move, **every**
   advisory the issue names is retargeted, in body order, so each tracking
   line is rewritten to the issue's new number. If one fails, the move
   stands and the error names every advisory still not retargeted, with
-  one `retarget` command for each, to run in order;
+  one `retarget` command for each, to run in order. Each command names
+  the issue's old number as `--from`, since the tracking line still
+  names it. If the tracked issues can't be read before the move, the
+  route stops with nothing moved;
 - **recreate** (when GitHub refuses the transfer): **every** advisory the
   issue names is retargeted to the copy, in body order, **before** the
   original closes. If one fails, the original stays open, the copy stays
@@ -294,10 +299,12 @@ A record's link moves only through `vrg-security-record retarget`, and
   changes, because which advisory goes to which task can't be inferred:
 
   ```text
-  vrg-intake-route: <owner>/<repo>#<N> names several advisories (<GHSA-id>, <GHSA-id>); retarget each by hand with vrg-security-record retarget, then split
+  vrg-intake-route: <owner>/<repo>#<N> names several advisories (<GHSA-id>, <GHSA-id>); retarget each by hand to the tasks that fix it, keeping every other issue it tracks (vrg-security-record retarget <GHSA-id> --from '<owner>/<repo>#<N>' --to <task> [--to …], then vrg-security-record retarget <GHSA-id> --from '<owner>/<repo>#<N>' --to <task> [--to …]), then split
   ```
 
-  Retarget each advisory to the task or tasks that fix it, one at a time.
+  Retarget each advisory to the task or tasks that fix it, one at a time,
+  with `--from` the item and a `--to` for every other issue it still
+  tracks as well as for each task.
   The last retarget leaves the item with no advisory line and no
   `security` label, so the split that follows is an ordinary one.
 
@@ -305,6 +312,44 @@ An issue an advisory stops tracking loses that advisory's line, and gets
 the neutral comment `Security record moved to <refs>`. It loses its
 `security` label only when that was its last advisory line; while it
 still names another advisory, the label and the other lines stay.
+
+### Retargeting by hand
+
+```bash
+vrg-security-record retarget GHSA-xxxx-xxxx-xxxx \
+  --from 'vergil-project/.github#500' \
+  --to 'vergil-project/vergil-tooling#101' \
+  --to 'vergil-project/vergil-tooling#102'
+```
+
+`--from` is required and names the issue the advisory moves from, which
+it must track now. `--to` names the **complete** set it tracks
+afterwards. Two checks run before anything is written; each refusal
+names the issues the advisory tracks and the command that would succeed:
+
+- **The source check.** A `--from` that no `Tracking issue:` line names
+  is refused: the advisory is not that issue's to hand on. Take the GHSA
+  IDs from `vrg-security-record list` (the advisories whose `tracks:`
+  names the issue), never from an issue body's lines alone.
+- **The open-issue check.** An open issue the advisory tracks, other than
+  `--from`, that the `--to` set leaves out is refused, so a retarget
+  never silently stops tracking work still in flight. The refusal's
+  command keeps every such issue as a `--to`. To add a fix task later,
+  retarget `--from` one of the current tasks with every task, old and
+  new, as `--to`. `--drop <ref>` (repeatable) names an open issue the
+  advisory is **deliberately** left to stop tracking: that is the human's
+  decision, and no tool ever suggests it.
+
+A retarget that fails partway (a step error, not a refusal) is finished
+by running the identical command again: the source check still accepts
+the `--from` once the tracking lines are rewritten, while that issue
+still names the advisory or carries the `Security record moved to`
+comment for the same `--to` set. A re-run after a full success writes
+nothing. `--from` is unmarked last, after every other dropped issue.
+
+`create` makes an advisory's **first** pairing on its own path: it refuses,
+before it creates, marks or links any issue, an advisory that already
+tracks another issue. Move a paired advisory with `retarget`.
 
 ## Security items in planning
 
@@ -323,9 +368,11 @@ of them until the plan exists.
 
   ```bash
   vrg-security-record retarget GHSA-xxxx-xxxx-xxxx \
+    --from 'vergil-project/.github#500' \
     --to 'vergil-project/vergil-tooling#101' \
     --to 'vergil-project/vergil-tooling#102'
   vrg-security-record retarget GHSA-yyyy-yyyy-yyyy \
+    --from 'vergil-project/.github#500' \
     --to 'vergil-project/vergil-tooling#103'
   ```
 
