@@ -45,14 +45,20 @@ The config check runs on every `vrg-validate` invocation, whatever
 against the published window (a pin outside the window, an app pin of
 more than one version, an unreadable window) or when a file selects the
 toolchain behind Vergil's back (for Python, `.python-version`; for
-Rust, `rust-toolchain.toml` or the legacy `rust-toolchain`). A
+Rust, `rust-toolchain.toml` or the legacy `rust-toolchain`; for
+TypeScript, `.nvmrc`, `.node-version`, or a root `package.json` field
+that names a Node or package-manager version: `packageManager`,
+`volta`, an `npm`, `pnpm` or `yarn` key under `engines`, or a
+`devEngines` `runtime` or `packageManager` entry). A
 declared floor that falls below the window's oldest version, or an
 upper bound that excludes its newest (for Python, `requires-python`;
 for Go, the `go.mod` `go` directive; for Rust, the root `Cargo.toml`'s
 `rust-version`), is printed as a warning and does not fail. See
 [Python version management](../standards/development/python/version-management.md#toolchain-selection-in-the-repo)
-and the Rust standards'
-[Toolchain Selection](../standards/development/rust/overview.md#toolchain-selection).
+the Rust standards'
+[Toolchain Selection](../standards/development/rust/overview.md#toolchain-selection),
+and the TypeScript standards'
+[Toolchain Selection](../standards/development/typescript/toolchain-and-strictness.md#toolchain-selection).
 
 ## PR CI Gates Not Run Locally
 

@@ -541,6 +541,47 @@ def test_main_toolchain_selection_fails_validation(
     assert "ERROR: .python-version selects the Python interpreter" in capsys.readouterr().err
 
 
+def _write_typescript_config(tmp_path: Path) -> None:
+    # No [ci].versions pin: the version step resolves the window's Node majors.
+    (tmp_path / "vergil.toml").write_text(
+        '[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
+        'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
+        'primary-language = "typescript"\n[dependencies]\nvergil = "v2.1"\n[ci]\n'
+    )
+
+
+def test_typescript_malformed_package_json_reports_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Review Focus 4: the version step reports the broken file and stops, before
+    # any later stage (which may also read package.json) has run.
+    _write_typescript_config(tmp_path)
+    (tmp_path / "package.json").write_text("[]", encoding="utf-8")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main([]) == 1
+    m_pipeline.assert_not_called()
+    captured = capsys.readouterr()
+    assert f"ERROR: package.json at {tmp_path / 'package.json'} cannot be parsed" in captured.err
+    assert "Traceback" not in captured.out + captured.err
+
+
+def test_typescript_toolchain_setting_fails_validation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_typescript_config(tmp_path)
+    (tmp_path / "package.json").write_text('{"packageManager": "npm@11.6.0"}', encoding="utf-8")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main([]) == 1
+    m_pipeline.assert_not_called()
+    assert 'ERROR: package.json "packageManager" selects' in capsys.readouterr().err
+
+
 def test_main_python_preference_passes_validation(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
