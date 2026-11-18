@@ -109,6 +109,11 @@ class Env:
         self.resolve_epic_ref = MagicMock(return_value=TOOL_ADHOC)
         self.advisory_home = MagicMock(side_effect=lambda org: f"{org}/.github")
         self.retarget = MagicMock()
+        # Each advisory tracks the routed item alone unless a test says otherwise.
+        self.tracked: dict[str, tuple[IssueRef, ...]] = {}
+        self.tracked_issues = MagicMock(
+            side_effect=lambda _home, ghsa: self.tracked.get(ghsa, (ITEM,))
+        )
 
     def make_security_item(self) -> None:
         """Turn the item into a security item: the label and the advisory line."""
@@ -231,6 +236,7 @@ def env() -> Iterator[Env]:
         patch(f"{_MOD}.time.sleep", state.sleep),
         patch(f"{_MOD}.security_records.advisory_home", state.advisory_home),
         patch(f"{_MOD}.security_records.retarget", state.retarget),
+        patch(f"{_MOD}.security_records.tracked_issues", state.tracked_issues),
     )
     with contextlib.ExitStack() as stack:
         for patcher in patches:
@@ -1826,7 +1832,7 @@ def test_split_security_item_retargets_to_all_tasks_before_close(env: Env) -> No
     env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
     route(ITEM, Split(into=SPLIT_INTO, reason="two fixes"), today=TODAY)
     env.advisory_home.assert_called_once_with("org")
-    env.retarget.assert_called_once_with("org/.github", GHSA, SPLIT_INTO, renamed=())
+    env.retarget.assert_called_once_with("org/.github", GHSA, SPLIT_INTO, source=ITEM, renamed=())
     assert order == ["retarget", "issue:close"]
 
 
@@ -1861,7 +1867,7 @@ def test_recreate_security_item_retargets_before_closing(env: Env) -> None:
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     new = IssueRef("org", "tool", 901)
     assert result == RouteResult(final=new, moved_by="recreate")
-    env.retarget.assert_called_once_with("org/.github", GHSA, (new,), renamed=())
+    env.retarget.assert_called_once_with("org/.github", GHSA, (new,), source=ITEM, renamed=())
     assert order == ["create", "retarget", "issue:close"]
     # The copy carries the label and the advisory line; retarget's mark is idempotent.
     kwargs = env.create_issue.call_args.kwargs
@@ -1878,7 +1884,7 @@ def test_recreate_security_item_retarget_failure_leaves_original_open(env: Env) 
     message = str(excinfo.value)
     assert f"recreated org/.github#352 as org/tool#901, but advisory {GHSA}" in message
     assert "org/.github#352 is left open" in message
-    assert f"vrg-security-record retarget {GHSA} --to 'org/tool#901'" in message
+    assert f"vrg-security-record retarget {GHSA} --from 'org/.github#352' --to 'org/tool#901'" in message
     env.run.assert_not_called()
     env.add_child.assert_not_called()
 
@@ -1892,7 +1898,7 @@ def test_transfer_security_item_retargets_to_final(env: Env) -> None:
     final = IssueRef("org", "tool", 900)
     assert result == RouteResult(final=final, moved_by="transfer")
     # The old number is the moved issue itself: rewritten away, never unmarked.
-    env.retarget.assert_called_once_with("org/.github", GHSA, (final,), renamed=(ITEM,))
+    env.retarget.assert_called_once_with("org/.github", GHSA, (final,), source=ITEM, renamed=(ITEM,))
     # The settle wait and its confirming wait both come before the retarget.
     assert order == ["settle", "settle", "retarget"]
     # The item was read before the move, while it still had its labels: once
@@ -1911,7 +1917,7 @@ def test_transfer_retarget_failure_reports_moved_not_refused(env: Env) -> None:
     assert not isinstance(excinfo.value, RouteRefusedError)
     assert str(excinfo.value) == (
         f"org/.github#352 moved to org/tool#900, but advisory {GHSA} was not retargeted; "
-        f"run: vrg-security-record retarget {GHSA} --to 'org/tool#900'"
+        f"run: vrg-security-record retarget {GHSA} --from 'org/.github#352' --to 'org/tool#900'"
     )
     assert excinfo.value.__cause__ is RETARGET_FAILED
 
@@ -1924,7 +1930,7 @@ def test_transfer_parent_mismatch_also_names_the_advisory(env: Env) -> None:
     message = str(excinfo.value)
     assert "half-applied" in message
     assert f"also, advisory {GHSA} was not retargeted" in message
-    assert f"vrg-security-record retarget {GHSA} --to 'org/tool#900'" in message
+    assert f"vrg-security-record retarget {GHSA} --from 'org/.github#352' --to 'org/tool#900'" in message
     env.retarget.assert_not_called()
 
 
@@ -1941,7 +1947,7 @@ def test_transfer_link_error_is_half_applied_and_names_the_advisory(env: Env) ->
         "org/.github#11 or reading its parent back failed (GraphQL errors: [boom])"
     )
     assert f"; also, advisory {GHSA} was not retargeted" in message
-    assert f"vrg-security-record retarget {GHSA} --to 'org/tool#900'" in message
+    assert f"vrg-security-record retarget {GHSA} --from 'org/.github#352' --to 'org/tool#900'" in message
     env.retarget.assert_not_called()
 
 
@@ -2010,8 +2016,8 @@ def test_transfer_retargets_every_advisory(env: Env) -> None:
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=FINAL, moved_by="transfer")
     assert env.retarget.call_args_list == [
-        call("org/.github", GHSA, (FINAL,), renamed=(ITEM,)),
-        call("org/.github", GHSA_B, (FINAL,), renamed=(ITEM,)),
+        call("org/.github", GHSA, (FINAL,), source=ITEM, renamed=(ITEM,)),
+        call("org/.github", GHSA_B, (FINAL,), source=ITEM, renamed=(ITEM,)),
     ]
 
 
@@ -2024,7 +2030,7 @@ def test_transfer_retarget_failure_names_every_pending_advisory(env: Env) -> Non
     # The first advisory was retargeted; only the second is left, with its command.
     assert str(excinfo.value) == (
         f"org/.github#352 moved to org/tool#900, but advisory {GHSA_B} was not retargeted; "
-        f"run: vrg-security-record retarget {GHSA_B} --to 'org/tool#900'"
+        f"run: vrg-security-record retarget {GHSA_B} --from 'org/.github#352' --to 'org/tool#900'"
     )
     assert excinfo.value.__cause__ is RETARGET_FAILED
 
@@ -2036,8 +2042,8 @@ def test_transfer_first_retarget_failure_names_both_advisories(env: Env) -> None
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert str(excinfo.value) == (
         f"org/.github#352 moved to org/tool#900, but advisories {GHSA}, {GHSA_B} were not "
-        f"retargeted; run: vrg-security-record retarget {GHSA} --to 'org/tool#900', then "
-        f"vrg-security-record retarget {GHSA_B} --to 'org/tool#900'"
+        f"retargeted; run: vrg-security-record retarget {GHSA} --from 'org/.github#352' --to 'org/tool#900', then "
+        f"vrg-security-record retarget {GHSA_B} --from 'org/.github#352' --to 'org/tool#900'"
     )
     env.retarget.assert_called_once()
 
@@ -2049,7 +2055,7 @@ def test_transfer_parent_mismatch_names_every_advisory(env: Env) -> None:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
     assert f"also, advisories {GHSA}, {GHSA_B} were not retargeted" in message
-    assert f"vrg-security-record retarget {GHSA_B} --to 'org/tool#900'" in message
+    assert f"vrg-security-record retarget {GHSA_B} --from 'org/.github#352' --to 'org/tool#900'" in message
     env.retarget.assert_not_called()
 
 
@@ -2063,8 +2069,8 @@ def test_recreate_retargets_every_advisory_before_closing(env: Env) -> None:
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=NEW, moved_by="recreate")
     assert env.retarget.call_args_list == [
-        call("org/.github", GHSA, (NEW,), renamed=()),
-        call("org/.github", GHSA_B, (NEW,), renamed=()),
+        call("org/.github", GHSA, (NEW,), source=ITEM, renamed=()),
+        call("org/.github", GHSA_B, (NEW,), source=ITEM, renamed=()),
     ]
     assert order == ["create", f"retarget:{GHSA}", f"retarget:{GHSA_B}", "issue:close"]
 
@@ -2077,7 +2083,7 @@ def test_recreate_second_retarget_failure_leaves_original_open(env: Env) -> None
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
     assert f"recreated org/.github#352 as org/tool#901, but advisory {GHSA_B} was not" in message
-    assert f"vrg-security-record retarget {GHSA_B} --to 'org/tool#901'" in message
+    assert f"vrg-security-record retarget {GHSA_B} --from 'org/.github#352' --to 'org/tool#901'" in message
     assert f"retarget {GHSA} " not in message
     assert "org/.github#352 is left open" in message
     env.run.assert_not_called()
@@ -2090,7 +2096,10 @@ def test_split_refuses_an_item_naming_several_advisories(env: Env) -> None:
         route(ITEM, Split(into=SPLIT_INTO, reason="two fixes"), today=TODAY)
     assert str(excinfo.value) == (
         f"org/.github#352 names several advisories ({GHSA}, {GHSA_B}); retarget each by hand "
-        "with vrg-security-record retarget, then split"
+        "to the tasks that fix it, keeping every other issue it tracks (vrg-security-record "
+        f"retarget {GHSA} --from 'org/.github#352' --to <task> [--to …], then "
+        f"vrg-security-record retarget {GHSA_B} --from 'org/.github#352' --to <task> "
+        "[--to …]), then split"
     )
     # Refused before any change: no comment, no close, no retarget.
     env.run.assert_not_called()
@@ -2101,9 +2110,84 @@ def test_split_refuses_an_item_naming_several_advisories(env: Env) -> None:
 def test_split_one_advisory_unchanged(env: Env) -> None:
     env.make_security_item()
     route(ITEM, Split(into=SPLIT_INTO, reason="two fixes"), today=TODAY)
-    env.retarget.assert_called_once_with("org/.github", GHSA, SPLIT_INTO, renamed=())
+    env.retarget.assert_called_once_with("org/.github", GHSA, SPLIT_INTO, source=ITEM, renamed=())
     env.run.assert_called_once()
     assert env.run.call_args.args[:2] == ("issue", "close")
+
+
+OTHER_TASK = IssueRef("org", "lib", 77)
+
+
+def test_split_keeps_other_tracked_issues(env: Env) -> None:
+    """The advisory also tracks open OTHER_TASK: the split keeps it (Review Focus 2)."""
+    env.make_security_item()
+    env.tracked[GHSA] = (OTHER_TASK, ITEM)
+    route(ITEM, Split(into=SPLIT_INTO, reason="two fixes"), today=TODAY)
+    env.retarget.assert_called_once_with(
+        "org/.github", GHSA, (OTHER_TASK, *SPLIT_INTO), source=ITEM, renamed=()
+    )
+    env.advisory_home.assert_called_once_with("org")
+    assert env.run.call_args.args[:2] == ("issue", "close")
+
+
+def test_split_tracking_read_failure_leaves_original_open(env: Env) -> None:
+    env.make_security_item()
+    env.tracked_issues.side_effect = security_records.RetargetError(
+        f"advisory {GHSA}: reading the tracking lines failed: HTTP 500"
+    )
+    with pytest.raises(RouteRefusedError, match=f"advisory {GHSA} was not retargeted"):
+        route(ITEM, Split(into=SPLIT_INTO, reason="two fixes"), today=TODAY)
+    env.retarget.assert_not_called()
+    env.run.assert_not_called()
+
+
+@pytest.mark.parametrize("transfer_fails", [False, True])
+def test_transfer_and_recreate_pass_source(env: Env, transfer_fails: bool) -> None:
+    env.make_security_item()
+    env.tracked[GHSA] = (OTHER_TASK, ITEM)
+    if transfer_fails:
+        _transfer_fails(env)
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    renamed = () if transfer_fails else (ITEM,)
+    env.retarget.assert_called_once_with(
+        "org/.github", GHSA, (OTHER_TASK, result.final), source=ITEM, renamed=renamed
+    )
+
+
+def test_transfer_tracking_read_failure_moves_nothing(env: Env) -> None:
+    env.make_security_item()
+    env.tracked_issues.side_effect = security_records.RetargetError(
+        f"advisory {GHSA}: reading the tracking lines failed: HTTP 500"
+    )
+    with pytest.raises(RouteRefusedError, match="nothing was moved"):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert _transfer_calls(env) == []
+    env.retarget.assert_not_called()
+
+
+def test_recovery_commands_carry_from() -> None:
+    targets = {GHSA: (OTHER_TASK, FINAL), GHSA_B: (FINAL,)}
+    assert intake_route._retarget_commands((GHSA, GHSA_B), ITEM, targets) == (
+        f"vrg-security-record retarget {GHSA} --from 'org/.github#352' --to 'org/lib#77' "
+        f"--to 'org/tool#900', then vrg-security-record retarget {GHSA_B} "
+        "--from 'org/.github#352' --to 'org/tool#900'"
+    )
+    assert intake_route._retarget_commands((GHSA,), ITEM, None) == (
+        f"vrg-security-record retarget {GHSA} --from 'org/.github#352' --to <task> [--to …]"
+    )
+
+
+def test_recovery_command_keeps_other_tracked_issues(env: Env) -> None:
+    env.make_security_item()
+    env.tracked[GHSA] = (OTHER_TASK, ITEM)
+    env.retarget.side_effect = RETARGET_FAILED
+    with pytest.raises(RuntimeError) as excinfo:
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert str(excinfo.value) == (
+        f"org/.github#352 moved to org/tool#900, but advisory {GHSA} was not retargeted; "
+        f"run: vrg-security-record retarget {GHSA} --from 'org/.github#352' "
+        "--to 'org/lib#77' --to 'org/tool#900'"
+    )
 
 
 # -- one-off: no link left to carry over, and a re-run clears a stale listing (#4291) --
