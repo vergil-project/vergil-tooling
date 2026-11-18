@@ -367,10 +367,43 @@ TypeScript hard gates:
   `junit.xml` and Cobertura `coverage.xml`, even when a test fails.
 - **AUDIT** (once) — `npm audit --audit-level=high --json`, plus a best-effort
   license summary. The audit run writes its JSON to `npm-audit.json`, the
-  audit gate's evidence, and exits with its own status. The vulnerability audit covers every package in
+  audit gate's evidence, and `vrg-npm-audit-gate` gives the verdict: it
+  fails on any advisory at high or critical that no live entry of
+  `.npm-audit-exceptions` covers (see [Audit exceptions](#audit-exceptions)).
+  The vulnerability audit covers every package in
   `package-lock.json`, devDependencies included, so a vulnerable docs or test
   tool fails the audit just as a runtime dependency does. The license summary
   still covers production dependencies only.
+
+### Audit exceptions
+
+An advisory sometimes has no patched release: upgrading cannot clear it,
+and the audit would fail in every repository that has the package until
+upstream ships a fix. Treat it as a Trivy finding with no fix: record a
+reviewed, time-boxed exception in `.npm-audit-exceptions` at the
+repository root and keep shipping. The file's format and the checks the
+gate makes are in
+[TypeScript audit exceptions](../../../guides/validation-matrix.md#typescript-audit-exceptions).
+
+- **Only when no fix exists.** An exception is allowed only when no
+  patched version of the vulnerable package has been released. npm's
+  `fixAvailable` can still name a breaking downgrade of a package that
+  depends on it, which is not a fix. When a patched version exists,
+  upgrade, or add an `overrides` entry in `package.json`, instead.
+- **At most 90 days.** The expiry is a date at most 90 days after the
+  day the entry is written; the gate refuses a later one. When it
+  expires, the gate fails: fix the dependency if a patch has shipped, or
+  review the risk again and set a new expiry.
+- **Always give a reason and a tracking issue.** The reason says why the
+  risk is acceptable for now (for example, a dev-only dependency that
+  never sees untrusted input). The tracking issue follows the advisory
+  until the entry is removed. Put the longer justification and the
+  removal condition in a `#` comment above the entry.
+- **Remove a stale entry.** The gate warns about an entry that matches no
+  advisory in the report; delete it in the next change.
+- **Reviewed like code.** An entry is visible in the diff, and the audit
+  log lists every exception the gate applied, so reviewers can challenge
+  it like any other change.
 
 ## Document Map
 

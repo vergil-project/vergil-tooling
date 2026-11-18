@@ -515,14 +515,18 @@ _TYPESCRIPT_TEST_SCRIPT = (
 )
 
 # ``npm audit --json`` writes the report to stdout and keeps the
-# ``--audit-level`` exit status, so the shell writes it to the report, prints
-# it back for the log, and exits with npm's status. ``cat`` failing fails the
-# gate.
+# ``--audit-level`` exit status, so the shell writes it to the report and
+# prints it back for the log; ``cat`` failing fails the gate. The report stays
+# the unfiltered evidence. ``vrg-npm-audit-gate`` then gives the verdict, with
+# npm's status as a cross-check: it drops the advisories a live entry of the
+# repo's ``.npm-audit-exceptions`` covers, lists them, and fails on any other
+# advisory at high or critical, or on an expired or malformed entry
+# (vergil-project/vergil-tooling#4682; see ``lib/npm_audit.py``).
 _TYPESCRIPT_AUDIT_SCRIPT = (
     f"npm audit --audit-level=high --json >{NPM_AUDIT_REPORT}; "
     "rc=$?; "
     f"cat {NPM_AUDIT_REPORT} || exit 1; "
-    'exit "$rc"'
+    f'exec vrg-npm-audit-gate {NPM_AUDIT_REPORT} --npm-exit "$rc"'
 )
 
 # -- C++ warning set (epic vergil-project/.github#207 §3.2, owned by T5) -------
@@ -1161,7 +1165,9 @@ _REGISTRY: dict[str, Language] = {
             # ``--omit=dev``, so a vulnerable docs or test tool fails the gate
             # just as a runtime dependency does (#3552, superseding spec §4
             # caveat 1's prod-only scope) — with an explicit severity threshold
-            # (``--audit-level=high``). Contingency (spec §4 caveat 1): if
+            # (``--audit-level=high``), less the advisories the repo's
+            # reviewed, time-boxed ``.npm-audit-exceptions`` entries cover
+            # (#4682). Contingency (spec §4 caveat 1): if
             # ``npm audit``'s signal/noise is unworkable, fall back to
             # OSV-Scanner over ``package-lock.json`` — the switch is proven or
             # rejected against a known CVE in T10, not asserted here. License
