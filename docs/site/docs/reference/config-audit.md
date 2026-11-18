@@ -102,9 +102,12 @@ order:
    whether or not there is new drift. With no change, no PR is opened.
 5. **Wait until merged.** `update` then watches the PR until it has
    merged. Auto-merge only speeds this up; the watch never depends on
-   it. A PR whose branch falls behind `develop` is updated and the
-   watch goes on, up to 5 branch updates. A PR whose checks are green
-   on an up-to-date branch is merged by the watch itself. A failed
+   it. When GitHub refuses auto-merge because the PR can already
+   merge, `update` merges it directly and does not wait. `develop`
+   does not require a branch to be up to date, so a PR whose checks
+   are green is merged by the watch itself, if auto-merge has not
+   merged it first. Only where `develop` still requires an up-to-date
+   branch is a PR that falls behind updated, up to 5 times. A failed
    check, a conflict, a PR closed by someone else, the update cap or
    the deadline ends the watch, naming the PR and the reason. The
    deadline is `$VRG_MECHANIZED_PR_DEADLINE` seconds, 2400 (40
@@ -117,7 +120,8 @@ order:
 
 `update` never reads or touches the caller's working checkout, so a
 human can run `update --repo OWNER/REPO` from anywhere. Once the sync
-PR has merged, `vrg-finalize-pr` brings a local `develop` up to date.
+PR has merged, `vrg-finalize-pr --cleanup-only` brings a local `develop` up
+to date.
 
 ### `update` exit codes
 

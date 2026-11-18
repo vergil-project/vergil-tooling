@@ -68,7 +68,8 @@ vrg-submit-pr \
 - `--notes` (optional): additional notes
 - `--dry-run` (optional): print generated PR without executing
 
-The script detects the target branch and merge strategy automatically.
+The PR opens against `develop`, with GitHub auto-merge on (squash, or
+rebase for a batch PR), and `vrg-finalize-pr` then watches it merge.
 
 ## Local deviations
 

@@ -1,5 +1,15 @@
 # Batch PR pipeline Implementation Plan
 
+> **Superseded (2026-11-18, vergil-project/.github#1218):** this plan
+> implemented the serial design that the
+> [design spec](2026-06-17-batch-pr-pipeline-design.md)'s supersession note
+> retires. Its orchestrator (`lib/pr_workflow/batch.py`, with
+> `finalize_post_checks_step`), the per-branch `rebase_onto` at submit and
+> finalize's `--skip-post-checks` are all removed. `vrg-submit-pr` now opens
+> every PR with auto-merge on and never rebases, and one `vrg-finalize-pr`
+> run watches the whole batch, then settles `develop` once. Kept as a record
+> of the earlier implementation.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let `vrg-submit-pr` and `vrg-finalize-pr` drive a *batch* of PRs through the existing submit → finalize → release pipeline single-threaded, so each expensive CI gate runs exactly once.
@@ -9,6 +19,7 @@
 **Tech Stack:** Python 3.12+, argparse, `subprocess`, pytest with `unittest.mock`. Spec: `docs/specs/2026-06-17-batch-pr-pipeline-design.md`.
 
 **Conventions for every commit in this plan:**
+
 - Use `vrg-commit --type <t> --scope <s> --message "<m>" --body "<b>"` — raw `git commit` is denied. `vrg-commit` resolves co-authors itself; do not add a `Co-Authored-By` trailer.
 - Stage with `vrg-git add <paths>` before committing.
 - Run all work from inside the worktree `.worktrees/issue-1673-batch-pr/`.
@@ -19,10 +30,12 @@
 ## File structure
 
 **New files:**
+
 - `src/vergil_tooling/lib/pr_workflow/batch.py` — generic serial orchestrator + report types.
 - `tests/vergil_tooling/pr_workflow/test_batch.py` — orchestrator unit tests.
 
 **Modified files:**
+
 - `src/vergil_tooling/lib/repo_init.py` — add `prompt_multi_choice`.
 - `src/vergil_tooling/lib/worktrees.py` — add `select_worktrees`, `match_worktrees`, `rebase_onto`.
 - `src/vergil_tooling/bin/vrg_finalize_pr.py` — `--skip-post-checks` flag; comma-list / `--all` batch mode.
@@ -34,6 +47,7 @@
 ## Task 1: Batch report types
 
 **Files:**
+
 - Create: `src/vergil_tooling/lib/pr_workflow/batch.py`
 - Test: `tests/vergil_tooling/pr_workflow/test_batch.py`
 
@@ -159,6 +173,7 @@ vrg-commit --type feat --scope batch --message "add batch report types (#1673)" 
 ## Task 2: `run_batch` orchestrator loop
 
 **Files:**
+
 - Modify: `src/vergil_tooling/lib/pr_workflow/batch.py` (append `run_batch` + `format_report`)
 - Test: `tests/vergil_tooling/pr_workflow/test_batch.py` (append)
 
@@ -395,6 +410,7 @@ vrg-commit --type feat --scope batch --message "add run_batch serial orchestrato
 ## Task 3: `prompt_multi_choice` (terminal multi-select)
 
 **Files:**
+
 - Modify: `src/vergil_tooling/lib/repo_init.py` (add `prompt_multi_choice` next to `prompt_choice`)
 - Test: `tests/vergil_tooling/test_repo_init.py`
 
@@ -486,6 +502,7 @@ vrg-commit --type feat --scope repo-init --message "add prompt_multi_choice (#16
 ## Task 4: `worktrees.select_worktrees` and `match_worktrees`
 
 **Files:**
+
 - Modify: `src/vergil_tooling/lib/worktrees.py` (add two functions; import `prompt_multi_choice`)
 - Test: `tests/vergil_tooling/test_worktrees.py`
 
@@ -628,6 +645,7 @@ vrg-commit --type feat --scope worktrees --message "add multi-select and token m
 ## Task 5: `worktrees.rebase_onto` (lazy rebase helper)
 
 **Files:**
+
 - Modify: `src/vergil_tooling/lib/worktrees.py` (add `rebase_onto`)
 - Test: `tests/vergil_tooling/test_worktrees.py`
 
@@ -701,6 +719,7 @@ Lets a batch finalize each item (merge + cleanup) while deferring container
 validation, the CD check, and any release to the end of the batch.
 
 **Files:**
+
 - Modify: `src/vergil_tooling/bin/vrg_finalize_pr.py` (`parse_args`, `build_stages`, `main`)
 - Test: `tests/vergil_tooling/test_vrg_finalize_pr.py`
 
@@ -808,6 +827,7 @@ vrg-commit --type feat --scope finalize-pr --message "add --skip-post-checks (#1
 ## Task 7: `vrg-finalize-pr` batch mode (comma-list / `--all`)
 
 **Files:**
+
 - Modify: `src/vergil_tooling/bin/vrg_finalize_pr.py` (`parse_args`, `main`; add helpers `_resolve_open_prs`, `_run_finalize_batch`)
 - Test: `tests/vergil_tooling/test_vrg_finalize_pr.py`
 
@@ -1031,6 +1051,7 @@ vrg-commit --type feat --scope finalize-pr --message "add batch finalize via com
 Prepares submit-pr for batch reuse without changing single-PR behavior.
 
 **Files:**
+
 - Modify: `src/vergil_tooling/bin/vrg_submit_pr.py` (extract `_submit_one`; `_run_template_mode` calls it)
 - Test: `tests/vergil_tooling/test_vrg_submit_pr.py`
 
@@ -1157,6 +1178,7 @@ vrg-commit --type refactor --scope submit-pr --message "extract _submit_one for 
 ## Task 9: `vrg-submit-pr` batch selection + orchestration
 
 **Files:**
+
 - Modify: `src/vergil_tooling/bin/vrg_submit_pr.py` (`parse_args`; refactor `_choose_submit_worktree` → `_ready_worktrees`; add `_run_submit_batch`; wire `_run_template_mode`)
 - Test: `tests/vergil_tooling/test_vrg_submit_pr.py`
 
@@ -1476,12 +1498,14 @@ vrg-commit --type feat --scope submit-pr --message "add batch submit via --all/-
 ## Task 10: Docs + full validation gate
 
 **Files:**
+
 - Modify: `CLAUDE.md` (and/or `docs/`) — document the batch flags
 - Verify: whole suite green
 
 - [ ] **Step 1: Document the new flags**
 
 Add a short subsection under the PR-submission docs noting:
+
 - `vrg-submit-pr --all|--select <issues> [--finalize|--release|--install]` — batch submit.
 - `vrg-finalize-pr <pr1,pr2,...>|--all [--release|--install]` — batch finalize.
 - One confirmation up front; fail-fast; release runs once at the end.

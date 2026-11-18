@@ -1,7 +1,7 @@
 """Shared wait-and-merge engine with fail-fast ordering.
 
-Used by ``vrg-finalize-pr`` (squash by default) and the release
-workflow (merge strategy) through :func:`wait_and_merge`, and by the
+Used by the release workflow and ``vrg-update-deps`` (merge strategy)
+through :func:`wait_and_merge`, and by the
 mechanized-PR building block through :func:`wait_until_merged`, which shares
 the same loop pieces but treats a merged PR as success and runs under one
 overall deadline (epic vergil-project/.github#1064). Doomed outcomes — already merged, draft,
@@ -9,8 +9,7 @@ conflicting, behind — are checked *before* waiting, never after
 letting a pointless CI run finish:
 
 - MERGED: the caller's premise is wrong. What "already merged" means
-  is a caller-level decision (finalize pre-checks and skips to
-  cleanup), so the engine raises. ``vrg-pr-await`` does not use this
+  is a caller-level decision, so the engine raises. ``vrg-pr-await`` does not use this
   engine: it waits on auto-merge and reports a merge as success.
 - Draft: can go green but ``gh pr merge`` refuses it.
 - CONFLICTING: cannot merge no matter what CI says. Re-checked every
@@ -20,7 +19,7 @@ letting a pointless CI run finish:
 
 The BEHIND precheck reads ``mergeStateStatus``, which GitHub computes lazily
 and serves stale for a window after the base branch advances — so in a merge
-train (serial batch finalize, issue #1673) a freshly-behind branch can pass the
+train (the old serial batch finalize, issue #1673) a freshly-behind branch can pass the
 precheck and only be caught by the merge endpoint itself, which rejects with
 "the head branch is not up to date with the base branch." That authoritative
 rejection is fed back into the same update-and-retry path rather than surfaced
@@ -81,7 +80,7 @@ _UPDATE_SETTLE_SECS = 5
 # per call so $VRG_CHECKS_TIMEOUT applies) so the waits never drift.
 _NOT_READY_POLL_SECS = _POLL_INTERVAL_SECS
 # The command to run again once the checks can finish.
-_RESUME = "vrg-release --resume for a release, vrg-finalize-pr otherwise"
+_RESUME = "vrg-release --resume for a release, vrg-update-deps for a dependency update"
 # How to get a merge moving again once a wait gives up on a check that is not
 # making progress: pending with no backing run, or an app-posted status (#3170).
 _RECOVERY_HINT = (
@@ -131,9 +130,9 @@ class MergeConflictError(MergeAbortError):
     """The PR conflicts with its base branch.
 
     A distinct subclass so a caller that knows where the PR's branch lives
-    (``vrg-finalize-pr``) can replace the generic message with the exact
-    commands to resolve it (issue #3555); every other caller still catches
-    it as a plain ``MergeAbortError``.
+    can replace the generic message with the exact commands to resolve it
+    (issue #3555); every other caller still catches it as a plain
+    ``MergeAbortError``.
     """
 
 

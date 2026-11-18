@@ -452,12 +452,13 @@ and branch protection rulesets.
   can push under `.github/workflows/`. GitHub rejects the API call
   regardless of what happens locally.
 - Branch protection rulesets require a pull request to change
-  `develop` or `main`, with its required CI checks passing on an
-  up-to-date branch; they require no approving review. Who can merge
-  is set by the identity's permissions: the human, and the org
-  automation App for the mechanized `automation/` PRs that merge
-  once CI passes (the repo-config sync and the upstream refresh). No
-  client-side manipulation changes this.
+  `develop` or `main`, with its required CI checks passing; only
+  `main`'s ruleset also requires the branch to be up to date. They
+  require no approving review. Who can merge is set by the identity's
+  permissions: the human, whose `vrg-submit-pr` turns a development
+  PR's auto-merge on, and the org automation App for the mechanized
+  `automation/` PRs that merge once CI passes (the repo-config sync and
+  the upstream refresh). No client-side manipulation changes this.
 - An App can only act on accounts it is installed on and repos that
   installation covers.
 

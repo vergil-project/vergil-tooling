@@ -3,8 +3,8 @@
 A *batch* is one PR that implements and closes 2 to 8 same-epic, same-repo
 issues, one commit per issue (epic vergil-project/.github#1019). Its checks
 are shared by ``vrg-pr-workflow batch-start``, ``report-ready``,
-``batch-check``, ``vrg-submit-pr`` and ``vrg-finalize-pr``, so every stage
-refuses the same batch with the same words:
+``batch-check`` and ``vrg-submit-pr``, so every stage refuses the same
+batch with the same words:
 
 - :func:`check_hard_rules` reads each issue on GitHub and refuses a batch
   that breaks a hard rule (spec §5.1).

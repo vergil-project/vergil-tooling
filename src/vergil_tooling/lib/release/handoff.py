@@ -73,7 +73,7 @@ def run_consumer_refresh(commands: str, version: str) -> int:
     renderer has already torn down, so there is no nesting (cf. issue #1470).
     """
     print()
-    print(f"--install: running consumer-refresh commands for v{version}:")
+    print(f"Installing: running consumer-refresh commands for v{version}:")
     print()
     print(commands)
     print()

@@ -246,7 +246,7 @@ the builder reads the PR itself:
 - The PR must be in the `--issue`'s repository, open, and headed by the
   current branch; anything else is a refusal.
 - A PR whose body has more than one `Closes` line is a **batch PR**, as
-  `vrg-finalize-pr` reads it. Its issues are those `Closes` refs, in body
+  `vrg-pr-workflow batch-check --pr` reads it. Its issues are those `Closes` refs, in body
   order: each must be in the PR's repository and listed once, and the
   `--issue` must be one of them.
 - A PR with one `Closes` line or none is a single-issue PR. Its body must
@@ -331,7 +331,9 @@ The kinds:
 - `design-question`: the fix would add something the design does not have
   (locks, retries, new state, caches, configuration, a component, a failure
   mode). The finding proposes no fix; the human decides.
-- `out-of-scope`: code or content the issue did not ask for.
+- `out-of-scope`: code or content the issue did not ask for. On a batch PR,
+  that is the issue the commit belongs to (see [A batch PR](#a-batch-pr)):
+  another batch issue's work, in its own commits, is in scope.
 - `pre-existing`: a real problem in code the branch did not introduce. A
   note only, never asked to be fixed on the branch. A check never raises it.
 

@@ -118,7 +118,7 @@ def test_run_consumer_refresh_header_names_version(
         mock_run.return_value.returncode = 0
         run_consumer_refresh("uv tool install pkg", "2.1.44")
     out = capsys.readouterr().out
-    assert "--install: running consumer-refresh commands for v2.1.44:" in out
+    assert "Installing: running consumer-refresh commands for v2.1.44:" in out
 
 
 # -- consumer_refresh holds when publish is deferred (issue #1853) --

@@ -131,8 +131,7 @@ worktree's `pr-workflow.json` when present, else the relay ref
 recorded `head_sha` and the PR opens with `--head` **without pushing**.
 Every mode driven by a ready-state opens the PR only at the `head_sha` the
 latest `report-ready` recorded and refuses rather than pick another head
-(#3815): a local worktree's HEAD must be that commit (the serial
-`--all`/`--select` batch checks it before its rebase), a named branch reopened by `unfreeze` and not
+(#3815): a local worktree's HEAD must be that commit, a named branch reopened by `unfreeze` and not
 re-reported is refused, a local ready-state and relay ref that disagree are
 refused, and origin's tip is checked against the recorded head right before
 `gh pr create`.
@@ -149,15 +148,26 @@ when it cannot, it says why (see
 It refuses an issue whose native parent is an intake, planning or deferred
 epic (see [`vrg-pr-workflow`](#vrg-pr-workflow)). Human-run: agent
 identities are refused, and agents hand off with
-`vrg-pr-workflow report-ready` instead. PRs merge manually.
+`vrg-pr-workflow report-ready` instead.
+
+Every mode takes one path (epic vergil-project/.github#1218): one
+confirmation for the selection, then for each PR the push, `gh pr create`,
+the provenance check, and GitHub auto-merge turned on, pinned to the pushed
+head (squash for a single-issue PR, rebase for a batch PR; a PR that can
+already merge is merged directly). PRs open against `develop` only, and
+submit never rebases a branch. A PR whose submit fails is named in a summary
+and the others go on. Then, by default, one `vrg-finalize-pr <pr>,<pr>,…`
+watches every opened PR merge and settles `develop` once; `--no-finalize`
+opens the PRs and returns. `--finalize` and `--install` are removed and
+refused by name. See [vrg-submit-pr](dev/submit-pr.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_submit_pr` |
-| Args | positional `branches` (relay mode); or `--issue` (required), `--summary` (required), `--linkage` (default: Ref; `vrg-submit-pr` auto-selects `Closes` for a managed task — `Fixes`/`Resolves` are banned), `--notes`, `--title`, `--dry-run` |
+| Args | positional `branches` (relay mode); or `--issue` (required), `--summary` (required), `--linkage` (default: Ref; `vrg-submit-pr` auto-selects `Closes` for a managed task — `Fixes`/`Resolves` are banned), `--notes`, `--title`; `--all`/`--select` (from the repo root), `--base` (`develop` only), `--no-finalize`, `--release`, `--no-install`, `--allow-provenance-violation`, `--dry-run`, `--yes` |
 | Preconditions | Git repo, `gh` CLI on PATH; relay mode: named branches on origin with a resolvable ready-state and matching `head_sha` |
-| Failure mode | Subprocess error from `git push` or `gh pr create`; loud refusal on a missing ready-state, a state that is not ready, or any head other than the recorded `head_sha` |
-| Exit codes | 0 success |
+| Failure mode | A PR whose push, `gh pr create`, provenance check or auto-merge fails is named in the summary and the rest go on; loud refusal, with nothing opened, on a missing ready-state, a state that is not ready, any head other than the recorded `head_sha`, a base other than `develop`, or a removed flag |
+| Exit codes | finalize's: 0 full success, 3 not every PR merged (at least 3 when a submit failed), 4 develop did not validate, 5 the release failed; 1 a usage error, a refusal, or a tool error from finalize |
 | Status | Active |
 
 ### vrg-pr-workflow
@@ -590,14 +600,23 @@ validation or a release. See the
 
 ### vrg-finalize-pr
 
-Finalize a pull request. Given a PR, runs the provenance check, merges
-it, then cleans up; with no PR, runs cleanup only. Cleanup switches to
-the target branch, fast-forward pulls, deletes merged local branches
-(auto-removing worktrees inside `.worktrees/` when necessary), deletes
+Watch a batch of auto-merging pull requests, then settle `develop` once
+(epic vergil-project/.github#1218). It never merges a PR: `vrg-submit-pr`
+turned auto-merge on, and GitHub merges each PR once its required checks
+pass. The watch follows every listed PR until it has merged or failed (CI,
+a conflict, closed, auto-merge off, provenance, not a develop PR), or the
+batch deadline (`$VRG_FINALIZE_DEADLINE`, default 7200s) passes. If any PR
+merged, the settle phase closes any issue GitHub left open, then, under the
+checkout lock, switches to the target branch, fast-forwards it, deletes the
+merged PRs' branches and worktrees and other merged local branches, deletes
 each merged branch's PR-workflow relay ref
 (`refs/vergil/pr-workflow/<branch>`) and sweeps any orphaned relay ref
-whose branch is gone (issue #2369), prunes remotes, runs validation, and
-checks the CD workflow status. It also removes each merged branch's
+whose branch is gone (issue #2369), prunes remotes, provisions the dev
+image and runs one validate. It then reports the synced head's CD run
+without waiting (`--wait-cd` waits), lists every PR as merged or not
+merged with the next step, and, with `--release`, chains into
+`vrg-release` on full success. `--cleanup-only` runs the settle phase with
+no PRs. It also removes each merged branch's
 cached dev images and sweeps cached images whose branch is live in no
 repo of the platform repo set, as `vrg-container-cache prune` decides it
 (skipped on the physical host, which has no default repo set); a failed
@@ -609,22 +628,19 @@ reused branch name with unmerged commits (issue #1719) — is surfaced
 `--clean-dirty` opt-in clears one whose only dirt is untracked
 build/validation output, after showing the paths and confirming
 (issue #2348).
-A PR whose body has more than one `Closes` line is a **batch PR**, one commit
-per issue (epic vergil-project/.github#1019). Finalize cross-checks its
-`Closes` issues against GitHub's closing references, updates it by rebase
-(never by merging the target in) when it is behind, re-checks the
-one-commit-per-issue invariant after every update and right before the merge,
-and rebase-merges it pinned to the head it checked, so `develop` gets one
-commit and one changelog entry per issue. `--strategy squash` is refused on a
-batch PR. See [vrg-finalize-pr](dev/finalize-pr.md#batch-prs-one-pr-closing-several-issues).
+A batch PR (more than one `Closes` line, one commit per issue, epic
+vergil-project/.github#1019) is watched like any other: `vrg-submit-pr`
+turned its auto-merge on with the rebase method, so `develop` gets one
+commit and one changelog entry per issue. See
+[vrg-finalize-pr](dev/finalize-pr.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_finalize_pr` |
-| Args | `PR` (optional), `--target-branch` (default: develop), `--strategy` (default: squash; rebase for a batch PR, merge for a `release/*` branch), `--allow-provenance-violation`, `--clean-dirty`, `--dry-run` |
+| Args | `PR` (a number or URL, or a comma list of them; optional), `--all`, `--cleanup-only`, `--target-branch` (default: develop), `--wait-cd`, `--release`, `--no-install` (with `--release`), `--allow-provenance-violation`, `--clean-dirty`, `--dry-run`, `--yes`. `--strategy`, `--no-wait-cd`, `--skip-post-checks` and `--install` are removed and are an error |
 | Preconditions | Must run from the main worktree, `vrg-container-run` on PATH |
-| Failure mode | Provenance violations, a dirty working tree, validation failures, or a failed CD run all return exit 1 |
-| Exit codes | 0 success, 1 provenance/worktree/validation/CD failure or unrecognized branching model |
+| Failure mode | An unmerged PR exits 3 and a develop that did not validate exits 4; a watch that cannot read a PR, a failed close of an issue, a failed sync or cleanup, or a dirty working tree exits 1 |
+| Exit codes | 0 full success, 1 a tool or usage error, 3 develop healthy but not every PR merged (or one merged with a provenance violation), 4 develop did not validate (with `--wait-cd`, or CD did not succeed), 5 the chained release failed |
 | Status | Active |
 
 ### vrg-branch-sweep

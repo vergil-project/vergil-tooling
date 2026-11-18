@@ -23,7 +23,7 @@ the dev-tree override venv.
 | [vrg-resolve-tracking-issue](cli-tools-overview.md#vrg-resolve-tracking-issue) | Print a merge commit's tracking issue |
 | [vrg-vm](cli-tools-overview.md#vrg-vm) | Manage the identity agent VMs |
 | [vrg-vm-resolve-session](cli-tools-overview.md#vrg-vm-resolve-session) | Pick and start a Claude Code session inside an identity VM (run by `vrg-vm session`) |
-| [vrg-submit-pr](dev/submit-pr.md) | Standards-compliant PR submission wrapper |
+| [vrg-submit-pr](dev/submit-pr.md) | Open standards-compliant PRs with auto-merge on, then finalize them by default |
 | [vrg-pr-workflow](cli-tools-overview.md#vrg-pr-workflow) | Record and manage the PR handoff state that `vrg-submit-pr` reads |
 | [vrg-pr-await](cli-tools-overview.md#vrg-pr-await) | Block until a PR merges (exit 0) or cannot merge (exit 1, naming why) |
 | [vrg-pr-review-comments](cli-tools-overview.md#vrg-pr-review-comments) | List a PR's inline review comments, read-only |
@@ -33,7 +33,7 @@ the dev-tree override venv.
 | [vrg-promote](cli-tools-overview.md#vrg-promote) | Move the rolling `vX.Y` tag to a release (human-only) |
 | [vrg-version](cli-tools-overview.md#vrg-version) | Print or bump the repo's version |
 | [vrg-update-deps](dev/update-deps.md) | Update dependencies within their declared bounds and merge the result |
-| [vrg-finalize-pr](dev/finalize-pr.md) | Merge a PR and run post-merge cleanup |
+| [vrg-finalize-pr](dev/finalize-pr.md) | Watch a batch of auto-merging PRs, then settle develop once |
 | [vrg-ruling](dev/ruling.md) | The agent's side of an authenticated ruling: post a request, draft the reply, read it, post the response; also draft a scope change |
 | [vrg-ruling-reply](dev/ruling-reply.md) | Post the human's reply to a ruling request, as the human (human-only) |
 | [vrg-scope-change](dev/scope-change.md) | Post a scope change on a task issue, as the human (human-only) |
