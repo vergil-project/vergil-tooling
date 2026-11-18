@@ -18616,7 +18616,10 @@ of them until the plan exists.</p>
 </code></pre></div>
 <p>After one of two retargets, the planning issue stays held by the other.
   Don't close the planning issue by hand before every retarget: that
-  would close the remaining advisories with the fix unwritten.</p>
+  would close the remaining advisories with the fix unwritten. The same
+  hold applies to the epic's docs PR, which normally also closes the
+  planning issue: while an advisory still tracks it, <code>vrg-submit-pr</code>
+  leaves the <code>Planning issue: Closes</code> line out of the body and says why.</p>
 <h2 id="recording-findings-from-a-review">Recording findings from a review<a class="headerlink" href="#recording-findings-from-a-review" title="Permanent link">&para;</a></h2>
 <p>Security findings can surface while the work is still being designed or
 built. Three recipes cover the findings raised inside the epic/task

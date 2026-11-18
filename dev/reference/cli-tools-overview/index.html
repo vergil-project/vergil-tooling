@@ -19920,6 +19920,10 @@ writes one <code>Closes</code> line per issue. It re-checks the batch hard rules
 one-commit-per-issue invariant against a freshly fetched target, at the head
 the PR opens at, before any push or <code>gh pr create</code>. CLI mode stays
 single-issue.
+A single-issue PR whose issue is an epic's documentation task also closes the
+epic's planning issue, on a <code>- Planning issue: Closes &lt;ref&gt;</code> line of its own;
+when it cannot, it says why (see
+<a href="../dev/submit-pr/#the-planning-issue-of-a-docs-task">the planning issue of a docs task</a>).
 It refuses an issue whose native parent is an intake, planning or deferred
 epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>). Human-run: agent
 identities are refused, and agents hand off with
@@ -20024,6 +20028,14 @@ repo's <code>#N</code> refs, the form <code>batch-start</code> and <code>batch-s
 <code>--issue</code> took; the recorded <code>issues</code> keep each value as given (<code>N</code>, or
 <code>owner/repo#N</code>), the form <code>vrg-submit-pr</code> reads. A single <code>--issue</code> records no
 <code>issues</code> key, prints none, and behaves exactly as before.</p>
+<p>When the single <code>--issue</code> is an epic's documentation task, the response also
+previews what its PR does with the epic's planning issue, as <code>planning_close</code>:
+<code>{"closes": "&lt;ref&gt;"}</code> when the PR will close it,
+<code>{"planning": "&lt;ref&gt;", "skipped": "&lt;why&gt;"}</code> when it will not, or
+<code>{"unknown": "&lt;why&gt;"}</code> when the check could not be read. <code>vrg-submit-pr</code> makes
+the check again when it builds the body (see
+<a href="../dev/submit-pr/#the-planning-issue-of-a-docs-task">the planning issue of a docs task</a>).
+Any other issue, and a batch, prints no <code>planning_close</code>.</p>
 <p>The batch hard rules are: 2 to 8 issues, none listed twice, every one in
 this repo, a task (not an epic, archive or queue item), not operational, not
 directly Blocked-by an open deployment task and opened by a trusted author,

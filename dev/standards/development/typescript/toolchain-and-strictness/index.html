@@ -16855,6 +16855,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#toolchain-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Toolchain Selection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#typecheck-is-the-compiler" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17944,6 +17955,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#toolchain-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Toolchain Selection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#typecheck-is-the-compiler" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18022,7 +18044,63 @@ no-standing-suppression rule that governs it. This page <strong>describes</stron
 does not choose it. The set is decided and tested in the shareable base tsconfig
 (<code>src/vergil_tooling/configs/typescript/tsconfig.base.json</code>) and the language
 registry (<code>src/vergil_tooling/lib/languages.py</code>), and this page mirrors that
-single source of truth.</p>
+single source of truth. It also states the rule that Vergil, not the
+repository, selects the Node runtime and the package manager.</p>
+<h2 id="toolchain-selection">Toolchain Selection<a class="headerlink" href="#toolchain-selection" title="Permanent link">&para;</a></h2>
+<p>Vergil selects the Node runtime, never the repository, as it selects Python's
+interpreter. Each Vergil TypeScript image carries one Node major, so every CI
+leg and dev container runs the major that Vergil resolved from the version
+window (see the
+<a href="../../runtime-version-support-policy/">Runtime Version Support Policy</a>), with
+the npm bundled with that major.</p>
+<ul>
+<li>A repository declares at most an <code>engines.node</code> range in its root
+  <code>package.json</code>. The range should admit every major in the window.</li>
+<li>Every setting that names a Node or package-manager version is an error in
+  <code>vrg-validate</code>, with its fix:</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>a <code>.nvmrc</code> file at the repository root</td>
+<td>delete it</td>
+</tr>
+<tr>
+<td>a <code>.node-version</code> file at the repository root</td>
+<td>delete it</td>
+</tr>
+<tr>
+<td>a <code>packageManager</code> field in the root <code>package.json</code>, whatever it names, <code>npm</code> included</td>
+<td>remove the field</td>
+</tr>
+<tr>
+<td>a <code>volta</code> field in the root <code>package.json</code> (Volta pins Node and package managers)</td>
+<td>remove the field</td>
+</tr>
+<tr>
+<td>an <code>npm</code>, <code>pnpm</code> or <code>yarn</code> key under <code>engines</code> in the root <code>package.json</code></td>
+<td>remove the key</td>
+</tr>
+<tr>
+<td>a <code>runtime</code> or <code>packageManager</code> entry under <code>devEngines</code> in the root <code>package.json</code>, as an object or an array of objects</td>
+<td>remove the entry</td>
+</tr>
+</tbody>
+</table>
+<p><code>devEngines</code> is reported because npm acts on it: npm checks it before
+<code>install</code>, <code>ci</code> and <code>run</code>, and by default fails when the running Node or npm
+does not match (see npm's
+<a href="https://docs.npmjs.com/cli/v11/configuring-npm/package-json#devengines"><code>devEngines</code> documentation</a>).
+<code>devEngines</code>' <code>os</code>, <code>cpu</code> and <code>libc</code> entries are allowed. An <code>engines</code> or
+<code>devEngines</code> that is not an object, a <code>devEngines</code> entry that is not an object
+or an array of objects, or a root <code>package.json</code> that cannot be parsed, is an
+error naming the field or the file.</p>
 <h2 id="typecheck-is-the-compiler">TYPECHECK Is "The Compiler"<a class="headerlink" href="#typecheck-is-the-compiler" title="Permanent link">&para;</a></h2>
 <p>For TypeScript, the TYPECHECK stage is <code>tsc --noEmit</code>, run as the
 repository's own <code>node_modules/.bin/tsc</code>: a full typecheck under the

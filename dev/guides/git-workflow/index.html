@@ -18515,7 +18515,9 @@ full flag list.</p>
 <li>Constructs a standards-compliant PR body with issue linkage,
   auto-selecting <code>Closes #42</code> for a managed task (so it closes on
   merge) or <code>Ref #42</code> for a legacy issue. <code>Fixes</code>/<code>Resolves</code> are
-  not accepted.</li>
+  not accepted. An epic's documentation-task PR also closes the
+  epic's planning issue (see
+  <a href="../../reference/dev/submit-pr/#the-planning-issue-of-a-docs-task">the planning issue of a docs task</a>).</li>
 <li>Creates the PR via <code>gh pr create</code> under the hood.</li>
 </ul>
 <p>See the <a href="../../reference/dev/submit-pr/">vrg-submit-pr reference</a>.</p>

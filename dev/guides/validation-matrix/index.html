@@ -18405,14 +18405,20 @@ checks.</p>
 against the published window (a pin outside the window, an app pin of
 more than one version, an unreadable window) or when a file selects the
 toolchain behind Vergil's back (for Python, <code>.python-version</code>; for
-Rust, <code>rust-toolchain.toml</code> or the legacy <code>rust-toolchain</code>). A
+Rust, <code>rust-toolchain.toml</code> or the legacy <code>rust-toolchain</code>; for
+TypeScript, <code>.nvmrc</code>, <code>.node-version</code>, or a root <code>package.json</code> field
+that names a Node or package-manager version: <code>packageManager</code>,
+<code>volta</code>, an <code>npm</code>, <code>pnpm</code> or <code>yarn</code> key under <code>engines</code>, or a
+<code>devEngines</code> <code>runtime</code> or <code>packageManager</code> entry). A
 declared floor that falls below the window's oldest version, or an
 upper bound that excludes its newest (for Python, <code>requires-python</code>;
 for Go, the <code>go.mod</code> <code>go</code> directive; for Rust, the root <code>Cargo.toml</code>'s
 <code>rust-version</code>), is printed as a warning and does not fail. See
 <a href="../../standards/development/python/version-management/#toolchain-selection-in-the-repo">Python version management</a>
-and the Rust standards'
-<a href="../../standards/development/rust/overview/#toolchain-selection">Toolchain Selection</a>.</p>
+the Rust standards'
+<a href="../../standards/development/rust/overview/#toolchain-selection">Toolchain Selection</a>,
+and the TypeScript standards'
+<a href="../../standards/development/typescript/toolchain-and-strictness/#toolchain-selection">Toolchain Selection</a>.</p>
 <h2 id="pr-ci-gates-not-run-locally">PR CI Gates Not Run Locally<a class="headerlink" href="#pr-ci-gates-not-run-locally" title="Permanent link">&para;</a></h2>
 <p>Each required PR CI check (see <a href="../ci-architecture/#ci-gates">CI gates</a>)
 was compared with what <code>vrg-container-run -- vrg-validate</code> runs, in
