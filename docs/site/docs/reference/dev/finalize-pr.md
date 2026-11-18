@@ -163,9 +163,9 @@ block. What a violation does depends on whether the PR has merged:
 
 #### Status table
 
-The watch prints a status table to stdout once at start-up and again
-after every poll, about every 15 seconds (issue #4677). It has one row
-for each PR in the batch:
+The watch builds a status table once at start-up and again after every
+poll, about every 15 seconds (issue #4677). It has one row for each PR in
+the batch:
 
 ```text
 Watch status after 0m30s:
@@ -189,10 +189,40 @@ Watch status after 0m30s:
   can be watched merging one by one.
 
 The last line counts the merged, pending and failed PRs and gives the
-time left before the batch deadline (`$VRG_FINALIZE_DEADLINE`). The table
-is printed as plain lines and never redraws the terminal, so it reads the
-same in a log. The per-PR outcome lines and the final report are as
-before.
+time left before the batch deadline (`$VRG_FINALIZE_DEADLINE`).
+
+#### The watch stage
+
+The watch is a stage of finalize's progress display, `watch`, shown
+before the settle phase's stages (issue #4694). How the table appears
+depends on where the output goes:
+
+- **On a terminal**, the table sits under the stage's spinner and is
+  redrawn in place after every poll, never appended. When the watch
+  ends, the stage collapses to one line, `✓` when every PR merged with
+  no provenance violation and `⚠` otherwise:
+
+  ```text
+  ⚠ watch  3m12s — 4 merged, 1 failed
+  ✓ close-refs  1.2s
+  ✓ checkout-lock  0.0s
+  ```
+
+- **Off a terminal** (a pipe, a log, CI), output stays plain and
+  append-only. The table is printed at start-up and then only when some
+  PR's state changes. Between changes, a heartbeat line is printed every
+  five minutes:
+
+  ```text
+  Watch status after 5m15s: no change; 1 merged, 2 pending, 0 failed; 1h54m45s left before the batch deadline
+  ```
+
+The run log, `.vergil/vrg-finalize-pr-<stamp>.log`, is shared by the
+watch and the settle phase. It keeps every table in which some PR's
+state changed, each under a timestamped `status changed:` line, so the
+full history survives the terminal's redraw. When no PR merged, the run
+ends by naming the log. The per-PR outcome lines (`<url>: merged`) go to
+the stage's output and the log, and the final report is unchanged.
 
 ### 2. Settle
 

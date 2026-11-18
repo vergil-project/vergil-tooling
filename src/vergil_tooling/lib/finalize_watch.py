@@ -59,14 +59,18 @@ A PR still pending at the deadline is ``timed out``; its auto-merge stays on.
 Every failure to read a PR, to run the provenance check or to turn auto-merge
 off raises; none is read as a pending or a clean PR.
 
-**A status table** is printed to stdout after start-up and after every poll
-(issue #4677): one row per PR in the batch, a PR that has ended included,
-with its number, its shortened title, its state (``checks pending (<n>)``,
+**A status table** (issue #4677) is built after start-up and after every
+poll: one row per PR in the batch, a PR that has ended included, with its
+number, its shortened title, its state (``checks pending (<n>)``,
 ``checks green, merging``, ``behind develop``, ``waiting (<merge state>)``,
 or the outcome it ended with) and how long it has waited since the watch
 started, frozen when it ended. A totals line closes it: merged, pending and
-failed, and the time left before the batch deadline. It is plain lines,
-never a terminal redraw, so it reads the same in a log.
+failed, and the time left before the batch deadline. It goes to
+:func:`vergil_tooling.lib.progress.status_block` (issue #4694), marked
+changed when some PR's state has changed since the last one: on a TTY it
+is redrawn in place every poll; off a TTY it is printed only when it
+changed, with a heartbeat line every few minutes between; and the run log
+keeps every changed table with a timestamp.
 """
 
 from __future__ import annotations
@@ -78,7 +82,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from vergil_tooling.lib import auto_merge, github, pr_provenance
+from vergil_tooling.lib import auto_merge, github, pr_provenance, progress
 from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
@@ -595,23 +599,61 @@ def _shorten(title: str) -> str:
     return title[: _TITLE_WIDTH - 3].rstrip() + "..."
 
 
-def _print_status(
-    rows: Sequence[_Row], results: Collection[PRResult], pending: int, elapsed: float, left: float
-) -> None:
-    """Print the status table: one line per PR, then the totals and the time left."""
+def _totals(results: Collection[PRResult], pending: int, left: float) -> str:
+    """The table's totals: merged, pending and failed, and the time left."""
+    merged = sum(r.outcome == "merged" for r in results)
+    failed = sum(r.outcome.startswith("failed") for r in results)
+    return (
+        f"{merged} merged, {pending} pending, {failed} failed; "
+        f"{_duration(left)} left before the batch deadline"
+    )
+
+
+def _status_lines(rows: Sequence[_Row], totals: str, elapsed: float) -> list[str]:
+    """The status table: a header, one line per PR, then the totals line."""
     table = [("PR", "TITLE", "STATE", "WAITING")]
     table += [(r.number, _shorten(r.title), r.state, _duration(r.waited)) for r in rows]
     widths = [max(len(line[i]) for line in table) for i in range(3)]
-    print(f"\nWatch status after {_duration(elapsed)}:")
+    lines = [f"Watch status after {_duration(elapsed)}:"]
     for line in table:
         cells = [cell.ljust(width) for cell, width in zip(line[:3], widths, strict=True)]
-        print(f"  {'  '.join([*cells, line[3]])}")
+        lines.append(f"  {'  '.join([*cells, line[3]])}")
+    lines.append(f"  {totals}")
+    return lines
+
+
+class _StatusTable:
+    """Sends the status table to the progress display, marking each change of state."""
+
+    def __init__(self) -> None:
+        self._last: tuple[tuple[str, str], ...] | None = None
+
+    def show(
+        self,
+        rows: Sequence[_Row],
+        results: Collection[PRResult],
+        pending: int,
+        elapsed: float,
+        left: float,
+    ) -> None:
+        states = tuple((r.number, r.state) for r in rows)
+        changed = states != self._last
+        self._last = states
+        totals = _totals(results, pending, left)
+        progress.status_block(
+            _status_lines(rows, totals, elapsed),
+            changed=changed,
+            heartbeat=f"Watch status after {_duration(elapsed)}: no change; {totals}",
+        )
+
+
+def summarize(results: Sequence[PRResult]) -> str:
+    """One line for the watch's collapsed stage: ``4 merged, 1 failed[, 1 timed out]``."""
     merged = sum(r.outcome == "merged" for r in results)
     failed = sum(r.outcome.startswith("failed") for r in results)
-    print(
-        f"  {merged} merged, {pending} pending, {failed} failed; "
-        f"{_duration(left)} left before the batch deadline"
-    )
+    timed_out = sum(r.outcome == "timed out" for r in results)
+    text = f"{merged} merged, {failed} failed"
+    return f"{text}, {timed_out} timed out" if timed_out else text
 
 
 def watch(
@@ -626,7 +668,7 @@ def watch(
     Returns one :class:`PRResult` per distinct PR, in the order given. The
     deadline (:func:`deadline_secs`) and *poll_interval* are checked before any
     PR is read. Each open PR is read once at start-up and once per interval,
-    and the status table is printed after start-up and after each poll. A PR
+    and the status table is shown after start-up and after each poll. A PR
     that ended on its checks alone is read again on every later poll, and
     ends ``merged`` once GitHub reports it merged. *cancel_grace* is how long
     a cancelled required check with no newer run holds a PR pending.
@@ -641,6 +683,7 @@ def watch(
     recheck: dict[str, _Watched] = {}
     rows: dict[str, _Row] = {}
     order: list[str] = []
+    table = _StatusTable()
     start = time.monotonic()
 
     def judge(snap: Snapshot, watched: _Watched) -> None:
@@ -667,7 +710,7 @@ def watch(
 
     end = time.monotonic() + deadline
     rows_now = [rows[u] for u in order]
-    _print_status(rows_now, list(results.values()), len(pending), 0.0, float(deadline))
+    table.show(rows_now, list(results.values()), len(pending), 0.0, float(deadline))
     while pending:
         remaining = end - time.monotonic()
         if remaining <= 0:
@@ -682,7 +725,7 @@ def watch(
             judge(snapshot(url), watched)
         now = time.monotonic()
         rows_now = [rows[u] for u in order]
-        _print_status(rows_now, list(results.values()), len(pending), now - start, end - now)
+        table.show(rows_now, list(results.values()), len(pending), now - start, end - now)
 
     for url, (watched, snap) in pending.items():
         detail = f"still pending at the {deadline}s batch deadline ({DEADLINE_ENV})"

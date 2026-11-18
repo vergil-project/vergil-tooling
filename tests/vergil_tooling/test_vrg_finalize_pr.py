@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
@@ -4133,3 +4134,93 @@ def test_main_sweeps_orphan_relay_ref(tmp_path: Path) -> None:
     assert result == 0
     mock_transport.assert_any_call("feature/orphan")
     mock_transport.return_value.delete.assert_called_once_with()
+
+
+# --- the watch as a progress stage (issue #4694) -----------------------------------
+
+
+def _run_logs(root: Path) -> list[Path]:
+    return sorted((root / ".vergil").glob("vrg-finalize-pr-*.log"))
+
+
+@pytest.fixture
+def plain_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the plain renderer: under GitHub Actions detect_format() picks gha."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
+@pytest.mark.usefixtures("plain_renderer")
+def test_watch_is_a_stage_sharing_the_settle_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        _settle_env(tmp_path, []),
+        patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged),
+    ):
+        assert main([f"{_PR_A},{_PR_B}"]) == 0
+    out = capsys.readouterr().out
+    assert "→ watch  starting...\n" in out
+    assert re.search(r"\n✓ watch  \d+\.\ds — 2 merged, 0 failed\n", out)
+    # The watch's line comes before the settle phase's stages.
+    assert out.index("✓ watch") < out.index("→ close-refs")
+    # One run log holds the watch and the settle phase.
+    (log,) = _run_logs(tmp_path)
+    text = log.read_text()
+    assert text.index("=== watch: started ===") < text.index("=== close-refs: started ===")
+    assert "=== watch: ok (2 merged, 0 failed, " in text
+    assert f"full log → {log}" in out
+
+
+@pytest.mark.usefixtures("plain_renderer")
+@pytest.mark.parametrize(
+    ("results", "line"),
+    [
+        (
+            [_pr_result(_PR_A), _pr_result(_PR_B, "failed: CI", "required check failed: test")],
+            "⚠ watch  {t} — 1 merged, 1 failed",
+        ),
+        (
+            [_pr_result(_PR_A, violation=True), _pr_result(_PR_B)],
+            "⚠ watch  {t} — 2 merged, 0 failed",
+        ),
+        (
+            [_pr_result(_PR_A), _pr_result(_PR_B, "timed out", "still pending")],
+            "⚠ watch  {t} — 1 merged, 0 failed, 1 timed out",
+        ),
+    ],
+)
+def test_watch_stage_warns_unless_every_pr_merged_cleanly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], results: list[PRResult], line: str
+) -> None:
+    watch = _watch_returning(*results)
+    with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
+        assert main([f"{_PR_A},{_PR_B}"]) == 3
+    pattern = re.escape(line).replace(re.escape("{t}"), r"\d+\.\ds")
+    assert re.search(rf"\n{pattern}\n", capsys.readouterr().out)
+
+
+@pytest.mark.usefixtures("plain_renderer")
+def test_nothing_merged_names_the_watch_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    watch = _watch_returning(_pr_result(_PR_A, "failed: closed", "closed without merging"))
+    with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
+        assert main([_PR_A]) == 3
+    out = capsys.readouterr().out
+    (log,) = _run_logs(tmp_path)
+    assert out.endswith(f"No PR merged: the settle phase was skipped.\n   full log → {log}\n")
+    assert "=== watch: warn (0 merged, 1 failed, " in log.read_text()
+
+
+@pytest.mark.usefixtures("plain_renderer")
+def test_a_watch_error_fails_the_stage(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    calls: list[str] = []
+    watch = MagicMock(side_effect=FinalizeWatchError(f"{_PR_A}: reading the PR failed: boom"))
+    with _settle_env(tmp_path, calls), patch(_MOD + ".finalize_watch.watch", watch):
+        assert main([_PR_A]) == 1
+    captured = capsys.readouterr()
+    assert calls == []
+    assert re.search(r"\n✗ watch  \d+\.\ds — FinalizeWatchError: ", captured.out)
+    assert "vrg-finalize-pr: the watch stopped: " in captured.err
+    (log,) = _run_logs(tmp_path)
+    assert "=== watch: failed (FinalizeWatchError: " in log.read_text()

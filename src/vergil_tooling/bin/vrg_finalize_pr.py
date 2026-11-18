@@ -73,10 +73,16 @@ waiting is the default), ``--skip-post-checks`` (one run watches the whole
 batch, then settles develop once) and ``--install`` (``--release`` installs
 by default; ``--no-install`` opts out).
 
-Output of the settle phase renders through the stage-aware progress framework
-(issue #1479): standalone TTY runs get the live display with collapsed
-per-stage status lines and a run log at ``.vergil/vrg-finalize-pr-<stamp>.log``;
-piped runs fall back to the plain renderer. ``vrg-release`` passes
+Output of the watch and the settle phase renders through the stage-aware
+progress framework (issue #1479): standalone TTY runs get the live display
+with collapsed per-stage status lines and a run log at
+``.vergil/vrg-finalize-pr-<stamp>.log``; piped runs fall back to the plain
+renderer. The watch is a stage of its own, ``watch`` (issue #4694): on a TTY
+its status table is redrawn in place each poll and the stage collapses to one
+line such as ``✓ watch  3m12s — 4 merged, 0 failed`` (``⚠`` when not every PR
+merged cleanly); piped, the table is printed only when some PR's state
+changes, with a heartbeat line every few minutes. The run log, shared by the
+watch and the settle phase, keeps every changed table with a timestamp. ``vrg-release`` passes
 ``--output-format plain`` explicitly because two live displays cannot nest
 (issue #1470). The release runs as a subprocess after that display has closed,
 so the two renderers never nest either.
@@ -127,7 +133,7 @@ from vergil_tooling.lib.container_cache import provision_dev_image
 from vergil_tooling.lib.live_branches import RepoSetError, default_repo_roots, discover_repos
 from vergil_tooling.lib.pr_workflow import github_transport
 from vergil_tooling.lib.process_errors import error_text
-from vergil_tooling.lib.progress import Stage, StageResult
+from vergil_tooling.lib.progress import Stage, StageResult, StageStatus
 from vergil_tooling.lib.release import gate
 from vergil_tooling.lib.repo_init import prompt_choice
 from vergil_tooling.lib.versions import VersionsError
@@ -365,19 +371,30 @@ def _run_watched(args: argparse.Namespace, root: Path, prs: list[str]) -> int:
         print("[dry-run] the settle phase below runs only if at least one PR merges")
         settle = _settle(args, root, merged_prs=list(prs))
         return _maybe_release(args, root, _settle_exit(settle))
+    log = progress.RunLog("vrg-finalize-pr", root)
     try:
-        results = finalize_watch.watch(
-            prs, allow_provenance_violation=args.allow_provenance_violation
-        )
-    except (finalize_watch.FinalizeWatchError, ValueError) as exc:
-        print(f"vrg-finalize-pr: the watch stopped: {exc}", file=sys.stderr)
-        return EXIT_ERROR
-    merged = [r.pr for r in results if r.outcome == "merged"]
-    if not merged:
-        _print_pr_report(results)
-        print("\nNo PR merged: the settle phase was skipped.")
-        return _maybe_release(args, root, _watch_exit(results))
-    settle = _settle(args, root, merged_prs=merged)
+        try:
+            results = progress.run_stage(
+                "watch",
+                lambda: finalize_watch.watch(
+                    prs, allow_provenance_violation=args.allow_provenance_violation
+                ),
+                args=args,
+                log=log,
+                describe=_describe_watch,
+            )
+        except (finalize_watch.FinalizeWatchError, ValueError) as exc:
+            print(f"vrg-finalize-pr: the watch stopped: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+        merged = [r.pr for r in results if r.outcome == "merged"]
+        if not merged:
+            _print_pr_report(results)
+            print("\nNo PR merged: the settle phase was skipped.")
+            print(f"   full log → {log.path}")
+            return _maybe_release(args, root, _watch_exit(results))
+        settle = _settle(args, root, merged_prs=merged, log=log)
+    finally:
+        log.close()
     _print_pr_report(results)
     _print_settle_report(settle)
     rc = _settle_exit(settle)
@@ -391,6 +408,12 @@ def _run_settle_only(args: argparse.Namespace, root: Path) -> int:
     settle = _settle(args, root, merged_prs=[])
     _print_settle_report(settle)
     return _maybe_release(args, root, _settle_exit(settle))
+
+
+def _describe_watch(results: Sequence[PRResult]) -> tuple[StageStatus, str]:
+    """The watch stage's status line: ``ok`` only when the watch alone allows full success."""
+    status: StageStatus = "ok" if _watch_exit(results) == EXIT_OK else "warn"
+    return status, finalize_watch.summarize(results)
 
 
 def _blocking_violation(result: PRResult) -> bool:
@@ -460,8 +483,17 @@ class SettleOutcome:
         return ""
 
 
-def _settle(args: argparse.Namespace, root: Path, *, merged_prs: list[str]) -> SettleOutcome:
+def _settle(
+    args: argparse.Namespace,
+    root: Path,
+    *,
+    merged_prs: list[str],
+    log: progress.RunLog | None = None,
+) -> SettleOutcome:
     """Run the settle phase's stages and surface any stuck worktrees.
+
+    *log* is the run log the watch wrote to, which the settle phase goes on
+    writing; with none, the pipeline opens its own.
 
     The checkout lock is taken by the ``checkout-lock`` stage, after
     close-refs, and let go by the CD check, or by the ``with`` block here when
@@ -480,6 +512,7 @@ def _settle(args: argparse.Namespace, root: Path, *, merged_prs: list[str]) -> S
             args=args,
             repo_root=root,
             results_sink=results,
+            log=log,
         )
 
     # Surface — and, with --clean-dirty, guardedly clear — any merged/closed

@@ -40,6 +40,11 @@ AUTO_WINDOW_CAP = 40
 AUTO_WINDOW_MARGIN = 2
 AUTO_WINDOW_FLOOR = 3
 
+# Off a TTY, a status block that has not changed is reprinted as one
+# heartbeat line at most this often, so a log shows the run is alive
+# without a copy of the block on every update (issue #4694).
+STATUS_HEARTBEAT_SECS = 300.0
+
 StageMode = Literal["warn", "fail_defer", "fail_fast"]
 StageStatus = Literal["ok", "warn", "failed", "skipped", "interrupted"]
 
@@ -64,12 +69,17 @@ class Stage:
 
 @dataclass
 class StageResult:
-    """Outcome of one stage."""
+    """Outcome of one stage.
+
+    *note* is a short account of what an ``ok`` stage did, shown on its
+    status line (e.g. ``4 merged``); a warning or failure uses *error*.
+    """
 
     name: str
     status: StageStatus
     elapsed: float = 0.0
     error: str | None = None
+    note: str | None = None
 
 
 class PipelineError(Exception):
@@ -184,21 +194,42 @@ def _status_line(result: StageResult) -> str:
     symbol = _SYMBOLS[result.status]
     if result.status == "skipped":
         return f"{symbol} {result.name} — {result.error}"
-    detail = f" — {result.error}" if result.error else ""
+    text = result.error or result.note
+    detail = f" — {text}" if text else ""
     return f"{symbol} {result.name}  {format_elapsed(result.elapsed)}{detail}"
 
 
 class PlainRenderer:
-    """Sequential flat output for piped / non-GHA-CI contexts."""
+    """Sequential flat output for piped / non-GHA-CI contexts.
 
-    def __init__(self, out: IO[str]) -> None:
+    A status block (:func:`status_block`) is append-only here: it is printed
+    whole when it changed, and otherwise as its one heartbeat line once
+    ``STATUS_HEARTBEAT_SECS`` have passed since anything of it was printed.
+    """
+
+    def __init__(self, out: IO[str], *, clock: Callable[[], float] = time.monotonic) -> None:
         self._out = out
+        self._clock = clock
+        self._status_printed: float | None = None
 
     def start_stage(self, name: str) -> None:
+        self._status_printed = None
         self._print(f"→ {name}  starting...")
 
     def stage_line(self, line: str) -> None:
         self._print(line)
+
+    def stage_status(self, lines: Sequence[str], *, changed: bool, heartbeat: str) -> None:
+        now = self._clock()
+        if changed or self._status_printed is None:
+            self._print("")
+            for line in lines:
+                self._print(line)
+        elif now - self._status_printed >= STATUS_HEARTBEAT_SECS:
+            self._print(heartbeat)
+        else:
+            return
+        self._status_printed = now
 
     def end_stage(self, result: StageResult) -> None:
         self._print(_status_line(result))
@@ -256,6 +287,10 @@ class RichRenderer:
     """Live TTY display: completed stages collapse to one line, the active stage
     shows a spinner plus a rolling window of its last N output lines.
 
+    An active stage's status block (:func:`status_block`) sits between its
+    spinner and its rolling window and is redrawn in place on every update;
+    it goes when the stage collapses.
+
     ``window=None`` (the default) auto-sizes the window to the terminal:
     each render shows as many tail lines as fit the current console height
     after the completed-stage lines and spinner, clamped to
@@ -281,14 +316,19 @@ class RichRenderer:
         maxlen = AUTO_WINDOW_CAP if window is None else window if window > 0 else 1
         self._tail: deque[str] = deque(maxlen=maxlen)
         self._active: str | None = None
+        self._status: list[str] = []
         self._live = Live(console=self._console, refresh_per_second=8)
         self._live.start()
 
     def _visible_window(self) -> int:
         """Tail size for auto mode, computed from the live terminal height."""
         available = (
-            self._console.size.height - len(self._completed) - 1 - AUTO_WINDOW_MARGIN
-        )  # − 1 for the spinner line
+            self._console.size.height
+            - len(self._completed)
+            - len(self._status)
+            - 1  # the spinner line
+            - AUTO_WINDOW_MARGIN
+        )
         return max(AUTO_WINDOW_FLOOR, min(AUTO_WINDOW_CAP, available))
 
     def _renderable(self) -> Group:
@@ -296,6 +336,9 @@ class RichRenderer:
         if self._active is not None:
             parts.append(
                 Spinner("dots", text=Text(f" {self._active}", no_wrap=True, overflow="ellipsis"))
+            )
+            parts.extend(
+                Text(f"   {line}", no_wrap=True, overflow="ellipsis") for line in self._status
             )
             if self._window is None:
                 visible = list(self._tail)[-self._visible_window() :]
@@ -307,6 +350,11 @@ class RichRenderer:
     def start_stage(self, name: str) -> None:
         self._active = name
         self._tail.clear()
+        self._status = []
+        self._live.update(self._renderable())
+
+    def stage_status(self, lines: Sequence[str], *, changed: bool, heartbeat: str) -> None:  # noqa: ARG002 — a live redraw shows every update
+        self._status = list(lines)
         self._live.update(self._renderable())
 
     def stage_line(self, line: str) -> None:
@@ -327,6 +375,7 @@ class RichRenderer:
         )
         self._active = None
         self._tail.clear()
+        self._status = []
         self._live.update(self._renderable())
 
     def summary(self, text: str) -> None:
@@ -358,6 +407,15 @@ class _Session:
             self.log.write(line)
             self.renderer.stage_line(line)
 
+    def handle_status(self, lines: Sequence[str], *, changed: bool, heartbeat: str) -> None:
+        with self._lock:
+            if changed:
+                stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+                self.log.write(f"[{stamp}] status changed:")
+                for line in lines:
+                    self.log.write(line)
+            self.renderer.stage_status(lines, changed=changed, heartbeat=heartbeat)
+
 
 _session: _Session | None = None
 
@@ -369,6 +427,33 @@ def emit(line: str) -> None:
         session.handle_line(line)
     else:
         print(line)
+
+
+def status_block(lines: Sequence[str], *, changed: bool, heartbeat: str) -> None:
+    """Show the current stage's status block: a few lines that replace the last ones.
+
+    For a stage that polls (``vrg-finalize-pr``'s watch, issue #4694). The
+    caller passes the whole block on every update, *changed* when what it
+    reports has changed since the last update (not merely a clock in it),
+    and *heartbeat*, one line that stands for an unchanged block.
+
+    - On a TTY the block is redrawn in place on every update and goes when
+      the stage collapses to its status line.
+    - Off a TTY (plain and GHA) it is append-only: printed whole when
+      *changed* (and on the stage's first update), and otherwise as
+      *heartbeat* at most every ``STATUS_HEARTBEAT_SECS``.
+    - The run log gets the block, with a timestamp, each time it changed.
+
+    Outside a running stage it prints the block when *changed*, and nothing
+    otherwise.
+    """
+    session = _session
+    if session is not None:
+        session.handle_status(lines, changed=changed, heartbeat=heartbeat)
+    elif changed:
+        print()
+        for line in lines:
+            print(line)
 
 
 def mark_warn(reason: str) -> None:
@@ -511,6 +596,68 @@ def _make_renderer(fmt: str, out: IO[str], window: int | None) -> Any:
     return PlainRenderer(out)
 
 
+def run_stage[T](
+    name: str,
+    fn: Callable[[], T],
+    *,
+    args: argparse.Namespace,
+    log: RunLog,
+    describe: Callable[[T], tuple[StageStatus, str]],
+) -> T:
+    """Run *fn* as one stage of its own, in a display of its own, and return its value.
+
+    For a stage that must finish before the caller knows which pipeline, if
+    any, runs next (``vrg-finalize-pr``'s watch, issue #4694). The stage is
+    rendered as a pipeline's are: on a TTY it collapses to one status line
+    when it ends, and the display closes with no summary, leaving that line
+    above whatever the caller prints next. Its output goes to *log*, which
+    the caller owns and may hand on to :func:`run_pipeline`.
+
+    *describe* turns *fn*'s value into the stage's status (``ok`` or
+    ``warn``) and the text on its status line. An exception from *fn*,
+    ``KeyboardInterrupt`` included, ends the stage ``failed`` (or
+    ``interrupted``) and is raised again for the caller to handle.
+    """
+    global _session  # noqa: PLW0603
+    renderer = _make_renderer(args.output_format or detect_format(), sys.stdout, args.output_window)
+    session = _Session(renderer=renderer, log=log)
+    _session = session
+    renderer.start_stage(name)
+    log.write(f"=== {name}: started ===")
+    start = time.monotonic()
+    try:
+        try:
+            with (
+                contextlib.redirect_stdout(_EmitWriter()),
+                contextlib.redirect_stderr(_EmitWriter()),
+            ):
+                value = fn()
+        except KeyboardInterrupt:
+            log.write(f"=== {name}: interrupted ===")
+            renderer.end_stage(
+                StageResult(name, "interrupted", time.monotonic() - start, "interrupted")
+            )
+            raise
+        except Exception as exc:
+            cause = f"{type(exc).__name__}: {exc}"
+            log.write(f"=== {name}: failed ({cause}) ===")
+            log.write(traceback.format_exc())
+            renderer.end_stage(StageResult(name, "failed", time.monotonic() - start, cause))
+            raise
+        status, text = describe(value)
+        elapsed = time.monotonic() - start
+        log.write(f"=== {name}: {status} ({text}, {format_elapsed(elapsed)}) ===")
+        if status == "ok":
+            result = StageResult(name, status, elapsed, note=text)
+        else:
+            result = StageResult(name, status, elapsed, text)
+        renderer.end_stage(result)
+        return value
+    finally:
+        _session = None
+        renderer.close()
+
+
 def run_pipeline(
     ctx: Any,
     stages: Sequence[Stage],
@@ -521,6 +668,7 @@ def run_pipeline(
     repo_root: Path,
     success_label: Callable[[], str | None] | None = None,
     results_sink: list[StageResult] | None = None,
+    log: RunLog | None = None,
 ) -> int:
     """Run *stages* in order with progress rendering and full logging.
 
@@ -532,12 +680,18 @@ def run_pipeline(
     :class:`StageResult`, in order, once the stages finish, however they
     finish (vrg-validate records them for merge-review).
 
+    *log*, when given, is the run log to write to instead of a new one (a
+    :func:`run_stage` before the pipeline wrote to it too); the caller owns
+    it and closes it.
+
     Returns 0 on success, 1 if any fail_defer/fail_fast stage failed,
     130 on KeyboardInterrupt.
     """
     global _session  # noqa: PLW0603
     out = sys.stdout
-    log = RunLog(command, repo_root)
+    owns_log = log is None
+    if log is None:
+        log = RunLog(command, repo_root)
     fmt = args.output_format or detect_format()
     renderer = _make_renderer(fmt, out, args.output_window)
     session = _Session(renderer=renderer, log=log)
@@ -618,7 +772,8 @@ def run_pipeline(
         renderer.summary(text)
         renderer.close()
         log.write(text)
-        log.close()
+        if owns_log:
+            log.close()
     if interrupted:
         return 130
     if any(r.status == "failed" for r in results):
