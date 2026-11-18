@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.327] - 2026-11-18
+
+### Bug fixes
+
+- make the planning hold one rule that fails closed on an unreadable advisory (#4726)
+
+### Features
+
+- require retarget's source and refuse to drop an open tracked issue (#4724)
+- hold an advisory open while a queue item or a non-completed close is all that ended it (#4725)
+- add the npm updater and its held-back report (#4728)
+- gate TypeScript dependency licenses on the lockfile (#4729)
+
+### Refactoring
+
+- share the time-boxed exception rules (#4727)
+
 ## [2.1.326] - 2026-11-18
 
 ### Bug fixes
