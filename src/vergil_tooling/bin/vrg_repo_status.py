@@ -33,6 +33,14 @@ Cleanup stays ``vrg-finalize-pr``'s job — this command only observes
 (issue #1552). PR state is queried from GitHub (one call per worktree)
 for an authoritative merged/closed verdict; a failed lookup is shown as
 ``unknown`` with the reason rather than silently downgraded.
+
+A worktree's open PR is shown whatever its local state, a branch mid-rebase
+included, and is read once more for its merge state (issue #4678). A PR that
+cannot merge as it stands shows ``merge failed: <reason>`` in STATE, with the
+reasons ``vrg-pr-await`` defines (``conflict``, ``check_failed``,
+``auto_merge_off``, ``orphaned_check``), beside any local state such as
+``rebasing``, and a note naming the failure. A merge state that cannot be read
+shows ``merge unknown`` with the reason.
 """
 
 from __future__ import annotations
@@ -42,9 +50,10 @@ import datetime
 import re
 import subprocess
 import sys
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import config, worktrees
+from vergil_tooling.lib import config, finalize_watch, pr_await, worktrees
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.open_prs import OpenPR, OpenPRKind, OpenPRsError, gather_open_prs
 from vergil_tooling.lib.pending_release import (
@@ -55,7 +64,7 @@ from vergil_tooling.lib.pending_release import (
     ReleaseTags,
     gather_pending_release,
 )
-from vergil_tooling.lib.process_errors import failure_message
+from vergil_tooling.lib.process_errors import error_text, failure_message
 from vergil_tooling.lib.worktrees import (
     MainCheckoutStatus,
     RawWorktree,
@@ -161,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise
             vanished.append(raw)
             continue
+        status = _with_merge_state(status)
         # A detached worktree is classified by the branch recovered for it
         # (a paused rebase's head-name, or its issue-<N>-<slug> directory), so
         # a mid-rebase feature worktree stays in Development (issue #2634).
@@ -274,6 +284,25 @@ def _branch_cell(branch: str, *, gone: bool) -> str:
     return f"{branch} (branch gone)" if gone else branch
 
 
+def _state_cell(status: WorktreeStatus) -> str:
+    """The STATE cell: the worktree's state and, apart, its open PR's merge state.
+
+    A PR that cannot merge shows ``merge failed: <reason>``; one whose merge
+    state could not be read shows ``merge unknown``. For a clean worktree with
+    an open PR that replaces ``open-pr``; a local state (``rebasing``,
+    ``detached``) is kept in front of it, so both are shown (#4678).
+    """
+    if status.merge_reason is not None:
+        merge = f"merge failed: {status.merge_reason}"
+    elif status.merge_error is not None:
+        merge = "merge unknown"
+    else:
+        return status.state.value
+    if status.state is WorktreeState.OPEN_PR:
+        return merge
+    return f"{status.state.value}, {merge}"
+
+
 def _row(
     status: WorktreeStatus, now: float, *, label: str | None = None, gone: bool = False
 ) -> tuple[str, ...]:
@@ -282,7 +311,7 @@ def _row(
         label if label is not None else status.worktree.path.name,
         _branch_cell(status.worktree.branch, gone=gone),
         pr,
-        status.state.value,
+        _state_cell(status),
         _workflow_cell(status),
         str(status.ahead),
         "yes" if status.dirty else "-",
@@ -323,10 +352,36 @@ def _print_notes(statuses: list[WorktreeStatus], labels: list[str]) -> None:
     for status, label in zip(statuses, labels, strict=True):
         branch = status.worktree.branch
         key = f"{label} {branch}" if branch == _DETACHED else branch
-        if status.detail:
-            print(f"  note: {key}: {status.detail}")
+        for note in _status_notes(status):
+            print(f"  note: {key}: {note}")
         if status.workflow_error:
             print(f"  note: {key}: pr-workflow unreadable: {status.workflow_error}")
+
+
+def _status_notes(status: WorktreeStatus) -> list[str]:
+    """The notes for one worktree row.
+
+    An open PR that cannot merge is named with its reason, and a merge state
+    that could not be read with why. A rebase on a branch with an open PR is
+    the PR's own (pr-watch updating it), so the how-to-finish-a-rebase detail
+    is shown only for a worktree with no open PR (#4678).
+    """
+    pr = status.pr_number
+    rebasing = status.state is WorktreeState.REBASING
+    notes: list[str] = []
+    if status.merge_reason is not None:
+        note = f"PR #{pr} cannot merge ({status.merge_reason}): {status.merge_detail}"
+        if rebasing:
+            note += "; pr-watch is resolving it (rebase in progress)"
+        notes.append(note)
+    elif status.merge_error is not None:
+        notes.append(f"PR #{pr}: merge state unreadable: {status.merge_error}")
+    if rebasing and pr is not None:
+        if status.merge_reason is None:
+            notes.append(f"PR #{pr} is open; its branch is mid-rebase (pr-watch updating it)")
+    elif status.detail:
+        notes.append(status.detail)
+    return notes
 
 
 def _summary(
@@ -360,6 +415,9 @@ def _development_summary(statuses: list[WorktreeStatus]) -> str:
     )
     if attention:
         line += " Some worktrees need attention (see notes above)."
+    blocked = sum(1 for s in statuses if s.merge_reason is not None)
+    if blocked:
+        line += f" {_count(blocked, 'PR')} cannot merge (see notes above)."
     if cruft:
         line += " Run vrg-finalize-pr to clean cruft."
     return line
@@ -534,6 +592,36 @@ def _gather(raw: RawWorktree, *, target: str) -> WorktreeStatus:
         target=target,
         with_freshness=True,
     )
+
+
+# The states whose PR is open, so its merge state is read: a clean worktree
+# with an open PR, or one whose branch is mid-rebase or detached.
+_MERGE_STATE_STATES = frozenset(
+    {WorktreeState.OPEN_PR, WorktreeState.REBASING, WorktreeState.DETACHED}
+)
+
+
+def _with_merge_state(status: WorktreeStatus) -> WorktreeStatus:
+    """Attach why *status*'s open PR cannot merge, if it cannot (#4678).
+
+    The reasons are ``vrg-pr-await``'s (:data:`pr_await.Reason`), from one
+    read of the PR. A failed read is attached as ``merge_error`` and shown,
+    never read as a PR that can merge.
+    """
+    if status.pr_number is None or status.state not in _MERGE_STATE_STATES:
+        return status
+    try:
+        block = pr_await.standing_block(str(status.pr_number))
+    except (
+        subprocess.CalledProcessError,
+        ValueError,
+        finalize_watch.FinalizeWatchError,
+        pr_await.PrAwaitError,
+    ) as exc:
+        return replace(status, merge_error=error_text(exc))
+    if block is None:
+        return status
+    return replace(status, merge_reason=block.reason, merge_detail=block.detail)
 
 
 def _print_vanished(vanished: list[RawWorktree]) -> None:
