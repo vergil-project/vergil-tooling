@@ -35,6 +35,7 @@ from vergil_tooling.lib.update_deps.updater import (
 )
 from vergil_tooling.lib.update_deps.updaters.cargo import CargoUpdater
 from vergil_tooling.lib.update_deps.updaters.images import ImagesUpdater
+from vergil_tooling.lib.update_deps.updaters.npm import NpmUpdater
 from vergil_tooling.lib.update_deps.updaters.python_uv import PythonUvUpdater
 from vergil_tooling.lib.update_deps.updaters.repo_hook import RepoHookUpdater
 from vergil_tooling.lib.update_deps.updaters.vergil_eco import VergilUpdater
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
 DEFAULT_REGISTRY: list[Updater] = [
     PythonUvUpdater(),
     CargoUpdater(),
+    NpmUpdater(),
     VergilUpdater(),
     ImagesUpdater(),
     RepoHookUpdater(),
