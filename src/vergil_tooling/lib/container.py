@@ -274,11 +274,47 @@ VERSION_WINDOW_MOUNT = "/run/vergil/version-window.json"
 # the container cannot see (it is rewritten to the mount instead). rustup's
 # ``RUSTUP_TOOLCHAIN`` and ``RUSTUP_AUTO_INSTALL`` would override the image's
 # toolchain pin, since a forwarded ``-e NAME`` beats the image's ``ENV``
-# (epic vergil-project/.github#1095, spec §6.4). The names are literal so this
-# module keeps importing ``versions.window`` lazily.
+# (epic vergil-project/.github#1095, spec §6.4). ``NODE_OPTIONS`` changes how
+# Node runs, for example by preloading code (epic vergil-project/.github#1281,
+# spec §6.3). The names are literal so this module keeps importing
+# ``versions.window`` lazily.
 NEVER_FORWARDED: frozenset[str] = frozenset(
-    {"VRG_VERSION_WINDOW", "RUSTUP_TOOLCHAIN", "RUSTUP_AUTO_INSTALL"}
+    {"VRG_VERSION_WINDOW", "RUSTUP_TOOLCHAIN", "RUSTUP_AUTO_INSTALL", "NODE_OPTIONS"}
 )
+
+# Name prefixes the env-prefixes passthrough never forwards, each matched
+# without regard to case: npm reads its ``npm_config_*`` environment
+# configuration case-insensitively (``NPM_CONFIG_*`` too), and Corepack and
+# Volta settings would pick another package manager or Node than the image's
+# (epic vergil-project/.github#1281, spec §6.3). ``NODE_PATH`` and the other
+# ``NODE_*`` names stay forwardable.
+NEVER_FORWARDED_PREFIXES: tuple[str, ...] = ("npm_config_", "COREPACK_", "VOLTA_")
+
+_RUST_TOOLCHAIN_REASON = "it would override the image's Rust toolchain"
+_HOST_PATH_REASON = "it names a host path the container cannot see"
+_NODE_REASON = "it would change how Node or npm behaves inside the container"
+
+_WITHHELD_NAME_REASONS: dict[str, str] = {
+    "VRG_VERSION_WINDOW": _HOST_PATH_REASON,
+    "RUSTUP_TOOLCHAIN": _RUST_TOOLCHAIN_REASON,
+    "RUSTUP_AUTO_INSTALL": _RUST_TOOLCHAIN_REASON,
+    "NODE_OPTIONS": _NODE_REASON,
+}
+
+
+def withheld_reason(name: str) -> str | None:
+    """Return why the env-prefixes passthrough withholds *name*, or ``None``.
+
+    ``None`` means the passthrough may forward it. A name in
+    :data:`NEVER_FORWARDED` is matched exactly; a prefix in
+    :data:`NEVER_FORWARDED_PREFIXES` is matched without regard to case.
+    """
+    if name in NEVER_FORWARDED:
+        return _WITHHELD_NAME_REASONS[name]
+    folded = name.casefold()
+    if folded.startswith(tuple(p.casefold() for p in NEVER_FORWARDED_PREFIXES)):
+        return _NODE_REASON
+    return None
 
 
 def version_window_override(environ: Mapping[str, str] | None = None) -> Path | None:
@@ -346,9 +382,15 @@ def build_container_args(
 
     The env-prefixes passthrough never forwards a name in
     :data:`NEVER_FORWARDED`: ``VRG_VERSION_WINDOW``, so a host path cannot leak
-    in, and rustup's ``RUSTUP_TOOLCHAIN`` and ``RUSTUP_AUTO_INSTALL``, so the
-    host cannot override the image's toolchain pin. *env_names* and *extra_env*
-    are not filtered.
+    in; rustup's ``RUSTUP_TOOLCHAIN`` and ``RUSTUP_AUTO_INSTALL``, so the host
+    cannot override the image's toolchain pin; and ``NODE_OPTIONS``. Nor does
+    it forward a name starting with a prefix in
+    :data:`NEVER_FORWARDED_PREFIXES` (``npm_config_``, ``COREPACK_``,
+    ``VOLTA_``, without regard to case), so the host cannot change how Node or
+    npm behaves inside the container. Each withheld name the repo's prefixes
+    match prints one ``vrg-container-run: not forwarding <NAME> from the host:
+    <reason>`` notice on stderr (see :func:`withheld_reason`). *env_names* and
+    *extra_env* are not filtered.
     """
     from vergil_tooling.lib.versions.window import WINDOW_ENV
 
@@ -387,8 +429,16 @@ def build_container_args(
     if env_prefixes:
         prefixes = tuple(env_prefixes)
         for name in os.environ:
-            if name.startswith(prefixes) and name not in NEVER_FORWARDED:
+            if not name.startswith(prefixes):
+                continue
+            reason = withheld_reason(name)
+            if reason is None:
                 container_args.extend(["-e", name])
+            else:
+                print(
+                    f"vrg-container-run: not forwarding {name} from the host: {reason}",
+                    file=sys.stderr,
+                )
 
     if version_window is not None:
         container_args.extend(["-v", f"{version_window}:{VERSION_WINDOW_MOUNT}:ro"])

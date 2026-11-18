@@ -11,6 +11,7 @@ import pytest
 from vergil_tooling.lib.container import (
     _NPM_GLOBAL_ROOT,
     NEVER_FORWARDED,
+    NEVER_FORWARDED_PREFIXES,
     PYCACHE_PREFIX,
     VERSION_WINDOW_MOUNT,
     PackageJsonError,
@@ -27,6 +28,7 @@ from vergil_tooling.lib.container import (
     report_package_json_error,
     resolve_language,
     version_window_override,
+    withheld_reason,
     workspace_mount_args,
     worktree_parent_gitdir,
 )
@@ -1064,3 +1066,144 @@ def test_env_prefixes_never_forward_rustup_selection(tmp_path: Path) -> None:
     assert "RUSTUP_TOOLCHAIN" not in args
     assert "RUSTUP_AUTO_INSTALL" not in args
     assert not any("RUSTUP_" in a for a in args)
+
+
+def test_rustup_withheld_with_notice(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # A withheld variable is never dropped silently: rustup's two names each
+    # print one notice with their reason.
+    env = {"RUST_LOG": "debug", "RUSTUP_TOOLCHAIN": "1.80", "RUSTUP_AUTO_INSTALL": "1"}
+    with patch.dict("os.environ", env, clear=True):
+        build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker", env_prefixes=("RUST",))
+    lines = capsys.readouterr().err.splitlines()
+    reason = "it would override the image's Rust toolchain"
+    assert sorted(lines) == [
+        f"vrg-container-run: not forwarding RUSTUP_AUTO_INSTALL from the host: {reason}",
+        f"vrg-container-run: not forwarding RUSTUP_TOOLCHAIN from the host: {reason}",
+    ]
+
+
+def test_window_env_withheld_with_notice(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with patch.dict("os.environ", {WINDOW_ENV: "/host/window.json"}, clear=True):
+        build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker", env_prefixes=("VRG_",))
+    assert capsys.readouterr().err.splitlines() == [
+        f"vrg-container-run: not forwarding {WINDOW_ENV} from the host: "
+        "it names a host path the container cannot see"
+    ]
+
+
+# -- Node and npm settings are never forwarded (epic .github#1281, spec §6.3) ---
+
+_NODE_HOST_ENV = {
+    "NODE_ENV": "production",
+    "NODE_OPTIONS": "--require /host/preload.js",
+    "npm_config_registry": "https://registry.example/",
+    "NPM_CONFIG_REGISTRY": "https://registry.example/",
+    "COREPACK_HOME": "/host/corepack",
+    "VOLTA_HOME": "/host/volta",
+}
+_NODE_PREFIXES = ("NODE", "npm", "NPM", "COREPACK", "VOLTA")
+_NODE_REASON = "it would change how Node or npm behaves inside the container"
+
+
+def test_env_prefixes_withhold_node_and_npm(tmp_path: Path) -> None:
+    with patch.dict("os.environ", _NODE_HOST_ENV, clear=True):
+        args = build_container_args(
+            tmp_path, "img:1", ["cmd"], runtime="docker", env_prefixes=_NODE_PREFIXES
+        )
+    assert args[args.index("NODE_ENV") - 1] == "-e"
+    for name in _NODE_HOST_ENV.keys() - {"NODE_ENV"}:
+        assert not any(a == name or a.startswith(f"{name}=") for a in args), name
+
+
+def test_withheld_variable_prints_a_notice(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with patch.dict("os.environ", _NODE_HOST_ENV, clear=True):
+        build_container_args(
+            tmp_path, "img:1", ["cmd"], runtime="docker", env_prefixes=_NODE_PREFIXES
+        )
+    lines = capsys.readouterr().err.splitlines()
+    expected = sorted(
+        f"vrg-container-run: not forwarding {name} from the host: {_NODE_REASON}"
+        for name in _NODE_HOST_ENV.keys() - {"NODE_ENV"}
+    )
+    assert sorted(lines) == expected
+
+
+def test_other_node_variables_still_forwarded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Review Focus 5: of the NODE_* names, only NODE_OPTIONS is withheld.
+    env = {"NODE_EXTRA_CA_CERTS": "/host/ca.pem", "NODE_OPTIONS": "--inspect"}
+    with patch.dict("os.environ", env, clear=True):
+        args = build_container_args(
+            tmp_path, "img:1", ["cmd"], runtime="docker", env_prefixes=("NODE",)
+        )
+    assert args[args.index("NODE_EXTRA_CA_CERTS") - 1] == "-e"
+    assert "NODE_OPTIONS" not in args
+    assert capsys.readouterr().err.splitlines() == [
+        f"vrg-container-run: not forwarding NODE_OPTIONS from the host: {_NODE_REASON}"
+    ]
+
+
+def test_node_path_unchanged(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # NODE_PATH moves where global modules are found, not which Node runs: a
+    # NODE prefix neither withholds it nor drops the host override (#2781).
+    (tmp_path / "vergil.toml").write_text(_TOML_WITH_BUILD_COMMAND)
+    with patch.dict("os.environ", {"NODE_PATH": "/custom/modules"}, clear=True):
+        args = build_container_args(
+            tmp_path, "img:1", ["cmd"], runtime="docker", env_prefixes=("NODE",)
+        )
+    assert _env_value(args, "NODE_PATH") == "/custom/modules"
+    assert capsys.readouterr().err == ""
+
+
+def test_nothing_withheld_prints_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with patch.dict("os.environ", {"MQ_HOST": "x"}, clear=True):
+        build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker", env_prefixes=("MQ_",))
+    assert capsys.readouterr().err == ""
+
+
+def test_unmatched_withheld_name_prints_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A notice is printed only for a name the repo's prefixes match.
+    env = {"NODE_OPTIONS": "--inspect", "MQ_HOST": "x"}
+    with patch.dict("os.environ", env, clear=True):
+        build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker", env_prefixes=("MQ_",))
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    ("name", "reason"),
+    [
+        ("RUSTUP_TOOLCHAIN", "it would override the image's Rust toolchain"),
+        ("RUSTUP_AUTO_INSTALL", "it would override the image's Rust toolchain"),
+        ("VRG_VERSION_WINDOW", "it names a host path the container cannot see"),
+        ("NODE_OPTIONS", _NODE_REASON),
+        ("npm_config_cache", _NODE_REASON),
+        ("NPM_CONFIG_CACHE", _NODE_REASON),
+        ("Npm_Config_Cache", _NODE_REASON),
+        ("COREPACK_HOME", _NODE_REASON),
+        ("corepack_home", _NODE_REASON),
+        ("VOLTA_HOME", _NODE_REASON),
+        ("NODE_ENV", None),
+        ("NODE_EXTRA_CA_CERTS", None),
+        ("NODE_PATH", None),
+        ("node_options", None),
+        ("NPM_TOKEN", None),
+        ("VOLTA", None),
+        ("MQ_HOST", None),
+    ],
+)
+def test_withheld_reason(name: str, reason: str | None) -> None:
+    assert withheld_reason(name) == reason
+
+
+def test_never_forwarded_names_and_prefixes() -> None:
+    assert "NODE_OPTIONS" in NEVER_FORWARDED
+    assert NEVER_FORWARDED_PREFIXES == ("npm_config_", "COREPACK_", "VOLTA_")
