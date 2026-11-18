@@ -2700,6 +2700,44 @@ def test_queue_kind_reads_epic_labels(labels: set[str], expected: str | None) ->
 
 
 @pytest.mark.parametrize(
+    ("labels", "title", "expected"),
+    [
+        ({"epic", "planning"}, "Epic (planning): org", "planning"),  # live queue epic
+        ({"epic", "intake"}, "Epic (intake): org", "intake"),
+        ({"epic", "deferred"}, "Epic (deferred): org", "deferred"),
+        ({"archive", "planning"}, "Archive (planning): org — 2026-Q3", "planning"),
+        ({"archive", "intake"}, "Archive (intake): org — 2026-Q3 (2)", "intake"),
+        # A planning archive that lost its archive label: its stamped title alone.
+        (set(), "Archive (planning): org — 2026-Q3", "planning"),
+        ({"planning"}, "Archive (planning): org — 2026-Q3", "planning"),
+        # The archive label with its kind label only: kind from the label.
+        ({"archive", "deferred"}, "something renamed", "deferred"),
+        ({"archive", "ad-hoc"}, "Archive (ad hoc): tool — 2026-Q3", None),
+        ({"epic", "ad-hoc"}, "Epic (ad hoc): tool", None),
+        ({"epic"}, "Epic: build a thing", None),  # a development epic
+        ({"bug"}, "fix: a thing", None),  # a non-epic
+        (set(), "Archive mq-protocol-gateway (read-only)", None),
+    ],
+)
+def test_queue_or_archive_kind(labels: set[str], title: str, expected: str | None) -> None:
+    row = {"labels": [{"name": name} for name in sorted(labels)], "title": title}
+    with patch("vergil_tooling.lib.epics.github.read_json", return_value=row) as read:
+        assert epics.queue_or_archive_kind(EPIC) == expected
+    read.assert_called_once_with(
+        "issue", "view", "40", "--repo", "org/.github", "--json", "labels,title"
+    )
+
+
+def test_queue_or_archive_kind_read_failure_raises() -> None:
+    error = github.GitHubAPIError(1, ["gh"], None, "HTTP 502")
+    with (
+        patch("vergil_tooling.lib.epics.github.read_json", side_effect=error),
+        pytest.raises(github.GitHubAPIError),
+    ):
+        epics.queue_or_archive_kind(EPIC)
+
+
+@pytest.mark.parametrize(
     ("labels", "expected"),
     [
         ({"epic", "intake"}, "intake"),

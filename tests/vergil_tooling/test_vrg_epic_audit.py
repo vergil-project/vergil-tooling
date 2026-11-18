@@ -906,9 +906,13 @@ _TRACKED = IssueRef("org", ".github", 10)
 
 
 def _security_issue(
-    ref: IssueRef = _TRACKED, *, open_: bool = False, ghsa_ids: tuple[str, ...] = (_GHSA,)
+    ref: IssueRef = _TRACKED,
+    *,
+    open_: bool = False,
+    ghsa_ids: tuple[str, ...] = (_GHSA,),
+    reason: str | None = "completed",
 ) -> SecurityIssue:
-    return SecurityIssue(ref, open_, ghsa_ids)
+    return SecurityIssue(ref, open_, ghsa_ids, None if open_ else reason)
 
 
 def _advisory(
@@ -949,10 +953,26 @@ def _run_close(
         return main(["--close"])
 
 
+_PLANNING_EPIC = IssueRef("org", ".github", 501)
+
+
 def _run_report(
-    *, issues: list[SecurityIssue], advisories: list[Advisory] | None, write: MagicMock
+    *,
+    issues: list[SecurityIssue],
+    advisories: list[Advisory] | None,
+    write: MagicMock,
+    parent: IssueRef | None = None,
 ) -> int:
     # advisories=None leaves list_advisories to the caller's own patch.
+    # Every tracked issue's native parent is *parent*; _PLANNING_EPIC reads as
+    # the live planning queue epic.
+    def native_parent_of(_ref: IssueRef) -> IssueRef | None:
+        return parent
+
+    def labels_and_title(ref: IssueRef) -> tuple[set[str], str]:
+        assert ref == _PLANNING_EPIC
+        return {"epic", "planning"}, "Epic (planning): org"
+
     listed = (
         patch(f"{_SEC}.list_advisories", return_value=advisories)
         if advisories is not None
@@ -969,6 +989,8 @@ def _run_report(
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
         patch(f"{_SEC}.security_issues", return_value=issues),
+        patch(f"{_SEC}.epics.native_parent_of", native_parent_of),
+        patch(f"{_SEC}.epics._labels_and_title", labels_and_title),
         listed,
         patch(f"{_SEC}.github.write_json", write),
     ):
@@ -1036,8 +1058,32 @@ def test_report_only_mode_previews_without_writes(capsys: pytest.CaptureFixture[
     assert rc == 0
     write.assert_not_called()
     out = capsys.readouterr().out
-    assert "Security records (preview): 1 advisory state would sync, 1 broken pair." in out
+    assert (
+        "Security records (preview): 1 advisory state would sync, 1 broken pair, 0 held, 0 errors."
+        in out
+    )
     assert f"- broken: {_BROKEN_GHSA}" in out
+
+
+def test_report_only_mode_previews_holds(capsys: pytest.CaptureFixture[str]) -> None:
+    # A closed planning item is all that ended the advisory: the preview
+    # surfaces the hold, apart from broken pairs, and does not fail.
+    write = MagicMock()
+    rc = _run_report(
+        issues=[_security_issue()], advisories=[_advisory()], write=write, parent=_PLANNING_EPIC
+    )
+    assert rc == 0
+    write.assert_not_called()
+    out = capsys.readouterr().out
+    assert (
+        "Security records (preview): 0 advisory states would sync, 0 broken pairs, "
+        "1 held, 0 errors."
+        in out
+    )
+    assert (
+        f"- held: {_GHSA} ({_TRACKED.slug}): retarget it to a fix task, "
+        "or close it with vrg-security-record close"
+    ) in out
 
 
 def test_summary_line_pluralizes_two_broken_pairs(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1049,7 +1095,11 @@ def test_summary_line_pluralizes_two_broken_pairs(capsys: pytest.CaptureFixture[
     )
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Security records (preview): 0 advisory states would sync, 2 broken pairs." in out
+    assert (
+        "Security records (preview): 0 advisory states would sync, 2 broken pairs, "
+        "0 held, 0 errors."
+        in out
+    )
 
 
 def test_report_only_mode_fails_loud_when_the_read_fails(

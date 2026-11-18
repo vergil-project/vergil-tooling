@@ -185,10 +185,38 @@ The scheduled sweep (`vrg-epic-audit --close`) does not run it: the sweep
 makes no security-advisory call, so its token needs no advisories access.
 On each run of `sync`:
 
-- the advisory is **closed** when **every** issue it tracks is closed,
-  whether fixed or dropped as not planned;
+- the advisory is **closed** when **every** issue it tracks is closed as
+  completed and none of them is a queue item;
 - it is a **draft** while **any** of them is open, so reopening an issue
   reopens its advisory.
+
+**The close guard.** Closing an issue does not always mean the fix
+exists, so `sync` keeps a draft advisory `draft`, even with every issue
+it tracks closed, while **any** of those issues:
+
+- is a **queue item**: its native parent is a live intake, planning or
+  deferred epic, or a per-quarter archive of one (by its `archive` label
+  or its stamped title alone), so an item already drained into its
+  archive still counts; or
+- was closed with any reason other than **completed** (not planned,
+  duplicate, no reason recorded, or any reason GitHub adds).
+
+Each advisory the guard holds is reported on its own line, by GHSA ID and
+the issue refs that fired it, with what a human does next:
+
+```text
+- held: GHSA-xxxx-xxxx-xxxx (org/repo#12): retarget it to a fix task, or close it with vrg-security-record close
+```
+
+Retarget it to the task that fixes it, or, when the work is dropped,
+close it with `vrg-security-record close` and a reason (see
+[Closing a record with a reason](#closing-a-record-with-a-reason)). Held
+advisories are counted apart from broken pairs, and a hold does not fail
+`sync`: it waits on a human step and is not a fault. The guard only stops
+a move to `closed`: an advisory a human already closed with `close` is
+left alone and is not reported as held. When an issue's parent cannot be
+read, that advisory is reported on an `- error:` line and left as it is,
+never closed; the rest are still synced, and `sync` exits 1.
 
 A manual state change to a draft or closed advisory is overwritten on the
 next run. `sync` only moves an advisory between `draft` and `closed`.
@@ -237,8 +265,8 @@ vrg-security-record close GHSA-xxxx-xxxx-xxxx \
 It posts `Security record <GHSA-id> closed: <reason>` on every issue the
 record tracks, then sets the advisory to `closed`. Use it when the work a
 record tracks is dropped and `sync` would not close the record, for
-example when its pair is broken, or to put on record why a record was
-closed. The issue still drives the record: `close` refuses while any of
+example when its pair is broken or the close guard holds it, or to put
+on record why a record was closed. The issue still drives the record: `close` refuses while any of
 its issues is open, since the next `sync` would set the advisory back to
 draft. Close the issue first (as not planned, for dropped work), or
 retarget the record to the work that replaces it.
@@ -397,8 +425,10 @@ of them until the plan exists.
   ```
 
   After one of two retargets, the planning issue stays held by the other.
-  Don't close the planning issue by hand before every retarget: that
-  would close the remaining advisories with the fix unwritten. The same
+  Don't close the planning issue by hand before every retarget: the
+  remaining advisories would be left tracking a closed planning item,
+  with the fix unwritten. `sync`'s close guard keeps them `draft` and
+  reports them as held, but only a retarget hands them on. The same
   hold applies to the epic's docs PR, which normally also closes the
   planning issue: while an advisory still tracks it, `vrg-submit-pr`
   leaves the `Planning issue: Closes` line out of the body and says why.
@@ -427,8 +457,11 @@ depends on the decision:
   names (see [Security items in planning](#security-items-in-planning));
 - a **rejected** finding (the human decided it is not a problem) is
   recorded with plain `create`, and the intake issue it creates is then
-  closed as "not planned", so the next `sync` closes the advisory. The human's
-  reason goes into the advisory's details, never into a public record;
+  closed as "not planned", and the advisory is then closed with
+  `vrg-security-record close` and a neutral reason, since `sync`'s close
+  guard holds an advisory whose issue was closed as not planned. The
+  human's reason goes into the advisory's details, never into a public
+  record;
 - a **dropped** finding is recorded with plain `create`, and its intake
   issue stays open, so intake review decides what becomes of it.
 
@@ -487,7 +520,7 @@ hand:
   tracks;
 - `vrg-security-record sync --dry-run` (or the read-only
   `vrg-epic-audit`, which prints the same preview) reports what would sync
-  and every broken pair.
+  and every broken pair and held advisory.
 
 `sync` reports a broken pair and never repairs it, so a human repairs
 each one it reports, by hand.

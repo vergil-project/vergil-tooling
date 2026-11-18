@@ -831,7 +831,7 @@ def test_close_cli_undetectable_org_is_refused(
 
 _REAL_LIST_ADVISORIES = security_records.list_advisories
 _STATE_URL = f"repos/{HOME}/security-advisories"
-_CLOSED_ISSUE = SecurityIssue(ISSUE, False, (GHSA,))
+_CLOSED_ISSUE = SecurityIssue(ISSUE, False, (GHSA,), "completed")
 
 
 def _sync(
@@ -845,12 +845,40 @@ def _sync(
     # advisories=None leaves list_advisories to the caller's own patch.
     if advisories is not None:
         env.list_advisories.return_value = advisories
+    # Every tracked issue is unparented: the close guard fires on no queue item.
     with (
         patch(f"{_SR}.security_issues", return_value=issues),
+        patch(f"{_SR}.epics.native_parent_of", return_value=None),
         patch(f"{_GH}.repo_exists", return_value=True),
         patch(f"{_GH}.write_json", write),
     ):
         return main(argv)
+
+
+def test_sync_holds_an_advisory_a_non_completed_close_ended(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write = MagicMock()
+    rc = _sync(
+        env,
+        ["sync"],
+        issues=[SecurityIssue(ISSUE, False, (GHSA,), "not_planned")],
+        advisories=[Advisory(GHSA, "draft", "tool", (ISSUE,), external=False)],
+        write=write,
+    )
+    assert rc == 0
+    write.assert_not_called()
+    out = capsys.readouterr().out
+    assert "0 advisory states synced, 0 broken pairs, 1 held, 0 errors." in out
+    assert f"- held: {GHSA} ({ISSUE.slug}): retarget it to a fix task" in out
+
+
+def test_sync_help_says_who_runs_it(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        main(["sync", "--help"])
+    text = " ".join(capsys.readouterr().out.split())
+    assert "the human or the user agent runs it" in text
+    assert "held:" in text
 
 
 def test_sync_sets_paired_advisory_states(
@@ -861,7 +889,7 @@ def test_sync_sets_paired_advisory_states(
     rc = _sync(
         env,
         ["sync"],
-        issues=[_CLOSED_ISSUE, SecurityIssue(reopened, True, (OTHER,))],
+        issues=[_CLOSED_ISSUE, SecurityIssue(reopened, True, (OTHER,), None)],
         advisories=[
             Advisory(GHSA, "draft", "tool", (ISSUE,), external=False),
             Advisory(OTHER, "closed", "tool", (reopened,), external=False),
@@ -875,9 +903,8 @@ def test_sync_sets_paired_advisory_states(
     ]
     env.detect_org.assert_called_once_with()
     env.advisory_home.assert_called_once_with("org")
-    assert "Security records: 2 advisory states synced, 0 broken pairs." in (
-        capsys.readouterr().out
-    )
+    out = capsys.readouterr().out
+    assert "Security records: 2 advisory states synced, 0 broken pairs, 0 held, 0 errors." in out
 
 
 def test_sync_dry_run_writes_nothing(env: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
@@ -892,7 +919,10 @@ def test_sync_dry_run_writes_nothing(env: MagicMock, capsys: pytest.CaptureFixtu
     assert rc == 0
     write.assert_not_called()
     out = capsys.readouterr().out
-    assert "Security records (preview): 1 advisory state would sync, 0 broken pairs." in out
+    assert (
+        "Security records (preview): 1 advisory state would sync, 0 broken pairs, 0 held, 0 errors."
+        in out
+    )
 
 
 @pytest.mark.parametrize(("argv", "expected_rc"), [(["sync"], 1), (["sync", "--dry-run"], 0)])
@@ -914,7 +944,7 @@ def test_sync_reports_broken_pairs(
     assert rc == expected_rc
     assert write.call_count == (1 if expected_rc else 0)
     out = capsys.readouterr().out
-    assert "1 broken pair." in out
+    assert "1 broken pair, 0 held, 0 errors." in out
     assert f"- broken: {OTHER}: no security issue names this advisory" in out
 
 
@@ -927,7 +957,7 @@ def test_sync_lists_external_reports_untouched(
     assert rc == 0
     write.assert_not_called()
     out = capsys.readouterr().out
-    assert "Security records: 0 advisory states synced, 0 broken pairs." in out
+    assert "Security records: 0 advisory states synced, 0 broken pairs, 0 held, 0 errors." in out
     assert f"- unpaired external report (left untouched): {OTHER}" in out
 
 
@@ -962,7 +992,7 @@ def test_sync_output_names_only_ids_and_states(
         assert "vrg-security-record: security records pass failed" in captured.err
         assert "HTTP 403: Forbidden" in captured.err
     else:
-        assert "1 advisory state synced, 1 broken pair." in captured.out
+        assert "1 advisory state synced, 1 broken pair, 0 held, 0 errors." in captured.out
         assert OTHER in captured.out
 
 
