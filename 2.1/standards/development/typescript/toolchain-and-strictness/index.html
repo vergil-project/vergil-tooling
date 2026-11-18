@@ -1446,6 +1446,8 @@
       
         
       
+        
+      
     
     
     
@@ -1498,6 +1500,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.324/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.324
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -16855,6 +16885,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#toolchain-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Toolchain Selection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Toolchain Selection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-enginesnode-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The engines.node Range
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#typecheck-is-the-compiler" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17944,6 +18002,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#toolchain-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Toolchain Selection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Toolchain Selection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-enginesnode-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The engines.node Range
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#typecheck-is-the-compiler" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18022,7 +18108,103 @@ no-standing-suppression rule that governs it. This page <strong>describes</stron
 does not choose it. The set is decided and tested in the shareable base tsconfig
 (<code>src/vergil_tooling/configs/typescript/tsconfig.base.json</code>) and the language
 registry (<code>src/vergil_tooling/lib/languages.py</code>), and this page mirrors that
-single source of truth.</p>
+single source of truth. It also states the rule that Vergil, not the
+repository, selects the Node runtime and the package manager.</p>
+<h2 id="toolchain-selection">Toolchain Selection<a class="headerlink" href="#toolchain-selection" title="Permanent link">&para;</a></h2>
+<p>Vergil selects the Node runtime, never the repository, as it selects Python's
+interpreter. Each Vergil TypeScript image carries one Node major, so every CI
+leg and dev container runs the major that Vergil resolved from the version
+window (see the
+<a href="../../runtime-version-support-policy/">Runtime Version Support Policy</a>), with
+the npm bundled with that major.</p>
+<ul>
+<li>A repository declares at most an <code>engines.node</code> range in its root
+  <code>package.json</code>. The range should admit every major in the window.</li>
+<li>Every setting that names a Node or package-manager version is an error in
+  <code>vrg-validate</code>, with its fix:</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>a <code>.nvmrc</code> file at the repository root</td>
+<td>delete it</td>
+</tr>
+<tr>
+<td>a <code>.node-version</code> file at the repository root</td>
+<td>delete it</td>
+</tr>
+<tr>
+<td>a <code>packageManager</code> field in the root <code>package.json</code>, whatever it names, <code>npm</code> included</td>
+<td>remove the field</td>
+</tr>
+<tr>
+<td>a <code>volta</code> field in the root <code>package.json</code> (Volta pins Node and package managers)</td>
+<td>remove the field</td>
+</tr>
+<tr>
+<td>an <code>npm</code>, <code>pnpm</code> or <code>yarn</code> key under <code>engines</code> in the root <code>package.json</code></td>
+<td>remove the key</td>
+</tr>
+<tr>
+<td>a <code>runtime</code> or <code>packageManager</code> entry under <code>devEngines</code> in the root <code>package.json</code>, as an object or an array of objects</td>
+<td>remove the entry</td>
+</tr>
+</tbody>
+</table>
+<p><code>devEngines</code> is reported because npm acts on it: npm checks it before
+<code>install</code>, <code>ci</code> and <code>run</code>, and by default fails when the running Node or npm
+does not match (see npm's
+<a href="https://docs.npmjs.com/cli/v11/configuring-npm/package-json#devengines"><code>devEngines</code> documentation</a>).
+<code>devEngines</code>' <code>os</code>, <code>cpu</code> and <code>libc</code> entries are allowed. An <code>engines</code> or
+<code>devEngines</code> that is not an object, a <code>devEngines</code> entry that is not an object
+or an array of objects, or a root <code>package.json</code> that cannot be parsed, is an
+error naming the field or the file.</p>
+<h3 id="the-enginesnode-range">The <code>engines.node</code> Range<a class="headerlink" href="#the-enginesnode-range" title="Permanent link">&para;</a></h3>
+<p><code>vrg-validate</code> checks <code>engines.node</code> on two sides against the window, as it
+checks Python's <code>requires-python</code>, and prints a warning, with its fix, for
+each side the range misses. A warning does not fail validation.</p>
+<table>
+<thead>
+<tr>
+<th>The range</th>
+<th>Warning</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>admits a Node major below the window's oldest (<code>&gt;=20</code> against 26/24/22)</td>
+<td><code>engines.node &gt;=20 admits Node 20, below the oldest supported major 22</code></td>
+<td>raise it to <code>&gt;=22</code> (the oldest major)</td>
+</tr>
+<tr>
+<td>admits no release of the window's newest major (<code>^24</code> excludes 26)</td>
+<td><code>engines.node ^24 excludes Node 26</code></td>
+<td>drop the upper bound, or widen it to admit 26</td>
+</tr>
+</tbody>
+</table>
+<p>A floor above the window's oldest major is a deliberate restriction and is
+allowed: <code>&gt;=24</code> against 26/24/22 gives no warning. A range with <code>||</code> is read
+as a whole, so <code>^22 || ^24</code> has a floor of 22 and excludes 26. Prerelease
+versions play no part in either test. Only the root <code>package.json</code> is read;
+workspaces are not checked, and a <code>package.json</code> with no <code>engines.node</code> gives
+no warning.</p>
+<p>The range is read with npm's grammar (node-semver's
+<a href="https://github.com/npm/node-semver#ranges">range syntax</a>: comparators,
+<code>x</code>-ranges, <code>~</code>, <code>^</code>, hyphen ranges and <code>||</code>). Two kinds of value are errors, which
+fail validation:</p>
+<ul>
+<li>an <code>engines.node</code> that is not a string, or a string that is not an npm
+  semver range (<code>latest</code>, for example);</li>
+<li>a valid range that admits no Node release (<code>&gt;=26 &lt;24</code>, for example).</li>
+</ul>
 <h2 id="typecheck-is-the-compiler">TYPECHECK Is "The Compiler"<a class="headerlink" href="#typecheck-is-the-compiler" title="Permanent link">&para;</a></h2>
 <p>For TypeScript, the TYPECHECK stage is <code>tsc --noEmit</code>, run as the
 repository's own <code>node_modules/.bin/tsc</code>: a full typecheck under the

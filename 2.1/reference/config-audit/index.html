@@ -1444,6 +1444,8 @@
       
         
       
+        
+      
     
     
     
@@ -1496,6 +1498,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.324/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.324
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18555,9 +18585,12 @@ order:</p>
    whether or not there is new drift. With no change, no PR is opened.</li>
 <li><strong>Wait until merged.</strong> <code>update</code> then watches the PR until it has
    merged. Auto-merge only speeds this up; the watch never depends on
-   it. A PR whose branch falls behind <code>develop</code> is updated and the
-   watch goes on, up to 5 branch updates. A PR whose checks are green
-   on an up-to-date branch is merged by the watch itself. A failed
+   it. When GitHub refuses auto-merge because the PR can already
+   merge, <code>update</code> merges it directly and does not wait. <code>develop</code>
+   does not require a branch to be up to date, so a PR whose checks
+   are green is merged by the watch itself, if auto-merge has not
+   merged it first. Only where <code>develop</code> still requires an up-to-date
+   branch is a PR that falls behind updated, up to 5 times. A failed
    check, a conflict, a PR closed by someone else, the update cap or
    the deadline ends the watch, naming the PR and the reason. The
    deadline is <code>$VRG_MECHANIZED_PR_DEADLINE</code> seconds, 2400 (40
@@ -18570,7 +18603,8 @@ order:</p>
 </ol>
 <p><code>update</code> never reads or touches the caller's working checkout, so a
 human can run <code>update --repo OWNER/REPO</code> from anywhere. Once the sync
-PR has merged, <code>vrg-finalize-pr</code> brings a local <code>develop</code> up to date.</p>
+PR has merged, <code>vrg-finalize-pr --cleanup-only</code> brings a local <code>develop</code> up
+to date.</p>
 <h3 id="update-exit-codes"><code>update</code> exit codes<a class="headerlink" href="#update-exit-codes" title="Permanent link">&para;</a></h3>
 <table>
 <thead>

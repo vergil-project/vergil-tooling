@@ -1444,6 +1444,8 @@
       
         
       
+        
+      
     
     
     
@@ -1496,6 +1498,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.324/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.324
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14857,6 +14887,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#waiting-for-green" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waiting for green
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -17978,6 +18019,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#waiting-for-green" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waiting for green
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18021,8 +18073,7 @@ under an agent identity.</p>
 <code>[publish] release = true</code> in <code>vergil.toml</code>. When the key is <code>false</code> or
 absent it refuses up front, before the resume lookup or any stage, and
 changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> refuse
-<code>--release</code> and <code>--install</code> on such a repo the same way, before any
-push, PR or merge.</p>
+<code>--release</code> on such a repo the same way, before any push, PR or watch.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-release<span class="w"> </span><span class="o">[</span>minor<span class="p">|</span>major<span class="o">]</span><span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
 </code></pre></div>
@@ -18108,6 +18159,117 @@ failure only in a docs job is a warning. A superseded run is replaced by
 the next develop CD run. With no run for the head, the latest completed
 run on an ancestor must be green. Lookup failures refuse the release.
 See <a href="../../../guides/releasing/#the-develop-cd-gate">The develop-CD gate</a>.</p>
+<h2 id="waiting-for-green">Waiting for green<a class="headerlink" href="#waiting-for-green" title="Permanent link">&para;</a></h2>
+<p>The <code>merge-release</code> and <code>back-merge-bump</code> stages, and <code>vrg-update-deps</code>'s
+<code>merge</code> stage, wait for their PR's checks and merge it once everything is
+green and current. The wait is <strong>bounded</strong> by a deadline: it never blocks
+forever, and it never merges past a non-terminal check. Doomed outcomes
+abort immediately rather than after the wait: a draft PR, merge conflicts,
+a failed check (named in the error), or a branch still behind after five
+update attempts. A branch that is merely behind its base is updated
+automatically and the wait restarts.</p>
+<p><strong>Orphaned check-runs.</strong> GitHub occasionally leaves a check-run
+non-terminal (<code>queued</code>/<code>in_progress</code>) even though the workflow run that
+owns it has already completed — an <em>orphan</em> that would never go green on
+its own. The waiter detects this <strong>while waiting</strong>, not only at the
+deadline (issue #3358). About every 30 seconds it checks the backing run
+(<code>gh run view</code>) of each pending Actions check. Once a run has completed,
+its check gets a one-minute grace period to turn terminal. If the check is
+still pending after that, the backing job's own conclusion decides
+(<code>GET /repos/{owner}/{repo}/actions/jobs/{job_id}</code>):</p>
+<ul>
+<li>The job <strong>succeeded</strong> and the check is <strong>not required</strong>: the check is
+  treated as passed and a warning names it (<code>'test / matrix' check-run
+  stale; backing job succeeded</code>), so the merge goes ahead instead of waiting
+  out the deadline. Checks that really failed are still caught by the
+  failed-checks gate.</li>
+<li>The job <strong>succeeded</strong> but the check is one of the target branch's
+  <strong>required</strong> status checks: the check is a <strong>suspected orphan</strong> (issue
+  #3379). GitHub keeps blocking the merge on a required check it reports as
+  pending, so passing it would only move the wait to the merge step. If it
+  is still pending when the grace period below runs out, the error names the
+  check, says GitHub will block the merge until it settles, and gives the
+  same close-and-reopen guidance.</li>
+<li>The job <strong>succeeded</strong> but the required checks <strong>could not be read</strong> (see
+  <em>Required checks</em> below): a <strong>suspected orphan</strong> for the same reason,
+  because the wait cannot tell whether GitHub will block on the stale check.
+  The error, if the grace runs out, says the required-check lookup failed.
+  Without a stale check, a failed lookup still only warns and waits on
+  registered checks.</li>
+<li>The job <strong>did not succeed</strong>, has no conclusion, or its conclusion <strong>cannot
+  be read</strong>: a <strong>suspected orphan</strong>. If the grace runs out, the wait aborts
+  with recovery guidance: close and reopen the PR to re-run the gate, then
+  re-run the waiting command. The error names each such check, its job's
+  outcome and its job link.</li>
+</ul>
+<p><strong>Grace period for suspected orphans.</strong> During a GitHub Actions incident,
+GitHub can write job results back minutes late, and at the moment of
+checking that looks exactly like an orphan (issue #3431). Closing and
+reopening the PR then would throw away results that are on their way. So a
+suspected orphan is not declared at once. The waiter prints a warning naming
+the suspects (<code>… have a completed run but no result yet … GitHub may be
+delayed; re-checking for up to 5m00s …</code>) and keeps polling, re-reading each
+suspect's job about every 30 seconds. A result that arrives in time lets the
+wait finish normally. Only a check still pending when the grace runs out is
+declared orphaned, and the error says how long each check waited. The grace
+defaults to 5 minutes from when the backing run was first seen completed.
+Set <code>VRG_ORPHAN_GRACE</code> (seconds, a positive whole number) to change it; a
+malformed value is an error. <code>vrg-pr-await</code> applies the same grace before it
+reports a PR as unable to merge with reason <code>orphaned_check</code>.</p>
+<p>The deadline is the backstop. When it elapses with checks still pending,
+each one is checked against its backing run again, and a non-terminal check
+over a completed run aborts with the same guidance. Genuinely
+still-running checks are waited on as normal; if the deadline elapses
+with nothing orphaned (for example an app-posted status that is legitimately
+slow), the wait fails with a timeout error that names every still-pending
+check and its run/job link, with the recovery path: re-run the stuck job,
+then re-run the waiting command (<code>vrg-release --resume</code>, or <code>vrg-update-deps</code>).</p>
+<p><strong>Deadline.</strong> The deadline defaults to 75 minutes (4500 seconds, about
+twice the longest known CI run, 36.5 minutes) and is shared by every merge wait:
+<code>vrg-release</code> (merge-release, back-merge-bump) and
+<code>vrg-update-deps</code>. Set <code>VRG_CHECKS_TIMEOUT</code>
+(seconds, a positive whole number) to change it; a malformed value is an
+error, and the deadline cannot be disabled. While waiting, the waiter prints
+each pending check with how long it has been pending, re-reporting whenever
+the pending set changes and at least once a minute.</p>
+<p><strong>Stale check-runs.</strong> GitHub occasionally sets a check-run's <code>conclusion</code>
+and <code>completedAt</code> but leaves its <code>status</code> at <code>IN_PROGRESS</code>. <code>gh pr checks</code>
+derives its state from <code>status</code>, so it reports such a check as pending
+indefinitely. The waiter checks each pending check's <code>conclusion</code> in the
+PR's <code>statusCheckRollup</code>. A check that has a conclusion is terminal and is
+classified by that conclusion, so a stale success passes and a stale failure
+fails. A warning names the inconsistent check (issue #3170).</p>
+<p><strong>Required checks.</strong> "Green" includes the target branch's <em>required</em>
+status checks, read from both classic branch protection
+(<code>GET /repos/{owner}/{repo}/branches/{branch}</code>) and repository rulesets
+(<code>GET /repos/{owner}/{repo}/rules/branches/{branch}</code>). CI aggregator jobs
+such as <code>test / evidence</code> only register as checks once their dependencies
+finish, so every <em>registered</em> check can be done while a required one does
+not exist yet. The wait goes on until each required check is
+registered and terminal, printing what it awaits (for example
+<code>Awaiting required checks: test / evidence (not registered)</code>). If the
+merge is still refused with "the base branch policy prohibits the merge"
+and no check has failed, the wait treats it as <em>not ready</em>: it polls and
+re-attempts within the same deadline, then fails naming the outstanding
+required checks. A policy block that waiting cannot clear, such as a
+required review (<code>reviewDecision=REVIEW_REQUIRED</code>), aborts at once. If the
+required checks cannot be read (permissions or an API error), the wait
+prints a warning and falls back to waiting on registered checks only
+(issue #3061).</p>
+<p>A required check can also be one a job's upload creates: <code>Semgrep OSS</code>,
+<code>Trivy</code> and <code>CodeQL</code> are registered by GitHub Advanced Security only once
+the <code>security / semgrep</code>, <code>security / trivy</code> or <code>security / codeql</code> job
+uploads its SARIF results. When that job fails before its upload, the check
+never registers. So when a required check is unregistered and its producing
+job has already failed (or been cancelled), the wait stops at once,
+even with other checks still running. It fails naming the unregistered
+check and the producing job with its result (for example <code>Required check
+Semgrep OSS was never registered and will not arrive: its producing job
+security / semgrep (failed) ended before uploading it.</code>), rather than
+waiting out the deadline. A required check with no known producing job
+still gets a fail-fast, only later: once every registered check has
+finished and one has failed, the wait stops waiting for it and names the
+failed checks as its likely cause (issue #4294).</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

@@ -1446,6 +1446,8 @@
       
         
       
+        
+      
     
     
     
@@ -1498,6 +1500,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.324/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.324
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18946,7 +18976,8 @@ cross-forge fallback.</p>
 <h3 id="finite-vs-perpetual-epics">Finite vs perpetual epics<a class="headerlink" href="#finite-vs-perpetual-epics" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Finite epic</strong> — a bounded initiative with a definite end. It <strong>rolls up</strong>:
-  once every child task is closed, <code>vrg-finalize-pr</code> closes the epic. A <em>managed
+  once every child task is closed, the event-driven rollup (<code>vrg-epic-rollup</code>)
+  closes the epic. A <em>managed
   task</em> (an issue with an <code>epic</code>-labelled parent) links its PR with <code>Closes</code>, so
   the task auto-closes on merge and the final close rolls its epic up.</li>
 <li><strong>Perpetual (ad-hoc) epic</strong> — a standing umbrella for unplanned work in one
@@ -19681,6 +19712,18 @@ until <code>epic-create</code> retargets each such advisory to the task or tasks
 fix it; closing it earlier would close those advisories with the fix unwritten
 (see
 <a href="../../guides/security-records/#security-items-in-planning">Security items in planning</a>).</p>
+<p><strong>The docs PR closes the planning item.</strong> When <code>vrg-submit-pr</code> opens the PR of
+an epic's documentation task, it adds a <code>- Planning issue: Closes &lt;ref&gt;</code> line
+for the planning item to the PR body, so merging the spec and plan also closes
+the planning item. Nothing has to come back to close it later. The tool finds
+the item from the epic body's <code>Planning:</code> line, and treats the PR's issue as
+the docs task only when the item's latest trusted <code>Docs task:</code> marker names
+it. It adds the line only when the item is in the PR's own repo, is open, is
+under the planning epic, and is not held by an advisory. Otherwise it prints
+the reason and leaves the item open. A batch PR never closes a planning item.
+The line does not begin with the keyword, so the PR is not read as a batch PR
+(see the
+<a href="../../reference/dev/submit-pr/#the-planning-issue-of-a-docs-task"><code>vrg-submit-pr</code> reference</a>).</p>
 <p><code>epic-review planning</code> only prunes the planning queue; it never picks what to
 plan next. It checks that each item is still valid and still needs a full epic,
 and leaves it in the queue, defers it, drops it, or routes it as a one-off when

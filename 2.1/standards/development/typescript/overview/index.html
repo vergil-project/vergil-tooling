@@ -1446,6 +1446,8 @@
       
         
       
+        
+      
     
     
     
@@ -1498,6 +1500,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.324/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.324
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17018,6 +17048,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="CI Gates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#audit-exceptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit exceptions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -18285,6 +18332,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="CI Gates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#audit-exceptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit exceptions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -18346,7 +18410,7 @@ matrix:</p>
 <p>Node majors are <code>[ci].versions</code> entries with a family prefix (<code>node-24</code>). The
 window has one family, so a TypeScript repo needs no pin and follows the window
 as Python and Rust do: an unpinned <strong>library</strong> builds every window major (today
-<code>node-24</code> and <code>node-22</code>), each a hard CI leg, and an unpinned app builds the
+<code>node-26</code>, <code>node-24</code> and <code>node-22</code>), each a hard CI leg, and an unpinned app builds the
 newest. A <code>library</code> may pin any subset of the window. Every other repository
 type resolves as an app and builds exactly one version, so an app that pins
 more than one major fails resolution (see
@@ -18666,10 +18730,42 @@ version a repo resolves from the version window is a hard CI leg (see the
   <code>junit.xml</code> and Cobertura <code>coverage.xml</code>, even when a test fails.</li>
 <li><strong>AUDIT</strong> (once) — <code>npm audit --audit-level=high --json</code>, plus a best-effort
   license summary. The audit run writes its JSON to <code>npm-audit.json</code>, the
-  audit gate's evidence, and exits with its own status. The vulnerability audit covers every package in
+  audit gate's evidence, and <code>vrg-npm-audit-gate</code> gives the verdict: it
+  fails on any advisory at high or critical that no live entry of
+  <code>.npm-audit-exceptions</code> covers (see <a href="#audit-exceptions">Audit exceptions</a>).
+  The vulnerability audit covers every package in
   <code>package-lock.json</code>, devDependencies included, so a vulnerable docs or test
   tool fails the audit just as a runtime dependency does. The license summary
   still covers production dependencies only.</li>
+</ul>
+<h3 id="audit-exceptions">Audit exceptions<a class="headerlink" href="#audit-exceptions" title="Permanent link">&para;</a></h3>
+<p>An advisory sometimes has no patched release: upgrading cannot clear it,
+and the audit would fail in every repository that has the package until
+upstream ships a fix. Treat it as a Trivy finding with no fix: record a
+reviewed, time-boxed exception in <code>.npm-audit-exceptions</code> at the
+repository root and keep shipping. The file's format and the checks the
+gate makes are in
+<a href="../../../../guides/validation-matrix/#typescript-audit-exceptions">TypeScript audit exceptions</a>.</p>
+<ul>
+<li><strong>Only when no fix exists.</strong> An exception is allowed only when no
+  patched version of the vulnerable package has been released. npm's
+  <code>fixAvailable</code> can still name a breaking downgrade of a package that
+  depends on it, which is not a fix. When a patched version exists,
+  upgrade, or add an <code>overrides</code> entry in <code>package.json</code>, instead.</li>
+<li><strong>At most 90 days.</strong> The expiry is a date at most 90 days after the
+  day the entry is written; the gate refuses a later one. When it
+  expires, the gate fails: fix the dependency if a patch has shipped, or
+  review the risk again and set a new expiry.</li>
+<li><strong>Always give a reason and a tracking issue.</strong> The reason says why the
+  risk is acceptable for now (for example, a dev-only dependency that
+  never sees untrusted input). The tracking issue follows the advisory
+  until the entry is removed. Put the longer justification and the
+  removal condition in a <code>#</code> comment above the entry.</li>
+<li><strong>Remove a stale entry.</strong> The gate warns about an entry that matches no
+  advisory in the report; delete it in the next change.</li>
+<li><strong>Reviewed like code.</strong> An entry is visible in the diff, and the audit
+  log lists every exception the gate applied, so reviewers can challenge
+  it like any other change.</li>
 </ul>
 <h2 id="document-map">Document Map<a class="headerlink" href="#document-map" title="Permanent link">&para;</a></h2>
 <ul>

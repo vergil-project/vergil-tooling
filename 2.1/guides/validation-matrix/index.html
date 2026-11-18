@@ -1444,6 +1444,8 @@
       
         
       
+        
+      
     
     
     
@@ -1496,6 +1498,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.324/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.324
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17893,6 +17923,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#typescript-audit-exceptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TypeScript audit exceptions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#semgrep-scan" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18144,6 +18185,17 @@
     <span class="md-ellipsis">
       
         Language checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#typescript-audit-exceptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TypeScript audit exceptions
       
     </span>
   </a>
@@ -18405,14 +18457,23 @@ checks.</p>
 against the published window (a pin outside the window, an app pin of
 more than one version, an unreadable window) or when a file selects the
 toolchain behind Vergil's back (for Python, <code>.python-version</code>; for
-Rust, <code>rust-toolchain.toml</code> or the legacy <code>rust-toolchain</code>). A
+Rust, <code>rust-toolchain.toml</code> or the legacy <code>rust-toolchain</code>; for
+TypeScript, <code>.nvmrc</code>, <code>.node-version</code>, or a root <code>package.json</code> field
+that names a Node or package-manager version: <code>packageManager</code>,
+<code>volta</code>, an <code>npm</code>, <code>pnpm</code> or <code>yarn</code> key under <code>engines</code>, or a
+<code>devEngines</code> <code>runtime</code> or <code>packageManager</code> entry). A
 declared floor that falls below the window's oldest version, or an
 upper bound that excludes its newest (for Python, <code>requires-python</code>;
 for Go, the <code>go.mod</code> <code>go</code> directive; for Rust, the root <code>Cargo.toml</code>'s
-<code>rust-version</code>), is printed as a warning and does not fail. See
-<a href="../../standards/development/python/version-management/#toolchain-selection-in-the-repo">Python version management</a>
-and the Rust standards'
-<a href="../../standards/development/rust/overview/#toolchain-selection">Toolchain Selection</a>.</p>
+<code>rust-version</code>; for TypeScript, the root <code>package.json</code>'s <code>engines.node</code>
+range), is printed as a warning and does not fail. An <code>engines.node</code>
+that is not an npm semver range, or a range that admits no Node release,
+fails. See
+<a href="../../standards/development/python/version-management/#toolchain-selection-in-the-repo">Python version management</a>,
+the Rust standards'
+<a href="../../standards/development/rust/overview/#toolchain-selection">Toolchain Selection</a>,
+and the TypeScript standards'
+<a href="../../standards/development/typescript/toolchain-and-strictness/#toolchain-selection">Toolchain Selection</a>.</p>
 <h2 id="pr-ci-gates-not-run-locally">PR CI Gates Not Run Locally<a class="headerlink" href="#pr-ci-gates-not-run-locally" title="Permanent link">&para;</a></h2>
 <p>Each required PR CI check (see <a href="../ci-architecture/#ci-gates">CI gates</a>)
 was compared with what <code>vrg-container-run -- vrg-validate</code> runs, in
@@ -18683,6 +18744,49 @@ its manifests, such as a branch that deletes <code>Cargo.toml</code> from an
 existing crate or adds Rust sources without one, has lost its manifest
 rather than never had one: its install stage fails, naming the missing
 manifests and the first sources found, and no language stage runs.</p>
+<h3 id="typescript-audit-exceptions">TypeScript audit exceptions<a class="headerlink" href="#typescript-audit-exceptions" title="Permanent link">&para;</a></h3>
+<p>The TypeScript audit stage runs <code>npm audit --audit-level=high --json</code>,
+keeps its report as the <code>npm-audit.json</code> evidence, and passes it to
+<a href="../../reference/cli-tools-overview/#vrg-npm-audit-gate"><code>vrg-npm-audit-gate</code></a>
+for the verdict. npm has no ignore list, so the gate reads the
+repository's <code>.npm-audit-exceptions</code>, the npm counterpart of
+<code>.trivyignore</code>. Each line is one reviewed, time-boxed exception:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a># picomatch ReDoS: no patched release yet. Dev-only, through vitest, vite,
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a># tinyglobby and typescript-eslint. Remove once picomatch ships a fix.
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>GHSA-fc5q-39xc-vjpf exp:2026-12-31 owner/repo#123 ReDoS in picomatch &lt;=4.0.7 with no patched release; dev-only
+</code></pre></div>
+<p>The fields, separated by spaces, are:</p>
+<ol>
+<li>The advisory's GHSA ID, as in its <code>github.com/advisories</code> URL. npm's
+   report names advisories only by GHSA ID, so a CVE ID is refused.</li>
+<li>The expiry, <code>exp:YYYY-MM-DD</code>. The entry is live through that day
+   (UTC), and the expiry may be at most 90 days after the day the gate
+   runs.</li>
+<li>The tracking issue: <code>#N</code>, <code>owner/repo#N</code> or a GitHub issue URL.</li>
+<li>The reason: the rest of the line.</li>
+</ol>
+<p>Lines starting with <code>#</code> and blank lines are ignored, so the longer
+justification and the removal condition go in a comment above the entry,
+as in <code>.trivyignore</code>. A repository with no file has no exceptions.</p>
+<p>The gate drops every advisory a live entry names, at any severity, and
+fails on any other advisory at high or critical. It prints each
+exception it applied, with its expiry, tracking issue and reason, so an
+acknowledged risk stays in the log. These fail the stage, each named by
+its line:</p>
+<ul>
+<li>an expired entry;</li>
+<li>a malformed entry: a missing field, an expiry that is not a real
+  <code>exp:YYYY-MM-DD</code> date, a bad tracking issue, or an ID that is not a
+  GHSA ID;</li>
+<li>an expiry more than 90 days ahead;</li>
+<li>a second entry for the same advisory.</li>
+</ul>
+<p>An entry that matches no advisory in the report is reported as a
+warning, so a stale one gets removed. A report the gate cannot read,
+an npm error report, and an npm exit status that disagrees with the
+report also fail the stage. When an exception is allowed, and for how
+long, is in the TypeScript standards'
+<a href="../../standards/development/typescript/overview/#audit-exceptions">Audit exceptions</a>.</p>
 <h3 id="semgrep-scan">Semgrep scan<a class="headerlink" href="#semgrep-scan" title="Permanent link">&para;</a></h3>
 <p>After the language checks, <code>vrg-validate</code> runs the scan of PR CI's
 <code>security / semgrep</code> gate, so a finding fails locally before the PR

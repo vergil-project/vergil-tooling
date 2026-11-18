@@ -1444,6 +1444,8 @@
       
         
       
+        
+      
     
     
     
@@ -1496,6 +1498,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.324/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.324
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18462,7 +18492,8 @@ in priority order:</p>
 <li><strong>Branch protection</strong> — rulesets require a pull request (no direct
    pushes to protected branches) and require CI to pass. They
    require no approving review: the mechanized <code>automation/</code> PRs
-   merge on CI alone, and the human merges every development PR.</li>
+   merge on CI alone, and a development PR merges through the
+   auto-merge the human's <code>vrg-submit-pr</code> turns on.</li>
 <li><strong><code>vrg-gh</code> / <code>vrg-git</code> wrappers</strong> — gate which operations an agent
    may attempt and surface clear errors. A soft ergonomic layer,
    bypassable by root, not the security boundary.</li>

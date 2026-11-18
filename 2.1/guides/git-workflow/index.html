@@ -1444,6 +1444,8 @@
       
         
       
+        
+      
     
     
     
@@ -1496,6 +1498,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.324/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.324
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17630,10 +17660,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-wait-for-review-merge-manually" class="md-nav__link">
+  <a href="#4-the-pr-merges-on-green" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Wait for review, merge manually
+        4. The PR merges on green
       
     </span>
   </a>
@@ -18162,10 +18192,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-wait-for-review-merge-manually" class="md-nav__link">
+  <a href="#4-the-pr-merges-on-green" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Wait for review, merge manually
+        4. The PR merges on green
       
     </span>
   </a>
@@ -18347,10 +18377,10 @@ through from branching to finalization.</p>
 For the rationale behind the worktree convention,
 see <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md">the worktree convention spec</a>.</p>
 <h2 id="at-a-glance">At a glance<a class="headerlink" href="#at-a-glance" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>new issue  →  branch  →  commit  →  PR  →  (human review)  →  merge  →  finalize
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                  │         │        │                                      │
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                  ▼         ▼        ▼                                      ▼
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>            feature/&lt;N&gt;  vrg-commit  vrg-submit-pr                    vrg-finalize-pr
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>new issue  →  branch  →  commit  →  PR (auto-merge on)  →  merge on green  →  finalize
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                  │         │        │                                             │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                  ▼         ▼        ▼                                             ▼
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>            feature/&lt;N&gt;  vrg-commit  vrg-submit-pr                           vrg-finalize-pr
 </code></pre></div>
 <ul>
 <li>One issue per branch. Branch name encodes the issue number.</li>
@@ -18358,14 +18388,18 @@ see <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/
   <code>git commit</code> is blocked.</strong></li>
 <li><code>vrg-submit-pr</code> creates the PR with issue linkage. <strong>Raw
   <code>gh pr create</code> is blocked.</strong></li>
-<li>Merging is <strong>manual</strong>. Every repo allows auto-merge
-  (<code>allow_auto_merge</code>) so that the mechanized PRs that
-  <code>vrg-github-repo-config update</code> and <code>vrg-upstream-refresh publish</code>
-  open on <code>automation/</code> branches merge on CI alone (epics
-  vergil-project/.github#1064 and #1168). Agents cannot turn
-  auto-merge on for a PR, and the human merges every development PR.</li>
-<li>After merge, <code>vrg-finalize-pr</code> pulls develop, deletes the merged
-  branch and its worktree, and prunes remote refs.</li>
+<li>Submitting is the human's decision to merge. <code>vrg-submit-pr</code> opens
+  each PR against <code>develop</code> with GitHub auto-merge on, and GitHub
+  merges it once its required checks pass (epic
+  vergil-project/.github#1218). <code>develop</code> does not require a branch to
+  be up to date, so ready PRs merge in parallel; <code>main</code> still does.
+  Every repo allows auto-merge (<code>allow_auto_merge</code>), which the
+  mechanized PRs on <code>automation/</code> branches use too (epics
+  vergil-project/.github#1064 and #1168). Agents cannot turn auto-merge
+  on for a PR, and never submit one.</li>
+<li><code>vrg-submit-pr</code> then runs <code>vrg-finalize-pr</code> by default, which watches
+  the PRs merge, then syncs <code>develop</code>, deletes the merged branches and
+  their worktrees, prunes remote refs and validates <code>develop</code> once.</li>
 </ul>
 <p>For parallel work on multiple issues, use the worktree convention
 (below) — every session starts at the project root, each concurrent
@@ -18515,8 +18549,15 @@ full flag list.</p>
 <li>Constructs a standards-compliant PR body with issue linkage,
   auto-selecting <code>Closes #42</code> for a managed task (so it closes on
   merge) or <code>Ref #42</code> for a legacy issue. <code>Fixes</code>/<code>Resolves</code> are
-  not accepted.</li>
-<li>Creates the PR via <code>gh pr create</code> under the hood.</li>
+  not accepted. An epic's documentation-task PR also closes the
+  epic's planning issue (see
+  <a href="../../reference/dev/submit-pr/#the-planning-issue-of-a-docs-task">the planning issue of a docs task</a>).</li>
+<li>Creates the PR via <code>gh pr create</code> under the hood, against <code>develop</code>
+  only.</li>
+<li>Runs the provenance check, then turns GitHub auto-merge on, pinned to
+  the pushed head: squash for a single-issue PR, rebase for a batch PR.</li>
+<li>Runs <code>vrg-finalize-pr</code> on the PR by default (see step 5);
+  <code>--no-finalize</code> opens it and returns.</li>
 </ul>
 <p>See the <a href="../../reference/dev/submit-pr/">vrg-submit-pr reference</a>.</p>
 <div class="admonition note">
@@ -18561,8 +18602,8 @@ the ordered list and a fixed base. Each issue gets one commit, its
 subject ending in <code>(#N)</code>; later changes to it are made with
 <code>vrg-commit --fixup</code> and folded in with <code>vrg-git rebase -i --autosquash</code>.
 <code>report-ready</code> names every issue in order (<code>--issue</code> repeated),
-<code>vrg-submit-pr</code> writes one <code>Closes</code> line per issue, and
-<code>vrg-finalize-pr</code> rebase-merges the PR, so <code>develop</code> gets one commit and
+<code>vrg-submit-pr</code> writes one <code>Closes</code> line per issue and turns the PR's
+auto-merge on with the rebase method, so <code>develop</code> gets one commit and
 one changelog entry per issue. Each stage re-checks one commit per
 issue. The
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md#batches">worktree convention</a>
@@ -18582,29 +18623,37 @@ worktree-free with <code>vrg-submit-pr &lt;branch&gt; [&lt;branch&gt; …]</code
 The relay ref is world-readable on a public repo, so keep secrets out
 of the <code>report-ready</code> title/summary/notes.</p>
 </div>
-<h3 id="4-wait-for-review-merge-manually">4. Wait for review, merge manually<a class="headerlink" href="#4-wait-for-review-merge-manually" title="Permanent link">&para;</a></h3>
-<p>Once CI is green and a reviewer approves, merge through the GitHub
-UI (squash merge for feature PRs; rebase merge for a batch PR, which
-must keep one commit per issue). No automated merge will happen.</p>
+<h3 id="4-the-pr-merges-on-green">4. The PR merges on green<a class="headerlink" href="#4-the-pr-merges-on-green" title="Permanent link">&para;</a></h3>
+<p>Review happens before submit: the agent's <a href="../merge-review/">merge review</a>
+and the human's own reading of the change. Once the PR's required checks
+pass, GitHub merges it, with no further human step. A review comment
+after submit does not hold the merge; the agent's <code>pr-watch</code> handles it,
+and fixes a failing check or a conflict while the PR is open. To stop a
+merge, turn the PR's auto-merge off.</p>
 <h3 id="5-finalize-with-vrg-finalize-pr">5. Finalize with <code>vrg-finalize-pr</code><a class="headerlink" href="#5-finalize-with-vrg-finalize-pr" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-finalize-pr<span class="w">            </span><span class="c1"># cleanup only, after merging in the UI</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-finalize-pr<span class="w"> </span>&lt;PR&gt;<span class="w">       </span><span class="c1"># provenance check, merge, then cleanup</span>
+<p><code>vrg-submit-pr</code> runs this for you by default. Run it by hand after
+<code>vrg-submit-pr --no-finalize</code>, after a fix to a PR that did not merge,
+or to settle <code>develop</code> after something merged on GitHub:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-finalize-pr<span class="w"> </span>&lt;PR&gt;<span class="o">[</span>,&lt;PR&gt;…<span class="o">]</span><span class="w">   </span><span class="c1"># watch the PRs merge, then settle develop</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-finalize-pr<span class="w"> </span>--cleanup-only<span class="w"> </span><span class="c1"># settle develop with no PRs</span>
 </code></pre></div>
-<p>This:</p>
+<p>Once at least one PR has merged, this:</p>
 <ul>
-<li>Switches back to the integration branch (<code>develop</code>).</li>
-<li>Pulls the latest.</li>
-<li>Deletes the merged local feature branch and removes its worktree,
+<li>Switches back to the integration branch (<code>develop</code>) and
+  fast-forwards it, under a checkout lock that keeps two runs from
+  cleaning up the same checkout at once.</li>
+<li>Deletes each merged local feature branch and removes its worktree,
   along with the branch's PR-workflow relay ref
   (<code>refs/vergil/pr-workflow/&lt;branch&gt;</code>).</li>
 <li>Prunes stale remote-tracking refs and sweeps any orphaned relay ref
   whose branch is gone.</li>
-<li>Runs post-merge validation via <code>vrg-container-run</code> to catch any
-  regression introduced by the merge.</li>
+<li>Runs one validation via <code>vrg-container-run</code> to catch any regression
+  the merges introduced.</li>
+<li>Reports the CD run of the synced head, without waiting on it
+  (<code>--wait-cd</code> waits).</li>
 </ul>
-<p>Run this immediately after the PR merges. A Stop hook in the plugin
-will remind you if you try to end the session with an unsubmitted
-or unfinalized PR still dangling.</p>
+<p>A Stop hook in the plugin will remind you if you try to end the
+session with an unsubmitted or unfinalized PR still dangling.</p>
 <p>A merged worktree the sweep cannot remove (a dirty tree, or a reused
 branch name with unmerged commits) is not deleted silently —
 <code>vrg-finalize-pr</code> surfaces it <strong>prominently after the pipeline</strong> so it
