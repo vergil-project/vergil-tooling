@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.325] - 2026-11-18
+
+### Bug fixes
+
+- a check cancelled by a superseding CI run is not a failure (#4693)
+- adopt the PR a failed gh pr create opened instead of retrying it blindly (#4700)
+
+### Chores
+
+- uv lock --upgrade
+
+### Features
+
+- show the watch as a live, collapsing progress stage (#4698)
+- a provenance violation always fails; drop advisories and remove --allow-provenance-violation (#4701)
+
 ## [2.1.324] - 2026-11-18
 
 ### Bug fixes
