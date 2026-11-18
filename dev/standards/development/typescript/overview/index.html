@@ -17100,6 +17100,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#dependency-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dependency updates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#ci-gates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18384,6 +18395,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#dependency-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dependency updates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#ci-gates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18763,6 +18785,29 @@ held to a <strong>100% line threshold per Node version</strong>:</p>
 <p>The gate is a forcing function for explicitness, not a claim that every line was
 exercised — see <a href="../testing-and-coverage/">Testing and Coverage</a> for the 100%
 philosophy and the <code>/* v8 ignore */</code> exclusion discipline.</p>
+<h2 id="dependency-updates">Dependency updates<a class="headerlink" href="#dependency-updates" title="Permanent link">&para;</a></h2>
+<p><code>vrg-update-deps</code>, and every <code>vrg-release</code> through its <code>update-deps</code>
+stage, runs the <code>npm</code> updater in a repository with <code>package.json</code> and
+<code>package-lock.json</code>. It runs <code>npm update --ignore-scripts</code> in the dev
+container, which moves each locked package to the newest version its
+<code>package.json</code> range allows. It changes only <code>package-lock.json</code>: the
+ranges are the repository's own, and the updater fails if <code>package.json</code>
+changes, so never set <code>save</code> in a TypeScript repository's <code>.npmrc</code>.
+Every entry the update adds or moves must carry a <code>license</code> field, the
+one the license gate reads.</p>
+<p>What the ranges hold back is reported, not bumped. After the update,
+<code>npm outdated</code> lists each direct dependency below its registry <code>latest</code>,
+in the held-back report of the update's PR, with the reason: outside the
+<code>package.json</code> range, held by the resolver, or both. For a required
+devDependency (see
+<a href="#required-devdependencies-and-their-accepted-majors">Required devDependencies and their accepted majors</a>)
+the note also says that Vergil accepts only its listed major, so a hold
+such as TypeScript at 6 reads as Vergil's, not the repository's. Moving a
+dependency to a new major is a change to its range in <code>package.json</code>,
+made by hand, and for a required devDependency only once Vergil accepts
+that major.
+The full behaviour is in the
+<a href="../../../../reference/dev/update-deps/#the-npm-updater"><code>vrg-update-deps</code> reference</a>.</p>
 <h2 id="ci-gates">CI Gates<a class="headerlink" href="#ci-gates" title="Permanent link">&para;</a></h2>
 <p>See <a href="../../../source-control-guidelines/#ci-gates">Source Control Guidelines</a>
 for the hard-gates-only standard: every CI check is a hard gate, and every

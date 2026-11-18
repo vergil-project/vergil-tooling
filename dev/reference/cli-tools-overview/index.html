@@ -20666,7 +20666,7 @@ commit-to-pulls lookup; <code>--pr</code> skips the lookup. Used by the
 <h3 id="vrg-update-deps">vrg-update-deps<a class="headerlink" href="#vrg-update-deps" title="Permanent link">&para;</a></h3>
 <p>Update the repo's dependencies to the newest versions their declared
 bounds allow, in a <code>deps/update-&lt;version&gt;</code> managed worktree: run the
-applicable updaters (<code>python</code>, <code>cargo</code>, <code>vergil</code>, <code>images</code>, then the repo
+applicable updaters (<code>python</code>, <code>cargo</code>, <code>npm</code>, <code>vergil</code>, <code>images</code>, then the repo
 <code>hook</code>), validate once, open a <code>dependency-update</code>-labelled PR, and
 merge it. A no-op run opens no PR. A validation or merge failure leaves
 the PR open and files a fix task; an updater or hook failure opens no PR
