@@ -64,9 +64,29 @@ for you; see [Keeping up to date](#keeping-up-to-date).
 
 ## Step 2: Install vergil-tooling
 
+Set `VERSION` to the newest release on the
+[releases page](https://github.com/vergil-project/vergil-tooling/releases)
+(for example `2.1.10`, with no leading `v`), then run:
+
 ```bash
-uv tool install --python 3.15 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
+VERSION=X.Y.Z
+(
+  set -euo pipefail
+  unset UV_PYTHON UV_PYTHON_PREFERENCE UV_NO_MANAGED_PYTHON
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  git init -q "$tmp/src"
+  git -C "$tmp/src" fetch -q --depth 1 https://github.com/vergil-project/vergil-tooling refs/tags/v${VERSION}
+  git -C "$tmp/src" checkout -q FETCH_HEAD
+  (cd "$tmp/src" && uv export --no-config --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt -o "$tmp/constraints.txt" >/dev/null)
+  uv tool install --force --no-config --python 3.15 --managed-python -c "$tmp/constraints.txt" "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v${VERSION}"
+)
 ```
+
+These lines install exactly the tag `v<VERSION>`, with its dependencies
+pinned by that tag's own `uv.lock` (fetched over git), on uv's managed
+Python 3.15, with no uv config file in the working directory or your
+user config able to change the interpreter.
 
 This installs all `vrg-*` console scripts into `~/.local/bin/`.
 `uv`'s official installer already puts that directory on `PATH`; with
@@ -684,15 +704,12 @@ Code session loaded, or a managed file edited by hand (re-run
 
 ## Keeping up to date
 
-After each `vergil-tooling` release, upgrade the host tools:
-
-```bash
-uv tool upgrade vergil-tooling
-```
-
-`uv tool upgrade` re-resolves the git reference, pulls the current
-tip of the rolling minor tag, and rebuilds the isolated tool venv.
-No need to repeat the full git URL.
+Each `vergil-tooling` release installs itself on the Mac that runs it:
+its `[publish].consumer-refresh` runs the
+[Step 2](#step-2-install-vergil-tooling) lines with the just-released
+version. On any other host, rerun those lines with `VERSION` set to the
+new release. Do not use `uv tool upgrade vergil-tooling`: it re-resolves
+the moving tag without the release's lock.
 
 On macOS, `vrg-host` covers the other host prerequisites (`uv`,
 `gh`, Docker, and the `vrg-vm` tools such as Lima, `gcloud` and
