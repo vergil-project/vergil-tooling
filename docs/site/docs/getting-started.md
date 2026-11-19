@@ -53,9 +53,11 @@ VERSION=X.Y.Z
 These lines install exactly the tag `v<VERSION>`, with its dependencies
 pinned by that tag's own `uv.lock`, on uv's managed Python 3.15. No uv
 config file and no `UV_PYTHON*` variable can change the interpreter. They
-are the same lines each vergil-tooling release runs on the Mac (its
-`[publish].consumer-refresh` in `vergil.toml`), so after the first install
-the release keeps the host tools current.
+are the same lines each vergil-tooling release runs (its
+`[publish].consumer-refresh` in `vergil.toml`), but only on the Mac that
+runs that release. On any other host, rerun them with the new `VERSION`
+to upgrade; see
+[Keeping up to date](guides/consuming-repo-setup.md#keeping-up-to-date).
 
 This installs all `vrg-*` console scripts into `~/.local/bin/`.
 `uv`'s official installer already puts that directory on `PATH`; with
