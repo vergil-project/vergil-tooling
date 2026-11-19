@@ -270,10 +270,104 @@ def _write_tag_file(transport: Transport, tag: str) -> None:
     transport.pipe(atomic_write_cmd(_TOOLING_TAG_FILE, 0o644), f"{tag}\n")
 
 
+# The guest's /etc/environment PATH, as vergil-vm's
+# templates/provision/15-environment.sh writes it: the user's ~/.local/bin first,
+# then Ubuntu's default directories. pam_env reads the file into every SSH session,
+# so a non-login remote command (a `limactl shell` command, `gcloud compute ssh
+# --command`, `ssh <host> <cmd>`) finds the uv-installed vrg-* with no PATH
+# prepend (#4742). Keep the text identical to vergil-vm's.
+_ETC_ENVIRONMENT = "/etc/environment"
+_LOGIN_PATH_DIRS = (
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games"
+)
+
+# Every in-guest vrg-* call that runs bare, with no PATH prepend, so depends on the
+# /etc/environment PATH line above, as (source file, function) pairs. Lima runs them
+# through `limactl shell`, the cloud backends through ssh (IAP or plain); each is a
+# non-login command. A static test keeps this list complete: a new bare call fails
+# it until it is added here (#4742).
+BARE_GUEST_CALLS: frozenset[tuple[str, str]] = frozenset(
+    {
+        # `vrg-vm list`: a running Lima VM's session roster (limactl shell).
+        ("bin/vrg_vm.py", "_vm_active_sessions"),
+        # `vrg-vm list`: an off-platform box's session roster (IAP or ssh).
+        ("bin/vrg_vm.py", "_off_platform_active_sessions"),
+        # `vrg-vm session`: the session resolver, on every transport.
+        ("bin/vrg_vm.py", "_session_inner"),
+        # The post-install check itself.
+        ("lib/vm_guest.py", "check_tooling"),
+    }
+)
+
+
+def _ensure_login_path_script(env_file: str) -> str:
+    """The guest script that puts the PATH line in *env_file*; prints changed or unchanged."""
+    env = shlex.quote(env_file)
+    return "\n".join(
+        [
+            "set -eu",
+            f'line="PATH=\\"$HOME/.local/bin:{_LOGIN_PATH_DIRS}\\""',
+            f'if grep -qxF -- "$line" {env} 2>/dev/null; then echo unchanged; exit 0; fi',
+            f"if grep -q '^PATH=' {env} 2>/dev/null; then",
+            f'  sudo sed -i "s|^PATH=.*|$line|" {env}',
+            "else",
+            f"  printf '%s\\n' \"$line\" | sudo tee -a {env} >/dev/null",
+            "fi",
+            f'grep -qxF -- "$line" {env} || '
+            f'{{ echo "ERROR: {env_file} still lacks $line" >&2; exit 1; }}',
+            "echo changed",
+        ]
+    )
+
+
+def ensure_login_path(transport: Transport) -> bool:
+    """Put ``~/.local/bin`` first on the guest's ``/etc/environment`` PATH.
+
+    Writes the same PATH line as vergil-vm's ``15-environment.sh``, replacing any
+    other PATH line, or adding one when there is none. Returns True when it changed
+    the file. pam_env reads the file once per SSH session, so a connection opened
+    before the change still has the old PATH: the caller reconnects before a bare
+    command relies on it (vergil-vm#110).
+    """
+    env_file = _ETC_ENVIRONMENT
+    answer = transport.run("bash", "-c", _ensure_login_path_script(env_file)).stdout.strip()
+    if answer == "changed":
+        print(f"  Put ~/.local/bin on PATH in {env_file}")
+        return True
+    if answer == "unchanged":
+        return False
+    msg = f"unexpected answer from the {env_file} PATH update: {answer!r}"
+    raise RuntimeError(msg)
+
+
+def check_tooling(transport: Transport) -> None:
+    """Run ``vrg-whoami --mode`` bare, as a non-login remote command; raise if it fails.
+
+    No PATH prepend: it tests the /etc/environment guarantee itself, the PATH every
+    bare in-guest call (:data:`BARE_GUEST_CALLS`) depends on. Run it on a session
+    opened after that PATH was written.
+    """
+    try:
+        transport.run("vrg-whoami", "--mode")
+    except subprocess.CalledProcessError:
+        print(
+            "ERROR: a bare non-login 'vrg-whoami --mode' failed in the VM: "
+            f"~/.local/bin is not on its PATH; check the PATH line in {_ETC_ENVIRONMENT}",
+            file=sys.stderr,
+        )
+        raise
+
+
 def install_tooling(transport: Transport, tag: str) -> None:
-    """Install vergil-tooling inside the VM and record the tag."""
+    """Install vergil-tooling inside the VM, put it on the login PATH, and record the tag.
+
+    The bare check is the caller's, on a fresh session: ``vrg-vm create`` runs it
+    after its ``cycle-ssh`` stage (Lima) or after closing its connection (cloud),
+    never over the session opened before provisioning.
+    """
     print(f"  Installing vergil-tooling ({tag})...")
     _install(transport, tag)
+    ensure_login_path(transport)
     _write_tag_file(transport, tag)
 
 
@@ -288,6 +382,9 @@ def update_tooling(transport: Transport, tag: str | None = None, *, fallback_tag
     persisted to the marker file, so a later plain update returns to the
     persisted (identity) version — which, for a release version, installs
     that release over any dev install and clears its dev-ref marker.
+
+    It then puts ``~/.local/bin`` on the guest's login PATH, reconnecting when
+    that changed it, and runs the bare check (#4742).
     """
     explicit = tag is not None
     if tag is None:
@@ -298,6 +395,11 @@ def update_tooling(transport: Transport, tag: str | None = None, *, fallback_tag
         raise SystemExit(1)
     print(f"  Updating vergil-tooling ({tag})...")
     _install(transport, tag)
+    if ensure_login_path(transport):
+        # The open connection still has the old PATH: reconnect, so the check
+        # runs on a session that reads the new one.
+        transport.close()
+    check_tooling(transport)
     if not explicit:
         _write_tag_file(transport, tag)
 

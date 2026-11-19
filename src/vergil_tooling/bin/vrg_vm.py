@@ -73,6 +73,7 @@ from vergil_tooling.lib.session import filter_recent
 from vergil_tooling.lib.session_store import SessionInfo
 from vergil_tooling.lib.vm_backend import select_backend
 from vergil_tooling.lib.vm_guest import (
+    check_tooling,
     copy_claude_config,
     get_tooling_version,
     inject_credentials,
@@ -1014,6 +1015,12 @@ def _st_cycle_ssh(state: _LifecycleState) -> None:
     start_vm(state.target.instance, timeout=state.timeout)
 
 
+def _st_check_tooling(state: _LifecycleState) -> None:
+    # The bare non-login check (#4742), on the connection cycle-ssh just opened:
+    # the one opened before provisioning may predate the /etc/environment PATH.
+    check_tooling(state.target.backend.transport(state.target.instance))
+
+
 def _create_stages() -> list[Stage]:
     return [
         Stage("fetch-template", _st_fetch_template, mode="fail_fast"),
@@ -1023,6 +1030,7 @@ def _create_stages() -> list[Stage]:
         Stage("credentials", _st_credentials, mode="fail_fast"),
         Stage("tooling", _st_install_tooling, mode="fail_fast"),
         Stage("cycle-ssh", _st_cycle_ssh, mode="fail_fast"),
+        Stage("tooling-check", _st_check_tooling, mode="fail_fast"),
     ]
 
 
@@ -1051,6 +1059,7 @@ def _rebuild_stages() -> list[Stage]:
         Stage("copy-config", _st_copy_config, mode="fail_fast"),
         Stage("update-plugins", _st_update_plugins, mode="warn"),
         Stage("cycle-ssh", _st_cycle_ssh, mode="fail_fast"),
+        Stage("tooling-check", _st_check_tooling, mode="fail_fast"),
     ]
 
 
@@ -1281,6 +1290,10 @@ def _cs_credentials(state: _CloudState) -> None:
 def _cs_tooling(state: _CloudState) -> None:
     transport = _require_transport(state)
     install_tooling(transport, state.vergil_version)
+    # The bare non-login check (#4742) needs a session opened after the install
+    # wrote the /etc/environment PATH, so drop the shared connection first.
+    transport.close()
+    check_tooling(transport)
     _report_dev_tooling(transport)
 
 
@@ -2838,6 +2851,7 @@ def _vm_active_sessions(instance: str) -> dict[str, dict[str, object]]:
     yet. The full SessionInfo row (name, cwd, lastActive) is returned so the host
     can both name and age such sessions.
     """
+    # Bare: relies on the guest login PATH (vm_guest.BARE_GUEST_CALLS, #4742).
     result = shell_run(instance, "vrg-vm-resolve-session", "--list-json")
     rows = json.loads(result.stdout)
     return {row["sessionId"]: row for row in rows if row.get("active")}
@@ -2852,6 +2866,7 @@ def _off_platform_active_sessions(vm: OffPlatformVm) -> dict[str, dict[str, obje
     source for a live session's name — exactly as for a Lima box.
     """
     transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir, vm.provider)
+    # Bare: relies on the guest login PATH (vm_guest.BARE_GUEST_CALLS, #4742).
     result = transport.run("vrg-vm-resolve-session", "--list-json")
     rows = json.loads(result.stdout)
     return {row["sessionId"]: row for row in rows if row.get("active")}
@@ -2982,6 +2997,7 @@ def _session_inner(
     # The resolved model is applied first; an explicit `-- claude --model X`
     # passthrough comes after, so Claude's last --model wins.
     extra = (["--model", model] if model else []) + passthrough
+    # Bare: relies on the guest login PATH (vm_guest.BARE_GUEST_CALLS, #4742).
     resolve_cmd = [
         "vrg-vm-resolve-session",
         "--identity",

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import ast
 import json
+import re
 import shlex
 import subprocess
 import tomllib
-from typing import TYPE_CHECKING
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from tests.vergil_tooling.conftest import failing_command, shell_transport
-from vergil_tooling.lib import tooling_install, vm_packages
+from vergil_tooling.lib import tooling_install, vm_guest, vm_packages
 from vergil_tooling.lib.atomic_write import atomic_write_cmd
 from vergil_tooling.lib.identity import Identity
 from vergil_tooling.lib.package import repo_setup
@@ -37,9 +39,6 @@ from vergil_tooling.lib.vm_guest import (
     vm_spec_status,
 )
 from vergil_tooling.lib.vm_transport import TransportTimeoutError
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _ok(stdout: str = "") -> subprocess.CompletedProcess[str]:
@@ -539,6 +538,8 @@ def installs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     )
     monkeypatch.setattr(vm_packages, "dev_install", lambda _t, ref: calls.append(("dev", ref)))
     monkeypatch.setattr(vm_packages, "cleanup_packages", lambda _t: [])
+    monkeypatch.setattr(vm_guest, "ensure_login_path", lambda _t: False)
+    monkeypatch.setattr(vm_guest, "check_tooling", lambda _t: None)
     return calls
 
 
@@ -549,6 +550,8 @@ def steps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr(vm_packages, "released_install", lambda _t, ref: calls.append(ref))
     monkeypatch.setattr(vm_packages, "dev_install", lambda _t, ref: calls.append(f"dev {ref}"))
     monkeypatch.setattr(vm_packages, "cleanup_packages", lambda _t: calls.append("cleanup") or [])
+    monkeypatch.setattr(vm_guest, "ensure_login_path", lambda _t: calls.append("path") or False)
+    monkeypatch.setattr(vm_guest, "check_tooling", lambda _t: calls.append("check"))
     return calls
 
 
@@ -556,11 +559,11 @@ class TestCleanupAfterInstall:
     @pytest.mark.parametrize(("tag", "step"), [("v2.1", "v2.1"), ("develop", "dev develop")])
     def test_install_then_cleanup(self, steps: list[str], tag: str, step: str) -> None:
         install_tooling(_transport(), tag)
-        assert steps == [step, "cleanup"]
+        assert steps == [step, "cleanup", "path"]
 
     def test_update_cleans_up_too(self, steps: list[str]) -> None:
         update_tooling(_transport(), "v2.1")
-        assert steps == ["v2.1", "cleanup"]
+        assert steps == ["v2.1", "cleanup", "path", "check"]
 
     def test_cleanup_runs_only_after_the_check_passes(
         self, monkeypatch: pytest.MonkeyPatch, steps: list[str]
@@ -599,6 +602,8 @@ class _MidTransitionVm:
             return _ok("".join(f"{s} {n}\n" for n, s in self.packages.items()))
         if "test -e" in joined:
             return _ok("".join(f"{f}\n" for f in sorted(self.files)))
+        if "/etc/environment" in joined:
+            return _ok("unchanged\n")
         if "purge" in args:
             for name in args[args.index("-y") + 1 :]:
                 self.packages.pop(name)
@@ -1496,3 +1501,202 @@ class TestPruneCacheImages:
             env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
         )
         assert result.stdout.strip() == token
+
+
+# --- The non-login PATH guarantee (#4742) ------------------------------------
+
+# vergil-vm's templates/provision/15-environment.sh line, with the guest home.
+_VM_PATH_TAIL = (
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games"
+)
+
+
+def _vm_path_line(home: Path) -> str:
+    return f'PATH="{home}/.local/bin:{_VM_PATH_TAIL}"'
+
+
+@pytest.fixture
+def guest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, Path, Path]:
+    """A real-shell guest whose ``/etc/environment`` is a temp file and ``sudo`` runs as-is."""
+    home = tmp_path / "home"
+    home.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    sudo = fake_bin / "sudo"
+    sudo.write_text('#!/bin/sh\nexec "$@"\n')
+    sudo.chmod(0o755)
+    env_file = tmp_path / "environment"
+    monkeypatch.setattr(vm_guest, "_ETC_ENVIRONMENT", str(env_file))
+    return shell_transport(home, fake_bin), home, env_file
+
+
+@pytest.fixture
+def installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the uv install and the package cleanup; leave the PATH steps real."""
+    monkeypatch.setattr(vm_packages, "released_install", lambda _t, _ref: None)
+    monkeypatch.setattr(vm_packages, "dev_install", lambda _t, _ref: None)
+    monkeypatch.setattr(vm_packages, "cleanup_packages", lambda _t: [])
+
+
+class TestLoginPath:
+    @pytest.mark.usefixtures("installed")
+    def test_update_writes_local_bin_into_etc_environment(
+        self, guest: tuple[MagicMock, Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        transport, home, env_file = guest
+        env_file.write_text('PATH="/usr/local/sbin:/usr/local/bin:/usr/bin"\nLANG=C.UTF-8\n')
+        monkeypatch.setattr(vm_guest, "check_tooling", lambda _t: None)
+        update_tooling(transport, "v2.1")
+        assert env_file.read_text() == f"{_vm_path_line(home)}\nLANG=C.UTF-8\n"
+
+    def test_adds_the_line_when_there_is_no_path(self, guest: tuple[MagicMock, Path, Path]) -> None:
+        transport, home, env_file = guest
+        env_file.write_text("DISABLE_AUTOUPDATER=1\n")
+        assert vm_guest.ensure_login_path(transport) is True
+        assert env_file.read_text() == f"DISABLE_AUTOUPDATER=1\n{_vm_path_line(home)}\n"
+
+    def test_unchanged_when_the_line_is_present(self, guest: tuple[MagicMock, Path, Path]) -> None:
+        transport, home, env_file = guest
+        text = f"{_vm_path_line(home)}\nDISABLE_AUTOUPDATER=1\n"
+        env_file.write_text(text)
+        assert vm_guest.ensure_login_path(transport) is False
+        assert env_file.read_text() == text
+
+    def test_failed_write_raises(self, guest: tuple[MagicMock, Path, Path], tmp_path: Path) -> None:
+        transport, _home, env_file = guest
+        env_file.write_text('PATH="/usr/bin"\n')
+        failing_command(tmp_path / "bin", "sed")
+        with pytest.raises(subprocess.CalledProcessError):
+            vm_guest.ensure_login_path(transport)
+
+    def test_unexpected_answer_raises(self) -> None:
+        with pytest.raises(RuntimeError, match="unexpected answer"):
+            vm_guest.ensure_login_path(_transport("maybe\n"))
+
+    @pytest.mark.usefixtures("installed")
+    def test_lima_reconnects_after_environment_change(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        order: list[str] = []
+        transport = _transport()
+        transport.close.side_effect = lambda: order.append("close")
+        monkeypatch.setattr(vm_guest, "ensure_login_path", lambda _t: order.append("path") or True)
+        monkeypatch.setattr(vm_guest, "check_tooling", lambda _t: order.append("check"))
+        update_tooling(transport, "v2.1")
+        assert order == ["path", "close", "check"]
+
+    @pytest.mark.usefixtures("installed")
+    def test_no_reconnect_when_line_already_present(
+        self, guest: tuple[MagicMock, Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        transport, home, env_file = guest
+        env_file.write_text(f"{_vm_path_line(home)}\n")
+        checks: list[object] = []
+        monkeypatch.setattr(vm_guest, "check_tooling", checks.append)
+        update_tooling(transport, "v2.1")
+        transport.close.assert_not_called()
+        assert checks == [transport]
+
+    def test_post_install_check_is_bare_non_login(self) -> None:
+        transport = _transport()
+        vm_guest.check_tooling(transport)
+        transport.run.assert_called_once_with("vrg-whoami", "--mode")
+
+    def test_failed_check_raises_with_the_cause(self, capsys: pytest.CaptureFixture[str]) -> None:
+        transport = _transport()
+        transport.run.side_effect = subprocess.CalledProcessError(127, "vrg-whoami")
+        with pytest.raises(subprocess.CalledProcessError):
+            vm_guest.check_tooling(transport)
+        assert "~/.local/bin is not on its PATH" in capsys.readouterr().err
+
+    @pytest.mark.usefixtures("installed")
+    def test_failed_check_records_no_tag(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fail(_t: object) -> None:
+            raise subprocess.CalledProcessError(127, "vrg-whoami")
+
+        monkeypatch.setattr(vm_guest, "ensure_login_path", lambda _t: False)
+        monkeypatch.setattr(vm_guest, "check_tooling", fail)
+        transport = _transport()
+        transport.run.return_value = _ok("v2.1\n")
+        with pytest.raises(subprocess.CalledProcessError):
+            update_tooling(transport)
+        transport.pipe.assert_not_called()
+
+    @pytest.mark.usefixtures("installed")
+    def test_create_install_leaves_the_check_to_a_fresh_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # vrg-vm create runs the bare check after cycle-ssh (or after closing the
+        # cloud connection); install_tooling never runs it over the session it has.
+        monkeypatch.setattr(vm_guest, "ensure_login_path", lambda _t: True)
+        monkeypatch.setattr(
+            vm_guest, "check_tooling", lambda _t: pytest.fail("checked over the install session")
+        )
+        transport = _transport()
+        install_tooling(transport, "v2.1")
+        transport.close.assert_not_called()
+
+
+# Guest-call methods and functions: a vrg-* argument to one runs in the VM.
+_GUEST_CALLS = frozenset({"run", "pipe", "popen", "exec_session", "shell_run"})
+_VRG_EXE = re.compile(r"^vrg-[a-z0-9-]+$")
+_VRG_IN_SCRIPT = re.compile(r"(?:^|[;&|(]|\bexec)\s*vrg-[a-z0-9-]+")
+
+
+def _call_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    return None
+
+
+def _string_parts(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if isinstance(node, ast.JoinedStr):
+        return [
+            v.value for v in node.values if isinstance(v, ast.Constant) and isinstance(v.value, str)
+        ]
+    return []
+
+
+def _bare_guest_calls(src_root: Path, rel: str) -> set[tuple[str, str]]:
+    """The functions in *rel* that run a vrg-* in the guest with no PATH prepend.
+
+    A bare call is a guest call (``transport.run`` and the like) given a ``vrg-*``
+    executable, or an inline script starting one, with no ``PATH`` in the call;
+    or a command list whose first word is a ``vrg-*`` (the session resolver,
+    joined into the session's script).
+    """
+    source = (src_root / rel).read_text()
+    found: set[tuple[str, str]] = set()
+    for func in ast.walk(ast.parse(source)):
+        if not isinstance(func, ast.FunctionDef):
+            continue
+        for node in ast.walk(func):
+            if isinstance(node, ast.Call) and _call_name(node) in _GUEST_CALLS:
+                if "PATH" in (ast.get_source_segment(source, node) or ""):
+                    continue
+                for arg in node.args:
+                    parts = _string_parts(arg)
+                    if any(_VRG_EXE.match(p) or _VRG_IN_SCRIPT.search(p) for p in parts):
+                        found.add((rel, func.name))
+            elif isinstance(node, ast.List) and node.elts:
+                first = node.elts[0]
+                if isinstance(first, ast.Constant) and _VRG_EXE.match(str(first.value)):
+                    found.add((rel, func.name))
+    return found
+
+
+def test_every_bare_in_guest_call_is_listed() -> None:
+    src_root = Path(vm_guest.__file__).resolve().parent.parent
+    modules = sorted(
+        str(p.relative_to(src_root))
+        for pattern in ("lib/vm_*.py", "lib/lima.py", "lib/claude_marketplace.py", "bin/vrg_vm.py")
+        for p in src_root.glob(pattern)
+    )
+    found: set[tuple[str, str]] = set()
+    for rel in modules:
+        found |= _bare_guest_calls(src_root, rel)
+    assert found == set(vm_guest.BARE_GUEST_CALLS)

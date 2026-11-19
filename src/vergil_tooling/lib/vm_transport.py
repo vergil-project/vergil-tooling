@@ -396,6 +396,12 @@ class Transport(Protocol):
         ...  # pragma: no cover
 
 
+def _lima_control_socket(instance: str) -> Path:
+    """Lima's SSH ControlMaster socket for *instance*: ``<LIMA_HOME>/<instance>/ssh.sock``."""
+    lima_home = os.environ.get("LIMA_HOME") or str(Path.home() / ".lima")
+    return Path(lima_home) / instance / "ssh.sock"
+
+
 class LimaTransport:
     """Transport over ``limactl shell`` for a local Lima instance."""
 
@@ -472,8 +478,34 @@ class LimaTransport:
         _run_transfer(["limactl", "copy", "--recursive", *remote, dest])
 
     def close(self) -> None:
-        """No persistent connection to tear down — limactl has no control master."""
-        return
+        """Stop Lima's SSH ControlMaster taking new sessions, so the next command opens one.
+
+        Every ``limactl shell`` rides one multiplexed connection, whose PAM
+        environment was read when it opened; a guest ``/etc/environment`` change
+        reaches only a new connection (vergil-vm#110). ``ssh -O stop`` closes the
+        master's control socket but leaves its live sessions (an open
+        ``vrg-vm session``) running: the next ``limactl shell`` starts a new master.
+        No master (no socket, or a socket nothing answers) means nothing to do;
+        any other failed stop raises.
+        """
+        socket = _lima_control_socket(self.instance)
+        if not socket.exists():
+            return
+        result = subprocess.run(  # noqa: S603
+            ["ssh", "-o", f"ControlPath={socket}", "-O", "stop", f"lima-{self.instance}"],  # noqa: S607
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_REAP_TIMEOUT_SECS,
+        )
+        # A socket with no master behind it (ssh: "Control socket connect(...)")
+        # is the same as none: the next command opens a fresh connection.
+        if result.returncode != 0 and "Control socket connect" not in result.stderr:
+            msg = (
+                f"could not stop Lima's SSH ControlMaster for {self.instance} "
+                f"({socket}): {result.stderr.strip() or f'exit {result.returncode}'}"
+            )
+            raise RuntimeError(msg)
 
 
 class IapTransport:

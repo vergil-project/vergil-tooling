@@ -344,6 +344,30 @@ remembered.
 `/usr/bin/vrg-whoami` left by an old package install that shadows the uv
 copy fails it.
 
+**`~/.local/bin` on `PATH` for remote commands.** A non-login remote
+command (a `limactl shell` command, `gcloud compute ssh --command`,
+`ssh <host> <cmd>`) reads no shell startup file: its `PATH` comes from
+`/etc/environment`, which pam_env reads when the SSH connection opens.
+`vrg-vm` runs some `vrg-*` commands in the VM this way, with no `PATH` of
+its own (the session resolver behind `vrg-vm session` and `vrg-vm list`),
+so `/etc/environment` puts `~/.local/bin` first on `PATH`:
+
+- A new VM gets the line from vergil-vm's provisioning
+  (`templates/provision/15-environment.sh`), on every boot.
+- After every install, `vrg-vm create`, `rebuild`, `start` and `update`
+  write the same line into `/etc/environment` when it is missing or
+  different, so a VM made before vergil-vm wrote it gets it too.
+- The connection a change was made over still has the old `PATH`. When
+  `vrg-vm update` (or `start`) changes the line, it drops its shared SSH
+  connection, so the next command opens a new one. On Lima this stops the
+  ControlMaster taking new sessions (`ssh -O stop`), and a `vrg-vm
+  session` already open keeps running.
+- Then a bare `vrg-whoami --mode`, with no `PATH` set, must run over that
+  transport; a failure fails the install. `vrg-vm create` and `rebuild`
+  run it as their `tooling-check` stage after `cycle-ssh` on Lima, and
+  after dropping the connection on a cloud VM, never over the
+  connection opened before provisioning.
+
 **Package cleanup.** VMs created before this release installed
 vergil-tooling as an apt package. Once the uv install has passed its
 check, `vrg-vm update` (and `vrg-vm create`) removes what that install
