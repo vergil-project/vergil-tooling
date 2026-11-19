@@ -792,10 +792,22 @@ Progress comments carry machine-readable marker lines — `Epic: <ref>`,
 `Docs task: <ref>`, and `Tasks filed: yes` (the latest of each wins) — and the
 epic body gains a `Planning: <ref>` line. `vrg-queue planning` reports an item
 **ready to close** once it is `in-progress`, all three markers are present, and
-the docs task is closed (its spec + plan PR merged). A planning item that any
-security advisory still tracks is **held** at in-progress, with a `held:` note,
-until `epic-create` retargets each such advisory to the task or tasks that
-fix it; closing it earlier would close those advisories with the fix unwritten
+the docs task is closed (its spec + plan PR merged). One hold rule, which
+fails closed, keeps a planning item **held** at in-progress, with a `held:`
+note in place of `ready-to-close`:
+
+- while any security advisory still tracks it, until `epic-create` retargets
+  each such advisory to the task or tasks that fix it; or
+- while it carries the `security` label and its body names an advisory that
+  cannot be read (the advisory listing does not return it): a missing advisory
+  is never read as "not tracking".
+
+A `Security advisory:` line on an item without the `security` label, with no
+advisory tracking it, is a broken pair: the note reports it and the item is
+not held. Never close a held item by hand. Its advisories do not close with
+it: `vrg-security-record sync`'s close guard keeps each one `draft` while an
+issue it tracks is a queue item, and reports it on a `held:` line. But they
+are left tracking a closed planning item instead of the work that fixes them
 (see
 [Security items in planning](../guides/security-records.md#security-items-in-planning)).
 
@@ -806,7 +818,9 @@ the planning item. Nothing has to come back to close it later. The tool finds
 the item from the epic body's `Planning:` line, and treats the PR's issue as
 the docs task only when the item's latest trusted `Docs task:` marker names
 it. It adds the line only when the item is in the PR's own repo, is open, is
-under the planning epic, and is not held by an advisory. Otherwise it prints
+under the planning epic, and is not held under the planning view's hold rule
+above (an advisory that tracks it, or one it names that cannot be read).
+Otherwise it prints
 the reason and leaves the item open. A batch PR never closes a planning item.
 The line does not begin with the keyword, so the PR is not read as a batch PR
 (see the
