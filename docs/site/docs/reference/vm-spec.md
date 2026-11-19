@@ -55,7 +55,7 @@ any `[vm]` key marks the spec customized, which gives the repo a dedicated VM.
 |---|---|---|---|
 | `cpus` | int | identity/base footprint | vCPUs (last-wins scalar) |
 | `memory` | string `"<N>GiB"` | identity/base footprint | RAM (last-wins scalar) |
-| `disk` | string `"<N>GiB"` | identity/base footprint | Disk size (last-wins scalar) |
+| `disk` | string `"<N>GiB"` | identity footprint, else base `100GiB` | Disk size (last-wins scalar). Lima only |
 | `stale_days` | int | 3 | Age threshold before `vrg-vm` prompts to rebuild |
 | `packages` | list of strings | `[]` | Extra apt packages (accumulates) |
 | `apt_repos` | list of tables | `[]` | Extra apt repositories — `name`, `key_url`, `uri`, `suite`, `components` (accumulates) |
@@ -168,7 +168,10 @@ memory    = "64GiB"
   (`"<N>GiB"`) to grow the disk for workloads whose scratch data lives
   *outside* the persistent `volume` — e.g. a nested-virt image pool and
   qcow2 overlays, which belong on the wipe-on-rebuild boot disk rather
-  than the never-wiped `volume`. Unlike `volume` it is **not required**
+  than the never-wiped `volume`. The rootless containerd image store
+  (`~/.local/share/containerd`, with `HOME` on the boot disk) is such
+  scratch data too, so a box that holds many container images needs a
+  larger `boot_disk`. Unlike `volume` it is **not required**
   off-platform, and it never enters the local (Lima) spec.
 - **`boot_disk_type` picks the ephemeral boot disk's type** (optional).
   Unset, the key is not passed and the vergil-vm module default holds:
@@ -302,6 +305,17 @@ set**, so cloud VMs created before the knob existed keep their
 fingerprints; declaring or resizing it trips `NEEDS-REBUILD` like
 `volume`. `boot_disk_type` follows the same rule: it enters the payload
 only when set, and declaring or changing it trips `NEEDS-REBUILD`.
+
+A local profile's `disk` is in the payload whether a tier declared it
+or it came from the base footprint, so a change to the base footprint
+reaches existing dedicated Lima VMs as `NEEDS-REBUILD`. When the base
+`disk` went from `50GiB` to `100GiB`, every dedicated Lima VM that took
+its size from the base read `NEEDS-REBUILD`, and `vrg-vm rebuild`
+brings it up at the new size. The shared base VM carries no
+fingerprint, so it never reads `NEEDS-REBUILD`; `vrg-vm list` shows
+the declared size for it, and it reaches that size only when it is
+rebuilt. A VM whose identity, repo or host override sets `disk` is
+unaffected.
 
 ## vergil-tooling inside the VM
 
