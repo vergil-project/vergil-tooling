@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.329] - 2026-11-19
+
+### Bug fixes
+
+- select the installation token from every form of target owner, or refuse (#4764)
+
+### Chores
+
+- uv lock --upgrade
+
+### Features
+
+- double the default Lima VM disk to 100GiB (#4792)
+
 ## [2.1.328] - 2026-11-19
 
 ### Bug fixes
