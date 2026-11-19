@@ -18,7 +18,10 @@ Subcommands (epic vergil-project/.github#167, spec §6):
 - ``vrg-host upgrade [<dep>... | --all]`` — remediate. Upgrades only
   ``upgrade = "auto"`` dependencies via their method handler. A ``manual``
   dependency is refused with an actionable message (``--all`` lists every
-  ``manual`` dependency it skipped). An actively pinned dependency — pins
+  ``manual`` dependency it skipped). A ``release`` dependency (vergil-tooling,
+  issue #4603) is installed by its own release's consumer refresh, so its
+  upgrade never runs: its installed version is probed and reported as skipped
+  (under ``--all``) or refused (when named). An actively pinned dependency — pins
   come from the host-local pins file, so ``vrg-host pin`` holds it — is held:
   the package managers cannot upgrade *to a constraint*, so a pin is a real
   hold, unless ``--force`` overrides it. An upgrade that would need privilege
@@ -32,7 +35,7 @@ Subcommands (epic vergil-project/.github#167, spec §6):
   and is not attempted.
   The exit code is ``0`` when everything requested was upgraded or already
   current (or, under ``--all``, deliberately skipped or held), ``1`` when an
-  explicitly named dependency was refused (``manual`` or pinned) or an upgrade
+  explicitly named dependency was refused (``manual``, ``release`` or pinned) or an upgrade
   left a dependency behind or its latest unknown, and ``2`` on any failure (an
   unknown dependency name, a missing dependency, a probe error, a failed or
   privilege-refused upgrade, an unsupported pin constraint, or an unreadable
@@ -122,7 +125,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="upgrade auto-managed dependencies (pin-respecting)",
         description=(
             "Upgrade the named dependencies, or every dependency with --all. Only "
-            "'upgrade = auto' dependencies are upgraded; 'manual' ones are refused "
+            "'upgrade = auto' dependencies are upgraded; 'manual' ones are refused, "
+            "'release' ones (vergil-tooling) are left to their own release, "
             "and actively pinned ones are held unless --force. Exit 0 = done, "
             "1 = a named dependency was refused, 2 = a failure."
         ),
@@ -466,6 +470,37 @@ def _upgrade_no_latest(dep: HostDependency, before: str, state: str) -> _Outcome
     return _Outcome(f"ran      {dep.name}: {before} -> {after}{note}", severity)
 
 
+def _release_owned(dep: HostDependency, *, named: bool) -> _Outcome:
+    """Report an ``upgrade = "release"`` dependency without upgrading it (issue #4603).
+
+    Its own release installs it, so no upgrade command runs, ``--force`` and
+    pins included. Its installed version is still probed: a missing install or
+    a probe error is an ERROR, as ``status`` reports it. Otherwise the line says
+    what is installed and why it is skipped, never that it is current (it has
+    no latest feed). Named explicitly, the request is refused (WARN), as a
+    ``manual`` dependency is; under ``--all`` the skip is intended (OK).
+    """
+    try:
+        installed = host_methods.installed_version(dep)
+    except _PROBE_ERRORS as exc:
+        return _Outcome(
+            f"ERROR    {dep.name}: probe-error ({type(exc).__name__}: {exc}); not upgraded",
+            host_status.ERROR,
+        )
+    if installed is None:
+        return _Outcome(
+            f"ERROR    {dep.name}: missing (not installed by {dep.method}); "
+            f"it is installed by the {dep.name} release, never by vrg-host",
+            host_status.ERROR,
+        )
+    verb = "refused  " if named else "skipped  "
+    return _Outcome(
+        f"{verb}{dep.name}: {installed} installed by the {dep.name} release "
+        "(its consumer-refresh installs it); vrg-host does not upgrade it",
+        host_status.WARN if named else host_status.OK,
+    )
+
+
 def _upgrade_one(dep: HostDependency, *, force: bool) -> _Outcome:
     """Probe, then upgrade one ``auto`` dependency only if it needs it.
 
@@ -534,7 +569,7 @@ def _upgrade(args: argparse.Namespace) -> int:
         )
         return host_status.ERROR
     targets = list(deps) if args.all else [by_name[name] for name in dict.fromkeys(args.deps)]
-    _refresh_brew([dep for dep in targets if dep.upgrade != "manual"])
+    _refresh_brew([dep for dep in targets if dep.upgrade == "auto"])
     worst = host_status.OK
     skipped_manual: list[str] = []
     for dep in targets:
@@ -547,6 +582,11 @@ def _upgrade(args: argparse.Namespace) -> int:
                 "upgrade it by hand"
             )
             worst = max(worst, host_status.WARN)
+            continue
+        if dep.upgrade == "release":
+            outcome = _release_owned(dep, named=not args.all)
+            print(outcome.line)
+            worst = max(worst, outcome.severity)
             continue
         outcome = _upgrade_one(dep, force=args.force)
         print(outcome.line)

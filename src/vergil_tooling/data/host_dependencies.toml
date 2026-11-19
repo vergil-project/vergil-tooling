@@ -184,17 +184,19 @@ method = "brew-formula"
 upgrade = "auto"
 latest = "probe"
 
-# vergil-tooling (the vrg-* tools): installed host-side with
-# `uv tool install 'vergil-tooling @ git+…@v<line>'` and upgraded within the
-# pinned release line with `uv tool upgrade vergil-tooling` (the documented
-# host upgrade). Its latest is `unmanaged`: it is git-sourced, so uv's
-# `--outdated` feed (a package index) cannot see new releases, and reading
-# "not listed as outdated" as current would be a silent false `current`.
+# vergil-tooling (the vrg-* tools): installed host-side with `uv tool install`
+# by vergil-tooling's own release: the `[publish].consumer-refresh` in its
+# vergil.toml reinstalls it at the just-released tag. `upgrade = "release"`
+# leaves its install to that release (#4603): vrg-host reports the installed
+# version and never runs `uv tool upgrade vergil-tooling`. Its latest is
+# `unmanaged`: it is git-sourced, so uv's `--outdated` feed (a package index)
+# cannot see new releases, and reading "not listed as outdated" as current
+# would be a silent false `current`.
 [[dependency]]
 name = "vergil-tooling"
 why = "The vrg-* host tools themselves (vrg-container-run, vrg-commit, vrg-vm, vrg-host, …)."
 method = "uv-tool"
-upgrade = "auto"
+upgrade = "release"
 latest = "unmanaged"
 
 # Claude Code: the host-side agent for out-of-sandbox work, for example

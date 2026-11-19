@@ -694,17 +694,17 @@ uv tool upgrade vergil-tooling
 tip of the rolling minor tag, and rebuilds the isolated tool venv.
 No need to repeat the full git URL.
 
-On macOS, `vrg-host` covers vergil-tooling and the other host
-prerequisites together (`uv`, `gh`, Docker, and the `vrg-vm` tools
-such as Lima, `gcloud` and OpenTofu):
+On macOS, `vrg-host` covers the other host prerequisites (`uv`,
+`gh`, Docker, and the `vrg-vm` tools such as Lima, `gcloud` and
+OpenTofu), and reports vergil-tooling's installed version:
 
 ```bash
 vrg-host                   # report drift, missing tools and failed health checks
 vrg-host upgrade --all     # upgrade every auto-managed tool, respecting pins
 ```
 
-`vrg-host upgrade vergil-tooling` runs the same `uv tool upgrade`.
-Docker Desktop and macOS itself are reported but never upgraded by
+`vrg-host` never upgrades vergil-tooling itself: the vergil-tooling
+release installs it. Docker Desktop and macOS itself are reported but never upgraded by
 `vrg-host`. When a new release of a host tool breaks your workflow,
 pin it with `vrg-host pin` rather than skipping upgrades — see the
 [vrg-host reference](../reference/dev/host.md#pinning-host-dependencies).

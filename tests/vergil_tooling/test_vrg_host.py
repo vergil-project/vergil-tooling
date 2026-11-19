@@ -779,7 +779,6 @@ def test_upgrade_honors_pin_from_pins_file(
         "gcloud",
         "lima",
         "opentofu",
-        "vergil-tooling",
         "claude-code",
     ]
     assert vrg_host.main(["upgrade", "--all"]) == 0
@@ -933,23 +932,23 @@ def test_upgrade_multi_level_offers_compare_against_leading_edge(
 @pytest.mark.parametrize(
     ("after", "line"),
     [
-        ("2.1.244", "ran      vergil-tooling: 2.1.244 -> 2.1.244 (unchanged; no latest feed)"),
-        ("2.1.245", "ran      vergil-tooling: 2.1.244 -> 2.1.245 (no latest feed)"),
+        ("2.1.244", "ran      tool: 2.1.244 -> 2.1.244 (unchanged; no latest feed)"),
+        ("2.1.245", "ran      tool: 2.1.244 -> 2.1.245 (no latest feed)"),
     ],
 )
 def test_upgrade_unmanaged_latest_runs_and_reports_before_after(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], after: str, line: str
 ) -> None:
-    dep = _dep(name="vergil-tooling", method="uv-tool", latest="unmanaged")
+    dep = _dep(name="tool", method="uv-tool", latest="unmanaged")
     calls = _stub_upgrade(
         monkeypatch,
         (dep,),
-        installed={"vergil-tooling": "2.1.244"},
-        latest={"vergil-tooling": hm.UNMANAGED},
-        after={"vergil-tooling": after},
+        installed={"tool": "2.1.244"},
+        latest={"tool": hm.UNMANAGED},
+        after={"tool": after},
     )
-    assert vrg_host.main(["upgrade", "vergil-tooling"]) == 0  # informational
-    assert calls == ["vergil-tooling"]
+    assert vrg_host.main(["upgrade", "tool"]) == 0  # informational
+    assert calls == ["tool"]
     assert capsys.readouterr().out.strip() == line
 
 
@@ -1177,8 +1176,15 @@ def test_status_classifies_the_captured_host(
     # Entries #3261 left alone render exactly as the real host printed them.
     before = (_FIXTURES / "vrg-host-status-before-3261.txt").read_text(encoding="utf-8")
     real = _rows_by_name(before.splitlines())
-    for name in ("gh", "gcloud", "vergil-tooling"):
+    for name in ("gh", "gcloud"):
         assert rows[name] == real[name], name
+    # #4603: vergil-tooling still shows its installed version and no latest
+    # feed, and now says that its own release installs it.
+    assert _row(rows["vergil-tooling"])[:7] == _row(real["vergil-tooling"])[:7]
+    assert rows["vergil-tooling"].endswith(
+        "latest-unmanaged (info: installed by the vergil-tooling release; "
+        "vrg-host does not upgrade it)"
+    )
     # macos reports every pending level (#3269); before, only the newest
     # (27.0.1) showed and the same-major 26.7.1 was hidden.
     assert real["macos"] == (
@@ -1551,3 +1557,95 @@ def test_plugins_exits_2_on_non_utf8_settings(
     assert vrg_host.main(["plugins"]) == 2
     assert local_run.calls == []
     assert f"cannot read {settings}" in capsys.readouterr().err
+
+
+# -- vergil-tooling is installed by its own release (#4603) -------------------
+
+
+def _tooling_host(monkeypatch: pytest.MonkeyPatch, uv_tool_list: str | None) -> list[list[str]]:
+    """Drive the real manifest's vergil-tooling entry; record every command run.
+
+    ``uv tool list`` answers *uv_tool_list* (``None`` = the probe fails); every
+    other command fails, so an upgrade that ran would show as FAILED.
+    """
+    from vergil_tooling.lib import host_deps
+
+    deps = tuple(d for d in host_deps.load_manifest() if d.name == "vergil-tooling")
+    monkeypatch.setattr(vrg_host.host_deps, "load_manifest", lambda: deps)
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str]) -> str | None:
+        commands.append(list(cmd))
+        return uv_tool_list if cmd == ["uv", "tool", "list"] else None
+
+    monkeypatch.setattr(vrg_host.host_methods, "_run", fake_run)
+    return commands
+
+
+def _uv_tool_list() -> str:
+    return (_FIXTURES / "uv-tool-list.txt").read_text(encoding="utf-8").strip()
+
+
+_SKIP_LINE = (
+    "vergil-tooling: 2.1.241 installed by the vergil-tooling release "
+    "(its consumer-refresh installs it); vrg-host does not upgrade it"
+)
+
+
+@pytest.mark.parametrize(
+    ("argv", "code", "prefix"),
+    [
+        (["upgrade", "--all"], 0, "skipped  "),
+        (["upgrade", "--all", "--force"], 0, "skipped  "),
+        (["upgrade", "vergil-tooling"], 1, "refused  "),
+        (["upgrade", "--force", "vergil-tooling"], 1, "refused  "),
+    ],
+)
+def test_upgrade_never_runs_uv_tool_upgrade_for_vergil_tooling(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    code: int,
+    prefix: str,
+) -> None:
+    commands = _tooling_host(monkeypatch, _uv_tool_list())
+    assert vrg_host.main(argv) == code
+    assert ["uv", "tool", "upgrade", "vergil-tooling"] not in commands
+    assert commands == [["uv", "tool", "list"]]  # only the installed-version probe
+    assert capsys.readouterr().out.strip() == prefix + _SKIP_LINE
+
+
+def test_upgrade_release_owned_missing_is_an_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    commands = _tooling_host(monkeypatch, "ruff v0.1.0\n- ruff")
+    assert vrg_host.main(["upgrade", "--all"]) == 2
+    assert commands == [["uv", "tool", "list"]]
+    assert capsys.readouterr().out.strip() == (
+        "ERROR    vergil-tooling: missing (not installed by uv-tool); "
+        "it is installed by the vergil-tooling release, never by vrg-host"
+    )
+
+
+def test_upgrade_release_owned_probe_error_is_an_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    commands = _tooling_host(monkeypatch, "vergil-tooling garbage")
+    assert vrg_host.main(["upgrade", "vergil-tooling"]) == 2
+    assert commands == [["uv", "tool", "list"]]
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("ERROR    vergil-tooling: probe-error (ProbeError: ")
+    assert out.endswith("; not upgraded")
+
+
+def test_status_reports_tooling_owned_by_release(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    commands = _tooling_host(monkeypatch, _uv_tool_list())
+    assert vrg_host.main(["status"]) == 0  # informational, never a warning
+    assert ["uv", "tool", "upgrade", "vergil-tooling"] not in commands
+    out = capsys.readouterr().out
+    row = _rows_by_name(out.splitlines())["vergil-tooling"]
+    assert _row(row)[:7] == _row("[OK   ] vergil-tooling uv-tool 2.1.241 -> unmanaged")
+    assert "installed by the vergil-tooling release" in row
+    assert "current" not in row  # git-sourced: no feed, so it never claims to be current
