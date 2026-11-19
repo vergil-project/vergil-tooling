@@ -13,8 +13,8 @@ required checks pass. Has three modes:
 
 - **Template mode** (no arguments): the normal path. Reads
   `.vergil/pr-workflow.json` (the oracle state file the agent records
-  with `vrg-pr-workflow report-ready`), shows a preview, asks for
-  confirmation, pushes the branch and opens the PR. From the repo root,
+  with `vrg-pr-workflow report-ready`), lists the PR in the selection
+  table, pushes the branch and opens the PR. From the repo root,
   `--all` and `--select` submit several ready worktrees at once.
 - **Relay branch mode** (positional `<branch> [<branch> …]`): the Mac
   side of the cloud→Mac relay handoff (issue #2368). Opens PRs for
@@ -23,7 +23,7 @@ required checks pass. Has three modes:
   one exists, else fetched from the relay ref
   `refs/vergil/pr-workflow/<branch>` that `report-ready` always pushes.
 - **CLI mode** (`--issue/--summary/--title`): direct invocation for
-  human emergency use. It asks no confirmation and stays single-issue.
+  human emergency use. It stays single-issue.
 
 !!! warning "Human-run tool"
     PR submission is a human action. Agent identities are refused;
@@ -52,9 +52,10 @@ vrg-submit-pr --issue NUMBER --summary TEXT --title TEXT [options]
 
 ## The one submit path
 
-Every mode gates and previews its PRs, asks for **one** confirmation for
-the whole selection (`--yes` skips it; CLI mode asks none), then opens
-each PR in turn:
+Every mode gates its PRs and prints **one** table of the whole
+selection, then opens each PR in turn. There is no confirmation prompt
+and no PR-body preview (vergil-tooling#4744): the arguments already
+chose the selection, and each body is on its opened PR:
 
 1. For a batch PR, re-check its rules (see
    [Batch PRs](#batch-prs-one-pr-closing-several-issues)).
@@ -87,8 +88,19 @@ nothing is fail-fast, since one PR no longer waits on another.
 
 ### Output
 
-The previews, any refusal, the confirmation and `--dry-run` print
-plainly. Once the selection is confirmed, the steps above run as a
+The selection table, any refusal and `--dry-run` print plainly. The
+table has one row per PR, with its issues and their linkage, its branch
+and its title:
+
+```text
+Submitting 2 PRs to develop:
+  ISSUES           BRANCH                         TITLE
+  Closes #4709     feature/4709-submit-pr-rollup  feat(submit): run the submits as a rollup
+  Closes #20, #21  feature/20-batch-docs          docs: batch of fixes
+```
+
+A dry run prints the table and what would follow, and opens nothing.
+Then the steps above run as a
 progress rollup, as in [`vrg-release`](release.md) (issue #4709): **one
 stage per PR**, named after its branch. On a terminal the active stage
 shows a spinner and a rolling window of its output, then collapses to
@@ -166,8 +178,7 @@ In template mode, `vrg-submit-pr` may be run from the repo root. It
 resolves the target worktree itself:
 
 - **One submittable worktree** (contains `.vergil/pr-workflow.json`):
-  announced and entered automatically; the usual preview and `[y/N]`
-  confirmation follow.
+  entered automatically and listed in the selection table.
 - **Several submittable worktrees:** a numbered menu shows each
   worktree with its issue number and title; pick one.
 - **None:** an error lists each worktree and why it was skipped.
@@ -186,7 +197,7 @@ From the repo root, `--all` selects every ready worktree, and
 worktree directory name (for example `--select 1673,1681`); an unmatched
 or ambiguous token is a hard error that names it. They are separate PRs,
 unrelated to a [batch PR](#batch-prs-one-pr-closing-several-issues). All
-of them go through the one submit path above, behind one confirmation,
+of them go through the one submit path above, listed in one table,
 and one finalize run watches them all.
 
 ## Relay branch mode (cloud-to-Mac handoff)
@@ -249,7 +260,6 @@ orphaned relay ref whose branch no longer exists.
 | `--release` | No | Pass `--release` to `vrg-finalize-pr`, which chains into `vrg-release` (installing by default) on full success. Not allowed with `--no-finalize` |
 | `--no-install` | No | With `--release`, run `vrg-release --no-install` |
 | `--dry-run` | No | Print what would be done without executing |
-| `--yes` | No | Skip the confirmation |
 | `--output-window N` | No | Rolling output window for the terminal renderer of the submit rollup (`0` streams everything); passed on to the chained `vrg-finalize-pr` |
 | `--output-format` | No | Force the submit rollup's renderer: `rich`, `gha` or `plain`; passed on to the chained `vrg-finalize-pr` |
 
@@ -263,6 +273,7 @@ names the new default:
 | `--finalize` | Finalizing is the default; `--no-finalize` opts out |
 | `--install` | `--release` installs by default; `--no-install` opts out |
 | `--allow-provenance-violation` | A provenance violation always fails: fix its cause, or fix the classifier if the violation is a false one |
+| `--yes` / `-y` | There is no confirmation left to answer: drop the flag |
 
 ### Linkage Keywords
 
@@ -273,11 +284,11 @@ issue with an `epic`-labelled parent) so it closes on merge. `Fixes` and
 ## Examples
 
 ```bash
-# Normal flow: resolve the worktree, preview, confirm, open with
-# auto-merge on, then watch it merge and settle develop
+# Normal flow: resolve the worktree, list it, open with auto-merge
+# on, then watch it merge and settle develop
 vrg-submit-pr
 
-# Every ready worktree, one confirmation, one finalize
+# Every ready worktree, one table, one finalize
 vrg-submit-pr --all
 
 # Merge, then release (installing by default)
@@ -289,7 +300,7 @@ vrg-submit-pr --no-finalize
 # Relay branch mode: open PRs for cloud-implemented branches, worktree-free
 vrg-submit-pr feature/123-x feature/124-y
 
-# Preview without submitting
+# List the selection without submitting
 vrg-submit-pr --dry-run
 
 # Emergency CLI mode
@@ -309,7 +320,7 @@ relay branch and `--all`/`--select`) submits it as one PR:
 - the per-issue refusals (cross-repo, non-task, operational, queue item) run
   on every issue, and the first refusal stops the submit;
 - the PR body carries one `Closes` line per issue, in the batch's order;
-- after the confirmation and before any push or `gh pr create`, it fetches
+- in the submit rollup, before any push or `gh pr create`, it fetches
   `develop` and re-checks the batch hard rules and the
   one-commit-per-issue invariant at the head the PR opens at. A failure
   opens nothing for that PR and is named in the summary;
@@ -366,7 +377,7 @@ failed to submit it returns at least 3, and a tool error from finalize
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Every PR opened and finalize reached full success (with `--no-finalize`: every PR opened with auto-merge on). Also a worktree whose PR is already submitted |
-| 1 | A usage error or a refusal before anything opened (a removed or contradictory flag, an agent identity, a declined confirmation, no submittable worktree, a malformed `$VRG_FINALIZE_DEADLINE`, `--release` on a repo that is not released), or a tool error from finalize |
+| 1 | A usage error or a refusal before anything opened (a removed or contradictory flag, an agent identity, no submittable worktree, a malformed `$VRG_FINALIZE_DEADLINE`, `--release` on a repo that is not released), or a tool error from finalize |
 | 3 | Not every PR merged: a submit failed, or finalize reported a PR not merged. With `--no-finalize`, or when no PR opened, a failed submit exits 3 |
 | 4 | Develop did not validate after the merges (finalize's 4) |
 | 5 | Every PR merged and develop validated, but the chained release failed |

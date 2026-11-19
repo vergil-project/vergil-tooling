@@ -1009,7 +1009,8 @@ def test_human_apply_converges_emptied_bypass_list() -> None:
     desired = mock_apply.call_args.args[1]
     tag = next(rs for rs in desired.rulesets if rs.name == "Tag protection")
     assert tag.bypass_actors == [
-        {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}
+        {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"},
+        {"actor_id": _APP_ID, "actor_type": "Integration", "bypass_mode": "always"},
     ]
 
 
@@ -2174,7 +2175,9 @@ def test_update_automation_logs_every_rulesets_bypass_actors_read(
     assert {"Tag protection", "Automation branches", "Rolling tag branch names"} <= set(names)
     for name in names:
         _read_back(out, name)
-    assert _read_back(out, "Tag protection") == "RepositoryRole 5 always"
+    assert _read_back(out, "Tag protection") == (
+        f"RepositoryRole 5 always, Integration {_APP_ID} always"
+    )
     assert _read_back(out, "Automation branches") == (
         f"Integration {_APP_ID} always, RepositoryRole 5 always"
     )

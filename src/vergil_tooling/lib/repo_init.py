@@ -514,20 +514,27 @@ def _container_suffix(resolution: Resolution | None) -> str:
     return resolution.primary_container_suffix if resolution else NO_LANGUAGE_SUFFIX
 
 
-def _cd_release_secrets(language: str | None) -> list[str]:
-    """Secrets ``cd-release.yml`` consumes per ecosystem (least-privilege).
+_CD_RELEASE_APP_SECRETS = ("APP_CLIENT_ID", "APP_PRIVATE_KEY")
+"""The automation App secrets every ``cd-release.yml`` call needs (issue #4747)."""
 
-    Mirrors exactly what the reusable release workflow reads for each
-    ecosystem, so a generated ``cd.yml`` forwards only what its publisher
-    needs instead of the blanket ``secrets: inherit`` (epic
-    vergil-project/.github#189). python (OIDC trusted publishing) and go
-    (no token) — and any non-listed / non-publishing language — need no
-    repo secret, so they get an empty list and no ``secrets:`` block.
+
+def _cd_release_secrets(language: str | None) -> list[str]:
+    """Secrets ``cd-release.yml`` consumes for a language (least-privilege).
+
+    Every release needs the automation App's ``APP_CLIENT_ID`` and
+    ``APP_PRIVATE_KEY``: cd-release pushes the release tags with the App's
+    installation token and fails at "Require the automation App secrets"
+    without them (vergil-project/vergil-actions#1315, issue #4747). After
+    them come exactly what the ecosystem's publisher reads, so a generated
+    ``cd.yml`` forwards only what its release needs instead of the blanket
+    ``secrets: inherit`` (epic vergil-project/.github#189). python (OIDC
+    trusted publishing) and go (no token), and any non-listed or
+    non-publishing language, add no publisher secret.
     """
-    secrets_map = {
+    publisher_secrets = {
         "rust": ["CARGO_REGISTRY_TOKEN"],
     }
-    return secrets_map.get(language or "", [])
+    return [*_CD_RELEASE_APP_SECRETS, *publisher_secrets.get(language or "", [])]
 
 
 def render_ci_workflow(ctx: RepoInitContext) -> str:
@@ -755,17 +762,17 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
                 f"      language: {suffix}\n",
             ]
         )
-        # Forward only the secrets this ecosystem's publisher needs, keyed on
-        # the primary language, instead of a blanket `secrets: inherit`
-        # (epic vergil-project/.github#189). python (OIDC) / go (none) forward
-        # nothing, so no `secrets:` block is emitted at all.
+        # Forward the automation App secrets every release needs, plus only
+        # the secrets this ecosystem's publisher needs, keyed on the primary
+        # language, instead of a blanket `secrets: inherit` (epic
+        # vergil-project/.github#189, issue #4747).
         #
         # Exception — a [package] repo must inherit: GitHub delivers a
         # cross-repo reusable workflow's *environment* secrets only under
         # `secrets: inherit`, never via an explicit map, so cd-release's
         # package-sign job would see an empty PACKAGE_SIGNING_KEY from its
         # `package-signing` environment (probe in vergil-project/packages#6;
-        # issue #3144). inherit also carries the ecosystem's publisher secrets.
+        # issue #3144). inherit also carries the App and publisher secrets.
         secret_names = _cd_release_secrets(ctx.primary_language)
         if ctx.package:
             lines.extend(
@@ -779,7 +786,7 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
                     "  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit\n",
                 ]
             )
-        elif secret_names:
+        else:
             lines.append("    secrets:\n")
             lines.extend(f"      {name}: ${{{{ secrets.{name} }}}}\n" for name in secret_names)
 

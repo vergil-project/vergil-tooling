@@ -31,9 +31,33 @@ git and the agent-VM tools, and flags anything missing or out of date.
 
 ## 1. Install vergil-tooling on the host
 
+Set `VERSION` to the newest release on the
+[releases page](https://github.com/vergil-project/vergil-tooling/releases)
+(for example `2.1.10`, with no leading `v`), then run:
+
 ```bash
-uv tool install --python 3.15 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
+VERSION=X.Y.Z
+(
+  set -euo pipefail
+  unset UV_PYTHON UV_PYTHON_PREFERENCE UV_NO_MANAGED_PYTHON
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  git init -q "$tmp/src"
+  git -C "$tmp/src" fetch -q --depth 1 https://github.com/vergil-project/vergil-tooling refs/tags/v${VERSION}
+  git -C "$tmp/src" checkout -q FETCH_HEAD
+  (cd "$tmp/src" && uv export --no-config --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt -o "$tmp/constraints.txt" >/dev/null)
+  uv tool install --force --no-config --python 3.15 --managed-python -c "$tmp/constraints.txt" "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v${VERSION}"
+)
 ```
+
+These lines install exactly the tag `v<VERSION>`, with its dependencies
+pinned by that tag's own `uv.lock`, on uv's managed Python 3.15. No uv
+config file and no `UV_PYTHON*` variable can change the interpreter. They
+are the same lines each vergil-tooling release runs (its
+`[publish].consumer-refresh` in `vergil.toml`), but only on the Mac that
+runs that release. On any other host, rerun them with the new `VERSION`
+to upgrade; see
+[Keeping up to date](guides/consuming-repo-setup.md#keeping-up-to-date).
 
 This installs all `vrg-*` console scripts into `~/.local/bin/`.
 `uv`'s official installer already puts that directory on `PATH`; with

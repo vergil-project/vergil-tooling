@@ -1162,10 +1162,14 @@ class TestRenderCdWorkflow:
         # cd-release@v2.1 derives the release image tag from the resolver's
         # primary, so the caller passes no container tag (issue #3484).
         assert "container-tag" not in content
-        # python publishes via OIDC trusted publishing — no repo secret, and
-        # the blanket `secrets: inherit` must never be emitted (epic .github#189).
+        # python publishes via OIDC trusted publishing, so only the automation
+        # App secrets the tag push needs are forwarded (issue #4747), and the
+        # blanket `secrets: inherit` must never be emitted (epic .github#189).
         assert "secrets: inherit" not in content
-        assert "secrets:" not in content
+        assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == {
+            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
+            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
+        }
         assert "attestations: write" in content
         assert "id-token: write" in content
         assert "pull-requests: write" in content
@@ -1210,9 +1214,14 @@ class TestRenderCdWorkflow:
         # caller passes no container tag (issue #3484).
         assert "container-tag" not in content
         assert "attestations: write" in content
-        # go needs no publishing token — no secrets block, never blanket inherit.
+        # go needs no publishing token: only the App secrets, never blanket inherit.
         assert "secrets: inherit" not in content
-        assert "secrets:" not in content
+        assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == {
+            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
+            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
+        }
+        # The docs job is not a cd-release call and gets no secrets.
+        assert "secrets" not in yaml.safe_load(content)["jobs"]["docs"]
 
     def test_release_rust_explicit_secrets(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -1222,15 +1231,30 @@ class TestRenderCdWorkflow:
         content = render_cd_workflow(ctx)
         assert "secrets: inherit" not in content
         assert "    secrets:\n" in content
-        assert "      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}\n" in content
+        assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == {
+            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
+            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
+            "CARGO_REGISTRY_TOKEN": "${{ secrets.CARGO_REGISTRY_TOKEN }}",
+        }
+
+    def test_release_without_language_forwards_app_secrets(self) -> None:
+        # A repo with no primary language still releases through cd-release,
+        # which pushes the tags with the App's token (issue #4747).
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.publish_docs = False
+        ctx.publish_release = True
+        content = render_cd_workflow(ctx)
+        assert "      APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}\n" in content
+        assert "      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}\n" in content
 
     def test_cd_release_secrets_helper(self) -> None:
-        # python/go/unlisted → no secrets; publishers → their exact secret set.
-        assert _cd_release_secrets("python") == []
-        assert _cd_release_secrets("go") == []
-        assert _cd_release_secrets(None) == []
-        assert _cd_release_secrets("elixir") == []
-        assert _cd_release_secrets("rust") == ["CARGO_REGISTRY_TOKEN"]
+        # Every release gets the App secrets; publishers add their exact set.
+        app = ["APP_CLIENT_ID", "APP_PRIVATE_KEY"]
+        assert _cd_release_secrets("python") == app
+        assert _cd_release_secrets("go") == app
+        assert _cd_release_secrets(None) == app
+        assert _cd_release_secrets("elixir") == app
+        assert _cd_release_secrets("rust") == [*app, "CARGO_REGISTRY_TOKEN"]
 
 
 class TestRenderMkdocsYml:

@@ -59,7 +59,7 @@ Each dependency is classified on two axes, its **version state** and its
 | State | Meaning | Severity |
 | --- | --- | --- |
 | `current` | Installed is at or newer than latest | OK |
-| `latest-unmanaged` | The manifest declares no latest feed; the installed version is shown as info | OK |
+| `latest-unmanaged` | The manifest declares no latest feed; the installed version is shown as info (for `vergil-tooling`, with a note that its release installs it) | OK |
 | `pinned` | An active pin holds it, and the installed version satisfies the constraint (tracked debt) | OK |
 | `pinned` | An active pin holds it, but the installed version has drifted off the constraint, or the pin is [due for re-evaluation](#re-evaluation) | WARN |
 | `behind` | Installed is older than latest, unpinned (shown as "drift") | WARN |
@@ -137,6 +137,11 @@ Name one or more dependencies **or** pass `--all`, not both.
   method (`brew upgrade`, `uv tool upgrade`, or the manifest's own upgrade
   command). A `manual` dependency (`docker-desktop`, `macos`, `xcode-clt`) is refused when
   named, and listed as skipped under `--all`; upgrade it by hand.
+- A `release` dependency (`vergil-tooling`) is installed by its own release,
+  so `vrg-host` never runs its upgrade, with or without `--force`. It reports
+  the installed version and says the release installs it: `skipped` under
+  `--all`, `refused` when named. See the
+  [`vergil-tooling` note](#the-host-dependency-manifest).
 - A Homebrew cask that updates itself (its `brew info` JSON says
   `auto_updates: true`) is never upgraded through `brew`. Without `--greedy`,
   `brew upgrade` skips such a cask without saying so, so `vrg-host` reports the
@@ -156,7 +161,7 @@ prints one line per dependency saying what it actually did:
 skipped  uv: current (0.13.1)
 upgraded git: 2.54.0 -> 2.56.0_1
 unchanged bash: still 5.3.9, latest 5.3.20 (the upgrade command succeeded but did not change the installed version)
-ran      vergil-tooling: 2.1.244 -> 2.1.244 (unchanged; no latest feed)
+skipped  vergil-tooling: 2.1.244 installed by the vergil-tooling release (its consumer-refresh installs it); vrg-host does not upgrade it
 held     gh: pinned to 2.40.x (2.41.0 breaks vrg-gh auth) at 2.40.1, holding back from 2.42.0; run 'vrg-host unpin gh' or pass --force to upgrade past the pin
 ERROR    lima: missing (not installed by brew-formula); vrg-host upgrades, it does not install
 skipped (upgrade = manual, upgrade by hand): docker-desktop, macos
@@ -171,7 +176,9 @@ skipped (upgrade = manual, upgrade by hand): docker-desktop, macos
 | `ran … <before> -> <after> (no latest feed)` | `latest = "unmanaged"`: nothing to compare with, so the upgrade runs and the change is reported | OK |
 | `ran … (latest unknown: …)` | The latest probe did not answer, or `brew update` failed for a Homebrew dependency (as `status`'s `latest-unknown`) | WARN |
 | `held …` | Actively pinned and no `--force`; shows the installed version and the latest it holds back from | WARN (not counted under `--all`) |
-| `ERROR … missing` / `ERROR … probe-error` | Not installed, or a probe failed, as `status` reports it; the upgrade is not attempted | ERROR |
+| `skipped … installed by the … release` | `upgrade = "release"` under `--all`: the installed version is reported and the upgrade is **not** run | OK |
+| `refused … installed by the … release` | `upgrade = "release"`, named explicitly: as above | WARN |
+| `ERROR … missing` / `ERROR … probe-error` | Not installed, or a probe failed, as `status` reports it; the upgrade is not attempted (for a `release` dependency too) | ERROR |
 | `ERROR … upgrade ran but …` | The installed version could not be re-probed after the upgrade | ERROR |
 
 The `after` version is always **re-probed** after the upgrade runs, never
@@ -180,7 +187,7 @@ the upgrade of a dependency that is already current.
 
 **Exit code:** `0` when everything requested was upgraded or already current
 (or, under `--all`, deliberately skipped or held); `1` when an explicitly named
-dependency was refused (`manual` or pinned), or an upgrade left a dependency
+dependency was refused (`manual`, `release` or pinned), or an upgrade left a dependency
 behind (or ran with its latest unknown); `2` on any failure: an unknown
 dependency name, a missing dependency, a probe error, a failed or
 privilege-refused upgrade, an unsupported pin constraint, or an unreadable
@@ -269,8 +276,8 @@ upgrades and checks, and letting a repo supply them would be an arbitrary-code
 execution surface on the host. Changing the list means a vergil-tooling PR.
 
 Each entry declares the dependency's `method` (`brew-formula`, `brew-cask`,
-`uv-tool` or `custom`), whether `vrg-host` may upgrade it (`upgrade = "auto"` or
-`"manual"`), whether it has a latest-version feed (`latest = "probe"` or
+`uv-tool` or `custom`), whether `vrg-host` may upgrade it (`upgrade = "auto"`,
+`"manual"`, or `"release"` for a tool its own release installs), whether it has a latest-version feed (`latest = "probe"` or
 `"unmanaged"`), and any auxiliary checks. A `custom` entry supplies its own
 installed, latest and upgrade commands. Its latest command is either
 `latest_version`, which prints one version, or `latest_versions`, which prints
@@ -294,7 +301,7 @@ itself. Current entries:
 | `lima` | brew-formula | auto | probe | Runs the local agent VMs `vrg-vm` creates |
 | `docker-desktop` | brew-cask (installed version from the app) | manual | probe | The container engine and `docker` CLI that `vrg-container-run` execs |
 | `opentofu` | brew-formula | auto | probe | Provisions cloud agent VMs for `vrg-vm` (preflight requires >= 1.8.0) |
-| `vergil-tooling` | uv-tool | auto | unmanaged | The `vrg-*` host tools themselves |
+| `vergil-tooling` | uv-tool | release | unmanaged | The `vrg-*` host tools themselves |
 | `claude-code` | brew-cask | auto | probe | The host-side agent for out-of-sandbox work, such as reattaching an agent session with human access |
 | `macos` | custom | manual | probe | The host OS; a pending update is surfaced, never applied |
 | `xcode-clt` | custom | manual | probe | Xcode Command Line Tools: Homebrew needs them, even when full Xcode is installed; a pending update is surfaced, never applied |
@@ -352,11 +359,15 @@ Notes on the entries:
   agent session on the Mac with human access. The original design excluded it
   as a personal tool; that was reversed in
   [#3300](https://github.com/vergil-project/vergil-tooling/issues/3300).
-- **`vergil-tooling` has no latest feed.** It is installed from git, so `uv`'s
-  outdated feed cannot see new releases; `status` reports it as
-  `latest-unmanaged` rather than a false `current`. `vrg-host upgrade
-  vergil-tooling` runs `uv tool upgrade vergil-tooling`, which moves within the
-  release line you installed.
+- **`vergil-tooling` is installed by its own release.** Releasing
+  vergil-tooling runs the `[publish].consumer-refresh` in its `vergil.toml`,
+  which reinstalls the host tools at the just-released tag, so `vrg-host` never
+  installs or upgrades it
+  ([#4603](https://github.com/vergil-project/vergil-tooling/issues/4603)). It
+  is installed from git, so `uv`'s outdated feed cannot see new releases and
+  there is no latest to compare with: `status` reports the installed version as
+  `latest-unmanaged`, noting that the release installs it, and never claims it
+  is `current`.
 - **Install method matters.** Each entry assumes the install path verified on a
   real macOS host. A tool installed some other way (for example, uv from
   Astral's standalone installer) reads as `missing` for the brew and `uv-tool`

@@ -575,7 +575,7 @@ order:
 | Ruleset | Target | Includes | Rules | Bypass |
 |---|---|---|---|---|
 | `Branch protection` | branch | `refs/heads/main`, `refs/heads/develop` | `deletion`, `non_fast_forward`, `pull_request` | none |
-| `Tag protection` | tag | `refs/tags/v*.*.*`, `refs/tags/v*.*` | `deletion`, `non_fast_forward`, `update` | repository Admin role (`RepositoryRole`, `actor_id` 5) |
+| `Tag protection` | tag | `refs/tags/v*.*.*`, `refs/tags/v*.*` | `creation`, `deletion`, `non_fast_forward`, `update` | the repository Admin role (`RepositoryRole`, `actor_id` 5) and the org automation App (`Integration`, its App ID) |
 | `Rolling tag branch names` | branch | `refs/heads/v[0-9]*` | `creation`, `update`, `non_fast_forward` | none |
 | `Automation branches` | branch | `refs/heads/automation/**` | `creation`, `update`, `non_fast_forward` | the org automation App (`Integration`, its App ID) and the repository Admin role (`RepositoryRole`, `actor_id` 5) |
 | `CI gates (develop)` | branch | `refs/heads/develop` | `required_status_checks` (see below), not strict | none |
@@ -594,8 +594,12 @@ order:
   checks.
 
 - **Tag protection** covers both the `vX.Y.Z` release tags and the rolling
-  `vX.Y` tags consumers follow as their deploy ref, so only the human release
-  identity can move or delete either.
+  `vX.Y` tags consumers follow as their deploy ref, so only the repository
+  Admin role and the org automation App can create, move or delete either.
+  The shared release action pushes `vX.Y.Z` with the App's installation
+  token, and the human moves `vX.Y` with `vrg-promote`. The GitHub Actions
+  integration is never a bypass actor, so no workflow's `GITHUB_TOKEN` can
+  create a release tag.
 - **Rolling tag branch names** blocks creating any branch named like a rolling
   tag (a `v` followed by a digit). Some consumers, Claude Code among them,
   resolve a ref such as `v2.1` as a branch before a tag (git's own short-name

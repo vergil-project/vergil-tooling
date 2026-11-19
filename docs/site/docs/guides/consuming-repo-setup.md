@@ -64,9 +64,29 @@ for you; see [Keeping up to date](#keeping-up-to-date).
 
 ## Step 2: Install vergil-tooling
 
+Set `VERSION` to the newest release on the
+[releases page](https://github.com/vergil-project/vergil-tooling/releases)
+(for example `2.1.10`, with no leading `v`), then run:
+
 ```bash
-uv tool install --python 3.15 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
+VERSION=X.Y.Z
+(
+  set -euo pipefail
+  unset UV_PYTHON UV_PYTHON_PREFERENCE UV_NO_MANAGED_PYTHON
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  git init -q "$tmp/src"
+  git -C "$tmp/src" fetch -q --depth 1 https://github.com/vergil-project/vergil-tooling refs/tags/v${VERSION}
+  git -C "$tmp/src" checkout -q FETCH_HEAD
+  (cd "$tmp/src" && uv export --no-config --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt -o "$tmp/constraints.txt" >/dev/null)
+  uv tool install --force --no-config --python 3.15 --managed-python -c "$tmp/constraints.txt" "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v${VERSION}"
+)
 ```
+
+These lines install exactly the tag `v<VERSION>`, with its dependencies
+pinned by that tag's own `uv.lock` (fetched over git), on uv's managed
+Python 3.15, with no uv config file in the working directory or your
+user config able to change the interpreter.
 
 This installs all `vrg-*` console scripts into `~/.local/bin/`.
 `uv`'s official installer already puts that directory on `PATH`; with
@@ -565,7 +585,8 @@ To ship signed `.deb`/`.rpm` packages from releases:
 
 Every `vrg-release` ends by updating the repo's dependencies (see
 [Dependency updates](releasing.md#dependency-updates)). The built-in
-updaters cover Python (`uv.lock`), vergil ecosystem refs, the packaged
+updaters cover Python (`uv.lock`), Rust (`Cargo.lock`), TypeScript
+(`package-lock.json`), vergil ecosystem refs, the packaged
 runtime, and container image tags. If the repo has other dependencies
 to keep current, such as binary tool versions or provider pins, add a
 hook to `vergil.toml`:
@@ -683,27 +704,24 @@ Code session loaded, or a managed file edited by hand (re-run
 
 ## Keeping up to date
 
-After each `vergil-tooling` release, upgrade the host tools:
+Each `vergil-tooling` release installs itself on the Mac that runs it:
+its `[publish].consumer-refresh` runs the
+[Step 2](#step-2-install-vergil-tooling) lines with the just-released
+version. On any other host, rerun those lines with `VERSION` set to the
+new release. Do not use `uv tool upgrade vergil-tooling`: it re-resolves
+the moving tag without the release's lock.
 
-```bash
-uv tool upgrade vergil-tooling
-```
-
-`uv tool upgrade` re-resolves the git reference, pulls the current
-tip of the rolling minor tag, and rebuilds the isolated tool venv.
-No need to repeat the full git URL.
-
-On macOS, `vrg-host` covers vergil-tooling and the other host
-prerequisites together (`uv`, `gh`, Docker, and the `vrg-vm` tools
-such as Lima, `gcloud` and OpenTofu):
+On macOS, `vrg-host` covers the other host prerequisites (`uv`,
+`gh`, Docker, and the `vrg-vm` tools such as Lima, `gcloud` and
+OpenTofu), and reports vergil-tooling's installed version:
 
 ```bash
 vrg-host                   # report drift, missing tools and failed health checks
 vrg-host upgrade --all     # upgrade every auto-managed tool, respecting pins
 ```
 
-`vrg-host upgrade vergil-tooling` runs the same `uv tool upgrade`.
-Docker Desktop and macOS itself are reported but never upgraded by
+`vrg-host` never upgrades vergil-tooling itself: the vergil-tooling
+release installs it. Docker Desktop and macOS itself are reported but never upgraded by
 `vrg-host`. When a new release of a host tool breaks your workflow,
 pin it with `vrg-host pin` rather than skipping upgrades — see the
 [vrg-host reference](../reference/dev/host.md#pinning-host-dependencies).

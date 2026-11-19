@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import ast
 import json
+import re
 import shlex
 import subprocess
 import tomllib
-from typing import TYPE_CHECKING
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from tests.vergil_tooling.conftest import failing_command, shell_transport
-from vergil_tooling.lib import vm_packages
+from vergil_tooling.lib import tooling_install, vm_guest, vm_packages
 from vergil_tooling.lib.atomic_write import atomic_write_cmd
 from vergil_tooling.lib.identity import Identity
+from vergil_tooling.lib.package import repo_setup
 from vergil_tooling.lib.trusted_authors import TrustedAuthors, parse_trusted_authors
 from vergil_tooling.lib.vm_guest import (
     _PLUGIN_PATH_EXPORT,
@@ -36,9 +39,6 @@ from vergil_tooling.lib.vm_guest import (
     vm_spec_status,
 )
 from vergil_tooling.lib.vm_transport import TransportTimeoutError
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _ok(stdout: str = "") -> subprocess.CompletedProcess[str]:
@@ -531,20 +531,146 @@ class TestInjectHostGitIdentity:
 
 @pytest.fixture
 def installs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
-    """Record the packaged/dev install dispatch instead of running it."""
+    """Record the released/dev install dispatch instead of running it."""
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        vm_packages, "packaged_install", lambda _t, ref: calls.append(("packaged", ref))
+        vm_packages, "released_install", lambda _t, ref: calls.append(("released", ref))
     )
     monkeypatch.setattr(vm_packages, "dev_install", lambda _t, ref: calls.append(("dev", ref)))
+    monkeypatch.setattr(vm_packages, "cleanup_packages", lambda _t: [])
+    monkeypatch.setattr(vm_guest, "ensure_login_path", lambda _t: False)
+    monkeypatch.setattr(vm_guest, "check_tooling", lambda _t: None)
     return calls
+
+
+@pytest.fixture
+def steps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the install and cleanup steps, in order."""
+    calls: list[str] = []
+    monkeypatch.setattr(vm_packages, "released_install", lambda _t, ref: calls.append(ref))
+    monkeypatch.setattr(vm_packages, "dev_install", lambda _t, ref: calls.append(f"dev {ref}"))
+    monkeypatch.setattr(vm_packages, "cleanup_packages", lambda _t: calls.append("cleanup") or [])
+    monkeypatch.setattr(vm_guest, "ensure_login_path", lambda _t: calls.append("path") or False)
+    monkeypatch.setattr(vm_guest, "check_tooling", lambda _t: calls.append("check"))
+    return calls
+
+
+class TestCleanupAfterInstall:
+    @pytest.mark.parametrize(("tag", "step"), [("v2.1", "v2.1"), ("develop", "dev develop")])
+    def test_install_then_cleanup(self, steps: list[str], tag: str, step: str) -> None:
+        install_tooling(_transport(), tag)
+        assert steps == [step, "cleanup", "path"]
+
+    def test_update_cleans_up_too(self, steps: list[str]) -> None:
+        update_tooling(_transport(), "v2.1")
+        assert steps == ["v2.1", "cleanup", "path", "check"]
+
+    def test_cleanup_runs_only_after_the_check_passes(
+        self, monkeypatch: pytest.MonkeyPatch, steps: list[str]
+    ) -> None:
+        def check_fails(_t: object, _ref: str) -> None:
+            raise subprocess.CalledProcessError(1, "vrg-whoami")
+
+        monkeypatch.setattr(vm_packages, "released_install", check_fails)
+        with pytest.raises(subprocess.CalledProcessError):
+            update_tooling(_transport(), "v2.1")
+        assert "cleanup" not in steps
+
+
+_SHA = "b" * 40
+_SOURCE = "/etc/apt/sources.list.d/vergil.sources"
+_PIN = "/etc/apt/preferences.d/vergil-tooling"
+
+
+class _MidTransitionVm:
+    """A VM still carrying the old packages: dpkg state, apt files, a working uv.
+
+    Answers the commands ``vrg-vm update`` runs from that state, and changes it
+    on ``apt-get purge`` and ``rm -f``; every other command succeeds.
+    """
+
+    def __init__(self, packages: dict[str, str], files: set[str]) -> None:
+        self.packages = packages
+        self.files = files
+        self.t = MagicMock()
+        self.t.run.side_effect = self._run
+        self.t.pipe.return_value = None
+
+    def _run(self, *args: str, **_kw: object) -> subprocess.CompletedProcess[str]:
+        joined = " ".join(args)
+        if args[0] == "dpkg-query":
+            return _ok("".join(f"{s} {n}\n" for n, s in self.packages.items()))
+        if "test -e" in joined:
+            return _ok("".join(f"{f}\n" for f in sorted(self.files)))
+        if "/etc/environment" in joined:
+            return _ok("unchanged\n")
+        if "purge" in args:
+            for name in args[args.index("-y") + 1 :]:
+                self.packages.pop(name)
+        elif args[:3] == ("sudo", "rm", "-f"):
+            self.files.difference_update(args[4:])
+        return _ok()
+
+
+@pytest.fixture
+def ls_remote(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        tooling_install, "git_ls_remote", lambda _u, _p: f"{_SHA}\trefs/tags/v2.1.10\n"
+    )
+
+
+def _purges(t: MagicMock) -> list[str]:
+    flat = [" ".join(str(a) for a in c[0]) for c in t.run.call_args_list]
+    return [c for c in flat if "purge" in c or c.startswith("sudo rm -f")]
+
+
+@pytest.mark.usefixtures("ls_remote")
+def test_update_after_partial_cleanup_is_idempotent() -> None:
+    # An earlier update removed vergil-tooling but stopped before the rest.
+    vm = _MidTransitionVm({"vergil-python3.15": "ii", "vergil-archive-keyring": "rc"}, {_SOURCE})
+    update_tooling(vm.t, "v2.1")
+    assert vm.packages == {}
+    assert vm.files == set()
+    assert len(_purges(vm.t)) == 2
+    vm.t.run.reset_mock()
+    update_tooling(vm.t, "v2.1")
+    assert _purges(vm.t) == []
+
+
+@pytest.mark.usefixtures("ls_remote")
+def test_update_of_a_packaged_vm_leaves_one_uv_copy() -> None:
+    vm = _MidTransitionVm(
+        {"vergil-tooling": "ii", "vergil-python3.15": "ii", "vergil-archive-keyring": "ii"},
+        {_SOURCE, _PIN},
+    )
+    update_tooling(vm.t, "v2.1")
+    assert vm.packages == {}
+    assert vm.files == set()
+    flat = [" ".join(str(a) for a in c[0]) for c in vm.t.run.call_args_list]
+    install = next(i for i, c in enumerate(flat) if "uv tool install" in c)
+    purge = next(i for i, c in enumerate(flat) if "purge" in c)
+    assert install < purge
+
+
+@pytest.mark.usefixtures("ls_remote")
+def test_create_does_not_bootstrap_the_vergil_repository(monkeypatch: pytest.MonkeyPatch) -> None:
+    def bootstrap(*_a: object, **_kw: object) -> None:
+        pytest.fail("vrg-vm create bootstrapped the vergil package repository")
+
+    monkeypatch.setattr(repo_setup, "bootstrap", bootstrap)
+    vm = _MidTransitionVm({}, set())
+    install_tooling(vm.t, "v2.1")
+    flat = [" ".join(str(a) for a in c[0]) for c in vm.t.run.call_args_list]
+    assert not any("apt-get" in c for c in flat)
+    piped = [str(c[0][0]) for c in vm.t.pipe.call_args_list]
+    assert all("tooling-tag" in p for p in piped)
 
 
 class TestInstallTooling:
     @pytest.mark.parametrize("tag", ["v2.0", "v2.1.226"])
-    def test_release_tag_installs_packaged(self, installs: list[tuple[str, str]], tag: str) -> None:
+    def test_release_tag_installs_released(self, installs: list[tuple[str, str]], tag: str) -> None:
         install_tooling(_transport(), tag)
-        assert installs == [("packaged", tag)]
+        assert installs == [("released", tag)]
 
     def test_dev_ref_installs_with_uv(self, installs: list[tuple[str, str]]) -> None:
         install_tooling(_transport(), "develop")
@@ -571,7 +697,7 @@ class TestInstallTooling:
         def fail(_t: object, _ref: str) -> None:
             raise SystemExit(1)
 
-        monkeypatch.setattr(vm_packages, "packaged_install", fail)
+        monkeypatch.setattr(vm_packages, "released_install", fail)
         transport = _transport()
         with pytest.raises(SystemExit):
             install_tooling(transport, "v2.2")
@@ -591,14 +717,14 @@ class TestInstallTooling:
         assert (config / "tooling-tag").read_text() == "v2.0\n"
         assert (config / "tooling-tag").stat().st_mode & 0o777 == 0o644
         assert [p.name for p in config.iterdir()] == ["tooling-tag"]
-        assert installs == [("packaged", "v2.0")]
+        assert installs == [("released", "v2.0")]
 
 
 class TestUpdateTooling:
     def test_updates_with_explicit_tag(self, installs: list[tuple[str, str]]) -> None:
         transport = _transport()
         update_tooling(transport, "v2.0")
-        assert installs == [("packaged", "v2.0")]
+        assert installs == [("released", "v2.0")]
         transport.run.assert_not_called()
 
     def test_explicit_dev_tag_installs_with_uv(self, installs: list[tuple[str, str]]) -> None:
@@ -609,7 +735,7 @@ class TestUpdateTooling:
         transport = _transport()
         transport.run.side_effect = [_ok("v2.0\n"), _ok()]
         update_tooling(transport)
-        assert installs == [("packaged", "v2.0")]
+        assert installs == [("released", "v2.0")]
         assert transport.run.call_count == 2
 
     def test_explicit_tag_does_not_persist_marker(self, installs: list[tuple[str, str]]) -> None:
@@ -618,15 +744,15 @@ class TestUpdateTooling:
         transport.pipe.assert_not_called()
         assert installs == [("dev", "develop")]
 
-    def test_plain_update_after_dev_returns_to_packaged(
+    def test_plain_update_after_dev_returns_to_release(
         self, installs: list[tuple[str, str]]
     ) -> None:
         # The dev ref was explicit, so never persisted: the marker still holds the
-        # identity version, and a plain update goes back to the packaged install.
+        # identity version, and a plain update goes back to the release install.
         transport = _transport()
         transport.run.side_effect = [_ok("v2.1\n"), _ok()]
         update_tooling(transport, fallback_tag="v2.1")
-        assert installs == [("packaged", "v2.1")]
+        assert installs == [("released", "v2.1")]
 
     def test_resolved_tag_persists_marker(self, installs: list[tuple[str, str]]) -> None:
         transport = _transport()
@@ -644,13 +770,13 @@ class TestUpdateTooling:
         transport.pipe.assert_called_once()
         assert "tooling-tag" in transport.pipe.call_args[0][0]
         assert "v2.1" in transport.pipe.call_args[0][1]
-        assert installs == [("packaged", "v2.1")]
+        assert installs == [("released", "v2.1")]
 
     def test_uses_fallback_when_no_marker(self, installs: list[tuple[str, str]]) -> None:
         transport = _transport()
         transport.run.side_effect = [_ok(), _ok()]
         update_tooling(transport, fallback_tag="v2.0")
-        assert installs == [("packaged", "v2.0")]
+        assert installs == [("released", "v2.0")]
 
     def test_creates_tag_dir_before_write(self, installs: list[tuple[str, str]]) -> None:
         transport = _transport()
@@ -674,25 +800,21 @@ class TestGetToolingVersion:
         assert get_tooling_version(transport) == "v2.0.63"
         assert transport.run.call_count == 1
 
-    def test_falls_back_to_installed_package(self) -> None:
-        transport = _transport()
-        transport.run.side_effect = [_ok("some-other-tool v1.0\n"), _ok("2.1.240-1")]
-        assert get_tooling_version(transport) == "2.1.240-1"
-        assert "dpkg-query" in " ".join(transport.run.call_args_list[1][0])
-
-    def test_returns_none_when_not_installed(self) -> None:
-        transport = _transport()
-        transport.run.side_effect = [_ok("some-other-tool v1.0\n"), _ok("")]
+    def test_never_reads_the_package(self) -> None:
+        transport = _transport("some-other-tool v1.0\n")
         assert get_tooling_version(transport) is None
+        assert transport.run.call_count == 1
+        assert "dpkg" not in " ".join(transport.run.call_args_list[0][0])
 
     def test_returns_none_on_empty_output(self) -> None:
         transport = _transport("")
         assert get_tooling_version(transport) is None
 
-    def test_uv_failure_falls_back_to_package(self) -> None:
+    def test_uv_failure_is_raised(self) -> None:
         transport = _transport()
-        transport.run.side_effect = [subprocess.CalledProcessError(1, "uv"), _ok("2.1.240-1\n")]
-        assert get_tooling_version(transport) == "2.1.240-1"
+        transport.run.side_effect = subprocess.CalledProcessError(1, "uv")
+        with pytest.raises(subprocess.CalledProcessError):
+            get_tooling_version(transport)
 
 
 class TestCopyClaudeConfig:
@@ -1379,3 +1501,202 @@ class TestPruneCacheImages:
             env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
         )
         assert result.stdout.strip() == token
+
+
+# --- The non-login PATH guarantee (#4742) ------------------------------------
+
+# vergil-vm's templates/provision/15-environment.sh line, with the guest home.
+_VM_PATH_TAIL = (
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games"
+)
+
+
+def _vm_path_line(home: Path) -> str:
+    return f'PATH="{home}/.local/bin:{_VM_PATH_TAIL}"'
+
+
+@pytest.fixture
+def guest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, Path, Path]:
+    """A real-shell guest whose ``/etc/environment`` is a temp file and ``sudo`` runs as-is."""
+    home = tmp_path / "home"
+    home.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    sudo = fake_bin / "sudo"
+    sudo.write_text('#!/bin/sh\nexec "$@"\n')
+    sudo.chmod(0o755)
+    env_file = tmp_path / "environment"
+    monkeypatch.setattr(vm_guest, "_ETC_ENVIRONMENT", str(env_file))
+    return shell_transport(home, fake_bin), home, env_file
+
+
+@pytest.fixture
+def installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the uv install and the package cleanup; leave the PATH steps real."""
+    monkeypatch.setattr(vm_packages, "released_install", lambda _t, _ref: None)
+    monkeypatch.setattr(vm_packages, "dev_install", lambda _t, _ref: None)
+    monkeypatch.setattr(vm_packages, "cleanup_packages", lambda _t: [])
+
+
+class TestLoginPath:
+    @pytest.mark.usefixtures("installed")
+    def test_update_writes_local_bin_into_etc_environment(
+        self, guest: tuple[MagicMock, Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        transport, home, env_file = guest
+        env_file.write_text('PATH="/usr/local/sbin:/usr/local/bin:/usr/bin"\nLANG=C.UTF-8\n')
+        monkeypatch.setattr(vm_guest, "check_tooling", lambda _t: None)
+        update_tooling(transport, "v2.1")
+        assert env_file.read_text() == f"{_vm_path_line(home)}\nLANG=C.UTF-8\n"
+
+    def test_adds_the_line_when_there_is_no_path(self, guest: tuple[MagicMock, Path, Path]) -> None:
+        transport, home, env_file = guest
+        env_file.write_text("DISABLE_AUTOUPDATER=1\n")
+        assert vm_guest.ensure_login_path(transport) is True
+        assert env_file.read_text() == f"DISABLE_AUTOUPDATER=1\n{_vm_path_line(home)}\n"
+
+    def test_unchanged_when_the_line_is_present(self, guest: tuple[MagicMock, Path, Path]) -> None:
+        transport, home, env_file = guest
+        text = f"{_vm_path_line(home)}\nDISABLE_AUTOUPDATER=1\n"
+        env_file.write_text(text)
+        assert vm_guest.ensure_login_path(transport) is False
+        assert env_file.read_text() == text
+
+    def test_failed_write_raises(self, guest: tuple[MagicMock, Path, Path], tmp_path: Path) -> None:
+        transport, _home, env_file = guest
+        env_file.write_text('PATH="/usr/bin"\n')
+        failing_command(tmp_path / "bin", "sed")
+        with pytest.raises(subprocess.CalledProcessError):
+            vm_guest.ensure_login_path(transport)
+
+    def test_unexpected_answer_raises(self) -> None:
+        with pytest.raises(RuntimeError, match="unexpected answer"):
+            vm_guest.ensure_login_path(_transport("maybe\n"))
+
+    @pytest.mark.usefixtures("installed")
+    def test_lima_reconnects_after_environment_change(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        order: list[str] = []
+        transport = _transport()
+        transport.close.side_effect = lambda: order.append("close")
+        monkeypatch.setattr(vm_guest, "ensure_login_path", lambda _t: order.append("path") or True)
+        monkeypatch.setattr(vm_guest, "check_tooling", lambda _t: order.append("check"))
+        update_tooling(transport, "v2.1")
+        assert order == ["path", "close", "check"]
+
+    @pytest.mark.usefixtures("installed")
+    def test_no_reconnect_when_line_already_present(
+        self, guest: tuple[MagicMock, Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        transport, home, env_file = guest
+        env_file.write_text(f"{_vm_path_line(home)}\n")
+        checks: list[object] = []
+        monkeypatch.setattr(vm_guest, "check_tooling", checks.append)
+        update_tooling(transport, "v2.1")
+        transport.close.assert_not_called()
+        assert checks == [transport]
+
+    def test_post_install_check_is_bare_non_login(self) -> None:
+        transport = _transport()
+        vm_guest.check_tooling(transport)
+        transport.run.assert_called_once_with("vrg-whoami", "--mode")
+
+    def test_failed_check_raises_with_the_cause(self, capsys: pytest.CaptureFixture[str]) -> None:
+        transport = _transport()
+        transport.run.side_effect = subprocess.CalledProcessError(127, "vrg-whoami")
+        with pytest.raises(subprocess.CalledProcessError):
+            vm_guest.check_tooling(transport)
+        assert "~/.local/bin is not on its PATH" in capsys.readouterr().err
+
+    @pytest.mark.usefixtures("installed")
+    def test_failed_check_records_no_tag(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fail(_t: object) -> None:
+            raise subprocess.CalledProcessError(127, "vrg-whoami")
+
+        monkeypatch.setattr(vm_guest, "ensure_login_path", lambda _t: False)
+        monkeypatch.setattr(vm_guest, "check_tooling", fail)
+        transport = _transport()
+        transport.run.return_value = _ok("v2.1\n")
+        with pytest.raises(subprocess.CalledProcessError):
+            update_tooling(transport)
+        transport.pipe.assert_not_called()
+
+    @pytest.mark.usefixtures("installed")
+    def test_create_install_leaves_the_check_to_a_fresh_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # vrg-vm create runs the bare check after cycle-ssh (or after closing the
+        # cloud connection); install_tooling never runs it over the session it has.
+        monkeypatch.setattr(vm_guest, "ensure_login_path", lambda _t: True)
+        monkeypatch.setattr(
+            vm_guest, "check_tooling", lambda _t: pytest.fail("checked over the install session")
+        )
+        transport = _transport()
+        install_tooling(transport, "v2.1")
+        transport.close.assert_not_called()
+
+
+# Guest-call methods and functions: a vrg-* argument to one runs in the VM.
+_GUEST_CALLS = frozenset({"run", "pipe", "popen", "exec_session", "shell_run"})
+_VRG_EXE = re.compile(r"^vrg-[a-z0-9-]+$")
+_VRG_IN_SCRIPT = re.compile(r"(?:^|[;&|(]|\bexec)\s*vrg-[a-z0-9-]+")
+
+
+def _call_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    return None
+
+
+def _string_parts(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if isinstance(node, ast.JoinedStr):
+        return [
+            v.value for v in node.values if isinstance(v, ast.Constant) and isinstance(v.value, str)
+        ]
+    return []
+
+
+def _bare_guest_calls(src_root: Path, rel: str) -> set[tuple[str, str]]:
+    """The functions in *rel* that run a vrg-* in the guest with no PATH prepend.
+
+    A bare call is a guest call (``transport.run`` and the like) given a ``vrg-*``
+    executable, or an inline script starting one, with no ``PATH`` in the call;
+    or a command list whose first word is a ``vrg-*`` (the session resolver,
+    joined into the session's script).
+    """
+    source = (src_root / rel).read_text()
+    found: set[tuple[str, str]] = set()
+    for func in ast.walk(ast.parse(source)):
+        if not isinstance(func, ast.FunctionDef):
+            continue
+        for node in ast.walk(func):
+            if isinstance(node, ast.Call) and _call_name(node) in _GUEST_CALLS:
+                if "PATH" in (ast.get_source_segment(source, node) or ""):
+                    continue
+                for arg in node.args:
+                    parts = _string_parts(arg)
+                    if any(_VRG_EXE.match(p) or _VRG_IN_SCRIPT.search(p) for p in parts):
+                        found.add((rel, func.name))
+            elif isinstance(node, ast.List) and node.elts:
+                first = node.elts[0]
+                if isinstance(first, ast.Constant) and _VRG_EXE.match(str(first.value)):
+                    found.add((rel, func.name))
+    return found
+
+
+def test_every_bare_in_guest_call_is_listed() -> None:
+    src_root = Path(vm_guest.__file__).resolve().parent.parent
+    modules = sorted(
+        str(p.relative_to(src_root))
+        for pattern in ("lib/vm_*.py", "lib/lima.py", "lib/claude_marketplace.py", "bin/vrg_vm.py")
+        for p in src_root.glob(pattern)
+    )
+    found: set[tuple[str, str]] = set()
+    for rel in modules:
+        found |= _bare_guest_calls(src_root, rel)
+    assert found == set(vm_guest.BARE_GUEST_CALLS)

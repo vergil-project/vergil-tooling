@@ -61,6 +61,7 @@ class ReleaseState:
     resume_issue_number: int | None = None
     without_deps: bool = False
     allow_pending_deps: bool = False
+    install: bool = True
 
 
 def _audit_stage(state: ReleaseState) -> None:
@@ -78,6 +79,7 @@ def _preflight_stage(state: ReleaseState) -> None:
     )
     ctx.promote = state.promote
     ctx.without_deps = state.without_deps
+    ctx.install = state.install
     # The read-only stages before prepare ran before the issue existed, so the
     # checklist the issue is created with has them ticked already (#4367).
     names = _stage_names()
@@ -180,15 +182,19 @@ def build_stages() -> list[Stage]:
             _tracked("close-finalize", close_and_finalize),
             mode="fail_defer",
         ),
+        # The first change on the new develop version, once the release is
+        # fully out (epic vergil-project/.github#381, spec §5.1).
+        Stage("update-deps", _tracked("update-deps", update_deps), mode="fail_defer"),
+        Stage("publish-status", _publish_status_stage, mode="fail_defer"),
+        # The last thing a release does, as the post-pipeline install was: a
+        # consumer that follows the rolling vX.Y tag (vergil-claude-plugin's
+        # marketplace) sees the release only once promote has moved it, and a
+        # deferred publish holds it (issue #4739).
         Stage(
             "consumer-refresh",
             _tracked("consumer-refresh", consumer_refresh),
             mode="fail_defer",
         ),
-        # The first change on the new develop version, once the release is
-        # fully out (epic vergil-project/.github#381, spec §5.1).
-        Stage("update-deps", _tracked("update-deps", update_deps), mode="fail_defer"),
-        Stage("publish-status", _publish_status_stage, mode="fail_defer"),
     ]
 
 
@@ -305,8 +311,9 @@ def _major_minor(ctx: ReleaseContext) -> str:
 def _publish_status_stage(state: ReleaseState) -> None:
     """Terminal fail_defer: surface deferred publish and dependency-update failures as exit 1.
 
-    Runs last, after every bookkeeping stage. Raising here marks the run failed
-    (fail_defer → exit 1 with the deferred summary) without aborting anything —
+    Runs after every bookkeeping stage, just before consumer-refresh. Raising
+    here marks the run failed (fail_defer → exit 1 with the deferred summary)
+    without aborting anything —
     the release is already complete. No-op when nothing deferred. A failed
     dependency update (spec §5.2) is repeated here so it is never lost in the
     stage list; it never affects the release itself.
@@ -442,7 +449,22 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
         else:
             lines.append("No [package] block; no package index to wait for.")
     elif phase == "consumer-refresh":
-        lines.append("Consumer refresh instructions displayed.")
+        if ctx.deferred_publish_failures:
+            lines.append(
+                "Consumer refresh held: artifact publish was deferred "
+                f"({', '.join(ctx.deferred_publish_failures)}); nothing was run."
+            )
+        elif ctx.consumer_refresh_commands is None:
+            lines.append("No [publish].consumer-refresh is configured; nothing to run.")
+        elif ctx.deferred_failures:
+            lines.append(
+                "Consumer refresh commands shown, not run: earlier stages failed "
+                f"({', '.join(ctx.deferred_failures)})."
+            )
+        elif not ctx.install:
+            lines.append("Consumer refresh commands shown, not run (--no-install).")
+        else:
+            lines.append(f"Consumer refresh commands for v{ctx.version} ran.")
     elif phase == "update-deps":
         if ctx.without_deps:
             lines.append("Dependency update skipped (--without-deps).")

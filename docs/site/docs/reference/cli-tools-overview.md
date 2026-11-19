@@ -151,23 +151,24 @@ identities are refused, and agents hand off with
 `vrg-pr-workflow report-ready` instead.
 
 Every mode takes one path (epic vergil-project/.github#1218): one
-confirmation for the selection, then for each PR the push, `gh pr create`,
+table of the selection (no confirmation prompt and no PR-body preview),
+then for each PR the push, `gh pr create`,
 the provenance check (a violation always fails that PR's submit), and GitHub
 auto-merge turned on, pinned to the pushed head (squash for a single-issue PR, rebase for a batch PR; a PR that can
 already merge is merged directly). PRs open against `develop` only, and
-submit never rebases a branch. After the confirmation the PRs open as a
+submit never rebases a branch. After the table the PRs open as a
 progress rollup, one stage per PR named after its branch, like
 `vrg-release`'s: each ends on one ✓/✗ line with its outcome, and the detail
 goes to `.vergil/vrg-submit-pr-<stamp>.log`. A PR whose submit fails is
 named in the summary and the others go on. Then, by default, one `vrg-finalize-pr <pr>,<pr>,…`
 watches every opened PR merge and settles `develop` once; `--no-finalize`
-opens the PRs and returns. `--finalize` and `--install` are removed and
-refused by name. See [vrg-submit-pr](dev/submit-pr.md).
+opens the PRs and returns. `--finalize`, `--install` and `--yes` are
+removed and refused by name. See [vrg-submit-pr](dev/submit-pr.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_submit_pr` |
-| Args | positional `branches` (relay mode); or `--issue` (required), `--summary` (required), `--linkage` (default: Ref; `vrg-submit-pr` auto-selects `Closes` for a managed task — `Fixes`/`Resolves` are banned), `--notes`, `--title`; `--all`/`--select` (from the repo root), `--base` (`develop` only), `--no-finalize`, `--release`, `--no-install`, `--dry-run`, `--yes`, `--output-window`, `--output-format`. `--finalize`, `--install` and `--allow-provenance-violation` are removed and are an error |
+| Args | positional `branches` (relay mode); or `--issue` (required), `--summary` (required), `--linkage` (default: Ref; `vrg-submit-pr` auto-selects `Closes` for a managed task — `Fixes`/`Resolves` are banned), `--notes`, `--title`; `--all`/`--select` (from the repo root), `--base` (`develop` only), `--no-finalize`, `--release`, `--no-install`, `--dry-run`, `--output-window`, `--output-format`. `--finalize`, `--install`, `--allow-provenance-violation` and `--yes` are removed and are an error |
 | Preconditions | Git repo, `gh` CLI on PATH; relay mode: named branches on origin with a resolvable ready-state and matching `head_sha` |
 | Failure mode | A PR whose push, `gh pr create`, provenance check or auto-merge fails is named in the summary and the rest go on; loud refusal, with nothing opened, on a missing ready-state, a state that is not ready, any head other than the recorded `head_sha`, a base other than `develop`, or a removed flag |
 | Exit codes | finalize's: 0 full success, 3 not every PR merged (at least 3 when a submit failed), 4 develop did not validate, 5 the release failed; 1 a usage error, a refusal, or a tool error from finalize |
@@ -405,9 +406,10 @@ posted again.
 
 Run the full release workflow from `develop` to `main`: tracking issue,
 changelog, release PR and merge, CD confirmation, back-merge and version
-bump, rolling-tag promotion, cleanup, consumer refresh, and finally the
-`update-deps` stage, which runs the dependency update on the new
-`develop` version. On a fresh start, preflight refuses while an open PR
+bump, rolling-tag promotion, cleanup, the `update-deps` stage, which
+runs the dependency update on the new `develop` version, and finally
+the consumer refresh, which runs the `[publish].consumer-refresh`
+commands (held while any publish is deferred). On a fresh start, preflight refuses while an open PR
 carries the `dependency-update` label, after first closing any whose fix
 task completed. Human-only. See the [vrg-release reference](dev/release.md)
 and the [Releasing guide](../guides/releasing.md).
@@ -430,8 +432,9 @@ before any other output or git call, so `--help` still prints the usage.
 `vrg-release`'s promote stage uses the same library and the same refusal.
 The refusal stops an agent from running it by mistake; it is not a security
 boundary, because the identity signals come from the caller's environment.
-The rolling-tag ruleset on GitHub, which only the repository Admin role
-bypasses, is what enforces who can move the tag.
+The `Tag protection` ruleset on GitHub, which only the repository Admin
+role and the org automation App bypass, is what enforces who can move the
+tag.
 
 The target must be an existing `vX.Y.Z` tag on origin whose commit is
 merged work and that has a published (non-draft) GitHub Release; any other
@@ -2102,10 +2105,12 @@ verifies the plugins in a running VM in place; `--all` updates every
 configured identity's boxes, and one box's failure does not stop the rest.
 `vrg-vm` is a human tool: it runs the VMs the agents work inside, so every
 subcommand refuses an agent identity before doing anything (`--help` still
-works). VMs install vergil-tooling as the signed package;
+works). VMs install vergil-tooling with uv, one resolved release commit
+constrained by its `uv.lock`, and `vrg-vm update` removes any vergil
+package an older VM still carries;
 `vrg-vm update --tag <ref>` with a non-release ref installs a dev copy
 instead and flags it with a `DEV tooling` banner, and a plain
-`vrg-vm update` returns the VM to the package. See
+`vrg-vm update` returns the VM to its release. See
 [VM Spec](vm-spec.md#vergil-tooling-inside-the-vm).
 
 | Attribute | Value |

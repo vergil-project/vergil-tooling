@@ -43,6 +43,7 @@ from vergil_tooling.lib.container_cache import (
     current_cache_key,
     ensure_cached_image,
     find_cached_image,
+    tooling_detail,
 )
 from vergil_tooling.lib.live_branches import (
     RepoSetError,
@@ -198,11 +199,10 @@ def _cmd_status(_args: argparse.Namespace, *, runtime: str) -> int:
 
 def _print_tooling(key: CacheKey, *, held: str | None = None) -> None:
     """Print the vergil-tooling release the cache installs, and the cached one."""
-    if not key.tooling:
+    if key.resolved is None:
         print("Tooling:      none installed (self-repo uses its local dev version)")
         return
-    resolved = key.tooling if key.pin == key.tooling else f"{key.tooling} (pin {key.pin})"
-    print(f"Tooling:      {resolved}")
+    print(f"Tooling:      {key.tooling}{tooling_detail(key.pin, key.resolved)}")
     if held is not None:
         print(f"Cached with:  {held}")
 

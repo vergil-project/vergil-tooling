@@ -12,21 +12,42 @@ old `standard-tooling`/`st-*` naming):
 
 | Target | Install mechanism | Who uses it |
 |---|---|---|
-| **Developer host** (macOS) | `uv tool install` from the git URL, pinned to the rolling minor tag | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr`, `vrg-host` |
+| **Developer host** (macOS) | `uv tool install` from the git URL of the exact release tag, constrained by that tag's `uv.lock`; the release's consumer refresh runs it | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr`, `vrg-host` |
 | **Container runtime** (all languages) | `vrg-container-run` cache-first install of the version `vergil.toml` names, in a per-branch cached image | `vrg-*` inside the dev container, locally and in CI, for every consumer |
 | **Agent VM** (Lima/cloud) | Signed `vergil-tooling` package via `apt` from <https://vergil-project.github.io/packages>, pinned to the identity's release line or version | Agent sessions inside the VM |
 
-The canonical host install (see [Getting Started](../getting-started.md)):
+The canonical host install (see [Getting Started](../getting-started.md)),
+with `VERSION` set to the release, for example `2.1.10`:
 
 ```bash
-uv tool install --python 3.15 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
+VERSION=X.Y.Z
+(
+  set -euo pipefail
+  unset UV_PYTHON UV_PYTHON_PREFERENCE UV_NO_MANAGED_PYTHON
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  git init -q "$tmp/src"
+  git -C "$tmp/src" fetch -q --depth 1 https://github.com/vergil-project/vergil-tooling refs/tags/v${VERSION}
+  git -C "$tmp/src" checkout -q FETCH_HEAD
+  (cd "$tmp/src" && uv export --no-config --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt -o "$tmp/constraints.txt" >/dev/null)
+  uv tool install --force --no-config --python 3.15 --managed-python -c "$tmp/constraints.txt" "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v${VERSION}"
+)
 ```
 
-On an agent VM, a dev ref (`vrg-vm update --tag develop`, or any non-release
-ref) is an explicit `uv tool install --python 3.15` from git that shadows the
-packaged copy,
-and every `vrg-vm` command that touches the VM prints a `DEV tooling` banner
-while it is in place. A plain `vrg-vm update` returns the VM to the package.
+The exact tag cannot move (tag protection), so the Mac needs no
+`git ls-remote` and no SHA; the lines still install with that tag's own
+`uv.lock` as constraints and on uv's managed 3.15. These are the same
+lines as `vergil.toml`'s `[publish].consumer-refresh`, which each release
+runs on the Mac with the just-released version (followed by
+`vrg-vm update --all`), so the release installs itself on the host.
+
+On an agent VM, a release installs with uv too: `vrg-vm` resolves the
+version to one commit, installs it with that commit's `uv.lock`, and
+removes any vergil package an older VM still carries. A dev ref
+(`vrg-vm update --tag develop`, or any non-release ref) is an explicit,
+unconstrained uv install of that git ref, and every `vrg-vm` command that
+touches the VM prints a `DEV tooling` banner while it is in place. A plain
+`vrg-vm update` returns the VM to its release.
 See [vergil-tooling inside the VM](../reference/vm-spec.md#vergil-tooling-inside-the-vm).
 
 [hlt]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/host-level-tool.md
@@ -107,7 +128,8 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      the release; the index's weekly reconcile picks the release up.
    - `vrg-release`'s `package-index` stage then polls the published
      index (up to one hour, every 30 seconds) until the new version is
-     visible, so the consumer refresh never races the index. With several
+     visible, so neither `promote` nor the consumer refresh runs ahead
+     of the index. With several
      `[[package]]` entries it waits for every package, each at its own full
      version, and succeeds only once all of them are listed. While it
      waits, it streams the `Publish package index` run in `<org>/packages`
@@ -126,18 +148,28 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      polling error) does not undo the release. It is recorded
      as a deferred publish failure: the tracking issue stays open with a
      deferral comment, the consumer-refresh stage holds (it
-     prints a warning not to advertise the version instead of the refresh
-     commands), the stage error tells you to re-run the `publish-index`
+     prints a warning not to advertise the version instead of running the
+     refresh commands), the stage error tells you to re-run the `publish-index`
      workflow in `<org>/packages`, `promote` leaves `vX.Y` where it is
      (see [A promote held back by the index](#a-promote-held-back-by-the-index)),
      and `vrg-release` exits 1. See the
      [package config reference](../reference/package-config.md#cd).
-4. After a clean release, `vrg-release` prints the consumer-refresh
-   commands and then runs them (pass `--no-install` to only print them,
-   and act on them yourself).
+4. Last, after `promote`, `close-finalize` and `update-deps`, the
+   `consumer-refresh` stage runs the `[publish].consumer-refresh`
+   commands. It runs after `promote` because a consumer that follows
+   the rolling `vX.Y` tag (vergil-claude-plugin's marketplace) sees the
+   release only once that tag has moved. While any publish is deferred
+   (a failed CD publish job, or a `package-index` miss) it holds: it
+   runs nothing and prints a warning not to advertise the version.
+   After an earlier stage that failed (`promote`, say) it runs nothing
+   either, and prints the commands below the summary to run once the
+   cause is fixed. On
+   success the stage is one `✓ consumer-refresh` line; on failure its
+   full output is printed below the summary, the stage fails and
+   `vrg-release` exits 1. Pass `--no-install` to have it print the
+   commands below the summary instead, and act on them yourself.
    A clean run names the released tag in its completion line
-   (`✓  vrg-release v1.3.1 complete`) and in the
-   `Consumer refresh commands for v1.3.1:` header.
+   (`✓  vrg-release v1.3.1 complete`).
 5. Check the end of the run for the `update-deps` result. A failed
    dependency update does not fail the release, but it leaves an open
    PR that blocks the next one; see
@@ -164,9 +196,9 @@ issue and ticks its box in the issue's stage checklist.
 | `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index. A miss is a deferred publish failure, not a halted stage |
 | `promote` | deferred | Moves the rolling `vX.Y` tag to the new release (skipped with `--no-promote`). It runs after `package-index`, so `vX.Y` moves only once the index has the release, and skips when `package-index` deferred (see [A promote held back by the index](#a-promote-held-back-by-the-index)) |
 | `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only` |
-| `consumer-refresh` | deferred | Prints the `[publish].consumer-refresh` commands |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
 | `publish-status` | deferred | Repeats any deferred publish failure, and any dependency-update failure, so neither is lost |
+| `consumer-refresh` | deferred | Runs the `[publish].consumer-refresh` commands, last, once `promote` has moved `vX.Y` (prints them instead with `--no-install`). Holds, running nothing, while any publish is deferred, and only prints the commands after an earlier stage failed. Success is one check line; a failure prints the full output below the summary |
 
 `close-finalize` leaves the tracking issue open, and skips the cleanup,
 when an earlier stage has failed, so the release can be resumed with
@@ -333,10 +365,10 @@ get the fix on the next normal action:
 
 | Consumer | When the patch lands |
 |---|---|
-| Developer host | Manual `uv tool upgrade vergil-tooling` (or `vrg-host upgrade vergil-tooling` on macOS) |
+| Developer host | The release's consumer refresh installs the exact patch tag on the Mac that ran it; any other host reruns the [canonical host install](#deployment-targets) with the new `VERSION` (`vrg-host` reports the installed version but never upgrades it) |
 | Python repo `.venv` | `uv lock --upgrade-package vergil-tooling` (typically batched with other dep bumps) |
 | Dev container image | The base images carry no vergil-tooling. The next `vrg-container-run` rebuilds the branch's cached image with the patch once it is in the package index: a `vX.Y` line pin in `vergil.toml` resolves to the newest release on the line (see [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)). An exact `vX.Y.Z` pin stays put |
-| Agent VM (Lima/cloud) | `vrg-vm update`: an apt upgrade of the packaged install within its pin, once the patch is in the package index. A `vX.Y` line pin picks the patch up; an exact `vX.Y.Z` pin stays put |
+| Agent VM (Lima/cloud) | `vrg-vm update`, which the release's consumer refresh runs on every VM (`vrg-vm update --all`): a `vX.Y` line pin resolves to the patch tag as soon as it exists; an exact `vX.Y.Z` pin stays put |
 
 ## Minor release — opt-in for new features
 
@@ -357,9 +389,9 @@ only handles patches within a minor.
    `[tool.uv.sources]` pinning to `v1.3` needs its `pyproject.toml`
    updated to `v1.4`. This is a per-repo decision — consumers who
    prefer to stay on `v1.3` can keep doing so until they're ready.
-3. Update the canonical install command in `getting-started.md`
-   (and anywhere else the documentation pins a minor) to the new
-   tag.
+3. Update anywhere the documentation pins a minor to the new tag.
+   The canonical host install in `getting-started.md` names an exact
+   `VERSION` placeholder, not a line, and needs no change.
 
 ### Consumer steps
 
@@ -367,7 +399,7 @@ Minor bumps are **deliberate opt-in** at every deployment target:
 
 | Consumer | What changes |
 |---|---|
-| Developer host | `uv tool install --python 3.15 --reinstall 'vergil-tooling @ git+...@v1.4'` (or update the pinned tag in their notes / shell history) |
+| Developer host | Nothing to change: the host installs an exact tag, never a line. The release's consumer refresh installs `v1.4.0` on the Mac that ran it; any other host reruns the [canonical host install](#deployment-targets) with `VERSION=1.4.0` |
 | Python repo `.venv` | Edit `pyproject.toml` `[tool.uv.sources]` to `tag = "v1.4"`, then `uv lock --upgrade-package vergil-tooling` |
 | Dev container image | Set `[dependencies].vergil` in `vergil.toml` to `v1.4`; `vergil.toml` is part of the cache key, so the next `vrg-container-run` rebuilds the branch's cached image with the newest `v1.4` release |
 | Agent VM (Lima/cloud) | Set the identity's `vergil` version (in `identities.toml`) to `v1.4`, then `vrg-vm rebuild`, which installs and records the new line. A plain `vrg-vm update` keeps upgrading within the line recorded at install time, and `vrg-vm update --tag v1.4` is a one-off override that is not remembered (see [VM spec](../reference/vm-spec.md#vergil-tooling-inside-the-vm)) |
@@ -413,8 +445,8 @@ edits its `v1.x` pin to `v2` deliberately. The difference is
 A rollback moves a rolling `vX.Y` tag back to an earlier `vX.Y.Z`, so
 consumers that follow the tag return to that release. It is a release act
 and stays human-gated. The gate is the `Tag protection` ruleset, which lets
-only the repository Admin role move a rolling tag (see the
-[config audit reference](../reference/config-audit.md#github-checks-rulesets)).
+only the repository Admin role and the org automation App move a rolling
+tag (see the [config audit reference](../reference/config-audit.md#github-checks-rulesets)).
 For Claude Code consumers the no-bypass `Rolling tag branch names` ruleset
 is part of the gate: Claude Code resolves `v2.1` as a branch before a tag,
 so the tag's protection holds only while no `v2.1` branch can exist.
@@ -559,7 +591,7 @@ nothing:
 Every release ends by updating the repo's dependencies to the newest
 versions their declared bounds allow. This is the `update-deps` stage,
 and it is the first change on the new `develop` version. It runs after
-`consumer-refresh`, once the release is tagged and published, so it can
+`close-finalize`, once the release is tagged and published, so it can
 never affect the release itself. Pass `--without-deps` to skip it.
 
 The stage brings the root checkout's `develop` up to date with

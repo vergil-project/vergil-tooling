@@ -91,7 +91,7 @@ class Offers:
 
 
 class UpgradeUnsupportedError(Exception):
-    """``upgrade()`` was called on a ``manual`` (observe-only) dependency."""
+    """``upgrade()`` was called on a ``manual`` or ``release`` (report-only) dependency."""
 
 
 UpgradeUnsupported = UpgradeUnsupportedError
@@ -441,12 +441,13 @@ def upgrade(dep: HostDependency) -> None:
     """Upgrade *dep* via its method handler.
 
     Raises:
-        UpgradeUnsupportedError: *dep* is ``upgrade = "manual"``.
+        UpgradeUnsupportedError: *dep* is ``upgrade = "manual"`` or
+            ``upgrade = "release"`` (its own release installs it, issue #4603).
         UpgradeFailedError: the upgrade command did not succeed, or *dep* is
             a self-updating (``auto_updates``) cask that brew must not upgrade.
         ManifestError: unknown method, or a ``custom`` entry lacks the probe.
     """
-    if dep.upgrade == "manual":
+    if dep.upgrade in {"manual", "release"}:
         raise UpgradeUnsupportedError(dep.name)
     if dep.method == "brew-cask":
         _refuse_self_updating_cask(dep)

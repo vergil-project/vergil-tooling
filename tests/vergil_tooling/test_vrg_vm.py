@@ -101,6 +101,7 @@ def _stub_guest_transport() -> Iterator[None]:
         patch(mod + "inject_credentials"),
         patch(mod + "inject_trusted_authors"),
         patch(mod + "install_tooling"),
+        patch(mod + "check_tooling"),
         patch(mod + "update_tooling"),
         patch(mod + "update_plugins"),
         patch(mod + "prune_cache_images"),
@@ -2480,7 +2481,7 @@ class TestSessionStaleness:
         with patch("vergil_tooling.lib.vm_packages.dev_ref", return_value="develop"):
             main(["session", "--config", str(config_file), "."])
         out = capsys.readouterr().out
-        assert "DEV tooling (ref develop) — not the packaged install\nEXEC" in out
+        assert "DEV tooling (ref develop) — dev ref, not a release\nEXEC" in out
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
@@ -4031,8 +4032,42 @@ class TestLifecycleStages:
             "credentials",
             "tooling",
             "cycle-ssh",
+            "tooling-check",
         ]
         assert all(s.mode == "fail_fast" for s in stages)
+
+    def test_create_check_runs_on_a_fresh_session(self) -> None:
+        # #4742: the bare non-login check never rides the connection opened before
+        # provisioning: on Lima it runs after cycle-ssh, on the cloud after close().
+        from vergil_tooling.bin import vrg_vm  # noqa: PLC0415
+
+        for stages in (vrg_vm._create_stages(), vrg_vm._rebuild_stages()):
+            names = [s.name for s in stages]
+            assert names.index("tooling-check") > names.index("cycle-ssh")
+            check = next(s for s in stages if s.name == "tooling-check")
+            assert check.fn is vrg_vm._st_check_tooling
+
+        state = MagicMock()
+        with patch("vergil_tooling.bin.vrg_vm.check_tooling") as check_tooling:
+            vrg_vm._st_check_tooling(state)
+        check_tooling.assert_called_once_with(state.target.backend.transport.return_value)
+
+        order: list[str] = []
+        cloud = MagicMock()
+        cloud.vergil_version = "v2.1"
+        cloud.transport.close.side_effect = lambda: order.append("close")
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_vm.install_tooling",
+                side_effect=lambda *_a: order.append("install"),
+            ),
+            patch(
+                "vergil_tooling.bin.vrg_vm.check_tooling",
+                side_effect=lambda _t: order.append("check"),
+            ),
+        ):
+            vrg_vm._cs_tooling(cloud)
+        assert order == ["install", "close", "check"]
 
     def test_start_stage_order_and_modes(self) -> None:
         from vergil_tooling.bin.vrg_vm import _start_stages
@@ -4075,6 +4110,7 @@ class TestLifecycleStages:
             "copy-config",
             "update-plugins",
             "cycle-ssh",
+            "tooling-check",
         ]
         # All fail_fast except update-plugins, which is warn so a failed plugin
         # refresh does not abort the rebuild.
@@ -4720,7 +4756,7 @@ class TestCloudSession:
             m["transport"].return_value = transport
             main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
         out = capsys.readouterr().out
-        assert "DEV tooling (ref develop) — not the packaged install\nEXEC" in out
+        assert "DEV tooling (ref develop) — dev ref, not a release\nEXEC" in out
         ref.assert_called_once_with(transport)
 
     def test_cloud_session_uses_iap_transport(self, _cloud_repo: Path, tmp_path: Path) -> None:
@@ -7147,7 +7183,7 @@ class TestCmdCp:
 class TestDevToolingBanner:
     """Every vrg-vm command that touches a box says so when it runs a dev install."""
 
-    _BANNER = "DEV tooling (ref develop) — not the packaged install"
+    _BANNER = "DEV tooling (ref develop) — dev ref, not a release"
 
     @pytest.fixture
     def dev_ref(self) -> Iterator[MagicMock]:
@@ -7167,7 +7203,7 @@ class TestDevToolingBanner:
         assert self._BANNER in capsys.readouterr().out
         dev_ref.assert_called_once_with(transport)
 
-    def test_update_over_transport_no_banner_for_packaged_install(
+    def test_update_over_transport_no_banner_for_release_install(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from vergil_tooling.bin import vrg_vm  # noqa: PLC0415

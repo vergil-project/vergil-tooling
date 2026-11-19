@@ -132,7 +132,8 @@ not be used on any repository.
 
 **Enforce-admins-ON**: Every ruleset has an empty `bypass_actors` list except
 two. Tag protection may be bypassed only by the repository Admin role (the
-human release identity), to move or delete a tag. Automation branches may be
+human, who moves rolling tags) and the org automation App (whose installation
+token the release pushes `vX.Y.Z` tags with). Automation branches may be
 bypassed only by the org automation App and the repository Admin role, which
 are the only identities that may write those branches. Every other ruleset
 applies to all users, including repository administrators.
@@ -163,11 +164,13 @@ branch names, so a tag or branch of either shape can never appear unprotected.
      CI job names defined in the repository's workflow files
 
 3. **Tag protection** (targets: `v*.*.*` release tags and `v*.*` rolling tags)
+   - Prevent tag creation
    - Prevent tag deletion
    - Prevent force-updating tags
    - Prevent modifying existing tags
-   - No creation restriction (the publish workflow creates tags)
-   - Bypass: the repository Admin role only
+   - Bypass: the repository Admin role and the org automation App only (never
+     the GitHub Actions integration, which would let any workflow's
+     `GITHUB_TOKEN` create a release tag)
 
 4. **Rolling tag branch names** (targets: `v[0-9]*`)
    - Prevent creating a branch named like a rolling tag, since some consumers,
