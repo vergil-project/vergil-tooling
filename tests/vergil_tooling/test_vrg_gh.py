@@ -509,6 +509,8 @@ class TestTargetOwnerInstallationSelection:
             ["issue", "edit", "https://github.com/other-owner/repo/issues/7", "--title", "t"],
             ["pr", "view", "https://github.com/other-owner/repo/pull/3", "--json", "state"],
             ["pr", "checks", "--json", "name", "https://github.com/other-owner/repo/pull/3"],
+            # a boolean short flag never consumes the next token
+            ["pr", "view", "-c", "https://github.com/other-owner/repo/pull/3"],
             # issue transfer: the destination repo
             ["issue", "transfer", "7", "other-owner/dest"],
             # search: --owner, --repo and query qualifiers
