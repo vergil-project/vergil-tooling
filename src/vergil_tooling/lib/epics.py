@@ -472,7 +472,9 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
     ``"intake"``, ``"planning"`` and ``"deferred"`` likewise ensure *repo*'s
     intake, planning or deferred queue epic in its queue home
     (:func:`ensure_intake_epic`, :func:`ensure_planning_epic`,
-    :func:`ensure_deferred_epic`). The ``vrg-epic-move`` and ``vrg-issue-create``
+    :func:`ensure_deferred_epic`), and ``"hoshin"`` the hoshin epic in *repo*'s
+    org ``.github`` (:func:`ensure_hoshin_epic`); ``vrg-intake-route`` refuses
+    the hoshin sentinel itself. The ``vrg-epic-move`` and ``vrg-issue-create``
     CLIs refuse the deferred epic themselves (:data:`DEFERRED_ROUTE_ONLY`); the
     sentinel resolves here so internal callers can reach it. Any other ref is parsed with
     :func:`qualify_epic_ref` (a bare ``#N`` reads against *repo*'s epic home)
@@ -485,6 +487,7 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
         INTAKE.sentinel: ensure_intake_epic,
         PLANNING.sentinel: ensure_planning_epic,
         DEFERRED.sentinel: ensure_deferred_epic,
+        HOSHIN.sentinel: ensure_hoshin_epic,
     }.get(ref)
     if ensure is not None:
         return ensure(repo)
@@ -574,7 +577,7 @@ def require_org_home(org: str) -> str:
 
 @dataclass(frozen=True)
 class StandingKind:
-    """One kind of perpetual standing epic: ad-hoc, intake, planning, or deferred.
+    """One kind of perpetual standing epic: ad-hoc, intake, planning, deferred or hoshin.
 
     ``key`` is the discriminating label that, alongside ``epic``, marks a live
     standing epic of this kind (and, alongside ``archive``, its per-quarter
@@ -604,8 +607,10 @@ ADHOC = StandingKind(
     archive_prefix="Archive (ad hoc): ",
     archive_labels=("archive", "ad-hoc"),
     body=(
-        "Perpetual umbrella for ad-hoc work in {owner}/{name}. Created and reused "
-        "idempotently; tasks routed to the ad-hoc epic are linked here.\n"
+        "Perpetual umbrella for ad-hoc work in {owner}/{name}: standalone, "
+        "single-issue work only, each task picked up, merged and released on its "
+        "own. A task owned by any epic or skill never goes here. Created and "
+        "reused idempotently; tasks routed to the ad-hoc epic are linked here.\n"
     ),
     archive_body="Ad-hoc work in {owner}/{name} finished in {quarter}. Managed automatically.\n",
 )
@@ -645,13 +650,36 @@ DEFERRED = StandingKind(
     ),
     archive_body="Deferred items for {name} closed in {quarter}. Managed automatically.\n",
 )
-STANDING_KINDS: tuple[StandingKind, ...] = (ADHOC, INTAKE, PLANNING, DEFERRED)
+# The hoshin epic: the logbook tasks of the hoshin review, one epic per org,
+# always in <org>/.github (ensure_hoshin_epic). Its tasks are PR-workable, so it
+# is not a queue kind; only the hoshin review files and works them, and
+# vrg-intake-route refuses to route work there.
+HOSHIN = StandingKind(
+    key="hoshin",
+    sentinel="hoshin",
+    title_prefix="Epic (hoshin): ",
+    labels=("epic", "hoshin"),
+    archive_prefix="Archive (hoshin): ",
+    archive_labels=("archive", "hoshin"),
+    body=(
+        "Perpetual hoshin epic for {name}: the logbook tasks of the hoshin "
+        "review, filed and worked only by that review and never by a queue "
+        "processor. Created and reused idempotently.\n"
+    ),
+    archive_body="Hoshin logbook tasks for {name} closed in {quarter}. Managed automatically.\n",
+)
+STANDING_KINDS: tuple[StandingKind, ...] = (ADHOC, INTAKE, PLANNING, DEFERRED, HOSHIN)
 # The queue kinds: one intake, one planning and one deferred epic per queue home
 # (queue_home). Their items are not PR-workable (queue_item_kind).
 QUEUE_KINDS: tuple[StandingKind, ...] = (INTAKE, PLANNING, DEFERRED)
 QUEUE_KIND_BY_KEY: dict[str, StandingKind] = {kind.key: kind for kind in QUEUE_KINDS}
+# The standing kinds the sweep's backstop drain (drain_standing_org) covers:
+# every one but ad-hoc, which has its own drain (drain_adhoc_org).
+DRAINED_STANDING_KINDS: tuple[StandingKind, ...] = tuple(
+    kind for kind in STANDING_KINDS if kind is not ADHOC
+)
 # The --epic sentinels resolve_epic_ref accepts: "adhoc", "intake", "planning",
-# "deferred".
+# "deferred", "hoshin".
 # Each resolves within the target repo's own org (its epic or queue home), so a
 # CLI's pre-network cross-org guard exempts exactly these (#3514).
 EPIC_SENTINELS: tuple[str, ...] = tuple(kind.sentinel for kind in STANDING_KINDS)
@@ -1007,6 +1035,31 @@ def ensure_deferred_epic(target_repo: str) -> IssueRef:
     return ensure_standing_epic(DEFERRED, home, name)
 
 
+def hoshin_home(target_repo: str) -> tuple[str, str]:
+    """The home and name of *target_repo*'s hoshin epic: ``(<owner>/.github, <owner>)``.
+
+    Always the org's ``.github``, whatever *target_repo*'s visibility: unlike
+    :func:`queue_home`, a private repo never self-homes a hoshin epic. Checks
+    that ``.github`` exists (:func:`require_org_home`), so an owner with none is
+    an :class:`EpicHomeError`, never a create in a missing repo.
+    """
+    if "/" not in target_repo:
+        raise ValueError(f"cannot resolve repo for hoshin epic (repo={target_repo!r})")
+    owner = target_repo.split("/", 1)[0]
+    return require_org_home(owner), owner
+
+
+def ensure_hoshin_epic(target_repo: str) -> IssueRef:
+    """Return the hoshin epic of *target_repo*'s org, creating it if absent.
+
+    ``Epic (hoshin): <org>`` in ``<org>/.github`` (:func:`hoshin_home`),
+    labelled ``epic`` + ``hoshin``, created and reused idempotently like
+    :func:`ensure_intake_epic`.
+    """
+    home, name = hoshin_home(target_repo)
+    return ensure_standing_epic(HOSHIN, home, name)
+
+
 def resolve_orphan_epic(repo: str) -> IssueRef:
     """The epic an orphaned issue in *repo* is attached to: its intake queue epic."""
     return ensure_intake_epic(repo)
@@ -1024,7 +1077,7 @@ def standing_kind_of(labels: set[str]) -> StandingKind | None:
 
 
 def is_standing(labels: set[str]) -> bool:
-    """True iff *labels* mark a perpetual standing epic (ad-hoc or a queue kind)."""
+    """True iff *labels* mark a perpetual standing epic (any :data:`STANDING_KINDS` kind)."""
     return standing_kind_of(labels) is not None
 
 
@@ -1550,18 +1603,22 @@ def _queue_homes(org: str) -> dict[str, str]:
 
 
 def drain_standing_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
-    """Drain the queue epics (:data:`QUEUE_KINDS`) of every queue home in *org*.
+    """Drain every standing epic but ad-hoc (:data:`DRAINED_STANDING_KINDS`) in *org*.
 
     Covers ``<org>/.github``'s queues and every private repo's self-homed queues
-    (:func:`_queue_homes`). Each (kind, home) is planned and, when *apply*,
-    executed via :func:`apply_standing_drain`. A corrupted home (e.g. two intake
-    epics sharing a title) is reported on stderr and skipped — never aborting the
-    sweep. Returns one plan per live queue epic. Ad-hoc epics are drained by
-    :func:`drain_adhoc_org`, not here.
+    (:func:`_queue_homes`), and the org's hoshin epic, which lives only in
+    ``<org>/.github`` (:func:`hoshin_home`). Each (kind, home) is planned and,
+    when *apply*, executed via :func:`apply_standing_drain`. A corrupted home
+    (e.g. two intake epics sharing a title) is reported on stderr and skipped —
+    never aborting the sweep. Returns one plan per live standing epic. Ad-hoc
+    epics are drained by :func:`drain_adhoc_org`, not here.
     """
+    org_home = f"{org}/.github"
     plans: list[DrainPlan] = []
     for home, name in _queue_homes(org).items():
-        for kind in QUEUE_KINDS:
+        for kind in DRAINED_STANDING_KINDS:
+            if kind is HOSHIN and home != org_home:
+                continue  # a hoshin epic is never self-homed
             try:
                 plan = plan_standing_drain(kind, home, name, now=now)
                 if plan is not None and apply:
@@ -1585,8 +1642,9 @@ def drain_standing_child(kind: StandingKind, parent: IssueRef, task: IssueRef) -
     - **ad-hoc**: the name is the bare repo in the title (``Epic (ad hoc):
       <bare>``), which must be a real repo; its home is resolved by visibility.
       A stamped archive title or a non-repo special epic is left untouched.
-    - **intake / planning**: the epic must be titled for its home — the org in
-      ``<org>/.github``, the bare repo name in a self-homed private repo. Any
+    - **intake / planning / deferred / hoshin**: the epic must be titled for its
+      home — the org in ``<org>/.github``, the bare repo name in a self-homed
+      private repo (never a hoshin epic, which lives only in ``.github``). Any
       other title is reported on stderr and skipped (never guessed at).
     """
     title = _issue_title(parent)
@@ -1813,7 +1871,7 @@ def rollup(task: IssueRef) -> None:
 
     A no-op unless the task has an ``epic``-labeled parent (the transition gate):
     legacy issues have no epic parent, so finalize never rolls them up. Every
-    standing epic (ad-hoc, intake, planning — :func:`standing_kind_of`) is
+    standing epic (every :data:`STANDING_KINDS` kind, :func:`standing_kind_of`) is
     perpetual and never auto-closes. Instead, the just-closed child of a **live**
     standing epic drains into its close-quarter archive of the same kind (the
     steady-state event path, :func:`drain_standing_child`). A parent that is

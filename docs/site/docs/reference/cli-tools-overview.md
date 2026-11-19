@@ -680,8 +680,9 @@ ruleset rule), a branch with no PR, or a branch whose name was reused
 
 Create an issue and link it under an epic (a native sub-issue) in one step.
 It is the sanctioned issue-creation path: `vrg-gh` denies raw
-`gh issue create`. `--epic` takes `adhoc`, `intake`, `planning`, `#N` (read
-against the target repo's epic home) or `owner/repo#N`. `--kind` stamps an
+`gh issue create`. `--epic` takes `adhoc`, `intake`, `planning`, `hoshin`
+(the org's hoshin epic, always in `<org>/.github`), `#N` (read against the
+target repo's epic home) or `owner/repo#N`. `--kind` stamps an
 operational (`validation`, `deployment`) or `retrospective` label and body
 scaffold, and `--blocked-by` stamps a `Blocked-by:` reference. With
 `--kind validation` or `--kind deployment`, `--body-file` fills the scaffold
@@ -795,8 +796,8 @@ A public task may not link under a private epic.
 ### vrg-epic-move
 
 Move a task under a different epic (unlink, then link). `--epic` accepts
-`adhoc`, `intake`, `planning`, `#N` or `owner/repo#N`, read against the
-task's repo. Moving a task already under the target is a no-op. The deferred
+`adhoc`, `intake`, `planning`, `hoshin`, `#N` or `owner/repo#N`, read against
+the task's repo. Moving a task already under the target is a no-op. The deferred
 queue is entered and left only through `vrg-intake-route`, so this refuses
 it.
 
@@ -891,7 +892,8 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
 - `one-off --repo OWNER/REPO [--epic REF]` — move the item into the target
   repo (transfer, or recreate with a link back when GitHub refuses the
   transfer) and link it under that repo's ad-hoc epic (default `adhoc`) or the
-  named epic. A planning item's `in-progress` label is removed from the moved
+  named epic. It refuses the hoshin epic: `--epic hoshin` before anything
+  resolves (so nothing is created), and a ref that names a hoshin epic. A planning item's `in-progress` label is removed from the moved
   issue once the move has settled; a recreated issue never carries it. A
   one-off also ends the item's estimated size, from intake, planning or
   deferred alike: a recreated issue never carries an `epic-size:*` label, and
@@ -1457,8 +1459,8 @@ home.
 
 1. Close the drifted tasks and rolled-up epics, and reopen each epic closed
    while a child was still open, with an explanatory comment on each.
-2. Drain the closed children of the ad-hoc, intake, planning and deferred
-   epics into per-quarter archives, and close past archives (see
+2. Drain the closed children of the ad-hoc, intake, planning, deferred and
+   hoshin epics into per-quarter archives, and close past archives (see
    [Ad-hoc epic archiving](../standards/github-issues.md#ad-hoc-epic-archiving)).
 3. Run the [orphan pass](../standards/github-issues.md#the-orphan-pass-auto-heal):
    nativize body-only `Parent:` links, strip the retired kind labels, move a

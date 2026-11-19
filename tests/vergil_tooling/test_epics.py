@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epic_docs, epics, github
 from vergil_tooling.lib.epics import _SUBISSUES_QUERY, ChildState, IssueRef
 from vergil_tooling.lib.labels import load_labels
 
@@ -2207,7 +2207,13 @@ def test_list_open_adhoc_archives_includes_segmented_titles() -> None:
 
 
 def test_standing_kinds_table() -> None:
-    assert epics.STANDING_KINDS == (epics.ADHOC, epics.INTAKE, epics.PLANNING, epics.DEFERRED)
+    assert epics.STANDING_KINDS == (
+        epics.ADHOC,
+        epics.INTAKE,
+        epics.PLANNING,
+        epics.DEFERRED,
+        epics.HOSHIN,
+    )
     assert epics.ADHOC.title_prefix == "Epic (ad hoc): "
     assert epics.ADHOC.labels == ("epic", "ad-hoc")
     assert epics.ADHOC.archive_prefix == "Archive (ad hoc): "
@@ -2220,7 +2226,13 @@ def test_standing_kinds_table() -> None:
     assert epics.PLANNING.labels == ("epic", "planning")
     assert epics.PLANNING.archive_prefix == "Archive (planning): "
     assert epics.PLANNING.archive_labels == ("archive", "planning")
-    assert [k.key for k in epics.STANDING_KINDS] == ["ad-hoc", "intake", "planning", "deferred"]
+    assert [k.key for k in epics.STANDING_KINDS] == [
+        "ad-hoc",
+        "intake",
+        "planning",
+        "deferred",
+        "hoshin",
+    ]
 
 
 def test_standing_kind_labels_are_in_registry() -> None:
@@ -3201,15 +3213,17 @@ def test_drain_standing_org_covers_dotgithub_and_private_self_homes() -> None:
         ("intake", "org/.github", "org"),
         ("planning", "org/.github", "org"),
         ("deferred", "org/.github", "org"),
+        ("hoshin", "org/.github", "org"),
         ("intake", "org/secret", "secret"),
         ("planning", "org/secret", "secret"),
         ("deferred", "org/secret", "secret"),
     ]
-    assert len(plans) == 6
+    assert len(plans) == 7
     assert [c.args[:3] for c in mock_apply.call_args_list] == [
         (epics.INTAKE, "org/.github", "org"),
         (epics.PLANNING, "org/.github", "org"),
         (epics.DEFERRED, "org/.github", "org"),
+        (epics.HOSHIN, "org/.github", "org"),
         (epics.INTAKE, "org/secret", "secret"),
         (epics.PLANNING, "org/secret", "secret"),
         (epics.DEFERRED, "org/secret", "secret"),
@@ -3249,10 +3263,11 @@ def test_drain_standing_org_skips_home_that_raises(capsys: pytest.CaptureFixture
         patch("vergil_tooling.lib.epics.apply_standing_drain") as mock_apply,
     ):
         plans = epics.drain_standing_org("org", apply=True, now=Q4_NOW)  # must NOT raise
-    assert plans == [good, good]
+    assert plans == [good, good, good]
     assert [c.args for c in mock_apply.call_args_list] == [
         (epics.PLANNING, "org/.github", "org", good),
         (epics.DEFERRED, "org/.github", "org", good),
+        (epics.HOSHIN, "org/.github", "org", good),
     ]
     assert "skipped intake drain in org/.github: multiple intake epics" in capsys.readouterr().err
 
@@ -3261,7 +3276,7 @@ def test_drain_standing_org_skips_home_that_raises(capsys: pytest.CaptureFixture
 
 
 def test_epic_sentinels_are_the_standing_kinds_sentinels() -> None:
-    assert epics.EPIC_SENTINELS == ("adhoc", "intake", "planning", "deferred")
+    assert epics.EPIC_SENTINELS == ("adhoc", "intake", "planning", "deferred", "hoshin")
     assert tuple(k.sentinel for k in epics.STANDING_KINDS) == epics.EPIC_SENTINELS
 
 
@@ -3272,6 +3287,7 @@ def test_epic_sentinels_are_the_standing_kinds_sentinels() -> None:
         ("intake", "ensure_intake_epic"),
         ("planning", "ensure_planning_epic"),
         ("deferred", "ensure_deferred_epic"),
+        ("hoshin", "ensure_hoshin_epic"),
     ],
 )
 def test_resolve_epic_ref_handles_every_sentinel(epic_sentinel: str, ensure: str) -> None:
@@ -3441,4 +3457,180 @@ def test_drain_standing_org_covers_deferred() -> None:
         patch("vergil_tooling.lib.epics.plan_standing_drain", side_effect=fake_plan),
     ):
         epics.drain_standing_org("org", apply=False, now=Q4_NOW)
-    assert seen == [epics.INTAKE, epics.PLANNING, epics.DEFERRED]
+    assert seen == [epics.INTAKE, epics.PLANNING, epics.DEFERRED, epics.HOSHIN]
+
+
+# -- HOSHIN standing kind (epic vergil-project/.github#1417) -------------------
+
+
+def test_hoshin_is_standing_not_queue() -> None:
+    kind = epics.HOSHIN
+    assert kind in epics.STANDING_KINDS
+    assert kind not in epics.QUEUE_KINDS
+    assert "hoshin" not in epics.QUEUE_KIND_BY_KEY
+    assert epics.DRAINED_STANDING_KINDS == (
+        epics.INTAKE,
+        epics.PLANNING,
+        epics.DEFERRED,
+        epics.HOSHIN,
+    )
+    assert (kind.key, kind.sentinel) == ("hoshin", "hoshin")
+    assert kind.title_prefix == "Epic (hoshin): "
+    assert kind.labels == ("epic", "hoshin")
+    assert kind.archive_prefix == "Archive (hoshin): "
+    assert kind.archive_labels == ("archive", "hoshin")
+    assert "hoshin" in epics.EPIC_SENTINELS
+    assert epics.standing_kind_of({"epic", "hoshin"}) is kind
+    assert epics.standing_kind_of({"archive", "hoshin"}) is None
+    assert epics.is_standing({"epic", "hoshin"})
+    with patch("vergil_tooling.lib.epics._labels", return_value={"epic", "hoshin"}):
+        assert epics.queue_kind(EPIC) is None
+        assert epics.container_kind(EPIC) == "hoshin"
+
+
+def test_hoshin_label_is_defined() -> None:
+    names = {label["name"] for label in load_labels()["labels"]}
+    assert "hoshin" in names
+
+
+def test_adhoc_body_states_the_standalone_rule() -> None:
+    body = epics.ADHOC.body.format(owner="org", name="tool")
+    assert "standalone, single-issue work only" in body
+    assert "A task owned by any epic or skill never goes here." in body
+
+
+def test_resolve_epic_ref_hoshin() -> None:
+    # --epic hoshin for vergil-project/docs: Epic (hoshin): vergil-project in its .github.
+    created = "https://github.com/vergil-project/.github/issues/77"
+    with (
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True) as mock_exists,
+        patch("vergil_tooling.lib.github.is_public") as mock_public,
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=[[], [{"number": 77, "title": "Epic (hoshin): vergil-project"}]],
+        ),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
+        patch("vergil_tooling.lib.epics.is_epic") as mock_is_epic,
+    ):
+        got = epics.resolve_epic_ref("hoshin", repo="vergil-project/docs")
+    assert got == IssueRef("vergil-project", ".github", 77)
+    mock_exists.assert_called_once_with("vergil-project", ".github")
+    mock_public.assert_not_called()  # the hoshin home never depends on visibility
+    mock_is_epic.assert_not_called()
+    mock_ensure.assert_called_once_with("vergil-project/.github", ("epic", "hoshin"))
+    kwargs = mock_create.call_args.kwargs
+    assert kwargs["repo"] == "vergil-project/.github"
+    assert kwargs["title"] == "Epic (hoshin): vergil-project"
+    assert kwargs["labels"] == ["epic", "hoshin"]
+    assert kwargs["body"].startswith("Perpetual hoshin epic for vergil-project:")
+
+
+def test_ensure_hoshin_epic_reuses_existing() -> None:
+    existing = IssueRef("org", ".github", 12)
+    with (
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
+        patch("vergil_tooling.lib.epics._find_epic_by_title", return_value=existing) as mock_find,
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+    ):
+        assert epics.ensure_hoshin_epic("org/docs") == existing
+    mock_find.assert_called_once_with(
+        "org/.github", "Epic (hoshin): org", labels=("epic", "hoshin")
+    )
+    mock_create.assert_not_called()
+
+
+def test_hoshin_home_is_org_dotgithub() -> None:
+    # A private target still resolves to the org's .github, never a self-home.
+    with (
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
+        patch("vergil_tooling.lib.github.is_public", return_value=False),
+        patch("vergil_tooling.lib.epics.ensure_standing_epic") as mock_ens,
+    ):
+        epics.ensure_hoshin_epic("org/secret")
+        assert epics.hoshin_home("org/secret") == ("org/.github", "org")
+    mock_ens.assert_called_once_with(epics.HOSHIN, "org/.github", "org")
+
+
+def test_hoshin_home_without_dotgithub_raises() -> None:
+    with (
+        patch("vergil_tooling.lib.github.repo_exists", return_value=False),
+        patch("vergil_tooling.lib.epics.ensure_standing_epic") as mock_ens,
+        pytest.raises(epics.EpicHomeError, match=r"has no \.github repository"),
+    ):
+        epics.ensure_hoshin_epic("someone/docs")
+    mock_ens.assert_not_called()
+
+
+def test_hoshin_home_repo_without_owner_raises() -> None:
+    with pytest.raises(ValueError, match="cannot resolve repo for hoshin epic"):
+        epics.hoshin_home("docs")
+
+
+def test_drain_standing_child_hoshin() -> None:
+    # A closed task under the hoshin epic moves to its close-quarter hoshin archive.
+    parent = IssueRef("vergil-project", ".github", 77)
+    task = IssueRef("vergil-project", "docs", 5)
+    arch = IssueRef("vergil-project", ".github", 600)
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=parent),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "hoshin"}),
+        patch(
+            "vergil_tooling.lib.epics._issue_title", return_value="Epic (hoshin): vergil-project"
+        ),
+        patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-11-19T00:00:00Z"),
+        patch(
+            "vergil_tooling.lib.epics.ensure_writable_standing_archive", return_value=arch
+        ) as mock_ens,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.rollup(task)
+    mock_ens.assert_called_once_with(
+        epics.HOSHIN, "vergil-project/.github", "vergil-project", "2026-Q4"
+    )
+    mock_reparent.assert_called_once_with(arch, task)
+    mock_run.assert_not_called()  # the hoshin epic is never closed
+
+
+def test_archive_title_hoshin() -> None:
+    title = epics.archive_title(epics.HOSHIN, "vergil-project", "2026-Q4")
+    assert title == "Archive (hoshin): vergil-project — 2026-Q4"
+    assert epics.archive_re(epics.HOSHIN).match(title)
+    assert epics.is_stamped_archive_title(title)
+
+
+def test_drain_standing_org_covers_hoshin() -> None:
+    # The sweep's plan includes the hoshin epic's closed children, read in
+    # <org>/.github only: a private repo's self-home has no hoshin epic.
+    seen: list[tuple[str, str, str]] = []
+    hoshin_plan = epics.DrainPlan(
+        IssueRef("org", ".github", 77),
+        moves=[(IssueRef("org", "docs", 5), "2026-Q4")],
+        close=[],
+    )
+
+    def fake_plan(
+        kind: epics.StandingKind, home: str, name: str, *, now: datetime
+    ) -> epics.DrainPlan | None:
+        seen.append((kind.key, home, name))
+        return hoshin_plan if kind is epics.HOSHIN else None
+
+    with (
+        patch("vergil_tooling.lib.github.list_org_repos", return_value=["docs", "secret"]),
+        patch(
+            "vergil_tooling.lib.github.is_public",
+            side_effect=_visibility({"org/.github", "org/docs"}),
+        ),
+        patch("vergil_tooling.lib.epics.plan_standing_drain", side_effect=fake_plan),
+        patch("vergil_tooling.lib.epics.apply_standing_drain") as mock_apply,
+    ):
+        plans = epics.drain_standing_org("org", apply=True, now=Q4_NOW)
+    assert ("hoshin", "org/.github", "org") in seen
+    assert [entry for entry in seen if entry[0] == "hoshin"] == [("hoshin", "org/.github", "org")]
+    assert plans == [hoshin_plan]
+    mock_apply.assert_called_once_with(epics.HOSHIN, "org/.github", "org", hoshin_plan)
+
+
+def test_hoshin_epic_docs_skipped() -> None:
+    assert epic_docs.is_skipped("Epic (hoshin): vergil-project", {"epic", "hoshin"})

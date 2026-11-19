@@ -1025,6 +1025,14 @@ def test_epic_help_names_every_standing_sentinel(capsys: pytest.CaptureFixture[s
         assert f"'{epic_sentinel}'" in out
 
 
+def test_epic_help_lists_hoshin(capsys: pytest.CaptureFixture[str]) -> None:
+    """The --epic help lists the hoshin sentinel (epic vergil-project/.github#1417)."""
+    with pytest.raises(SystemExit):
+        parse_args(["--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "'hoshin'" in out
+
+
 # -- Deferred queue: entered only through vrg-intake-route (#3673) -----------
 
 
