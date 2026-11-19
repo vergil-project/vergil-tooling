@@ -27,6 +27,7 @@ from vergil_tooling.lib.config import (
 )
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
+    _GITHUB_ACTIONS_INTEGRATION_ID,
     _PRODUCIBLE_GATE_CATALOG,
     CI_GATES_DEVELOP,
     CI_GATES_MAIN,
@@ -44,7 +45,6 @@ from vergil_tooling.lib.github_config import (
     FetchResult,
     NotChecked,
     UndeclaredParam,
-    _GITHUB_ACTIONS_INTEGRATION_ID,
     _apply_actions_permissions,
     _apply_repo_settings,
     _apply_rulesets,
