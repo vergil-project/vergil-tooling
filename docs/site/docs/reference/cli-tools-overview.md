@@ -406,9 +406,10 @@ posted again.
 
 Run the full release workflow from `develop` to `main`: tracking issue,
 changelog, release PR and merge, CD confirmation, back-merge and version
-bump, rolling-tag promotion, cleanup, consumer refresh, and finally the
-`update-deps` stage, which runs the dependency update on the new
-`develop` version. On a fresh start, preflight refuses while an open PR
+bump, rolling-tag promotion, cleanup, the `update-deps` stage, which
+runs the dependency update on the new `develop` version, and finally
+the consumer refresh, which runs the `[publish].consumer-refresh`
+commands (held while any publish is deferred). On a fresh start, preflight refuses while an open PR
 carries the `dependency-update` label, after first closing any whose fix
 task completed. Human-only. See the [vrg-release reference](dev/release.md)
 and the [Releasing guide](../guides/releasing.md).

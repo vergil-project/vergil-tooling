@@ -1,6 +1,6 @@
 """The vrg-release ``update-deps`` stage (epic vergil-project/.github#381, spec §5.1).
 
-Runs after consumer-refresh, once the release is tagged, promoted and published,
+Runs after close-finalize, once the release is tagged, promoted and published,
 so nothing about the release depends on it (mode fail_defer). Develop is already
 on the next patch version, so the update is the first change on it.
 """

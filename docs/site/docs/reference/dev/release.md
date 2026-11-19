@@ -7,8 +7,8 @@
 
 Runs the whole release workflow from `develop` to `main`: preflight,
 tracking issue, changelog, release PR, merge, CD confirmation,
-back-merge and version bump, rolling-tag promotion, cleanup, consumer
-refresh, and the post-release dependency update. The stages and what
+back-merge and version bump, rolling-tag promotion, cleanup, the
+post-release dependency update, and last the consumer refresh. The stages and what
 they leave behind are described in the
 [Releasing guide](../../guides/releasing.md#the-vrg-release-pipeline).
 
@@ -35,7 +35,7 @@ vrg-release [minor|major] [options]
 | `--no-promote` | No | Skip moving the rolling `vX.Y` tag |
 | `--without-deps` | No | Skip the `update-deps` stage |
 | `--allow-pending-deps` | No | Release even though an open `dependency-update` PR blocks it. For urgent fixes only; the bypassed PRs are listed on the tracking issue |
-| `--no-install` | No | Skip the install step. By default, after a clean release, `vrg-release` runs the `[publish].consumer-refresh` commands instead of only printing them; with none configured it says there is nothing to run, which is not an error. `--install` was removed: passing it exits 1 and names this default |
+| `--no-install` | No | Skip the install step. By default the `consumer-refresh` stage runs the `[publish].consumer-refresh` commands as the release's last stage, unless a deferred publish holds it; with this flag it prints them below the summary instead. With none configured the stage says there is nothing to run, which is not an error. `--install` was removed: passing it exits 1 and names this default |
 | `--resume [X.Y.Z]` | No | Resume an interrupted release from its open tracking issue. Name the version when more than one release is in flight. Cannot be combined with `minor`/`major` |
 | `--skip-audit` | No | Skip the `audit` stage |
 | `--output-window N` | No | Rolling output window for the terminal renderer (`0` streams everything) |
@@ -194,5 +194,5 @@ failed checks as its likely cause (issue #4294).
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Every stage succeeded |
-| 1 | A stage failed, including a deferred failure such as a missed publish job or a failed dependency update; or the command was refused |
+| 1 | A stage failed, including a deferred failure such as a missed publish job, a failed consumer refresh or a failed dependency update; or the command was refused |
 | 130 | Interrupted (Ctrl-C) |
