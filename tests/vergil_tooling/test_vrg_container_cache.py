@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.vergil_tooling.conftest import window_default_resolution
+from tests.vergil_tooling.conftest import fixture_tooling_sha, window_default_resolution
 from vergil_tooling.bin.vrg_container_cache import main
 from vergil_tooling.lib import git as git_lib
 from vergil_tooling.lib.cache_prune import CacheImage
@@ -19,6 +19,9 @@ from vergil_tooling.lib.versions.resolve import ResolutionError
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
     from pathlib import Path
+
+# The hermetic listing (conftest) resolves the pin v2.0 in _VALID_TOML to v2.0.7.
+_SHA_207 = fixture_tooling_sha("v2.0.7")
 
 _VALID_TOML = """\
 [project]
@@ -135,7 +138,12 @@ def test_status_hash_includes_the_resolved_python_env(
 
     files = cache_sensitive_files(tmp_path, "python")
     h = compute_cache_hash(
-        files, base_digest="sha256:abc", salt=tmp_path.name, env=_PY_ENV, tooling="v2.0.7"
+        files,
+        base_digest="sha256:abc",
+        salt=tmp_path.name,
+        env=_PY_ENV,
+        tooling="v2.0.7",
+        tooling_sha=_SHA_207,
     )
     cached = (f"ghcr.io/r/dev-python:3.14--feature-42--{h}", h)
     with (
@@ -329,7 +337,9 @@ def test_status_current(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     files = cache_sensitive_files(tmp_path, "go")
     # status must compute the hash the same way ensure_cached_image does:
     # salt (repo name) + base digest.
-    h = compute_cache_hash(files, base_digest="sha256:abc", salt=tmp_path.name, tooling="v2.0.7")
+    h = compute_cache_hash(
+        files, base_digest="sha256:abc", salt=tmp_path.name, tooling="v2.0.7", tooling_sha=_SHA_207
+    )
     cached = (f"ghcr.io/r/dev-go:1.26--feature-42--{h}", h)
     with (
         patch("vergil_tooling.bin.vrg_container_cache.git.repo_root", return_value=tmp_path),
@@ -387,7 +397,7 @@ def test_status_stale_when_base_digest_changes(
     files = cache_sensitive_files(tmp_path, "go")
     # Cache built against an OLD base digest; the live base now has a NEW digest.
     old_hash = compute_cache_hash(
-        files, base_digest="sha256:OLD", salt=tmp_path.name, tooling="v2.0.7"
+        files, base_digest="sha256:OLD", salt=tmp_path.name, tooling="v2.0.7", tooling_sha=_SHA_207
     )
     cached = (f"ghcr.io/r/dev-go:1.26--feature-42--{old_hash}", old_hash)
     with (
@@ -415,11 +425,18 @@ def test_status_stale_when_base_digest_changes(
 # -- status and the vergil-tooling release (#4550) ----------------------------
 
 
-def _go_hash(repo_root: Path, tooling: str) -> str:
+def _go_hash(repo_root: Path, tooling: str, sha: str = "") -> str:
     from vergil_tooling.lib.container_cache import cache_sensitive_files, compute_cache_hash
 
     files = cache_sensitive_files(repo_root, "go")
-    return compute_cache_hash(files, base_digest="sha256:abc", salt=repo_root.name, tooling=tooling)
+    return compute_cache_hash(
+        files, base_digest="sha256:abc", salt=repo_root.name, tooling=tooling, tooling_sha=sha
+    )
+
+
+def _line_hash(repo_root: Path, tag: str) -> str:
+    """The key of an image built from the line pin v2.0 when it resolved to *tag*."""
+    return _go_hash(repo_root, tag, fixture_tooling_sha(tag))
 
 
 def _status(repo_root: Path, cached: tuple[str, str]) -> int:
@@ -448,10 +465,10 @@ def test_status_current_names_the_resolved_release(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
-    h = _go_hash(tmp_path, "v2.0.7")
+    h = _line_hash(tmp_path, "v2.0.7")
     assert _status(tmp_path, (f"ghcr.io/r/dev-go:1.26--feature-42--my-repo.{h}", h)) == 0
     out = capsys.readouterr().out
-    assert "Tooling:      v2.0.7 (pin v2.0)" in out
+    assert f"Tooling:      v2.0.7 (pin v2.0, commit {_SHA_207})\n" in out
     assert "Cached with:  v2.0.7" in out
     assert "Status:       current" in out
 
@@ -477,11 +494,11 @@ def test_status_stale_when_the_pinned_line_has_a_newer_release(
     # v2.0.7. Nothing else changed, and the cache is not reported current.
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     _cached_tooling.return_value = "v2.0.6"
-    h = _go_hash(tmp_path, "v2.0.6")
+    h = _line_hash(tmp_path, "v2.0.6")
     assert _status(tmp_path, (f"ghcr.io/r/dev-go:1.26--feature-42--my-repo.{h}", h)) == 0
     out = capsys.readouterr().out
     assert "Status:       current" not in out
-    assert f"Status:       stale (current hash: {_go_hash(tmp_path, 'v2.0.7')})" in out
+    assert f"Status:       stale (current hash: {_line_hash(tmp_path, 'v2.0.7')})" in out
     assert "vergil-tooling: the image holds v2.0.6; v2.0 now installs v2.0.7" in out
     assert "vrg-container-cache build rebuilds it now" in out
 
@@ -507,17 +524,17 @@ def test_status_fails_when_the_release_cannot_be_resolved(
 ) -> None:
     # Offline, the release v2.0 resolves to is unknown: status says so, names
     # the release the cached image holds, and never reports it current.
-    import urllib.error
-
     from vergil_tooling.lib import tooling_release
+    from vergil_tooling.lib.tooling_install import ToolingInstallError
 
-    def offline(url: str) -> bytes:
-        raise urllib.error.URLError("no route to host")
+    def offline(url: str, pattern: str) -> str:
+        msg = f"git ls-remote --tags {url} {pattern} failed (exit 128): no route to host"
+        raise ToolingInstallError(msg)
 
-    monkeypatch.setattr(tooling_release, "_http_fetch", offline)
+    monkeypatch.setattr(tooling_release, "_ls_remote", offline)
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     _cached_tooling.return_value = "v2.0.6"
-    h = _go_hash(tmp_path, "v2.0.6")
+    h = _line_hash(tmp_path, "v2.0.6")
     with patch("vergil_tooling.lib.container_cache.cached_tooling", return_value="v2.0.6"):
         assert _status(tmp_path, (f"ghcr.io/r/dev-go:1.26--feature-42--my-repo.{h}", h)) == 1
     captured = capsys.readouterr()
@@ -533,15 +550,15 @@ def test_status_with_an_exact_override_needs_no_index(
     monkeypatch: pytest.MonkeyPatch,
     _cached_tooling: MagicMock,
 ) -> None:
-    # The offline way out: an exact pin is its own release, so the image built
-    # when v2.0 resolved to v2.0.6 is current under VRG_DOCKER_INSTALL_TAG=v2.0.6.
+    # The offline way out: an exact pin's key is its tag alone, so an image
+    # built under VRG_DOCKER_INSTALL_TAG=v2.0.6 is found current with no listing.
     from vergil_tooling.lib import tooling_release
 
-    def no_network(url: str) -> bytes:
-        msg = f"unexpected index fetch: {url}"
+    def no_network(url: str, pattern: str) -> str:
+        msg = f"unexpected ls-remote: {url} {pattern}"
         raise AssertionError(msg)
 
-    monkeypatch.setattr(tooling_release, "_http_fetch", no_network)
+    monkeypatch.setattr(tooling_release, "_ls_remote", no_network)
     monkeypatch.setenv("VRG_DOCKER_INSTALL_TAG", "v2.0.6")
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     _cached_tooling.return_value = "v2.0.6"

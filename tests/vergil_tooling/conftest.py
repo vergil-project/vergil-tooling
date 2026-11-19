@@ -22,9 +22,12 @@ opt out (see ``_RESOLVER_TEST_MODULES``).
 
 from __future__ import annotations
 
+import fnmatch
+import hashlib
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
@@ -39,6 +42,9 @@ from vergil_tooling.lib import (
 )
 from vergil_tooling.lib.versions import window
 from vergil_tooling.lib.versions.resolve import Resolution
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # Modules that test identity resolution directly and set the signals themselves.
 _RESOLVER_TEST_MODULES = frozenset({"test_identity_mode", "test_vrg_whoami"})
@@ -102,27 +108,47 @@ def _hermetic_version_window(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(window.WINDOW_ENV, str(FIXTURE_WINDOW))
 
 
-# The releases the hermetic vergil package index lists, in every suite and arch.
-FIXTURE_TOOLING_RELEASES = ("2.0.6", "2.0.7", "2.1.9")
+# The release tags the hermetic vergil-tooling repository lists.
+FIXTURE_TOOLING_RELEASES = ("v2.0.6", "v2.0.7", "v2.1.9")
 
 
-def fixture_package_index(releases: tuple[str, ...] = FIXTURE_TOOLING_RELEASES) -> bytes:
-    """A deb ``Packages`` index listing vergil-tooling at each of *releases*."""
-    return "".join(
-        f"Package: vergil-tooling\nVersion: {r}-1\nArchitecture: all\n\n" for r in releases
-    ).encode()
+def fixture_tooling_sha(tag: str) -> str:
+    """The commit SHA the fixture listing gives release *tag* (stable, per tag)."""
+    return hashlib.sha1(f"commit {tag}".encode()).hexdigest()  # noqa: S324 - a fixture id
+
+
+def fixture_ls_remote(
+    releases: tuple[str, ...] = FIXTURE_TOOLING_RELEASES,
+) -> Callable[[str, str], str]:
+    """A ``git ls-remote --tags`` stand-in listing *releases* as annotated tags.
+
+    Each tag lists twice, as ``git ls-remote`` lists an annotated tag: its tag
+    object, then the peeled ``^{}`` line with the commit
+    (:func:`fixture_tooling_sha`). Only the tags matching the pattern are listed.
+    """
+
+    def ls_remote(_url: str, pattern: str) -> str:
+        lines = []
+        for tag in releases:
+            ref = f"refs/tags/{tag}"
+            if fnmatch.fnmatchcase(ref, pattern):
+                tag_object = hashlib.sha1(f"tag {tag}".encode()).hexdigest()  # noqa: S324
+                lines += [f"{tag_object}\t{ref}", f"{fixture_tooling_sha(tag)}\t{ref}^{{}}"]
+        return "".join(f"{line}\n" for line in lines)
+
+    return ls_remote
 
 
 @pytest.fixture(autouse=True)
-def _hermetic_tooling_index(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Resolve a vergil-tooling line pin against a fixture index, never the network.
+def _hermetic_tooling_tags(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve a vergil-tooling line pin against a fixture listing, never the network.
 
-    A cache key names the release a line pin resolves to, read from the vergil
-    package index (#4550). Here every index lists
-    :data:`FIXTURE_TOOLING_RELEASES`, so ``v2.0`` resolves to ``v2.0.7``. Tests
-    of the fetch path pass their own ``fetch``.
+    A cache key names the release a line pin resolves to, and its commit, read
+    with ``git ls-remote`` (#4550, epic vergil-project/.github#1350). Here the
+    listing holds :data:`FIXTURE_TOOLING_RELEASES`, so ``v2.0`` resolves to
+    ``v2.0.7``. Tests of the listing itself pass their own ``ls_remote``.
     """
-    monkeypatch.setattr(tooling_release, "_http_fetch", lambda _url: fixture_package_index())
+    monkeypatch.setattr(tooling_release, "_ls_remote", fixture_ls_remote())
 
 
 @pytest.fixture(autouse=True)
