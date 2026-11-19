@@ -625,6 +625,7 @@ def test_list_dir() -> None:
         ("Ad-hoc maintenance", {"epic", "standing"}, True),
         ("Epic (standing): Ad-hoc maintenance", {"epic"}, True),
         ("[archived] Epic: x", {"epic"}, True),
+        ("Epic (proxy): x", {"epic", "proxy"}, True),
         ("Epic: x", {"epic"}, False),
         ("Sync .gitignore to baseline", {"epic"}, False),
     ],
@@ -999,3 +1000,9 @@ def test_list_epics_rejects_unexpected_shape(bad: object) -> None:
         pytest.raises(ValueError, match="unexpected epic"),
     ):
         epic_docs.list_epics("o/.github")
+
+
+def test_is_skipped_proxy() -> None:
+    # A proxy carries no documents of its own: its primary does (#1417). The
+    # label decides, whatever the title says.
+    assert epic_docs.is_skipped("Epic: anything", {"epic", "proxy"}) is True

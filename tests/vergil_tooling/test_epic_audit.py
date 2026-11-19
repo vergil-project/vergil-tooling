@@ -2255,3 +2255,34 @@ def test_stray_dotgithub_issue_refuses_a_list_that_may_be_truncated() -> None:
         pytest.raises(epics.EpicListTruncatedError, match="open issues of org/.github"),
     ):
         epic_audit.stray_dotgithub_issue("org", home="org/.github")
+
+
+def test_epic_drift_skips_proxy() -> None:
+    # A proxy whose tasks are all closed is not drift: it lives as long as its
+    # primary (#1417), so the daily sweep's drift close never closes it. The
+    # finite epic beside it, all closed too, still is drift.
+    epic_list = [
+        {
+            "number": 40,
+            "title": "Convention",
+            "createdAt": "2026-06-28T10:00:00Z",
+            "milestone": None,
+            "labels": [{"name": "epic"}],
+            "url": "u40",
+        },
+        {
+            "number": 9,
+            "title": "Epic (proxy): keep ad-hoc queues standalone",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "milestone": None,
+            "labels": [{"name": "epic"}, {"name": "proxy"}],
+            "url": "u9",
+        },
+    ]
+    closed = [epics.ChildState(epics.IssueRef("vergil-project", "vergil-tooling", 1), "CLOSED")]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=epic_list),
+        patch("vergil_tooling.lib.epics.child_states", return_value=closed),
+    ):
+        result = epic_audit.epic_drift("vergil-project", home="vergil-project/.github")
+    assert [e.number for e in result] == [40]

@@ -570,12 +570,14 @@ def is_skipped(title: str, labels: Iterable[str]) -> bool:
     """True for an epic the Documents section does not apply to.
 
     A container epic (one :func:`epics.is_standing` recognises, one carrying
-    the retired ``standing`` label, or one titled ``Epic (standing): …``) or
+    the retired ``standing`` label, or one titled ``Epic (standing): …``), a
+    proxy epic (:func:`epics.is_proxy`: its primary carries the documents) or
     an archived one (titled ``[archived] …``).
     """
     names = set(labels)
     return (
         epics.is_standing(names)
+        or epics.is_proxy(names)
         or _RETIRED_STANDING_LABEL in names
         or title.startswith((_STANDING_TITLE_PREFIX, _ARCHIVED_PREFIX))
     )
