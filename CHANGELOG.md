@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.328] - 2026-11-19
+
+### Bug fixes
+
+- report vergil-tooling and leave its install to the release (#4745)
+- pass the automation App secrets to cd-release in generated cd.yml (#4750)
+- guarantee ~/.local/bin on PATH for non-login remote commands (#4758)
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- record the TypeScript license report and the npm updater in the guides (#4735)
+- align the security-records guide and the planning hold with the security-planning flow (#4749)
+
+### Features
+
+- replace the confirmation and body previews with one selection table (#4746)
+- resolve once and install a release commit with uv (#4748)
+- protect release tag creation (#4754)
+- run consumer-refresh as the last pipeline stage, rolled up to one line (#4755)
+- install vergil-tooling with uv and remove the vergil packages (#4757)
+- install vergil-tooling from one release commit with uv (#4756)
+
+### Testing
+
+- use distinctive sentinels in the hook-environment checks (#4753)
+
 ## [2.1.327] - 2026-11-18
 
 ### Bug fixes
