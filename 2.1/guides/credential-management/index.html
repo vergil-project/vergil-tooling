@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1454,6 +1454,8 @@
       
         
       
+        
+      
     
     
     
@@ -1506,6 +1508,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.329/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.329
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18578,21 +18608,38 @@ inherits the parent environment. This lets the tooling run in CI
 environments where credentials are provided through other mechanisms
 (for example, an Actions-provided token).</p>
 <p>Degradation applies only when App config is absent. When App config
-is present, these two cases stop the command rather than fall back
+is present, these three cases stop the command rather than fall back
 to ambient <code>gh</code>/<code>git</code> auth:</p>
 <ul>
 <li><strong>No target org.</strong> The target org comes from an explicit owner
-  (<code>-R owner/repo</code> for <code>vrg-gh</code>, a command's own target argument
-  such as <code>--repo owner/repo</code>, or a <code>vrg-git clone</code> URL) or else from the
-  current repo's GitHub <code>origin</code> remote. If neither yields an org (for
-  example, <code>vrg-gh</code> without <code>-R</code> run outside a repo), the command
-  stops with <code>GitHub App mode is configured ... but no target org
-  could be determined</code> and exits non-zero. Run it inside a repo
-  whose <code>origin</code> is on GitHub, or name the target explicitly.</li>
+  (for <code>vrg-gh</code>, any way the command names one, listed below; a
+  command's own target argument such as <code>--repo owner/repo</code>; or a
+  <code>vrg-git clone</code> URL) or else from the current repo's GitHub <code>origin</code>
+  remote. If neither yields an org (for example, <code>vrg-gh issue list</code>
+  run outside a repo), the command stops with <code>GitHub App mode is
+  configured ... but no target org could be determined</code> and exits
+  non-zero. Run it inside a repo whose <code>origin</code> is on GitHub, or name
+  the target explicitly.</li>
+<li><strong>More than one target org.</strong> One installation token reaches one
+  org's private repos, so a <code>vrg-gh</code> command naming two owners (for
+  example, <code>search prs --owner a --owner b</code>) stops with <code>this command
+  targets more than one owner</code>. Run it once per owner. <code>vrg-gh api
+  graphql</code> is refused in App mode for the same reason: a GraphQL call
+  names its owner inside the query, where the wrapper cannot read it.</li>
 <li><strong>Minting fails.</strong> A broken or rotated key stops the command with
   <code>GitHub App authentication failed for owner '&lt;owner&gt;'</code> (see
   <a href="#rotating-an-app-private-key">Rotating an App private key</a>).</li>
 </ul>
+<p><code>vrg-gh</code> reads the target owner from every form <code>gh</code> accepts:
+<code>-R</code>/<code>--repo</code>, <code>--owner</code>, a <code>repo view &lt;owner&gt;/&lt;repo&gt;</code> or
+<code>repo list &lt;owner&gt;</code> positional, an issue or pull request URL, an
+<code>issue transfer</code> destination, a <code>repo:</code>, <code>org:</code> or <code>user:</code> search
+qualifier, and an <code>api repos|orgs|users/&lt;owner&gt;/...</code> endpoint, given as
+a path or a full URL. Only a
+command that names no owner falls back to the current repo's <code>origin</code>.
+This matters across orgs: a token for the current repo's org can still
+read other orgs' public repos, so a wrong-org token would not fail. It
+would just leave the target org's private repos out.</p>
 <p>Ambient auth may be a human's <code>gh</code> login. Falling back to it would
 let an agent act under a different identity without any sign.</p>
 <p>One case still falls back: the org is known, but the App has no
