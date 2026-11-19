@@ -432,8 +432,8 @@ edits its `v1.x` pin to `v2` deliberately. The difference is
 A rollback moves a rolling `vX.Y` tag back to an earlier `vX.Y.Z`, so
 consumers that follow the tag return to that release. It is a release act
 and stays human-gated. The gate is the `Tag protection` ruleset, which lets
-only the repository Admin role move a rolling tag (see the
-[config audit reference](../reference/config-audit.md#github-checks-rulesets)).
+only the repository Admin role and the org automation App move a rolling
+tag (see the [config audit reference](../reference/config-audit.md#github-checks-rulesets)).
 For Claude Code consumers the no-bypass `Rolling tag branch names` ruleset
 is part of the gate: Claude Code resolves `v2.1` as a branch before a tag,
 so the tag's protection holds only while no `v2.1` branch can exist.

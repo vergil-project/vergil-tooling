@@ -251,23 +251,36 @@ def desired_branch_protection_ruleset() -> DesiredRuleset:
     )
 
 
-def desired_tag_protection_ruleset() -> DesiredRuleset:
+def desired_tag_protection_ruleset(app_id: int | None) -> DesiredRuleset:
+    """Only the repository Admin role and the automation App write release tags.
+
+    ``v*.*.*`` covers the release tags; ``v*.*`` covers the rolling ``vX.Y``
+    tags consumers follow as their deploy ref. Creating, updating, deleting
+    or force-pushing either is restricted to the bypass actors: the repository
+    Admin role (``RepositoryRole`` 5, the human, who moves ``vX.Y`` with
+    ``vrg-promote``) and the org automation App (an ``Integration``, by its
+    numeric *app_id*), whose installation token the shared release action
+    pushes ``vX.Y.Z`` with. The GitHub Actions integration is never a bypass
+    actor: that would let any workflow's ``GITHUB_TOKEN`` create a release
+    tag (epic vergil-project/.github#1350, spec §1.1).
+
+    *app_id* ``None`` leaves the bypass list unmanaged (skipped), which
+    :func:`compute_desired_state` allows only with ``skip_bypass``.
+    """
+    bypass: list[dict[str, object]] | None = None
+    if app_id is not None:
+        bypass = [
+            {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"},
+            {"actor_id": app_id, "actor_type": "Integration", "bypass_mode": "always"},
+        ]
     return DesiredRuleset(
         name="Tag protection",
         target="tag",
         enforcement="active",
-        # ``v*.*.*`` covers release tags; ``v*.*`` covers the rolling ``vX.Y``
-        # tags consumers follow as their deploy ref. Only the repository Admin
-        # role (the human release identity) may move or delete either.
         ref_include=["refs/tags/v*.*.*", "refs/tags/v*.*"],
-        bypass_actors=[
-            {
-                "actor_id": 5,
-                "actor_type": "RepositoryRole",
-                "bypass_mode": "always",
-            },
-        ],
+        bypass_actors=bypass,
         rules=[
+            {"type": "creation"},
             {"type": "deletion"},
             {"type": "non_fast_forward"},
             {"type": "update"},
@@ -970,20 +983,21 @@ def compute_desired_state(
     App's token or a CI ``GITHUB_TOKEN``), which GitHub never shows the field
     to. Otherwise
     *automation_app_id*, the org automation App's numeric ID, is required: it
-    is the automation-branch ruleset's bypass actor. A missing ID without
-    *skip_bypass* raises rather than leaving that ruleset unmanaged.
+    is a bypass actor of the tag-protection and automation-branch rulesets. A
+    missing ID without *skip_bypass* raises rather than leaving those rulesets
+    unmanaged.
     """
     if not skip_bypass and automation_app_id is None:
         msg = (
-            "the automation App's ID is required for the automation-branch "
-            "ruleset's bypass actors unless bypass_actors are skipped"
+            "the automation App's ID is required for the tag-protection and "
+            "automation-branch rulesets' bypass actors unless bypass_actors are skipped"
         )
         raise ValueError(msg)
     ghas = ghas_available(config, visibility=visibility)
     rulesets: list[DesiredRuleset] = []
 
     rulesets.append(desired_branch_protection_ruleset())
-    rulesets.append(desired_tag_protection_ruleset())
+    rulesets.append(desired_tag_protection_ruleset(automation_app_id))
     rulesets.append(desired_rolling_tag_branch_ruleset())
     rulesets.append(desired_automation_branch_ruleset(automation_app_id))
     rulesets.extend(
