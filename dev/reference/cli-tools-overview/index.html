@@ -20050,7 +20050,11 @@ is accepted.</p>
 <h3 id="vrg-gh">vrg-gh<a class="headerlink" href="#vrg-gh" title="Permanent link">&para;</a></h3>
 <p>A safe, identity-aware <code>gh</code> wrapper for agent sessions. It forwards to <code>gh</code>
 only after enforcing a per-identity subcommand allowlist, injecting the GitHub
-App installation token for the target owner. Raw <code>gh issue create</code>, <code>gh auth</code>,
+App installation token for the target owner, read from every form the command
+names it in (<code>-R</code>/<code>--repo</code>, <code>--owner</code>, a positional repo, owner or URL, a
+search qualifier, an <code>api</code> endpoint), and refusing a command that names more
+than one owner (see
+<a href="../../guides/credential-management/">Credential management</a>). Raw <code>gh issue create</code>, <code>gh auth</code>,
 <code>pr close</code>, <code>repo edit/create/delete</code> and <code>workflow run</code> are denied outright;
 <code>gh api</code> is full for a human, read-only <code>GET</code> for the audit identity, and
 denied for the user identity. Its own <code>run job-log --repo &lt;owner&gt;/&lt;repo&gt; --job
