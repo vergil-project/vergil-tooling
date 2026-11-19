@@ -18790,7 +18790,7 @@ A planning issue may name several advisories, and it keeps tracking each
 of them until the plan exists.</p>
 <ul>
 <li><strong>Hand each advisory to its fix.</strong> When <code>epic-create</code> files the tasks
-  (its step 9), retarget <strong>each</strong> advisory the planning issue names from
+  (its step 8), retarget <strong>each</strong> advisory the planning issue names from
   the planning issue to the task or tasks that fix it. Run one
   <code>retarget</code> per advisory, <strong>one after another, never in parallel</strong>: each
   retarget rewrites the planning issue's body, so two at once can write
@@ -18805,8 +18805,10 @@ of them until the plan exists.</p>
 <a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span>--from<span class="w"> </span><span class="s1">'vergil-project/.github#500'</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">  </span>--to<span class="w"> </span><span class="s1">'vergil-project/vergil-tooling#103'</span>
 </code></pre></div>
-<p>From then on, the PRs that close those tasks are what close each
-  advisory.
+<p>From then on, each advisory follows its fix tasks: once every one of
+  them has closed as completed, the next <code>vrg-security-record sync</code>
+  closes it (see
+  <a href="#managing-a-record-through-its-issue">Managing a record through its issue</a>).
 - <strong>A finding the design itself resolves.</strong> A finding that the revised
   design resolves on its own, with no task implementing it (for example,
   the spec now removes the mechanism it was about), is retargeted to the
@@ -18855,7 +18857,7 @@ built. Three recipes cover the findings raised inside the epic/task
 framework: design review during <code>epic-create</code>, the security
 follow-ups <code>issue-implement</code> finds, and the security findings of a
 task's merge review. All use <code>create</code>; design review
-also uses <code>retarget</code>, through <code>epic-create</code>'s step 9. As everywhere on
+also uses <code>retarget</code>, through <code>epic-create</code>'s step 8. As everywhere on
 this page, the refs and GHSA IDs are placeholders, not a real finding.</p>
 <p><strong>Design review, during <code>epic-create</code>.</strong> The review runs in rounds
 against the spec and the plan while a planning issue tracks the work.
@@ -18866,7 +18868,7 @@ depends on the decision:</p>
 <ul>
 <li>an <strong>accepted</strong> finding (the spec or plan now states the requirement)
   is recorded on the planning issue with attach mode,
-  <code>vrg-security-record create --issue &lt;planning issue&gt; …</code>. Step 9 then
+  <code>vrg-security-record create --issue &lt;planning issue&gt; …</code>. Step 8 then
   hands it off to its fix like any other advisory the planning issue
   names (see <a href="#security-items-in-planning">Security items in planning</a>);</li>
 <li>a <strong>rejected</strong> finding (the human decided it is not a problem) is
