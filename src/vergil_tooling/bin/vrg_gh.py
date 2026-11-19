@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import github, identity_mode, retry
@@ -301,7 +302,7 @@ def _api_is_get(argv: list[str]) -> bool:
 
 
 def _parse_repo_owner(value: str) -> str | None:
-    """Extract the owner from a ``-R``/``--repo`` value.
+    """Extract the owner from a repository value (``-R``/``--repo``, ``repo view``).
 
     gh accepts ``OWNER/REPO``, ``HOST/OWNER/REPO``, and full URL forms.
     """
@@ -317,42 +318,244 @@ def _parse_repo_owner(value: str) -> str | None:
     return None
 
 
-def _extract_repo_owner(argv: list[str]) -> str | None:
-    """Return the owner named by ``-R``/``--repo`` in the wrapped argv.
+@dataclass
+class _ParsedArgs:
+    """The parts of a wrapped argv that can name a target owner."""
 
-    Handles separate-value (``-R x``, ``--repo x``), equals
-    (``--repo=x``, ``-R=x``), and glued-shorthand (``-Rx``) forms;
-    the last occurrence wins, matching gh's flag parsing.
+    repo_values: list[str] = field(default_factory=list)
+    owner_values: list[str] = field(default_factory=list)
+    positionals: list[str] = field(default_factory=list)
+
+
+def _parse_args(args: list[str], value_flags: frozenset[str]) -> _ParsedArgs:
+    """Split *args* into ``-R``/``--repo`` values, ``--owner`` values and positionals.
+
+    *value_flags* names the flags (long ``--x`` and short ``-x``) that take a
+    value, so a flag's value is never mistaken for a positional. ``-R``/
+    ``--repo`` and ``--owner`` always take one. A flag not in the table is
+    treated as boolean: that errs toward reading a token as a positional, so
+    an owner it names is found rather than skipped. Handles separate-value
+    (``-R x``), equals (``--repo=x``, ``-R=x``), glued-shorthand (``-Rx``) and
+    clustered-shorthand (``-wR x``) forms, and ``--`` ending the flags.
     """
-    value: str | None = None
+    value_flags = value_flags | {"-R", "--repo", "--owner"}
+    parsed = _ParsedArgs()
+
+    def record(flag: str, value: str) -> None:
+        if flag in ("-R", "--repo"):
+            parsed.repo_values.append(value)
+        elif flag == "--owner":
+            parsed.owner_values.append(value)
+
     i = 0
-    while i < len(argv):
-        arg = argv[i]
-        if arg in ("-R", "--repo"):
-            if i + 1 < len(argv):
-                value = argv[i + 1]
-            i += 2
-            continue
-        if arg.startswith("--repo="):
-            value = arg.split("=", 1)[1]
-        elif arg.startswith("-R") and arg != "-R":
-            value = arg[2:].removeprefix("=")
+    while i < len(args):
+        arg = args[i]
         i += 1
-    if value is None:
-        return None
-    return _parse_repo_owner(value)
+        if arg == "--":
+            parsed.positionals.extend(args[i:])
+            break
+        if arg.startswith("--"):
+            name, sep, value = arg.partition("=")
+            if sep:
+                record(name, value)
+            elif name in value_flags and i < len(args):
+                record(name, args[i])
+                i += 1
+            continue
+        if arg.startswith("-") and len(arg) > 1:
+            for pos, letter in enumerate(arg[1:], start=2):
+                short = f"-{letter}"
+                if short not in value_flags:
+                    continue
+                rest = arg[pos:].removeprefix("=")
+                if rest:
+                    record(short, rest)
+                elif i < len(args):
+                    record(short, args[i])
+                    i += 1
+                break
+            continue
+        parsed.positionals.append(arg)
+    return parsed
+
+
+def _flags(*names: str) -> frozenset[str]:
+    return frozenset(names)
+
+
+# The value-taking flags of every command whose positionals can name an owner,
+# as `gh <command> --help` lists them (gh 2.8x). `-R`/`--repo` and `--owner`
+# are added for every command by _parse_args.
+_OUTPUT_FLAGS = ("--jq", "-q", "--json", "--template", "-t")
+_SEARCH_COMMON = (*_OUTPUT_FLAGS, "--limit", "-L", "--match", "--order", "--sort", "--visibility")
+_VALUE_FLAGS: dict[tuple[str, str], frozenset[str]] = {
+    ("issue", "view"): _flags(*_OUTPUT_FLAGS),
+    ("issue", "close"): _flags("--comment", "-c", "--duplicate-of", "--reason", "-r"),
+    ("issue", "reopen"): _flags("--comment", "-c"),
+    ("issue", "edit"): _flags(
+        "--add-assignee", "--add-blocked-by", "--add-blocking", "--add-label",
+        "--add-project", "--add-sub-issue", "--attach", "--body", "-b",
+        "--body-file", "-F", "--milestone", "-m", "--parent",
+        "--remove-assignee", "--remove-blocked-by", "--remove-blocking",
+        "--remove-label", "--remove-project", "--remove-sub-issue",
+        "--title", "-t", "--type",
+    ),  # fmt: skip
+    ("issue", "comment"): _flags("--attach", "--body", "-b", "--body-file", "-F"),
+    ("issue", "transfer"): _flags(),
+    ("pr", "view"): _flags(*_OUTPUT_FLAGS),
+    ("pr", "checks"): _flags(*_OUTPUT_FLAGS, "--interval", "-i"),
+    ("pr", "diff"): _flags("--color", "--exclude", "-e"),
+    ("pr", "comment"): _flags("--attach", "--body", "-b", "--body-file", "-F"),
+    ("pr", "edit"): _flags(
+        "--add-assignee", "--add-label", "--add-project", "--add-reviewer",
+        "--base", "-B", "--body", "-b", "--body-file", "-F", "--milestone", "-m",
+        "--remove-assignee", "--remove-label", "--remove-project",
+        "--remove-reviewer", "--title", "-t",
+    ),  # fmt: skip
+    ("pr", "review"): _flags("--body", "-b", "--body-file", "-F"),
+    ("pr", "merge"): _flags(
+        "--author-email", "-A", "--body", "-b", "--body-file", "-F",
+        "--match-head-commit", "--subject", "-t",
+    ),  # fmt: skip
+    ("pr", "update-branch"): _flags(),
+    ("repo", "view"): _flags(*_OUTPUT_FLAGS, "--branch", "-b"),
+    ("repo", "list"): _flags(
+        *_OUTPUT_FLAGS, "--language", "-l", "--limit", "-L", "--topic", "--visibility"
+    ),
+    ("search", "code"): _flags(
+        *_OUTPUT_FLAGS, "--extension", "--filename", "--language", "--limit", "-L",
+        "--match", "--size",
+    ),  # fmt: skip
+    ("search", "commits"): _flags(
+        *_SEARCH_COMMON, "--author", "--author-date", "--author-email",
+        "--author-name", "--committer", "--committer-date", "--committer-email",
+        "--committer-name", "--hash", "--parent", "--tree",
+    ),  # fmt: skip
+    ("search", "issues"): _flags(
+        *_SEARCH_COMMON, "--app", "--assignee", "--author", "--closed",
+        "--commenter", "--comments", "--created", "--interactions", "--involves",
+        "--label", "--language", "--mentions", "--milestone", "--project",
+        "--reactions", "--search-type", "--state", "--team-mentions", "--updated",
+    ),  # fmt: skip
+    ("search", "prs"): _flags(
+        *_SEARCH_COMMON, "--app", "--assignee", "--author", "--base", "-B",
+        "--checks", "--closed", "--commenter", "--comments", "--created",
+        "--head", "-H", "--interactions", "--involves", "--label", "--language",
+        "--mentions", "--merged-at", "--milestone", "--project", "--reactions",
+        "--review", "--review-requested", "--reviewed-by", "--state",
+        "--team-mentions", "--updated",
+    ),  # fmt: skip
+    ("search", "repos"): _flags(
+        *_SEARCH_COMMON, "--created", "--followers", "--forks",
+        "--good-first-issues", "--help-wanted-issues", "--include-forks",
+        "--language", "--license", "--number-topics", "--size", "--stars",
+        "--topic", "--updated",
+    ),  # fmt: skip
+}
+_API_VALUE_FLAGS = _flags(
+    "--method", "-X", "--header", "-H", "--field", "-F", "--raw-field", "-f",
+    "--input", "--jq", "-q", "--template", "-t", "--cache", "--preview", "-p",
+    "--hostname",
+)  # fmt: skip
+
+# An issue or PR URL: http(s)://<host>/<owner>/<repo>[/...].
+_URL_OWNER_RE = re.compile(r"https?://[^/\s]+/([^/\s]+)/[^/\s]+(?:/.*)?")
+# A search qualifier naming an owner: repo:<owner>/<repo>, org:<owner>, user:<owner>.
+_QUALIFIER_RE = re.compile(r"(repo|org|user):\"?([^\s\"]+)\"?")
+# An API endpoint scoped to one owner: [/]repos/<owner>/..., [/]orgs/<owner>, [/]users/<owner>.
+_API_OWNER_RE = re.compile(r"/?(?:repos|orgs|users)/([^/?\s]+)")
+
+
+def _owner_if_valid(owner: str | None) -> str | None:
+    """*owner* when it is a GitHub owner name; a ``{owner}`` placeholder or junk is ``None``."""
+    if owner is not None and _OWNER_RE.fullmatch(owner):
+        return owner
+    return None
+
+
+def _positional_owners(top: str, sub: str, positionals: list[str]) -> list[str | None]:
+    """The owners the command's positional arguments name, per gh's grammar for it."""
+    if top == "repo" and sub == "view":
+        return [_parse_repo_owner(positionals[0])] if positionals else []
+    if top == "repo" and sub == "list":
+        return [_owner_if_valid(positionals[0])] if positionals else []
+    if top in ("issue", "pr"):
+        # A number or branch names no owner; a branch may contain '/', so only
+        # a full URL is read, never a bare OWNER/REPO.
+        owners: list[str | None] = []
+        for value in positionals:
+            match = _URL_OWNER_RE.fullmatch(value)
+            owners.append(match.group(1) if match else None)
+        if top == "issue" and sub == "transfer" and len(positionals) >= 2:  # noqa: PLR2004
+            owners[1] = _parse_repo_owner(positionals[1])
+        return owners
+    if top == "search":
+        owners = []
+        for word in " ".join(positionals).split():
+            # Grouping parentheses may hug a qualifier: (org:a OR org:b).
+            match = _QUALIFIER_RE.fullmatch(word.strip("()"))
+            if match:
+                kind, value = match.groups()
+                owners.append(_parse_repo_owner(value) if kind == "repo" else value)
+        return owners
+    return []
+
+
+def _target_owners(argv: list[str]) -> list[str]:
+    """Every distinct owner the wrapped *argv* names, in the order first named.
+
+    Owners are compared case-insensitively, as GitHub does; the first spelling
+    is kept. Sources: ``-R``/``--repo``, ``--owner``, and the command's
+    positional target (a ``repo view``/``repo list`` owner, an issue or PR
+    URL, an ``issue transfer`` destination, a ``repo:``/``org:``/``user:``
+    search qualifier, or an ``api`` endpoint's ``repos|orgs|users/<owner>``).
+    """
+    if argv[0] == "api":
+        parsed = _parse_args(argv[1:], _API_VALUE_FLAGS)
+        endpoint = parsed.positionals[0] if parsed.positionals else ""
+        match = _API_OWNER_RE.match(endpoint)
+        candidates: list[str | None] = [match.group(1) if match else None]
+    else:
+        top, sub = argv[0], argv[1]
+        parsed = _parse_args(argv[2:], _VALUE_FLAGS.get((top, sub), _flags()))
+        candidates = _positional_owners(top, sub, parsed.positionals)
+        if top != "search" and parsed.repo_values:
+            # Outside search, -R/--repo takes one value and the last one wins.
+            parsed.repo_values = parsed.repo_values[-1:]
+    candidates += [_parse_repo_owner(value) for value in parsed.repo_values]
+    candidates += parsed.owner_values
+
+    owners: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        owner = _owner_if_valid(candidate)
+        if owner is not None and owner.lower() not in seen:
+            seen.add(owner.lower())
+            owners.append(owner)
+    return owners
 
 
 def _exec_gh(argv: list[str]) -> int:
     """Inject the installation token and execute ``gh`` with retry.
 
-    The App installation is selected by the ``-R``/``--repo`` owner
-    when present, falling back to cwd remote detection otherwise.
-    A targeted owner with no installation fails loudly: a token
-    minted for a different installation cannot reach that owner's
-    private repos (#1413).
+    The App installation is selected by the owner the command targets, in
+    whatever form it names it (see :func:`_target_owners`), and falls back to
+    cwd remote detection only when the command names no owner. A targeted
+    owner with no installation fails loudly: a token minted for a different
+    installation cannot reach that owner's private repos, it only sees their
+    public ones (#1413, #4762). In App mode, a command that names more than
+    one owner is refused, since no single installation token reaches them all.
     """
-    return _run_gh(argv, _extract_repo_owner(argv))
+    owners = _target_owners(argv)
+    if len(owners) > 1 and github.is_app_mode():
+        print(
+            f"vrg-gh: this command targets more than one owner ({', '.join(owners)}); "
+            "one GitHub App installation token cannot reach all of them, and the "
+            "others' private repos would be silently missed. Run it once per owner.",
+            file=sys.stderr,
+        )
+        return 1
+    return _run_gh(argv, owners[0] if owners else None)
 
 
 def _parse_job_log_args(args: list[str]) -> tuple[str, str, str] | str:
@@ -446,7 +649,7 @@ def _run_gh(argv: list[str], owner: str | None, *, clean: Callable[[str], str] =
         known = ", ".join(exc.known) if exc.known else "none"
         print(
             f"vrg-gh: the GitHub App has no installation for owner "
-            f"'{exc.org}' (from -R/--repo). Known installations: {known}.",
+            f"'{exc.org}' (the command's target). Known installations: {known}.",
             file=sys.stderr,
         )
         return 1

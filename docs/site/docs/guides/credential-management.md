@@ -112,20 +112,35 @@ environments where credentials are provided through other mechanisms
 (for example, an Actions-provided token).
 
 Degradation applies only when App config is absent. When App config
-is present, these two cases stop the command rather than fall back
+is present, these three cases stop the command rather than fall back
 to ambient `gh`/`git` auth:
 
 - **No target org.** The target org comes from an explicit owner
-  (`-R owner/repo` for `vrg-gh`, a command's own target argument
-  such as `--repo owner/repo`, or a `vrg-git clone` URL) or else from the
-  current repo's GitHub `origin` remote. If neither yields an org (for
-  example, `vrg-gh` without `-R` run outside a repo), the command
-  stops with `GitHub App mode is configured ... but no target org
-  could be determined` and exits non-zero. Run it inside a repo
-  whose `origin` is on GitHub, or name the target explicitly.
+  (for `vrg-gh`, any way the command names one, listed below; a
+  command's own target argument such as `--repo owner/repo`; or a
+  `vrg-git clone` URL) or else from the current repo's GitHub `origin`
+  remote. If neither yields an org (for example, `vrg-gh issue list`
+  run outside a repo), the command stops with `GitHub App mode is
+  configured ... but no target org could be determined` and exits
+  non-zero. Run it inside a repo whose `origin` is on GitHub, or name
+  the target explicitly.
+- **More than one target org.** One installation token reaches one
+  org's private repos, so a `vrg-gh` command naming two owners (for
+  example, `search prs --owner a --owner b`) stops with `this command
+  targets more than one owner`. Run it once per owner.
 - **Minting fails.** A broken or rotated key stops the command with
   `GitHub App authentication failed for owner '<owner>'` (see
   [Rotating an App private key](#rotating-an-app-private-key)).
+
+`vrg-gh` reads the target owner from every form `gh` accepts:
+`-R`/`--repo`, `--owner`, a `repo view <owner>/<repo>` or
+`repo list <owner>` positional, an issue or pull request URL, an
+`issue transfer` destination, a `repo:`, `org:` or `user:` search
+qualifier, and an `api repos|orgs|users/<owner>/...` endpoint. Only a
+command that names no owner falls back to the current repo's `origin`.
+This matters across orgs: a token for the current repo's org can still
+read other orgs' public repos, so a wrong-org token would not fail. It
+would just leave the target org's private repos out.
 
 Ambient auth may be a human's `gh` login. Falling back to it would
 let an agent act under a different identity without any sign.

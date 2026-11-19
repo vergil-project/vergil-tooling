@@ -101,7 +101,11 @@ is accepted.
 
 A safe, identity-aware `gh` wrapper for agent sessions. It forwards to `gh`
 only after enforcing a per-identity subcommand allowlist, injecting the GitHub
-App installation token for the target owner. Raw `gh issue create`, `gh auth`,
+App installation token for the target owner, read from every form the command
+names it in (`-R`/`--repo`, `--owner`, a positional repo, owner or URL, a
+search qualifier, an `api` endpoint), and refusing a command that names more
+than one owner (see
+[Credential management](../guides/credential-management.md)). Raw `gh issue create`, `gh auth`,
 `pr close`, `repo edit/create/delete` and `workflow run` are denied outright;
 `gh api` is full for a human, read-only `GET` for the audit identity, and
 denied for the user identity. Its own `run job-log --repo <owner>/<repo> --job
