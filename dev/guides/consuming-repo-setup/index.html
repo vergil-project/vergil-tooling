@@ -19163,7 +19163,8 @@ never produces.</p>
 <h3 id="optional-dependency-update-hook">Optional: dependency-update hook<a class="headerlink" href="#optional-dependency-update-hook" title="Permanent link">&para;</a></h3>
 <p>Every <code>vrg-release</code> ends by updating the repo's dependencies (see
 <a href="../releasing/#dependency-updates">Dependency updates</a>). The built-in
-updaters cover Python (<code>uv.lock</code>), vergil ecosystem refs, the packaged
+updaters cover Python (<code>uv.lock</code>), Rust (<code>Cargo.lock</code>), TypeScript
+(<code>package-lock.json</code>), vergil ecosystem refs, the packaged
 runtime, and container image tags. If the repo has other dependencies
 to keep current, such as binary tool versions or provider pins, add a
 hook to <code>vergil.toml</code>:</p>
