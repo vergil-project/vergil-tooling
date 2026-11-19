@@ -21,6 +21,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _planning_close,
     _pr_label,
     _prepare,
+    _print_selection,
     _push_branch,
     _recheck_batch,
     _reject_if_cross_repo,
@@ -32,7 +33,6 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _require_ready,
     _require_relay_agrees,
     _require_reported_head,
-    _resolve_linkage,
     _resolve_ready_state,
     _run_submit_batch,
     _select_batch_worktrees,
@@ -50,6 +50,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
 from vergil_tooling.lib import auto_merge, epics, github, pr_provenance, progress, retry, worktrees
 from vergil_tooling.lib.linkage import extract_tracking_refs
 from vergil_tooling.lib.planning_close import PlanningClose
+from vergil_tooling.lib.pr_body import build_pr_body
 from vergil_tooling.lib.pr_workflow import batch_rules, engine, freeze
 from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
@@ -88,7 +89,7 @@ def _no_epic_link_check() -> Iterator[None]:
         patch(_MOD + "._reject_if_non_task"),
         patch(_MOD + "._reject_if_operational_task"),
         patch(_MOD + "._reject_if_queue_item"),
-        patch(_MOD + "._task_linkage", side_effect=lambda _ref, requested: (requested, None)),
+        patch(_MOD + "._task_linkage", side_effect=lambda _ref, requested: requested),
         patch(_MOD + "._planning_close", return_value=None),
     ):
         yield
@@ -370,9 +371,10 @@ def test_base_flag_develop_used_in_pr_creation(tmp_path: Path) -> None:
     assert mock_create_pr.call_args.kwargs["base"] == "develop"
 
 
-def test_dry_run_body_has_no_testing_section(
+def test_cli_dry_run_prints_the_table_not_the_body(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """The CLI dry run lists the PR in the selection table; the body is not printed."""
     gh = tmp_path / ".github"
     gh.mkdir()
     (gh / "pull_request_template.md").write_text(
@@ -385,10 +387,19 @@ def test_dry_run_body_has_no_testing_section(
         result = main(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug", "--dry-run"])
     assert result == 0
     output = capsys.readouterr().out
-    assert "## Summary" in output
-    assert "## Issue Linkage" in output
-    assert "## Notes" in output
-    assert "## Testing" not in output
+    assert "Submitting 1 PR to develop:" in output
+    assert "Ref #42" in output
+    assert "fix: bug" in output
+    assert "## Summary" not in output
+    assert "[dry-run] would finalize every opened PR in one run" in output
+
+
+def test_cli_body_has_no_testing_section() -> None:
+    body = build_pr_body(summary="Fix bug", links=[("Ref", "#42")], notes="", planning=None)
+    assert "## Summary" in body
+    assert "## Issue Linkage" in body
+    assert "## Notes" in body
+    assert "## Testing" not in body
 
 
 def test_main_dry_run(tmp_path: Path) -> None:
@@ -737,7 +748,6 @@ class TestTemplateMode:
                 "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
                 return_value="https://github.com/pr/1",
             ) as mock_pr,
-            patch("builtins.input", return_value="y"),
         ):
             result = main([])
         assert result == 0
@@ -756,7 +766,6 @@ class TestTemplateMode:
                 "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
                 return_value="https://github.com/pr/1",
             ) as mock_pr,
-            patch("builtins.input", return_value="y"),
         ):
             result = main([])
         assert result == 0
@@ -765,10 +774,11 @@ class TestTemplateMode:
         # not deleted as the legacy template was.
         assert _state_submitted(tmp_path)
 
-    def test_template_yes_flag_submits_without_prompting(self, tmp_path: Path) -> None:
-        """--yes pre-answers the submit confirmation, so the PR is created
-        without reading stdin (issue #1644)."""
-        _write_workflow_state(tmp_path)
+    def test_template_submits_without_prompting(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Submit never reads stdin and never prints the PR body (vergil-tooling#4744)."""
+        _write_workflow_state(tmp_path, summary="SUMMARY-TEXT")
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -782,10 +792,24 @@ class TestTemplateMode:
             ) as mock_pr,
             patch("builtins.input", side_effect=AssertionError("stdin read")) as mock_input,
         ):
-            result = main(["--yes"])
+            result = main(["--no-finalize"])
         assert result == 0
         mock_pr.assert_called_once()
         mock_input.assert_not_called()
+        out = capsys.readouterr().out
+        assert "Submitting 1 PR to develop:" in out
+        assert "SUMMARY-TEXT" not in out
+        assert "Body Preview" not in out
+
+    @pytest.mark.parametrize("flag", ["--yes", "-y"])
+    def test_yes_flag_is_refused_by_name(
+        self, flag: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--yes was removed with the confirmation; it is refused before any side effect."""
+        with patch(_MOD + "._run_template_mode") as run:
+            assert main([flag]) == 1
+        run.assert_not_called()
+        assert "--yes was removed" in capsys.readouterr().err
 
     def test_template_prints_pr_watch_oneliner(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -802,7 +826,6 @@ class TestTemplateMode:
                 "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
                 return_value="https://github.com/pr/7",
             ),
-            patch("builtins.input", return_value="y"),
         ):
             result = main(["--no-finalize"])
         assert result == 0
@@ -861,13 +884,12 @@ class TestTemplateMode:
                 "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
                 return_value="https://github.com/pr/8",
             ),
-            patch("builtins.input", return_value="y"),
         ):
             result = main([])
         assert result == 0
         captured = capsys.readouterr()
         assert "Ref #1761" in captured.err
-        # The rendered body carries the bare keyword with the auto-appended number.
+        # The selection table carries the bare keyword with the auto-appended number.
         assert "Ref #42" in captured.out
 
     def test_template_mode_reports_unready_workflow(
@@ -896,37 +918,6 @@ class TestTemplateMode:
         assert result == 1
         assert "cannot read PR submission fields" in capsys.readouterr().err
 
-    def test_template_aborts_on_decline(self, tmp_path: Path) -> None:
-        _write_workflow_state(tmp_path, title="fix", summary="Fix")
-        with (
-            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
-            patch(
-                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
-                return_value="feature/x",
-            ),
-            patch("builtins.input", return_value="n"),
-        ):
-            result = main([])
-        assert result == 1
-        # Declining leaves the state file in place and un-submitted.
-        assert not _state_submitted(tmp_path)
-        assert (tmp_path / ".vergil" / "pr-workflow.json").is_file()
-
-    def test_template_aborts_on_eof(self, tmp_path: Path) -> None:
-        _write_workflow_state(tmp_path, title="fix", summary="Fix")
-        with (
-            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
-            patch(
-                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
-                return_value="feature/x",
-            ),
-            patch("builtins.input", side_effect=EOFError),
-        ):
-            result = main([])
-        assert result == 1
-        assert not _state_submitted(tmp_path)
-        assert (tmp_path / ".vergil" / "pr-workflow.json").is_file()
-
     def test_missing_issue_arg_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
         result = main(["--summary", "Fix", "--title", "fix: bug"])
         assert result != 0
@@ -946,7 +937,6 @@ class TestTemplateMode:
                 "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
                 return_value="https://github.com/pr/1",
             ) as mock_pr,
-            patch("builtins.input", return_value="y"),
         ):
             main([])
         push_calls = [c for c in mock_git_run.call_args_list if c.args and c.args[0] == "push"]
@@ -992,7 +982,7 @@ class TestTemplateMode:
             patch(_MOD + "._create_pr") as create,
             pytest.raises(SystemExit, match="PRs are opened against develop only"),
         ):
-            main(["--yes"])
+            main([])
         push.assert_not_called()
         create.assert_not_called()
 
@@ -1156,8 +1146,8 @@ class TestUnreleasedRepoRefusal:
         "argv",
         [
             ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"],
-            ["--all", "--yes", "--release", "--no-install"],
-            ["feature/a", "--release", "--yes"],
+            ["--all", "--release", "--no-install"],
+            ["feature/a", "--release"],
             ["feature/a", "--release", "--dry-run"],
         ],
     )
@@ -1464,7 +1454,7 @@ class TestFinalizeByDefault:
         self, capsys: pytest.CaptureFixture[str], argv: list[str], message: str
     ) -> None:
         """Refused before any side effect, in every mode."""
-        for mode in (_CLI, [], ["--all", "--yes"], ["feature/a", "--yes"]):
+        for mode in (_CLI, [], ["--all"], ["feature/a"]):
             with (
                 patch(_MOD + ".git.repo_root") as repo_root,
                 patch(_MOD + ".git.run") as git_run,
@@ -1511,8 +1501,10 @@ class TestFinalizeByDefault:
         )
 
     @pytest.mark.parametrize("count", [1, 3])
-    def test_single_confirmation_for_selection(self, count: int) -> None:
-        """One plan and one confirmation for one PR or many; none with --yes."""
+    def test_selection_table_and_no_prompt(
+        self, count: int, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """One table lists the selection, one row per PR; nothing is asked."""
         wts = [_batch_wt(f"issue-{n}-x") for n in range(1, count + 1)]
         urls = [f"https://x/pull/{n}" for n in range(1, count + 1)]
         with (
@@ -1520,20 +1512,16 @@ class TestFinalizeByDefault:
             patch(_MOD + "._push_branch"),
             patch(_MOD + "._create_pr", side_effect=urls),
             patch(_MOD + ".submission.record_submission"),
-            patch(_MOD + ".confirm", return_value=True) as ask,
-        ):
-            assert _run_submit_batch(wts, parse_args(["--all"])) == 0
-        ask.assert_called_once()
-        assert ask.call_args.kwargs == {"assume_yes": False}
-        with (
-            patch(_MOD + ".submission.read_pr_fields", side_effect=_batch_fields),
-            patch(_MOD + "._push_branch"),
-            patch(_MOD + "._create_pr", side_effect=urls),
-            patch(_MOD + ".submission.record_submission"),
             patch("builtins.input") as typed,
         ):
-            assert _run_submit_batch(wts, parse_args(["--all", "--yes"])) == 0
+            assert _run_submit_batch(wts, parse_args(["--all", "--no-finalize"])) == 0
         typed.assert_not_called()
+        out = capsys.readouterr().out
+        noun = "PR" if count == 1 else "PRs"
+        assert f"Submitting {count} {noun} to develop:" in out
+        table = out[out.index("Submitting") :]
+        for wt in wts:
+            assert wt.branch in table
 
     def test_template_mode_finalizes_the_opened_pr(self, tmp_path: Path) -> None:
         _write_workflow_state(tmp_path, title="fix", summary="Fix")
@@ -1547,7 +1535,7 @@ class TestFinalizeByDefault:
             patch(_MOD + ".subprocess.run") as run,
         ):
             run.return_value.returncode = 0
-            assert main(["--yes"]) == 0
+            assert main([]) == 0
         assert run.call_args.args[0] == ["vrg-finalize-pr", "https://github.com/pr/7"]
         assert _state_submitted(tmp_path)
 
@@ -1574,19 +1562,8 @@ class TestFinalizeByDefault:
             patch(_MOD + ".github.create_pr", side_effect=[_URL1, _URL2]),
             patch(_MOD + "._chain_finalize", return_value=0) as chain,
         ):
-            assert main(["feature/a", "feature/b", "--release", "--yes"]) == 0
+            assert main(["feature/a", "feature/b", "--release"]) == 0
         chain.assert_called_once_with(["vrg-finalize-pr", f"{_URL1},{_URL2}", "--release"])
-
-    def test_decline_never_reaches_finalize(self, tmp_path: Path) -> None:
-        _write_workflow_state(tmp_path, title="fix", summary="Fix")
-        with (
-            patch(_MOD + ".git.repo_root", return_value=tmp_path),
-            patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + "._chain_finalize") as chain,
-            patch("builtins.input", return_value="n"),
-        ):
-            assert main([]) == 1
-        chain.assert_not_called()
 
     def test_submit_failure_raised_never_reaches_finalize(self) -> None:
         """An unexpected error propagates loudly, with finalize never run."""
@@ -1625,6 +1602,7 @@ def _submission(
         title="T",
         pr_body="BODY",
         issue_refs=list(issues),
+        links=[("Closes", ref) for ref in issues],
         expected_head=head,
         push=push,
         record_in=record_in,
@@ -2106,10 +2084,10 @@ class TestSubmitRollup:
         ):
             _submit_all([_submission()], _ARGS)
 
-    def test_rollup_starts_after_the_preview(
+    def test_rollup_starts_after_the_table(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """The preview prints plainly first; the rollup follows the confirmation."""
+        """The selection table prints plainly first; the rollup follows it."""
         _write_workflow_state(tmp_path)
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
@@ -2117,9 +2095,9 @@ class TestSubmitRollup:
             patch(_MOD + "._push_branch"),
             patch(_MOD + "._create_pr", return_value="https://x/pull/5"),
         ):
-            assert main(["--yes", "--output-format", "plain"]) == 0
+            assert main(["--output-format", "plain"]) == 0
         out = capsys.readouterr().out
-        assert out.index("=== Body Preview ===") < out.index("→ feature/x  starting...")
+        assert out.index("Submitting 1 PR to develop:") < out.index("→ feature/x  starting...")
         assert "✓ feature/x" in out
         assert "PR #5 auto-merge on (squash, pinned to h0)" in out
 
@@ -2149,7 +2127,7 @@ def test_single_and_batch_share_submit_all(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="feature/x"),
         patch(_MOD + "._submit_all", return_value=summary) as submit_all,
     ):
-        assert main(["--yes"]) == 0
+        assert main([]) == 0
         assert main(["--issue", "42", "--summary", "S", "--title", "T"]) == 0
     assert submit_all.call_count == 2
     template_sel, cli_sel = (c.args[0] for c in submit_all.call_args_list)
@@ -2163,7 +2141,7 @@ def test_single_and_batch_share_submit_all(tmp_path: Path) -> None:
         patch(_MOD + ".submission.read_pr_fields", side_effect=_batch_fields),
         patch(_MOD + "._submit_all", return_value=summary) as submit_all,
     ):
-        assert _run_submit_batch([a, b], parse_args(["--all", "--yes"])) == 0
+        assert _run_submit_batch([a, b], parse_args(["--all"])) == 0
     selection, _args = submit_all.call_args.args
     assert [s.branch for s in selection] == ["feature/1-x", "feature/2-x"]
     assert [s.record_in for s in selection] == [a.path, b.path]
@@ -2213,7 +2191,7 @@ def _run_batch(
         patch(_MOD + "._chain_finalize", _real_chain_finalize),
         patch(_MOD + ".subprocess.run", side_effect=fake_run),
     ):
-        rc = _run_submit_batch(wts, parse_args(["--all", "--yes", *argv]))
+        rc = _run_submit_batch(wts, parse_args(["--all", *argv]))
     return rc, calls
 
 
@@ -2249,7 +2227,7 @@ def test_submit_batch_failure_labels_by_branch_not_dir(
         patch(_MOD + "._push_branch"),
         patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
     ):
-        rc = _run_submit_batch([wt], parse_args(["--all", "--yes"]))
+        rc = _run_submit_batch([wt], parse_args(["--all"]))
     assert rc == 3
     err = capsys.readouterr().err
     assert "  feature/911-authz-apply-tag — " in err
@@ -2337,23 +2315,6 @@ def test_prepare_strips_issue_number_from_linkage_and_warns(
     assert sub.pr_body == "BODY"
     assert build.call_args.kwargs["links"] == [("Ref", "#1")]
     assert "Ref #1761" in capsys.readouterr().err
-
-
-def test_submit_batch_declined_opens_nothing(capsys: pytest.CaptureFixture[str]) -> None:
-    """Declining the one confirmation opens nothing and exits 1."""
-    with (
-        patch(_MOD + ".submission.read_pr_fields", side_effect=_batch_fields),
-        patch(_MOD + ".confirm", return_value=False) as ask,
-        patch(_MOD + "._submit_all") as submit_all,
-    ):
-        rc = _run_submit_batch(
-            [_batch_wt("issue-1-a"), _batch_wt("issue-2-b")], parse_args(["--all"])
-        )
-    assert rc == 1
-    ask.assert_called_once()
-    assert "Submit these 2 PRs?" in ask.call_args.args[0]
-    submit_all.assert_not_called()
-    assert "Aborted." in capsys.readouterr().out
 
 
 def test_submit_batch_dry_run_opens_nothing() -> None:
@@ -2557,10 +2518,7 @@ def test_task_linkage_upgrades_managed_task_to_closes() -> None:
         patch(f"{_MOD}.epics.parent_of", return_value=parent),
         patch(f"{_MOD}.epics.is_epic", return_value=True),
     ):
-        linkage, note = _task_linkage("#42", "Ref")
-    assert linkage == "Closes"
-    assert note is not None
-    assert "Closes" in note
+        assert _task_linkage("#42", "Ref") == "Closes"
 
 
 def test_task_linkage_keeps_ref_for_legacy_issue() -> None:
@@ -2568,7 +2526,7 @@ def test_task_linkage_keeps_ref_for_legacy_issue() -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.parent_of", return_value=None),
     ):
-        assert _task_linkage("#42", "Ref") == ("Ref", None)
+        assert _task_linkage("#42", "Ref") == "Ref"
 
 
 def test_task_linkage_keeps_ref_when_parent_not_epic() -> None:
@@ -2578,12 +2536,12 @@ def test_task_linkage_keeps_ref_when_parent_not_epic() -> None:
         patch(f"{_MOD}.epics.parent_of", return_value=parent),
         patch(f"{_MOD}.epics.is_epic", return_value=False),
     ):
-        assert _task_linkage("#42", "Ref") == ("Ref", None)
+        assert _task_linkage("#42", "Ref") == "Ref"
 
 
 def test_task_linkage_noop_when_ref_unresolvable() -> None:
     with patch(f"{_MOD}.github.current_repo", return_value=""):
-        assert _task_linkage("#42", "Ref") == ("Ref", None)
+        assert _task_linkage("#42", "Ref") == "Ref"
 
 
 # -- _planning_close (a docs task's PR also closes its planning issue) --------
@@ -2663,19 +2621,6 @@ def test_prepare_body_carries_the_planning_close(tmp_path: Path) -> None:
         )
     assert "- Ref #20\n- Planning issue: Closes acme/.github#7\n" in sub.pr_body
     assert sub.issue_refs == ["#20"]
-
-
-def test_resolve_linkage_announces_closes_upgrade(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    with patch(f"{_MOD}._task_linkage", return_value=("Closes", "note: upgraded")):
-        assert _resolve_linkage("#42", "Ref") == "Closes"
-    assert "note: upgraded" in capsys.readouterr().out
-
-
-def test_resolve_linkage_returns_requested_without_note() -> None:
-    with patch(f"{_MOD}._task_linkage", return_value=("Ref", None)):
-        assert _resolve_linkage("#42", "Ref") == "Ref"
 
 
 def test_reject_if_non_task_noop_when_repo_unresolvable() -> None:
@@ -2773,7 +2718,7 @@ def test_local_submission_pushes_before_creating() -> None:
     push.assert_called_once_with("feature/x")
 
 
-def test_prepare_previews_without_opening(capsys: pytest.CaptureFixture[str]) -> None:
+def test_prepare_prints_nothing_and_opens_nothing(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(_MOD + ".resolve_issue_ref", return_value="#42"),
         patch(_MOD + ".build_pr_body", return_value="BODY"),
@@ -2789,7 +2734,8 @@ def test_prepare_previews_without_opening(capsys: pytest.CaptureFixture[str]) ->
             record_in=None,
         )
     assert sub.pr_body == "BODY"
-    assert "=== Body Preview ===\nBODY" in capsys.readouterr().out
+    assert sub.links == [("Ref", "#42")]
+    assert "BODY" not in capsys.readouterr().out
     push.assert_not_called()
     create.assert_not_called()
 
@@ -2968,7 +2914,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".git.run") as git_run,
             patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5") as create,
         ):
-            rc = main(["feature/x", "--no-finalize", "--yes"])
+            rc = main(["feature/x", "--no-finalize"])
         assert rc == 0
         push.assert_not_called()
         assert not any(c.args and c.args[0] == "push" for c in git_run.call_args_list)
@@ -2990,7 +2936,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".submission.record_submission"),
             patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5"),
         ):
-            rc = main(["feature/x", "--yes"])
+            rc = main(["feature/x"])
         assert rc == 0
         gh_cls.assert_not_called()
 
@@ -3012,7 +2958,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".submission.record_submission") as record,
             patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/7") as create,
         ):
-            rc = main(["feature/x", "--yes"])
+            rc = main(["feature/x"])
         assert rc == 0
         push.assert_called_once_with("feature/x")
         assert create.call_args.kwargs["head"] == "feature/x"
@@ -3041,7 +2987,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".submission.record_submission") as record,
             patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/7") as create,
         ):
-            rc = main(["feature/x", "--yes"])
+            rc = main(["feature/x"])
         assert rc == 0
         push.assert_not_called()
         assert create.call_args.kwargs["head"] == "feature/x"
@@ -3063,7 +3009,7 @@ class TestRelayBranchPath:
             patch(_MOD + "._push_branch") as push,
             patch(_MOD + ".github.create_pr", return_value="https://github.com/o/r/pull/7"),
         ):
-            rc = main(["feature/x", "--yes"])
+            rc = main(["feature/x"])
         assert rc == 0
         push.assert_not_called()
         recorded = LocalFileTransport(tmp_path).read()
@@ -3084,7 +3030,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".submission.record_submission") as record,
             patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5"),
         ):
-            rc = main(["feature/x", "--yes"])
+            rc = main(["feature/x"])
         assert rc == 0
         record.assert_not_called()
 
@@ -3107,7 +3053,7 @@ class TestRelayBranchPath:
                 side_effect=subprocess.CalledProcessError(1, ["gh", "pr", "create"]),
             ),
         ):
-            assert main(["feature/x", "--yes"]) == 3
+            assert main(["feature/x"]) == 3
         record.assert_not_called()
         captured = capsys.readouterr()
         assert "✗ feature/x" in captured.out
@@ -3126,7 +3072,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".github.create_pr") as create,
             pytest.raises(SystemExit, match="does not"),
         ):
-            main(["feature/x", "--yes"])
+            main(["feature/x"])
         create.assert_not_called()
 
     def test_relay_missing_ready_state_errors(self) -> None:
@@ -3138,7 +3084,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".GitHubTransport", return_value=transport),
             pytest.raises(SystemExit, match="no ready-state for branch"),
         ):
-            main(["feature/x", "--yes"])
+            main(["feature/x"])
 
     def test_relay_skips_already_submitted_branch(self, capsys: pytest.CaptureFixture[str]) -> None:
         state = _ready_state(
@@ -3153,7 +3099,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".GitHubTransport", return_value=transport),
             patch(_MOD + ".github.create_pr") as create,
         ):
-            rc = main(["feature/x", "--no-finalize", "--yes"])
+            rc = main(["feature/x", "--no-finalize"])
         assert rc == 0
         create.assert_not_called()
         assert "already has a submitted PR" in capsys.readouterr().out
@@ -3186,7 +3132,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
         ):
             enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
-            rc = main(["feature/a", "feature/b", "--yes"])
+            rc = main(["feature/a", "feature/b"])
         assert rc == 0
         assert create.call_count == 2
         push.assert_not_called()
@@ -3216,12 +3162,10 @@ class TestRelayBranchPath:
             patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
             patch(_MOD + ".GitHubTransport", side_effect=fake_transport),
             patch(_MOD + ".git.read_output", side_effect=fake_read_output),
-            patch(_MOD + ".confirm", return_value=True) as ask,
             patch(_MOD + "._submit_all", return_value=summary) as submit_all,
         ):
             rc = main(["feature/a", "feature/b"])
         assert rc == 0
-        ask.assert_called_once()
         submit_all.assert_called_once()
         selection, _args = submit_all.call_args.args
         assert [(s.branch, s.expected_head, s.push) for s in selection] == [
@@ -3247,7 +3191,7 @@ class TestRelayBranchPath:
                 side_effect=auto_merge.AutoMergeError("https://x/pull/7: refused"),
             ),
         ):
-            assert main(["feature/x", "--yes"]) == 3
+            assert main(["feature/x"]) == 3
         err = capsys.readouterr().err
         assert "Failed to submit:" in err
         assert "https://x/pull/7 — https://x/pull/7: refused" in err
@@ -3310,7 +3254,7 @@ class TestRelayBranchPath:
             patch(_MOD + ".subprocess.run") as run,
             pytest.raises(SystemExit) as excinfo,
         ):
-            main(["feature/a", "feature/b", "--yes"])
+            main(["feature/a", "feature/b"])
         create.assert_not_called()
         run.assert_not_called()
         msg = str(excinfo.value.code)
@@ -3336,7 +3280,6 @@ def test_no_arg_local_path_unchanged_regression(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="feature/x"),
         patch(_MOD + ".git.run") as git_run,
         patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1") as create,
-        patch("builtins.input", return_value="y"),
     ):
         rc = main([])
     assert rc == 0
@@ -3496,7 +3439,6 @@ def test_template_refuses_a_head_other_than_the_recorded_one(tmp_path: Path) -> 
         patch(_MOD + ".git.read_output", return_value="h1"),
         patch(_MOD + ".git.run") as git_run,
         patch(_MOD + ".github.create_pr") as create,
-        patch("builtins.input", return_value="y"),
         pytest.raises(SystemExit, match="is not the head the latest report-ready recorded"),
     ):
         main([])
@@ -3513,7 +3455,6 @@ def test_template_holds_origin_to_the_recorded_head(tmp_path: Path) -> None:
         patch(_MOD + ".git.run"),
         patch(_MOD + "._require_origin_head") as origin_check,
         patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
-        patch("builtins.input", return_value="y"),
     ):
         assert main([]) == 0
     origin_check.assert_called_once_with("feature/x", "h0")
@@ -3529,7 +3470,7 @@ def test_submit_batch_refuses_a_worktree_off_its_recorded_head() -> None:
         patch(_MOD + "._submit_all") as submit_all,
         pytest.raises(SystemExit, match="refusing to submit 'feature/1-x'"),
     ):
-        _run_submit_batch([wt], parse_args(["--all", "--yes"]))
+        _run_submit_batch([wt], parse_args(["--all"]))
     submit_all.assert_not_called()
 
 
@@ -3566,7 +3507,7 @@ class TestRelayRecordedHead:
             patch(_MOD + ".github.create_pr") as create,
             pytest.raises(SystemExit, match="not ready"),
         ):
-            main(["feature/x", "--yes"])
+            main(["feature/x"])
         push.assert_not_called()
         create.assert_not_called()
 
@@ -3582,7 +3523,7 @@ class TestRelayRecordedHead:
             patch(_MOD + ".github.create_pr") as create,
             pytest.raises(SystemExit, match="not ready"),
         ):
-            main(["feature/x", "--yes"])
+            main(["feature/x"])
         create.assert_not_called()
 
     def test_local_worktree_past_its_recorded_head_is_refused(self) -> None:
@@ -3599,7 +3540,7 @@ class TestRelayRecordedHead:
             patch(_MOD + ".github.create_pr") as create,
             pytest.raises(SystemExit, match="is not the head the latest report-ready recorded"),
         ):
-            main(["feature/x", "--yes"])
+            main(["feature/x"])
         push.assert_not_called()
         create.assert_not_called()
 
@@ -3619,7 +3560,7 @@ class TestRelayRecordedHead:
             patch(_MOD + ".github.create_pr") as create,
             pytest.raises(SystemExit, match="disagree"),
         ):
-            main(["feature/x", "--yes"])
+            main(["feature/x"])
         create.assert_not_called()
 
     def test_relay_open_holds_origin_to_the_recorded_head(self) -> None:
@@ -3633,7 +3574,7 @@ class TestRelayRecordedHead:
             patch(_MOD + "._require_origin_head") as origin_check,
             patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5"),
         ):
-            assert main(["feature/x", "--yes"]) == 0
+            assert main(["feature/x"]) == 0
         origin_check.assert_called_once_with("feature/x", "abc123")
 
 
@@ -3671,9 +3612,9 @@ def _batch_state(
     return state
 
 
-def _all_closes(_ref: str, _requested: str) -> tuple[str, str | None]:
+def _all_closes(_ref: str, _requested: str) -> str:
     """Every batch issue is a task under the batch's epic, so each links Closes."""
-    return "Closes", None
+    return "Closes"
 
 
 def _batch_metadata(issues: str = "10,11") -> dict[str, str]:
@@ -3709,7 +3650,7 @@ class TestBatchSubmit:
             patch(_MOD + "._push_branch"),
             patch(_MOD + "._create_pr", return_value="https://github.com/o/r/pull/9") as create,
         ):
-            assert main(["--yes"]) == 0
+            assert main([]) == 0
         body = create.call_args.kwargs["pr_body"]
         assert "## Issue Linkage\n\n- Closes #10\n- Closes #11\n\n## Notes" in body
         assert extract_tracking_refs(body) == [("Closes", "#10"), ("Closes", "#11")]
@@ -3737,7 +3678,7 @@ class TestBatchSubmit:
             patch(_MOD + "._push_branch") as push,
             patch(_MOD + "._create_pr") as create,
         ):
-            assert main(["--yes"]) == 3
+            assert main([]) == 3
         # A submit that pushes fetches only the target: fetching the branch would
         # move the lease ref that --force-with-lease holds (merge review R1).
         git_run.assert_called_once_with("fetch", "origin", "develop")
@@ -3764,7 +3705,7 @@ class TestBatchSubmit:
             patch(_MOD + "._push_branch") as push,
             patch(_MOD + "._create_pr") as create,
         ):
-            assert main(["--yes"]) == 3
+            assert main([]) == 3
         # Template mode pushes, so only the target is fetched.
         git_run.assert_called_once_with("fetch", "origin", "develop")
         commits.assert_not_called()
@@ -3787,7 +3728,7 @@ class TestBatchSubmit:
             patch(_MOD + "._create_pr") as create,
             pytest.raises(SystemExit, match=r"#11\) is an epic"),
         ):
-            main(["--yes"])
+            main([])
         create.assert_not_called()
 
     def test_submit_single_issue_template_body_and_no_batch_check(self, tmp_path: Path) -> None:
@@ -3802,7 +3743,7 @@ class TestBatchSubmit:
             patch(_MOD + ".batch_rules.check_commit_per_issue") as commits,
             patch(_MOD + "._create_pr", return_value="https://github.com/o/r/pull/9") as create,
         ):
-            assert main(["--yes"]) == 0
+            assert main([]) == 0
         body = create.call_args.kwargs["pr_body"]
         assert body == (
             "# Pull Request\n\n## Summary\n\n- Fix the bug\n\n"
@@ -3845,7 +3786,7 @@ class TestBatchSubmit:
             patch(_MOD + "._push_branch") as push,
             patch(_MOD + "._create_pr", return_value="https://github.com/o/r/pull/5") as create,
         ):
-            assert main(["feature/10-x", "--yes"]) == 0
+            assert main(["feature/10-x"]) == 0
         push.assert_not_called()
         body = create.call_args.kwargs["pr_body"]
         assert extract_tracking_refs(body) == [("Closes", "#10"), ("Closes", "#11")]
@@ -3874,7 +3815,7 @@ class TestBatchSubmit:
             patch(_MOD + ".batch_rules.check_commit_per_issue", order.check_commit_per_issue),
             patch(_MOD + "._create_pr") as create,
         ):
-            assert main(["feature/10-x", "--yes"]) == 3
+            assert main(["feature/10-x"]) == 3
         names = [c[0] for c in order.mock_calls]
         assert names == ["run", "check_hard_rules", "check_commit_per_issue"]
         assert order.run.call_args.args == ("fetch", "origin", "feature/10-x", "develop")
@@ -3899,7 +3840,7 @@ class TestBatchSubmit:
             patch(_MOD + ".batch_rules.check_hard_rules") as rules,
             patch(_MOD + "._create_pr", return_value="https://github.com/o/r/pull/5") as create,
         ):
-            assert main(["feature/x", "--yes"]) == 0
+            assert main(["feature/x"]) == 0
         body = create.call_args.kwargs["pr_body"]
         assert "## Issue Linkage\n\n- Closes #42\n\n## Notes" in body
         git_run.assert_not_called()
@@ -4069,7 +4010,7 @@ def test_batch_checks_the_reported_head_without_rebasing(
         patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
     ):
         enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
-        assert _run_submit_batch([wt], parse_args(["--select", "10", "--yes"])) == 0
+        assert _run_submit_batch([wt], parse_args(["--select", "10"])) == 0
     assert _run_git(clone, "rev-parse", "HEAD") == reported
     assert checked == [reported]
     rules.assert_called_once_with(["#10", "#11"], repo="acme/tools")
@@ -4078,18 +4019,44 @@ def test_batch_checks_the_reported_head_without_rebasing(
     enable.assert_called_once_with("https://x/pull/1", head=reported, method="REBASE")
 
 
-def test_relay_declined_opens_nothing(capsys: pytest.CaptureFixture[str]) -> None:
-    transport = MagicMock()
-    transport.read.return_value = _ready_state(branch="feature/x", head_sha="abc123")
-    with (
-        patch(_MOD + ".identity_mode.is_agent", return_value=False),
-        patch(_MOD + ".git.repo_root", return_value="/repo"),
-        patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
-        patch(_MOD + ".GitHubTransport", return_value=transport),
-        patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
-        patch(_MOD + ".confirm", return_value=False),
-        patch(_MOD + "._submit_all") as submit_all,
-    ):
-        assert main(["feature/x"]) == 1
-    submit_all.assert_not_called()
-    assert "Aborted." in capsys.readouterr().out
+# -- the selection table (vergil-tooling#4744) ---------------------------------
+
+
+def _table_sub(branch: str, title: str, links: list[tuple[str, str]]) -> _Submission:
+    return _Submission(
+        branch=branch,
+        base="develop",
+        title=title,
+        pr_body="BODY",
+        issue_refs=[ref for _, ref in links],
+        links=links,
+        expected_head="a" * 40,
+        push=True,
+        record_in=None,
+    )
+
+
+def test_print_selection_aligns_one_row_per_pr(capsys: pytest.CaptureFixture[str]) -> None:
+    _print_selection(
+        [
+            _table_sub("feature/1-a", "fix: a", [("Closes", "#1")]),
+            _table_sub("feature/20-batch-b", "feat: b", [("Closes", "#20"), ("Closes", "#21")]),
+        ]
+    )
+    assert capsys.readouterr().out == (
+        "Submitting 2 PRs to develop:\n"
+        "  ISSUES           BRANCH              TITLE\n"
+        "  Closes #1        feature/1-a         fix: a\n"
+        "  Closes #20, #21  feature/20-batch-b  feat: b\n"
+        "\n"
+    )
+
+
+def test_print_selection_groups_mixed_linkage(capsys: pytest.CaptureFixture[str]) -> None:
+    _print_selection([_table_sub("feature/x", "t", [("Closes", "#1"), ("Ref", "#2")])])
+    assert "Closes #1; Ref #2" in capsys.readouterr().out
+
+
+def test_print_selection_empty_prints_nothing(capsys: pytest.CaptureFixture[str]) -> None:
+    _print_selection([])
+    assert capsys.readouterr().out == ""
