@@ -19269,14 +19269,14 @@ Code session loaded, or a managed file edited by hand (re-run
 <p><code>uv tool upgrade</code> re-resolves the git reference, pulls the current
 tip of the rolling minor tag, and rebuilds the isolated tool venv.
 No need to repeat the full git URL.</p>
-<p>On macOS, <code>vrg-host</code> covers vergil-tooling and the other host
-prerequisites together (<code>uv</code>, <code>gh</code>, Docker, and the <code>vrg-vm</code> tools
-such as Lima, <code>gcloud</code> and OpenTofu):</p>
+<p>On macOS, <code>vrg-host</code> covers the other host prerequisites (<code>uv</code>,
+<code>gh</code>, Docker, and the <code>vrg-vm</code> tools such as Lima, <code>gcloud</code> and
+OpenTofu), and reports vergil-tooling's installed version:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>vrg-host<span class="w">                   </span><span class="c1"># report drift, missing tools and failed health checks</span>
 <a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>vrg-host<span class="w"> </span>upgrade<span class="w"> </span>--all<span class="w">     </span><span class="c1"># upgrade every auto-managed tool, respecting pins</span>
 </code></pre></div>
-<p><code>vrg-host upgrade vergil-tooling</code> runs the same <code>uv tool upgrade</code>.
-Docker Desktop and macOS itself are reported but never upgraded by
+<p><code>vrg-host</code> never upgrades vergil-tooling itself: the vergil-tooling
+release installs it. Docker Desktop and macOS itself are reported but never upgraded by
 <code>vrg-host</code>. When a new release of a host tool breaks your workflow,
 pin it with <code>vrg-host pin</code> rather than skipping upgrades — see the
 <a href="../../reference/dev/host/#pinning-host-dependencies">vrg-host reference</a>.</p>
