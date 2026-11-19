@@ -684,8 +684,63 @@ class TestClose:
         SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").close()
         mock_run.assert_not_called()
 
-    def test_lima_close_is_noop(self) -> None:
-        LimaTransport("vm-x").close()  # no raise, no connection to tear down
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_lima_close_without_a_master_does_nothing(
+        self, mock_run: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("LIMA_HOME", raising=False)
+        LimaTransport("vm-x").close()
+        mock_run.assert_not_called()
+
+    @pytest.mark.parametrize("lima_home", [None, "custom-lima"])
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_lima_close_stops_the_master(
+        self,
+        mock_run: MagicMock,
+        lima_home: str | None,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # #4742: `-O stop`, not `-O exit`, so a live `vrg-vm session` riding the
+        # master keeps running while the next command opens a new connection.
+        home = tmp_path / ".lima" if lima_home is None else tmp_path / lima_home
+        if lima_home is None:
+            monkeypatch.delenv("LIMA_HOME", raising=False)
+        else:
+            monkeypatch.setenv("LIMA_HOME", str(home))
+        socket = home / "vm-x" / "ssh.sock"
+        socket.parent.mkdir(parents=True)
+        socket.write_text("")
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        LimaTransport("vm-x").close()
+        cmd = mock_run.call_args[0][0]
+        assert cmd == ["ssh", "-o", f"ControlPath={socket}", "-O", "stop", "lima-vm-x"]
+        assert socket.exists()  # ssh removes it itself; never unlinked behind its back
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_lima_close_with_a_dead_socket_does_nothing(
+        self, mock_run: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LIMA_HOME", str(tmp_path))
+        (tmp_path / "vm-x").mkdir()
+        (tmp_path / "vm-x" / "ssh.sock").write_text("")
+        mock_run.return_value = subprocess.CompletedProcess(
+            [], 255, stdout="", stderr="Control socket connect(x): Connection refused\n"
+        )
+        LimaTransport("vm-x").close()  # no raise: no master to stop
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_lima_close_failure_raises(
+        self, mock_run: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LIMA_HOME", str(tmp_path))
+        (tmp_path / "vm-x").mkdir()
+        (tmp_path / "vm-x" / "ssh.sock").write_text("")
+        mock_run.return_value = subprocess.CompletedProcess(
+            [], 255, stdout="", stderr="mux_client_request_stop: master refused\n"
+        )
+        with pytest.raises(RuntimeError, match="master refused"):
+            LimaTransport("vm-x").close()
 
 
 class TestGuestCommandTimeout:
