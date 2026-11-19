@@ -53,7 +53,7 @@ def test_load_manifest_parses_curated_entries() -> None:
         "lima": ("brew-formula", "auto", "probe"),
         "docker-desktop": ("brew-cask", "manual", "probe"),
         "opentofu": ("brew-formula", "auto", "probe"),
-        "vergil-tooling": ("uv-tool", "auto", "unmanaged"),
+        "vergil-tooling": ("uv-tool", "release", "unmanaged"),
         "claude-code": ("brew-cask", "auto", "probe"),
         "macos": ("custom", "manual", "probe"),
         "xcode-clt": ("custom", "manual", "probe"),

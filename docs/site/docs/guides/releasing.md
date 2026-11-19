@@ -333,7 +333,7 @@ get the fix on the next normal action:
 
 | Consumer | When the patch lands |
 |---|---|
-| Developer host | Manual `uv tool upgrade vergil-tooling` (or `vrg-host upgrade vergil-tooling` on macOS) |
+| Developer host | Manual `uv tool upgrade vergil-tooling` (`vrg-host` reports the installed version but never upgrades it) |
 | Python repo `.venv` | `uv lock --upgrade-package vergil-tooling` (typically batched with other dep bumps) |
 | Dev container image | The base images carry no vergil-tooling. The next `vrg-container-run` rebuilds the branch's cached image with the patch once it is in the package index: a `vX.Y` line pin in `vergil.toml` resolves to the newest release on the line (see [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)). An exact `vX.Y.Z` pin stays put |
 | Agent VM (Lima/cloud) | `vrg-vm update`: an apt upgrade of the packaged install within its pin, once the patch is in the package index. A `vX.Y` line pin picks the patch up; an exact `vX.Y.Z` pin stays put |

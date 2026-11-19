@@ -26,7 +26,7 @@ from typing import Any
 _MANIFEST_FILE = "host_dependencies.toml"
 
 _METHODS = frozenset({"brew-formula", "brew-cask", "uv-tool", "custom"})
-_UPGRADE = frozenset({"auto", "manual"})
+_UPGRADE = frozenset({"auto", "manual", "release"})
 _LATEST = frozenset({"probe", "unmanaged"})
 _PIN_STATES = frozenset({"active", "under-evaluation", "freed"})
 

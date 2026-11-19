@@ -24,7 +24,10 @@ Version states (spec §8):
   ``inducing_release``) or cannot be evaluated (latest unknown, or versions
   not comparable) — see :func:`pin_review`. An unsupported constraint raises
   ``ValueError``, which ``vrg-host status`` reports as ``probe-error``.
-- ``latest-unmanaged`` — the manifest declares no latest feed (OK, info).
+- ``latest-unmanaged`` — the manifest declares no latest feed (OK, info). A
+  dependency its own release installs (``upgrade = "release"``, today
+  vergil-tooling, issue #4603) is shown as installed by that release, never
+  as ``current``.
 - ``latest-unknown`` — a latest probe that should work failed (WARN).
 
 Update levels (issue #3269): a dependency whose latest probe offers several
@@ -282,6 +285,16 @@ def worst_severity(reports: Sequence[Report]) -> int:
     return max((r.severity for r in reports), default=OK)
 
 
+def release_owned(dep: HostDependency) -> str:
+    """Say who installs an ``upgrade = "release"`` dependency (issue #4603).
+
+    Its own release's consumer refresh installs it, so ``vrg-host`` only
+    reports it. With no latest feed nothing says whether it is current, and
+    this wording never claims it is.
+    """
+    return f"installed by the {dep.name} release; vrg-host does not upgrade it"
+
+
 def fmt_latest(latest: Edge) -> str:
     """Render a leading edge for display: a version, ``unmanaged`` or ``unknown``."""
     if latest is hm.UNMANAGED:
@@ -304,7 +317,9 @@ def render(reports: Sequence[Report], *, today: datetime.date | None = None) -> 
         edge = None if r.state == PROBE_ERROR else leading_edge(r.installed, r.latest)
         latest = "-" if r.state == PROBE_ERROR else fmt_latest(edge)
         state = r.state
-        if r.state in _DISPLAY:
+        if r.state == "latest-unmanaged" and r.dep.upgrade == "release":
+            state = f"{r.state} (info: {release_owned(r.dep)})"
+        elif r.state in _DISPLAY:
             state = f"{r.state} ({_DISPLAY[r.state]})"
         if isinstance(r.latest, hm.Offers) and r.installed is not None:
             levels = levels_behind(r.installed, r.latest)

@@ -106,6 +106,20 @@ def test_manual_upgrade_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     assert hm.UpgradeUnsupported is hm.UpgradeUnsupportedError
 
 
+def test_release_owned_upgrade_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An `upgrade = "release"` dependency is installed by its own release
+    # (#4603): the handler never runs `uv tool upgrade` for it.
+    fake = _stub(monkeypatch, {})
+    with pytest.raises(hm.UpgradeUnsupportedError, match="vergil-tooling"):
+        hm.upgrade(_dep(name="vergil-tooling", method="uv-tool", upgrade="release"))
+    assert fake.calls == []
+
+
+def test_manifest_vergil_tooling_is_owned_by_its_release() -> None:
+    tooling = _manifest_dep("vergil-tooling")
+    assert (tooling.method, tooling.upgrade, tooling.latest) == ("uv-tool", "release", "unmanaged")
+
+
 # -- _run seam ---------------------------------------------------------------------
 
 
