@@ -387,7 +387,7 @@ A planning issue may name several advisories, and it keeps tracking each
 of them until the plan exists.
 
 - **Hand each advisory to its fix.** When `epic-create` files the tasks
-  (its step 9), retarget **each** advisory the planning issue names from
+  (its step 8), retarget **each** advisory the planning issue names from
   the planning issue to the task or tasks that fix it. Run one
   `retarget` per advisory, **one after another, never in parallel**: each
   retarget rewrites the planning issue's body, so two at once can write
@@ -404,8 +404,10 @@ of them until the plan exists.
     --to 'vergil-project/vergil-tooling#103'
   ```
 
-  From then on, the PRs that close those tasks are what close each
-  advisory.
+  From then on, each advisory follows its fix tasks: once every one of
+  them has closed as completed, the next `vrg-security-record sync`
+  closes it (see
+  [Managing a record through its issue](#managing-a-record-through-its-issue)).
 - **A finding the design itself resolves.** A finding that the revised
   design resolves on its own, with no task implementing it (for example,
   the spec now removes the mechanism it was about), is retargeted to the
@@ -461,7 +463,7 @@ built. Three recipes cover the findings raised inside the epic/task
 framework: design review during `epic-create`, the security
 follow-ups `issue-implement` finds, and the security findings of a
 task's merge review. All use `create`; design review
-also uses `retarget`, through `epic-create`'s step 9. As everywhere on
+also uses `retarget`, through `epic-create`'s step 8. As everywhere on
 this page, the refs and GHSA IDs are placeholders, not a real finding.
 
 **Design review, during `epic-create`.** The review runs in rounds
@@ -473,7 +475,7 @@ depends on the decision:
 
 - an **accepted** finding (the spec or plan now states the requirement)
   is recorded on the planning issue with attach mode,
-  `vrg-security-record create --issue <planning issue> …`. Step 9 then
+  `vrg-security-record create --issue <planning issue> …`. Step 8 then
   hands it off to its fix like any other advisory the planning issue
   names (see [Security items in planning](#security-items-in-planning));
 - a **rejected** finding (the human decided it is not a problem) is
