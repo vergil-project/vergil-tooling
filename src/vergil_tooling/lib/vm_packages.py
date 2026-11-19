@@ -1,51 +1,59 @@
-"""Install vergil-tooling on a VM from the org package repository (spec §9).
+"""Install vergil-tooling on a VM with uv, and remove the vergil packages.
 
-The tooling ref decides the install mode, never a failure:
+Every VM install is ``uv tool install`` of one commit, rendered by
+:mod:`vergil_tooling.lib.tooling_install` (epic vergil-project/.github#1350,
+spec §4.5):
 
-- a **line** (``vX.Y``) or an **exact** release (``vX.Y.Z``) is a *packaged*
-  install from the vergil apt repository, pinned to that line or version;
-- anything else (``develop``, a feature branch) is an explicit *dev* install,
-  ``uv tool install`` from git into ``~/.local/bin``, which shadows the packaged
-  ``/usr/bin`` copy. A dev install records its ref so every ``vrg-vm`` command
-  that touches the VM can say so (:data:`DEV_BANNER`), and the next packaged
-  install removes it again.
+- a **line** (``vX.Y``) or an **exact** release (``vX.Y.Z``) is resolved on the
+  host, once, to its tag and commit SHA, and installs that commit constrained
+  by its own ``uv.lock``. It clears the dev-ref marker;
+- anything else (``develop``, a feature branch) is an explicit **dev** install
+  of that git ref, unconstrained. It records its ref so every ``vrg-vm``
+  command that touches the VM can say so (:data:`DEV_BANNER`).
+
+Both land in uv's default ``~/.local/bin`` and are checked there
+(:func:`tooling_install.check_lines`). Once the check passes, the caller runs
+:func:`cleanup_packages`, which removes what the old packaged install left: the
+vergil-tooling, ``vergil-python*`` and keyring packages, the vergil apt source,
+key and pin.
 """
 
 from __future__ import annotations
 
-import re
 import shlex
 import subprocess
 import sys
 from typing import TYPE_CHECKING, Literal, NoReturn
 
+from vergil_tooling.lib import tooling_install
 from vergil_tooling.lib.atomic_write import atomic_write_cmd
-from vergil_tooling.lib.package import PackageError, orgs, repo_setup
-from vergil_tooling.lib.package import targets as tg
+from vergil_tooling.lib.package import orgs, repo_setup
+from vergil_tooling.lib.tooling_install import classify_ref as classify_ref
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.vm_transport import Transport
 
-_LINE = re.compile(r"v(\d+)\.(\d+)")
-_EXACT = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
 _PACKAGE = "vergil-tooling"
 _RUNTIME_PREFIX = "vergil-python"
-_VENDOR = "vergil"
+_ORG = orgs.for_vendor("vergil")
 _PIN_FILE = "/etc/apt/preferences.d/vergil-tooling"
+# What the old packaged install left besides the packages: the apt source the
+# keyring package wrote, the key that source trusts, and the version pin.
+_APT_FILES = (
+    repo_setup.deb_source_path(_ORG),
+    repo_setup.installed_key_path(_ORG, "deb"),
+    _PIN_FILE,
+)
 _DEV_REF_FILE = "~/.config/vergil/tooling-dev-ref"
-_DEV_INSTALL = "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@{ref}"
 _UV_PATH = 'export PATH="$HOME/.local/bin:$PATH"'
+_BIN_DIR = "$HOME/.local/bin"
+_LOG_PREFIX = "vergil-tooling: "
 
-DEV_BANNER = "DEV tooling (ref {ref}) — not the packaged install"
+DEV_BANNER = "DEV tooling (ref {ref}) — dev ref, not a release"
 
 
-def classify_ref(ref: str) -> Literal["line", "exact", "dev"]:
-    """Classify a tooling ref: a release line, an exact release, or a dev ref."""
-    if _EXACT.fullmatch(ref):
-        return "exact"
-    if _LINE.fullmatch(ref):
-        return "line"
-    return "dev"
+# deb_version and apt_pin serve only the container cache build's packaged
+# branch, which vergil-project/vergil-tooling#4740 removes.
 
 
 def deb_version(ref: str) -> str:
@@ -67,108 +75,33 @@ def apt_pin(ref: str) -> str:
     return f"Package: {_PACKAGE}\nPin: version {version}\nPin-Priority: 1001\n"
 
 
-def candidate_matches(ref: str, candidate: str) -> bool:
-    """Whether apt ``candidate`` is the release ``ref`` names (its line, or exactly)."""
-    if classify_ref(ref) == "exact":
-        return candidate == deb_version(ref)
-    return candidate.startswith(f"{ref[1:]}.")
-
-
 def _die(msg: str) -> NoReturn:
     print(f"ERROR: {msg}", file=sys.stderr)
     raise SystemExit(1)
 
 
-def _codename(transport: Transport) -> str:
-    """The VM's Ubuntu codename, which must be a registered deb suite."""
-    os_release = transport.run("cat", "/etc/os-release").stdout
-    m = re.search(r"^VERSION_CODENAME=\"?([^\"\s]+)\"?", os_release, re.MULTILINE)
-    suites = sorted({t.suite for t in tg.all_targets() if t.fmt == "deb"})
-    codename = m[1] if m else "(unknown)"
-    if codename not in suites:
-        _die(
-            f"VM OS codename {codename} is not a supported package target "
-            f"(supported: {', '.join(suites)})"
-        )
-    return codename
-
-
-def _remove_uv_copy(transport: Transport) -> None:
-    """Remove a uv-installed vergil-tooling (legacy or dev) and the dev-ref marker.
-
-    A uv copy in ``~/.local/bin`` would shadow the packaged ``/usr/bin`` one.
-    """
-    listed = transport.run("bash", "-c", f"{_UV_PATH}; uv tool list 2>/dev/null || true").stdout
-    if re.search(rf"^{re.escape(_PACKAGE)} ", listed, re.MULTILINE):
-        print("  Removing the uv-installed vergil-tooling (shadows the packaged install)...")
-        transport.run("bash", "-c", f"{_UV_PATH}; uv tool uninstall {_PACKAGE}")
-    transport.run("bash", "-c", f"rm -f {_DEV_REF_FILE}")
-
-
-def _package_names(lines: list[str]) -> set[str]:
-    """Package names from apt output lines, dropping any ``:<arch>`` qualifier."""
-    return {line.split(":", 1)[0] for line in lines}
-
-
-def _purge_obsolete_runtimes(transport: Transport) -> None:
-    """Purge the ``vergil-python*`` runtimes that nothing installed needs any more.
-
-    A runtime is purged only when it is auto-installed **and** apt itself would
-    autoremove it (``apt-get -s autoremove``, a simulation that changes nothing),
-    so a runtime that is still a dependency, or that someone installed by hand,
-    is kept. The purge names those runtimes explicitly; a blanket
-    ``apt-get autoremove`` is never run, because it would also remove unrelated
-    orphaned OS packages.
-    """
-    auto = _package_names(transport.run("apt-mark", "showauto").stdout.split())
-    simulated = transport.run("apt-get", "-s", "autoremove").stdout
-    orphaned = _package_names(re.findall(r"^Remv (\S+)", simulated, re.MULTILINE))
-    obsolete = sorted(n for n in auto & orphaned if n.startswith(_RUNTIME_PREFIX))
-    if not obsolete:
-        return
-    names = " ".join(obsolete)
-    print(f"  Purging obsolete vergil-python runtimes: {names}")
+def _resolve(ref: str) -> tooling_install.ResolvedRef:
+    """Resolve *ref* on the host, once; a failure exits naming the URL and the ref."""
     try:
-        transport.run("sudo", *repo_setup.apt_get("purge", "-y", *obsolete))
-    except subprocess.CalledProcessError as exc:
-        _die(f"could not purge the obsolete runtimes {names} (exit {exc.returncode})")
+        return tooling_install.resolve(ref, ls_remote=tooling_install.git_ls_remote)
+    except tooling_install.ToolingInstallError as exc:
+        _die(str(exc))
 
 
-def packaged_install(transport: Transport, ref: str) -> None:
-    """Install (or upgrade within the pin) vergil-tooling from the org apt repository.
-
-    Exits with an actionable error, installing nothing, when the repository has
-    no package matching ``ref``. Any uv-installed copy is removed, and any
-    obsolete ``vergil-python*`` runtime purged, only after the apt install
-    succeeds, so a failed install never leaves the VM without tooling.
-    """
-    kind = _require_release(ref)
-    codename = _codename(transport)
-    org = orgs.for_vendor(_VENDOR)
-    try:
-        repo_setup.bootstrap(transport.run, org, "deb", codename, sudo=True)
-    except PackageError as exc:
-        _die(f"could not set up the {_VENDOR} package repository ({org.base_url}): {exc}")
-    write_pin = atomic_write_cmd(_PIN_FILE, 0o644)
-    transport.pipe(f"sudo bash -c {shlex.quote(write_pin)}", apt_pin(ref))
-    transport.run("sudo", *repo_setup.apt_get("update"))
-    policy = transport.run("apt-cache", "policy", _PACKAGE).stdout
-    m = re.search(r"Candidate:\s*(\S+)", policy)
-    if m is None or not candidate_matches(ref, m[1]):
-        _die(
-            f"no packaged vergil-tooling matching {ref} in {org.base_url} "
-            f"(apt candidate: {m[1] if m else '(none)'}). Release {ref} first, or "
-            f"install a git ref explicitly with 'vrg-vm update --tag <git-ref>' (a dev install)."
-        )
-    spec = f"{_PACKAGE}={deb_version(ref)}" if kind == "exact" else _PACKAGE
-    # An explicit pin may move the VM to an older release (identity pinned back).
-    transport.run("sudo", *repo_setup.apt_get("install", "-y", "--allow-downgrades", spec))
-    _remove_uv_copy(transport)
-    _purge_obsolete_runtimes(transport)
+def _script(lines: list[str]) -> str:
+    """*lines* as one ``bash -c`` script, with uv's ``~/.local/bin`` first on ``PATH``."""
+    return "\n".join([_UV_PATH, *lines])
 
 
-def _uv_tool_install(transport: Transport, install_spec: str, *, reinstall: bool) -> None:
-    """Run ``uv tool install`` inside the VM, self-healing a poisoned uv cache.
+def _print_log(stderr: str) -> None:
+    """Print the install's own ``vergil-tooling:`` log lines (tag and SHA)."""
+    for line in stderr.splitlines():
+        if line.startswith(_LOG_PREFIX):
+            print(f"  {line}")
+
+
+def _uv_tool_install(transport: Transport, resolved: tooling_install.ResolvedRef) -> None:
+    """Run *resolved*'s install lines inside the VM, self-healing a poisoned uv cache.
 
     A corrupt cache entry — e.g. a zero-byte wheel ``METADATA`` left behind by
     an unclean VM stop — makes ``uv tool install`` fail with "wheel is invalid".
@@ -177,40 +110,122 @@ def _uv_tool_install(transport: Transport, install_spec: str, *, reinstall: bool
     ``vrg-vm session`` until the cache is cleared by hand. So on failure, clear
     the VM's uv cache and retry the install once.
 
-    The retry escalates to ``--force``. The same unclean stop also corrupts the
-    tool *receipt*: uv removes the entry but, unable to read the receipt, cannot
-    enumerate the tool's entry points, so the ``vrg-*`` executables orphan in
-    ``~/.local/bin``. Clearing the cache fixes the wheel, but the retry would
-    then die with "Executable already exists" — only ``--force`` replaces
-    existing entry points (``--reinstall`` alone does not), so the retry must
-    force to fully recover.
+    The install lines always pass ``--force``: the same unclean stop also
+    corrupts the tool *receipt*, so uv cannot enumerate the tool's entry points
+    and the ``vrg-*`` executables orphan in ``~/.local/bin``. Only ``--force``
+    replaces existing entry points, so the retry recovers fully.
     """
-    flag = "--reinstall " if reinstall else ""
-    install_cmd = f'{_UV_PATH} && uv tool install --python 3.15 {flag}"{install_spec}"'
-    retry_cmd = f'{_UV_PATH} && uv tool install --python 3.15 --force --reinstall "{install_spec}"'
+    script = _script(
+        tooling_install.install_lines(resolved, python_dir_env=None, tool_dir=None, bin_dir=None)
+    )
     try:
-        transport.run("bash", "-c", install_cmd)
-        return
+        result = transport.run("bash", "-c", script)
     except subprocess.CalledProcessError:
         print(
             "  uv tool install failed — clearing the VM uv cache and retrying once...",
             file=sys.stderr,
         )
         transport.run("bash", "-c", f"{_UV_PATH} && uv cache clean")
-        transport.run("bash", "-c", retry_cmd)
+        result = transport.run("bash", "-c", script)
+    _print_log(result.stderr or "")
+
+
+def _check(transport: Transport) -> None:
+    """Check ``vrg-whoami`` resolves to ``~/.local/bin`` and runs; raise if not.
+
+    A ``/usr/bin/vrg-whoami`` that shadows the uv install fails it.
+    """
+    transport.run("bash", "-c", _script(tooling_install.check_lines(_BIN_DIR)))
+
+
+def released_install(transport: Transport, ref: str) -> None:
+    """Install the release ``ref`` names with uv, check it, and clear the dev-ref marker.
+
+    A line resolves to its newest ``vX.Y.Z``; the install is that one commit,
+    constrained by its ``uv.lock``. The marker is cleared only once the check
+    passes, so a failed install still reports the dev install it left.
+    """
+    _require_release(ref)
+    _uv_tool_install(transport, _resolve(ref))
+    _check(transport)
+    transport.run("bash", "-c", f"rm -f {_DEV_REF_FILE}")
 
 
 def dev_install(transport: Transport, ref: str) -> None:
-    """Explicitly install vergil-tooling from git ``ref`` with uv, and record the ref."""
+    """Explicitly install vergil-tooling from git ``ref`` with uv, check it, record the ref."""
     if classify_ref(ref) != "dev":
-        msg = f"{ref!r} is a release version; it installs from the package repository"
+        msg = f"{ref!r} is a release version; it installs as a release"
         raise ValueError(msg)
-    _uv_tool_install(transport, _DEV_INSTALL.format(ref=ref), reinstall=True)
+    _uv_tool_install(transport, _resolve(ref))
+    _check(transport)
     transport.run("bash", "-c", f"mkdir -p $(dirname {_DEV_REF_FILE})")
     transport.pipe(atomic_write_cmd(_DEV_REF_FILE, 0o644), f"{ref}\n")
 
 
 def dev_ref(transport: Transport) -> str | None:
-    """The ref of the VM's dev install, or ``None`` when it runs the packaged install."""
+    """The ref of the VM's dev install, or ``None`` when it runs a release."""
     out = transport.run("bash", "-c", f"cat {_DEV_REF_FILE} 2>/dev/null || true").stdout.strip()
     return out or None
+
+
+def _is_vergil_package(name: str) -> bool:
+    return name in (_PACKAGE, _ORG.keyring_package) or name.startswith(_RUNTIME_PREFIX)
+
+
+def _vergil_packages(transport: Transport) -> list[str]:
+    """The vergil packages dpkg still knows, installed or with config files left.
+
+    A package counts unless dpkg records it as not installed (status ``?n``).
+    """
+    listing = transport.run("dpkg-query", "-W", "-f=${db:Status-Abbrev} ${Package}\n").stdout
+    names: set[str] = set()
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) != 2:  # noqa: PLR2004
+            continue
+        status, name = fields
+        if _is_vergil_package(name) and status[1:2] != "n":
+            names.add(name)
+    return sorted(names)
+
+
+def _vergil_apt_files(transport: Transport) -> list[str]:
+    """Which of the vergil apt source, key and pin files exist."""
+    probe = "; ".join(f"test -e {shlex.quote(f)} && echo {shlex.quote(f)}" for f in _APT_FILES)
+    out = transport.run("bash", "-c", f"{probe}; true").stdout
+    return [f for f in out.splitlines() if f in _APT_FILES]
+
+
+def cleanup_packages(transport: Transport) -> list[str]:
+    """Remove the vergil packages and apt files the packaged install left; name them.
+
+    It purges ``vergil-tooling``, every ``vergil-python*`` and the keyring
+    package, naming each (never a blanket ``apt-get autoremove``), then removes
+    the vergil apt source, key and pin files, and confirms none is left. Run it
+    only once the uv install has passed its check. When it removed a package,
+    it checks the uv install again, so an install that still leaned on a
+    removed package fails here, loudly. A VM with none of them (created after
+    the move, or cleaned already) changes nothing.
+    """
+    removed: list[str] = []
+    packages = _vergil_packages(transport)
+    if packages:
+        print(f"  Removing the vergil packages: {' '.join(packages)}")
+        try:
+            transport.run("sudo", *repo_setup.apt_get("purge", "-y", *packages))
+        except subprocess.CalledProcessError as exc:
+            _die(
+                f"could not remove the vergil packages {' '.join(packages)} (exit {exc.returncode})"
+            )
+        removed += packages
+    files = _vergil_apt_files(transport)
+    if files:
+        print(f"  Removing the vergil apt files: {' '.join(files)}")
+        transport.run("sudo", "rm", "-f", "--", *files)
+        removed += files
+    left = _vergil_packages(transport) + _vergil_apt_files(transport)
+    if left:
+        _die(f"the vergil packages and apt files are not all removed; left: {' '.join(left)}")
+    if packages:
+        _check(transport)
+    return removed

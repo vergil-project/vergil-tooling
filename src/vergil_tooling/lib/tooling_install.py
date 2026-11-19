@@ -34,13 +34,13 @@ import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from vergil_tooling.lib.vm_packages import classify_ref
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 GIT_URL = "https://github.com/vergil-project/vergil-tooling"
 
+_LINE = re.compile(r"v(\d+)\.(\d+)")
+_EXACT = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
 _PACKAGE = "vergil-tooling"
 _PYTHON = "3.15"
 _UV_VARS = ("UV_PYTHON", "UV_PYTHON_PREFERENCE", "UV_NO_MANAGED_PYTHON")
@@ -59,6 +59,15 @@ _EXPORT = (
     "uv export --no-config --frozen --no-dev --no-emit-project --no-hashes "
     "--format requirements-txt"
 )
+
+
+def classify_ref(ref: str) -> Literal["line", "exact", "dev"]:
+    """Classify a tooling ref: a release line, an exact release, or a dev ref."""
+    if _EXACT.fullmatch(ref):
+        return "exact"
+    if _LINE.fullmatch(ref):
+        return "line"
+    return "dev"
 
 
 class ToolingInstallError(RuntimeError):

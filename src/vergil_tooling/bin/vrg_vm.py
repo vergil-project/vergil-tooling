@@ -954,7 +954,7 @@ def _st_spec_check(state: _LifecycleState) -> None:
 
 
 def _report_dev_tooling(transport: Transport) -> None:
-    """Say so when the box runs a dev install of vergil-tooling, not the packaged one."""
+    """Say so when the box runs a dev install of vergil-tooling, not a release."""
     ref = vm_packages.dev_ref(transport)
     if ref:
         print(vm_packages.DEV_BANNER.format(ref=ref))

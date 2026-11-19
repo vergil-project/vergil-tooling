@@ -2105,10 +2105,12 @@ verifies the plugins in a running VM in place; `--all` updates every
 configured identity's boxes, and one box's failure does not stop the rest.
 `vrg-vm` is a human tool: it runs the VMs the agents work inside, so every
 subcommand refuses an agent identity before doing anything (`--help` still
-works). VMs install vergil-tooling as the signed package;
+works). VMs install vergil-tooling with uv, one resolved release commit
+constrained by its `uv.lock`, and `vrg-vm update` removes any vergil
+package an older VM still carries;
 `vrg-vm update --tag <ref>` with a non-release ref installs a dev copy
 instead and flags it with a `DEV tooling` banner, and a plain
-`vrg-vm update` returns the VM to the package. See
+`vrg-vm update` returns the VM to its release. See
 [VM Spec](vm-spec.md#vergil-tooling-inside-the-vm).
 
 | Attribute | Value |

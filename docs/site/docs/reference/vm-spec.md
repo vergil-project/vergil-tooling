@@ -305,10 +305,13 @@ only when set, and declaring or changing it trips `NEEDS-REBUILD`.
 
 ## vergil-tooling inside the VM
 
-Lima and cloud VMs install vergil-tooling from the vergil **package
-repository** (`https://vergil-project.github.io/packages`) with `apt`,
-not with `uv tool install`. The macOS host and this repo's dev-tree
-`.venv` still use `uv`. The dev container cache chooses by the image (see
+Lima and cloud VMs install vergil-tooling with `uv tool install`, from
+git, into uv's default `~/.local/bin`, on uv's own managed Python 3.15.
+They read no package repository. Every install runs
+`uv tool install --force --no-config --python 3.15 --managed-python` with
+`UV_PYTHON`, `UV_PYTHON_PREFERENCE` and `UV_NO_MANAGED_PYTHON` unset, so
+no uv config file and no interpreter variable can change it. The dev
+container cache has its own install (see
 [the cached image](../guides/ci-architecture.md#tier-1-local-pre-commit)).
 
 **Which version.** The version is the identity's resolved vergil
@@ -317,58 +320,49 @@ the config-level `vergil`. The repo's `vergil.toml` plays no part. A
 `vrg-vm update --tag <ref>` overrides it for that one update and is not
 remembered.
 
-**Packaged install** (any release version):
+**Release install** (any release version):
 
-- `vX.Y` (a release line) pins `vergil-tooling` to `X.Y.*` in
-  `/etc/apt/preferences.d/vergil-tooling` and installs the newest
-  package on that line.
-- `vX.Y.Z` (an exact release) pins `X.Y.Z-1` and installs
-  `vergil-tooling=X.Y.Z-1`.
-- Before anything is written to the apt sources, `vrg-vm` downloads
-  the org signing key and checks its fingerprint against the one
-  pinned in vergil-tooling. It then installs `vergil-archive-keyring`,
-  which owns the key and the source entry from then on.
-- Every apt call `vrg-vm` makes, both the repository setup and the
-  `apt-get update` and `apt-get install` of `vergil-tooling`, runs
-  with `Acquire::Retries=3` and 20-second
-  `Acquire::http::Timeout`/`Acquire::https::Timeout`, so a dead mirror
-  connection fails or retries in seconds rather than hanging. It also
-  sets `Acquire::Retries::Delay=false`, because apt 2.4–2.8 can
-  deadlock on mirror failover when retries are delayed
-  ([Launchpad #2003851](https://bugs.launchpad.net/ubuntu/+source/apt/+bug/2003851)),
-  and `DPkg::Lock::Timeout=60`, so a dpkg lock held by
-  `unattended-upgrades` or `apt-daily` on a freshly booted VM is waited
-  out for up to 60 seconds instead of failing provisioning at once.
-  Finally it sets `APT::Update::Error-Mode=any`, so `apt-get update`
-  fails when no mirror can serve an index, instead of warning and
-  leaving the install to fail later on a misleading "Unable to locate
-  package". Failing over to another mirror is not an error.
-- The VM's Ubuntu codename must be a published suite (`noble` or
-  `resolute`). Any other codename fails provisioning.
-- If the repository has no package matching the version, for example
-  a new line before its first packaged release, provisioning **fails**
-  and names the version and the repository URL. It never falls back
-  to another version or to a `uv` install.
-- `vrg-vm update` re-runs the same steps, which upgrades the VM within
-  the pin.
-- Once the apt install has succeeded, any `uv`-installed copy (a legacy
-  install or an earlier dev install) is removed, because the copy in
-  `~/.local/bin` would shadow `/usr/bin`. A failed packaged install
-  leaves the existing tooling in place.
-- After that, obsolete `vergil-python*` runtimes are purged, so a
-  runtime move (for example from `vergil-python3.14` to
-  `vergil-python3.15`) does not leave the old runtime and its
-  `/opt/vergil/python/<…>` tree behind. A runtime is obsolete only
-  when it is auto-installed (`apt-mark showauto`) **and** apt would
-  autoremove it (`apt-get -s autoremove`, a simulation), so a runtime
-  that an installed package still needs, or one installed by hand, is
-  kept. The obsolete runtimes are named in one explicit
-  `apt-get purge -y <names>` and printed. `vrg-vm` never runs a
-  blanket `apt-get autoremove`, which could remove unrelated orphaned
-  OS packages. A failed purge fails the update, and a failed install
-  purges nothing.
-- This applies to apt only. Agent VMs are always Ubuntu (`noble` or
-  `resolute`), so there are no dnf VMs to clean up.
+- `vrg-vm` resolves the version on the host, once, with
+  `git ls-remote`: `vX.Y` (a release line) to the newest `vX.Y.Z` tag,
+  `vX.Y.Z` (an exact release) to itself, each to its commit SHA.
+- The VM installs that one commit (`git+…@<sha>`), constrained by the
+  commit's own `uv.lock`, which it reads with a shallow fetch of the
+  commit and `uv export`. The install logs the tag and the SHA.
+- A version with no release tag, a failed lock export or a failed
+  install fails provisioning loudly. It never falls back to another
+  version or to an unconstrained install.
+- If `uv tool install` fails, `vrg-vm` clears the VM's uv cache and
+  retries once, so a cache entry left corrupt by an unclean VM stop does
+  not leave the VM without tooling.
+- Once the install passes its check (below), the dev-ref marker
+  `~/.config/vergil/tooling-dev-ref` is removed.
+- `vrg-vm update` re-runs the same steps, which moves a line pin to the
+  line's newest release.
+
+**The check.** After every install, `vrg-whoami` must resolve to
+`~/.local/bin/vrg-whoami` and `vrg-whoami --mode` must run. A
+`/usr/bin/vrg-whoami` left by an old package install that shadows the uv
+copy fails it.
+
+**Package cleanup.** VMs created before this release installed
+vergil-tooling as an apt package. Once the uv install has passed its
+check, `vrg-vm update` (and `vrg-vm create`) removes what that install
+left:
+
+- the `vergil-tooling`, every `vergil-python*` and the
+  `vergil-archive-keyring` package, named in one
+  `apt-get purge -y <names>` and printed. `vrg-vm` never runs a blanket
+  `apt-get autoremove`, which could remove unrelated orphaned OS
+  packages;
+- the vergil apt source (`/etc/apt/sources.list.d/vergil.sources`), its
+  key (`/usr/share/keyrings/vergil-archive-keyring.asc`) and the version
+  pin (`/etc/apt/preferences.d/vergil-tooling`).
+
+It then confirms none of them is left, and, when it removed a package,
+runs the check again. A failure at any step fails the update. A VM with
+none of them, a new one or one cleaned already, changes nothing.
+`vrg-vm create` no longer sets up the vergil package repository, so a
+new VM never gets any of them.
 
 **Dev install** (explicit, for a git ref that is not a release version,
 such as `develop` or a feature branch):
@@ -377,16 +371,16 @@ such as `develop` or a feature branch):
 vrg-vm update --tag develop
 ```
 
-- This runs `uv tool install --python 3.15` from git into
-  `~/.local/bin`, which takes precedence over the packaged `/usr/bin`
-  copy on the VM user's `PATH`, and records the ref in `~/.config/vergil/tooling-dev-ref`.
-- You only get a dev install by passing a dev ref. A failed packaged
+- This installs that git ref with uv, unconstrained, under the same
+  interpreter rule, runs the same check, and records the ref in
+  `~/.config/vergil/tooling-dev-ref`.
+- You only get a dev install by passing a dev ref. A failed release
   install never falls back to one.
 - While it is in place, every `vrg-vm` command that touches the VM
   (`create`, `rebuild`, `start`, `update`, `session`) prints
-  `DEV tooling (ref <ref>) — not the packaged install`.
-- A plain `vrg-vm update` (no `--tag`) returns the VM to the packaged
-  install and removes the dev copy.
+  `DEV tooling (ref <ref>) — dev ref, not a release`.
+- A plain `vrg-vm update` (no `--tag`) returns the VM to its release
+  and removes the marker.
 
 ### Cache image prune on update
 
