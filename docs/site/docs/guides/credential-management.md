@@ -372,8 +372,8 @@ The `publish` job of `ops-upstream-refresh.yml` passes them to
 `vrg-upstream-refresh publish`, which mints its own repo-scoped tokens
 (see [Upstream Refresh](../reference/upstream-refresh-config.md#identity-and-credentials)).
 The `epic-rollup` and epic-sweep workflows use them to close epics and
-tasks. The `cd-release` workflow uses them to dispatch to the org's
-`packages` repository (see
+tasks. The `cd-release` workflow uses them to push the release tags
+and to dispatch to the org's `packages` repository (see
 [Package config](../reference/package-config.md)).
 
 **Blast radius.** Each App is installed on its org with access to all
@@ -399,8 +399,8 @@ the draft advisories in the org's `.github` (see
 delete the key, suspend the installation if access must stop at once,
 and generate a new key. Then update the `APP_PRIVATE_KEY` secret
 wherever it is stored. Until you do, the workflows that depend on it
-(ops, upstream refresh, epic roll-up and sweep, package-index
-dispatch) will fail.
+(ops, upstream refresh, epic roll-up and sweep, release tagging,
+package-index dispatch) will fail.
 
 ### CI publishing secrets
 

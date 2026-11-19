@@ -362,17 +362,21 @@ to the reusable `cd-release` workflow per ecosystem — never a blanket
 `secrets: inherit` (epic
 [vergil-project/.github#189](https://github.com/vergil-project/.github/issues/189)).
 The map lives in `_cd_release_secrets()`
-(`src/vergil_tooling/lib/repo_init.py`) and mirrors exactly what each
-publisher reads:
+(`src/vergil_tooling/lib/repo_init.py`). Every release forwards the
+automation App's `APP_CLIENT_ID` and `APP_PRIVATE_KEY`: `cd-release`
+pushes the release tags with the App's installation token, and fails
+at "Require the automation App secrets" without them. After those
+come exactly what each publisher reads:
 
 | Ecosystem | Secrets forwarded |
 | --------- | ----------------- |
-| python | *none* — PyPI OIDC trusted publishing |
-| go | *none* — no publish token |
-| rust | `CARGO_REGISTRY_TOKEN` |
+| python | App secrets only (PyPI OIDC trusted publishing) |
+| go | App secrets only (no publish token) |
+| rust | App secrets and `CARGO_REGISTRY_TOKEN` |
 
-A language that needs no secret (python, go, or any non-publishing
-language) gets **no `secrets:` block at all**, not `secrets: inherit`.
+A language whose publisher needs no secret (python, go, or any
+non-publishing language) gets a `secrets:` block naming only the two
+App secrets, never `secrets: inherit`.
 References to our own `vergil-actions@v2.1` reusable workflows are
 unaffected — they are trusted first-party refs.
 
