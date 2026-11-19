@@ -431,8 +431,9 @@ before any other output or git call, so `--help` still prints the usage.
 `vrg-release`'s promote stage uses the same library and the same refusal.
 The refusal stops an agent from running it by mistake; it is not a security
 boundary, because the identity signals come from the caller's environment.
-The rolling-tag ruleset on GitHub, which only the repository Admin role
-bypasses, is what enforces who can move the tag.
+The `Tag protection` ruleset on GitHub, which only the repository Admin
+role and the org automation App bypass, is what enforces who can move the
+tag.
 
 The target must be an existing `vX.Y.Z` tag on origin whose commit is
 merged work and that has a published (non-draft) GitHub Release; any other

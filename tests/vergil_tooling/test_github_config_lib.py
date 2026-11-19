@@ -27,6 +27,7 @@ from vergil_tooling.lib.config import (
 )
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
+    _GITHUB_ACTIONS_INTEGRATION_ID,
     _PRODUCIBLE_GATE_CATALOG,
     CI_GATES_DEVELOP,
     CI_GATES_MAIN,
@@ -274,18 +275,38 @@ def test_branch_protection_pr_rule_details() -> None:
 
 
 def test_tag_protection_ruleset() -> None:
-    r = desired_tag_protection_ruleset()
+    r = desired_tag_protection_ruleset(app_id=123)
     assert r.name == "Tag protection"
     assert r.target == "tag"
+    assert r.enforcement == "active"
     assert r.ref_include == ["refs/tags/v*.*.*", "refs/tags/v*.*"]
-    assert r.bypass_actors is not None
-    assert len(r.bypass_actors) == 1
-    assert r.bypass_actors[0]["actor_type"] == "RepositoryRole"
-    assert r.bypass_actors[0]["actor_id"] == 5
-    rule_types = [rule["type"] for rule in r.rules]
-    assert "deletion" in rule_types
-    assert "non_fast_forward" in rule_types
-    assert "update" in rule_types
+
+
+def test_tag_protection_blocks_creation() -> None:
+    rules = {r["type"] for r in desired_tag_protection_ruleset(app_id=123).rules}
+    assert rules == {"creation", "update", "deletion", "non_fast_forward"}
+
+
+def test_tag_protection_bypass_is_admin_and_release_identity_only() -> None:
+    actors = desired_tag_protection_ruleset(app_id=123).bypass_actors
+    assert actors is not None
+    assert {(a["actor_type"], a["actor_id"]) for a in actors} == {
+        ("RepositoryRole", 5),
+        ("Integration", 123),
+    }
+    assert all(a["bypass_mode"] == "always" for a in actors)
+
+
+def test_tag_protection_bypass_never_includes_github_actions() -> None:
+    # The GitHub Actions integration as a bypass actor would let every
+    # workflow's GITHUB_TOKEN create a release tag.
+    actors = desired_tag_protection_ruleset(app_id=123).bypass_actors
+    assert actors is not None
+    assert _GITHUB_ACTIONS_INTEGRATION_ID not in {a["actor_id"] for a in actors}
+
+
+def test_tag_protection_without_app_id_is_skipped() -> None:
+    assert desired_tag_protection_ruleset(None).bypass_actors is None
 
 
 # The literal the rolling-tag branch ruleset matches: a ``v`` then a digit, so a
@@ -2725,7 +2746,7 @@ def test_apply_rulesets_non_list_response_raises_without_writing() -> None:
 
 
 def test_ruleset_body_structure() -> None:
-    ruleset = desired_tag_protection_ruleset()
+    ruleset = desired_tag_protection_ruleset(_APP_ID)
     body = _ruleset_body(ruleset)
     assert body["name"] == "Tag protection"
     assert body["target"] == "tag"
@@ -3051,7 +3072,7 @@ def test_cleanup_skips_branch_without_classic_protection() -> None:
 
 
 def test_cleanup_skips_tag_rulesets() -> None:
-    rulesets = [desired_tag_protection_ruleset()]
+    rulesets = [desired_tag_protection_ruleset(_APP_ID)]
     with (
         patch("vergil_tooling.lib.github_config.github.read_json") as mock_read,
         patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
@@ -4094,7 +4115,10 @@ def test_compute_desired_state_without_skip_keeps_bypass_actors() -> None:
     state = _state(_vergil_config(), visibility="public", is_org=True)
     tag_rs = next(rs for rs in state.rulesets if rs.name == "Tag protection")
     assert tag_rs.bypass_actors is not None
-    assert len(tag_rs.bypass_actors) == 1
+    assert {(a["actor_type"], a["actor_id"]) for a in tag_rs.bypass_actors} == {
+        ("RepositoryRole", 5),
+        ("Integration", _APP_ID),
+    }
 
 
 def test_compute_desired_state_requires_app_id_unless_skipping() -> None:
@@ -4185,7 +4209,10 @@ def test_diff_reports_wrong_automation_app_id() -> None:
         automation_app_id=_APP_ID + 1,
     )
     diff = compute_diff(desired=desired, actual=actual)
-    assert [d.field for d in diff.items] == ["rulesets.Automation branches.bypass_actors"]
+    assert [d.field for d in diff.items] == [
+        "rulesets.Tag protection.bypass_actors",
+        "rulesets.Automation branches.bypass_actors",
+    ]
 
 
 def _with_emptied_bypass(*names: str) -> tuple[Any, Any]:
