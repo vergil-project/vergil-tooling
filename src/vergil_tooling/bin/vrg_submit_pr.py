@@ -2,8 +2,8 @@
 
 Supports three modes:
 - **Template mode** (no args): reads the PR workflow state file
-  (``.vergil/pr-workflow.json``); shows a summary, prompts for
-  confirmation, pushes the branch, and creates the PR. From the repo root,
+  (``.vergil/pr-workflow.json``); shows the selection table, pushes the
+  branch, and creates the PR. From the repo root,
   ``--all``/``--select`` submit several ready worktrees at once (#1673).
 - **CLI argument mode** (``--issue``/``--summary``/``--title``): existing
   direct invocation for human emergency use.
@@ -24,8 +24,11 @@ Supports three modes:
   GitHub.
 
 **One path** (epic vergil-project/.github#1218, spec §6.2). Every mode gates
-and previews its PRs, asks for one confirmation (the CLI emergency mode asks
-none), then hands the whole selection to :func:`_submit_all`. For each PR it
+its PRs, prints one compact table of the selection (issues and linkage,
+branch, title), then hands the whole selection to :func:`_submit_all`. There
+is no confirmation prompt and no PR-body preview (vergil-tooling#4744): the
+arguments already chose the selection, and the body is on the opened PR.
+For each PR it
 re-checks a batch PR's rules, pushes the branch when the mode pushes, holds
 origin's tip to the head the PR must open at, opens the PR and records the
 submission, runs the provenance check, and turns auto-merge on, pinned to
@@ -35,8 +38,9 @@ provenance violation always fails that PR's submit and leaves its auto-merge
 off (vergil-tooling#4695). Submit never rebases a branch:
 rebasing before handoff stays the agent's job.
 
-The previews, refusals, confirmation and ``--dry-run`` print plainly. Once
-the selection is confirmed, :func:`_submit_all` runs as a progress rollup
+The selection table, refusals and ``--dry-run`` print plainly (a dry run
+prints the table and what would follow). Then :func:`_submit_all` runs as a
+progress rollup
 (:mod:`vergil_tooling.lib.progress`, as ``vrg-release`` does) with one stage
 per PR, named after its branch (vergil-tooling#4709): each step's output
 goes to ``.vergil/vrg-submit-pr-<stamp>.log`` in the main worktree, each
@@ -104,8 +108,9 @@ A usage error, or a refusal before anything opened, exits 1.
 
 **Removed flags** are refused by name before any side effect: ``--finalize``
 (finalizing is the default), ``--install`` (``--release`` installs by
-default) and ``--allow-provenance-violation`` (a provenance violation always
-fails; fix its cause or the classifier).
+default), ``--allow-provenance-violation`` (a provenance violation always
+fails; fix its cause or the classifier) and ``--yes``/``-y`` (there is no
+confirmation left to answer).
 """
 
 from __future__ import annotations
@@ -134,7 +139,6 @@ from vergil_tooling.lib import (
     worktrees,
 )
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES, normalize_linkage
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
 from vergil_tooling.lib.pr_workflow import batch_rules, freeze, submission
@@ -305,8 +309,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Comma-separated list of ready worktrees to batch-submit, by issue "
         "number or worktree directory name (issue #1673).",
     )
+    parser.add_argument("--yes", "-y", action="store_true", help=argparse.SUPPRESS)
     progress.add_progress_args(parser, ())
-    add_yes_argument(parser)
     return parser.parse_args(argv)
 
 
@@ -323,6 +327,9 @@ ALLOW_PROVENANCE_VIOLATION_REMOVED = (
     "violation always fails. Fix its cause, or fix the classifier if the "
     "violation is a false one"
 )
+YES_REMOVED = (
+    "vrg-submit-pr: --yes was removed; submit no longer asks for confirmation, so drop the flag"
+)
 
 
 def _flag_refusal(args: argparse.Namespace) -> str | None:
@@ -338,6 +345,8 @@ def _flag_refusal(args: argparse.Namespace) -> str | None:
         return INSTALL_REMOVED
     if args.allow_provenance_violation:
         return ALLOW_PROVENANCE_VIOLATION_REMOVED
+    if args.yes:
+        return YES_REMOVED
     if args.release and args.no_finalize:
         return (
             "vrg-submit-pr: --release cannot be combined with --no-finalize; "
@@ -500,9 +509,9 @@ def _submit_exit(finalize_rc: int, *, any_failed: bool) -> int:
 def _dry_run_plan(args: argparse.Namespace) -> str:
     """The ``[dry-run]`` line naming what would follow the submit."""
     if args.no_finalize:
-        return "\n[dry-run] --no-finalize: the PRs would be opened with auto-merge on, not watched"
+        return "[dry-run] --no-finalize: the PRs would be opened with auto-merge on, not watched"
     cmd = " ".join(_finalize_cmd(["<pr>,…"], args, release=args.release))
-    return f"\n[dry-run] would finalize every opened PR in one run: {cmd}"
+    return f"[dry-run] would finalize every opened PR in one run: {cmd}"
 
 
 def _print_pr_watch(pr_url: str) -> None:
@@ -533,12 +542,14 @@ class SubmitSummary:
 
 @dataclass(frozen=True)
 class _Submission:
-    """One gated, previewed PR for :func:`_submit_all` to open.
+    """One gated PR for :func:`_submit_all` to open.
 
     *expected_head* is the commit the PR must open at; auto-merge is pinned to
     it too. *push* says whether the branch is pushed first (the relay path's
     branch is already on origin). *record_in* is the worktree whose
     ``pr-workflow.json`` records the submission, ``None`` when there is none.
+    *links* are the body's ``(linkage, ref)`` lines, shown in the selection
+    table.
     """
 
     branch: str
@@ -546,6 +557,7 @@ class _Submission:
     title: str
     pr_body: str
     issue_refs: list[str]
+    links: list[tuple[str, str]]
     expected_head: str
     push: bool
     record_in: Path | None
@@ -694,7 +706,7 @@ def _submit_all(selection: list[_Submission], args: argparse.Namespace) -> Submi
     """Open every PR in *selection* and turn its auto-merge on: the one submit path.
 
     Every mode reaches this rollup with its PRs already gated (ready state,
-    freeze, recorded head) and confirmed. Each PR is one stage of a
+    freeze, recorded head) and listed. Each PR is one stage of a
     :mod:`~vergil_tooling.lib.progress` rollup, named after its branch: open
     it (:func:`_open_one`), run the provenance check, then turn auto-merge on
     pinned to the expected head, with the rebase method for a batch PR and
@@ -740,15 +752,32 @@ def _print_failed(summary: SubmitSummary) -> None:
         print(f"  {label} — {reason}", file=sys.stderr)
 
 
-def _confirm_selection(selection: list[_Submission], *, assume_yes: bool) -> bool:
-    """The one confirmation for a selection: one prompt for one PR or many."""
-    question = (
-        "\nSubmit this PR?" if len(selection) == 1 else f"\nSubmit these {len(selection)} PRs?"
-    )
-    if confirm(question, assume_yes=assume_yes):
-        return True
-    print("Aborted.")
-    return False
+def _issues_cell(links: list[tuple[str, str]]) -> str:
+    """``Closes #1, #2`` for a selection-table row: each linkage keyword once, in order."""
+    groups: dict[str, list[str]] = {}
+    for linkage, ref in links:
+        groups.setdefault(linkage, []).append(ref)
+    return "; ".join(f"{linkage} {', '.join(refs)}" for linkage, refs in groups.items())
+
+
+def _print_selection(selection: list[_Submission]) -> None:
+    """Print one compact table of the PRs about to be submitted (vergil-tooling#4744).
+
+    One row per PR, with its issues and linkage, branch and title, under a
+    header naming the count and the base. It replaces the PR-body previews
+    and the confirmation prompt: the arguments already chose the selection.
+    """
+    if not selection:
+        return
+    bases = sorted({sub.base for sub in selection})
+    noun = "PR" if len(selection) == 1 else "PRs"
+    print(f"Submitting {len(selection)} {noun} to {', '.join(bases)}:")
+    header = ("ISSUES", "BRANCH", "TITLE")
+    rows = [(_issues_cell(sub.links), sub.branch, sub.title) for sub in selection]
+    widths = [max(len(row[i]) for row in (header, *rows)) for i in range(2)]
+    for row in (header, *rows):
+        print(f"  {row[0]:<{widths[0]}}  {row[1]:<{widths[1]}}  {row[2]}")
+    print()
 
 
 def _finish(summary: SubmitSummary, args: argparse.Namespace) -> int:
@@ -899,19 +928,6 @@ def _task_linkage(issue_ref: str, requested: str) -> tuple[str, str | None]:
     return requested, None
 
 
-def _resolve_linkage(issue_ref: str, requested: str) -> str:
-    """Effective PR-body linkage for *issue_ref*, announcing a ``Closes`` upgrade.
-
-    Thin wrapper over :func:`_task_linkage` used at every PR-body build site: it
-    prints the upgrade note (when a managed task is auto-linked with ``Closes``)
-    and returns the linkage keyword.
-    """
-    linkage, note = _task_linkage(issue_ref, requested)
-    if note:
-        print(f"vrg-submit-pr: {note}")
-    return linkage
-
-
 def _checked_links(issue_refs: list[str], requested: str) -> list[tuple[str, str]]:
     """Run the per-issue refusals on every issue and return the body's linkage lines.
 
@@ -920,6 +936,8 @@ def _checked_links(issue_refs: list[str], requested: str) -> list[tuple[str, str
     its own, so a batch PR gets one ``(linkage, ref)`` per issue, in order
     (epic vergil-project/.github#1019). Every batch issue is a task under the
     batch's epic, so each resolves to ``Closes``. The first refusal aborts.
+    The linkage is shown in the selection table, so a ``Closes`` upgrade is
+    not announced on a line of its own.
     """
     links: list[tuple[str, str]] = []
     for issue_ref in issue_refs:
@@ -927,7 +945,7 @@ def _checked_links(issue_refs: list[str], requested: str) -> list[tuple[str, str
         _reject_if_non_task(issue_ref)
         _reject_if_operational_task(issue_ref)
         _reject_if_queue_item(issue_ref)
-        links.append((_resolve_linkage(issue_ref, requested), issue_ref))
+        links.append((_task_linkage(issue_ref, requested)[0], issue_ref))
     return links
 
 
@@ -971,19 +989,12 @@ def _ready_issue_refs(fields: dict[str, str]) -> list[str]:
     return [resolve_issue_ref(item.strip()) for item in raw.split(",")]
 
 
-def _describe_issues(issue_refs: list[str]) -> str:
-    """``issue #N`` for one issue, ``issues #N, #M`` for a batch."""
-    if len(issue_refs) == 1:
-        return f"issue {issue_refs[0]}"
-    return f"issues {', '.join(issue_refs)}"
-
-
 def _recheck_batch(
     issue_refs: list[str], *, branch: str, target: str, head: str, push: bool
 ) -> None:
     """Re-check a batch's hard rules and commits on the head the PR opens at.
 
-    Runs only for a batch, after the confirm and before any push or ``gh pr
+    Runs only for a batch, in the submit rollup, before any push or ``gh pr
     create``. It fetches the target, then holds ``origin/<target>..<head>`` to
     one commit per issue and re-reads every issue against the hard rules
     (spec §5.1, §5.6). *head* is the commit the PR must open at;
@@ -1033,13 +1044,6 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
         summary=args.summary, links=links, notes=args.notes, planning=_planning_close([issue_ref])
     )
 
-    if args.dry_run:
-        print(f"=== PR Title ===\n{args.title}\n")
-        print(f"=== Target Branch ===\n{target}\n")
-        print(f"=== PR Body ===\n{pr_body}")
-        print(_dry_run_plan(args))
-        return 0
-
     # No ready-state records a head here, so the PR (and its auto-merge) is
     # pinned to the commit the push publishes: the local HEAD.
     selection = [
@@ -1049,11 +1053,16 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
             title=args.title,
             pr_body=pr_body,
             issue_refs=[issue_ref],
+            links=links,
             expected_head=git.commit_sha("HEAD"),
             push=True,
             record_in=None,
         )
     ]
+    _print_selection(selection)
+    if args.dry_run:
+        print(_dry_run_plan(args))
+        return 0
     summary = _submit_all(selection, args)
     return _finish(summary, args)
 
@@ -1102,7 +1111,7 @@ def _ready_worktrees(root: Path) -> list[tuple[worktrees.Worktree, dict[str, str
 def _choose_submit_worktree(root: Path) -> Path:
     """At the repo root, pick the single template-ready worktree to submit from.
 
-    One candidate is auto-picked (the existing y/N preview still confirms);
+    One candidate is auto-picked (the selection table then names it);
     several prompt a menu; none is an error that names each skipped worktree
     and why. Root launches are interactive by requirement, so the TTY guard
     fires up front, not per-prompt.
@@ -1111,9 +1120,7 @@ def _choose_submit_worktree(root: Path) -> Path:
     ready = _ready_worktrees(root)
 
     if len(ready) == 1:
-        wt, fields = ready[0]
-        print(f"Using worktree {wt.path.name} (issue {fields['issue']}: {fields['title']})")
-        return wt.path
+        return ready[0][0].path
 
     labels = [f"{wt.path.name} — issue {f['issue']}: {f['title']}" for wt, f in ready]
     chosen = worktrees.select_worktree(
@@ -1151,8 +1158,8 @@ def _run_submit_batch(selected: list[worktrees.Worktree], args: argparse.Namespa
     """Submit *selected* worktrees through the one submit path (#1673, spec §6.2).
 
     Each worktree is held to the head its latest ``report-ready`` recorded
-    (issue #3815) and previewed; then one confirmation covers the whole
-    selection, and :func:`_submit_all` opens every PR with auto-merge on.
+    (issue #3815); then one table lists the whole selection, and
+    :func:`_submit_all` opens every PR with auto-merge on.
     No branch is rebased: the PR opens at exactly the reported head.
     """
     selection: list[_Submission] = []
@@ -1169,11 +1176,10 @@ def _run_submit_batch(selected: list[worktrees.Worktree], args: argparse.Namespa
                 record_in=wt.path,
             )
         )
+    _print_selection(selection)
     if args.dry_run:
         print(_dry_run_plan(args))
         return 0
-    if not _confirm_selection(selection, assume_yes=args.yes):
-        return 1
     summary = _submit_all(selection, args)
     return _finish(summary, args)
 
@@ -1198,15 +1204,14 @@ def _prepare(
     expected_head: str,
     record_in: Path | None,
 ) -> _Submission:
-    """Gate and preview one PR from its ready-state *metadata*; return its submission.
+    """Gate one PR from its ready-state *metadata*; return its submission.
 
     Runs the standards guards on every issue (``issues``, comma-joined in
-    order, is required), resolves each linkage, builds the body and prints
-    the preview. It takes *branch* / *base* / *metadata* as given — it never
+    order, is required), resolves each linkage and builds the body; the
+    caller prints the selection table. It takes *branch* / *base* / *metadata* as given — it never
     reads ``git.current_branch()`` nor looks a worktree up — so the relay
     path can drive it for a branch that is not checked out anywhere locally.
-    Nothing is pushed or opened here: :func:`_submit_all` does that once the
-    selection is confirmed.
+    Nothing is pushed or opened here: :func:`_submit_all` does that.
 
     Raises ``SystemExit`` on a forbidden linkage or a refused issue.
     """
@@ -1224,15 +1229,13 @@ def _prepare(
         notes=metadata.get("notes", ""),
         planning=_planning_close(issue_refs),
     )
-    print(f"=== Submitting {_describe_issues(issue_refs)}: {metadata['title']} ===")
-    print(f"    base {base}, branch {branch}")
-    print(f"\n=== Body Preview ===\n{pr_body}")
     return _Submission(
         branch=branch,
         base=base,
         title=metadata["title"],
         pr_body=pr_body,
         issue_refs=issue_refs,
+        links=links,
         expected_head=expected_head,
         push=push,
         record_in=record_in,
@@ -1282,7 +1285,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     issue_refs = _ready_issue_refs(fields)
     branch = git.current_branch()
     # Hold the worktree to the head the latest report-ready recorded before
-    # anything is previewed or pushed: the push publishes the checked-out
+    # anything is shown or pushed: the push publishes the checked-out
     # branch, so a HEAD that moved after report-ready would otherwise become
     # the PR head unreported (issue #3815).
     expected_head = fields.get("head_sha", "")
@@ -1307,21 +1310,6 @@ def _run_template_mode(args: argparse.Namespace) -> int:
         summary=fields["summary"], links=links, notes=notes, planning=_planning_close(issue_refs)
     )
 
-    print("=== PR from template ===")
-    print(f"Title:  {title}")
-    print(f"Base:   {target}")
-    print(f"Branch: {branch}")
-    if len(issue_refs) == 1:
-        print(f"Issue:  {issue_refs[0]}")
-    else:
-        print(f"Issues: {', '.join(issue_refs)}")
-    print()
-    print(f"=== Body Preview ===\n{pr_body}")
-
-    if args.dry_run:
-        print(_dry_run_plan(args))
-        return 0
-
     selection = [
         _Submission(
             branch=branch,
@@ -1329,13 +1317,16 @@ def _run_template_mode(args: argparse.Namespace) -> int:
             title=title,
             pr_body=pr_body,
             issue_refs=issue_refs,
+            links=links,
             expected_head=expected_head,
             push=True,
             record_in=root,
         )
     ]
-    if not _confirm_selection(selection, assume_yes=args.yes):
-        return 1
+    _print_selection(selection)
+    if args.dry_run:
+        print(_dry_run_plan(args))
+        return 0
     summary = _submit_all(selection, args)
     return _finish(summary, args)
 
@@ -1444,7 +1435,7 @@ def _check_origin_tip(branch: str, expected: str) -> None:
 def _require_origin_head(branch: str, expected: str) -> None:
     """The last check before a PR is opened: origin holds the recorded head.
 
-    Runs after any push and after the confirm prompt, immediately before
+    Runs after any push, immediately before
     ``gh pr create``, on every report-ready-driven path (template, batch and
     named-branch). The PR opens at origin's tip, so a branch that moved on
     origin, or a push that published something other than the recorded
@@ -1551,7 +1542,7 @@ def _origin_has_branch(branch: str) -> bool:
 
 
 def _relay_prepare(root: Path, branch: str, args: argparse.Namespace) -> _Submission | None:
-    """Resolve, verify and preview the PR for one named *branch*.
+    """Resolve and verify the PR for one named *branch*.
 
     Returns the branch's submission, or ``None`` for a branch that already
     carries a submitted PR, reported and skipped with ``--no-finalize``.
@@ -1571,8 +1562,8 @@ def _relay_prepare(root: Path, branch: str, args: argparse.Namespace) -> _Submis
     exactly what selecting that worktree from the interactive list would do.
     Otherwise keep the relay path (``push=False``, verify origin's tip matches
     the recorded ``head_sha``). The fallback is a live-run concern only: a dry
-    run merely previews the body (push vs no-push does not change it) and never
-    touches origin, so it stays on the relay preview.
+    run only prints the selection table (push vs no-push does not change it)
+    and never touches origin, so it stays on the relay path.
 
     Whenever the named branch has a local ready worktree, the open records the
     submission in that worktree's ``pr-workflow.json`` (*record_in*) — on the
@@ -1629,9 +1620,9 @@ def _relay_prepare(root: Path, branch: str, args: argparse.Namespace) -> _Submis
 def _run_relay(branches: list[str], args: argparse.Namespace) -> int:
     """Open PRs for each named *branch*, worktree-free, through the one submit path.
 
-    :func:`_relay_prepare` resolves, verifies and previews every branch first
-    (a refusal stops the run with nothing opened); then one confirmation
-    covers them all, and :func:`_submit_all` opens each PR with auto-merge on.
+    :func:`_relay_prepare` resolves and verifies every branch first (a
+    refusal stops the run with nothing opened); then one table lists them
+    all, and :func:`_submit_all` opens each PR with auto-merge on.
     With ``--no-finalize``, branches already carrying a submitted PR are
     reported and skipped. Then :func:`_finish` finalizes the opened PRs in
     one run.
@@ -1642,13 +1633,12 @@ def _run_relay(branches: list[str], args: argparse.Namespace) -> int:
         sub = _relay_prepare(root, branch, args)
         if sub is not None:
             selection.append(sub)
+    _print_selection(selection)
     if args.dry_run:
         print(_dry_run_plan(args))
         return 0
     if not selection:
         return 0
-    if not _confirm_selection(selection, assume_yes=args.yes):
-        return 1
     summary = _submit_all(selection, args)
     return _finish(summary, args)
 
