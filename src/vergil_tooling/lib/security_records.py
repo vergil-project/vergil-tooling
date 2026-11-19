@@ -18,6 +18,11 @@ one way a link moves (only from an issue the advisory tracks), and
 :func:`close_record`, which closes an advisory with a public reason, and
 :func:`note_record`, which appends a dated note to an advisory's description.
 
+A retarget whose targets are all in another org **moves** the advisory there
+(epic vergil-project/.github#1417, spec 4.6): GitHub cannot move one, so the
+copy carries ``Moved from: <GHSA-id>`` and the closed original carries
+``Moved to: <org>/.github <GHSA-id>``, a terminal state the sync recognises.
+
 **Output rule.** An advisory's ``summary`` and ``description`` reach a caller
 only through :func:`read_text`. :class:`Advisory` has no text field, the list
 reads project the text away with ``--jq`` before it reaches stdout, and every
@@ -34,7 +39,7 @@ from __future__ import annotations
 import contextlib
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from vergil_tooling.lib import epics, github, labels
@@ -56,16 +61,24 @@ _NAME = r"[A-Za-z0-9._-]+"
 # line, a mention mid-sentence, a repo other than .github) is not a reference.
 _ADVISORY_RE = re.compile(rf"^Security advisory: ({_NAME})/\.github ({_GHSA})[ \t]*\r?$", re.M)
 _TRACKING_RE = re.compile(rf"^Tracking issue: ({_NAME})/({_NAME})#([0-9]+)[ \t]*\r?$", re.M)
+# The two lines of a cross-org move: the copy names its original and the
+# original names its copy, each exact and alone on its line.
+_MOVED_FROM_RE = re.compile(rf"^Moved from: ({_GHSA})[ \t]*\r?$", re.M)
+_MOVED_TO_RE = re.compile(rf"^Moved to: ({_NAME})/\.github ({_GHSA})[ \t]*\r?$", re.M)
 
 # The same tracking-line test, applied by gh's jq to each page so only the
 # reference lines (never the rest of the description) reach stdout.
 _JQ_TRACKING_TEST = r"^Tracking issue: [A-Za-z0-9._-]+/[A-Za-z0-9._-]+#[0-9]+[ \t]*$"
+_JQ_MOVED_FROM_TEST = r"^Moved from: GHSA(-[0-9a-z]{4}){3}[ \t]*$"
+_JQ_MOVED_TO_TEST = r"^Moved to: [A-Za-z0-9._-]+/[.]github GHSA(-[0-9a-z]{4}){3}[ \t]*$"
 _LIST_JQ = (
-    "[.[] | {ghsa_id, state,"
+    '[.[] | [(.description // "") | split("\\n")[] | rtrimstr("\\r")] as $lines'
+    " | {ghsa_id, state,"
     " affected: ((.vulnerabilities // []) | map(.package.name // empty) | first),"
     " submission: (.submission != null),"
-    ' tracking: [(.description // "") | split("\\n")[] | rtrimstr("\\r")'
-    f' | select(test("{_JQ_TRACKING_TEST}"))]}}]'
+    f' tracking: [$lines[] | select(test("{_JQ_TRACKING_TEST}"))],'
+    f' moved_from: [$lines[] | select(test("{_JQ_MOVED_FROM_TEST}"))],'
+    f' moved_to: [$lines[] | select(test("{_JQ_MOVED_TO_TEST}"))]}}]'
 )
 _DUPLICATE_JQ = (
     "[.[] | {ghsa_id, summary, names: [(.vulnerabilities // [])[] | .package.name // empty]}]"
@@ -112,6 +125,10 @@ class Advisory:
     affected: str | None  # the first ``other``-ecosystem package name
     tracking: tuple[IssueRef, ...]
     external: bool  # came from private vulnerability reporting
+    # The GHSA IDs its exact ``Moved from:`` lines name (a copy a move made).
+    moved_from: tuple[str, ...] = ()
+    # The ``(org, GHSA ID)`` its exact ``Moved to:`` lines name (a moved original).
+    moved_to: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -145,16 +162,20 @@ class GuardResult:
 
 @dataclass(frozen=True)
 class Classification:
-    """The pair check's verdict: consistent pairs, external reports, broken pairs.
+    """The pair check's verdict: consistent pairs, external reports, broken pairs, moves.
 
     ``broken`` holds one-line reasons naming only GHSA IDs and issue refs. An
     advisory with any broken tracking line is reported there and left out of
-    ``paired``, so nothing acts on a pair whose links are wrong.
+    ``paired``, so nothing acts on a pair whose links are wrong. ``moved``
+    holds each advisory with exactly one ``Moved to:`` line: a terminal
+    state, never synced and never broken for tracking nothing
+    (:func:`moved_problems` checks the copy it names).
     """
 
     paired: list[Advisory]
     external: list[Advisory]
     broken: list[str]
+    moved: list[Advisory] = field(default_factory=list)
 
 
 def _scrubbed(exc: github.GitHubAPIError) -> github.GitHubAPIError:
@@ -207,6 +228,27 @@ def advisory_line(home: str, ghsa_id: str) -> str:
 def tracking_line(ref: IssueRef) -> str:
     """The advisory-description line naming a tracked issue."""
     return f"Tracking issue: {ref.slug}"
+
+
+def moved_from_line(ghsa_id: str) -> str:
+    """The line a moved advisory's copy carries: ``Moved from: <original GHSA>``."""
+    return f"Moved from: {ghsa_id}"
+
+
+def moved_to_line(home: str, ghsa_id: str) -> str:
+    """The line a moved original carries: ``Moved to: <home> <copy GHSA>``."""
+    return f"Moved to: {home} {ghsa_id}"
+
+
+def parse_moved_from(description: str) -> tuple[str, ...]:
+    """Every GHSA ID the exact ``Moved from:`` lines name, in order, without repeats."""
+    return tuple(dict.fromkeys(m.group(1) for m in _MOVED_FROM_RE.finditer(description)))
+
+
+def parse_moved_to(description: str) -> tuple[tuple[str, str], ...]:
+    """Every ``(org, GHSA ID)`` the exact ``Moved to:`` lines name, in order, without repeats."""
+    pairs = ((m.group(1), m.group(2)) for m in _MOVED_TO_RE.finditer(description))
+    return tuple(dict.fromkeys(pairs))
 
 
 def parse_advisory_refs(issue_body: str) -> tuple[str, ...]:
@@ -284,13 +326,18 @@ def _advisory_from_row(row: Any) -> Advisory:
     if not isinstance(ghsa_id, str) or not isinstance(state, str):
         raise ValueError("advisory list row lacks a ghsa_id or state")
     affected = row.get("affected")
-    lines = [str(line) for line in row.get("tracking") or []]
+
+    def joined(key: str) -> str:
+        return "\n".join(str(line) for line in row.get(key) or [])
+
     return Advisory(
         ghsa_id=ghsa_id,
         state=state,
         affected=affected if isinstance(affected, str) else None,
-        tracking=parse_tracking("\n".join(lines)),
+        tracking=parse_tracking(joined("tracking")),
         external=state == "triage" or bool(row.get("submission")),
+        moved_from=parse_moved_from(joined("moved_from")),
+        moved_to=parse_moved_to(joined("moved_to")),
     )
 
 
@@ -298,7 +345,8 @@ def list_advisories(home: str) -> list[Advisory]:
     """Every advisory in *home*, in every state, across every page.
 
     The fetch projects each page to the GHSA ID, state, package name, whether
-    a ``submission`` exists and the ``Tracking issue:`` lines, so no summary or
+    a ``submission`` exists and the ``Tracking issue:``, ``Moved from:`` and
+    ``Moved to:`` lines, so no other summary or
     description text reaches stdout.
     """
     with _no_text():
@@ -448,10 +496,23 @@ def _unmark_current(
     return True
 
 
+def _without_tracking(description: str) -> str:
+    """*description* with every ``Tracking issue:`` line and the gap it leaves removed."""
+    return re.sub(r"\n{3,}", "\n\n", _TRACKING_RE.sub("", description)).rstrip()
+
+
 def _with_tracking(description: str, targets: Sequence[IssueRef]) -> str:
-    kept = re.sub(r"\n{3,}", "\n\n", _TRACKING_RE.sub("", description)).rstrip()
     lines = "\n".join(tracking_line(ref) for ref in targets)
-    return f"{kept}\n\n{lines}" if kept else lines
+    return _append_line(_without_tracking(description), lines)
+
+
+def _before_tracking(description: str, block: str) -> str:
+    """*description* with *block* appended, its ``Tracking issue:`` lines kept last in order."""
+    text = _append_line(_without_tracking(description), block)
+    tracking = parse_tracking(description)
+    if tracking:
+        text += "\n\n" + "\n".join(tracking_line(ref) for ref in tracking)
+    return text
 
 
 @contextlib.contextmanager
@@ -470,10 +531,20 @@ def _step(ghsa_id: str, step: str, error: type[RuntimeError] = RetargetError) ->
         raise error(f"advisory {ghsa_id}: {step} failed: {exc}") from exc
 
 
-def retarget_command(ghsa_id: str, source: IssueRef, targets: Sequence[IssueRef]) -> str:
-    """The paste-ready ``vrg-security-record retarget`` command for this move."""
+def retarget_command(
+    ghsa_id: str,
+    source: IssueRef,
+    targets: Sequence[IssueRef],
+    drop: Sequence[IssueRef] = (),
+) -> str:
+    """The paste-ready ``vrg-security-record retarget`` command for this move.
+
+    *drop* is only ever the ``--drop`` set the human already gave: no tool
+    output suggests leaving an open issue untracked.
+    """
     words = [f"vrg-security-record retarget {ghsa_id} --from {quoted_slug(source)}"]
     words += [f"--to {quoted_slug(ref)}" for ref in targets]
+    words += [f"--drop {quoted_slug(ref)}" for ref in drop]
     return " ".join(words)
 
 
@@ -572,6 +643,17 @@ def _check_drops(  # noqa: PLR0913 - each input is one part of the one check
     if not refused:
         return
     noun = "issue" if len(refused) == 1 else "issues"
+    if wanted[0].owner != source.owner:
+        # A move closes this advisory, so it cannot keep tracking an issue
+        # in its own org: the command that succeeds is the same one, re-run
+        # once the open issue no longer needs it.
+        raise RetargetRefusedError(
+            f"advisory {ghsa_id}: this would stop tracking the open {noun} {_slugs(refused)}; "
+            f"a move to {wanted[0].owner}/.github closes this advisory, so it cannot keep "
+            f"tracking an issue in {source.owner}. Close or retarget that work first, then "
+            f"run: {retarget_command(ghsa_id, source, wanted, drop)}. "
+            "Leaving an open issue untracked is the human's decision"
+        )
     keep = tuple(dict.fromkeys((*still_open, *wanted)))
     raise RetargetRefusedError(
         f"advisory {ghsa_id}: this would stop tracking the open {noun} {_slugs(refused)}; "
@@ -590,6 +672,11 @@ def retarget(  # noqa: PLR0913 - the move, its source and its two exception list
     renamed: Sequence[IssueRef] = (),
 ) -> tuple[str, ...]:
     """Move advisory *ghsa_id*'s tracking from *source* to *targets*.
+
+    Every target must be in one org (:func:`fix_org`). When that org is not
+    *home*'s, the advisory itself **moves** to the targets' org
+    (:func:`_move`), and the return value ends with the original's
+    :func:`moved_to_line`, which names the copy's GHSA ID. Otherwise:
 
     It first reads the tracking lines and the org's ``security`` issues and
     runs two checks. Either raises :class:`RetargetRefusedError` before
@@ -637,12 +724,38 @@ def retarget(  # noqa: PLR0913 - the move, its source and its two exception list
     wanted = tuple(dict.fromkeys(targets))
     if not wanted:
         raise RetargetError(f"advisory {ghsa_id}: no target issues given")
+    if fix_org(ghsa_id, wanted) != home.split("/", 1)[0]:
+        return _move(home, ghsa_id, wanted, source=source, drop=drop, renamed=renamed)
     with _step(ghsa_id, "reading the tracking lines"):
         _summary, description = read_text(home, ghsa_id)
     previous = parse_tracking(description)
     with _step(ghsa_id, "listing the security issues"):
         listed = {issue.ref: issue for issue in security_issues(home.split("/", 1)[0])}
     _check_source(ghsa_id, source, previous, wanted)
+    unmarks = _checked_drops(ghsa_id, source, previous, wanted, drop, renamed, listed)
+    _hand_to(home, ghsa_id, wanted)
+    with _step(ghsa_id, "rewriting the tracking lines"):
+        _set_tracking(home, ghsa_id, description, wanted)
+    return _unmark_all(ghsa_id, unmarks, wanted)
+
+
+def _checked_drops(  # noqa: PLR0913 - the drop check's inputs, as retarget has them
+    ghsa_id: str,
+    source: IssueRef,
+    previous: Sequence[IssueRef],
+    wanted: Sequence[IssueRef],
+    drop: Sequence[IssueRef],
+    renamed: Sequence[IssueRef],
+    listed: dict[IssueRef, SecurityIssue],
+) -> list[IssueRef]:
+    """Run the drop check (:func:`_check_drops`); return the issues to unmark, in order.
+
+    The **dropped** issues are those *previous* tracks or a listed
+    ``security`` issue names, less the targets and *renamed*. *source* (and
+    the issue it was transferred to) goes last, so a run interrupted before
+    then leaves it marked and a re-run's source check still finds it tied
+    to the move.
+    """
     marked = [ref for ref, issue in listed.items() if ghsa_id in issue.ghsa_ids]
     dropped = [
         ref
@@ -653,23 +766,235 @@ def retarget(  # noqa: PLR0913 - the move, its source and its two exception list
         source_now = _current_ref(_read_issue(source))
     others = [ref for ref in dropped if ref not in (source, source_now)]
     _check_drops(ghsa_id, source, wanted, others, drop, listed)
+    last = [ref for ref in (source, source_now) if ref in dropped]
+    return list(dict.fromkeys((*others, *last)))
+
+
+def _hand_to(home: str, ghsa_id: str, wanted: Sequence[IssueRef]) -> None:
+    """Mark every target with advisory *ghsa_id* of *home*, each a step of its own."""
     for ref in wanted:
         with _step(ghsa_id, f"marking {ref.slug}"):
             mark_issue(ref, home, ghsa_id)
+
+
+def _set_tracking(home: str, ghsa_id: str, description: str, wanted: Sequence[IssueRef]) -> None:
+    """Write *description* with one tracking line per target, unless that changes nothing."""
     rewritten = _with_tracking(description, wanted)
     if rewritten != description:
-        with _step(ghsa_id, "rewriting the tracking lines"):
-            _write_description(home, ghsa_id, rewritten)
-    # The source goes last, so a run interrupted before then leaves it marked
-    # and a re-run's source check still finds it tied to the move.
-    last = [ref for ref in (source, source_now) if ref in dropped]
+        _write_description(home, ghsa_id, rewritten)
+
+
+def _unmark_all(
+    ghsa_id: str, refs: Sequence[IssueRef], wanted: Sequence[IssueRef]
+) -> tuple[str, ...]:
+    """Unmark each of *refs* in order (:func:`unmark_issue`); return the transfer notes."""
     notes: list[str] = []
-    for ref in dict.fromkeys((*others, *last)):
+    for ref in refs:
         with _step(ghsa_id, f"unmarking {ref.slug}"):
             note = unmark_issue(ref, ghsa_id, wanted)
         if note is not None:
             notes.append(note)
     return tuple(notes)
+
+
+# --- the cross-org move -----------------------------------------------------------
+
+
+def fix_org(ghsa_id: str, targets: Sequence[IssueRef]) -> str:
+    """The one org every target is in; :class:`RetargetRefusedError` when they span orgs.
+
+    Advisories are homed and synced per org, so one advisory's fix tasks are
+    all in one org. The refusal names the two ways out.
+    """
+    orgs = sorted({ref.owner for ref in targets})
+    if len(orgs) != 1:
+        raise RetargetRefusedError(
+            f"advisory {ghsa_id}: the --to issues span orgs ({', '.join(orgs) or 'none'}), "
+            "and every fix of one advisory must be in one org. Either duplicate the "
+            "advisory into each org, each copy tracking that org's own fix tasks, or "
+            "break the finding up into separate advisories"
+        )
+    return orgs[0]
+
+
+def _read_move_fields(home: str, ghsa_id: str) -> tuple[str, str, object]:
+    """Advisory *ghsa_id*'s ``(summary, description, severity)``, for its copy only."""
+    with _no_text():
+        raw: Any = github.read_json(
+            "api", f"{_advisories(home)}/{ghsa_id}", "--jq", "{summary, description, severity}"
+        )
+    summary, description = raw.get("summary"), raw.get("description") or ""
+    if not isinstance(summary, str) or not isinstance(description, str):
+        raise ValueError(f"advisory {ghsa_id} read returned no summary or description")
+    return summary, description, raw.get("severity")
+
+
+def _movable(home: str, ghsa_id: str, advisories: Sequence[Advisory]) -> Advisory:
+    """Advisory *ghsa_id* of *home*, refused unless it is a draft record, or a moved one."""
+    advisory = {a.ghsa_id: a for a in advisories}.get(ghsa_id)
+    if advisory is None:
+        raise RetargetRefusedError(f"advisory {ghsa_id} does not exist in {home}")
+    if len(advisory.moved_to) > 1:
+        raise RetargetRefusedError(
+            f"advisory {ghsa_id} has more than one Moved to: line, so which copy holds it "
+            "is a human's decision"
+        )
+    resumable = advisory.state == "closed" and bool(advisory.moved_to)
+    if advisory.external or not (advisory.state == "draft" or resumable):
+        kind = "an external report" if advisory.external else f"in state {advisory.state}"
+        raise RetargetRefusedError(
+            f"advisory {ghsa_id} is {kind}; a move hands on a draft security record only, "
+            "and any other state is a human's decision"
+        )
+    return advisory
+
+
+def _reusable_copy(
+    ghsa_id: str,
+    to_home: str,
+    candidates: Sequence[Advisory],
+    moved_to: Sequence[tuple[str, str]],
+    wanted: Sequence[IssueRef],
+) -> Advisory | None:
+    """The copy an earlier run of this move made, or None; refuse any other match.
+
+    *candidates* are the advisories of *to_home* with a ``Moved from:`` line
+    naming *ghsa_id*. One is reused only when it is the only one, a
+    ``draft``, and not an external report: a private vulnerability report's
+    submitter writes its description, so a line there proves nothing. Any
+    other match refuses the move, naming each candidate. A copy must also
+    agree with the original's ``Moved to:`` line, when it has one, and
+    track nothing or exactly *wanted*.
+    """
+    if len(candidates) > 1 or any(c.external or c.state != "draft" for c in candidates):
+        names = ", ".join(
+            f"{c.ghsa_id} ({'an external report' if c.external else c.state})" for c in candidates
+        )
+        raise RetargetRefusedError(
+            f"advisory {ghsa_id}: {to_home} has advisories with a Moved from: {ghsa_id} "
+            f"line ({names}); a move reuses only one draft record it made, so it reuses "
+            "none of these and creates no copy. A human must check them"
+        )
+    copy = candidates[0] if candidates else None
+    if moved_to:
+        org, copy_id = moved_to[0]
+        if copy is None or (org, copy_id) != (to_home.split("/", 1)[0], copy.ghsa_id):
+            found = f"; {to_home} holds {copy.ghsa_id}" if copy else ""
+            raise RetargetRefusedError(
+                f"advisory {ghsa_id} has already moved to {org}/.github {copy_id}, which is "
+                f"not a copy of it in {to_home}{found}. A human must decide where it lives"
+            )
+    if copy is not None and copy.tracking and set(copy.tracking) != set(wanted):
+        raise RetargetRefusedError(
+            f"advisory {ghsa_id}: its copy {copy.ghsa_id} in {to_home} already tracks "
+            f"{_slugs(copy.tracking)}; retarget the copy in its own org instead"
+        )
+    return copy
+
+
+def _move(  # noqa: PLR0913 - retarget's inputs, passed on unchanged
+    home: str,
+    ghsa_id: str,
+    wanted: Sequence[IssueRef],
+    *,
+    source: IssueRef,
+    drop: Sequence[IssueRef],
+    renamed: Sequence[IssueRef],
+) -> tuple[str, ...]:
+    """Move advisory *ghsa_id* from *home* to the advisory home of *wanted*'s org.
+
+    GitHub cannot move an advisory, so the move copies it. Every check runs
+    before the first write, and each raises :class:`RetargetRefusedError`:
+
+    - the original must be a ``draft``, not an external report, with at most
+      one ``Moved to:`` line (a ``closed`` one carrying the line is a
+      finished move, re-run);
+    - the **source check** and **drop check** of :func:`retarget`, so a move
+      never closes an advisory that still tracks open work no ``--drop``
+      names; once the original's tracking lines are gone, *source* must be
+      tied to this move (:func:`_source_tied_to_move`);
+    - the copy to reuse (:func:`_reusable_copy`), and a severity the copy
+      can take when there is none.
+
+    Then, in order, each step only once the one before succeeded:
+
+    1. **Reuse** the copy an earlier run made, found by its ``Moved from:``
+       line; otherwise
+    2. **create** it in the fix org's home with the original's summary,
+       details (less its tracking lines) and severity plus
+       :func:`moved_from_line`, the affected repo being the first target's;
+       then mark every target with it and give it one tracking line each;
+    3. write :func:`moved_to_line` on the original, unmark every dropped
+       issue (*source* last), remove the original's tracking lines and set
+       it ``closed``.
+
+    Each org's calls run under :func:`github.target_org` of that org. A
+    re-run of the identical command finishes a move that failed partway,
+    and writes nothing once it is done. Returns the transfer notes, then
+    the original's ``Moved to:`` line.
+    """
+    org, to_org = home.split("/", 1)[0], wanted[0].owner
+    with github.target_org(org):
+        with _step(ghsa_id, "reading the advisories"):
+            advisories = list_advisories(home)
+        original = _movable(home, ghsa_id, advisories)
+        with _step(ghsa_id, "reading the advisory"):
+            summary, description, severity = _read_move_fields(home, ghsa_id)
+        previous = parse_tracking(description)
+        moved_to = parse_moved_to(description)
+        with _step(ghsa_id, "listing the security issues"):
+            listed = {issue.ref: issue for issue in security_issues(org)}
+        if moved_to and not previous:
+            with _step(ghsa_id, f"reading {source.slug}"):
+                tied = _source_tied_to_move(source, ghsa_id, wanted)
+            if not tied:
+                raise RetargetRefusedError(
+                    f"advisory {ghsa_id} has moved and tracks no issue, and --from "
+                    f"{source.slug} is not the source of a move to {_slugs(wanted)}"
+                )
+        else:
+            _check_source(ghsa_id, source, previous, wanted)
+        unmarks = _checked_drops(ghsa_id, source, previous, wanted, drop, renamed, listed)
+    with github.target_org(to_org):
+        to_home = advisory_home(to_org)
+        with _step(ghsa_id, f"listing the advisories in {to_home}"):
+            candidates = [a for a in list_advisories(to_home) if ghsa_id in a.moved_from]
+    copy = _reusable_copy(ghsa_id, to_home, candidates, moved_to, wanted)
+    if copy is None and severity not in SEVERITIES:
+        raise RetargetRefusedError(
+            f"advisory {ghsa_id} has no {', '.join(SEVERITIES)} severity for its copy "
+            "to take; set its severity first"
+        )
+    with github.target_org(to_org):
+        if copy is None:
+            with _step(ghsa_id, f"creating its copy in {to_home}"):
+                copy_id = create_advisory(
+                    to_home,
+                    summary=summary,
+                    details=_append_line(_without_tracking(description), moved_from_line(ghsa_id)),
+                    affected_repo=f"{wanted[0].owner}/{wanted[0].repo}",
+                    severity=str(severity),
+                )
+        else:
+            copy_id = copy.ghsa_id
+        _hand_to(to_home, copy_id, wanted)
+        with _step(copy_id, "writing the tracking lines"):
+            _summary, copy_text = read_text(to_home, copy_id)
+            _set_tracking(to_home, copy_id, copy_text, wanted)
+    line = moved_to_line(to_home, copy_id)
+    with github.target_org(org):
+        if not moved_to:
+            description = _before_tracking(description, line)
+            with _step(ghsa_id, "writing the Moved to: line"):
+                _write_description(home, ghsa_id, description)
+        notes = _unmark_all(ghsa_id, unmarks, wanted)
+        if previous:
+            with _step(ghsa_id, "removing the tracking lines"):
+                _write_description(home, ghsa_id, _without_tracking(description))
+        if original.state != "closed":
+            with _step(ghsa_id, "setting the state to closed"):
+                set_state(home, ghsa_id, "closed")
+    return (*notes, line)
 
 
 def tracked_issues(home: str, ghsa_id: str) -> tuple[IssueRef, ...]:
@@ -795,6 +1120,11 @@ def classify(advisories: Sequence[Advisory], issues: Sequence[SecurityIssue]) ->
       its lines naming an advisory that does not exist or does not track it is
       a broken line of its own.
 
+    - An advisory that is not an external report and carries one ``Moved
+      to:`` line is **moved** (a terminal state, whatever issues name it or
+      it tracks); one with more than one such line is **broken**. An external
+      report's description is its submitter's, so a line there moves nothing.
+
     An issue :func:`retarget` unmarked has no ``security`` label, so it is not
     among *issues* and is never reported.
     """
@@ -804,7 +1134,14 @@ def classify(advisories: Sequence[Advisory], issues: Sequence[SecurityIssue]) ->
     paired: list[Advisory] = []
     external: list[Advisory] = []
     broken: list[str] = []
+    moved: list[Advisory] = []
     for advisory in sorted(advisories, key=lambda a: a.ghsa_id):
+        if advisory.moved_to and not advisory.external:
+            if len(advisory.moved_to) == 1:
+                moved.append(advisory)
+            else:
+                broken.append(f"{advisory.ghsa_id}: more than one Moved to: line")
+            continue
         if advisory.ghsa_id not in named:
             if advisory.external:
                 external.append(advisory)
@@ -818,7 +1155,35 @@ def classify(advisories: Sequence[Advisory], issues: Sequence[SecurityIssue]) ->
             paired.append(advisory)
     for issue in sorted(issues, key=lambda i: i.ref.slug):
         broken += _issue_problems(issue, by_id)
-    return Classification(paired=paired, external=external, broken=broken)
+    return Classification(paired=paired, external=external, broken=broken, moved=moved)
+
+
+def moved_problems(moved: Sequence[Advisory]) -> list[str]:
+    """One broken line per moved advisory whose copy does not hold it.
+
+    The copy its ``Moved to:`` line names must exist in that org's advisory
+    home, carry a ``Moved from:`` line naming the original, and track at
+    least one issue (its own org's sync checks those links). Each home is
+    listed once, under :func:`github.target_org` of its org; a failed read
+    propagates, so the pass fails rather than vouch for a pair it never saw.
+    """
+    homes: dict[str, dict[str, Advisory]] = {}
+    problems: list[str] = []
+    for advisory in moved:
+        org, copy_id = advisory.moved_to[0]
+        if org not in homes:
+            with github.target_org(org):
+                listed = list_advisories(advisory_home(org))
+            homes[org] = {a.ghsa_id: a for a in listed}
+        copy = homes[org].get(copy_id)
+        where = f"{advisory.ghsa_id}: moved to {org}/.github {copy_id}"
+        if copy is None:
+            problems.append(f"{where}, which does not exist")
+        elif advisory.ghsa_id not in copy.moved_from:
+            problems.append(f"{where}, which has no Moved from: {advisory.ghsa_id} line")
+        elif not copy.tracking:
+            problems.append(f"{where}, which tracks no issue")
+    return problems
 
 
 # The states the sync keeps in step with the issues. Any other state (a
@@ -956,9 +1321,13 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
 
     Lists the advisories in the org's advisory home, syncs each paired
     advisory's ``draft``/``closed`` state to its issues (:func:`sync_states`),
-    and reports broken pairs and unpaired external reports. It needs
-    **Repository security advisories: read** on ``<org>/.github``, and with
-    *apply* also **write**. *prog* prefixes the failure line on stderr.
+    and reports broken pairs and unpaired external reports. A **moved**
+    advisory is never synced; its copy is checked in the org it moved to
+    (:func:`moved_problems`), and a copy that does not hold it is a broken
+    pair. It needs **Repository security advisories: read** on
+    ``<org>/.github`` (and on the ``.github`` of each org an advisory moved
+    to), and with *apply* also **write**. *prog* prefixes the failure line on
+    stderr.
 
     Its output names only GHSA IDs, issue refs and states, never advisory
     text: every advisory read it makes projects the text away, and
@@ -988,6 +1357,7 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
         home = advisory_home(org)
         result = classify(list_advisories(home), issues)
         guard = guard_check(result, issues)
+        broken = [*result.broken, *moved_problems(result.moved)]
         synced = (
             sync_states(home, result, issues, guard)
             if apply
@@ -1001,10 +1371,10 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
     verb = "synced" if apply else "would sync"
     print(
         f"Security records{mode}: {_count(synced, 'advisory state', 'advisory states')} {verb}, "
-        f"{_count(len(result.broken), 'broken pair', 'broken pairs')}, "
+        f"{_count(len(broken), 'broken pair', 'broken pairs')}, "
         f"{len(guard.held)} held, {_count(len(guard.errors), 'error', 'errors')}."
     )
-    for line in result.broken:
+    for line in broken:
         print(f"- broken: {line}")
     for ghsa_id, refs in guard.held:
         print(_held_line(ghsa_id, refs))
@@ -1014,7 +1384,7 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
         )
     for advisory in result.external:
         print(f"- unpaired external report (left untouched): {advisory.ghsa_id}")
-    return 1 if apply and (result.broken or guard.errors) else 0
+    return 1 if apply and (broken or guard.errors) else 0
 
 
 # --- close ------------------------------------------------------------------
@@ -1150,9 +1520,9 @@ def check_note(note: str) -> str:
     """*note* with its outer blank lines and every line's trailing spaces dropped.
 
     :class:`NoteError` when it is empty, or when any of its lines is an exact
-    ``Tracking issue:`` line: the note would then change what the record
-    tracks, which only :func:`retarget` may do. The message never quotes the
-    note.
+    ``Tracking issue:``, ``Moved from:`` or ``Moved to:`` line: the note
+    would then change what the record tracks or where it lives, which only
+    :func:`retarget` may do. The message never quotes the note.
     """
     text = "\n".join(line.rstrip() for line in note.splitlines()).strip("\n")
     if not text.strip():
@@ -1161,6 +1531,11 @@ def check_note(note: str) -> str:
         raise NoteError(
             "the note has a 'Tracking issue:' line, which would change what the record "
             "tracks; use retarget to move a record's tracking"
+        )
+    if _MOVED_FROM_RE.search(text) or _MOVED_TO_RE.search(text):
+        raise NoteError(
+            "the note has a 'Moved from:' or 'Moved to:' line, which would change where "
+            "the record lives; use retarget to move a record to another org"
         )
     return text
 
@@ -1172,13 +1547,7 @@ def with_note(description: str, note: str, day: date) -> str:
     so :func:`retarget`, :func:`list_advisories` and the sync read them as
     before.
     """
-    tracking = parse_tracking(description)
-    kept = re.sub(r"\n{3,}", "\n\n", _TRACKING_RE.sub("", description)).rstrip()
-    block = f"{note_header(day)}\n{note}"
-    text = f"{kept}\n\n{block}" if kept else block
-    if tracking:
-        text += "\n\n" + "\n".join(tracking_line(ref) for ref in tracking)
-    return text
+    return _before_tracking(description, f"{note_header(day)}\n{note}")
 
 
 def _ends_with_note(description: str, note: str, day: date) -> bool:
@@ -1187,7 +1556,7 @@ def _ends_with_note(description: str, note: str, day: date) -> bool:
     Only the last note counts, and only as a whole block, so a new note that
     is merely a prefix of an earlier one, or repeats an older one, is added.
     """
-    kept = re.sub(r"\n{3,}", "\n\n", _TRACKING_RE.sub("", description)).rstrip()
+    kept = _without_tracking(description)
     block = f"{note_header(day)}\n{note}"
     return kept == block or kept.endswith(f"\n\n{block}")
 

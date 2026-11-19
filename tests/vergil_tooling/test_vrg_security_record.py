@@ -690,7 +690,7 @@ def test_retarget_cli_failure_exits_nonzero(
         (["retarget", GHSA, "--from", EXISTING.slug, "--to", "#1"], "--to must be owner/repo#N"),
         (
             ["retarget", GHSA, "--from", EXISTING.slug, "--to", "org/a#1", "--to", "other/b#2"],
-            "cross-org",
+            "the --to issues span orgs (org, other)",
         ),
     ],
 )
@@ -728,13 +728,48 @@ def test_cli_retarget_refusal_exits_nonzero(
     assert "is not an issue it tracks" in capsys.readouterr().err
 
 
+_FIX = IssueRef("fix", ".github", 20)
+_FIX2 = IssueRef("fix", "tool", 21)
+_COPY = "GHSA-c0py-2345-wxyz"
+
+
+def test_cli_retarget_to_another_org_moves_the_advisory(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    note = f"{EXISTING.slug} was transferred to org/tool#56: followed the transfer"
+    env.retarget.return_value = (note, security_records.moved_to_line("fix/.github", _COPY))
+    argv = ["retarget", GHSA, "--from", EXISTING.slug, "--to", _FIX.slug, "--to", _FIX2.slug]
+    with patch(f"{_GH}.target_org", wraps=github.target_org) as target_org:
+        assert main(argv) == 0
+    # The CLI enters the advisory's own org; the library enters the fix org.
+    target_org.assert_called_once_with("org")
+    env.advisory_home.assert_called_once_with("org")
+    env.retarget.assert_called_once_with(HOME, GHSA, [_FIX, _FIX2], source=EXISTING, drop=[])
+    assert capsys.readouterr().out == (
+        f"{GHSA}: {note}.\n"
+        f"Moved {GHSA} to fix/.github as {_COPY}, tracked by {_FIX.slug}, {_FIX2.slug}; "
+        f"{GHSA} is closed as moved.\n"
+    )
+
+
+def test_cli_retarget_targets_spanning_orgs_are_refused(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    argv = ["retarget", GHSA, "--from", EXISTING.slug, "--to", ISSUE.slug, "--to", _FIX.slug]
+    assert main(argv) == 1
+    err = capsys.readouterr().err
+    assert "duplicate the advisory into each org" in err
+    assert "break the finding up into separate advisories" in err
+    env.retarget.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("argv", "message"),
     [
         (["--from", "#1", "--to", "org/a#1"], "--from must be owner/repo#N"),
         (["--from", "org/a#2", "--to", "org/a#1", "--drop", "#3"], "--drop must be owner/repo#N"),
-        (["--from", "other/b#2", "--to", "org/a#1"], "cross-org"),
         (["--from", "org/a#2", "--to", "org/a#1", "--drop", "other/b#3"], "cross-org"),
+        (["--from", "org/a#2", "--to", "fix/a#1", "--drop", "fix/b#3"], "cross-org"),
     ],
 )
 def test_cli_retarget_refuses_a_bad_source_or_drop(

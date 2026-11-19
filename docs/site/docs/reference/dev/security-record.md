@@ -47,7 +47,9 @@ advisory.
 - `--repo` always names the **affected** repo, never where anything is
   created.
 - The advisory is always created in `<org>/.github`, where `<org>` is the
-  owner of `--repo` (or of the `--from`, `--to` and `--drop` refs for `retarget`). The command
+  owner of `--repo` (or of the `--from` and `--drop` refs for `retarget`, whose
+  `--to` refs in another org move it there: see
+  [The cross-org move](#the-cross-org-move)). The command
   checks that `<org>/.github` is public and otherwise refuses with:
 
   ```text
@@ -195,8 +197,10 @@ vrg-security-record retarget GHSA-xxxx-xxxx-xxxx --from 'vergil-project/.github#
 | `--to REF` | Required, repeatable. The complete set of issues the advisory tracks afterwards. |
 | `--drop REF` | Repeatable. An open tracked issue deliberately left untracked: the human's decision. |
 
-Every ref must be a full `owner/repo#N` ref, and all of them must be
-in one org. The refs are single-quoted so the command pastes into any
+Every ref must be a full `owner/repo#N` ref. `--from` and every
+`--drop` must be in one org, the advisory's, and every `--to` in one org;
+when that is another org, the retarget is a
+[cross-org move](#the-cross-org-move). The refs are single-quoted so the command pastes into any
 shell: unquoted, the `#` is a glob operator in zsh with `EXTENDED_GLOB`
 set. The `retarget` commands that `vrg-intake-route` prints for an
 advisory it could not retarget are quoted the same way.
@@ -286,6 +290,71 @@ because the old number now leads to the moved issue itself. Its recovery
 commands name that old number as `--from`; without `renamed=` the old
 number is the source, and its unmark finds the issue already at a target.
 
+### The cross-org move
+
+When every `--to` is in an org other than the advisory's, `retarget`
+moves the advisory to that org's `.github` (epic
+vergil-project/.github#1417). GitHub cannot move an advisory, so the move
+copies it. A `--to` set spanning orgs is refused before any read:
+
+```text
+vrg-security-record: advisory <GHSA-id>: the --to issues span orgs (<org>, <org>), and every fix of one advisory must be in one org. Either duplicate the advisory into each org, each copy tracking that org's own fix tasks, or break the finding up into separate advisories
+```
+
+Every check runs before the first write, and each refusal exits 1:
+
+- The original must exist, be a `draft` and not an external report, with
+  at most one `Moved to:` line. A `closed` original carrying the line is
+  a finished move, re-run.
+- The source check and the open-issue check, as above. Once a re-run
+  finds the original's tracking lines already removed, `--from` must
+  carry the `Security record moved to <refs>` comment for exactly the
+  `--to` set. The open-issue refusal for a move prints the same command,
+  since a move closes the original and cannot keep tracking an open
+  issue in its own org:
+
+  ```text
+  vrg-security-record: advisory <GHSA-id>: this would stop tracking the open issue <ref>; a move to <org>/.github closes this advisory, so it cannot keep tracking an issue in <org>. Close or retarget that work first, then run: vrg-security-record retarget <GHSA-id> --from '<ref>' --to '<ref>' …. Leaving an open issue untracked is the human's decision
+  ```
+
+- The fix org's `.github` must be public. Its advisories are listed, and
+  each one with a `Moved from: <GHSA-id>` line naming this advisory alone
+  on its line is a candidate. One candidate is reused only when it is a
+  `draft` and not an external report; more than one candidate, or any
+  that is an external report or in another state, refuses the move,
+  naming each, and nothing is created. A reused copy must also be the one
+  the original's `Moved to:` line names, when it has one, and track no
+  issue or exactly the `--to` set.
+- With no copy to reuse, the original's severity must be `critical`,
+  `high`, `medium` or `low`.
+
+Then, each step only once the one before succeeded, every fix-org call
+under that org's token and every other under the advisory's:
+
+1. **Create** the copy, unless one is reused: a draft in the fix org's
+   `.github` with the original's summary, its details less the
+   `Tracking issue:` lines plus `Moved from: <GHSA-id>`, its severity, and
+   the first `--to`'s repo as the affected repo. The create is sent
+   exactly once.
+2. **Hand it on**: mark every `--to` with the copy's
+   `Security advisory: <fix-org>/.github <new GHSA-id>` line and give the
+   copy one `Tracking issue:` line per `--to`.
+3. **Close the original**: write `Moved to: <fix-org>/.github <new
+   GHSA-id>` on it (its tracking lines kept last), unmark every dropped
+   issue, `--from` last, remove its tracking lines, and set it `closed`.
+
+A failure at any step exits 1 naming the advisory and the step; the
+identical command finishes the move, reusing the copy by its
+`Moved from:` line, and writes nothing once the move is done. On success
+it prints any transfer notes, then
+`Moved <GHSA-id> to <fix-org>/.github as <new GHSA-id>, tracked by <refs>; <GHSA-id> is closed as moved.`
+
+The library's `retarget` returns the transfer notes followed by the
+original's `Moved to:` line; `fix_org` is the one-org check, and
+`moved_from_line`, `moved_to_line`, `parse_moved_from` and
+`parse_moved_to` build and read the two lines. `note` refuses a note
+holding either line.
+
 ## sync
 
 ```bash
@@ -301,6 +370,16 @@ advisory between `draft` and `closed`: it never changes a `published`,
 `withdrawn` or `triage` advisory, or an unpaired external report, which
 it lists as `unpaired external report (left untouched)`. Broken pairs are
 listed as `- broken: <GHSA-id or issue ref>: <problem>`, never repaired.
+
+**Moved advisories.** An advisory that is not an external report and
+carries one `Moved to: <org>/.github <GHSA-id>` line is moved, a terminal
+state: it is never synced and never broken for tracking nothing. The pass
+lists each org's `.github` it names once, under that org's token, and
+reports `- broken: <GHSA-id>: moved to <org>/.github <GHSA-id>, which
+does not exist` (or `which has no Moved from: <GHSA-id> line`, or `which
+tracks no issue`) for a copy that does not hold it. An advisory with more
+than one `Moved to:` line is broken. A failed read of the other org fails
+the pass.
 
 **The close guard.** A draft advisory whose tracked issues are all closed
 stays `draft` when any of them is a queue item (its native parent is a

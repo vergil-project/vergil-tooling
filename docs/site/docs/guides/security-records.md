@@ -63,7 +63,9 @@ security record is the durable, private home for them.
 
 - **The advisory** is always in **`<org>/.github`**, whichever repo the
   finding is about. The affected repo is recorded as the advisory's
-  package name (ecosystem `other`), so it stays queryable.
+  package name (ecosystem `other`), so it stays queryable. When its fix
+  lands in another org, the advisory moves to that org's `.github` (see
+  [Moving a record to another org](#moving-a-record-to-another-org)).
 - **The issue** is created in the affected repo's **queue home**, the same
   place `vrg-intake-create` files an item, and linked under its intake
   epic:
@@ -97,7 +99,10 @@ that collected several). An issue keeps the `security` label while **any**
 of its advisory lines remains; the label goes only with the last one.
 
 The GHSA ID reveals only that a record exists. Don't edit these lines by
-hand; `vrg-security-record` writes and moves them.
+hand; `vrg-security-record` writes and moves them. The same holds for the
+two lines a move to another org writes, `Moved from: <GHSA-id>` on the
+copy and `Moved to: <org>/.github <GHSA-id>` on the original (see
+[Moving a record to another org](#moving-a-record-to-another-org)).
 
 ### The labels
 
@@ -231,7 +236,11 @@ and issue ref only. A pair is broken when:
 - an advisory has no `Tracking issue:` lines, or tracks an issue that is
   not a `security`-labelled issue, or one that does not point back;
 - an advisory is not named by any `security` issue and is not an
-  external report.
+  external report;
+- a moved advisory's copy is missing, does not name it in a `Moved from:`
+  line, or tracks no issue, or an advisory has more than one `Moved to:`
+  line (see
+  [Moving a record to another org](#moving-a-record-to-another-org)).
 
 `sync` reports a broken pair and does not repair it; a human decides
 what to do. Broken pairs make `sync` exit 1, after it has synced the
@@ -379,6 +388,71 @@ nothing. `--from` is unmarked last, after every other dropped issue.
 before it creates, marks or links any issue, an advisory that already
 tracks another issue. Move a paired advisory with `retarget`.
 
+### Moving a record to another org
+
+Advisories are homed and synced per org. When a finding's fix tasks land
+in another org (a task filed under a proxy epic there), `retarget` moves
+the advisory itself to that org's `.github`. The command is the same
+retarget, with `--to` naming the fix tasks in the other org:
+
+```bash
+vrg-security-record retarget GHSA-xxxx-xxxx-xxxx \
+  --from 'vergil-project/.github#500' \
+  --to 'other-org/some-repo#12'
+```
+
+Run it from a repo in the advisory's org, with a token for both orgs.
+GitHub cannot move an advisory, so a move is, in order:
+
+1. look in the fix org's `.github` for the copy an earlier run of the
+   same move made, by its `Moved from: <original GHSA-id>` line, and reuse
+   it;
+2. otherwise create the copy there, with the original's summary, details
+   and severity plus that `Moved from:` line (its affected repo is the
+   first fix task's repo), then mark the fix tasks with
+   it and give it their tracking lines;
+3. write `Moved to: <org>/.github <new GHSA-id>` on the original, unmark
+   `--from` (and every issue `--drop` names), remove the original's
+   tracking lines and close it.
+
+It prints `Moved <GHSA-id> to <org>/.github as <new GHSA-id>, tracked by
+<refs>; <GHSA-id> is closed as moved.`
+
+Every check runs before the first write:
+
+- **All of an advisory's fixes are in one org.** A `--to` set spanning
+  orgs is refused. The refusal names the two ways out: duplicate the
+  advisory into each org, each copy tracking that org's own fix tasks, or
+  break the finding up into separate advisories.
+- **The retarget rules hold.** The source check and the open-issue check
+  run as for any retarget. A move closes the original, so it can never
+  keep tracking an open issue in its own org: the refusal says so and
+  prints the same command, to re-run once that work is closed or
+  retargeted. Leaving it untracked with `--drop` is the human's decision.
+- **Only the move's own copy is reused.** A copy is reused only when it
+  is a draft, is not an external report, and carries the `Moved from:`
+  line naming exactly this advisory, alone on its line. A private
+  vulnerability report's text is its submitter's, so a line there proves
+  nothing: a matching report, a copy in any other state, or more than one
+  match refuses the move and names each one, and nothing is created.
+- Only a draft advisory moves. It also refuses a copy that already tracks
+  other issues, an original whose `Moved to:` line names an advisory that
+  is not its copy, and an original with no `critical`, `high`, `medium` or
+  `low` severity for the copy to take.
+
+A move that fails partway is finished by running the identical command
+again: the `Moved from:` line, written when the copy is created, lets the
+re-run find it instead of creating a second copy. A re-run after a full
+success writes nothing.
+
+**Moved is a terminal state.** `sync` recognises an advisory carrying a
+`Moved to:` line as moved: it is never synced and never reported as
+broken for tracking nothing. Instead `sync` checks that the copy it names
+exists, carries a `Moved from:` line naming it, and tracks at least one
+issue, and reports the pair as broken if not. That check reads the other
+org's `.github`, so `sync` needs advisories read access there too. The
+copy itself is an ordinary record in its own org, synced there.
+
 ## Security items in planning
 
 A security item can go through planning like any other. Planning
@@ -408,6 +482,9 @@ of them until the plan exists.
   them has closed as completed, the next `vrg-security-record sync`
   closes it (see
   [Managing a record through its issue](#managing-a-record-through-its-issue)).
+  When an advisory's fix tasks are all in another org, the same retarget
+  moves it there; when they span orgs it is refused (see
+  [Moving a record to another org](#moving-a-record-to-another-org)).
 - **A finding the design itself resolves.** A finding that the revised
   design resolves on its own, with no task implementing it (for example,
   the spec now removes the mechanism it was about), is retargeted to the
@@ -603,7 +680,10 @@ Every user App (`<username>-vergil-user`) needs **Repository security
 advisories: Read and write**, for `vrg-security-record` (`sync`, `close` and
 `note` included) and the hooks in `vrg-intake-route` and `vrg-queue`. A human
 running `vrg-security-record` in human mode needs the same access through
-their own `gh` login. `sync --dry-run` needs only Read.
+their own `gh` login. `sync --dry-run` needs only Read. A move to another
+org (`retarget` with every `--to` there) needs Read and write in both
+orgs' `.github`, and `sync` of an org with a moved advisory also needs Read
+in the org it moved to.
 
 The scheduled sweep (`vrg-epic-audit --close`, run by each org's
 automation App, `<org>-automation`) makes no security-advisory call, so

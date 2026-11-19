@@ -18,7 +18,11 @@ neutral ``security``-labelled intake issue carrying only a pointer to it.
 - ``show`` prints one pair with its details, to the terminal only.
 - ``retarget`` moves an advisory's tracking from ``--from``, an issue it
   tracks, to new issues. It refuses an untracked source, and stopping
-  tracking an open issue that no ``--drop`` names, before any write.
+  tracking an open issue that no ``--drop`` names, before any write. When
+  every ``--to`` is in another org it moves the advisory to that org's
+  ``.github`` (a copy with ``Moved from:``; the original closed with
+  ``Moved to:``); ``--to`` issues spanning orgs are refused (epic
+  vergil-project/.github#1417).
 - ``close`` closes a draft advisory whose issues are all closed, with a
   required ``--reason``: it first posts ``Security record <GHSA> closed:
   <reason>`` on every issue the record tracks, the audit trail
@@ -447,8 +451,11 @@ def _retarget(args: argparse.Namespace) -> int:
     targets = [_full_ref(text, "--to") for text in args.to]
     drop = [_full_ref(text, "--drop") for text in args.drop or ()]
     try:
-        org = epics.single_target_org(source, *targets, *drop)
-    except ValueError as exc:
+        # The advisory lives in the org of --from and every issue it drops;
+        # the --to issues may all be in one other org, which moves it there.
+        org = epics.single_target_org(source, *drop)
+        to_org = security_records.fix_org(ghsa_id, targets)
+    except (ValueError, security_records.RetargetRefusedError) as exc:
         raise _RefusedError(str(exc)) from None
     with github.target_org(org):
         home = security_records.advisory_home(org)
@@ -457,9 +464,21 @@ def _retarget(args: argparse.Namespace) -> int:
         except security_records.RetargetError as exc:
             print(f"{_PROG}: {_reason(exc)}", file=sys.stderr)
             return 1
-    for note in notes:
+    refs = ", ".join(ref.slug for ref in targets)
+    if to_org == org:
+        for note in notes:
+            print(f"{ghsa_id}: {note}.")
+        print(f"Retargeted {ghsa_id} to {refs}.")
+        return 0
+    # A move's last note is the original's Moved to: line, naming the copy.
+    *transfers, moved = notes
+    (_copy_org, copy_id), *_rest = security_records.parse_moved_to(moved)
+    for note in transfers:
         print(f"{ghsa_id}: {note}.")
-    print(f"Retargeted {ghsa_id} to {', '.join(ref.slug for ref in targets)}.")
+    print(
+        f"Moved {ghsa_id} to {to_org}/.github as {copy_id}, tracked by {refs}; "
+        f"{ghsa_id} is closed as moved."
+    )
     return 0
 
 
@@ -565,7 +584,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "and stopping tracking an open issue (other than --from) that no --drop "
             "names; each refusal prints the command that would succeed. A re-run with "
             "the same arguments finishes an interrupted retarget. Leaving an open "
-            "issue untracked with --drop is the human's decision."
+            "issue untracked with --drop is the human's decision. Every --to must be "
+            "in one org; when that is not the advisory's org, the advisory moves "
+            "there: a copy with a 'Moved from:' line is created in that org's .github "
+            "and tracks the --to set, and the original gets a 'Moved to:' line and is "
+            "closed."
         ),
     )
     retarget.add_argument("ghsa", help="The advisory's GHSA ID")
