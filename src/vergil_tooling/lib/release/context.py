@@ -58,13 +58,19 @@ class ReleaseContext:
     # stage has not succeeded.
     package_index_urls: tuple[str, ...] = ()
 
+    # What the consumer-refresh stage leaves for the human to read below the
+    # summary: the commands to run by hand (--no-install), the notice that
+    # none is configured, or a failed run's full output. None after a run
+    # that succeeded.
     consumer_refresh_message: str | None = None
 
-    # The version-expanded consumer-refresh command block, without the
-    # display wrapper, so ``vrg-release`` (unless ``--no-install``) can execute
-    # exactly what the message shows (issue #1643). None when no template is
-    # configured.
+    # The version-expanded consumer-refresh command block the stage runs
+    # (issue #1643). None when no template is configured.
     consumer_refresh_commands: str | None = None
+
+    # False with --no-install: the consumer-refresh stage shows the commands
+    # instead of running them.
+    install: bool = True
 
     # Names of fail-defer stages that errored. close-finalize leaves the
     # tracking issue open (and skips cleanup) when any are pending, so the
@@ -73,8 +79,8 @@ class ReleaseContext:
 
     # Families of CD publish jobs that did not succeed (e.g. "docker-publish",
     # "docs"). The release itself is valid (tag + Release published); these are
-    # re-publishable. Surfaced by the publish-status stage (exit 1), the open
-    # tracking issue, and the consumer-refresh hold-warning. Separate from
+    # re-publishable. Surfaced by the publish-status stage (exit 1) and the
+    # open tracking issue; the consumer refresh never holds on them. Separate from
     # deferred_failures, which the _tracked wrapper fills with failed STAGE
     # names (#1853).
     deferred_publish_failures: list[str] = field(default_factory=list)

@@ -405,8 +405,9 @@ posted again.
 ### vrg-release
 
 Run the full release workflow from `develop` to `main`: tracking issue,
-changelog, release PR and merge, CD confirmation, back-merge and version
-bump, rolling-tag promotion, cleanup, consumer refresh, and finally the
+changelog, release PR and merge, CD confirmation, consumer refresh (as
+soon as the release is tagged), back-merge and version bump, rolling-tag
+promotion, cleanup, and finally the
 `update-deps` stage, which runs the dependency update on the new
 `develop` version. On a fresh start, preflight refuses while an open PR
 carries the `dependency-update` label, after first closing any whose fix

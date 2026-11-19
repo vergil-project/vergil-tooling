@@ -530,8 +530,8 @@ def wait_for_index(
     publish-index run that failed with no newer run to follow (#4121), a
     followed run still not completed after ``follow_timeout``, or an error
     while polling) records ``package-index`` in
-    ``ctx.deferred_publish_failures`` before propagating, so the consumer
-    refresh holds.
+    ``ctx.deferred_publish_failures`` before propagating, so ``promote``
+    holds ``vX.Y`` back and the run ends on the deferral.
     """
     try:
         _wait(

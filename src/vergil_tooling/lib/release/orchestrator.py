@@ -61,6 +61,7 @@ class ReleaseState:
     resume_issue_number: int | None = None
     without_deps: bool = False
     allow_pending_deps: bool = False
+    install: bool = True
 
 
 def _audit_stage(state: ReleaseState) -> None:
@@ -78,6 +79,7 @@ def _preflight_stage(state: ReleaseState) -> None:
     )
     ctx.promote = state.promote
     ctx.without_deps = state.without_deps
+    ctx.install = state.install
     # The read-only stages before prepare ran before the issue existed, so the
     # checklist the issue is created with has them ticked already (#4367).
     names = _stage_names()
@@ -156,6 +158,15 @@ def build_stages() -> list[Stage]:
         Stage("prepare", _tracked("prepare", prepare), mode="fail_fast"),
         Stage("merge-release", _tracked("merge-release", merge_release), mode="fail_fast"),
         Stage("confirm-main", _tracked("confirm-main", confirm_main), mode="fail_fast"),
+        # As soon as confirm-main has seen the tag: the refresh needs only the
+        # tag, so no later stage (package-index, promote, ...) can hold it, and
+        # a failed follow-on stage still leaves the consumers on the release
+        # (epic vergil-project/.github#1350, spec §4.6).
+        Stage(
+            "consumer-refresh",
+            _tracked("consumer-refresh", consumer_refresh),
+            mode="fail_defer",
+        ),
         Stage(
             "back-merge-bump",
             _tracked("back-merge-bump", back_merge_and_bump),
@@ -169,7 +180,7 @@ def build_stages() -> list[Stage]:
         ),
         # Waits for the published package index before close-finalize, so a
         # miss (a deferred publish) leaves the tracking issue open with the
-        # deferral comment (#3557); the consumer refresh then holds on it.
+        # deferral comment (#3557).
         Stage("package-index", _tracked("package-index", wait_for_index), mode="fail_defer"),
         # After package-index, so vX.Y moves only once the index has the
         # release and git and packaged installs of vX.Y agree; a deferred
@@ -178,11 +189,6 @@ def build_stages() -> list[Stage]:
         Stage(
             "close-finalize",
             _tracked("close-finalize", close_and_finalize),
-            mode="fail_defer",
-        ),
-        Stage(
-            "consumer-refresh",
-            _tracked("consumer-refresh", consumer_refresh),
             mode="fail_defer",
         ),
         # The first change on the new develop version, once the release is
@@ -442,7 +448,12 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
         else:
             lines.append("No [package] block; no package index to wait for.")
     elif phase == "consumer-refresh":
-        lines.append("Consumer refresh instructions displayed.")
+        if ctx.consumer_refresh_commands is None:
+            lines.append("No [publish].consumer-refresh is configured; nothing to run.")
+        elif not ctx.install:
+            lines.append("Consumer refresh commands shown, not run (--no-install).")
+        else:
+            lines.append(f"Consumer refresh commands for v{ctx.version} ran.")
     elif phase == "update-deps":
         if ctx.without_deps:
             lines.append("Dependency update skipped (--without-deps).")

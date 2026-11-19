@@ -1,145 +1,197 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from vergil_tooling.lib.release.context import ReleaseContext
+import pytest
+
+from vergil_tooling.lib import progress
+from vergil_tooling.lib.progress import Stage
+from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.handoff import consumer_refresh, run_consumer_refresh
 
 if TYPE_CHECKING:
-    import pytest
+    from collections.abc import Iterator
+    from unittest.mock import MagicMock
 
 _MOD = "vergil_tooling.lib.release.handoff"
 
 
-def _ctx() -> ReleaseContext:
+def _ctx(tmp_path: Path | None = None) -> ReleaseContext:
     return ReleaseContext(
         repo="owner/repo",
         version="2.1.0",
-        repo_root=Path("/tmp/repo"),  # noqa: S108
+        repo_root=tmp_path or Path("/tmp/repo"),  # noqa: S108
         version_override=None,
     )
 
 
-def test_consumer_refresh_templates_version(capsys: pytest.CaptureFixture[str]) -> None:
-    ctx = _ctx()
+@pytest.fixture
+def template() -> Iterator[MagicMock]:
+    """Patch read_config; set ``.return_value.publish.consumer_refresh``."""
     with patch(_MOD + ".config.read_config") as mock_config:
-        mock_config.return_value.publish.consumer_refresh = "uv tool install pkg@v<VERSION>"
-        consumer_refresh(ctx)
-    captured = capsys.readouterr()
-    assert "uv tool install pkg@v2.1.0" in captured.out
+        yield mock_config
 
 
-def test_consumer_refresh_none(capsys: pytest.CaptureFixture[str]) -> None:
+def _set(mock_config: MagicMock, value: str | None) -> None:
+    mock_config.return_value.publish.consumer_refresh = value
+
+
+# -- the commands run, version-expanded (issues #1643, #1184) ---------------------
+
+
+def test_consumer_refresh_runs_the_expanded_commands(template: MagicMock) -> None:
+    _set(template, "uv tool install pkg@v<VERSION>\nvrg-vm update --all")
     ctx = _ctx()
-    with patch(_MOD + ".config.read_config") as mock_config:
-        mock_config.return_value.publish.consumer_refresh = None
+    with patch(_MOD + ".run_consumer_refresh", return_value=(0, "")) as m_run:
         consumer_refresh(ctx)
-    captured = capsys.readouterr()
-    assert "no consumer-refresh" in captured.out.lower()
-
-
-def test_consumer_refresh_stores_message_on_ctx() -> None:
-    ctx = _ctx()
-    with patch(_MOD + ".config.read_config") as mock_config:
-        mock_config.return_value.publish.consumer_refresh = "uv tool install pkg@v<VERSION>"
-        consumer_refresh(ctx)
-    assert ctx.consumer_refresh_message is not None
-    assert "Consumer refresh commands for v2.1.0:" in ctx.consumer_refresh_message
-    assert "uv tool install pkg@v2.1.0" in ctx.consumer_refresh_message
-
-
-def test_consumer_refresh_none_stores_notice_on_ctx() -> None:
-    ctx = _ctx()
-    with patch(_MOD + ".config.read_config") as mock_config:
-        mock_config.return_value.publish.consumer_refresh = None
-        consumer_refresh(ctx)
-    assert ctx.consumer_refresh_message is not None
-    assert "no consumer-refresh" in ctx.consumer_refresh_message.lower()
-
-
-# -- consumer_refresh stores the raw command block for --install (issue #1643) --
-
-
-def test_consumer_refresh_stores_expanded_commands_on_ctx() -> None:
-    ctx = _ctx()
-    template = "uv tool install pkg@v<VERSION>\nvrg-vm update --all"
-    with patch(_MOD + ".config.read_config") as mock_config:
-        mock_config.return_value.publish.consumer_refresh = template
-        consumer_refresh(ctx)
-    # The version macro is expanded and the display wrapper is stripped, so
-    # --install runs exactly the command lines.
+    m_run.assert_called_once_with(
+        "uv tool install pkg@v2.1.0\nvrg-vm update --all", cwd=ctx.repo_root
+    )
     assert ctx.consumer_refresh_commands == "uv tool install pkg@v2.1.0\nvrg-vm update --all"
 
 
-def test_consumer_refresh_none_stores_no_commands() -> None:
-    ctx = _ctx()
-    with patch(_MOD + ".config.read_config") as mock_config:
-        mock_config.return_value.publish.consumer_refresh = None
-        consumer_refresh(ctx)
-    assert ctx.consumer_refresh_commands is None
-
-
-# -- run_consumer_refresh: execute the command block fail-fast (issue #1643) ----
-
-
-def test_run_consumer_refresh_executes_via_bash_failfast() -> None:
-    with patch(_MOD + ".subprocess.run") as mock_run:
-        mock_run.return_value.returncode = 0
-        rc = run_consumer_refresh("uv tool install pkg\nvrg-vm update --all", "2.1.0")
-    assert rc == 0
-    cmd = mock_run.call_args.args[0]
-    assert cmd[0] == "bash"
-    assert cmd[1] == "-c"
-    # fail-fast wrapper, then the verbatim command block.
-    assert cmd[2].startswith("set -eo pipefail\n")
-    assert "uv tool install pkg" in cmd[2]
-    assert "vrg-vm update --all" in cmd[2]
-
-
-def test_run_consumer_refresh_returns_failure_code(
-    capsys: pytest.CaptureFixture[str],
+def test_consumer_refresh_success_leaves_nothing_to_read(
+    template: MagicMock, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    with patch(_MOD + ".subprocess.run") as mock_run:
-        mock_run.return_value.returncode = 3
-        rc = run_consumer_refresh("false", "2.1.0")
-    assert rc == 3
-    err = capsys.readouterr().err
-    assert "install commands failed" in err
-    # The release itself is not implicated by a failed local refresh.
-    assert "release itself completed" in err
-
-
-def test_run_consumer_refresh_header_names_version(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    with patch(_MOD + ".subprocess.run") as mock_run:
-        mock_run.return_value.returncode = 0
-        run_consumer_refresh("uv tool install pkg", "2.1.44")
-    out = capsys.readouterr().out
-    assert "Installing: running consumer-refresh commands for v2.1.44:" in out
-
-
-# -- consumer_refresh holds when publish is deferred (issue #1853) --
-
-
-def test_consumer_refresh_holds_when_publish_deferred() -> None:
+    _set(template, "uv tool install pkg@v<VERSION>")
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["docker-publish"]
-    consumer_refresh(ctx)  # must not read config / must not raise
-    assert ctx.consumer_refresh_commands is None
-    assert "held" in (ctx.consumer_refresh_message or "").lower()
-    assert "2.1.0" in (ctx.consumer_refresh_message or "")  # version named
-    assert "re-run the CD publish" in (ctx.consumer_refresh_message or "")
-
-
-def test_consumer_refresh_hold_gives_per_kind_advice_for_an_index_deferral() -> None:
-    ctx = _ctx()
-    ctx.deferred_publish_failures = ["package-index"]
-    with patch(_MOD + ".publish_deferred_remedy", return_value="re-run publish-index") as remedy:
+    with patch(_MOD + ".run_consumer_refresh", return_value=(0, "Installed 40 packages\n")):
         consumer_refresh(ctx)
-    remedy.assert_called_once_with(ctx, ["package-index"])
+    assert ctx.consumer_refresh_message is None
+    assert capsys.readouterr().out == ""
+
+
+def test_consumer_refresh_failure_raises_and_keeps_full_output(template: MagicMock) -> None:
+    _set(template, "uv tool install pkg@v<VERSION>")
+    ctx = _ctx()
+    output = "Resolving...\nerror: no such tag v2.1.0\n"
+    with (
+        patch(_MOD + ".run_consumer_refresh", return_value=(2, output)),
+        pytest.raises(ReleaseError) as info,
+    ):
+        consumer_refresh(ctx)
+    assert info.value.phase == "consumer-refresh"
+    assert "exit 2" in str(info.value)
+    # The local install log never rides on the error, which is posted on the
+    # public tracking issue.
+    assert info.value.detail is None
+    assert "no such tag" not in str(info.value)
     message = ctx.consumer_refresh_message or ""
-    assert "re-run publish-index" in message
-    assert "CD publish" not in message
+    assert "failed (exit 2)" in message
+    assert "uv tool install pkg@v2.1.0" in message
+    assert "Resolving...\nerror: no such tag v2.1.0" in message
+
+
+def test_consumer_refresh_no_install_shows_the_commands_without_running(
+    template: MagicMock,
+) -> None:
+    _set(template, "uv tool install pkg@v<VERSION>")
+    ctx = _ctx()
+    ctx.install = False
+    with patch(_MOD + ".run_consumer_refresh") as m_run:
+        consumer_refresh(ctx)
+    m_run.assert_not_called()
+    message = ctx.consumer_refresh_message or ""
+    assert "Consumer refresh commands for v2.1.0" in message
+    assert "--no-install" in message
+    assert "uv tool install pkg@v2.1.0" in message
+
+
+def test_consumer_refresh_none_configured_is_not_an_error(template: MagicMock) -> None:
+    _set(template, None)
+    ctx = _ctx()
+    with patch(_MOD + ".run_consumer_refresh") as m_run:
+        consumer_refresh(ctx)
+    m_run.assert_not_called()
+    assert ctx.consumer_refresh_commands is None
+    assert "no consumer-refresh" in (ctx.consumer_refresh_message or "").lower()
+
+
+def test_consumer_refresh_not_held_by_a_deferred_publish(template: MagicMock) -> None:
+    """The refresh needs only the tag (spec §4.6): a deferred CD publish
+    recorded by confirm-main does not hold it."""
+    _set(template, "uv tool install pkg@v<VERSION>")
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["docker-publish", "package-index"]
+    with patch(_MOD + ".run_consumer_refresh", return_value=(0, "")) as m_run:
+        consumer_refresh(ctx)
+    m_run.assert_called_once()
+    assert ctx.consumer_refresh_message is None
+
+
+# -- through the pipeline: one check line, or the full output and a failure ------
+
+
+def _run_stage(ctx: ReleaseContext, tmp_path: Path) -> int:
+    args = argparse.Namespace(output_format="plain", output_window=None)
+    return progress.run_pipeline(
+        ctx,
+        [Stage("consumer-refresh", consumer_refresh, mode="fail_defer")],
+        command="vrg-release",
+        label="vrg-release",
+        args=args,
+        repo_root=tmp_path,
+    )
+
+
+def test_consumer_refresh_success_is_one_check_line(
+    template: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _set(template, "echo installing vergil-tooling <VERSION>\necho refreshing VMs")
+    ctx = _ctx(tmp_path)
+    rc = _run_stage(ctx, tmp_path)
+    out = capsys.readouterr().out
+    assert rc == 0
+    stage_lines = out.split("\n\n", 1)[0].splitlines()
+    assert stage_lines[0] == "→ consumer-refresh  starting..."
+    assert len(stage_lines) == 2
+    assert stage_lines[1].startswith("✓ consumer-refresh  ")
+    assert "installing vergil-tooling" not in out
+    assert "refreshing VMs" not in out
+
+
+def test_consumer_refresh_failure_shows_full_output_and_fails(
+    template: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _set(template, "echo step one <VERSION>\necho to-stderr >&2\nexit 7\necho never-reached")
+    ctx = _ctx(tmp_path)
+    rc = _run_stage(ctx, tmp_path)
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert any(
+        line.startswith("✗ consumer-refresh  ") and "exit 7" in line for line in out.splitlines()
+    )
+    # The full output, standard error included, is shown; set -e stopped the block.
+    assert "step one 2.1.0\nto-stderr" in out
+    message = ctx.consumer_refresh_message or ""
+    shown = message.split("Their full output:\n\n", 1)[1]
+    assert shown == "step one 2.1.0\nto-stderr"
+
+
+# -- run_consumer_refresh: one bash -c, fail-fast, output captured ---------------
+
+
+def test_run_consumer_refresh_runs_bash_failfast_and_captures(tmp_path: Path) -> None:
+    rc, output = run_consumer_refresh("echo one\nfalse\necho two", cwd=tmp_path)
+    assert rc == 1
+    assert output == "one\n"
+
+
+def test_run_consumer_refresh_pipefail(tmp_path: Path) -> None:
+    rc, _ = run_consumer_refresh("false | cat", cwd=tmp_path)
+    assert rc == 1
+
+
+def test_run_consumer_refresh_merges_stderr_in_order(tmp_path: Path) -> None:
+    rc, output = run_consumer_refresh("echo out1\necho err1 >&2\necho out2", cwd=tmp_path)
+    assert rc == 0
+    assert output == "out1\nerr1\nout2\n"
+
+
+def test_run_consumer_refresh_runs_in_cwd_with_no_stdin(tmp_path: Path) -> None:
+    rc, output = run_consumer_refresh("pwd\ncat", cwd=tmp_path)
+    assert rc == 0
+    assert output == f"{tmp_path.resolve()}\n"

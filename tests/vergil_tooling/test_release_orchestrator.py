@@ -51,13 +51,13 @@ def test_build_stages_order_and_modes() -> None:
         "prepare",
         "merge-release",
         "confirm-main",
+        "consumer-refresh",
         "back-merge-bump",
         "teardown-worktree",
         "confirm-develop",
         "package-index",
         "promote",
         "close-finalize",
-        "consumer-refresh",
         "update-deps",
         "publish-status",
     ]
@@ -531,26 +531,81 @@ def test_phase_details_close_finalize_halted_stages_skip_close_and_cleanup() -> 
     assert "--resume" in details
 
 
-def test_phase_details_consumer_refresh() -> None:
-    from vergil_tooling.lib.release.orchestrator import _phase_details
-
+def test_phase_details_consumer_refresh_ran() -> None:
     ctx = _ctx()
-    details = _phase_details(ctx, "consumer-refresh")
-    assert "Consumer refresh" in details
+    ctx.consumer_refresh_commands = "uv tool install pkg@v2.1.0"
+    assert _phase_details(ctx, "consumer-refresh") == "Consumer refresh commands for v2.1.0 ran."
+
+
+def test_phase_details_consumer_refresh_no_install() -> None:
+    ctx = _ctx()
+    ctx.consumer_refresh_commands = "uv tool install pkg@v2.1.0"
+    ctx.install = False
+    assert "not run (--no-install)" in _phase_details(ctx, "consumer-refresh")
+
+
+def test_phase_details_consumer_refresh_none_configured() -> None:
+    ctx = _ctx()
+    assert "nothing to run" in _phase_details(ctx, "consumer-refresh")
+
+
+def test_consumer_refresh_runs_right_after_confirm_main() -> None:
+    """The refresh needs only the tag confirm-main confirmed, so it runs next,
+    ahead of package-index, promote and every later stage; package-index still
+    precedes promote (epic vergil-project/.github#1350, spec §4.6)."""
+    stages = build_stages()
+    names = [s.name for s in stages]
+    assert names[names.index("confirm-main") + 1] == "consumer-refresh"
+    assert names.index("package-index") < names.index("promote")
+    assert stages[names.index("consumer-refresh")].mode == "fail_defer"
+
+
+def test_consumer_refresh_not_held_by_a_later_deferral(tmp_path: Path) -> None:
+    """A deferred package-index after the refresh changes nothing about it:
+    the commands ran before it, and nothing re-holds them."""
+    state = _state()
+    ctx = state.ctx
+    assert ctx is not None
+    ctx.issue_number = 42
+    ctx.tag = "v2.1.2"
+    names = ("consumer-refresh", "back-merge-bump", "package-index", "promote")
+    args = argparse.Namespace(output_format="plain", output_window=None)
+    timeout = ReleaseError(phase="package-index", command="poll package index", message="slow")
+    with (
+        patch("vergil_tooling.lib.release.handoff.config.read_config") as m_config,
+        patch(
+            "vergil_tooling.lib.release.handoff.run_consumer_refresh", return_value=(0, "")
+        ) as m_run,
+        patch(_MOD + ".back_merge_and_bump"),
+        patch("vergil_tooling.lib.release.package_index._wait", side_effect=timeout),
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".comment_phase_failed"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+        patch(_MOD + ".promote") as m_promote,
+    ):
+        m_config.return_value.publish.consumer_refresh = "uv tool install pkg@v<VERSION>"
+        stages = [s for s in build_stages() if s.name in names]
+        assert [s.name for s in stages] == list(names)
+        progress.run_pipeline(
+            state, stages, command="vrg-release", label="vrg-release", args=args, repo_root=tmp_path
+        )
+    m_run.assert_called_once_with("uv tool install pkg@v2.1.2", cwd=ctx.repo_root)
+    assert ctx.deferred_publish_failures == ["package-index"]
+    assert ctx.consumer_refresh_message is None
+    m_promote.assert_not_called()
 
 
 def test_package_index_then_promote_then_close_finalize() -> None:
     """package-index is a fail_defer stage before close-finalize, so an index
     miss leaves the tracking issue open with the deferral comment (#3557), and
-    the later consumer refresh holds on it (epic .github#356, §8.3). promote
-    sits between them, so vX.Y moves only once the index has the release
-    (#4293)."""
+    promote sits between them, so vX.Y moves only once the index has the
+    release (#4293)."""
     from vergil_tooling.lib.release.orchestrator import _stage_names
 
     names = _stage_names()
     assert names[names.index("package-index") + 1] == "promote"
     assert names[names.index("promote") + 1] == "close-finalize"
-    assert names.index("package-index") < names.index("consumer-refresh")
     stages = build_stages()
     assert stages[names.index("package-index")].mode == "fail_defer"
     assert stages[names.index("promote")].mode == "fail_defer"
@@ -877,10 +932,10 @@ def test_publish_status_is_terminal_fail_defer() -> None:
 # --- update-deps stage (epic vergil-project/.github#381) ---------------------
 
 
-def test_update_deps_stage_between_consumer_refresh_and_publish_status() -> None:
+def test_update_deps_stage_between_close_finalize_and_publish_status() -> None:
     stages = build_stages()
     names = [s.name for s in stages]
-    assert names[-3:] == ["consumer-refresh", "update-deps", "publish-status"]
+    assert names[-3:] == ["close-finalize", "update-deps", "publish-status"]
     assert stages[names.index("update-deps")].mode == "fail_defer"
 
 
@@ -1015,7 +1070,7 @@ def test_preflight_stage_copies_without_deps() -> None:
 
 # --- deferred publishes through the real stage tail (#3557) -----------------
 
-_TAIL = ("package-index", "promote", "close-finalize", "consumer-refresh", "publish-status")
+_TAIL = ("package-index", "promote", "close-finalize", "publish-status")
 
 
 def _run_tail(
@@ -1060,7 +1115,14 @@ def _run_tail(
     return rc, ctx, m_comment, m_close, m_progress.run
 
 
-def test_index_only_timeout_leaves_issue_open_with_deferral_comment(tmp_path: Path) -> None:
+def _publish_status(out: str) -> str:
+    """The publish-status stage's status line: the deferral remedy the run ends on."""
+    return next(line for line in out.splitlines() if line.startswith("✗ publish-status"))
+
+
+def test_index_only_timeout_leaves_issue_open_with_deferral_comment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     rc, ctx, m_comment, m_close, m_finalize = _run_tail(
         tmp_path, cd_deferred=[], index_times_out=True
     )
@@ -1069,16 +1131,17 @@ def test_index_only_timeout_leaves_issue_open_with_deferral_comment(tmp_path: Pa
     m_close.assert_not_called()  # the tracking issue stays open
     m_finalize.assert_called_once()  # cleanup still runs: the release is complete
     assert ctx.deferred_failures == []  # not a halted, resumable stage
-    message = ctx.consumer_refresh_message or ""
-    assert "held" in message
+    message = _publish_status(capsys.readouterr().out)
     assert "publish-index workflow in o/packages" in message
     assert "CD publish" not in message
 
 
-def test_index_timeout_skips_promote_and_names_it(tmp_path: Path) -> None:
+def test_index_timeout_skips_promote_and_names_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """A deferred index leaves vX.Y on the previous release (#4293): promote never
-    moves the tag, the run stays a completed-with-deferral one, and the consumer
-    refresh message tells the human to run vrg-promote."""
+    moves the tag, the run stays a completed-with-deferral one, and the run's
+    closing deferral message tells the human to run vrg-promote."""
     m_promote = MagicMock()
     rc, ctx, m_comment, m_close, _ = _run_tail(
         tmp_path, cd_deferred=[], index_times_out=True, promote_mock=m_promote
@@ -1088,26 +1151,25 @@ def test_index_timeout_skips_promote_and_names_it(tmp_path: Path) -> None:
     m_comment.assert_called_once_with(ctx, ["package-index"])
     m_close.assert_not_called()
     assert ctx.deferred_failures == []
-    assert "then run vrg-promote v2.1.2" in (ctx.consumer_refresh_message or "")
+    assert "then run vrg-promote v2.1.2" in _publish_status(capsys.readouterr().out)
 
 
 def test_index_found_promotes_after_it(tmp_path: Path) -> None:
-    """With the index found, promote moves the tag before close-finalize closes the issue.
-
-    The exit code is not checked: consumer-refresh reads the (absent) vergil.toml
-    here, which says nothing about promote.
-    """
+    """With the index found, promote moves the tag before close-finalize closes the issue."""
     m_promote = MagicMock()
-    _, ctx, m_comment, m_close, _ = _run_tail(
+    rc, ctx, m_comment, m_close, _ = _run_tail(
         tmp_path, cd_deferred=[], index_times_out=False, promote_mock=m_promote
     )
+    assert rc == 0
     assert ctx.deferred_publish_failures == []
     m_promote.assert_called_once_with("2.1.2")
     m_comment.assert_not_called()
     m_close.assert_called_once()
 
 
-def test_cd_only_deferral_leaves_issue_open_with_cd_advice(tmp_path: Path) -> None:
+def test_cd_only_deferral_leaves_issue_open_with_cd_advice(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     rc, ctx, m_comment, m_close, m_finalize = _run_tail(
         tmp_path, cd_deferred=["docker-publish"], index_times_out=False
     )
@@ -1115,18 +1177,20 @@ def test_cd_only_deferral_leaves_issue_open_with_cd_advice(tmp_path: Path) -> No
     m_comment.assert_called_once_with(ctx, ["docker-publish"])
     m_close.assert_not_called()
     m_finalize.assert_called_once()
-    message = ctx.consumer_refresh_message or ""
+    message = _publish_status(capsys.readouterr().out)
     assert "re-run the CD publish" in message
     assert "publish-index" not in message
 
 
-def test_cd_and_index_deferral_together_give_both_remedies(tmp_path: Path) -> None:
+def test_cd_and_index_deferral_together_give_both_remedies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     rc, ctx, m_comment, m_close, _ = _run_tail(
         tmp_path, cd_deferred=["docker-publish"], index_times_out=True
     )
     assert rc == 1
     m_comment.assert_called_once_with(ctx, ["docker-publish", "package-index"])
     m_close.assert_not_called()
-    message = ctx.consumer_refresh_message or ""
+    message = _publish_status(capsys.readouterr().out)
     assert "re-run the CD publish" in message
     assert "publish-index workflow in o/packages" in message
