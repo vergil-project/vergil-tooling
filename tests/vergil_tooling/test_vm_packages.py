@@ -1,92 +1,117 @@
 from __future__ import annotations
 
-import shlex
+import os
 import subprocess
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from vergil_tooling.lib import vm_packages
+from tests.vergil_tooling.tooling_install_stubs import stub_bin, write_stub
+from vergil_tooling.lib import tooling_install, vm_packages
 from vergil_tooling.lib.atomic_write import atomic_write_cmd
-from vergil_tooling.lib.package import PackageError
+from vergil_tooling.lib.tooling_install import GIT_URL, ResolvedRef, check_lines, install_lines
 
 if TYPE_CHECKING:
-    from vergil_tooling.lib.package.orgs import OrgRepo
+    from pathlib import Path
 
-_REPO_URL = "https://vergil-project.github.io/packages"
+SHA = "a" * 40
+_UV_PATH = 'export PATH="$HOME/.local/bin:$PATH"'
 _FAST = (
     "-o Acquire::Retries=3 -o Acquire::Retries::Delay=false"
     " -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
     " -o DPkg::Lock::Timeout=60 -o APT::Update::Error-Mode=any"
 )
-_UPDATE = f"sudo apt-get {_FAST} update"
-_INSTALL = f"sudo apt-get {_FAST} install -y --allow-downgrades vergil-tooling"
 _PURGE = f"sudo apt-get {_FAST} purge -y"
-_SHOWAUTO = "apt-mark showauto"
-_SIMULATE = "apt-get -s autoremove"
+_SOURCE = "/etc/apt/sources.list.d/vergil.sources"
+_KEY = "/usr/share/keyrings/vergil-archive-keyring.asc"
+_PIN = "/etc/apt/preferences.d/vergil-tooling"
+_DPKG = "dpkg-query -W -f=${db:Status-Abbrev} ${Package}\n"
+_DEV_MARKER = "rm -f ~/.config/vergil/tooling-dev-ref"
 
 
-def _transport_answering(answers: dict[str, str]) -> MagicMock:
-    """A Transport double answering ``run`` by substring of the joined argv."""
-
-    def run(*args: str, **_kw: Any) -> subprocess.CompletedProcess[str]:
-        joined = " ".join(args)
-        stdout = next((v for k, v in answers.items() if k in joined), "")
-        return subprocess.CompletedProcess(list(args), 0, stdout=stdout, stderr="")
-
-    t = MagicMock()
-    t.run.side_effect = run
-    t.pipe.return_value = None
-    return t
+def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess([], 0, stdout=stdout, stderr=stderr)
 
 
 def _flat(t: MagicMock) -> list[str]:
     return [" ".join(str(a) for a in c[0]) for c in t.run.call_args_list]
 
 
-def _piped(t: MagicMock) -> list[str]:
-    return [str(c[0][0]) for c in t.pipe.call_args_list]
-
-
 def _index(flat: list[str], needle: str) -> int:
     return next(i for i, c in enumerate(flat) if needle in c)
 
 
-_NOBLE = "NAME=Ubuntu\nVERSION_CODENAME=noble\nID=ubuntu\n"
+def _script(lines: list[str]) -> str:
+    return "\n".join([_UV_PATH, *lines])
 
 
-def _policy(candidate: str) -> str:
-    return f"vergil-tooling:\n  Installed: (none)\n  Candidate: {candidate}\n"
+def _install_script(resolved: ResolvedRef) -> str:
+    return _script(install_lines(resolved, python_dir_env=None, tool_dir=None, bin_dir=None))
 
 
-# The lab VM after vergil-tooling moved to vergil-python3.15 (2026-10-23): all
-# three runtimes are auto-installed, and apt would autoremove the two 3.14 ones.
-_SIMULATED_AUTOREMOVE = (
-    "NOTE: This is only a simulation!\n"
-    "Reading package lists...\n"
-    "The following packages will be REMOVED:\n"
-    "  vergil-python3.14 vergil-python3.14.8\n"
-    "0 upgraded, 0 newly installed, 2 to remove and 60 not upgraded.\n"
-    "Remv vergil-python3.14 [3.14.8+20261013-1]\n"
-    "Remv vergil-python3.14.8 [3.14.8+20261003-1]\n"
-)
-_RUNTIMES = {
-    "cat /etc/os-release": _NOBLE,
-    _SHOWAUTO: "libfoo1\nvergil-python3.14\nvergil-python3.14.8\nvergil-python3.15\n",
-    _SIMULATE: _SIMULATED_AUTOREMOVE,
-}
+_CHECK = _script(check_lines("$HOME/.local/bin"))
 
 
 @pytest.fixture
-def boot(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, ...]]:
-    calls: list[tuple[Any, ...]] = []
+def ls_remote(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """The host's ``git ls-remote``, listing v2.1.9 and v2.1.10; records its calls."""
+    calls: list[tuple[str, str]] = []
 
-    def fake(run: Any, org: OrgRepo, fmt: str, suite: str, *, sudo: bool) -> None:
-        calls.append((run, org, fmt, suite, sudo))
+    def fake(url: str, pattern: str) -> str:
+        calls.append((url, pattern))
+        return f"{'9' * 40}\trefs/tags/v2.1.9\n{SHA}\trefs/tags/v2.1.10\n"
 
-    monkeypatch.setattr(vm_packages.repo_setup, "bootstrap", fake)
+    monkeypatch.setattr(tooling_install, "git_ls_remote", fake)
     return calls
+
+
+class FakeVm:
+    """A Transport double holding a VM's vergil packages and apt files as state.
+
+    ``dpkg-query`` lists :attr:`packages` (name → status abbreviation), the file
+    probe lists :attr:`files`, and ``apt-get purge`` / ``rm -f`` change them.
+    Any command named in *fail* raises.
+    """
+
+    def __init__(
+        self,
+        packages: dict[str, str] | None = None,
+        files: set[str] | None = None,
+        *,
+        fail: tuple[str, ...] = (),
+        sticky: tuple[str, ...] = (),
+    ) -> None:
+        self.packages = dict(packages or {})
+        self.files = set(files or set())
+        self.fail = fail
+        self.sticky = sticky
+        self.t = MagicMock()
+        self.t.run.side_effect = self._run
+        self.t.pipe.return_value = None
+
+    def _run(self, *args: str, **_kw: Any) -> subprocess.CompletedProcess[str]:
+        joined = " ".join(args)
+        for needle in self.fail:
+            if needle in joined:
+                raise subprocess.CalledProcessError(1, list(args))
+        if args[0] == "dpkg-query":
+            listing = "".join(f"{s} {n}\n" for n, s in self.packages.items())
+            return _ok("ii  libc6\nun  vergil-unrelated-un\n" + listing)
+        if "test -e" in joined:
+            return _ok("".join(f"{f}\n" for f in sorted(self.files)))
+        if "purge" in args:
+            for name in args[args.index("-y") + 1 :]:
+                if name not in self.sticky:
+                    self.packages.pop(name, None)
+        elif args[:3] == ("sudo", "rm", "-f"):
+            for f in args[4:]:
+                if f not in self.sticky:
+                    self.files.discard(f)
+        return _ok()
+
+
+# -- classify_ref and the pin the container cache still uses -----------------
 
 
 @pytest.mark.parametrize(
@@ -120,407 +145,318 @@ def test_apt_pin_rejects_dev_ref() -> None:
         vm_packages.apt_pin("develop")
 
 
-class TestPackagedInstall:
-    def test_packaged_install_sequence(self, boot: list[tuple[Any, ...]]) -> None:
-        t = _transport_answering(
-            {
-                "cat /etc/os-release": _NOBLE,
-                "apt-cache policy vergil-tooling": _policy("2.1.240-1"),
-                "uv tool list": "",
-            }
-        )
-        vm_packages.packaged_install(t, "v2.1")
-        flat = _flat(t)
-        assert len(boot) == 1
-        run, org, fmt, suite, sudo = boot[0]
-        assert run is t.run
-        assert org.vendor == "vergil"
-        assert (fmt, suite, sudo) == ("deb", "noble", True)
-        # The pin is replaced atomically as root, never truncated in place (#4035).
-        write_pin = atomic_write_cmd("/etc/apt/preferences.d/vergil-tooling", 0o644)
-        assert _piped(t) == [f"sudo bash -c {shlex.quote(write_pin)}"]
-        assert t.pipe.call_args[0][1] == vm_packages.apt_pin("v2.1")
-        assert _INSTALL in flat
-        # Order: pin, refresh, candidate check, install.
-        assert _index(flat, _UPDATE) < _index(flat, "apt-cache policy") < _index(flat, _INSTALL)
-        # No legacy copy listed: nothing to uninstall, the dev marker is still cleared.
-        assert not any("uv tool uninstall" in c for c in flat)
-        assert any("rm -f ~/.config/vergil/tooling-dev-ref" in c for c in flat)
+# -- released_install --------------------------------------------------------
 
-    def test_exact_installs_exact_version(self, boot: list[tuple[Any, ...]]) -> None:
-        t = _transport_answering(
-            {
-                "cat /etc/os-release": _NOBLE,
-                "apt-cache policy vergil-tooling": _policy("2.1.226-1"),
-            }
-        )
-        vm_packages.packaged_install(t, "v2.1.226")
-        flat = _flat(t)
-        assert f"{_INSTALL}=2.1.226-1" in flat
-        assert t.pipe.call_args[0][1] == vm_packages.apt_pin("v2.1.226")
-        assert boot
 
-    def test_line_with_no_candidate_fails_with_actionable_message(
-        self, boot: list[tuple[Any, ...]], capsys: pytest.CaptureFixture[str]
+class TestReleasedInstall:
+    def test_released_install_runs_tooling_install_lines(
+        self, ls_remote: list[tuple[str, str]]
     ) -> None:
-        """Review Focus 3: a line with no published package fails, naming line and repo."""
-        t = _transport_answering(
-            {
-                "cat /etc/os-release": _NOBLE,
-                "apt-cache policy vergil-tooling": _policy("(none)"),
-                "uv tool list": "vergil-tooling v2.1.200\n- vrg-git\n",
-            }
-        )
-        with pytest.raises(SystemExit) as exc:
-            vm_packages.packaged_install(t, "v2.2")
-        assert exc.value.code == 1
-        err = capsys.readouterr().err
-        assert "v2.2" in err
-        assert _REPO_URL in err
-        assert "--tag" in err
+        t = FakeVm().t
+        vm_packages.released_install(t, "v2.1")
+        resolved = ResolvedRef(ref="v2.1", kind="line", tag="v2.1.10", sha=SHA)
+        assert t.run.call_args_list[0][0] == ("bash", "-c", _install_script(resolved))
+        install = t.run.call_args_list[0][0][2]
+        assert "uv tool install --force --no-config --python 3.15 --managed-python" in install
+        assert f"vt_sha={SHA}\n" in install
+        assert f'git+{GIT_URL}@$vt_sha"' in install
+
+    def test_line_resolves_once_on_the_host(self, ls_remote: list[tuple[str, str]]) -> None:
+        vm_packages.released_install(FakeVm().t, "v2.1")
+        assert ls_remote == [(GIT_URL, "refs/tags/v2.1*")]
+
+    def test_exact_installs_its_own_commit(self, ls_remote: list[tuple[str, str]]) -> None:
+        t = FakeVm().t
+        vm_packages.released_install(t, "v2.1.9")
+        assert f"vt_sha={'9' * 40}\n" in t.run.call_args_list[0][0][2]
+
+    def test_released_install_checks_the_install(self, ls_remote: list[tuple[str, str]]) -> None:
+        t = FakeVm().t
+        vm_packages.released_install(t, "v2.1")
+        assert t.run.call_args_list[1][0] == ("bash", "-c", _CHECK)
+
+    def test_released_install_clears_dev_ref_marker(self, ls_remote: list[tuple[str, str]]) -> None:
+        t = FakeVm().t
+        vm_packages.released_install(t, "v2.1")
         flat = _flat(t)
-        # Nothing installed, and the existing tooling is left in place.
-        assert not any("--allow-downgrades" in c for c in flat)
-        assert not any("uv tool uninstall" in c for c in flat)
-        assert not any("tooling-dev-ref" in c for c in flat)
-        assert boot
+        assert _index(flat, "vrg-whoami --mode") < _index(flat, _DEV_MARKER)
 
-    def test_line_whose_only_candidate_is_another_line_fails(
-        self, boot: list[tuple[Any, ...]], capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        # The pin only raises the priority of matching versions; a non-matching
-        # newest version would still be the candidate. It must not be installed.
-        t = _transport_answering(
-            {
-                "cat /etc/os-release": _NOBLE,
-                "apt-cache policy vergil-tooling": _policy("2.1.240-1"),
-            }
-        )
-        with pytest.raises(SystemExit):
-            vm_packages.packaged_install(t, "v2.2")
-        assert not any("--allow-downgrades" in c for c in _flat(t))
-        err = capsys.readouterr().err
-        assert "v2.2" in err
-        assert _REPO_URL in err
-        assert boot
-
-    def test_exact_with_other_candidate_fails(
-        self, boot: list[tuple[Any, ...]], capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        t = _transport_answering(
-            {
-                "cat /etc/os-release": _NOBLE,
-                "apt-cache policy vergil-tooling": _policy("2.1.240-1"),
-            }
-        )
-        with pytest.raises(SystemExit):
-            vm_packages.packaged_install(t, "v2.1.226")
-        assert not any("--allow-downgrades" in c for c in _flat(t))
-        assert "v2.1.226" in capsys.readouterr().err
-        assert boot
-
-    def test_policy_without_candidate_line_fails(
-        self, boot: list[tuple[Any, ...]], capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        # apt-cache policy prints nothing for a package no source knows about.
-        t = _transport_answering({"cat /etc/os-release": _NOBLE})
-        with pytest.raises(SystemExit):
-            vm_packages.packaged_install(t, "v2.1")
-        assert _REPO_URL in capsys.readouterr().err
-        assert boot
-
-    def test_packaged_install_removes_legacy_uv_install(self, boot: list[tuple[Any, ...]]) -> None:
-        """Review Focus 5: the shadowing uv copy goes once the apt install succeeds."""
-        t = _transport_answering(
-            {
-                "cat /etc/os-release": _NOBLE,
-                "apt-cache policy vergil-tooling": "  Candidate: 2.1.240-1\n",
-                "uv tool list": "vergil-tooling v2.1.200\n- vrg-git\n",
-            }
-        )
-        vm_packages.packaged_install(t, "v2.1")
-        flat = _flat(t)
-        assert any("uv tool uninstall vergil-tooling" in c for c in flat)
-        assert any("rm -f ~/.config/vergil/tooling-dev-ref" in c for c in flat)
-        # Only after a successful apt install, so a failed packaged install
-        # never leaves the VM without tooling.
-        install = _index(flat, _INSTALL)
-        assert install < _index(flat, "uv tool uninstall vergil-tooling")
-        assert install < _index(flat, "rm -f ~/.config/vergil/tooling-dev-ref")
-        assert boot
-
-    def test_failed_apt_install_keeps_legacy_uv_install(self, boot: list[tuple[Any, ...]]) -> None:
-        answers = {
-            "cat /etc/os-release": _NOBLE,
-            "apt-cache policy vergil-tooling": _policy("2.1.240-1"),
-            "uv tool list": "vergil-tooling v2.1.200\n",
-        }
-        base = _transport_answering(answers).run.side_effect
-
-        def run(*args: str, **kw: Any) -> subprocess.CompletedProcess[str]:
-            if args[:2] == ("sudo", "apt-get") and "install" in args:
-                raise subprocess.CalledProcessError(100, list(args))
-            return base(*args, **kw)
-
-        t = _transport_answering(answers)
-        t.run.side_effect = run
+    def test_failed_check_keeps_the_dev_ref_marker(self, ls_remote: list[tuple[str, str]]) -> None:
+        vm = FakeVm(fail=("vrg-whoami --mode",))
         with pytest.raises(subprocess.CalledProcessError):
-            vm_packages.packaged_install(t, "v2.1")
-        flat = _flat(t)
-        assert not any("uv tool uninstall" in c for c in flat)
-        assert not any("tooling-dev-ref" in c for c in flat)
-        assert boot
+            vm_packages.released_install(vm.t, "v2.1")
+        assert not any(_DEV_MARKER in c for c in _flat(vm.t))
 
-    def test_failed_apt_install_purges_nothing(self, boot: list[tuple[Any, ...]]) -> None:
-        answers = {**_RUNTIMES, "apt-cache policy vergil-tooling": _policy("2.1.240-1")}
-        base = _transport_answering(answers).run.side_effect
-
-        def run(*args: str, **kw: Any) -> subprocess.CompletedProcess[str]:
-            if args[:2] == ("sudo", "apt-get") and "install" in args:
-                raise subprocess.CalledProcessError(100, list(args))
-            return base(*args, **kw)
-
-        t = _transport_answering(answers)
-        t.run.side_effect = run
-        with pytest.raises(subprocess.CalledProcessError):
-            vm_packages.packaged_install(t, "v2.1")
-        flat = _flat(t)
-        assert not any(_SIMULATE in c for c in flat)
-        assert not any("purge" in c for c in flat)
-        assert boot
-
-    def test_unrelated_uv_tool_is_not_uninstalled(self, boot: list[tuple[Any, ...]]) -> None:
-        t = _transport_answering(
-            {
-                "cat /etc/os-release": _NOBLE,
-                "apt-cache policy vergil-tooling": _policy("2.1.240-1"),
-                "uv tool list": "vergil-tooling-extras v1.0\nruff v0.1\n",
-            }
-        )
-        vm_packages.packaged_install(t, "v2.1")
-        assert not any("uv tool uninstall" in c for c in _flat(t))
-        assert boot
-
-    def test_unsupported_codename_is_fatal(
-        self, boot: list[tuple[Any, ...]], capsys: pytest.CaptureFixture[str]
+    def test_prints_the_logged_tag_and_sha(
+        self, ls_remote: list[tuple[str, str]], capsys: pytest.CaptureFixture[str]
     ) -> None:
-        t = _transport_answering({"cat /etc/os-release": "VERSION_CODENAME=jammy\n"})
-        with pytest.raises(SystemExit) as exc:
-            vm_packages.packaged_install(t, "v2.1")
-        assert exc.value.code == 1
-        err = capsys.readouterr().err
-        assert "jammy" in err
-        assert "noble, resolute" in err
-        assert boot == []
-        t.pipe.assert_not_called()
-
-    def test_missing_codename_is_fatal(
-        self, boot: list[tuple[Any, ...]], capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        t = _transport_answering({"cat /etc/os-release": "NAME=Something\n"})
-        with pytest.raises(SystemExit):
-            vm_packages.packaged_install(t, "v2.1")
-        assert "(unknown)" in capsys.readouterr().err
-        assert boot == []
-
-    def test_quoted_codename_is_accepted(self, boot: list[tuple[Any, ...]]) -> None:
-        t = _transport_answering(
-            {
-                "cat /etc/os-release": 'VERSION_CODENAME="resolute"\n',
-                "apt-cache policy vergil-tooling": _policy("2.1.240-1"),
-            }
+        t = MagicMock()
+        t.run.return_value = _ok(
+            stderr=f"Resolved 30 packages\nvergil-tooling: installed v2.1.10 (commit {SHA})\n"
         )
-        vm_packages.packaged_install(t, "v2.1")
-        assert boot[0][3] == "resolute"
+        vm_packages.released_install(t, "v2.1")
+        out = capsys.readouterr().out
+        assert f"vergil-tooling: installed v2.1.10 (commit {SHA})" in out
+        assert "Resolved 30 packages" not in out
 
-    def test_bootstrap_failure_is_fatal(
+    def test_unresolvable_ref_exits_and_installs_nothing(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        def fail(*_a: Any, **_k: Any) -> None:
-            msg = "vergil package key fingerprint mismatch"
-            raise PackageError(msg)
+        monkeypatch.setattr(tooling_install, "git_ls_remote", lambda _u, _p: "")
+        t = FakeVm().t
+        with pytest.raises(SystemExit):
+            vm_packages.released_install(t, "v2.2")
+        assert "no release tag for v2.2" in capsys.readouterr().err
+        t.run.assert_not_called()
 
-        monkeypatch.setattr(vm_packages.repo_setup, "bootstrap", fail)
-        t = _transport_answering({"cat /etc/os-release": _NOBLE})
-        with pytest.raises(SystemExit) as exc:
-            vm_packages.packaged_install(t, "v2.1")
-        assert exc.value.code == 1
-        assert "fingerprint mismatch" in capsys.readouterr().err
-        t.pipe.assert_not_called()
+    def test_clears_cache_and_retries_once_on_failure(
+        self, ls_remote: list[tuple[str, str]]
+    ) -> None:
+        t = MagicMock()
+        t.run.side_effect = [subprocess.CalledProcessError(1, "uv"), _ok(), _ok(), _ok(), _ok()]
+        vm_packages.released_install(t, "v2.1")
+        flat = _flat(t)
+        assert "uv cache clean" in flat[1]
+        assert t.run.call_args_list[0] == t.run.call_args_list[2]
+
+    def test_propagates_when_retry_also_fails(self, ls_remote: list[tuple[str, str]]) -> None:
+        t = MagicMock()
+        t.run.side_effect = [
+            subprocess.CalledProcessError(1, "uv"),
+            _ok(),
+            subprocess.CalledProcessError(1, "uv"),
+        ]
+        with pytest.raises(subprocess.CalledProcessError):
+            vm_packages.released_install(t, "v2.1")
+        assert not any(_DEV_MARKER in c for c in _flat(t))
 
     def test_dev_ref_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="develop"):
-            vm_packages.packaged_install(_transport_answering({}), "develop")
+            vm_packages.released_install(FakeVm().t, "develop")
+
+    def test_never_touches_apt(self, ls_remote: list[tuple[str, str]]) -> None:
+        t = FakeVm().t
+        vm_packages.released_install(t, "v2.1")
+        assert not any("apt" in c for c in _flat(t))
+        t.pipe.assert_not_called()
 
 
-class TestPurgeObsoleteRuntimes:
-    def _install(self, answers: dict[str, str]) -> MagicMock:
-        t = _transport_answering(
-            {**answers, "apt-cache policy vergil-tooling": _policy("2.1.240-1")}
-        )
-        vm_packages.packaged_install(t, "v2.1")
-        return t
+def _guest(tmp_path: Path, *, shim: bool) -> MagicMock:
+    """A Transport running guest commands in a real bash, with stub git/uv.
 
-    def test_obsolete_runtimes_are_purged(
-        self, boot: list[tuple[Any, ...]], capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        t = self._install(_RUNTIMES)
-        flat = _flat(t)
-        purge = f"{_PURGE} vergil-python3.14 vergil-python3.14.8"
-        assert purge in flat
-        # Only after the install and the uv-copy cleanup.
-        assert _index(flat, _INSTALL) < _index(flat, purge)
-        assert _index(flat, "rm -f ~/.config/vergil/tooling-dev-ref") < _index(flat, purge)
-        # The queries run unprivileged; only the purge needs root.
-        assert _SHOWAUTO in flat
-        assert _SIMULATE in flat
-        out = capsys.readouterr().out
-        assert (
-            "Purging obsolete vergil-python runtimes: vergil-python3.14 vergil-python3.14.8" in out
-        )
-        assert boot
+    ``~/.local/bin/vrg-whoami`` exists, as after a uv install. With *shim*, a
+    ``vrg-whoami`` stub also sits ahead of it on ``PATH``, as a stale package
+    shim would on a VM whose ``PATH`` puts it first.
+    """
+    home = tmp_path / "home"
+    write_stub(home / ".local" / "bin", "vrg-whoami", "#!/bin/bash\nexit 0\n")
+    stubs = stub_bin(tmp_path)
+    (stubs / "vrg-whoami").unlink()
+    shim_dir = tmp_path / "shim"
+    if shim:
+        write_stub(shim_dir, "vrg-whoami", "#!/bin/bash\nexit 0\n")
+    log = tmp_path / "stub.log"
+    log.write_text("")
+    env = {
+        "HOME": str(home),
+        "PATH": os.pathsep.join([str(stubs), "/usr/bin", "/bin"]),
+        "STUB_LOG": str(log),
+        "TMPDIR": str(tmp_path),
+    }
 
-    def test_never_runs_a_blanket_autoremove(self, boot: list[tuple[Any, ...]]) -> None:
-        flat = _flat(self._install(_RUNTIMES))
-        assert [c for c in flat if "autoremove" in c] == [_SIMULATE]
-        assert boot
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        argv = list(args)
+        if shim and argv[:2] == ["bash", "-c"]:
+            # A PATH that puts the shim ahead of ~/.local/bin even after the prepend.
+            argv[2] = argv[2].replace(_UV_PATH, f'{_UV_PATH}; export PATH="{shim_dir}:$PATH"', 1)
+        return subprocess.run(argv, capture_output=True, text=True, check=True, env=env)  # noqa: S603
 
-    def test_runtime_still_needed_is_kept(self, boot: list[tuple[Any, ...]]) -> None:
-        # vergil-python3.15 is auto-installed but apt keeps it: vergil-tooling needs it.
-        purge = next(c for c in _flat(self._install(_RUNTIMES)) if "purge" in c)
-        assert "vergil-python3.15" not in purge
-        assert boot
+    t = MagicMock()
+    t.run.side_effect = run
+    return t
 
-    def test_manually_installed_runtime_is_kept(self, boot: list[tuple[Any, ...]]) -> None:
-        # vergil-python3.14.8 was installed by hand, so it is not in the auto set.
-        answers = {**_RUNTIMES, _SHOWAUTO: "vergil-python3.14\nvergil-python3.15\n"}
-        purge = next(c for c in _flat(self._install(answers)) if "purge" in c)
-        assert purge == f"{_PURGE} vergil-python3.14"
-        assert boot
 
-    def test_unrelated_orphans_are_never_purged(self, boot: list[tuple[Any, ...]]) -> None:
-        answers = {
-            **_RUNTIMES,
-            _SIMULATE: "Remv libfoo1 [1.0-1]\nRemv vergil-python3.14 [3.14.8+20261013-1]\n",
-        }
-        purge = next(c for c in _flat(self._install(answers)) if "purge" in c)
-        assert purge == f"{_PURGE} vergil-python3.14"
-        assert boot
+def test_released_install_under_bash(tmp_path: Path, ls_remote: list[tuple[str, str]]) -> None:
+    t = _guest(tmp_path, shim=False)
+    vm_packages.released_install(t, "v2.1")
+    calls = (tmp_path / "stub.log").read_text()
+    assert f"git+{GIT_URL}@{SHA}" in calls
+    assert "\tls-remote\t" not in calls  # resolved on the host, once
 
-    def test_arch_qualified_names_are_matched(self, boot: list[tuple[Any, ...]]) -> None:
-        answers = {
-            **_RUNTIMES,
-            _SHOWAUTO: "vergil-python3.14:amd64\nvergil-python3.15:amd64\n",
-            _SIMULATE: "Remv vergil-python3.14:amd64 [3.14.8+20261013-1]\n",
-        }
-        purge = next(c for c in _flat(self._install(answers)) if "purge" in c)
-        assert purge == f"{_PURGE} vergil-python3.14"
-        assert boot
 
-    def test_nothing_to_purge_makes_no_purge_call(
-        self, boot: list[tuple[Any, ...]], capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        answers = {**_RUNTIMES, _SIMULATE: "0 upgraded, 0 newly installed, 0 to remove\n"}
-        flat = _flat(self._install(answers))
-        assert not any("purge" in c for c in flat)
-        assert "Purging" not in capsys.readouterr().out
-        assert boot
+def test_check_fails_on_a_shadowing_shim_under_bash(
+    tmp_path: Path, ls_remote: list[tuple[str, str]]
+) -> None:
+    t = _guest(tmp_path, shim=True)
+    with pytest.raises(subprocess.CalledProcessError) as excinfo:
+        vm_packages.released_install(t, "v2.1")
+    assert "vrg-whoami resolves to" in excinfo.value.stderr
 
-    def test_purge_failure_is_fatal(
-        self, boot: list[tuple[Any, ...]], capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        base = _transport_answering(
-            {**_RUNTIMES, "apt-cache policy vergil-tooling": _policy("2.1.240-1")}
-        ).run.side_effect
 
-        def run(*args: str, **kw: Any) -> subprocess.CompletedProcess[str]:
-            if "purge" in args:
-                raise subprocess.CalledProcessError(100, list(args))
-            return base(*args, **kw)
-
-        t = _transport_answering({})
-        t.run.side_effect = run
-        with pytest.raises(SystemExit) as exc:
-            vm_packages.packaged_install(t, "v2.1")
-        assert exc.value.code == 1
-        err = capsys.readouterr().err
-        assert "vergil-python3.14 vergil-python3.14.8" in err
-        assert "exit 100" in err
-        assert boot
+# -- dev_install -------------------------------------------------------------
 
 
 class TestDevInstall:
-    def test_dev_install_records_ref_and_uses_uv(self) -> None:
-        t = _transport_answering({})
+    def test_dev_install_runs_tooling_install_lines_and_records_ref(
+        self, ls_remote: list[tuple[str, str]]
+    ) -> None:
+        t = FakeVm().t
         vm_packages.dev_install(t, "develop")
-        flat = _flat(t)
-        assert any(
-            "uv tool install" in c
-            and "git+https://github.com/vergil-project/vergil-tooling@develop" in c
-            for c in flat
+        resolved = ResolvedRef(ref="develop", kind="dev", tag=None, sha=None)
+        assert t.run.call_args_list[0][0] == ("bash", "-c", _install_script(resolved))
+        assert t.run.call_args_list[1][0] == ("bash", "-c", _CHECK)
+        assert t.pipe.call_args[0] == (
+            atomic_write_cmd("~/.config/vergil/tooling-dev-ref", 0o644),
+            "develop\n",
         )
-        assert _piped(t) == [atomic_write_cmd("~/.config/vergil/tooling-dev-ref", 0o644)]
-        assert t.pipe.call_args[0][1] == "develop\n"
-        assert _index(flat, "uv tool install") < _index(flat, "mkdir -p")
+        assert ls_remote == []
 
-    def test_dev_install_reinstalls(self) -> None:
-        t = _transport_answering({})
+    def test_dev_install_follows_the_interpreter_rule(
+        self, ls_remote: list[tuple[str, str]]
+    ) -> None:
+        t = FakeVm().t
         vm_packages.dev_install(t, "feature/1-x")
-        install = next(c for c in _flat(t) if "uv tool install" in c)
+        install = t.run.call_args_list[0][0][2]
+        assert "unset UV_PYTHON UV_PYTHON_PREFERENCE UV_NO_MANAGED_PYTHON" in install
         assert "--reinstall" in install
-        assert "--force" not in install
-        assert "uv tool install --python 3.15 " in install
+        assert "--no-config --python 3.15 --managed-python" in install
 
-    def test_failed_dev_install_records_no_marker(self) -> None:
-        t = _transport_answering({})
+    def test_failed_dev_install_records_no_marker(self, ls_remote: list[tuple[str, str]]) -> None:
+        t = MagicMock()
         t.run.side_effect = subprocess.CalledProcessError(1, "uv")
         with pytest.raises(subprocess.CalledProcessError):
             vm_packages.dev_install(t, "develop")
         t.pipe.assert_not_called()
 
-    def test_clears_cache_and_retries_with_force_on_failure(self) -> None:
-        t = _transport_answering({})
-        t.run.side_effect = [
-            subprocess.CalledProcessError(1, "uv"),
-            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
-            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
-            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
-        ]
-        vm_packages.dev_install(t, "develop")
-        flat = _flat(t)
-        assert any("uv cache clean" in c for c in flat)
-        installs = [c for c in flat if "uv tool install" in c]
-        assert len(installs) == 2
-        assert "--force" not in installs[0]
-        assert "--force" in installs[1]
-        assert all("uv tool install --python 3.15 " in c for c in installs)
-
-    def test_propagates_when_retry_also_fails(self) -> None:
-        t = _transport_answering({})
-        t.run.side_effect = [
-            subprocess.CalledProcessError(1, "uv"),
-            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
-            subprocess.CalledProcessError(1, "uv"),
-        ]
+    def test_failed_check_records_no_marker(self, ls_remote: list[tuple[str, str]]) -> None:
+        vm = FakeVm(fail=("vrg-whoami --mode",))
         with pytest.raises(subprocess.CalledProcessError):
-            vm_packages.dev_install(t, "develop")
-        t.pipe.assert_not_called()
+            vm_packages.dev_install(vm.t, "develop")
+        vm.t.pipe.assert_not_called()
 
     def test_dev_ref_is_rejected_for_release_versions(self) -> None:
         with pytest.raises(ValueError, match="v2.1"):
-            vm_packages.dev_install(_transport_answering({}), "v2.1")
+            vm_packages.dev_install(FakeVm().t, "v2.1")
 
 
 class TestDevRef:
     def test_returns_recorded_ref(self) -> None:
-        t = _transport_answering({"tooling-dev-ref": "develop\n"})
+        t = MagicMock()
+        t.run.return_value = _ok("develop\n")
         assert vm_packages.dev_ref(t) == "develop"
 
     def test_returns_none_without_marker(self) -> None:
-        assert vm_packages.dev_ref(_transport_answering({})) is None
+        t = MagicMock()
+        t.run.return_value = _ok("")
+        assert vm_packages.dev_ref(t) is None
 
 
-def test_dev_banner() -> None:
+def test_dev_banner_text() -> None:
+    assert "not a release" in vm_packages.DEV_BANNER
     assert vm_packages.DEV_BANNER.format(ref="develop") == (
-        "DEV tooling (ref develop) — not the packaged install"
+        "DEV tooling (ref develop) — dev ref, not a release"
     )
+
+
+# -- cleanup_packages --------------------------------------------------------
+
+_OLD_VM = {
+    "vergil-tooling": "ii",
+    "vergil-python3.15": "ii",
+    "vergil-python3.14.8": "rc",
+    "vergil-archive-keyring": "ii",
+}
+
+
+class TestCleanupPackages:
+    def test_cleanup_removes_named_packages_source_keyring_and_pin(self) -> None:
+        vm = FakeVm(_OLD_VM, {_SOURCE, _KEY, _PIN})
+        removed = vm_packages.cleanup_packages(vm.t)
+        flat = _flat(vm.t)
+        assert (
+            f"{_PURGE} vergil-archive-keyring vergil-python3.14.8 vergil-python3.15 vergil-tooling"
+            in flat
+        )
+        assert f"sudo rm -f -- {_PIN} {_SOURCE} {_KEY}" in flat
+        assert not any("autoremove" in c for c in flat)
+        assert removed == [
+            "vergil-archive-keyring",
+            "vergil-python3.14.8",
+            "vergil-python3.15",
+            "vergil-tooling",
+            _PIN,
+            _SOURCE,
+            _KEY,
+        ]
+        assert vm.packages == {}
+        assert vm.files == set()
+
+    def test_cleanup_reads_package_state_from_dpkg(self) -> None:
+        vm = FakeVm()
+        vm_packages.cleanup_packages(vm.t)
+        assert vm.t.run.call_args_list[0][0] == (
+            "dpkg-query",
+            "-W",
+            "-f=${db:Status-Abbrev} ${Package}\n",
+        )
+        assert _DPKG in _flat(vm.t)
+
+    def test_not_installed_and_unrelated_packages_are_left_alone(self) -> None:
+        vm = FakeVm({"vergil-tooling": "un", "vergilant": "ii", "libvergil": "ii"})
+        assert vm_packages.cleanup_packages(vm.t) == []
+        assert not any("purge" in c for c in _flat(vm.t))
+
+    def test_nothing_to_remove_changes_nothing(self) -> None:
+        vm = FakeVm()
+        assert vm_packages.cleanup_packages(vm.t) == []
+        flat = _flat(vm.t)
+        assert not any("purge" in c or "rm -f" in c or "vrg-whoami" in c for c in flat)
+
+    def test_cleanup_confirms_nothing_left(self, capsys: pytest.CaptureFixture[str]) -> None:
+        vm = FakeVm(_OLD_VM, {_SOURCE}, sticky=("vergil-tooling", _SOURCE))
+        with pytest.raises(SystemExit):
+            vm_packages.cleanup_packages(vm.t)
+        err = capsys.readouterr().err
+        assert "not all removed" in err
+        assert "vergil-tooling" in err
+        assert _SOURCE in err
+
+    def test_failed_purge_is_fatal(self, capsys: pytest.CaptureFixture[str]) -> None:
+        vm = FakeVm(_OLD_VM, fail=("purge",))
+        with pytest.raises(SystemExit):
+            vm_packages.cleanup_packages(vm.t)
+        assert "could not remove the vergil packages" in capsys.readouterr().err
+
+    def test_rechecks_the_uv_install_after_removing_packages(self) -> None:
+        vm = FakeVm(_OLD_VM)
+        vm_packages.cleanup_packages(vm.t)
+        flat = _flat(vm.t)
+        assert _index(flat, "purge") < _index(flat, "vrg-whoami --mode")
+
+    def test_install_broken_by_the_removal_fails_loudly(self) -> None:
+        vm = FakeVm(_OLD_VM, fail=("vrg-whoami --mode",))
+        with pytest.raises(subprocess.CalledProcessError):
+            vm_packages.cleanup_packages(vm.t)
+
+    def test_files_alone_need_no_recheck(self) -> None:
+        vm = FakeVm(files={_PIN})
+        assert vm_packages.cleanup_packages(vm.t) == [_PIN]
+        assert not any("vrg-whoami" in c for c in _flat(vm.t))
+
+    def test_second_cleanup_removes_nothing(self) -> None:
+        vm = FakeVm(_OLD_VM, {_SOURCE, _KEY, _PIN})
+        vm_packages.cleanup_packages(vm.t)
+        vm.t.run.reset_mock()
+        assert vm_packages.cleanup_packages(vm.t) == []
+        assert not any("purge" in c or "rm -f" in c for c in _flat(vm.t))
+
+
+def test_file_probe_runs_under_bash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    present = tmp_path / "vergil.sources"
+    present.write_text("")
+    monkeypatch.setattr(vm_packages, "_APT_FILES", (str(present), str(tmp_path / "absent")))
+    t = MagicMock()
+    t.run.side_effect = lambda *a: subprocess.run(
+        list(a), capture_output=True, text=True, check=True
+    )  # noqa: S603
+    assert vm_packages._vergil_apt_files(t) == [str(present)]

@@ -2480,7 +2480,7 @@ class TestSessionStaleness:
         with patch("vergil_tooling.lib.vm_packages.dev_ref", return_value="develop"):
             main(["session", "--config", str(config_file), "."])
         out = capsys.readouterr().out
-        assert "DEV tooling (ref develop) — not the packaged install\nEXEC" in out
+        assert "DEV tooling (ref develop) — dev ref, not a release\nEXEC" in out
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
@@ -4720,7 +4720,7 @@ class TestCloudSession:
             m["transport"].return_value = transport
             main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
         out = capsys.readouterr().out
-        assert "DEV tooling (ref develop) — not the packaged install\nEXEC" in out
+        assert "DEV tooling (ref develop) — dev ref, not a release\nEXEC" in out
         ref.assert_called_once_with(transport)
 
     def test_cloud_session_uses_iap_transport(self, _cloud_repo: Path, tmp_path: Path) -> None:
@@ -7147,7 +7147,7 @@ class TestCmdCp:
 class TestDevToolingBanner:
     """Every vrg-vm command that touches a box says so when it runs a dev install."""
 
-    _BANNER = "DEV tooling (ref develop) — not the packaged install"
+    _BANNER = "DEV tooling (ref develop) — dev ref, not a release"
 
     @pytest.fixture
     def dev_ref(self) -> Iterator[MagicMock]:
@@ -7167,7 +7167,7 @@ class TestDevToolingBanner:
         assert self._BANNER in capsys.readouterr().out
         dev_ref.assert_called_once_with(transport)
 
-    def test_update_over_transport_no_banner_for_packaged_install(
+    def test_update_over_transport_no_banner_for_release_install(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from vergil_tooling.bin import vrg_vm  # noqa: PLC0415

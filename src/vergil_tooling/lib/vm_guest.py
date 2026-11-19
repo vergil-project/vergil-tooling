@@ -235,37 +235,34 @@ def _inject_conan_token(transport: Transport, token_path: str) -> None:
 
 
 def get_tooling_version(transport: Transport) -> str | None:
-    """Return the vergil-tooling version on the VM's PATH, or None.
+    """Return the uv-installed vergil-tooling version on the VM, or None.
 
-    A uv-installed copy (a dev install, or a legacy pre-package install) sits in
-    ``~/.local/bin`` and shadows the packaged ``/usr/bin`` one, so it is reported
-    first; otherwise the installed deb's version is reported.
+    Every install is a uv tool install, so ``uv tool list`` is the one source.
+    A failing ``uv tool list`` raises; ``None`` means no vergil-tooling tool.
     """
-    try:
-        result = transport.run(
-            "bash",
-            "-c",
-            'export PATH="$HOME/.local/bin:$PATH" && uv tool list 2>/dev/null',
-        )
-        for line in result.stdout.splitlines():
-            if line.startswith("vergil-tooling "):
-                return line.split()[1]
-    except subprocess.CalledProcessError:
-        pass
     result = transport.run(
         "bash",
         "-c",
-        "dpkg-query -W -f='${Version}' vergil-tooling 2>/dev/null || true",
+        'export PATH="$HOME/.local/bin:$PATH" && uv tool list',
     )
-    return result.stdout.strip() or None
+    for line in result.stdout.splitlines():
+        if line.startswith("vergil-tooling "):
+            return line.split()[1]
+    return None
 
 
 def _install(transport: Transport, tag: str) -> None:
-    """Install vergil-tooling for *tag*: packaged for a release, uv for a dev ref."""
+    """Install vergil-tooling for *tag* with uv, then remove the vergil packages.
+
+    A release installs its resolved commit, a dev ref its git ref. The packages,
+    the vergil apt source, key and pin an old packaged install left are removed
+    only after the uv install has passed its check (both installs raise first).
+    """
     if vm_packages.classify_ref(tag) == "dev":
         vm_packages.dev_install(transport, tag)
     else:
-        vm_packages.packaged_install(transport, tag)
+        vm_packages.released_install(transport, tag)
+    vm_packages.cleanup_packages(transport)
 
 
 def _write_tag_file(transport: Transport, tag: str) -> None:
@@ -289,8 +286,8 @@ def update_tooling(transport: Transport, tag: str | None = None, *, fallback_tag
 
     An explicit *tag* is treated as a temporary override and is not
     persisted to the marker file, so a later plain update returns to the
-    persisted (identity) version — which, for a release version, is the
-    packaged install and removes any dev install.
+    persisted (identity) version — which, for a release version, installs
+    that release over any dev install and clears its dev-ref marker.
     """
     explicit = tag is not None
     if tag is None:
