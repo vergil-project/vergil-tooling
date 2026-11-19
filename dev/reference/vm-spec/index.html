@@ -18679,6 +18679,30 @@ remembered.</p>
 <code>~/.local/bin/vrg-whoami</code> and <code>vrg-whoami --mode</code> must run. A
 <code>/usr/bin/vrg-whoami</code> left by an old package install that shadows the uv
 copy fails it.</p>
+<p><strong><code>~/.local/bin</code> on <code>PATH</code> for remote commands.</strong> A non-login remote
+command (a <code>limactl shell</code> command, <code>gcloud compute ssh --command</code>,
+<code>ssh &lt;host&gt; &lt;cmd&gt;</code>) reads no shell startup file: its <code>PATH</code> comes from
+<code>/etc/environment</code>, which pam_env reads when the SSH connection opens.
+<code>vrg-vm</code> runs some <code>vrg-*</code> commands in the VM this way, with no <code>PATH</code> of
+its own (the session resolver behind <code>vrg-vm session</code> and <code>vrg-vm list</code>),
+so <code>/etc/environment</code> puts <code>~/.local/bin</code> first on <code>PATH</code>:</p>
+<ul>
+<li>A new VM gets the line from vergil-vm's provisioning
+  (<code>templates/provision/15-environment.sh</code>), on every boot.</li>
+<li>After every install, <code>vrg-vm create</code>, <code>rebuild</code>, <code>start</code> and <code>update</code>
+  write the same line into <code>/etc/environment</code> when it is missing or
+  different, so a VM made before vergil-vm wrote it gets it too.</li>
+<li>The connection a change was made over still has the old <code>PATH</code>. When
+  <code>vrg-vm update</code> (or <code>start</code>) changes the line, it drops its shared SSH
+  connection, so the next command opens a new one. On Lima this stops the
+  ControlMaster taking new sessions (<code>ssh -O stop</code>), and a <code>vrg-vm
+  session</code> already open keeps running.</li>
+<li>Then a bare <code>vrg-whoami --mode</code>, with no <code>PATH</code> set, must run over that
+  transport; a failure fails the install. <code>vrg-vm create</code> and <code>rebuild</code>
+  run it as their <code>tooling-check</code> stage after <code>cycle-ssh</code> on Lima, and
+  after dropping the connection on a cloud VM, never over the
+  connection opened before provisioning.</li>
+</ul>
 <p><strong>Package cleanup.</strong> VMs created before this release installed
 vergil-tooling as an apt package. Once the uv install has passed its
 check, <code>vrg-vm update</code> (and <code>vrg-vm create</code>) removes what that install
