@@ -527,6 +527,10 @@ class TestTargetOwnerInstallationSelection:
             ["api", "repos/other-owner/repo/actions/runs"],
             ["api", "/orgs/other-owner/repos", "--paginate"],
             ["api", "-H", "Accept: x", "users/other-owner"],
+            # api: a full-URL endpoint, github.com and GHES
+            ["api", "https://api.github.com/repos/other-owner/repo/actions/runs"],
+            ["api", "--paginate", "https://api.github.com/orgs/other-owner/repos"],
+            ["api", "https://ghes.example.com/api/v3/repos/other-owner/repo"],
         ],
     )
     def test_target_owner_selects_its_installation(self, argv: list[str]) -> None:
@@ -552,7 +556,8 @@ class TestTargetOwnerInstallationSelection:
             ["search", "prs", "--json", "repository", "--jq", "{org: .repository}"],
             ["search", "issues", "bug", "-repo:other-owner/r"],
             ["api", "repos/{owner}/{repo}/pulls"],
-            ["api", "graphql", "-f", "query=repos/other-owner/x"],
+            ["api", "user"],
+            ["api", "https://api.github.com/rate_limit"],
         ],
     )
     def test_no_target_owner_keeps_cwd_detection(self, argv: list[str]) -> None:
@@ -611,6 +616,41 @@ class TestTargetOwnerInstallationSelection:
         err = capsys.readouterr().err
         assert "more than one owner (owner-a, owner-b)" in err
         assert "Run it once per owner" in err
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["api", "graphql", "-f", "query={viewer{login}}"],
+            ["api", "/graphql", "-F", "owner=other-owner"],
+            ["api", "https://api.github.com/graphql", "-f", "query=x"],
+            ["api", "https://ghes.example.com/api/graphql", "-f", "query=x"],
+        ],
+    )
+    def test_graphql_refused_in_app_mode(
+        self, argv: list[str], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A GraphQL call names its owner inside the query, out of vrg-gh's sight,
+        # so in App mode it would silently take the cwd org's token.
+        with (
+            patch("vergil_tooling.bin.vrg_gh.github.get_installation_token") as mock_token,
+            patch("vergil_tooling.bin.vrg_gh.github.is_app_mode", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_gh.identity_mode.current_mode",
+                return_value=identity_mode.IdentityMode.HUMAN,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            rc = main(argv)
+        assert rc == 1
+        mock_token.assert_not_called()
+        mock_run.assert_not_called()
+        assert "api graphql is refused in GitHub App mode" in capsys.readouterr().err
+
+    def test_graphql_allowed_on_ambient_auth(self) -> None:
+        rc, kwargs = _token_call(["api", "graphql", "-f", "query=x"], app_mode=False)
+        assert rc == 0
+        assert kwargs is not None
+        assert kwargs.get("org") is None
 
     def test_multiple_owners_allowed_on_ambient_auth(self) -> None:
         # Without App mode there is no installation token to scope: ambient

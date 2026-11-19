@@ -127,7 +127,9 @@ to ambient `gh`/`git` auth:
 - **More than one target org.** One installation token reaches one
   org's private repos, so a `vrg-gh` command naming two owners (for
   example, `search prs --owner a --owner b`) stops with `this command
-  targets more than one owner`. Run it once per owner.
+  targets more than one owner`. Run it once per owner. `vrg-gh api
+  graphql` is refused in App mode for the same reason: a GraphQL call
+  names its owner inside the query, where the wrapper cannot read it.
 - **Minting fails.** A broken or rotated key stops the command with
   `GitHub App authentication failed for owner '<owner>'` (see
   [Rotating an App private key](#rotating-an-app-private-key)).
@@ -136,7 +138,8 @@ to ambient `gh`/`git` auth:
 `-R`/`--repo`, `--owner`, a `repo view <owner>/<repo>` or
 `repo list <owner>` positional, an issue or pull request URL, an
 `issue transfer` destination, a `repo:`, `org:` or `user:` search
-qualifier, and an `api repos|orgs|users/<owner>/...` endpoint. Only a
+qualifier, and an `api repos|orgs|users/<owner>/...` endpoint, given as
+a path or a full URL. Only a
 command that names no owner falls back to the current repo's `origin`.
 This matters across orgs: a token for the current repo's org can still
 read other orgs' public repos, so a wrong-org token would not fail. It

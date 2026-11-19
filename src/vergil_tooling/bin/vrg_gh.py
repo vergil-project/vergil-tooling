@@ -579,6 +579,22 @@ _URL_OWNER_RE = re.compile(r"https?://[^/\s]+/([^/\s]+)/[^/\s]+(?:/.*)?")
 _QUALIFIER_RE = re.compile(r"(repo|org|user):\"?([^\s\"]+)\"?")
 # An API endpoint scoped to one owner: [/]repos/<owner>/..., [/]orgs/<owner>, [/]users/<owner>.
 _API_OWNER_RE = re.compile(r"/?(?:repos|orgs|users)/([^/?\s]+)")
+# A full-URL API endpoint's scheme and host, and a GHES /api/v3 prefix: gh
+# uses an endpoint holding "://" as-is, so its path is what names the owner.
+_API_URL_PREFIX_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^/]*(?:/api/v3)?")
+
+
+def _api_endpoint(argv: list[str]) -> str:
+    """The path of a ``gh api`` call's endpoint, a full URL reduced to its path."""
+    parsed = _parse_args(argv[1:], _API_VALUE_FLAGS)
+    endpoint = parsed.positionals[0] if parsed.positionals else ""
+    prefix = _API_URL_PREFIX_RE.match(endpoint)
+    return endpoint[prefix.end() :] if prefix else endpoint
+
+
+def _is_graphql(argv: list[str]) -> bool:
+    """True for a ``gh api graphql`` call, by name or by URL."""
+    return argv[0] == "api" and _api_endpoint(argv).strip("/") in ("graphql", "api/graphql")
 
 
 def _owner_if_valid(owner: str | None) -> str | None:
@@ -623,12 +639,12 @@ def _target_owners(argv: list[str]) -> list[str]:
     is kept. Sources: ``-R``/``--repo``, ``--owner``, and the command's
     positional target (a ``repo view``/``repo list`` owner, an issue or PR
     URL, an ``issue transfer`` destination, a ``repo:``/``org:``/``user:``
-    search qualifier, or an ``api`` endpoint's ``repos|orgs|users/<owner>``).
+    search qualifier, or an ``api`` endpoint's ``repos|orgs|users/<owner>``,
+    given as a path or a full URL).
     """
     if argv[0] == "api":
         parsed = _parse_args(argv[1:], _API_VALUE_FLAGS)
-        endpoint = parsed.positionals[0] if parsed.positionals else ""
-        match = _API_OWNER_RE.match(endpoint)
+        match = _API_OWNER_RE.match(_api_endpoint(argv))
         candidates: list[str | None] = [match.group(1) if match else None]
     else:
         top, sub = argv[0], argv[1]
@@ -659,8 +675,18 @@ def _exec_gh(argv: list[str]) -> int:
     owner with no installation fails loudly: a token minted for a different
     installation cannot reach that owner's private repos, it only sees their
     public ones (#1413, #4762). In App mode, a command that names more than
-    one owner is refused, since no single installation token reaches them all.
+    one owner is refused, since no single installation token reaches them all,
+    and so is ``api graphql``, which names its owner inside the query.
     """
+    if _is_graphql(argv) and github.is_app_mode():
+        print(
+            "vrg-gh: api graphql is refused in GitHub App mode: a GraphQL call names "
+            "its target owner inside the query, where vrg-gh cannot read it, so the "
+            "token would silently come from the working directory's org. Use a REST "
+            "endpoint (repos/<owner>/..., orgs/<owner>/...) or a gh subcommand instead.",
+            file=sys.stderr,
+        )
+        return 1
     owners = _target_owners(argv)
     if len(owners) > 1 and github.is_app_mode():
         print(
