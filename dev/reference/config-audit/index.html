@@ -19204,8 +19204,8 @@ order:</p>
 <td><code>Tag protection</code></td>
 <td>tag</td>
 <td><code>refs/tags/v*.*.*</code>, <code>refs/tags/v*.*</code></td>
-<td><code>deletion</code>, <code>non_fast_forward</code>, <code>update</code></td>
-<td>repository Admin role (<code>RepositoryRole</code>, <code>actor_id</code> 5)</td>
+<td><code>creation</code>, <code>deletion</code>, <code>non_fast_forward</code>, <code>update</code></td>
+<td>the repository Admin role (<code>RepositoryRole</code>, <code>actor_id</code> 5) and the org automation App (<code>Integration</code>, its App ID)</td>
 </tr>
 <tr>
 <td><code>Rolling tag branch names</code></td>
@@ -19253,8 +19253,12 @@ order:</p>
 </li>
 <li>
 <p><strong>Tag protection</strong> covers both the <code>vX.Y.Z</code> release tags and the rolling
-  <code>vX.Y</code> tags consumers follow as their deploy ref, so only the human release
-  identity can move or delete either.</p>
+  <code>vX.Y</code> tags consumers follow as their deploy ref, so only the repository
+  Admin role and the org automation App can create, move or delete either.
+  The shared release action pushes <code>vX.Y.Z</code> with the App's installation
+  token, and the human moves <code>vX.Y</code> with <code>vrg-promote</code>. The GitHub Actions
+  integration is never a bypass actor, so no workflow's <code>GITHUB_TOKEN</code> can
+  create a release tag.</p>
 </li>
 <li><strong>Rolling tag branch names</strong> blocks creating any branch named like a rolling
   tag (a <code>v</code> followed by a digit). Some consumers, Claude Code among them,

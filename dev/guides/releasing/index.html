@@ -19241,8 +19241,8 @@ edits its <code>v1.x</code> pin to <code>v2</code> deliberately. The difference 
 <p>A rollback moves a rolling <code>vX.Y</code> tag back to an earlier <code>vX.Y.Z</code>, so
 consumers that follow the tag return to that release. It is a release act
 and stays human-gated. The gate is the <code>Tag protection</code> ruleset, which lets
-only the repository Admin role move a rolling tag (see the
-<a href="../../reference/config-audit/#github-checks-rulesets">config audit reference</a>).
+only the repository Admin role and the org automation App move a rolling
+tag (see the <a href="../../reference/config-audit/#github-checks-rulesets">config audit reference</a>).
 For Claude Code consumers the no-bypass <code>Rolling tag branch names</code> ruleset
 is part of the gate: Claude Code resolves <code>v2.1</code> as a branch before a tag,
 so the tag's protection holds only while no <code>v2.1</code> branch can exist.
