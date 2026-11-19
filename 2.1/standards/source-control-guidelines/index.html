@@ -1454,6 +1454,8 @@
       
         
       
+        
+      
     
     
     
@@ -1506,6 +1508,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.328/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.328
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18439,7 +18469,8 @@ Rulesets replace legacy branch protection rules. Legacy branch protection must
 not be used on any repository.</p>
 <p><strong>Enforce-admins-ON</strong>: Every ruleset has an empty <code>bypass_actors</code> list except
 two. Tag protection may be bypassed only by the repository Admin role (the
-human release identity), to move or delete a tag. Automation branches may be
+human, who moves rolling tags) and the org automation App (whose installation
+token the release pushes <code>vX.Y.Z</code> tags with). Automation branches may be
 bypassed only by the org automation App and the repository Admin role, which
 are the only identities that may write those branches. Every other ruleset
 applies to all users, including repository administrators.</p>
@@ -18474,12 +18505,14 @@ branch names, so a tag or branch of either shape can never appear unprotected.</
 <li>
 <p><strong>Tag protection</strong> (targets: <code>v*.*.*</code> release tags and <code>v*.*</code> rolling tags)</p>
 </li>
+<li>Prevent tag creation</li>
 <li>Prevent tag deletion</li>
 <li>Prevent force-updating tags</li>
 <li>Prevent modifying existing tags</li>
-<li>No creation restriction (the publish workflow creates tags)</li>
 <li>
-<p>Bypass: the repository Admin role only</p>
+<p>Bypass: the repository Admin role and the org automation App only (never
+     the GitHub Actions integration, which would let any workflow's
+     <code>GITHUB_TOKEN</code> create a release tag)</p>
 </li>
 <li>
 <p><strong>Rolling tag branch names</strong> (targets: <code>v[0-9]*</code>)</p>

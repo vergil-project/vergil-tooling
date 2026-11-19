@@ -1450,6 +1450,8 @@
       
         
       
+        
+      
     
     
     
@@ -1502,6 +1504,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.328/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.328
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18731,7 +18761,7 @@ old <code>standard-tooling</code>/<code>st-*</code> naming):</p>
 <tbody>
 <tr>
 <td><strong>Developer host</strong> (macOS)</td>
-<td><code>uv tool install</code> from the git URL, pinned to the rolling minor tag</td>
+<td><code>uv tool install</code> from the git URL of the exact release tag, constrained by that tag's <code>uv.lock</code>; the release's consumer refresh runs it</td>
 <td>Host-side commands: <code>vrg-container-run</code>, <code>vrg-commit</code>, <code>vrg-submit-pr</code>, <code>vrg-release</code>, <code>vrg-finalize-pr</code>, <code>vrg-host</code></td>
 </tr>
 <tr>
@@ -18746,14 +18776,34 @@ old <code>standard-tooling</code>/<code>st-*</code> naming):</p>
 </tr>
 </tbody>
 </table>
-<p>The canonical host install (see <a href="../../getting-started/">Getting Started</a>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.15<span class="w"> </span><span class="s1">'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'</span>
+<p>The canonical host install (see <a href="../../getting-started/">Getting Started</a>),
+with <code>VERSION</code> set to the release, for example <code>2.1.10</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">VERSION</span><span class="o">=</span>X.Y.Z
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="o">(</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nb">set</span><span class="w"> </span>-euo<span class="w"> </span>pipefail
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nb">unset</span><span class="w"> </span>UV_PYTHON<span class="w"> </span>UV_PYTHON_PREFERENCE<span class="w"> </span>UV_NO_MANAGED_PYTHON
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nv">tmp</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>mktemp<span class="w"> </span>-d<span class="k">)</span><span class="s2">"</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nb">trap</span><span class="w"> </span><span class="s1">'rm -rf "$tmp"'</span><span class="w"> </span>EXIT
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span>git<span class="w"> </span>init<span class="w"> </span>-q<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/src"</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span>git<span class="w"> </span>-C<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/src"</span><span class="w"> </span>fetch<span class="w"> </span>-q<span class="w"> </span>--depth<span class="w"> </span><span class="m">1</span><span class="w"> </span>https://github.com/vergil-project/vergil-tooling<span class="w"> </span>refs/tags/v<span class="si">${</span><span class="nv">VERSION</span><span class="si">}</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span>git<span class="w"> </span>-C<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/src"</span><span class="w"> </span>checkout<span class="w"> </span>-q<span class="w"> </span>FETCH_HEAD
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="o">(</span><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/src"</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>uv<span class="w"> </span><span class="nb">export</span><span class="w"> </span>--no-config<span class="w"> </span>--frozen<span class="w"> </span>--no-dev<span class="w"> </span>--no-emit-project<span class="w"> </span>--no-hashes<span class="w"> </span>--format<span class="w"> </span>requirements-txt<span class="w"> </span>-o<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/constraints.txt"</span><span class="w"> </span>&gt;/dev/null<span class="o">)</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--force<span class="w"> </span>--no-config<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.15<span class="w"> </span>--managed-python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/constraints.txt"</span><span class="w"> </span><span class="s2">"vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v</span><span class="si">${</span><span class="nv">VERSION</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="o">)</span>
 </code></pre></div>
-<p>On an agent VM, a dev ref (<code>vrg-vm update --tag develop</code>, or any non-release
-ref) is an explicit <code>uv tool install --python 3.15</code> from git that shadows the
-packaged copy,
-and every <code>vrg-vm</code> command that touches the VM prints a <code>DEV tooling</code> banner
-while it is in place. A plain <code>vrg-vm update</code> returns the VM to the package.
+<p>The exact tag cannot move (tag protection), so the Mac needs no
+<code>git ls-remote</code> and no SHA; the lines still install with that tag's own
+<code>uv.lock</code> as constraints and on uv's managed 3.15. These are the same
+lines as <code>vergil.toml</code>'s <code>[publish].consumer-refresh</code>, which each release
+runs on the Mac with the just-released version (followed by
+<code>vrg-vm update --all</code>), so the release installs itself on the host.</p>
+<p>On an agent VM, a release installs with uv too: <code>vrg-vm</code> resolves the
+version to one commit, installs it with that commit's <code>uv.lock</code>, and
+removes any vergil package an older VM still carries. A dev ref
+(<code>vrg-vm update --tag develop</code>, or any non-release ref) is an explicit,
+unconstrained uv install of that git ref, and every <code>vrg-vm</code> command that
+touches the VM prints a <code>DEV tooling</code> banner while it is in place. A plain
+<code>vrg-vm update</code> returns the VM to its release.
 See <a href="../../reference/vm-spec/#vergil-tooling-inside-the-vm">vergil-tooling inside the VM</a>.</p>
 <h2 id="tag-scheme-whats-user-facing-what-isnt">Tag scheme — what's user-facing, what isn't<a class="headerlink" href="#tag-scheme-whats-user-facing-what-isnt" title="Permanent link">&para;</a></h2>
 <p>Two parallel tag families exist in the repo. Consumers only see and
@@ -18847,7 +18897,8 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
      the release; the index's weekly reconcile picks the release up.
    - <code>vrg-release</code>'s <code>package-index</code> stage then polls the published
      index (up to one hour, every 30 seconds) until the new version is
-     visible, so the consumer refresh never races the index. With several
+     visible, so neither <code>promote</code> nor the consumer refresh runs ahead
+     of the index. With several
      <code>[[package]]</code> entries it waits for every package, each at its own full
      version, and succeeds only once all of them are listed. While it
      waits, it streams the <code>Publish package index</code> run in <code>&lt;org&gt;/packages</code>
@@ -18866,18 +18917,28 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
      polling error) does not undo the release. It is recorded
      as a deferred publish failure: the tracking issue stays open with a
      deferral comment, the consumer-refresh stage holds (it
-     prints a warning not to advertise the version instead of the refresh
-     commands), the stage error tells you to re-run the <code>publish-index</code>
+     prints a warning not to advertise the version instead of running the
+     refresh commands), the stage error tells you to re-run the <code>publish-index</code>
      workflow in <code>&lt;org&gt;/packages</code>, <code>promote</code> leaves <code>vX.Y</code> where it is
      (see <a href="#a-promote-held-back-by-the-index">A promote held back by the index</a>),
      and <code>vrg-release</code> exits 1. See the
      <a href="../../reference/package-config/#cd">package config reference</a>.
-4. After a clean release, <code>vrg-release</code> prints the consumer-refresh
-   commands and then runs them (pass <code>--no-install</code> to only print them,
-   and act on them yourself).
+4. Last, after <code>promote</code>, <code>close-finalize</code> and <code>update-deps</code>, the
+   <code>consumer-refresh</code> stage runs the <code>[publish].consumer-refresh</code>
+   commands. It runs after <code>promote</code> because a consumer that follows
+   the rolling <code>vX.Y</code> tag (vergil-claude-plugin's marketplace) sees the
+   release only once that tag has moved. While any publish is deferred
+   (a failed CD publish job, or a <code>package-index</code> miss) it holds: it
+   runs nothing and prints a warning not to advertise the version.
+   After an earlier stage that failed (<code>promote</code>, say) it runs nothing
+   either, and prints the commands below the summary to run once the
+   cause is fixed. On
+   success the stage is one <code>✓ consumer-refresh</code> line; on failure its
+   full output is printed below the summary, the stage fails and
+   <code>vrg-release</code> exits 1. Pass <code>--no-install</code> to have it print the
+   commands below the summary instead, and act on them yourself.
    A clean run names the released tag in its completion line
-   (<code>✓  vrg-release v1.3.1 complete</code>) and in the
-   <code>Consumer refresh commands for v1.3.1:</code> header.
+   (<code>✓  vrg-release v1.3.1 complete</code>).
 5. Check the end of the run for the <code>update-deps</code> result. A failed
    dependency update does not fail the release, but it leaves an open
    PR that blocks the next one; see
@@ -18953,11 +19014,6 @@ issue and ticks its box in the issue's stage checklist.</p>
 <td>Closes the tracking issue with a summary and runs <code>vrg-finalize-pr --cleanup-only</code></td>
 </tr>
 <tr>
-<td><code>consumer-refresh</code></td>
-<td>deferred</td>
-<td>Prints the <code>[publish].consumer-refresh</code> commands</td>
-</tr>
-<tr>
 <td><code>update-deps</code></td>
 <td>deferred</td>
 <td>Runs the dependency update on the new <code>develop</code> version (skipped with <code>--without-deps</code>); see <a href="#dependency-updates">Dependency updates</a></td>
@@ -18966,6 +19022,11 @@ issue and ticks its box in the issue's stage checklist.</p>
 <td><code>publish-status</code></td>
 <td>deferred</td>
 <td>Repeats any deferred publish failure, and any dependency-update failure, so neither is lost</td>
+</tr>
+<tr>
+<td><code>consumer-refresh</code></td>
+<td>deferred</td>
+<td>Runs the <code>[publish].consumer-refresh</code> commands, last, once <code>promote</code> has moved <code>vX.Y</code> (prints them instead with <code>--no-install</code>). Holds, running nothing, while any publish is deferred, and only prints the commands after an earlier stage failed. Success is one check line; a failure prints the full output below the summary</td>
 </tr>
 </tbody>
 </table>
@@ -19124,7 +19185,7 @@ get the fix on the next normal action:</p>
 <tbody>
 <tr>
 <td>Developer host</td>
-<td>Manual <code>uv tool upgrade vergil-tooling</code> (or <code>vrg-host upgrade vergil-tooling</code> on macOS)</td>
+<td>The release's consumer refresh installs the exact patch tag on the Mac that ran it; any other host reruns the <a href="#deployment-targets">canonical host install</a> with the new <code>VERSION</code> (<code>vrg-host</code> reports the installed version but never upgrades it)</td>
 </tr>
 <tr>
 <td>Python repo <code>.venv</code></td>
@@ -19136,7 +19197,7 @@ get the fix on the next normal action:</p>
 </tr>
 <tr>
 <td>Agent VM (Lima/cloud)</td>
-<td><code>vrg-vm update</code>: an apt upgrade of the packaged install within its pin, once the patch is in the package index. A <code>vX.Y</code> line pin picks the patch up; an exact <code>vX.Y.Z</code> pin stays put</td>
+<td><code>vrg-vm update</code>, which the release's consumer refresh runs on every VM (<code>vrg-vm update --all</code>): a <code>vX.Y</code> line pin resolves to the patch tag as soon as it exists; an exact <code>vX.Y.Z</code> pin stays put</td>
 </tr>
 </tbody>
 </table>
@@ -19156,9 +19217,9 @@ only handles patches within a minor.</p>
    <code>[tool.uv.sources]</code> pinning to <code>v1.3</code> needs its <code>pyproject.toml</code>
    updated to <code>v1.4</code>. This is a per-repo decision — consumers who
    prefer to stay on <code>v1.3</code> can keep doing so until they're ready.</li>
-<li>Update the canonical install command in <code>getting-started.md</code>
-   (and anywhere else the documentation pins a minor) to the new
-   tag.</li>
+<li>Update anywhere the documentation pins a minor to the new tag.
+   The canonical host install in <code>getting-started.md</code> names an exact
+   <code>VERSION</code> placeholder, not a line, and needs no change.</li>
 </ol>
 <h3 id="consumer-steps_1">Consumer steps<a class="headerlink" href="#consumer-steps_1" title="Permanent link">&para;</a></h3>
 <p>Minor bumps are <strong>deliberate opt-in</strong> at every deployment target:</p>
@@ -19172,7 +19233,7 @@ only handles patches within a minor.</p>
 <tbody>
 <tr>
 <td>Developer host</td>
-<td><code>uv tool install --python 3.15 --reinstall 'vergil-tooling @ git+...@v1.4'</code> (or update the pinned tag in their notes / shell history)</td>
+<td>Nothing to change: the host installs an exact tag, never a line. The release's consumer refresh installs <code>v1.4.0</code> on the Mac that ran it; any other host reruns the <a href="#deployment-targets">canonical host install</a> with <code>VERSION=1.4.0</code></td>
 </tr>
 <tr>
 <td>Python repo <code>.venv</code></td>
@@ -19223,8 +19284,8 @@ edits its <code>v1.x</code> pin to <code>v2</code> deliberately. The difference 
 <p>A rollback moves a rolling <code>vX.Y</code> tag back to an earlier <code>vX.Y.Z</code>, so
 consumers that follow the tag return to that release. It is a release act
 and stays human-gated. The gate is the <code>Tag protection</code> ruleset, which lets
-only the repository Admin role move a rolling tag (see the
-<a href="../../reference/config-audit/#github-checks-rulesets">config audit reference</a>).
+only the repository Admin role and the org automation App move a rolling
+tag (see the <a href="../../reference/config-audit/#github-checks-rulesets">config audit reference</a>).
 For Claude Code consumers the no-bypass <code>Rolling tag branch names</code> ruleset
 is part of the gate: Claude Code resolves <code>v2.1</code> as a branch before a tag,
 so the tag's protection holds only while no <code>v2.1</code> branch can exist.
@@ -19344,7 +19405,7 @@ nothing:</p>
 <p>Every release ends by updating the repo's dependencies to the newest
 versions their declared bounds allow. This is the <code>update-deps</code> stage,
 and it is the first change on the new <code>develop</code> version. It runs after
-<code>consumer-refresh</code>, once the release is tagged and published, so it can
+<code>close-finalize</code>, once the release is tagged and published, so it can
 never affect the release itself. Pass <code>--without-deps</code> to skip it.</p>
 <p>The stage brings the root checkout's <code>develop</code> up to date with
 <code>origin/develop</code> (the root checkout must be on <code>develop</code>), then runs the

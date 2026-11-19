@@ -1452,6 +1452,8 @@
       
         
       
+        
+      
     
     
     
@@ -1504,6 +1506,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.328/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.328
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -20092,18 +20122,19 @@ epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>). Human-ru
 identities are refused, and agents hand off with
 <code>vrg-pr-workflow report-ready</code> instead.</p>
 <p>Every mode takes one path (epic vergil-project/.github#1218): one
-confirmation for the selection, then for each PR the push, <code>gh pr create</code>,
+table of the selection (no confirmation prompt and no PR-body preview),
+then for each PR the push, <code>gh pr create</code>,
 the provenance check (a violation always fails that PR's submit), and GitHub
 auto-merge turned on, pinned to the pushed head (squash for a single-issue PR, rebase for a batch PR; a PR that can
 already merge is merged directly). PRs open against <code>develop</code> only, and
-submit never rebases a branch. After the confirmation the PRs open as a
+submit never rebases a branch. After the table the PRs open as a
 progress rollup, one stage per PR named after its branch, like
 <code>vrg-release</code>'s: each ends on one ✓/✗ line with its outcome, and the detail
 goes to <code>.vergil/vrg-submit-pr-&lt;stamp&gt;.log</code>. A PR whose submit fails is
 named in the summary and the others go on. Then, by default, one <code>vrg-finalize-pr &lt;pr&gt;,&lt;pr&gt;,…</code>
 watches every opened PR merge and settles <code>develop</code> once; <code>--no-finalize</code>
-opens the PRs and returns. <code>--finalize</code> and <code>--install</code> are removed and
-refused by name. See <a href="../dev/submit-pr/">vrg-submit-pr</a>.</p>
+opens the PRs and returns. <code>--finalize</code>, <code>--install</code> and <code>--yes</code> are
+removed and refused by name. See <a href="../dev/submit-pr/">vrg-submit-pr</a>.</p>
 <table>
 <thead>
 <tr>
@@ -20118,7 +20149,7 @@ refused by name. See <a href="../dev/submit-pr/">vrg-submit-pr</a>.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td>positional <code>branches</code> (relay mode); or <code>--issue</code> (required), <code>--summary</code> (required), <code>--linkage</code> (default: Ref; <code>vrg-submit-pr</code> auto-selects <code>Closes</code> for a managed task — <code>Fixes</code>/<code>Resolves</code> are banned), <code>--notes</code>, <code>--title</code>; <code>--all</code>/<code>--select</code> (from the repo root), <code>--base</code> (<code>develop</code> only), <code>--no-finalize</code>, <code>--release</code>, <code>--no-install</code>, <code>--dry-run</code>, <code>--yes</code>, <code>--output-window</code>, <code>--output-format</code>. <code>--finalize</code>, <code>--install</code> and <code>--allow-provenance-violation</code> are removed and are an error</td>
+<td>positional <code>branches</code> (relay mode); or <code>--issue</code> (required), <code>--summary</code> (required), <code>--linkage</code> (default: Ref; <code>vrg-submit-pr</code> auto-selects <code>Closes</code> for a managed task — <code>Fixes</code>/<code>Resolves</code> are banned), <code>--notes</code>, <code>--title</code>; <code>--all</code>/<code>--select</code> (from the repo root), <code>--base</code> (<code>develop</code> only), <code>--no-finalize</code>, <code>--release</code>, <code>--no-install</code>, <code>--dry-run</code>, <code>--output-window</code>, <code>--output-format</code>. <code>--finalize</code>, <code>--install</code>, <code>--allow-provenance-violation</code> and <code>--yes</code> are removed and are an error</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -20480,9 +20511,10 @@ posted again.</p>
 <h3 id="vrg-release">vrg-release<a class="headerlink" href="#vrg-release" title="Permanent link">&para;</a></h3>
 <p>Run the full release workflow from <code>develop</code> to <code>main</code>: tracking issue,
 changelog, release PR and merge, CD confirmation, back-merge and version
-bump, rolling-tag promotion, cleanup, consumer refresh, and finally the
-<code>update-deps</code> stage, which runs the dependency update on the new
-<code>develop</code> version. On a fresh start, preflight refuses while an open PR
+bump, rolling-tag promotion, cleanup, the <code>update-deps</code> stage, which
+runs the dependency update on the new <code>develop</code> version, and finally
+the consumer refresh, which runs the <code>[publish].consumer-refresh</code>
+commands (held while any publish is deferred). On a fresh start, preflight refuses while an open PR
 carries the <code>dependency-update</code> label, after first closing any whose fix
 task completed. Human-only. See the <a href="../dev/release/">vrg-release reference</a>
 and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
@@ -20528,8 +20560,9 @@ before any other output or git call, so <code>--help</code> still prints the usa
 <code>vrg-release</code>'s promote stage uses the same library and the same refusal.
 The refusal stops an agent from running it by mistake; it is not a security
 boundary, because the identity signals come from the caller's environment.
-The rolling-tag ruleset on GitHub, which only the repository Admin role
-bypasses, is what enforces who can move the tag.</p>
+The <code>Tag protection</code> ruleset on GitHub, which only the repository Admin
+role and the org automation App bypass, is what enforces who can move the
+tag.</p>
 <p>The target must be an existing <code>vX.Y.Z</code> tag on origin whose commit is
 merged work and that has a published (non-draft) GitHub Release; any other
 target is refused. Merged work is a commit on origin's <code>main</code>, or that
@@ -23101,10 +23134,12 @@ verifies the plugins in a running VM in place; <code>--all</code> updates every
 configured identity's boxes, and one box's failure does not stop the rest.
 <code>vrg-vm</code> is a human tool: it runs the VMs the agents work inside, so every
 subcommand refuses an agent identity before doing anything (<code>--help</code> still
-works). VMs install vergil-tooling as the signed package;
+works). VMs install vergil-tooling with uv, one resolved release commit
+constrained by its <code>uv.lock</code>, and <code>vrg-vm update</code> removes any vergil
+package an older VM still carries;
 <code>vrg-vm update --tag &lt;ref&gt;</code> with a non-release ref installs a dev copy
 instead and flags it with a <code>DEV tooling</code> banner, and a plain
-<code>vrg-vm update</code> returns the VM to the package. See
+<code>vrg-vm update</code> returns the VM to its release. See
 <a href="../vm-spec/#vergil-tooling-inside-the-vm">VM Spec</a>.</p>
 <table>
 <thead>

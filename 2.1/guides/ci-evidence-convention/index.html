@@ -1452,6 +1452,8 @@
       
         
       
+        
+      
     
     
     
@@ -1504,6 +1506,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.328/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.328
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18723,10 +18753,11 @@ second local <code>vrg-validate</code> never lints the first run's reports.</p>
 <p><code>ci-quality.yml</code>, <code>ci-test.yml</code> and <code>ci-audit.yml</code> stage each leg's reports
 with version-suffixed names, as for Python and Rust:
 <code>quality-eslint-&lt;ver&gt;.json</code>, <code>quality-tsc-&lt;ver&gt;.txt</code>, <code>coverage-&lt;ver&gt;.xml</code>,
-<code>junit-&lt;ver&gt;.xml</code> and <code>npm-audit-&lt;ver&gt;.json</code>. The TypeScript entries of
-vergil-actions' report table require these reports from vergil-actions
-v2.1.78, so a TypeScript repository needs a vergil-tooling release whose
-gates write them (2.1.319 or later).</p>
+<code>junit-&lt;ver&gt;.xml</code>, <code>npm-audit-&lt;ver&gt;.json</code> and <code>licenses-&lt;ver&gt;.json</code>. The
+TypeScript entries of vergil-actions' report table require these reports
+from vergil-actions v2.1.78, and <code>licenses.json</code> from v2.1.84, so a
+TypeScript repository needs a vergil-tooling release whose gates write them
+(2.1.327 or later, the first release with <code>vrg-npm-license-gate</code>).</p>
 <p><code>quality-common.log</code> is the transcript of <code>vrg-validate --check common</code> and
 <code>quality-custom.log</code> the transcript of <code>vrg-validate --check custom</code>, each
 captured once per run by the <code>quality / common</code> and <code>quality / custom</code> jobs.

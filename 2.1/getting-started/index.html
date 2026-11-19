@@ -1452,6 +1452,8 @@
       
         
       
+        
+      
     
     
     
@@ -1504,6 +1506,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../releases/v2.1.328/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.328
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18114,8 +18144,30 @@ installed (step 1), <code>vrg-host status</code> is the complete host-dependency
 reports every tool Vergil needs on the host, including the Command Line Tools,
 git and the agent-VM tools, and flags anything missing or out of date.</p>
 <h2 id="1-install-vergil-tooling-on-the-host">1. Install vergil-tooling on the host<a class="headerlink" href="#1-install-vergil-tooling-on-the-host" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.15<span class="w"> </span><span class="s1">'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'</span>
+<p>Set <code>VERSION</code> to the newest release on the
+<a href="https://github.com/vergil-project/vergil-tooling/releases">releases page</a>
+(for example <code>2.1.10</code>, with no leading <code>v</code>), then run:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">VERSION</span><span class="o">=</span>X.Y.Z
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="o">(</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nb">set</span><span class="w"> </span>-euo<span class="w"> </span>pipefail
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nb">unset</span><span class="w"> </span>UV_PYTHON<span class="w"> </span>UV_PYTHON_PREFERENCE<span class="w"> </span>UV_NO_MANAGED_PYTHON
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nv">tmp</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>mktemp<span class="w"> </span>-d<span class="k">)</span><span class="s2">"</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nb">trap</span><span class="w"> </span><span class="s1">'rm -rf "$tmp"'</span><span class="w"> </span>EXIT
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span>git<span class="w"> </span>init<span class="w"> </span>-q<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/src"</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span>git<span class="w"> </span>-C<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/src"</span><span class="w"> </span>fetch<span class="w"> </span>-q<span class="w"> </span>--depth<span class="w"> </span><span class="m">1</span><span class="w"> </span>https://github.com/vergil-project/vergil-tooling<span class="w"> </span>refs/tags/v<span class="si">${</span><span class="nv">VERSION</span><span class="si">}</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span>git<span class="w"> </span>-C<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/src"</span><span class="w"> </span>checkout<span class="w"> </span>-q<span class="w"> </span>FETCH_HEAD
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="o">(</span><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/src"</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>uv<span class="w"> </span><span class="nb">export</span><span class="w"> </span>--no-config<span class="w"> </span>--frozen<span class="w"> </span>--no-dev<span class="w"> </span>--no-emit-project<span class="w"> </span>--no-hashes<span class="w"> </span>--format<span class="w"> </span>requirements-txt<span class="w"> </span>-o<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/constraints.txt"</span><span class="w"> </span>&gt;/dev/null<span class="o">)</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--force<span class="w"> </span>--no-config<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.15<span class="w"> </span>--managed-python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/constraints.txt"</span><span class="w"> </span><span class="s2">"vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v</span><span class="si">${</span><span class="nv">VERSION</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="o">)</span>
 </code></pre></div>
+<p>These lines install exactly the tag <code>v&lt;VERSION&gt;</code>, with its dependencies
+pinned by that tag's own <code>uv.lock</code>, on uv's managed Python 3.15. No uv
+config file and no <code>UV_PYTHON*</code> variable can change the interpreter. They
+are the same lines each vergil-tooling release runs (its
+<code>[publish].consumer-refresh</code> in <code>vergil.toml</code>), but only on the Mac that
+runs that release. On any other host, rerun them with the new <code>VERSION</code>
+to upgrade; see
+<a href="../guides/consuming-repo-setup/#keeping-up-to-date">Keeping up to date</a>.</p>
 <p>This installs all <code>vrg-*</code> console scripts into <code>~/.local/bin/</code>.
 <code>uv</code>'s official installer already puts that directory on <code>PATH</code>; with
 a Homebrew-installed <code>uv</code>, run <code>uv tool update-shell</code> once to add it.</p>

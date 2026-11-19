@@ -1452,6 +1452,8 @@
       
         
       
+        
+      
     
     
     
@@ -1504,6 +1506,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.328/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.328
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18462,7 +18492,7 @@ warning on stderr, and every Homebrew dependency reports <code>latest-unknown</c
 </tr>
 <tr>
 <td><code>latest-unmanaged</code></td>
-<td>The manifest declares no latest feed; the installed version is shown as info</td>
+<td>The manifest declares no latest feed; the installed version is shown as info (for <code>vergil-tooling</code>, with a note that its release installs it)</td>
 <td>OK</td>
 </tr>
 <tr>
@@ -18574,6 +18604,11 @@ and forces exit <code>2</code>. Remediations run unprivileged like every other c
   method (<code>brew upgrade</code>, <code>uv tool upgrade</code>, or the manifest's own upgrade
   command). A <code>manual</code> dependency (<code>docker-desktop</code>, <code>macos</code>, <code>xcode-clt</code>) is refused when
   named, and listed as skipped under <code>--all</code>; upgrade it by hand.</li>
+<li>A <code>release</code> dependency (<code>vergil-tooling</code>) is installed by its own release,
+  so <code>vrg-host</code> never runs its upgrade, with or without <code>--force</code>. It reports
+  the installed version and says the release installs it: <code>skipped</code> under
+  <code>--all</code>, <code>refused</code> when named. See the
+  <a href="#the-host-dependency-manifest"><code>vergil-tooling</code> note</a>.</li>
 <li>A Homebrew cask that updates itself (its <code>brew info</code> JSON says
   <code>auto_updates: true</code>) is never upgraded through <code>brew</code>. Without <code>--greedy</code>,
   <code>brew upgrade</code> skips such a cask without saying so, so <code>vrg-host</code> reports the
@@ -18591,7 +18626,7 @@ prints one line per dependency saying what it actually did:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>skipped  uv: current (0.13.1)
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>upgraded git: 2.54.0 -&gt; 2.56.0_1
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>unchanged bash: still 5.3.9, latest 5.3.20 (the upgrade command succeeded but did not change the installed version)
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>ran      vergil-tooling: 2.1.244 -&gt; 2.1.244 (unchanged; no latest feed)
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>skipped  vergil-tooling: 2.1.244 installed by the vergil-tooling release (its consumer-refresh installs it); vrg-host does not upgrade it
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>held     gh: pinned to 2.40.x (2.41.0 breaks vrg-gh auth) at 2.40.1, holding back from 2.42.0; run 'vrg-host unpin gh' or pass --force to upgrade past the pin
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>ERROR    lima: missing (not installed by brew-formula); vrg-host upgrades, it does not install
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>skipped (upgrade = manual, upgrade by hand): docker-desktop, macos
@@ -18641,8 +18676,18 @@ prints one line per dependency saying what it actually did:</p>
 <td>WARN (not counted under <code>--all</code>)</td>
 </tr>
 <tr>
+<td><code>skipped … installed by the … release</code></td>
+<td><code>upgrade = "release"</code> under <code>--all</code>: the installed version is reported and the upgrade is <strong>not</strong> run</td>
+<td>OK</td>
+</tr>
+<tr>
+<td><code>refused … installed by the … release</code></td>
+<td><code>upgrade = "release"</code>, named explicitly: as above</td>
+<td>WARN</td>
+</tr>
+<tr>
 <td><code>ERROR … missing</code> / <code>ERROR … probe-error</code></td>
-<td>Not installed, or a probe failed, as <code>status</code> reports it; the upgrade is not attempted</td>
+<td>Not installed, or a probe failed, as <code>status</code> reports it; the upgrade is not attempted (for a <code>release</code> dependency too)</td>
 <td>ERROR</td>
 </tr>
 <tr>
@@ -18657,7 +18702,7 @@ assumed to be the latest. <code>--force</code> only upgrades past a pin. It neve
 the upgrade of a dependency that is already current.</p>
 <p><strong>Exit code:</strong> <code>0</code> when everything requested was upgraded or already current
 (or, under <code>--all</code>, deliberately skipped or held); <code>1</code> when an explicitly named
-dependency was refused (<code>manual</code> or pinned), or an upgrade left a dependency
+dependency was refused (<code>manual</code>, <code>release</code> or pinned), or an upgrade left a dependency
 behind (or ran with its latest unknown); <code>2</code> on any failure: an unknown
 dependency name, a missing dependency, a probe error, a failed or
 privilege-refused upgrade, an unsupported pin constraint, or an unreadable
@@ -18767,8 +18812,8 @@ This is a security invariant: the manifest carries shell commands for probes,
 upgrades and checks, and letting a repo supply them would be an arbitrary-code
 execution surface on the host. Changing the list means a vergil-tooling PR.</p>
 <p>Each entry declares the dependency's <code>method</code> (<code>brew-formula</code>, <code>brew-cask</code>,
-<code>uv-tool</code> or <code>custom</code>), whether <code>vrg-host</code> may upgrade it (<code>upgrade = "auto"</code> or
-<code>"manual"</code>), whether it has a latest-version feed (<code>latest = "probe"</code> or
+<code>uv-tool</code> or <code>custom</code>), whether <code>vrg-host</code> may upgrade it (<code>upgrade = "auto"</code>,
+<code>"manual"</code>, or <code>"release"</code> for a tool its own release installs), whether it has a latest-version feed (<code>latest = "probe"</code> or
 <code>"unmanaged"</code>), and any auxiliary checks. A <code>custom</code> entry supplies its own
 installed, latest and upgrade commands. Its latest command is either
 <code>latest_version</code>, which prints one version, or <code>latest_versions</code>, which prints
@@ -18850,7 +18895,7 @@ itself. Current entries:</p>
 <tr>
 <td><code>vergil-tooling</code></td>
 <td>uv-tool</td>
-<td>auto</td>
+<td>release</td>
 <td>unmanaged</td>
 <td>The <code>vrg-*</code> host tools themselves</td>
 </tr>
@@ -18930,11 +18975,15 @@ itself. Current entries:</p>
   agent session on the Mac with human access. The original design excluded it
   as a personal tool; that was reversed in
   <a href="https://github.com/vergil-project/vergil-tooling/issues/3300">#3300</a>.</li>
-<li><strong><code>vergil-tooling</code> has no latest feed.</strong> It is installed from git, so <code>uv</code>'s
-  outdated feed cannot see new releases; <code>status</code> reports it as
-  <code>latest-unmanaged</code> rather than a false <code>current</code>. <code>vrg-host upgrade
-  vergil-tooling</code> runs <code>uv tool upgrade vergil-tooling</code>, which moves within the
-  release line you installed.</li>
+<li><strong><code>vergil-tooling</code> is installed by its own release.</strong> Releasing
+  vergil-tooling runs the <code>[publish].consumer-refresh</code> in its <code>vergil.toml</code>,
+  which reinstalls the host tools at the just-released tag, so <code>vrg-host</code> never
+  installs or upgrades it
+  (<a href="https://github.com/vergil-project/vergil-tooling/issues/4603">#4603</a>). It
+  is installed from git, so <code>uv</code>'s outdated feed cannot see new releases and
+  there is no latest to compare with: <code>status</code> reports the installed version as
+  <code>latest-unmanaged</code>, noting that the release installs it, and never claims it
+  is <code>current</code>.</li>
 <li><strong>Install method matters.</strong> Each entry assumes the install path verified on a
   real macOS host. A tool installed some other way (for example, uv from
   Astral's standalone installer) reads as <code>missing</code> for the brew and <code>uv-tool</code>
