@@ -11,7 +11,7 @@ from vergil_tooling.lib.release.context import ReleaseContext
 from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Iterator
 
     from vergil_tooling.lib.release.orchestrator import ReleaseState
 
