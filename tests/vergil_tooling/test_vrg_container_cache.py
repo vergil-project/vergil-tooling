@@ -541,7 +541,7 @@ def test_status_fails_when_the_release_cannot_be_resolved(
     assert "Status:" not in captured.out
     assert "error: cannot resolve vergil-tooling v2.0 to a release" in captured.err
     assert "no route to host" in captured.err
-    assert "VRG_DOCKER_INSTALL_TAG=v2.0.6" in captured.err
+    assert "VRG_DOCKER_INSTALL_TAG=v2.0.6 once the network is back" in captured.err
 
 
 def test_status_with_an_exact_override_needs_no_index(

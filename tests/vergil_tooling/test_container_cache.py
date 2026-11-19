@@ -2999,7 +2999,11 @@ def test_ensure_refuses_when_the_release_cannot_be_resolved(
     assert "cannot resolve vergil-tooling v2.0 to a release" in message
     assert GIT_URL in message
     assert "no route to host" in message
-    assert "VRG_DOCKER_INSTALL_TAG=v2.0.6" in message
+    assert "VRG_DOCKER_INSTALL_TAG=v2.0.6 once the network is back" in message
+    # The image was built under the line pin, so the advice never promises it.
+    assert "built under v2.0, so an exact pin does not reuse it" in message
+    assert "use it without the network" not in message
+    assert "needs one build with the network, then is found offline" in message
     assert store.built == []
     assert store.removed == []
 
@@ -3061,6 +3065,25 @@ def test_ensure_with_an_exact_override_reuses_its_cache_with_no_lookup(
     store = _ImageStore([cached])
     assert _ensure_go(tmp_path, store) == cached
     assert store.built == []
+
+
+def test_exact_override_does_not_reuse_an_image_built_under_the_line_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A line pin's key holds the commit and an exact pin's does not, so the
+    # image built when v2.0 resolved to v2.0.6 is rebuilt under the exact pin:
+    # the reason the offline advice promises no reuse of it.
+    from vergil_tooling.lib import tooling_release
+
+    monkeypatch.setattr(tooling_release, "_ls_remote", _no_network)
+    monkeypatch.setenv("VRG_DOCKER_INSTALL_TAG", "v2.0.6")
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    line_built = f"img:1--develop--r.{_line_key(tmp_path, 'v2.0.6')}"
+    store = _ImageStore([line_built])
+    image = _ensure_go(tmp_path, store)
+    assert image == f"img:1--develop--r.{_go_key(tmp_path, 'v2.0.6')}"
+    assert store.removed == [line_built]
+    assert store.built == [image]
 
 
 def test_self_repo_key_names_no_tooling_and_makes_no_listing(

@@ -1116,7 +1116,10 @@ def _resolve_tooling(
 
     A failure to resolve a line pin is never papered over with the release
     the existing cache holds: it raises :class:`ToolingResolveError`, naming
-    the cached release when it is an exact tag, and the exact pin that reuses it.
+    the cached release when it is an exact tag as the one to pin. An exact
+    pin's key is its tag alone and a line pin's also holds the commit, so an
+    image built under the line pin is not reused: the exact pin's cache needs
+    one build with the network, and is then found offline.
     """
     if is_self_repo(repo_root):
         return "", None
@@ -1125,14 +1128,19 @@ def _resolve_tooling(
         return pin, resolve_tooling_tag(pin)
     except ToolingResolveError as exc:
         held = cached_tooling(existing_tag, runtime=runtime) if existing_tag else None
-        # Only an exact tag works offline; a dev ref the image was built with does not.
+        # Only an exact tag can be pinned; a dev ref the image was built with cannot.
         reusable = held if held and classify_ref(held) == "exact" else None
+        remedy = (
+            " To work without the network, pin an exact release (vX.Y.Z) with "
+            "VRG_DOCKER_INSTALL_TAG: its cache needs one build with the network, "
+            "then is found offline."
+        )
         reuse = (
-            f" This branch's cached image holds {reusable}: set "
-            f"VRG_DOCKER_INSTALL_TAG={reusable} to use it without the network."
+            f" This branch's cached image holds {reusable}, built under {pin}, so an "
+            f"exact pin does not reuse it.{remedy} To stay on that release, set "
+            f"VRG_DOCKER_INSTALL_TAG={reusable} once the network is back."
             if reusable
-            else " To work without the network, pin an exact release (vX.Y.Z) with "
-            "VRG_DOCKER_INSTALL_TAG."
+            else remedy
         )
         msg = (
             f"cannot resolve vergil-tooling {pin} to a release: {exc}. Refusing to use a "
