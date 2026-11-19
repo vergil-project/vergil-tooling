@@ -157,7 +157,9 @@ def test_proxies_of_ignores_untrusted_malformed_line() -> None:
 
 
 def test_proxies_of_strips_app_prefix() -> None:
-    comments = [_comment("app/wphillipmoore-vergil-user", "Proxy: logical-minds-foundry/.github#320")]
+    comments = [
+        _comment("app/wphillipmoore-vergil-user", "Proxy: logical-minds-foundry/.github#320")
+    ]
     assert _proxies_of(comments) == (PROXY,)
 
 
