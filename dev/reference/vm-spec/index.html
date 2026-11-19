@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -18356,8 +18356,8 @@ any <code>[vm]</code> key marks the spec customized, which gives the repo a dedi
 <tr>
 <td><code>disk</code></td>
 <td>string <code>"&lt;N&gt;GiB"</code></td>
-<td>identity/base footprint</td>
-<td>Disk size (last-wins scalar)</td>
+<td>identity footprint, else base <code>100GiB</code></td>
+<td>Disk size (last-wins scalar). Lima only</td>
 </tr>
 <tr>
 <td><code>stale_days</code></td>
@@ -18533,7 +18533,10 @@ design spec is
   (<code>"&lt;N&gt;GiB"</code>) to grow the disk for workloads whose scratch data lives
   <em>outside</em> the persistent <code>volume</code> — e.g. a nested-virt image pool and
   qcow2 overlays, which belong on the wipe-on-rebuild boot disk rather
-  than the never-wiped <code>volume</code>. Unlike <code>volume</code> it is <strong>not required</strong>
+  than the never-wiped <code>volume</code>. The rootless containerd image store
+  (<code>~/.local/share/containerd</code>, with <code>HOME</code> on the boot disk) is such
+  scratch data too, so a box that holds many container images needs a
+  larger <code>boot_disk</code>. Unlike <code>volume</code> it is <strong>not required</strong>
   off-platform, and it never enters the local (Lima) spec.</li>
 <li><strong><code>boot_disk_type</code> picks the ephemeral boot disk's type</strong> (optional).
   Unset, the key is not passed and the vergil-vm module default holds:
@@ -18672,6 +18675,16 @@ set</strong>, so cloud VMs created before the knob existed keep their
 fingerprints; declaring or resizing it trips <code>NEEDS-REBUILD</code> like
 <code>volume</code>. <code>boot_disk_type</code> follows the same rule: it enters the payload
 only when set, and declaring or changing it trips <code>NEEDS-REBUILD</code>.</p>
+<p>A local profile's <code>disk</code> is in the payload whether a tier declared it
+or it came from the base footprint, so a change to the base footprint
+reaches existing dedicated Lima VMs as <code>NEEDS-REBUILD</code>. When the base
+<code>disk</code> went from <code>50GiB</code> to <code>100GiB</code>, every dedicated Lima VM that took
+its size from the base read <code>NEEDS-REBUILD</code>, and <code>vrg-vm rebuild</code>
+brings it up at the new size. The shared base VM carries no
+fingerprint, so it never reads <code>NEEDS-REBUILD</code>; <code>vrg-vm list</code> shows
+the declared size for it, and it reaches that size only when it is
+rebuilt. A VM whose identity, repo or host override sets <code>disk</code> is
+unaffected.</p>
 <h2 id="vergil-tooling-inside-the-vm">vergil-tooling inside the VM<a class="headerlink" href="#vergil-tooling-inside-the-vm" title="Permanent link">&para;</a></h2>
 <p>Lima and cloud VMs install vergil-tooling with <code>uv tool install</code>, from
 git, into uv's default <code>~/.local/bin</code>, on uv's own managed Python 3.15.
