@@ -192,9 +192,10 @@ def test_prepare_passes_token_to_clone_only(
         return real(repo)
 
     monkeypatch.setattr(develop_clone, "clone_develop", spy)
-    prepared = prepare(_REPO, tmp_path / "out", token="t0ken-value")
-    assert seen == ["t0ken-value"]
-    assert not any("t0ken-value" in note for note in prepared.notes)
+    token = _sentinel("clone-token")
+    prepared = prepare(_REPO, tmp_path / "out", token=token)
+    assert seen == [token]
+    assert not any(_SENTINEL in note for note in prepared.notes)
 
 
 def test_prepare_requires_upstream_refresh_section(
@@ -235,6 +236,28 @@ def test_hook_read_from_clone_config(
 
 # -- the hook ------------------------------------------------------------------
 
+#: A marker no ambient variable can carry by chance (#4752). The hook tests
+#: dump the hook's whole environment, which in CI includes the branch name
+#: (``GITHUB_HEAD_REF``, ``GITHUB_REF``, ``GITHUB_REF_NAME``); asserting a
+#: common word such as "secret" is absent made them fail on any branch
+#: named with it. They assert this exact marker is absent instead.
+_SENTINEL = "vrg-sentinel-7f3c9e1a4b2d"
+
+#: A branch name holding the words the old checks looked for.
+_SECRET_BRANCH = "feature/4747-repo-init-app-secrets"
+
+
+def _sentinel(name: str) -> str:
+    return f"{_SENTINEL}-{name}"
+
+
+def _set_ci_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Set the CI branch variables to a name with "secret" and "token" in it."""
+    monkeypatch.setenv("GITHUB_HEAD_REF", f"{_SECRET_BRANCH}-tokens")
+    monkeypatch.setenv("GITHUB_REF", f"refs/heads/{_SECRET_BRANCH}")
+    monkeypatch.setenv("GITHUB_REF_NAME", _SECRET_BRANCH)
+
+
 _SCRUBBED = (
     "GH_TOKEN",
     "GITHUB_TOKEN",
@@ -254,13 +277,13 @@ _SCRUBBED = (
 
 def test_hook_env_has_no_tokens_or_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for name in _SCRUBBED:
-        monkeypatch.setenv(name, f"secret-{name}")
+        monkeypatch.setenv(name, _sentinel(name))
     monkeypatch.setenv("KEEP_ME", "visible")
     report = tmp_path / "report.txt"
     notes = run_hook(tmp_path, 'env > "$VRG_UPSTREAM_REPORT"', report)
     names = {note.split("=", 1)[0] for note in notes}
     assert not names & set(_SCRUBBED)
-    assert not any("secret-" in note for note in notes)
+    assert not any(_SENTINEL in note for note in notes)
     assert "KEEP_ME=visible" in notes
     assert f"{REPORT_ENV}={report}" in notes
 
@@ -275,10 +298,31 @@ def test_hook_env_function_scrubs_the_same(monkeypatch: pytest.MonkeyPatch, tmp_
 
 def test_prepare_hook_sees_no_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _origin(tmp_path, monkeypatch, 'env > "$VRG_UPSTREAM_REPORT"')
-    monkeypatch.setenv("GH_TOKEN", "ghs_secret")
-    monkeypatch.setenv("VRG_AUTOMATION_CLIENT_ID", "Iv1.secret")
+    monkeypatch.setenv("GH_TOKEN", _sentinel("GH_TOKEN"))
+    monkeypatch.setenv("VRG_AUTOMATION_CLIENT_ID", _sentinel("VRG_AUTOMATION_CLIENT_ID"))
     prepared = prepare(_REPO, tmp_path / "out")
-    assert not any("secret" in note for note in prepared.notes)
+    assert not any(_SENTINEL in note for note in prepared.notes)
+
+
+def test_hook_env_checks_ignore_a_secret_branch_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#4752: a branch named with "secret" reaches the hook and fails no check."""
+    _set_ci_branch(monkeypatch)
+    for name in _SCRUBBED:
+        monkeypatch.setenv(name, _sentinel(name))
+    notes = run_hook(tmp_path, 'env > "$VRG_UPSTREAM_REPORT"', tmp_path / "report.txt")
+    assert not any(_SENTINEL in note for note in notes)
+    assert f"GITHUB_HEAD_REF={_SECRET_BRANCH}-tokens" in notes
+    assert f"GITHUB_REF_NAME={_SECRET_BRANCH}" in notes
+
+
+def test_prepare_hook_sees_no_token_on_a_secret_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#4752: the prepare-path check holds on a branch named with "secret"."""
+    _set_ci_branch(monkeypatch)
+    test_prepare_hook_sees_no_token(tmp_path, monkeypatch)
 
 
 def test_hook_failure_raises(tmp_path: Path) -> None:
