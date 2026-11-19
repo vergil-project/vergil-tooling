@@ -97,7 +97,7 @@ class FakeVm:
                 raise subprocess.CalledProcessError(1, list(args))
         if args[0] == "dpkg-query":
             listing = "".join(f"{s} {n}\n" for n, s in self.packages.items())
-            return _ok("ii  libc6\nun  vergil-unrelated-un\n" + listing)
+            return _ok("ii  libc6\nun  vergil-unrelated-un\nmalformed line here\n" + listing)
         if "test -e" in joined:
             return _ok("".join(f"{f}\n" for f in sorted(self.files)))
         if "purge" in args:

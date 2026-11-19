@@ -11,9 +11,9 @@ import pytest
 
 from tests.vergil_tooling.conftest import failing_command, shell_transport
 from vergil_tooling.lib import tooling_install, vm_packages
-from vergil_tooling.lib.package import repo_setup
 from vergil_tooling.lib.atomic_write import atomic_write_cmd
 from vergil_tooling.lib.identity import Identity
+from vergil_tooling.lib.package import repo_setup
 from vergil_tooling.lib.trusted_authors import TrustedAuthors, parse_trusted_authors
 from vergil_tooling.lib.vm_guest import (
     _PLUGIN_PATH_EXPORT,

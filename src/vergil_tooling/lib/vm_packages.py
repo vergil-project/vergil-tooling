@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Literal, NoReturn
 from vergil_tooling.lib import tooling_install
 from vergil_tooling.lib.atomic_write import atomic_write_cmd
 from vergil_tooling.lib.package import orgs, repo_setup
-from vergil_tooling.lib.tooling_install import classify_ref
+from vergil_tooling.lib.tooling_install import classify_ref as classify_ref
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.vm_transport import Transport
