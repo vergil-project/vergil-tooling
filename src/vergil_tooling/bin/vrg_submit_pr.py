@@ -900,7 +900,7 @@ def _reject_if_queue_item(issue_ref: str) -> None:
         raise SystemExit(f"vrg-submit-pr: {epics.queue_refusal_message(issue_ref, kind)}")
 
 
-def _task_linkage(issue_ref: str, requested: str) -> tuple[str, str | None]:
+def _task_linkage(issue_ref: str, requested: str) -> str:
     """Choose the PR-body linkage keyword for *issue_ref*.
 
     A managed task — an issue with an ``epic``-labeled parent — is closed by its
@@ -910,22 +910,17 @@ def _task_linkage(issue_ref: str, requested: str) -> tuple[str, str | None]:
     epic-target case was already rejected by :func:`_reject_if_non_task`.
 
     Deciding task-ness needs the same authenticated cross-repo ``gh`` call as the
-    epic rejection — a parent epic may live in ``.github``. Returns
-    ``(linkage, note)`` where *note* explains the automatic upgrade to ``Closes``
-    (for the caller to surface), or ``None``.
+    epic rejection — a parent epic may live in ``.github``. The chosen keyword
+    is shown in the selection table, so the upgrade is not announced separately.
     """
     try:
         task = epics.parse_issue_ref(issue_ref, default_repo=github.current_repo())
     except ValueError:
-        return requested, None
+        return requested
     parent = epics.parent_of(task)
     if parent is not None and epics.is_epic(parent):
-        note = (
-            f"{task.slug} is a task under epic {parent.slug}; "
-            "linking with 'Closes' to auto-close it on merge."
-        )
-        return "Closes", note
-    return requested, None
+        return "Closes"
+    return requested
 
 
 def _checked_links(issue_refs: list[str], requested: str) -> list[tuple[str, str]]:
@@ -936,8 +931,6 @@ def _checked_links(issue_refs: list[str], requested: str) -> list[tuple[str, str
     its own, so a batch PR gets one ``(linkage, ref)`` per issue, in order
     (epic vergil-project/.github#1019). Every batch issue is a task under the
     batch's epic, so each resolves to ``Closes``. The first refusal aborts.
-    The linkage is shown in the selection table, so a ``Closes`` upgrade is
-    not announced on a line of its own.
     """
     links: list[tuple[str, str]] = []
     for issue_ref in issue_refs:
@@ -945,7 +938,7 @@ def _checked_links(issue_refs: list[str], requested: str) -> list[tuple[str, str
         _reject_if_non_task(issue_ref)
         _reject_if_operational_task(issue_ref)
         _reject_if_queue_item(issue_ref)
-        links.append((_task_linkage(issue_ref, requested)[0], issue_ref))
+        links.append((_task_linkage(issue_ref, requested), issue_ref))
     return links
 
 

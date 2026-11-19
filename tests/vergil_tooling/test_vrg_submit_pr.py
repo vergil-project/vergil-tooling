@@ -89,7 +89,7 @@ def _no_epic_link_check() -> Iterator[None]:
         patch(_MOD + "._reject_if_non_task"),
         patch(_MOD + "._reject_if_operational_task"),
         patch(_MOD + "._reject_if_queue_item"),
-        patch(_MOD + "._task_linkage", side_effect=lambda _ref, requested: (requested, None)),
+        patch(_MOD + "._task_linkage", side_effect=lambda _ref, requested: requested),
         patch(_MOD + "._planning_close", return_value=None),
     ):
         yield
@@ -2518,10 +2518,7 @@ def test_task_linkage_upgrades_managed_task_to_closes() -> None:
         patch(f"{_MOD}.epics.parent_of", return_value=parent),
         patch(f"{_MOD}.epics.is_epic", return_value=True),
     ):
-        linkage, note = _task_linkage("#42", "Ref")
-    assert linkage == "Closes"
-    assert note is not None
-    assert "Closes" in note
+        assert _task_linkage("#42", "Ref") == "Closes"
 
 
 def test_task_linkage_keeps_ref_for_legacy_issue() -> None:
@@ -2529,7 +2526,7 @@ def test_task_linkage_keeps_ref_for_legacy_issue() -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.parent_of", return_value=None),
     ):
-        assert _task_linkage("#42", "Ref") == ("Ref", None)
+        assert _task_linkage("#42", "Ref") == "Ref"
 
 
 def test_task_linkage_keeps_ref_when_parent_not_epic() -> None:
@@ -2539,12 +2536,12 @@ def test_task_linkage_keeps_ref_when_parent_not_epic() -> None:
         patch(f"{_MOD}.epics.parent_of", return_value=parent),
         patch(f"{_MOD}.epics.is_epic", return_value=False),
     ):
-        assert _task_linkage("#42", "Ref") == ("Ref", None)
+        assert _task_linkage("#42", "Ref") == "Ref"
 
 
 def test_task_linkage_noop_when_ref_unresolvable() -> None:
     with patch(f"{_MOD}.github.current_repo", return_value=""):
-        assert _task_linkage("#42", "Ref") == ("Ref", None)
+        assert _task_linkage("#42", "Ref") == "Ref"
 
 
 # -- _planning_close (a docs task's PR also closes its planning issue) --------
@@ -3615,9 +3612,9 @@ def _batch_state(
     return state
 
 
-def _all_closes(_ref: str, _requested: str) -> tuple[str, str | None]:
+def _all_closes(_ref: str, _requested: str) -> str:
     """Every batch issue is a task under the batch's epic, so each links Closes."""
-    return "Closes", None
+    return "Closes"
 
 
 def _batch_metadata(issues: str = "10,11") -> dict[str, str]:
