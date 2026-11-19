@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin.vrg_gh import main
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, identity_mode
 
 
 def _completed(
@@ -461,6 +461,225 @@ class TestRepoFlagInstallationSelection:
         assert captured.startswith("vrg-gh: GitHub App mode is configured")
         assert "no target org could be determined" in captured
         assert "-R owner/repo" in captured
+
+
+# -- installation selection from every form of target owner (#4762) ----------
+
+
+def _token_call(argv: list[str], *, app_mode: bool = True) -> tuple[int, dict[str, object] | None]:
+    """Run ``main(argv)``; return its exit code and get_installation_token's kwargs."""
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value="ghs_token",
+        ) as mock_token,
+        patch("vergil_tooling.bin.vrg_gh.github.is_app_mode", return_value=app_mode),
+        # Human mode allows every command under test, `api` included.
+        patch(
+            "vergil_tooling.bin.vrg_gh.identity_mode.current_mode",
+            return_value=identity_mode.IdentityMode.HUMAN,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed()
+        rc = main(argv)
+    kwargs = dict(mock_token.call_args.kwargs) if mock_token.call_args else None
+    return rc, kwargs
+
+
+class TestTargetOwnerInstallationSelection:
+    """Every way a command names its target owner selects that owner's installation."""
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            # repo view: positional OWNER/REPO, HOST/OWNER/REPO, URL
+            ["repo", "view", "other-owner/repo"],
+            ["repo", "view", "github.com/other-owner/repo"],
+            ["repo", "view", "https://github.com/other-owner/repo"],
+            ["repo", "view", "other-owner/repo", "--json", "visibility"],
+            ["repo", "view", "--json", "visibility", "other-owner/repo"],
+            # repo list: positional owner, before or after flags
+            ["repo", "list", "other-owner"],
+            ["repo", "list", "--limit", "1000", "other-owner", "--json", "name"],
+            ["repo", "list", "-L1000", "other-owner"],
+            # issue / pr: a URL positional
+            ["issue", "view", "https://github.com/other-owner/repo/issues/7"],
+            ["issue", "comment", "https://github.com/other-owner/repo/issues/7", "-b", "hi"],
+            ["issue", "edit", "https://github.com/other-owner/repo/issues/7", "--title", "t"],
+            ["pr", "view", "https://github.com/other-owner/repo/pull/3", "--json", "state"],
+            ["pr", "checks", "--json", "name", "https://github.com/other-owner/repo/pull/3"],
+            # a boolean short flag never consumes the next token
+            ["pr", "view", "-c", "https://github.com/other-owner/repo/pull/3"],
+            # issue transfer: the destination repo
+            ["issue", "transfer", "7", "other-owner/dest"],
+            # search: --owner, --repo and query qualifiers
+            ["search", "prs", "--owner", "other-owner", "--state", "open"],
+            ["search", "prs", "--owner=other-owner"],
+            ["search", "issues", "--repo", "other-owner/repo"],
+            ["search", "issues", "-R", "other-owner/repo", "bug"],
+            ["search", "issues", "is:open org:other-owner"],
+            ["search", "prs", "repo:other-owner/repo", "is:open"],
+            ["search", "repos", "user:other-owner"],
+            ["search", "issues", "(org:other-owner OR org:Other-Owner)"],
+            ["search", "code", "secrets: inherit", "--owner", "other-owner"],
+            # api: an owner-scoped endpoint
+            ["api", "repos/other-owner/repo/actions/runs"],
+            ["api", "/orgs/other-owner/repos", "--paginate"],
+            ["api", "-H", "Accept: x", "users/other-owner"],
+            # api: a full-URL endpoint, github.com and GHES
+            ["api", "https://api.github.com/repos/other-owner/repo/actions/runs"],
+            ["api", "--paginate", "https://api.github.com/orgs/other-owner/repos"],
+            ["api", "https://ghes.example.com/api/v3/repos/other-owner/repo"],
+        ],
+    )
+    def test_target_owner_selects_its_installation(self, argv: list[str]) -> None:
+        rc, kwargs = _token_call(argv)
+        assert rc == 0
+        assert kwargs is not None
+        assert kwargs.get("org") == "other-owner"
+        assert kwargs.get("require_installation") is True
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["repo", "view"],
+            ["repo", "view", "bare-repo-name"],
+            ["repo", "list"],
+            ["issue", "view", "7"],
+            ["pr", "view", "feature/12-some-branch"],
+            ["pr", "view", "123", "--json", "title"],
+            # a flag's value is never read as a target
+            ["issue", "comment", "7", "--body", "see https://github.com/other-owner/r/issues/1"],
+            ["pr", "review", "7", "-b", "https://github.com/other-owner/r/pull/1", "--comment"],
+            ["repo", "view", "--branch", "other-owner/branch"],
+            ["search", "prs", "--json", "repository", "--jq", "{org: .repository}"],
+            ["search", "issues", "bug", "-repo:other-owner/r"],
+            ["api", "repos/{owner}/{repo}/pulls"],
+            ["api", "user"],
+            ["api", "https://api.github.com/rate_limit"],
+        ],
+    )
+    def test_no_target_owner_keeps_cwd_detection(self, argv: list[str]) -> None:
+        rc, kwargs = _token_call(argv)
+        assert rc == 0
+        assert kwargs is not None
+        assert kwargs.get("org") is None
+        assert not kwargs.get("require_installation")
+
+    def test_double_dash_ends_flags(self) -> None:
+        rc, kwargs = _token_call(["search", "issues", "--", "-label:x", "org:other-owner"])
+        assert rc == 0
+        assert kwargs is not None
+        assert kwargs.get("org") == "other-owner"
+
+    def test_clustered_short_flags_read_the_value_flag(self) -> None:
+        rc, kwargs = _token_call(["issue", "view", "-cR", "other-owner/repo", "7"])
+        assert rc == 0
+        assert kwargs is not None
+        assert kwargs.get("org") == "other-owner"
+
+    def test_same_owner_named_twice_is_one_owner(self) -> None:
+        rc, kwargs = _token_call(
+            ["pr", "view", "https://github.com/Other-Owner/repo/pull/3", "-R", "other-owner/repo"]
+        )
+        assert rc == 0
+        assert kwargs is not None
+        assert kwargs.get("org") == "Other-Owner"
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["search", "prs", "--owner", "owner-a", "--owner", "owner-b"],
+            ["search", "issues", "--repo", "owner-a/r", "--repo", "owner-b/r"],
+            ["search", "issues", "org:owner-a", "--owner", "owner-b"],
+            ["pr", "view", "https://github.com/owner-a/r/pull/3", "-R", "owner-b/r"],
+            ["issue", "transfer", "https://github.com/owner-a/r/issues/7", "owner-b/dest"],
+        ],
+    )
+    def test_multiple_owners_refused_in_app_mode(
+        self, argv: list[str], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_gh.github.get_installation_token") as mock_token,
+            patch("vergil_tooling.bin.vrg_gh.github.is_app_mode", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_gh.identity_mode.current_mode",
+                return_value=identity_mode.IdentityMode.HUMAN,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            rc = main(argv)
+        assert rc == 1
+        mock_token.assert_not_called()
+        mock_run.assert_not_called()
+        err = capsys.readouterr().err
+        assert "more than one owner (owner-a, owner-b)" in err
+        assert "Run it once per owner" in err
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["api", "graphql", "-f", "query={viewer{login}}"],
+            ["api", "/graphql", "-F", "owner=other-owner"],
+            ["api", "https://api.github.com/graphql", "-f", "query=x"],
+            ["api", "https://ghes.example.com/api/graphql", "-f", "query=x"],
+        ],
+    )
+    def test_graphql_refused_in_app_mode(
+        self, argv: list[str], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A GraphQL call names its owner inside the query, out of vrg-gh's sight,
+        # so in App mode it would silently take the cwd org's token.
+        with (
+            patch("vergil_tooling.bin.vrg_gh.github.get_installation_token") as mock_token,
+            patch("vergil_tooling.bin.vrg_gh.github.is_app_mode", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_gh.identity_mode.current_mode",
+                return_value=identity_mode.IdentityMode.HUMAN,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            rc = main(argv)
+        assert rc == 1
+        mock_token.assert_not_called()
+        mock_run.assert_not_called()
+        assert "api graphql is refused in GitHub App mode" in capsys.readouterr().err
+
+    def test_graphql_allowed_on_ambient_auth(self) -> None:
+        rc, kwargs = _token_call(["api", "graphql", "-f", "query=x"], app_mode=False)
+        assert rc == 0
+        assert kwargs is not None
+        assert kwargs.get("org") is None
+
+    def test_multiple_owners_allowed_on_ambient_auth(self) -> None:
+        # Without App mode there is no installation token to scope: ambient
+        # (human) gh auth serves every owner, so nothing is refused.
+        rc, kwargs = _token_call(
+            ["search", "prs", "--owner", "owner-a", "--owner", "owner-b"], app_mode=False
+        )
+        assert rc == 0
+        assert kwargs is not None
+        assert kwargs.get("org") == "owner-a"
+
+    def test_positional_owner_without_installation_fails_loudly(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        err = github.NoInstallationError("other-owner", ["vergil-project"])
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                side_effect=err,
+            ) as mock_token,
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            rc = main(["repo", "list", "other-owner"])
+        assert rc == 1
+        mock_run.assert_not_called()
+        assert mock_token.call_args.kwargs.get("require_installation") is True
+        captured = capsys.readouterr().err
+        assert "no installation for owner 'other-owner' (the command's target)" in captured
+        assert "vergil-project" in captured
 
 
 # -- subprocess passthrough ---------------------------------------------------
