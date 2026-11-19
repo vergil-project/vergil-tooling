@@ -72,7 +72,7 @@ environment variables:
   DOCKER_DEV_IMAGE        override the auto-detected container image
   DOCKER_NETWORK          join a Docker network (e.g. for integration tests)
   VRG_DOCKER_INSTALL_TAG   override the vergil-tooling version tag from vergil.toml
-                          (an exact vX.Y.Z needs no package-index lookup)
+                          (an exact vX.Y.Z needs no network lookup)
   PYTHONPYCACHEPREFIX     container bytecode cache root (default: /tmp/pycache,
                           keeping __pycache__ off the bind-mounted repo)
   CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER
