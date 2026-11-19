@@ -441,7 +441,9 @@ def _resolve(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig]:
 
 _BASE_CPUS = 4
 _BASE_MEMORY = "4GiB"
-_BASE_DISK = "50GiB"
+# Doubled from 50GiB (#4791): each per-branch container cache image is 2-3 GB and
+# several sessions share one VM, so the container store filled a 50GiB disk.
+_BASE_DISK = "100GiB"
 
 
 @dataclass

@@ -24,7 +24,7 @@ from vergil_tooling.lib.vm_spec import (
     validate_repo_segment,
 )
 
-BASE = {"cpus": 4, "memory": "4GiB", "disk": "50GiB"}
+BASE = {"cpus": 4, "memory": "4GiB", "disk": "100GiB"}
 
 _REPO = {
     "name": "hashicorp",
@@ -309,7 +309,7 @@ class TestOffPlatformCompose:
         spec = compose_vm_spec(
             identity="vergil-user", base=BASE, stanza=_off_platform_stanza(), override=None
         )
-        assert spec.disk == "50GiB"  # untouched base — ignored on the cloud path
+        assert spec.disk == "100GiB"  # untouched base — ignored on the cloud path
         assert spec.volume == "300GiB"
 
     def test_missing_required_key_raises(self) -> None:

@@ -23,6 +23,7 @@ from vergil_tooling.bin.vrg_vm import (
     DedicatedRow,
     OffPlatformVm,
     Target,
+    _base_footprint,
     _candidate_zones,
     _cloud_backend,
     _CloudState,
@@ -3784,6 +3785,16 @@ class TestDiscoverDedicated:
     def test_nonexistent_projects_dir(self, tmp_path: Path) -> None:
         rows = discover_dedicated("vergil-user", ["vergil-user.org.gone"], str(tmp_path / "nope"))
         assert [(r.repo, r.state) for r in rows] == [("gone", "orphaned")]
+
+
+class TestBaseFootprint:
+    def test_default_disk_is_100gib(self) -> None:
+        ident = Identity(vm_instance="vergil-user")
+        assert _base_footprint(ident) == {"cpus": 4, "memory": "4GiB", "disk": "100GiB"}
+
+    def test_identity_disk_overrides_the_base(self) -> None:
+        ident = Identity(vm_instance="vergil-user", disk="200GiB")
+        assert _base_footprint(ident)["disk"] == "200GiB"
 
 
 class TestListRows:
