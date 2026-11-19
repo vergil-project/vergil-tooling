@@ -18819,8 +18819,8 @@ The <code>publish</code> job of <code>ops-upstream-refresh.yml</code> passes the
 <code>vrg-upstream-refresh publish</code>, which mints its own repo-scoped tokens
 (see <a href="../../reference/upstream-refresh-config/#identity-and-credentials">Upstream Refresh</a>).
 The <code>epic-rollup</code> and epic-sweep workflows use them to close epics and
-tasks. The <code>cd-release</code> workflow uses them to dispatch to the org's
-<code>packages</code> repository (see
+tasks. The <code>cd-release</code> workflow uses them to push the release tags
+and to dispatch to the org's <code>packages</code> repository (see
 <a href="../../reference/package-config/">Package config</a>).</p>
 <p><strong>Blast radius.</strong> Each App is installed on its org with access to all
 repositories, not per contributor, so a leaked key reaches every repo
@@ -18844,8 +18844,8 @@ the draft advisories in the org's <code>.github</code> (see
 delete the key, suspend the installation if access must stop at once,
 and generate a new key. Then update the <code>APP_PRIVATE_KEY</code> secret
 wherever it is stored. Until you do, the workflows that depend on it
-(ops, upstream refresh, epic roll-up and sweep, package-index
-dispatch) will fail.</p>
+(ops, upstream refresh, epic roll-up and sweep, release tagging,
+package-index dispatch) will fail.</p>
 <h3 id="ci-publishing-secrets">CI publishing secrets<a class="headerlink" href="#ci-publishing-secrets" title="Permanent link">&para;</a></h3>
 <p>The release workflow forwards per-ecosystem secrets to <code>cd-release</code>
 (see <a href="../ci-architecture/#cd-release-publishing-secrets">CI Architecture</a>):</p>

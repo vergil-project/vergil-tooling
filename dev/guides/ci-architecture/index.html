@@ -18836,8 +18836,11 @@ to the reusable <code>cd-release</code> workflow per ecosystem — never a blank
 <code>secrets: inherit</code> (epic
 <a href="https://github.com/vergil-project/.github/issues/189">vergil-project/.github#189</a>).
 The map lives in <code>_cd_release_secrets()</code>
-(<code>src/vergil_tooling/lib/repo_init.py</code>) and mirrors exactly what each
-publisher reads:</p>
+(<code>src/vergil_tooling/lib/repo_init.py</code>). Every release forwards the
+automation App's <code>APP_CLIENT_ID</code> and <code>APP_PRIVATE_KEY</code>: <code>cd-release</code>
+pushes the release tags with the App's installation token, and fails
+at "Require the automation App secrets" without them. After those
+come exactly what each publisher reads:</p>
 <table>
 <thead>
 <tr>
@@ -18848,20 +18851,21 @@ publisher reads:</p>
 <tbody>
 <tr>
 <td>python</td>
-<td><em>none</em> — PyPI OIDC trusted publishing</td>
+<td>App secrets only (PyPI OIDC trusted publishing)</td>
 </tr>
 <tr>
 <td>go</td>
-<td><em>none</em> — no publish token</td>
+<td>App secrets only (no publish token)</td>
 </tr>
 <tr>
 <td>rust</td>
-<td><code>CARGO_REGISTRY_TOKEN</code></td>
+<td>App secrets and <code>CARGO_REGISTRY_TOKEN</code></td>
 </tr>
 </tbody>
 </table>
-<p>A language that needs no secret (python, go, or any non-publishing
-language) gets <strong>no <code>secrets:</code> block at all</strong>, not <code>secrets: inherit</code>.
+<p>A language whose publisher needs no secret (python, go, or any
+non-publishing language) gets a <code>secrets:</code> block naming only the two
+App secrets, never <code>secrets: inherit</code>.
 References to our own <code>vergil-actions@v2.1</code> reusable workflows are
 unaffected — they are trusted first-party refs.</p>
 <p><strong>Exception: repos with <code>[package]</code>.</strong> A repo whose <code>vergil.toml</code> has a

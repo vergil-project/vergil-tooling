@@ -18681,6 +18681,8 @@ workflows use it for:</p>
   The <code>prepare</code> job holds no secrets.</li>
 <li><strong>Epic roll-up and sweep</strong> (<code>ops-epic-rollup.yml</code>,
   <code>ops-epic-sweep.yml</code>): closing epics and tasks across the org.</li>
+<li><strong>Release tagging</strong> (<code>cd-release.yml</code>): pushing the release tags
+  with a token scoped to the releasing repo, Contents write only.</li>
 <li><strong>Package-index dispatch</strong> (<code>cd-release.yml</code>): sending
   <code>package-released</code> to the org's <code>packages</code> repo after a packaged
   release.</li>
