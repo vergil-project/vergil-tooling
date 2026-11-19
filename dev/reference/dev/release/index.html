@@ -18153,8 +18153,8 @@
 <code>src/vergil_tooling/lib/release/orchestrator.py</code>)</p>
 <p>Runs the whole release workflow from <code>develop</code> to <code>main</code>: preflight,
 tracking issue, changelog, release PR, merge, CD confirmation,
-back-merge and version bump, rolling-tag promotion, cleanup, consumer
-refresh, and the post-release dependency update. The stages and what
+back-merge and version bump, rolling-tag promotion, cleanup, the
+post-release dependency update, and last the consumer refresh. The stages and what
 they leave behind are described in the
 <a href="../../../guides/releasing/#the-vrg-release-pipeline">Releasing guide</a>.</p>
 <p>Releasing is a human maintainer action. <code>vrg-release</code> refuses to run
@@ -18200,7 +18200,7 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 <tr>
 <td><code>--no-install</code></td>
 <td>No</td>
-<td>Skip the install step. By default, after a clean release, <code>vrg-release</code> runs the <code>[publish].consumer-refresh</code> commands instead of only printing them; with none configured it says there is nothing to run, which is not an error. <code>--install</code> was removed: passing it exits 1 and names this default</td>
+<td>Skip the install step. By default the <code>consumer-refresh</code> stage runs the <code>[publish].consumer-refresh</code> commands as the release's last stage, unless a deferred publish holds it; with this flag it prints them below the summary instead. With none configured the stage says there is nothing to run, which is not an error. <code>--install</code> was removed: passing it exits 1 and names this default</td>
 </tr>
 <tr>
 <td><code>--resume [X.Y.Z]</code></td>
@@ -18375,7 +18375,7 @@ failed checks as its likely cause (issue #4294).</p>
 </tr>
 <tr>
 <td>1</td>
-<td>A stage failed, including a deferred failure such as a missed publish job or a failed dependency update; or the command was refused</td>
+<td>A stage failed, including a deferred failure such as a missed publish job, a failed consumer refresh or a failed dependency update; or the command was refused</td>
 </tr>
 <tr>
 <td>130</td>

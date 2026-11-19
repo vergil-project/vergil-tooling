@@ -18643,84 +18643,76 @@ fingerprints; declaring or resizing it trips <code>NEEDS-REBUILD</code> like
 <code>volume</code>. <code>boot_disk_type</code> follows the same rule: it enters the payload
 only when set, and declaring or changing it trips <code>NEEDS-REBUILD</code>.</p>
 <h2 id="vergil-tooling-inside-the-vm">vergil-tooling inside the VM<a class="headerlink" href="#vergil-tooling-inside-the-vm" title="Permanent link">&para;</a></h2>
-<p>Lima and cloud VMs install vergil-tooling from the vergil <strong>package
-repository</strong> (<code>https://vergil-project.github.io/packages</code>) with <code>apt</code>,
-not with <code>uv tool install</code>. The macOS host and this repo's dev-tree
-<code>.venv</code> still use <code>uv</code>. The dev container cache chooses by the image (see
+<p>Lima and cloud VMs install vergil-tooling with <code>uv tool install</code>, from
+git, into uv's default <code>~/.local/bin</code>, on uv's own managed Python 3.15.
+They read no package repository. Every install runs
+<code>uv tool install --force --no-config --python 3.15 --managed-python</code> with
+<code>UV_PYTHON</code>, <code>UV_PYTHON_PREFERENCE</code> and <code>UV_NO_MANAGED_PYTHON</code> unset, so
+no uv config file and no interpreter variable can change it. The dev
+container cache has its own install (see
 <a href="../../guides/ci-architecture/#tier-1-local-pre-commit">the cached image</a>).</p>
 <p><strong>Which version.</strong> The version is the identity's resolved vergil
 version: the per-identity <code>vergil</code> setting in <code>identities.toml</code>, else
 the config-level <code>vergil</code>. The repo's <code>vergil.toml</code> plays no part. A
 <code>vrg-vm update --tag &lt;ref&gt;</code> overrides it for that one update and is not
 remembered.</p>
-<p><strong>Packaged install</strong> (any release version):</p>
+<p><strong>Release install</strong> (any release version):</p>
 <ul>
-<li><code>vX.Y</code> (a release line) pins <code>vergil-tooling</code> to <code>X.Y.*</code> in
-  <code>/etc/apt/preferences.d/vergil-tooling</code> and installs the newest
-  package on that line.</li>
-<li><code>vX.Y.Z</code> (an exact release) pins <code>X.Y.Z-1</code> and installs
-  <code>vergil-tooling=X.Y.Z-1</code>.</li>
-<li>Before anything is written to the apt sources, <code>vrg-vm</code> downloads
-  the org signing key and checks its fingerprint against the one
-  pinned in vergil-tooling. It then installs <code>vergil-archive-keyring</code>,
-  which owns the key and the source entry from then on.</li>
-<li>Every apt call <code>vrg-vm</code> makes, both the repository setup and the
-  <code>apt-get update</code> and <code>apt-get install</code> of <code>vergil-tooling</code>, runs
-  with <code>Acquire::Retries=3</code> and 20-second
-  <code>Acquire::http::Timeout</code>/<code>Acquire::https::Timeout</code>, so a dead mirror
-  connection fails or retries in seconds rather than hanging. It also
-  sets <code>Acquire::Retries::Delay=false</code>, because apt 2.4–2.8 can
-  deadlock on mirror failover when retries are delayed
-  (<a href="https://bugs.launchpad.net/ubuntu/+source/apt/+bug/2003851">Launchpad #2003851</a>),
-  and <code>DPkg::Lock::Timeout=60</code>, so a dpkg lock held by
-  <code>unattended-upgrades</code> or <code>apt-daily</code> on a freshly booted VM is waited
-  out for up to 60 seconds instead of failing provisioning at once.
-  Finally it sets <code>APT::Update::Error-Mode=any</code>, so <code>apt-get update</code>
-  fails when no mirror can serve an index, instead of warning and
-  leaving the install to fail later on a misleading "Unable to locate
-  package". Failing over to another mirror is not an error.</li>
-<li>The VM's Ubuntu codename must be a published suite (<code>noble</code> or
-  <code>resolute</code>). Any other codename fails provisioning.</li>
-<li>If the repository has no package matching the version, for example
-  a new line before its first packaged release, provisioning <strong>fails</strong>
-  and names the version and the repository URL. It never falls back
-  to another version or to a <code>uv</code> install.</li>
-<li><code>vrg-vm update</code> re-runs the same steps, which upgrades the VM within
-  the pin.</li>
-<li>Once the apt install has succeeded, any <code>uv</code>-installed copy (a legacy
-  install or an earlier dev install) is removed, because the copy in
-  <code>~/.local/bin</code> would shadow <code>/usr/bin</code>. A failed packaged install
-  leaves the existing tooling in place.</li>
-<li>After that, obsolete <code>vergil-python*</code> runtimes are purged, so a
-  runtime move (for example from <code>vergil-python3.14</code> to
-  <code>vergil-python3.15</code>) does not leave the old runtime and its
-  <code>/opt/vergil/python/&lt;…&gt;</code> tree behind. A runtime is obsolete only
-  when it is auto-installed (<code>apt-mark showauto</code>) <strong>and</strong> apt would
-  autoremove it (<code>apt-get -s autoremove</code>, a simulation), so a runtime
-  that an installed package still needs, or one installed by hand, is
-  kept. The obsolete runtimes are named in one explicit
-  <code>apt-get purge -y &lt;names&gt;</code> and printed. <code>vrg-vm</code> never runs a
-  blanket <code>apt-get autoremove</code>, which could remove unrelated orphaned
-  OS packages. A failed purge fails the update, and a failed install
-  purges nothing.</li>
-<li>This applies to apt only. Agent VMs are always Ubuntu (<code>noble</code> or
-  <code>resolute</code>), so there are no dnf VMs to clean up.</li>
+<li><code>vrg-vm</code> resolves the version on the host, once, with
+  <code>git ls-remote</code>: <code>vX.Y</code> (a release line) to the newest <code>vX.Y.Z</code> tag,
+  <code>vX.Y.Z</code> (an exact release) to itself, each to its commit SHA.</li>
+<li>The VM installs that one commit (<code>git+…@&lt;sha&gt;</code>), constrained by the
+  commit's own <code>uv.lock</code>, which it reads with a shallow fetch of the
+  commit and <code>uv export</code>. The install logs the tag and the SHA.</li>
+<li>A version with no release tag, a failed lock export or a failed
+  install fails provisioning loudly. It never falls back to another
+  version or to an unconstrained install.</li>
+<li>If <code>uv tool install</code> fails, <code>vrg-vm</code> clears the VM's uv cache and
+  retries once, so a cache entry left corrupt by an unclean VM stop does
+  not leave the VM without tooling.</li>
+<li>Once the install passes its check (below), the dev-ref marker
+  <code>~/.config/vergil/tooling-dev-ref</code> is removed.</li>
+<li><code>vrg-vm update</code> re-runs the same steps, which moves a line pin to the
+  line's newest release.</li>
 </ul>
+<p><strong>The check.</strong> After every install, <code>vrg-whoami</code> must resolve to
+<code>~/.local/bin/vrg-whoami</code> and <code>vrg-whoami --mode</code> must run. A
+<code>/usr/bin/vrg-whoami</code> left by an old package install that shadows the uv
+copy fails it.</p>
+<p><strong>Package cleanup.</strong> VMs created before this release installed
+vergil-tooling as an apt package. Once the uv install has passed its
+check, <code>vrg-vm update</code> (and <code>vrg-vm create</code>) removes what that install
+left:</p>
+<ul>
+<li>the <code>vergil-tooling</code>, every <code>vergil-python*</code> and the
+  <code>vergil-archive-keyring</code> package, named in one
+  <code>apt-get purge -y &lt;names&gt;</code> and printed. <code>vrg-vm</code> never runs a blanket
+  <code>apt-get autoremove</code>, which could remove unrelated orphaned OS
+  packages;</li>
+<li>the vergil apt source (<code>/etc/apt/sources.list.d/vergil.sources</code>), its
+  key (<code>/usr/share/keyrings/vergil-archive-keyring.asc</code>) and the version
+  pin (<code>/etc/apt/preferences.d/vergil-tooling</code>).</li>
+</ul>
+<p>It then confirms none of them is left, and, when it removed a package,
+runs the check again. A failure at any step fails the update. A VM with
+none of them, a new one or one cleaned already, changes nothing.
+<code>vrg-vm create</code> no longer sets up the vergil package repository, so a
+new VM never gets any of them.</p>
 <p><strong>Dev install</strong> (explicit, for a git ref that is not a release version,
 such as <code>develop</code> or a feature branch):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-vm<span class="w"> </span>update<span class="w"> </span>--tag<span class="w"> </span>develop
 </code></pre></div>
 <ul>
-<li>This runs <code>uv tool install --python 3.15</code> from git into
-  <code>~/.local/bin</code>, which takes precedence over the packaged <code>/usr/bin</code>
-  copy on the VM user's <code>PATH</code>, and records the ref in <code>~/.config/vergil/tooling-dev-ref</code>.</li>
-<li>You only get a dev install by passing a dev ref. A failed packaged
+<li>This installs that git ref with uv, unconstrained, under the same
+  interpreter rule, runs the same check, and records the ref in
+  <code>~/.config/vergil/tooling-dev-ref</code>.</li>
+<li>You only get a dev install by passing a dev ref. A failed release
   install never falls back to one.</li>
 <li>While it is in place, every <code>vrg-vm</code> command that touches the VM
   (<code>create</code>, <code>rebuild</code>, <code>start</code>, <code>update</code>, <code>session</code>) prints
-  <code>DEV tooling (ref &lt;ref&gt;) — not the packaged install</code>.</li>
-<li>A plain <code>vrg-vm update</code> (no <code>--tag</code>) returns the VM to the packaged
-  install and removes the dev copy.</li>
+  <code>DEV tooling (ref &lt;ref&gt;) — dev ref, not a release</code>.</li>
+<li>A plain <code>vrg-vm update</code> (no <code>--tag</code>) returns the VM to its release
+  and removes the marker.</li>
 </ul>
 <h3 id="cache-image-prune-on-update">Cache image prune on update<a class="headerlink" href="#cache-image-prune-on-update" title="Permanent link">&para;</a></h3>
 <p>After the reinstall, <code>vrg-vm update</code> (and each box of <code>update --all</code>) runs

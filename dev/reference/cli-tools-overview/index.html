@@ -20481,9 +20481,10 @@ posted again.</p>
 <h3 id="vrg-release">vrg-release<a class="headerlink" href="#vrg-release" title="Permanent link">&para;</a></h3>
 <p>Run the full release workflow from <code>develop</code> to <code>main</code>: tracking issue,
 changelog, release PR and merge, CD confirmation, back-merge and version
-bump, rolling-tag promotion, cleanup, consumer refresh, and finally the
-<code>update-deps</code> stage, which runs the dependency update on the new
-<code>develop</code> version. On a fresh start, preflight refuses while an open PR
+bump, rolling-tag promotion, cleanup, the <code>update-deps</code> stage, which
+runs the dependency update on the new <code>develop</code> version, and finally
+the consumer refresh, which runs the <code>[publish].consumer-refresh</code>
+commands (held while any publish is deferred). On a fresh start, preflight refuses while an open PR
 carries the <code>dependency-update</code> label, after first closing any whose fix
 task completed. Human-only. See the <a href="../dev/release/">vrg-release reference</a>
 and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
@@ -23103,10 +23104,12 @@ verifies the plugins in a running VM in place; <code>--all</code> updates every
 configured identity's boxes, and one box's failure does not stop the rest.
 <code>vrg-vm</code> is a human tool: it runs the VMs the agents work inside, so every
 subcommand refuses an agent identity before doing anything (<code>--help</code> still
-works). VMs install vergil-tooling as the signed package;
+works). VMs install vergil-tooling with uv, one resolved release commit
+constrained by its <code>uv.lock</code>, and <code>vrg-vm update</code> removes any vergil
+package an older VM still carries;
 <code>vrg-vm update --tag &lt;ref&gt;</code> with a non-release ref installs a dev copy
 instead and flags it with a <code>DEV tooling</code> banner, and a plain
-<code>vrg-vm update</code> returns the VM to the package. See
+<code>vrg-vm update</code> returns the VM to its release. See
 <a href="../vm-spec/#vergil-tooling-inside-the-vm">VM Spec</a>.</p>
 <table>
 <thead>
