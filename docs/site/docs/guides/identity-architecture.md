@@ -242,6 +242,8 @@ workflows use it for:
   The `prepare` job holds no secrets.
 - **Epic roll-up and sweep** (`ops-epic-rollup.yml`,
   `ops-epic-sweep.yml`): closing epics and tasks across the org.
+- **Release tagging** (`cd-release.yml`): pushing the release tags
+  with a token scoped to the releasing repo, Contents write only.
 - **Package-index dispatch** (`cd-release.yml`): sending
   `package-released` to the org's `packages` repo after a packaged
   release.

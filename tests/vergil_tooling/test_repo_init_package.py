@@ -150,10 +150,15 @@ class TestPackagedCdWorkflow:
         assert "secrets: inherit" not in content
         assert "      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}\n" in content
 
-    def test_no_package_python_has_no_secrets_block(self) -> None:
+    def test_no_package_python_forwards_only_app_secrets(self) -> None:
         ctx = _packaged_python_ctx()
         ctx.package = False
-        assert "secrets:" not in render_cd_workflow(ctx)
+        content = render_cd_workflow(ctx)
+        assert "secrets: inherit" not in content
+        assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == {
+            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
+            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
+        }
 
     def test_package_without_release_emits_no_release_job(self) -> None:
         ctx = _packaged_python_ctx()
