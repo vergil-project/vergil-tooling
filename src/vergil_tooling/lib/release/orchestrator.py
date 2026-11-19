@@ -158,15 +158,6 @@ def build_stages() -> list[Stage]:
         Stage("prepare", _tracked("prepare", prepare), mode="fail_fast"),
         Stage("merge-release", _tracked("merge-release", merge_release), mode="fail_fast"),
         Stage("confirm-main", _tracked("confirm-main", confirm_main), mode="fail_fast"),
-        # As soon as confirm-main has seen the tag: the refresh needs only the
-        # tag, so no later stage (package-index, promote, ...) can hold it, and
-        # a failed follow-on stage still leaves the consumers on the release
-        # (epic vergil-project/.github#1350, spec §4.6).
-        Stage(
-            "consumer-refresh",
-            _tracked("consumer-refresh", consumer_refresh),
-            mode="fail_defer",
-        ),
         Stage(
             "back-merge-bump",
             _tracked("back-merge-bump", back_merge_and_bump),
@@ -180,7 +171,7 @@ def build_stages() -> list[Stage]:
         ),
         # Waits for the published package index before close-finalize, so a
         # miss (a deferred publish) leaves the tracking issue open with the
-        # deferral comment (#3557).
+        # deferral comment (#3557); the consumer refresh then holds on it.
         Stage("package-index", _tracked("package-index", wait_for_index), mode="fail_defer"),
         # After package-index, so vX.Y moves only once the index has the
         # release and git and packaged installs of vX.Y agree; a deferred
@@ -195,6 +186,15 @@ def build_stages() -> list[Stage]:
         # fully out (epic vergil-project/.github#381, spec §5.1).
         Stage("update-deps", _tracked("update-deps", update_deps), mode="fail_defer"),
         Stage("publish-status", _publish_status_stage, mode="fail_defer"),
+        # The last thing a release does, as the post-pipeline install was: a
+        # consumer that follows the rolling vX.Y tag (vergil-claude-plugin's
+        # marketplace) sees the release only once promote has moved it, and a
+        # deferred publish holds it (issue #4739).
+        Stage(
+            "consumer-refresh",
+            _tracked("consumer-refresh", consumer_refresh),
+            mode="fail_defer",
+        ),
     ]
 
 
@@ -311,8 +311,9 @@ def _major_minor(ctx: ReleaseContext) -> str:
 def _publish_status_stage(state: ReleaseState) -> None:
     """Terminal fail_defer: surface deferred publish and dependency-update failures as exit 1.
 
-    Runs last, after every bookkeeping stage. Raising here marks the run failed
-    (fail_defer → exit 1 with the deferred summary) without aborting anything —
+    Runs after every bookkeeping stage, just before consumer-refresh. Raising
+    here marks the run failed (fail_defer → exit 1 with the deferred summary)
+    without aborting anything —
     the release is already complete. No-op when nothing deferred. A failed
     dependency update (spec §5.2) is repeated here so it is never lost in the
     stage list; it never affects the release itself.
@@ -448,8 +449,18 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
         else:
             lines.append("No [package] block; no package index to wait for.")
     elif phase == "consumer-refresh":
-        if ctx.consumer_refresh_commands is None:
+        if ctx.deferred_publish_failures:
+            lines.append(
+                "Consumer refresh held: artifact publish was deferred "
+                f"({', '.join(ctx.deferred_publish_failures)}); nothing was run."
+            )
+        elif ctx.consumer_refresh_commands is None:
             lines.append("No [publish].consumer-refresh is configured; nothing to run.")
+        elif ctx.deferred_failures:
+            lines.append(
+                "Consumer refresh commands shown, not run: earlier stages failed "
+                f"({', '.join(ctx.deferred_failures)})."
+            )
         elif not ctx.install:
             lines.append("Consumer refresh commands shown, not run (--no-install).")
         else:

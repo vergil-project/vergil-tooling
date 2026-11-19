@@ -110,16 +110,54 @@ def test_consumer_refresh_none_configured_is_not_an_error(template: MagicMock) -
     assert "no consumer-refresh" in (ctx.consumer_refresh_message or "").lower()
 
 
-def test_consumer_refresh_not_held_by_a_deferred_publish(template: MagicMock) -> None:
-    """The refresh needs only the tag (spec §4.6): a deferred CD publish
-    recorded by confirm-main does not hold it."""
+# -- holds when publish is deferred (issue #1853), or after a failed stage --------
+
+
+def test_consumer_refresh_holds_when_publish_deferred(template: MagicMock) -> None:
     _set(template, "uv tool install pkg@v<VERSION>")
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["docker-publish", "package-index"]
-    with patch(_MOD + ".run_consumer_refresh", return_value=(0, "")) as m_run:
+    ctx.deferred_publish_failures = ["docker-publish"]
+    with patch(_MOD + ".run_consumer_refresh") as m_run:
         consumer_refresh(ctx)
-    m_run.assert_called_once()
-    assert ctx.consumer_refresh_message is None
+    m_run.assert_not_called()
+    template.assert_not_called()
+    assert ctx.consumer_refresh_commands is None
+    message = ctx.consumer_refresh_message or ""
+    assert "held" in message.lower()
+    assert "2.1.0" in message  # version named
+    assert "re-run the CD publish" in message
+
+
+def test_consumer_refresh_hold_gives_per_kind_advice_for_an_index_deferral(
+    template: MagicMock,
+) -> None:
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["package-index"]
+    with (
+        patch(_MOD + ".publish_deferred_remedy", return_value="re-run publish-index") as remedy,
+        patch(_MOD + ".run_consumer_refresh") as m_run,
+    ):
+        consumer_refresh(ctx)
+    m_run.assert_not_called()
+    remedy.assert_called_once_with(ctx, ["package-index"])
+    message = ctx.consumer_refresh_message or ""
+    assert "re-run publish-index" in message
+    assert "CD publish" not in message
+
+
+def test_consumer_refresh_not_run_after_a_failed_stage(template: MagicMock) -> None:
+    """A failed earlier stage never triggers the install, as the post-pipeline
+    install never ran after a failed pipeline: the commands are shown."""
+    _set(template, "uv tool install pkg@v<VERSION>")
+    ctx = _ctx()
+    ctx.deferred_failures = ["promote", "update-deps"]
+    with patch(_MOD + ".run_consumer_refresh") as m_run:
+        consumer_refresh(ctx)
+    m_run.assert_not_called()
+    assert ctx.consumer_refresh_commands == "uv tool install pkg@v2.1.0"
+    message = ctx.consumer_refresh_message or ""
+    assert "not run: earlier stages failed: promote, update-deps" in message
+    assert "uv tool install pkg@v2.1.0" in message
 
 
 # -- through the pipeline: one check line, or the full output and a failure ------

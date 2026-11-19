@@ -126,7 +126,8 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      the release; the index's weekly reconcile picks the release up.
    - `vrg-release`'s `package-index` stage then polls the published
      index (up to one hour, every 30 seconds) until the new version is
-     visible, so `promote` never moves `vX.Y` ahead of the index. With several
+     visible, so neither `promote` nor the consumer refresh runs ahead
+     of the index. With several
      `[[package]]` entries it waits for every package, each at its own full
      version, and succeeds only once all of them are listed. While it
      waits, it streams the `Publish package index` run in `<org>/packages`
@@ -144,18 +145,25 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      re-running it. A miss (timeout, a failed publish-index run, or a
      polling error) does not undo the release. It is recorded
      as a deferred publish failure: the tracking issue stays open with a
-     deferral comment, the stage error tells you to re-run the `publish-index`
+     deferral comment, the consumer-refresh stage holds (it
+     prints a warning not to advertise the version instead of running the
+     refresh commands), the stage error tells you to re-run the `publish-index`
      workflow in `<org>/packages`, `promote` leaves `vX.Y` where it is
      (see [A promote held back by the index](#a-promote-held-back-by-the-index)),
      and `vrg-release` exits 1. See the
      [package config reference](../reference/package-config.md#cd).
-4. As soon as `confirm-main` has seen the release tag, the
+4. Last, after `promote`, `close-finalize` and `update-deps`, the
    `consumer-refresh` stage runs the `[publish].consumer-refresh`
-   commands, before `package-index`, `promote` or any later stage, so
-   no later stage holds it and a later failure, a deferred publish
-   included, still leaves the consumers on the new release. On success
-   the stage is one `✓ consumer-refresh` line; on failure its full
-   output is printed below the summary, the stage fails and
+   commands. It runs after `promote` because a consumer that follows
+   the rolling `vX.Y` tag (vergil-claude-plugin's marketplace) sees the
+   release only once that tag has moved. While any publish is deferred
+   (a failed CD publish job, or a `package-index` miss) it holds: it
+   runs nothing and prints a warning not to advertise the version.
+   After an earlier stage that failed (`promote`, say) it runs nothing
+   either, and prints the commands below the summary to run once the
+   cause is fixed. On
+   success the stage is one `✓ consumer-refresh` line; on failure its
+   full output is printed below the summary, the stage fails and
    `vrg-release` exits 1. Pass `--no-install` to have it print the
    commands below the summary instead, and act on them yourself.
    A clean run names the released tag in its completion line
@@ -180,7 +188,6 @@ issue and ticks its box in the issue's stage checklist.
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
-| `consumer-refresh` | deferred | Runs the `[publish].consumer-refresh` commands as soon as the tag exists (prints them instead with `--no-install`). A deferred publish does not hold it. Success is one check line; a failure prints the full output below the summary |
 | `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, refreshes the lockfile (`uv lock` for Python and `cargo update --workspace` for Rust, in the dev container; for TypeScript, a direct edit of `package-lock.json`'s root version fields that runs no npm), and merges it to `develop`. Records the back-merge's merge commit |
 | `teardown-worktree` | deferred | Removes the release worktree and returns to the root checkout |
 | `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed docs publish is deferred |
@@ -189,6 +196,7 @@ issue and ticks its box in the issue's stage checklist.
 | `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only` |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
 | `publish-status` | deferred | Repeats any deferred publish failure, and any dependency-update failure, so neither is lost |
+| `consumer-refresh` | deferred | Runs the `[publish].consumer-refresh` commands, last, once `promote` has moved `vX.Y` (prints them instead with `--no-install`). Holds, running nothing, while any publish is deferred, and only prints the commands after an earlier stage failed. Success is one check line; a failure prints the full output below the summary |
 
 `close-finalize` leaves the tracking issue open, and skips the cleanup,
 when an earlier stage has failed, so the release can be resumed with

@@ -106,8 +106,9 @@ def main(argv: list[str] | None = None) -> int:
     # The progress renderer collapses each finished stage to a one-line
     # summary. The consumer-refresh stage runs the commands itself and, after
     # a run that succeeded, leaves nothing to read; what it does leave (the
-    # commands under --no-install, the notice that none is configured, or a
-    # failed run's full output) is re-printed below the summary.
+    # hold warning for a deferred publish, the commands under --no-install,
+    # the notice that none is configured, or a failed run's full output) is
+    # re-printed below the summary.
     if state.ctx is not None and state.ctx.consumer_refresh_message:
         print()
         print(state.ctx.consumer_refresh_message)
@@ -153,8 +154,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help=(
             "Skip the install step. By default the consumer-refresh stage runs "
-            "the [publish].consumer-refresh commands as soon as the release is "
-            "tagged; with this flag it only prints them."
+            "the [publish].consumer-refresh commands as the release's last "
+            "stage; with this flag it only prints them."
         ),
     )
     # Removed (#1184): still parsed, and hidden from --help, only so that

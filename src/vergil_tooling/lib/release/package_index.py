@@ -531,7 +531,7 @@ def wait_for_index(
     followed run still not completed after ``follow_timeout``, or an error
     while polling) records ``package-index`` in
     ``ctx.deferred_publish_failures`` before propagating, so ``promote``
-    holds ``vX.Y`` back and the run ends on the deferral.
+    holds ``vX.Y`` back and the consumer refresh holds.
     """
     try:
         _wait(

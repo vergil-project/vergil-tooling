@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, progress
 from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release.tracking import publish_deferred_remedy
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -19,23 +20,38 @@ PHASE = "consumer-refresh"
 def consumer_refresh(ctx: ReleaseContext) -> None:
     """Run the release's consumer-refresh commands, rolled up to one line.
 
-    The stage runs right after ``confirm-main``, as soon as the release tag
-    exists (epic vergil-project/.github#1350, spec §4.6). It needs only the
-    tag, so no later stage holds it, and a deferred publish (a CD job or the
-    package index) does not either: the consumers get the release even if a
-    follow-on stage fails.
+    The stage is the pipeline's last, after ``promote``, ``close-finalize``
+    and ``update-deps``: a consumer that follows the rolling ``vX.Y`` tag
+    (vergil-claude-plugin's marketplace) sees the release only once
+    ``promote`` has moved it. While any publish is deferred (a CD job seen at
+    ``confirm-main``, or ``package-index``) it holds: nothing runs, and the
+    message warns not to advertise the version. After an earlier stage that
+    failed, nothing runs either, and the commands are shown to run by hand.
 
     The version-expanded command block is stored on
     ``ctx.consumer_refresh_commands``. ``ctx.consumer_refresh_message`` is set
     only when the human has something to read once the progress renderer has
-    collapsed this stage: the commands to run by hand (``--no-install``), the
-    notice that none is configured, or a failed run's full output.
-    ``vrg-release`` re-prints it below the summary.
+    collapsed this stage: the hold warning, the commands to run by hand
+    (after a failed stage, or with ``--no-install``), the notice that none is
+    configured, or a failed run's full output. ``vrg-release`` re-prints it
+    below the summary.
 
     On success the commands' output is not shown, so the stage is the one
     ``✓ consumer-refresh`` line. On failure the full output is shown and the
     stage fails with the exit status.
     """
+    if ctx.deferred_publish_failures:
+        remedy = publish_deferred_remedy(ctx, ctx.deferred_publish_failures)
+        ctx.consumer_refresh_commands = None
+        ctx.consumer_refresh_message = (
+            "⚠ Consumer refresh held: artifact publish was deferred "
+            f"({', '.join(ctx.deferred_publish_failures)}). Do NOT advertise "
+            f"v{ctx.version} to consumers until the artifacts are delivered: {remedy}."
+        )
+        print(ctx.consumer_refresh_message)
+        progress.note("held: publish deferred")
+        return
+
     cfg = config.read_config(ctx.repo_root)
     template = cfg.publish.consumer_refresh
 
@@ -51,6 +67,19 @@ def consumer_refresh(ctx: ReleaseContext) -> None:
 
     commands = template.replace("<VERSION>", ctx.version)
     ctx.consumer_refresh_commands = commands
+
+    # A failed earlier stage (promote among them, which leaves vX.Y behind)
+    # never triggers the install, as the post-pipeline install never ran after
+    # a failed pipeline: the commands are shown to run once it is fixed.
+    if ctx.deferred_failures:
+        ctx.consumer_refresh_message = (
+            f"Consumer refresh commands for v{ctx.version} (not run: earlier stages "
+            f"failed: {', '.join(ctx.deferred_failures)}). Fix the cause, then run "
+            f"them yourself:\n\n{commands}"
+        )
+        print(ctx.consumer_refresh_message)
+        progress.note("not run: earlier stages failed")
+        return
 
     if not ctx.install:
         ctx.consumer_refresh_message = (
