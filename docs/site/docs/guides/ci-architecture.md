@@ -74,13 +74,17 @@ repository with no language uses the base image. On top of that image,
 vergil-tooling installed. Set `DOCKER_DEV_IMAGE` to use a different
 image.
 
-For a release version, the cached image installs the vergil-tooling package
-at that release, and a `vX.Y` line resolves first to the newest release on the line, so a new
-release rebuilds the cached image (see
+Every ref is `uv tool install` from git on the image's uv-managed
+Python 3.15, the one the base image publishes in `VERGIL_CORE_PYTHON_DIR`,
+with interpreter downloads off. For a release version, the cached image
+installs that release's commit, constrained by the commit's own `uv.lock`,
+and a `vX.Y` line resolves first to the newest release on the line, so a
+new release rebuilds the cached image (see
 [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)).
-The build checks that `vrg-*` runs from `/usr/bin` on vergil-python. A
-branch is `uv tool install` from git on the image's core vergil-python
-(`/opt/vergil/python/*/bin/python3`). The build log names the path it took.
+A branch or other dev ref installs from git unconstrained. The `vrg-*`
+entry points land in `/usr/local/bin`, and the build checks that
+`vrg-whoami` resolves there and runs. The build log names the release
+tag and commit it installed (for a dev ref, the ref).
 
 `vrg-validate` first runs the common checks: the
 [repo-profile](../reference/lint/repo-profile.md) check, markdownlint,
