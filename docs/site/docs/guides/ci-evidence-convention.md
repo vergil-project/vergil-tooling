@@ -288,10 +288,11 @@ second local `vrg-validate` never lints the first run's reports.
 `ci-quality.yml`, `ci-test.yml` and `ci-audit.yml` stage each leg's reports
 with version-suffixed names, as for Python and Rust:
 `quality-eslint-<ver>.json`, `quality-tsc-<ver>.txt`, `coverage-<ver>.xml`,
-`junit-<ver>.xml` and `npm-audit-<ver>.json`. The TypeScript entries of
-vergil-actions' report table require these reports from vergil-actions
-v2.1.78, so a TypeScript repository needs a vergil-tooling release whose
-gates write them (2.1.319 or later).
+`junit-<ver>.xml`, `npm-audit-<ver>.json` and `licenses-<ver>.json`. The
+TypeScript entries of vergil-actions' report table require these reports
+from vergil-actions v2.1.78, and `licenses.json` from v2.1.84, so a
+TypeScript repository needs a vergil-tooling release whose gates write them
+(2.1.327 or later, the first release with `vrg-npm-license-gate`).
 
 `quality-common.log` is the transcript of `vrg-validate --check common` and
 `quality-custom.log` the transcript of `vrg-validate --check custom`, each

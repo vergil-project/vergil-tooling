@@ -565,7 +565,8 @@ To ship signed `.deb`/`.rpm` packages from releases:
 
 Every `vrg-release` ends by updating the repo's dependencies (see
 [Dependency updates](releasing.md#dependency-updates)). The built-in
-updaters cover Python (`uv.lock`), vergil ecosystem refs, the packaged
+updaters cover Python (`uv.lock`), Rust (`Cargo.lock`), TypeScript
+(`package-lock.json`), vergil ecosystem refs, the packaged
 runtime, and container image tags. If the repo has other dependencies
 to keep current, such as binary tool versions or provider pins, add a
 hook to `vergil.toml`:
