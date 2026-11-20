@@ -136,6 +136,26 @@ def test_main_single_label_color_only_keeps_explicit_form() -> None:
     )
 
 
+def test_main_single_label_description_only_keeps_explicit_form() -> None:
+    with (
+        patch("vergil_tooling.lib.labels.load_labels") as mock_registry,
+        patch(f"{_MOD}.github.run") as mock_run,
+    ):
+        result = main(["--repo", "o/r", "--label", "custom", "--description", "Custom"])
+    assert result == 0
+    mock_registry.assert_not_called()
+    mock_run.assert_called_once_with(
+        "label",
+        "create",
+        "custom",
+        "--repo",
+        "o/r",
+        "--force",
+        "--description",
+        "Custom",
+    )
+
+
 def test_main_single_label_with_color_description() -> None:
     with patch("vergil_tooling.bin.vrg_ensure_label.github.run") as mock_run:
         result = main(
