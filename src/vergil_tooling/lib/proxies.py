@@ -38,7 +38,7 @@ from typing import Any
 from vergil_tooling.lib import epic_size, epics, github
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.labels import ensure_labels
-from vergil_tooling.lib.trusted_authors import trusted_comment_bodies
+from vergil_tooling.lib.trusted_authors import trusted_comment_lines
 
 PRIMARY_MARKER = "Primary:"
 PROXY_MARKER = "Proxy:"
@@ -131,15 +131,16 @@ def proxies_of(primary: IssueRef) -> tuple[IssueRef, ...]:
     trusted = epic_size.trusted_logins()
     comments = _view(primary, "comments").get("comments") or []
     found: dict[str, IssueRef] = {}
-    for body in trusted_comment_bodies(comments, trusted):
-        for line in _marker_lines(body, PROXY_MARKER):
-            ref = _parse(line, _PROXY_RE, f"a comment on {primary.slug}")
-            if ref.repo != PROXY_HOME_REPO:
-                raise ProxyLinkError(
-                    f"a comment on {primary.slug} names {ref.slug} as a proxy, which is not"
-                    f" in an <owner>/{PROXY_HOME_REPO} home"
-                )
-            found.setdefault(ref.slug.lower(), ref)
+    for line in trusted_comment_lines(comments, trusted):
+        if not line.startswith(PROXY_MARKER):
+            continue
+        ref = _parse(line, _PROXY_RE, f"a comment on {primary.slug}")
+        if ref.repo != PROXY_HOME_REPO:
+            raise ProxyLinkError(
+                f"a comment on {primary.slug} names {ref.slug} as a proxy, which is not"
+                f" in an <owner>/{PROXY_HOME_REPO} home"
+            )
+        found.setdefault(ref.slug.lower(), ref)
     return tuple(found[key] for key in sorted(found))
 
 

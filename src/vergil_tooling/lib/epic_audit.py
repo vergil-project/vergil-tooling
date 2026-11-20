@@ -30,6 +30,7 @@ from typing import Any
 
 from vergil_tooling.lib import (
     epic_docs,
+    epic_size,
     epics,
     github,
     linkage,
@@ -39,6 +40,7 @@ from vergil_tooling.lib import (
     roadmap,
 )
 from vergil_tooling.lib.labels import RETIRED_LABELS
+from vergil_tooling.lib.trusted_authors import trusted_comment_lines
 
 # A closed-epic-with-open-child violation (issue #2259): the closed epic paired
 # with the tuple of its still-open children.
@@ -1057,6 +1059,104 @@ def misplaced_archives(
     return found
 
 
+# -- Misplaced ad-hoc tasks (epic vergil-project/.github#1417, spec §4.8) ------
+
+STANDALONE_CONFIRMED = "Standalone-confirmed"
+_LOGBOOK_PREFIX = "Logbook:"
+# An issue a task body names: ``owner/repo#N`` or a github.com issue URL. The
+# lookbehind keeps a slug from starting inside a path or a longer word.
+_BODY_ISSUE_RE = re.compile(
+    r"(?<![\w./-])([A-Za-z0-9-]+)/([A-Za-z0-9._-]+)#([0-9]+)\b"
+    r"|https://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9._-]+)/issues/([0-9]+)\b"
+)
+
+
+@dataclass(frozen=True)
+class MisplacedTask:
+    """An open task under a live ad-hoc epic that looks misplaced, and why."""
+
+    task: epics.IssueRef
+    reason: str
+
+
+def _cross_org_refs(body: str, org: str) -> list[epics.IssueRef]:
+    """The issues *body* names outside *org*, in first-mention order, without repeats."""
+    found: dict[str, epics.IssueRef] = {}
+    for match in _BODY_ISSUE_RE.finditer(body):
+        groups = match.groups()
+        owner, repo, number = groups[:3] if groups[0] is not None else groups[3:]
+        if owner.lower() == org.lower():
+            continue
+        ref = epics.IssueRef(owner, repo, int(number))
+        found.setdefault(ref.slug.lower(), ref)
+    return list(found.values())
+
+
+def _standalone_confirmed(task: epics.IssueRef, trusted: frozenset[str]) -> bool:
+    """True iff a trusted comment on *task* carries ``Standalone-confirmed`` alone on its line."""
+    with github.target_org(task.owner):
+        raw = github.read_json(
+            "issue", "view", str(task.number), "--repo", f"{task.owner}/{task.repo}",
+            "--json", "comments",
+        )  # fmt: skip
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"unexpected 'gh issue view' response for {task.slug}: {raw!r}")
+    comments: Any = raw.get("comments") or []
+    lines = trusted_comment_lines(comments, trusted)
+    return STANDALONE_CONFIRMED in lines
+
+
+def misplaced_adhoc(org: str, *, issues: list[OpenIssue] | None = None) -> list[MisplacedTask]:
+    """Open tasks under a live ad-hoc epic that look misplaced (report only, spec §4.8).
+
+    A task is a candidate when its title starts ``Logbook:`` (it belongs under
+    the hoshin epic) or its body names an ``epic``-labelled issue in another
+    org (it belongs under a proxy). A cross-org ref whose labels cannot be
+    read (private, deleted, an org the App cannot reach) is a candidate of its
+    own, never raised and never skipped. A candidate is dropped when a trusted
+    comment on it carries ``Standalone-confirmed`` alone on its line: the
+    human ruled it standalone. Nothing is refused, moved, closed or labelled.
+
+    It reads the trusted authors (only once a candidate is found), so the audit
+    runs it only without ``--close``: the daily sweep has no trusted-authors
+    configuration. *issues* is the shared :func:`open_issues` enumeration.
+    """
+    if issues is None:
+        issues = open_issues(org)
+    live_adhoc = {
+        issue.ref for issue in issues if epics.standing_kind_of(set(issue.labels)) is epics.ADHOC
+    }
+    epic_label: dict[str, bool | None] = {}  # cross-org ref -> is an epic; None if unreadable
+    trusted: frozenset[str] | None = None
+    found: list[MisplacedTask] = []
+    for issue in sorted(issues, key=lambda i: (i.ref.owner, i.ref.repo, i.ref.number)):
+        if issue.native_parent not in live_adhoc:
+            continue
+        reasons: list[str] = []
+        if issue.title.startswith(_LOGBOOK_PREFIX):
+            reasons.append(f"titled `{_LOGBOOK_PREFIX}`; it belongs under the hoshin epic")
+        for ref in _cross_org_refs(issue.body, issue.ref.owner):
+            key = ref.slug.lower()
+            if key not in epic_label:
+                try:
+                    with github.target_org(ref.owner):
+                        epic_label[key] = epics.is_epic(ref)
+                except _LINK_READ_ERRORS:
+                    epic_label[key] = None
+            if epic_label[key] is None:
+                reasons.append(f"names {ref.slug}, which could not be read")
+            elif epic_label[key]:
+                reasons.append(f"names {ref.slug}, an epic in another org")
+        if not reasons:
+            continue
+        if trusted is None:
+            trusted = epic_size.trusted_logins()
+        if _standalone_confirmed(issue.ref, trusted):
+            continue
+        found += [MisplacedTask(task=issue.ref, reason=reason) for reason in reasons]
+    return found
+
+
 # -- Proxy children and the link check (epic vergil-project/.github#1417) ------
 
 
@@ -1338,6 +1438,7 @@ def render(
     proxy_link_drift: list[str] | None = None,
     proxy_closures: list[ProxyClosure] | None = None,
     proxy_errors: list[str] | None = None,
+    misplaced_adhoc: list[MisplacedTask] | None = None,
     coverage_gap: str | None = None,
 ) -> str:
     """Format the drift + invariant report; a clean state says so explicitly.
@@ -1362,7 +1463,8 @@ def render(
     ``epic_docs_findings`` are the :func:`epic_documents` problems (epic
     .github#819). ``proxy_link_drift`` is the report-only :func:`proxy_link_drift`
     check (epic .github#1417); ``proxy_closures`` and ``proxy_errors`` preview
-    the ``--close`` proxy close pass (:func:`proxy_closures`). Each section
+    the ``--close`` proxy close pass (:func:`proxy_closures`), and
+    ``misplaced_adhoc`` is the report-only :func:`misplaced_adhoc` check. Each section
     appears only when it has something to report.
     """
     epics_outside = epics_outside or []
@@ -1380,6 +1482,7 @@ def render(
     proxy_link_drift = proxy_link_drift or []
     proxy_closures = proxy_closures or []
     proxy_errors = proxy_errors or []
+    misplaced_adhoc = misplaced_adhoc or []
     scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
     banner = (
         f"_Read-only audit of {scope} (merged PRs from the last "
@@ -1406,6 +1509,7 @@ def render(
             proxy_link_drift,
             proxy_closures,
             proxy_errors,
+            misplaced_adhoc,
         ]
     ):
         if coverage_gap is not None:
@@ -1486,6 +1590,7 @@ def render(
         lines += _render_private_under_public(private_under_public)
         lines += _render_misplaced_archives(misplaced)
     lines += _render_proxy_link_drift(proxy_link_drift)
+    lines += _render_misplaced_adhoc(misplaced_adhoc)
     lines += _render_epic_documents(epic_docs_findings, home or f"{org}/.github")
     lines.append("")
     return "\n".join(lines)
@@ -1520,6 +1625,21 @@ def _render_proxy_link_drift(problems: list[str]) -> list[str]:
         "A proxy and its primary must name each other; fix each link by hand:",
         "",
         *[f"- {problem}" for problem in problems],
+    ]
+
+
+def _render_misplaced_adhoc(misplaced: list[MisplacedTask]) -> list[str]:
+    """The misplaced ad-hoc task report, one line per reason; none when clean."""
+    if not misplaced:
+        return []
+    return [
+        "",
+        "## Ad-hoc tasks that look misplaced (report only)",
+        "",
+        "Move each misplaced task under its proxy or hoshin epic; for a task you rule"
+        f" standalone, post a comment with the line `{STANDALONE_CONFIRMED}` alone on its line:",
+        "",
+        *[f"- {m.task.slug} — {m.reason}" for m in misplaced],
     ]
 
 

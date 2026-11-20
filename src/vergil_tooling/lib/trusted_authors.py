@@ -59,6 +59,22 @@ def trusted_comment_bodies(
     return bodies
 
 
+def trusted_comment_lines(
+    comments: Iterable[Mapping[str, object]], trusted: Collection[str]
+) -> list[str]:
+    """Every line of the trusted *comments* (:func:`trusted_comment_bodies`), stripped, in order.
+
+    The one reader of the machine-read comment lines, each alone on its line
+    (``Proxy:``, ``Standalone-confirmed``): a caller matches a stripped line,
+    so a marker inside prose never counts.
+    """
+    return [
+        line.strip()
+        for body in trusted_comment_bodies(comments, trusted)
+        for line in body.splitlines()
+    ]
+
+
 class TrustedAuthorsNotConfiguredError(Exception):
     """Neither the VM file nor the ``identities.toml`` stanza configures trusted authors."""
 

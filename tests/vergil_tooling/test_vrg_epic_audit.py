@@ -58,6 +58,7 @@ def standing_drain() -> Iterator[MagicMock]:
         patch(f"{_PX}.is_proxy_ref", return_value=False),
         patch(f"{_MOD}.epic_audit.proxy_link_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.proxy_closures", return_value=([], [])),
+        patch(f"{_MOD}.epic_audit.misplaced_adhoc", return_value=[]),
     ):
         yield mock_drain
 
@@ -1426,3 +1427,50 @@ def test_preview_with_a_proxy_link_error_exits_1(capsys: pytest.CaptureFixture[s
     assert captured.err == "vrg-epic-audit: proxy link error: proxy org/.github#3 broke\n"
     assert "## Proxy link errors (the run fails; fix each link by hand)" in captured.out
     assert "- proxy org/.github#3 broke" in captured.out
+
+
+# --- misplaced ad-hoc tasks (epic .github#1417) -----------------------------------
+
+
+def test_sweep_close_never_loads_trusted_authors(capsys: pytest.CaptureFixture[str]) -> None:
+    misplaced = MagicMock(return_value=[])
+    load = MagicMock(side_effect=AssertionError("the sweep must not load trusted authors"))
+    with (
+        patch.dict("os.environ", {"VRG_EPIC_SWEEP": "1"}),
+        patch(f"{_MOD}.identity_mode.is_human", return_value=False),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        patch(f"{_MOD}.epic_audit.misplaced_adhoc", misplaced),
+        patch(f"{_MOD}.epic_audit.proxy_closures", wraps=_PROXY_CLOSURES),
+        patch("vergil_tooling.lib.epic_size.load_trusted_authors", load),
+        patch("vergil_tooling.lib.trusted_authors.load_trusted_authors", load),
+        _patched(_close_patches(**_no_op_writers())),
+    ):
+        assert main(["--close"]) == 0
+    misplaced.assert_not_called()
+    load.assert_not_called()
+    assert "look misplaced" not in capsys.readouterr().out
+
+
+def test_report_renders_misplaced_adhoc(capsys: pytest.CaptureFixture[str]) -> None:
+    issues = [object()]
+    task = IssueRef("org", "tool", 3)
+    misplaced = MagicMock(
+        return_value=[
+            epic_audit.MisplacedTask(task, "titled `Logbook:`; it belongs under the hoshin epic")
+        ]
+    )
+    with (
+        _patched(_report_patches()),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epic_audit.open_issues", return_value=issues),
+        _patched([patch(f"{_MOD}.epic_audit.{n}", m) for n, m in _derivations().items()]),
+        patch(f"{_MOD}.epic_audit.misplaced_adhoc", misplaced),
+    ):
+        rc = main([])
+    assert rc == 0  # report-only
+    misplaced.assert_called_once_with("org", issues=issues)
+    assert (
+        "- org/tool#3 — titled `Logbook:`; it belongs under the hoshin epic"
+        in capsys.readouterr().out
+    )

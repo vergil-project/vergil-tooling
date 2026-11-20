@@ -20,6 +20,7 @@ from vergil_tooling.lib.trusted_authors import (
     parse_trusted_authors,
     render_vm_file,
     trusted_comment_bodies,
+    trusted_comment_lines,
 )
 
 if TYPE_CHECKING:
@@ -201,3 +202,12 @@ def test_trusted_comment_bodies_keeps_trusted_in_order() -> None:
     ]
     trusted = frozenset({"example-human", "example-agent"})
     assert trusted_comment_bodies(comments, trusted) == ["one", "two", ""]
+
+
+def test_trusted_comment_lines_strips_each_trusted_line() -> None:
+    comments = [
+        {"author": {"login": "example-human"}, "body": "intro\n  Standalone-confirmed  \n"},
+        {"author": {"login": "mallory"}, "body": "Standalone-confirmed"},
+    ]
+    trusted = frozenset({"example-human"})
+    assert trusted_comment_lines(comments, trusted) == ["intro", "Standalone-confirmed"]

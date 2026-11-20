@@ -247,6 +247,13 @@ has no open task. One that still has an open task after its primary closed is
 reported and left open. The primary's rollup never closes its proxies, since
 it runs in the primary's org.
 
+Another org's epic tasks belong under that org's proxy, and hoshin's logbook
+tasks under the hoshin epic, never under an ad-hoc epic. No marker or
+filing-time guard enforces this; `vrg-epic-audit` reports an open ad-hoc task
+that looks misplaced (a `Logbook:` title, or a body naming an epic in another
+org) for a human to rule on. A task ruled standalone gets a trusted comment
+with the line `Standalone-confirmed`, and the audit stops reporting it.
+
 ### Ad-hoc epic archiving
 
 A live ad-hoc epic accumulates closed children forever, so its "what's in

@@ -247,6 +247,8 @@ def _audit(args: argparse.Namespace, org: str) -> int:
             proxy_link_drift=epic_audit.proxy_link_drift(home, listing=home_epics),
             proxy_closures=proxy_plan,
             proxy_errors=proxy_errors,
+            # It reads trusted comments too, so it never runs under --close.
+            misplaced_adhoc=epic_audit.misplaced_adhoc(org, issues=issues),
             coverage_gap=gap,
         )
     )
