@@ -55,6 +55,7 @@ the dev-tree override venv.
 | [vrg-scorecard](cli-tools-overview.md#vrg-scorecard) | Run OpenSSF Scorecard in a dev container with a GitHub App token |
 | [vrg-generate-commands](cli-tools-overview.md#vrg-generate-commands) | Generate MQSC command methods |
 | [vrg-host](dev/host.md) | Report, upgrade and pin the macOS host dependencies |
+| [vrg-tooling-install](cli-tools-overview.md#vrg-tooling-install) | Install an exact vergil-tooling release on the host, locked to its `uv.lock` |
 | [vrg-issue-create](cli-tools-overview.md#vrg-issue-create) | Create an issue and link it under an epic in one step |
 | [vrg-epic-create](cli-tools-overview.md#vrg-epic-create) | Create a top-level epic in its home repo |
 | [vrg-epic-docs](cli-tools-overview.md#vrg-epic-docs) | Write an epic's Documents section |
