@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.330/">
       
       
         <link rel="next" href="../v2.1.328/">
@@ -1463,6 +1463,8 @@
       
         
       
+        
+      
     
     
     
@@ -1518,6 +1520,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.330/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.330
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18136,6 +18166,7 @@
 <li><strong>double the default Lima VM disk to 100GiB (#4792)</strong>
   Per-branch container cache images are 2-3 GB each and several sessions share one VM, so the 50GiB base disk filled up. The base footprint's disk becomes 100GiB; an identity, repo or host override disk still wins. The VM spec reference now states the base size, where the cloud container store lives (the boot disk), and how existing VMs pick up the change. The cloud boot disk default (boot_disk_gib) lives in vergil-vm and is not changed here. Ref #4791</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.329/v2.1.329-ci-evidence.tar.gz">Download →</a></p>
 
 
 

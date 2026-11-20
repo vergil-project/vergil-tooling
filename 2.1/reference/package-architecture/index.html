@@ -1456,6 +1456,8 @@
       
         
       
+        
+      
     
     
     
@@ -1508,6 +1510,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.330/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.330
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18137,10 +18167,13 @@ which is the complete list of entry points. The
   <a href="../cli-tools-overview/#vrg-whoami"><code>vrg-whoami</code></a>; <code>platform_env.py</code>
   resolves the platform.</li>
 <li><strong><code>epics.py</code></strong>: the epic/task model: the <code>StandingKind</code> table (the
-  ad-hoc, intake, planning and deferred standing epics and their
+  ad-hoc, intake, planning, deferred and hoshin standing epics and their
   per-quarter archives), epic and queue homes, sub-issue linking, rollup,
   and the parent-based queue-item check that <code>vrg-pr-workflow report-ready</code>
   and <code>vrg-submit-pr</code> use to refuse intake, planning and deferred items.</li>
+<li><strong><code>proxies.py</code></strong>: the proxy epic's link to its primary, read from the
+  proxy's <code>Primary:</code> body line and the primary's trusted <code>Proxy:</code> comments
+  (<code>epics.is_proxy</code> is the label test every development-epic check skips).</li>
 <li><strong><code>epic_audit.py</code></strong>, <strong><code>intake_route.py</code></strong> and <strong><code>queue_view.py</code></strong> build
   on <code>epics.py</code>: the <code>vrg-epic-audit</code> drift report and orphan pass, the
   <code>vrg-intake-route</code> mechanics and route table, and the <code>vrg-queue</code> views.</li>

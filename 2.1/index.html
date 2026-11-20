@@ -1545,6 +1545,8 @@
       
         
       
+        
+      
     
     
     
@@ -1597,6 +1599,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="releases/v2.1.330/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.330
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18160,8 +18190,13 @@ PreToolUse hook that blocks raw <code>git</code> and <code>gh</code>, routing th
    <code>.claude/settings.json</code>, blocking raw <code>git</code>/<code>gh</code> in agent sessions.</li>
 <li>Consuming repos call tools by bare name -- no file copying or
    syncing.</li>
-<li>Lima and cloud agent VMs install the signed <code>vergil-tooling</code>
-   package with <code>apt</code> instead of <code>uv</code>. The apt/dnf install guide is the
+<li>Lima and cloud agent VMs install vergil-tooling with <code>uv</code> too:
+   <code>vrg-vm</code> installs the identity's release from git, constrained by
+   that release's <code>uv.lock</code> (see
+   <a href="reference/vm-spec/#vergil-tooling-inside-the-vm">vergil-tooling inside the VM</a>).
+   No Vergil install path reads the package repository. The signed
+   <code>vergil-tooling</code> package is still published for other consumers;
+   its apt/dnf install guide is the
    <a href="https://github.com/vergil-project/packages#readme"><code>vergil-project/packages</code> README</a>
    (pinned primary key fingerprint
    <code>B3A1D804DC03AB036566A4E367861822166ECABE</code>).</li>
