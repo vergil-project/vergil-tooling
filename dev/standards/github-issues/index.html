@@ -19130,8 +19130,10 @@ cross-forge fallback.</p>
   closes the epic. A <em>managed
   task</em> (an issue with an <code>epic</code>-labelled parent) links its PR with <code>Closes</code>, so
   the task auto-closes on merge and the final close rolls its epic up.</li>
-<li><strong>Perpetual (ad-hoc) epic</strong> — a standing umbrella for unplanned work in one
-  repo. Titled <code>Epic (ad hoc): &lt;repo&gt;</code>, labelled <code>epic</code> + <code>ad-hoc</code>, one per repo,
+<li><strong>Perpetual (ad-hoc) epic</strong> — a standing umbrella for standalone,
+  single-issue work in one repo: each task can be picked up, merged and
+  released on its own. A task owned by any epic or skill never goes there.
+  Titled <code>Epic (ad hoc): &lt;repo&gt;</code>, labelled <code>epic</code> + <code>ad-hoc</code>, one per repo,
   and it <strong>never auto-closes</strong>. Target it with <code>vrg-issue-create --epic adhoc</code>.
   (The older <code>standing</code> alias is <strong>retired</strong> — only <code>ad-hoc</code> remains.)
   <code>vrg-adhoc-epic ensure --repo &lt;owner&gt;/&lt;repo&gt;</code> creates a repo's ad-hoc epic
@@ -19142,7 +19144,7 @@ cross-forge fallback.</p>
   with <a href="#viewing-the-queues-vrg-queue"><code>vrg-queue adhoc</code></a>.</li>
 </ul>
 <h3 id="standing-epics">Standing epics<a class="headerlink" href="#standing-epics" title="Permanent link">&para;</a></h3>
-<p>The ad-hoc epic is one of four kinds of <strong>standing epic</strong> — perpetual
+<p>The ad-hoc epic is one of five kinds of <strong>standing epic</strong> — perpetual
 umbrellas that are created and reused idempotently, never auto-close, and never
 gate rollup:</p>
 <table>
@@ -19184,6 +19186,13 @@ gate rollup:</p>
 <td>one per queue home</td>
 <td>evaluated items parked until their revival conditions are met</td>
 </tr>
+<tr>
+<td>Hoshin</td>
+<td><code>Epic (hoshin): &lt;org&gt;</code></td>
+<td><code>epic</code> + <code>hoshin</code></td>
+<td>one per org, always in <code>&lt;org&gt;/.github</code></td>
+<td>the <code>Logbook:</code> tasks <code>/vergil:hoshin</code> files and works</td>
+</tr>
 </tbody>
 </table>
 <p>Intake, planning and deferred are the three <strong>queue epics</strong>. Their <strong>queue
@@ -19191,11 +19200,19 @@ home</strong> follows the <a href="#epic-home-the-orggithub-rule">epic-home rule
 public repo shares the org's set in <code>&lt;org&gt;/.github</code> (<code>&lt;name&gt;</code> is the org),
 while a <strong>private</strong> repo self-homes its own set (<code>&lt;name&gt;</code> is the repo), so
 private work never surfaces in a public issue. <code>vrg-issue-create --epic</code>
-accepts <code>adhoc</code>, <code>intake</code>, and <code>planning</code> as sentinels that resolve (creating
-if absent) the target repo's standing epic of that kind. It refuses
+accepts <code>adhoc</code>, <code>intake</code>, <code>planning</code> and <code>hoshin</code> as sentinels that resolve
+(creating if absent) the target repo's standing epic of that kind. It refuses
 <code>deferred</code>, as does <code>vrg-epic-move</code>: an item enters and leaves the deferred
 queue only through <code>vrg-intake-route</code>, which records the deferral (see
 <a href="#the-deferred-queue">The deferred queue</a>).</p>
+<p>The <strong>hoshin epic</strong> is not a queue: its tasks are PR-workable, but only
+<code>/vergil:hoshin</code> files and works them, so no queue processor picks them up.
+It is homed in <code>&lt;org&gt;/.github</code> whatever the target repo's visibility, and
+named for the org. Only <code>vrg-issue-create</code> (hoshin's filing) and
+<code>vrg-epic-move</code> accept the <code>hoshin</code> sentinel; <code>vrg-intake-route</code> refuses a
+one-off into the hoshin epic, by sentinel or by ref. Its closed children
+drain into per-quarter <code>Archive (hoshin): &lt;org&gt;</code> archives like the other
+standing kinds.</p>
 <h3 id="ad-hoc-epic-archiving">Ad-hoc epic archiving<a class="headerlink" href="#ad-hoc-epic-archiving" title="Permanent link">&para;</a></h3>
 <p>A live ad-hoc epic accumulates closed children forever, so its "what's in
 flight" signal drowns in finished work. To keep the umbrella honest, closed
@@ -19289,7 +19306,7 @@ hazard between the code landing and this sweep running.</p>
   its close-quarter archive.</li>
 <li><strong>Backstop + backfill.</strong> The daily <code>vrg-epic-audit --close</code> sweep runs the
   org-wide drain for every standing kind (ad-hoc, intake, planning,
-  deferred): it
+  deferred, hoshin): it
   distributes any backlog the steady-state path missed and closes past-quarter
   archives. This is the same trusted sweep that closes other
   provably-complete drift, so it is allowed to mutate under the scheduled
@@ -19415,7 +19432,7 @@ so tools can find and replace it:</p>
 <li><strong>One writer:</strong> only <a href="../../reference/cli-tools-overview/#vrg-epic-docs"><code>vrg-epic-docs</code></a>
   writes the section, never a hand edit, so its format lives in one place.</li>
 <li><strong>Scope:</strong> every epic except the standing epics (ad hoc, intake, planning,
-  deferred, and the retired <code>standing</code> label or <code>Epic (standing):</code> title) and
+  deferred, hoshin, and the retired <code>standing</code> label or <code>Epic (standing):</code> title) and
   <code>[archived]</code> epics. Task issues have no section.</li>
 </ul>
 <p><strong>Entry rules.</strong> An entry is a link when the document exists. Otherwise its
@@ -20054,6 +20071,10 @@ up to date (see
 <td>Marks the standing deferred epic (with <code>epic</code>) and its archives (with <code>archive</code>); never auto-closes</td>
 </tr>
 <tr>
+<td><code>hoshin</code></td>
+<td>Marks the standing hoshin epic (with <code>epic</code>) and its archives (with <code>archive</code>); never auto-closes</td>
+</tr>
+<tr>
 <td><code>in-progress</code></td>
 <td>Planning item whose <code>epic-create</code> session is underway</td>
 </tr>
@@ -20063,7 +20084,7 @@ up to date (see
 </tr>
 <tr>
 <td><code>archive</code></td>
-<td>Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred); historical record</td>
+<td>Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred, hoshin); historical record</td>
 </tr>
 <tr>
 <td><code>hotfix</code></td>
@@ -20092,8 +20113,8 @@ up to date (see
 </tbody>
 </table>
 <p>The parent epic carries an issue's state, so no label restates it. <code>intake</code>,
-<code>planning</code> and <code>deferred</code> label only the standing epics (and their archives),
-the way <code>ad-hoc</code>
+<code>planning</code>, <code>deferred</code> and <code>hoshin</code> label only the standing epics (and their
+archives), the way <code>ad-hoc</code>
 does. The per-item queue labels are <code>in-progress</code>, used only on planning
 items, and the <code>epic-size:*</code> family, used only on planning and deferred items
 and written only through <code>vrg-intake-route</code>. The former intake kind labels <code>triage</code>, <code>idea</code>, and <code>research</code> are

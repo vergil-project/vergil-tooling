@@ -20990,8 +20990,9 @@ ruleset rule), a branch with no PR, or a branch whose name was reused
 <h3 id="vrg-issue-create">vrg-issue-create<a class="headerlink" href="#vrg-issue-create" title="Permanent link">&para;</a></h3>
 <p>Create an issue and link it under an epic (a native sub-issue) in one step.
 It is the sanctioned issue-creation path: <code>vrg-gh</code> denies raw
-<code>gh issue create</code>. <code>--epic</code> takes <code>adhoc</code>, <code>intake</code>, <code>planning</code>, <code>#N</code> (read
-against the target repo's epic home) or <code>owner/repo#N</code>. <code>--kind</code> stamps an
+<code>gh issue create</code>. <code>--epic</code> takes <code>adhoc</code>, <code>intake</code>, <code>planning</code>, <code>hoshin</code>
+(the org's hoshin epic, always in <code>&lt;org&gt;/.github</code>), <code>#N</code> (read against the
+target repo's epic home) or <code>owner/repo#N</code>. <code>--kind</code> stamps an
 operational (<code>validation</code>, <code>deployment</code>) or <code>retrospective</code> label and body
 scaffold, and <code>--blocked-by</code> stamps a <code>Blocked-by:</code> reference. With
 <code>--kind validation</code> or <code>--kind deployment</code>, <code>--body-file</code> fills the scaffold
@@ -21194,8 +21195,8 @@ A public task may not link under a private epic.</p>
 </table>
 <h3 id="vrg-epic-move">vrg-epic-move<a class="headerlink" href="#vrg-epic-move" title="Permanent link">&para;</a></h3>
 <p>Move a task under a different epic (unlink, then link). <code>--epic</code> accepts
-<code>adhoc</code>, <code>intake</code>, <code>planning</code>, <code>#N</code> or <code>owner/repo#N</code>, read against the
-task's repo. Moving a task already under the target is a no-op. The deferred
+<code>adhoc</code>, <code>intake</code>, <code>planning</code>, <code>hoshin</code>, <code>#N</code> or <code>owner/repo#N</code>, read against
+the task's repo. Moving a task already under the target is a no-op. The deferred
 queue is entered and left only through <code>vrg-intake-route</code>, so this refuses
 it.</p>
 <table>
@@ -21380,7 +21381,8 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
 - <code>one-off --repo OWNER/REPO [--epic REF]</code> — move the item into the target
   repo (transfer, or recreate with a link back when GitHub refuses the
   transfer) and link it under that repo's ad-hoc epic (default <code>adhoc</code>) or the
-  named epic. A planning item's <code>in-progress</code> label is removed from the moved
+  named epic. It refuses the hoshin epic: <code>--epic hoshin</code> before anything
+  resolves (so nothing is created), and a ref that names a hoshin epic. A planning item's <code>in-progress</code> label is removed from the moved
   issue once the move has settled; a recreated issue never carries it. A
   one-off also ends the item's estimated size, from intake, planning or
   deferred alike: a recreated issue never carries an <code>epic-size:*</code> label, and
@@ -22221,8 +22223,8 @@ home.</p>
 <ol>
 <li>Close the drifted tasks and rolled-up epics, and reopen each epic closed
    while a child was still open, with an explanatory comment on each.</li>
-<li>Drain the closed children of the ad-hoc, intake, planning and deferred
-   epics into per-quarter archives, and close past archives (see
+<li>Drain the closed children of the ad-hoc, intake, planning, deferred and
+   hoshin epics into per-quarter archives, and close past archives (see
    <a href="../../standards/github-issues/#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>).</li>
 <li>Run the <a href="../../standards/github-issues/#the-orphan-pass-auto-heal">orphan pass</a>:
    nativize body-only <code>Parent:</code> links, strip the retired kind labels, move a
