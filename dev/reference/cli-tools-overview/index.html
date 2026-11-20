@@ -15009,6 +15009,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-tooling-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-tooling-install
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-generate-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19631,6 +19642,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-tooling-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-tooling-install
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-generate-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -23394,6 +23416,50 @@ Runs unprivileged and refuses <code>sudo</code>/<code>doas</code>/<code>su</code
 <tr>
 <td>Exit codes</td>
 <td><code>status</code>: 0 OK, 1 warnings, 2 errors; <code>upgrade</code>: 0 done, 1 a named dependency refused, 2 failure; <code>pin</code>/<code>unpin</code>: 0 success, 1 refused; <code>plugins</code>: 0 refreshed and verified, 1 refused (agent identity), 2 failure</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-tooling-install">vrg-tooling-install<a class="headerlink" href="#vrg-tooling-install" title="Permanent link">&para;</a></h3>
+<p>Install an exact vergil-tooling release on this host with uv, locked to that
+release's <code>uv.lock</code>. In a temporary directory it shallow-fetches the tag over
+git, reads the commit the tag names, exports that commit's <code>uv.lock</code> as
+constraints (refusing an empty export or one naming a non-registry package),
+and runs <code>uv tool install --force --no-config --python 3.15 --managed-python</code>
+of that commit under them, with <code>UV_PYTHON</code>, <code>UV_PYTHON_PREFERENCE</code> and
+<code>UV_NO_MANAGED_PYTHON</code> cleared. Run it to move a host to a new release. A
+fresh host, or one whose installed copy fails, installs by hand (see
+<a href="../../getting-started/">Getting Started</a>).</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_tooling_install</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>vX.Y.Z</code> (an exact release tag)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td><code>git</code> and <code>uv</code> on PATH; network access to github.com</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Names the failed step (fetch, checkout, lock export, constraints check or install) and its error output on stderr; the temporary directory is removed either way</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 installed; 1 a step failed or the tag is not <code>vX.Y.Z</code>; 2 usage error</td>
 </tr>
 <tr>
 <td>Status</td>
