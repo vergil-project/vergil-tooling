@@ -6,6 +6,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -132,10 +133,10 @@ def test_a_missing_tool_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 def test_an_install_that_cannot_run_raises(stubs: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     real_run = subprocess.run
 
-    def run(argv: tuple[str, ...], **kwargs: object) -> object:
+    def run(argv: tuple[str, ...], **kwargs: Any) -> subprocess.CompletedProcess[str]:  # noqa: ANN401
         if argv[:2] == ("uv", "tool"):
             raise FileNotFoundError(2, "No such file or directory", "uv")
-        return real_run(argv, **kwargs)  # type: ignore[call-overload]
+        return real_run(argv, **kwargs)
 
     monkeypatch.setattr(tooling_install.subprocess, "run", run)
     with pytest.raises(ToolingInstallError, match=rf"uv tool install of {_TAG} .*could not run"):
@@ -146,10 +147,10 @@ def test_an_install_that_cannot_run_raises(stubs: Path, monkeypatch: pytest.Monk
 def test_an_unreadable_export_raises(stubs: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     real_read = Path.read_text
 
-    def read_text(self: Path, *args: object, **kwargs: object) -> str:
+    def read_text(self: Path, *args: Any, **kwargs: Any) -> str:  # noqa: ANN401
         if self.name == "constraints.txt":
             raise PermissionError(13, "Permission denied", str(self))
-        return real_read(self, *args, **kwargs)  # type: ignore[arg-type]
+        return real_read(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", read_text)
     with pytest.raises(ToolingInstallError, match="could not be read: .*Permission denied"):
