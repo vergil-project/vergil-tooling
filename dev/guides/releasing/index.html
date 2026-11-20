@@ -18866,9 +18866,7 @@ touches the VM prints a <code>DEV tooling</code> banner while it is in place. A 
 <code>vrg-vm update</code> returns the VM to its release.
 See <a href="../../reference/vm-spec/#vergil-tooling-inside-the-vm">vergil-tooling inside the VM</a>.</p>
 <h2 id="tag-scheme-whats-user-facing-what-isnt">Tag scheme — what's user-facing, what isn't<a class="headerlink" href="#tag-scheme-whats-user-facing-what-isnt" title="Permanent link">&para;</a></h2>
-<p>Two parallel tag families exist in the repo. Consumers only see and
-use the first; the second is an internal marker of where <code>develop</code>
-stood when a release was published.</p>
+<p>Releases are tagged on <code>main</code>, and consumers pin to those tags.</p>
 <table>
 <thead>
 <tr>
@@ -18891,24 +18889,20 @@ stood when a release was published.</p>
 <td>Rolling minor tag (force-updated each patch)</td>
 <td>Yes — what consumers actually pin to</td>
 </tr>
-<tr>
-<td><code>develop-v1.3.0</code></td>
-<td><code>develop</code></td>
-<td>Marks the <code>develop</code> tip when the release was published</td>
-<td>No — internal</td>
-</tr>
 </tbody>
 </table>
-<p>The <code>develop-</code> prefix is invisible to install / consumption; never
-pin to a <code>develop-v*</code> tag.</p>
-<p>The changelog and release notes do not use the <code>develop-v*</code> tags as
-their boundary. CD places one on the <code>develop</code> tip after the release
-has merged, so a PR merged to <code>develop</code> while the release was in flight
-would sit behind it without having shipped. A release's changes are
-instead the commits since the merge base of the release branch and the
-previous <code>vX.Y.Z</code> tag, so such a PR appears in the next release. The
-new section is added to the top of <code>CHANGELOG.md</code>; the entries of
-earlier releases are kept as they were published.</p>
+<p>CD has also placed a <code>develop-v1.3.0</code> tag on the <code>develop</code> tip after
+each release.
+Those tags are being retired: nothing uses them, <code>vrg-release</code> neither
+requires nor reports one, and the changelog and release notes ignore
+any that remain. Never pin to a <code>develop-v*</code> tag.</p>
+<p>A release's changes are the commits since the merge base of the
+release branch and the previous <code>vX.Y.Z</code> tag, so a PR merged to
+<code>develop</code> while a release was in flight appears in the next release.
+The changelog heading and the release notes title carry the bare
+version (<code>## [1.3.1] - &lt;date&gt;</code>, <code># Release 1.3.1 (&lt;date&gt;)</code>). The new
+section is added to the top of <code>CHANGELOG.md</code>; the entries of earlier
+releases are kept as they were published.</p>
 <h2 id="patch-release-the-common-path">Patch release — the common path<a class="headerlink" href="#patch-release-the-common-path" title="Permanent link">&para;</a></h2>
 <p>A patch release fixes a bug or refines an existing feature without
 adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>.</p>
@@ -18939,7 +18933,6 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
    - CD on <code>main</code> creates the release tag (<code>v1.3.1</code>).
    - The rolling minor tag (<code>v1.3</code>) is <strong>force-updated</strong> to point at
      the new release.
-   - The boundary tag (<code>develop-v1.3.1</code>) is created on <code>develop</code>.
    - The Documentation workflow publishes the new release notes to
      the docs site under <code>releases/v1.3.1</code>.
    - <strong>Repos with <code>[package]</code></strong> (vergil-tooling is one) also publish
