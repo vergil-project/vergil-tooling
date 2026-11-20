@@ -2173,6 +2173,7 @@ def discover_dedicated(
 
     - instance + spec   -> present (carrying the parsed stanza)
     - instance, no spec -> orphaned
+    - named instance the repo's role no longer declares -> orphaned
 
     A spec-bearing repo with no instance is not listed here; the session/start
     preflight gate surfaces it loudly when the repo is actually used.
@@ -2186,6 +2187,10 @@ def discover_dedicated(
         if ident != identity_name or org is None or repo is None:
             continue
         state, stanza = _classify_instance(projects_dir, org, repo, name)
+        if stanza is not None and inst_name is not None:
+            role = stanza.roles.get(identity_name)
+            if role is None or inst_name not in role.instances:
+                state, stanza = "orphaned", None
         rows.append(DedicatedRow(org, repo, name, state, stanza, inst_name))
     return rows
 
@@ -2293,8 +2298,16 @@ def _list_rows(
             )
             continue
         override = identity.overrides.get((d.org, d.repo))
+        # Compose with the named-instance overlay, exactly as create/rebuild's
+        # _resolve_target does, so the fingerprint compared here is the one the
+        # VM was stamped with (#4806). An unverified row (stanza None) has no
+        # role to look the instance up in, so it falls back to the base tiers.
         spec = compose_vm_spec(
-            identity=identity_name, base=base, stanza=d.stanza, override=override
+            identity=identity_name,
+            base=base,
+            stanza=d.stanza,
+            override=override,
+            instance=d.instance_name if d.stanza is not None else None,
         )
         rows.append(
             {
