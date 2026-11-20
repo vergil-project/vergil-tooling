@@ -2,7 +2,9 @@
 
 Supports three modes:
 
-1. **Single-label** — create/update one label in one repo.
+1. **Single-label** — create/update one label in one repo: from the
+   canonical registry when neither ``--color`` nor ``--description`` is
+   given, else from those flags.
 2. **Sync** — provision every label from the canonical registry into a repo,
    and delete the deprecated and retired labels it still has.
 3. **Project** — discover repos via a GitHub Project and sync each one.
@@ -16,7 +18,7 @@ import sys
 from vergil_tooling.lib import github
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.github import list_project_repos
-from vergil_tooling.lib.labels import sync_labels
+from vergil_tooling.lib.labels import UnknownLabelError, ensure_labels, sync_labels
 
 
 @cli_main
@@ -39,11 +41,19 @@ def main(argv: list[str] | None = None) -> int:
             elif args.sync:
                 # Sync mode: single repo
                 sync_labels(args.repo)
+            elif args.color is None and args.description is None:
+                # Single-label mode, registry-backed: the label's canonical
+                # colour and description; an unregistered name creates nothing.
+                ensure_labels(args.repo, [args.label])
+                print(f"  {args.label}")
             else:
-                # Single-label mode
+                # Single-label mode, explicit: the given colour/description.
                 _ensure_single(args.repo, args.label, args.color, args.description)
     except github.NoInstallationError as exc:
         print(f"vrg-ensure-label: {github.no_installation_message(exc)}", file=sys.stderr)
+        return 1
+    except UnknownLabelError as exc:
+        print(f"vrg-ensure-label: {exc}", file=sys.stderr)
         return 1
 
     return 0
