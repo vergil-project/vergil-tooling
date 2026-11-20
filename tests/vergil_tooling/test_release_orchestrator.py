@@ -566,6 +566,22 @@ def test_phase_details_consumer_refresh_after_a_failed_stage() -> None:
     assert "promote" in details
 
 
+def test_phase_details_consumer_refresh_ran_after_only_update_deps_failed() -> None:
+    """update-deps alone never holds the refresh back (issue #4828)."""
+    ctx = _ctx()
+    ctx.consumer_refresh_commands = "uv tool install pkg@v2.1.0"
+    ctx.deferred_failures = ["update-deps"]
+    assert _phase_details(ctx, "consumer-refresh") == "Consumer refresh commands for v2.1.0 ran."
+
+
+def test_phase_details_consumer_refresh_names_only_blocking_stages() -> None:
+    ctx = _ctx()
+    ctx.consumer_refresh_commands = "uv tool install pkg@v2.1.0"
+    ctx.deferred_failures = ["promote", "update-deps"]
+    details = _phase_details(ctx, "consumer-refresh")
+    assert details == "Consumer refresh commands shown, not run: earlier stages failed (promote)."
+
+
 def test_consumer_refresh_runs_last() -> None:
     """The refresh is the release's last stage, after promote, close-finalize
     and update-deps: a consumer that follows the rolling vX.Y tag sees the
@@ -628,6 +644,85 @@ def test_consumer_refresh_not_run_after_a_failed_promote(tmp_path: Path) -> None
     message = ctx.consumer_refresh_message or ""
     assert "not run: earlier stages failed: promote" in message
     assert "uv tool install pkg@v2.1.2" in message
+
+
+_DEPS_FAILURE = (
+    "Dependency update for 2.1.3 failed (validation): Validation failed after dependency "
+    "updates. The PR stays open: https://example.test/pull/7."
+)
+
+
+def _fail_update_deps(ctx: ReleaseContext) -> None:
+    ctx.deps_failure = _DEPS_FAILURE
+    raise ReleaseError(phase="update-deps", command="vrg-update-deps", message=_DEPS_FAILURE)
+
+
+def _run_deps_then_refresh(
+    tmp_path: Path, *, names: tuple[str, ...], promote_error: Exception | None
+) -> tuple[int, ReleaseContext, MagicMock]:
+    """Run the real stages in *names* through the pipeline, update-deps failing."""
+    state = _state()
+    ctx = state.ctx
+    assert ctx is not None
+    ctx.issue_number = 42
+    ctx.tag = "v2.1.2"
+    args = argparse.Namespace(output_format="plain", output_window=None)
+    with (
+        patch("vergil_tooling.lib.release.handoff.config.read_config") as m_config,
+        patch(
+            "vergil_tooling.lib.release.handoff.run_consumer_refresh", return_value=(0, "")
+        ) as m_run,
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".comment_phase_failed"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+        patch(_MOD + ".promote", side_effect=promote_error),
+        patch(_MOD + ".update_deps", side_effect=_fail_update_deps),
+    ):
+        m_config.return_value.publish.consumer_refresh = "uv tool install pkg@v<VERSION>"
+        stages = [s for s in build_stages() if s.name in names]
+        assert [s.name for s in stages] == list(names)
+        rc = progress.run_pipeline(
+            state, stages, command="vrg-release", label="vrg-release", args=args, repo_root=tmp_path
+        )
+    return rc, ctx, m_run
+
+
+def test_consumer_refresh_runs_when_only_update_deps_failed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """update-deps prepares the next version, so its failure alone leaves the
+    published release valid: the refresh runs, and the run still fails on the
+    update-deps failure, which publish-status repeats (issue #4828)."""
+    rc, ctx, m_run = _run_deps_then_refresh(
+        tmp_path,
+        names=("update-deps", "publish-status", "consumer-refresh"),
+        promote_error=None,
+    )
+    assert rc == 1
+    assert ctx.deferred_failures == ["update-deps"]
+    out = capsys.readouterr().out
+    m_run.assert_called_once_with("uv tool install pkg@v2.1.2", cwd=ctx.repo_root)
+    assert ctx.consumer_refresh_message is None
+    assert "✗ update-deps" in out
+    assert "✓ consumer-refresh" in out
+    assert f"repeats the update-deps failure: {_DEPS_FAILURE}" in out
+
+
+def test_consumer_refresh_not_run_after_promote_and_update_deps_failed(tmp_path: Path) -> None:
+    """A failed stage the release depends on still holds the refresh back, even
+    alongside an update-deps failure, and only it is named."""
+    error = ReleaseError(phase="promote", command="git push", message="refused")
+    rc, ctx, m_run = _run_deps_then_refresh(
+        tmp_path,
+        names=("promote", "update-deps", "publish-status", "consumer-refresh"),
+        promote_error=error,
+    )
+    assert rc == 1
+    assert ctx.deferred_failures == ["promote", "update-deps"]
+    m_run.assert_not_called()
+    message = ctx.consumer_refresh_message or ""
+    assert "not run: earlier stages failed: promote)." in message
 
 
 def test_package_index_then_promote_then_close_finalize() -> None:

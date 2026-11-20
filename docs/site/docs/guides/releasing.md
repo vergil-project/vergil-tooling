@@ -161,7 +161,10 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
    runs nothing and prints a warning not to advertise the version.
    After an earlier stage that failed (`promote`, say) it runs nothing
    either, and prints the commands below the summary to run once the
-   cause is fixed. On
+   cause is fixed. A failed `update-deps` is the exception: it prepares
+   the next version, so the release just published is still valid and
+   the refresh runs. The run still reports the `update-deps` failure and
+   exits 1 (see step 5). On
    success the stage is one `✓ consumer-refresh` line; on failure its
    full output is printed below the summary, the stage fails and
    `vrg-release` exits 1. Pass `--no-install` to have it print the
@@ -196,7 +199,7 @@ issue and ticks its box in the issue's stage checklist.
 | `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only` |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
 | `publish-status` | deferred | Repeats any deferred publish failure, and any dependency-update failure, so neither is lost |
-| `consumer-refresh` | deferred | Runs the `[publish].consumer-refresh` commands, last, once `promote` has moved `vX.Y` (prints them instead with `--no-install`). Holds, running nothing, while any publish is deferred, and only prints the commands after an earlier stage failed. Success is one check line; a failure prints the full output below the summary |
+| `consumer-refresh` | deferred | Runs the `[publish].consumer-refresh` commands, last, once `promote` has moved `vX.Y` (prints them instead with `--no-install`). Holds, running nothing, while any publish is deferred, and only prints the commands after an earlier stage failed, except `update-deps`, whose failure alone does not stop it. Success is one check line; a failure prints the full output below the summary |
 
 `close-finalize` leaves the tracking issue open, and skips the cleanup,
 when an earlier stage has failed, so the release can be resumed with
