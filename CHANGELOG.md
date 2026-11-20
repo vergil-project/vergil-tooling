@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.331] - 2026-11-20
+
+### Bug fixes
+
+- run consumer-refresh when only update-deps failed (#4829)
+
+### Chores
+
+- land 2.1.331 dependency update with a bounded retry for the real-gpg test (#4831)
+
+### Features
+
+- stop requiring the develop-vX.Y.Z tag (#4826)
+- add vrg-tooling-install, a Python locked host install of an exact release (#4832)
+
 ## [2.1.330] - 2026-11-20
 
 ### Bug fixes
