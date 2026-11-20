@@ -21124,13 +21124,16 @@ fails after creation, the created issue's URL is reported for recovery with
 The sanctioned path for creating epics, used by the <code>epic-create</code> skill.</p>
 <p><code>--proxy-for OWNER/REPO#N --repo OWNER/NAME</code> instead ensures the <strong>proxy
 epic</strong> for a development epic in another org (its primary): an epic in the
-target's <code>&lt;owner&gt;/.github</code>, titled <code>Epic (proxy): &lt;primary title without
-"Epic: "&gt;</code> and labelled <code>epic</code> + <code>proxy</code>, whose body carries the line
-<code>Primary: OWNER/REPO#N</code>. It then posts a comment on the primary carrying
+target's <code>&lt;owner&gt;/.github</code>, titled <code>Epic (proxy): OWNER/REPO#N — &lt;primary
+title without "Epic: "&gt;</code> and labelled <code>epic</code> + <code>proxy</code>, whose body carries the
+line <code>Primary: OWNER/REPO#N</code>. It then posts a comment on the primary carrying
 <code>Proxy: &lt;owner&gt;/.github#&lt;N&gt;</code>, alone on its line. An open proxy for the primary
-is reused and a closed one is reopened (it prints which), and the comment is
-posted only when no trusted comment on the primary already names the proxy,
-so a re-run writes nothing. It refuses, before any write, a primary in the
+is reused and a closed one is reopened (it prints which). A reused or reopened
+proxy whose title differs from the derived one is retitled, so a re-run brings
+an older proxy up to date; a proxy is found by its <code>Primary:</code> line and labels,
+never its title. The comment is posted only when no trusted comment on the
+primary already names the proxy, so a re-run on an up-to-date proxy writes
+nothing. It refuses, before any write, a primary in the
 target's own org, a primary that is not an open development epic (a standing
 epic, a proxy, an archive or a closed epic), and a private primary repo,
 target or <code>.github</code>: a proxy exists only between public repos, and the task

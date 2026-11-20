@@ -19298,8 +19298,9 @@ standing kinds.</p>
 <h3 id="proxy-epics">Proxy epics<a class="headerlink" href="#proxy-epics" title="Permanent link">&para;</a></h3>
 <p>A <strong>proxy epic</strong> is a same-org umbrella for the tasks that a development epic
 in another org (its <strong>primary</strong>) has in this org. It is titled
-<code>Epic (proxy): &lt;primary title without "Epic: "&gt;</code>, labelled <code>epic</code> + <code>proxy</code>,
-and homes in the public <code>&lt;owner&gt;/.github</code>: proxies exist only between public
+<code>Epic (proxy): &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; — &lt;primary title without "Epic: "&gt;</code>, the
+primary's ref first, so the title names the epic it stands in for. It is
+labelled <code>epic</code> + <code>proxy</code> and homes in the public <code>&lt;owner&gt;/.github</code>: proxies exist only between public
 repos. The link runs both ways, each side on a line alone on its line:</p>
 <ul>
 <li>the proxy's body carries exactly one <code>Primary: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> line;</li>
