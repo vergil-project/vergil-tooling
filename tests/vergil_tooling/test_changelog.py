@@ -14,8 +14,8 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib.changelog import (
-    DEVELOP_TAG_PATTERN,
     CONFIG_MOUNT,
+    DEVELOP_TAG_PATTERN,
     RELEASE_NOTES_DIR,
     generate_changelog,
     generate_release_notes,

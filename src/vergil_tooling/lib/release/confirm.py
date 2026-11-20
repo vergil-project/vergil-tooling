@@ -593,4 +593,3 @@ def _verify_artifacts(ctx: ReleaseContext) -> None:
     )
     ctx.release_url = release_url
     print(f"  GitHub Release: {release_url}")
-
