@@ -22,8 +22,10 @@ from the files changed since it, against the allow-list committed there.
 The builder reads the body of the ``--issue`` itself, and derives the
 epic's open tasks from its native parent: when the parent carries ``epic``
 and not ``ad-hoc``, its open sub-issues, every page, as ``{"ref",
-"title"}``, without the task; otherwise none. It refuses when either cannot
-be read.
+"title"}``, without the task; otherwise none. When the parent is a proxy
+epic, they are the open children of its primary instead, its own and every
+proxy's, as ``vrg-epic-audit --epic`` lists them. It refuses when either
+cannot be read, or when a proxy's link to its primary is broken.
 
 It also reads the comments of the ``--issue`` itself, every page, and
 keeps only those posted by the one human login of the trusted-authors
