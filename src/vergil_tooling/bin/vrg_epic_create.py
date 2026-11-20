@@ -7,6 +7,12 @@ centrally in ``<org>/.github``; a private target (with a public ``.github``)
 homes its epics in itself. The target defaults to the current repo but is named
 explicitly with ``--repo``. This is the sanctioned path for creating epics —
 ``vrg-gh`` denies raw ``gh issue create`` — used by the ``epic-create`` skill.
+
+``--proxy-for <owner>/<repo>#<N> --repo <owner>/<repo>`` instead ensures the
+**proxy epic** for another org's primary epic in the target's org home, and the
+``Proxy:`` comment on the primary (:func:`vergil_tooling.lib.proxies.create_proxy`,
+vergil-project/.github#1417). Its title and body are derived, so it takes no
+``--title``, ``--body``, ``--label`` or ``--assignee``.
 """
 
 from __future__ import annotations
@@ -14,13 +20,18 @@ from __future__ import annotations
 import argparse
 import sys
 
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epics, github, proxies
 from vergil_tooling.lib.cli import cli_main
 
 
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.proxy_for is not None:
+        return _proxy_for(args)
+    if args.title is None:
+        print("vrg-epic-create: --title is required (unless --proxy-for)", file=sys.stderr)
+        return 1
     target = args.repo or github.current_repo()  # "owner/repo"; raises if undeterminable
     if "/" not in target:
         print(
@@ -48,6 +59,62 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _proxy_for(args: argparse.Namespace) -> int:
+    """``--proxy-for``: ensure the proxy and its comment, and report what was done."""
+    derived = [
+        flag
+        for flag, value in (
+            ("--title", args.title),
+            ("--body", args.body),
+            ("--body-file", args.body_file),
+            ("--label", args.label),
+            ("--assignee", args.assignee),
+        )
+        if value
+    ]
+    if derived:
+        print(
+            f"vrg-epic-create: --proxy-for derives the proxy's title, body and labels;"
+            f" it does not take {', '.join(derived)}",
+            file=sys.stderr,
+        )
+        return 1
+    if args.repo is None:
+        print(
+            "vrg-epic-create: --proxy-for needs --repo OWNER/REPO, the repo the proxy's"
+            " tasks land in",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        # No default repo, so a bare '#N' is refused: the primary is in another org.
+        primary = epics.parse_issue_ref(args.proxy_for, default_repo="")
+    except ValueError:
+        print(
+            f"vrg-epic-create: --proxy-for must be a full 'owner/repo#N' ref"
+            f" (got {args.proxy_for!r})",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        result = proxies.create_proxy(primary, args.repo)
+    except (proxies.ProxyRefusedError, proxies.ProxyLinkError) as exc:
+        print(f"vrg-epic-create: {exc}", file=sys.stderr)
+        return 1
+    proxy = result.proxy.slug
+    if result.created:
+        print(f"Created proxy {proxy} for {primary.slug}.")
+    elif result.reopened:
+        print(f"Reopened proxy {proxy} for {primary.slug} (it was closed).")
+    else:
+        print(f"Proxy {proxy} for {primary.slug} already exists.")
+    if result.commented:
+        print(f"Posted '{proxies.proxy_line(result.proxy)}' on {primary.slug}.")
+    else:
+        print(f"{primary.slug} already records '{proxies.proxy_line(result.proxy)}'.")
+    return 0
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -59,10 +126,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         epilog=(
             "Extra --label values are added alongside 'epic' (e.g. --label "
-            "ad-hoc for an ad-hoc epic)."
+            "ad-hoc for an ad-hoc epic). With --proxy-for OWNER/REPO#N --repo "
+            "OWNER/REPO it instead ensures the proxy epic for that primary epic "
+            "in the target's org .github, and the 'Proxy:' comment on the primary; "
+            "both repos must be public and in different orgs."
         ),
     )
-    parser.add_argument("--title", required=True, help="Epic title")
+    parser.add_argument("--title", help="Epic title (required unless --proxy-for)")
     parser.add_argument("--body", default="", help="Epic body text")
     parser.add_argument("--body-file", help="Read the epic body from a file")
     parser.add_argument(
@@ -79,6 +149,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Extra label (repeatable); 'epic' is always added",
     )
     parser.add_argument("--assignee", action="append", default=[], help="Assignee (repeatable)")
+    parser.add_argument(
+        "--proxy-for",
+        metavar="OWNER/REPO#N",
+        help=(
+            "Ensure the proxy epic for this primary epic (in another org) in the "
+            "--repo target's org .github, and its 'Proxy:' comment on the primary"
+        ),
+    )
     return parser.parse_args(argv)
 
 
