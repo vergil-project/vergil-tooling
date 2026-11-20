@@ -708,13 +708,29 @@ Create a top-level epic (labelled `epic`, no parent) in its home repo:
 `<org>/.github` for a public target, the target repo itself when private.
 The sanctioned path for creating epics, used by the `epic-create` skill.
 
+`--proxy-for OWNER/REPO#N --repo OWNER/NAME` instead ensures the **proxy
+epic** for a development epic in another org (its primary): an epic in the
+target's `<owner>/.github`, titled `Epic (proxy): <primary title without
+"Epic: ">` and labelled `epic` + `proxy`, whose body carries the line
+`Primary: OWNER/REPO#N`. It then posts a comment on the primary carrying
+`Proxy: <owner>/.github#<N>`, alone on its line. An open proxy for the primary
+is reused and a closed one is reopened (it prints which), and the comment is
+posted only when no trusted comment on the primary already names the proxy,
+so a re-run writes nothing. It refuses, before any write, a primary in the
+target's own org, a primary that is not an open development epic (a standing
+epic, a proxy, an archive or a closed epic), and a private primary repo,
+target or `.github`: a proxy exists only between public repos, and the task
+must not be filed in an ad-hoc epic instead. It reads and writes each org
+under that org's App token. The title and body are derived, so it takes no
+`--title`, `--body`, `--body-file`, `--label` or `--assignee`.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_epic_create` |
-| Args | `--title` (required), `--body` / `--body-file`, `--repo OWNER/NAME`, `--label` (repeatable), `--assignee` (repeatable) |
-| Preconditions | GitHub App credentials for the target org |
-| Failure mode | Error on stderr |
-| Exit codes | 0 created, 1 error |
+| Args | `--title` (required unless `--proxy-for`), `--body` / `--body-file`, `--repo OWNER/NAME`, `--label` (repeatable), `--assignee` (repeatable), `--proxy-for OWNER/REPO#N` (needs `--repo`) |
+| Preconditions | GitHub App credentials for the target org (with `--proxy-for`, for both orgs) |
+| Failure mode | Error on stderr; a `--proxy-for` refusal or link error writes nothing |
+| Exit codes | 0 created (or, with `--proxy-for`, ensured), 1 error or refusal |
 | Status | Active |
 
 ### vrg-epic-docs
