@@ -16,6 +16,21 @@ if TYPE_CHECKING:
 
 PHASE = "consumer-refresh"
 
+# Failed stages that never hold the refresh back (issue #4828). update-deps
+# prepares the next develop version, after the release is fully out: its
+# failure has its own handling (the PR stays open, a fix task is filed, the
+# next vrg-release is gated) and leaves the published release valid.
+OPTIONAL_STAGES = frozenset({"update-deps"})
+
+
+def blocking_failures(ctx: ReleaseContext) -> list[str]:
+    """The failed earlier stages that hold the refresh back, in pipeline order.
+
+    Every failed stage in ``ctx.deferred_failures`` except the optional ones
+    (:data:`OPTIONAL_STAGES`), whose failure leaves the published release valid.
+    """
+    return [name for name in ctx.deferred_failures if name not in OPTIONAL_STAGES]
+
 
 def consumer_refresh(ctx: ReleaseContext) -> None:
     """Run the release's consumer-refresh commands, rolled up to one line.
@@ -27,6 +42,9 @@ def consumer_refresh(ctx: ReleaseContext) -> None:
     ``confirm-main``, or ``package-index``) it holds: nothing runs, and the
     message warns not to advertise the version. After an earlier stage that
     failed, nothing runs either, and the commands are shown to run by hand.
+    A failed ``update-deps`` alone does not hold it (issue #4828): that stage
+    prepares the next version, so the release just published is still valid,
+    and its failure is still reported and still ends the run non-zero.
 
     The version-expanded command block is stored on
     ``ctx.consumer_refresh_commands``. ``ctx.consumer_refresh_message`` is set
@@ -71,11 +89,13 @@ def consumer_refresh(ctx: ReleaseContext) -> None:
 
     # A failed earlier stage (promote among them, which leaves vX.Y behind)
     # never triggers the install, as the post-pipeline install never ran after
-    # a failed pipeline: the commands are shown to run once it is fixed.
-    if ctx.deferred_failures:
+    # a failed pipeline: the commands are shown to run once it is fixed. An
+    # optional stage's failure (update-deps) does not count (issue #4828).
+    blocking = blocking_failures(ctx)
+    if blocking:
         ctx.consumer_refresh_message = (
             f"Consumer refresh commands for v{ctx.version} (not run: earlier stages "
-            f"failed: {', '.join(ctx.deferred_failures)}). Fix the cause, then run "
+            f"failed: {', '.join(blocking)}). Fix the cause, then run "
             f"them yourself:\n\n{commands}"
         )
         print(ctx.consumer_refresh_message)

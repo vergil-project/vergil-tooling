@@ -15,7 +15,7 @@ from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
 from vergil_tooling.lib.release.conflict import merge_main_into_release
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.finalize import close_and_finalize, teardown_worktree
-from vergil_tooling.lib.release.handoff import consumer_refresh
+from vergil_tooling.lib.release.handoff import blocking_failures, consumer_refresh
 from vergil_tooling.lib.release.merge import (
     ReleaseConflictError,
     known_pr_state,
@@ -456,10 +456,10 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
             )
         elif ctx.consumer_refresh_commands is None:
             lines.append("No [publish].consumer-refresh is configured; nothing to run.")
-        elif ctx.deferred_failures:
+        elif blocking := blocking_failures(ctx):
             lines.append(
                 "Consumer refresh commands shown, not run: earlier stages failed "
-                f"({', '.join(ctx.deferred_failures)})."
+                f"({', '.join(blocking)})."
             )
         elif not ctx.install:
             lines.append("Consumer refresh commands shown, not run (--no-install).")
