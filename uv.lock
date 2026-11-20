@@ -866,7 +866,7 @@ wheels = [
 
 [[package]]
 name = "vergil-tooling"
-version = "2.1.330"
+version = "2.1.331"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
