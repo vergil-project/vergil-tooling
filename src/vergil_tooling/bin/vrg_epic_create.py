@@ -108,6 +108,8 @@ def _proxy_for(args: argparse.Namespace) -> int:
         print(f"Reopened proxy {proxy} for {primary.slug} (it was closed).")
     else:
         print(f"Proxy {proxy} for {primary.slug} already exists.")
+    if result.retitled:
+        print(f"Retitled proxy {proxy} to the derived title.")
     if result.commented:
         print(f"Posted '{proxies.proxy_line(result.proxy)}' on {primary.slug}.")
     else:

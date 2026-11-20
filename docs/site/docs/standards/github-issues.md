@@ -216,8 +216,9 @@ standing kinds.
 
 A **proxy epic** is a same-org umbrella for the tasks that a development epic
 in another org (its **primary**) has in this org. It is titled
-`Epic (proxy): <primary title without "Epic: ">`, labelled `epic` + `proxy`,
-and homes in the public `<owner>/.github`: proxies exist only between public
+`Epic (proxy): <owner>/<repo>#<N> — <primary title without "Epic: ">`, the
+primary's ref first, so the title names the epic it stands in for. It is
+labelled `epic` + `proxy` and homes in the public `<owner>/.github`: proxies exist only between public
 repos. The link runs both ways, each side on a line alone on its line:
 
 - the proxy's body carries exactly one `Primary: <owner>/<repo>#<N>` line;

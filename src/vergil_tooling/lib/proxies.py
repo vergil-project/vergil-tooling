@@ -172,14 +172,16 @@ _NOT_ADHOC = "The task must not be filed in an ad-hoc epic instead."
 class ProxyResult:
     """What :func:`create_proxy` did.
 
-    *proxy* is the proxy epic; *created*, *reopened* and *commented* say whether
-    it was created, reopened, or had its ``Proxy:`` comment posted on the
-    primary. All three False is a re-run that wrote nothing.
+    *proxy* is the proxy epic; *created*, *reopened*, *retitled* and
+    *commented* say whether it was created, reopened, retitled to the derived
+    title (:func:`proxy_title`), or had its ``Proxy:`` comment posted on the
+    primary. All four False is a re-run that wrote nothing.
     """
 
     proxy: IssueRef
     created: bool
     reopened: bool
+    retitled: bool
     commented: bool
 
 
@@ -187,9 +189,14 @@ def _same_ref(a: IssueRef, b: IssueRef) -> bool:
     return a.slug.lower() == b.slug.lower()
 
 
-def proxy_title(primary_title: str) -> str:
-    """``Epic (proxy): <primary title without its "Epic: " prefix>``."""
-    return f"{PROXY_TITLE_PREFIX}{primary_title.removeprefix(_EPIC_TITLE_PREFIX)}"
+def proxy_title(primary: IssueRef, primary_title: str) -> str:
+    """``Epic (proxy): <owner>/<repo>#<N> — <primary title without its "Epic: " prefix>``.
+
+    The primary's ref comes first, so the title names which epic the proxy
+    stands in for.
+    """
+    subject = primary_title.removeprefix(_EPIC_TITLE_PREFIX)
+    return f"{PROXY_TITLE_PREFIX}{primary.slug} — {subject}"
 
 
 def proxy_body(primary: IssueRef, target_owner: str) -> str:
@@ -256,7 +263,7 @@ def _proxy_rows(home: str) -> list[dict[str, Any]]:
         "--limit",
         str(epics.LISTING_LIMIT),
         "--json",
-        "number,state,body",
+        "number,state,title,body",
     )
     if not isinstance(raw, list):
         raise ProxyLinkError(f"unexpected 'gh issue list' response for {home}: {raw!r}")
@@ -268,10 +275,19 @@ def _is_open(view: dict[str, Any]) -> bool:
     return str(view.get("state") or "").upper() == "OPEN"
 
 
+@dataclass(frozen=True)
+class _Existing:
+    """A proxy found in the home: its ref, whether it is open, and its title."""
+
+    ref: IssueRef
+    is_open: bool
+    title: str
+
+
 def _existing_proxies(
     primary: IssueRef, home: str, listed: tuple[IssueRef, ...]
-) -> list[tuple[IssueRef, bool]]:
-    """Every proxy in *home* for *primary*, with whether it is open, lowest first.
+) -> list[_Existing]:
+    """Every proxy in *home* for *primary*, with its state and title, lowest first.
 
     Read from the home's ``epic`` + ``proxy`` issues, plus any proxy in *home*
     the primary's trusted comments name (*listed*) that the listing missed (a
@@ -280,22 +296,22 @@ def _existing_proxies(
     a proxy naming *primary* raises :class:`ProxyLinkError`.
     """
     owner, repo = home.split("/", 1)
-    found: dict[int, tuple[IssueRef, bool]] = {}
+    found: dict[int, _Existing] = {}
     for row in _proxy_rows(home):
         ref = IssueRef(owner, repo, int(row["number"]))
         if _same_ref(_primary_in_body(ref, str(row.get("body") or "")), primary):
-            found[ref.number] = (ref, _is_open(row))
+            found[ref.number] = _Existing(ref, _is_open(row), str(row.get("title") or ""))
     for ref in listed:
         if ref.owner.lower() != owner.lower() or ref.number in found:
             continue
-        view = _view(ref, "labels,state,body")
+        view = _view(ref, "labels,state,title,body")
         named = _primary_in_body(ref, str(view.get("body") or ""))
         if not epics.is_proxy(_label_names(view)) or not _same_ref(named, primary):
             raise ProxyLinkError(
                 f"a trusted comment on {primary.slug} names {ref.slug} as its proxy, but"
                 f" {ref.slug} is not a proxy naming {primary.slug}"
             )
-        found[ref.number] = (ref, _is_open(view))
+        found[ref.number] = _Existing(ref, _is_open(view), str(view.get("title") or ""))
     return [found[number] for number in sorted(found)]
 
 
@@ -306,7 +322,11 @@ def create_proxy(primary: IssueRef, target_repo: str) -> ProxyResult:
     comes before any write, so a refusal, or a token that cannot be minted for
     either org, writes nothing. The proxy is found among the home's proxies by
     its ``Primary:`` line: an open one is reused, a closed one is reopened, and
-    none means it is created, its labels ensured first. The comment is posted
+    none means it is created, its labels ensured first. A reused or reopened
+    proxy whose title differs from :func:`proxy_title` is retitled, so a re-run
+    brings an older proxy's title up to date; a proxy is found by its
+    ``Primary:`` line and labels, never its title, so retitling is safe. The
+    comment is posted
     on the primary only when no trusted comment there names the proxy, so a
     re-run that finds both writes nothing. Each call runs under
     :func:`github.target_org` of the org it touches.
@@ -328,24 +348,29 @@ def create_proxy(primary: IssueRef, target_repo: str) -> ProxyResult:
         _refuse_private(target_repo, "target repo")
         _refuse_private(home, "proxy home")
         existing = _existing_proxies(primary, home, listed)
-        open_refs = [ref for ref, is_open in existing if is_open]
+        derived = proxy_title(primary, title)
+        open_proxies = [found for found in existing if found.is_open]
+        open_refs = [found.ref for found in open_proxies]
         if len(open_refs) > 1:
             raise ProxyLinkError(
                 f"{home} has {len(open_refs)} open proxies for {primary.slug}"
                 f" ({', '.join(ref.slug for ref in open_refs)}); keep one and close the rest"
             )
-        created = reopened = False
-        if open_refs:
-            proxy = open_refs[0]
-        elif existing:
-            proxy = existing[0][0]
-            github.run("issue", "reopen", str(proxy.number), "--repo", home)
-            reopened = True
+        created = reopened = retitled = False
+        if existing:
+            found = open_proxies[0] if open_proxies else existing[0]
+            proxy = found.ref
+            if not found.is_open:
+                github.run("issue", "reopen", str(proxy.number), "--repo", home)
+                reopened = True
+            if found.title != derived:
+                github.run("issue", "edit", str(proxy.number), "--repo", home, "--title", derived)
+                retitled = True
         else:
             labels = ["epic", epics.PROXY_LABEL]
             ensure_labels(home, labels)
             url = github.create_issue(
-                repo=home, title=proxy_title(title), body=proxy_body(primary, owner), labels=labels
+                repo=home, title=derived, body=proxy_body(primary, owner), labels=labels
             )
             proxy = IssueRef(owner, PROXY_HOME_REPO, int(url.rstrip("/").rsplit("/", 1)[-1]))
             created = True
@@ -361,4 +386,6 @@ def create_proxy(primary: IssueRef, target_repo: str) -> ProxyResult:
                 "--body",
                 proxy_comment(proxy),
             )
-    return ProxyResult(proxy=proxy, created=created, reopened=reopened, commented=commented)
+    return ProxyResult(
+        proxy=proxy, created=created, reopened=reopened, retitled=retitled, commented=commented
+    )
