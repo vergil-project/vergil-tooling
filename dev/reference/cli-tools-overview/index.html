@@ -21040,6 +21040,21 @@ fails after creation, the created issue's URL is reported for recovery with
 <p>Create a top-level epic (labelled <code>epic</code>, no parent) in its home repo:
 <code>&lt;org&gt;/.github</code> for a public target, the target repo itself when private.
 The sanctioned path for creating epics, used by the <code>epic-create</code> skill.</p>
+<p><code>--proxy-for OWNER/REPO#N --repo OWNER/NAME</code> instead ensures the <strong>proxy
+epic</strong> for a development epic in another org (its primary): an epic in the
+target's <code>&lt;owner&gt;/.github</code>, titled <code>Epic (proxy): &lt;primary title without
+"Epic: "&gt;</code> and labelled <code>epic</code> + <code>proxy</code>, whose body carries the line
+<code>Primary: OWNER/REPO#N</code>. It then posts a comment on the primary carrying
+<code>Proxy: &lt;owner&gt;/.github#&lt;N&gt;</code>, alone on its line. An open proxy for the primary
+is reused and a closed one is reopened (it prints which), and the comment is
+posted only when no trusted comment on the primary already names the proxy,
+so a re-run writes nothing. It refuses, before any write, a primary in the
+target's own org, a primary that is not an open development epic (a standing
+epic, a proxy, an archive or a closed epic), and a private primary repo,
+target or <code>.github</code>: a proxy exists only between public repos, and the task
+must not be filed in an ad-hoc epic instead. It reads and writes each org
+under that org's App token. The title and body are derived, so it takes no
+<code>--title</code>, <code>--body</code>, <code>--body-file</code>, <code>--label</code> or <code>--assignee</code>.</p>
 <table>
 <thead>
 <tr>
@@ -21054,19 +21069,19 @@ The sanctioned path for creating epics, used by the <code>epic-create</code> ski
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--title</code> (required), <code>--body</code> / <code>--body-file</code>, <code>--repo OWNER/NAME</code>, <code>--label</code> (repeatable), <code>--assignee</code> (repeatable)</td>
+<td><code>--title</code> (required unless <code>--proxy-for</code>), <code>--body</code> / <code>--body-file</code>, <code>--repo OWNER/NAME</code>, <code>--label</code> (repeatable), <code>--assignee</code> (repeatable), <code>--proxy-for OWNER/REPO#N</code> (needs <code>--repo</code>)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>GitHub App credentials for the target org</td>
+<td>GitHub App credentials for the target org (with <code>--proxy-for</code>, for both orgs)</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Error on stderr</td>
+<td>Error on stderr; a <code>--proxy-for</code> refusal or link error writes nothing</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 created, 1 error</td>
+<td>0 created (or, with <code>--proxy-for</code>, ensured), 1 error or refusal</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -21525,7 +21540,9 @@ vergil-project/.github#517). <code>create</code> makes the pair (or attaches an
 advisory to an existing issue, or resumes an unfinished pair), <code>list</code> and
 <code>show</code> read records, <code>retarget</code> moves an advisory's tracking from an issue
 it tracks (<code>--from</code>) to new issues, refusing to stop tracking an open
-issue unless <code>--drop</code> names it, <code>sync</code> sets each paired advisory's state from its issues and
+issue unless <code>--drop</code> names it, and moves the advisory to another org's
+<code>.github</code> when every <code>--to</code> is there (a copy with a <code>Moved from:</code> line;
+the original closed with <code>Moved to:</code>), <code>sync</code> sets each paired advisory's state from its issues and
 reports broken pairs (<code>--dry-run</code> previews it), and <code>close</code> closes a draft
 advisory whose issues are all closed, posting the GHSA ID and a required
 <code>--reason</code> on each of them first, and <code>note</code> appends a dated private note
@@ -21550,11 +21567,11 @@ from a file to an advisory's description (append-only). Advisory text is printed
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>The org's <code>.github</code> is public; Repository security advisories: Read and write on the identity's App (or a human <code>gh</code> login with access)</td>
+<td>The org's <code>.github</code> is public; Repository security advisories: Read and write on the identity's App (or a human <code>gh</code> login with access), in both orgs for a cross-org <code>retarget</code></td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A partial pair exits 1 naming what exists and the exact <code>--resume</code> command that finishes it; a private <code>.github</code>, a duplicate draft, or <code>--details</code> under <code>VRG_EPIC_SWEEP</code> is refused; <code>retarget</code> refuses, before any write, a <code>--from</code> the advisory does not track and dropping an open tracked issue, printing the command that would succeed; <code>create</code> refuses an advisory that already tracks another issue; <code>sync</code> exits 1 on a broken pair after syncing the rest</td>
+<td>A partial pair exits 1 naming what exists and the exact <code>--resume</code> command that finishes it; a private <code>.github</code>, a duplicate draft, or <code>--details</code> under <code>VRG_EPIC_SWEEP</code> is refused; <code>retarget</code> refuses, before any write, a <code>--from</code> the advisory does not track and dropping an open tracked issue, printing the command that would succeed, and <code>--to</code> refs spanning orgs, naming the two ways out; a cross-org <code>retarget</code> that fails partway is finished by the identical command; <code>create</code> refuses an advisory that already tracks another issue, and <code>create</code> and <code>note</code> refuse caller text holding a <code>Moved from:</code> or <code>Moved to:</code> line; <code>sync</code> exits 1 on a broken pair after syncing the rest</td>
 </tr>
 <tr>
 <td>Exit codes</td>

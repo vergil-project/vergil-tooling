@@ -15196,6 +15196,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="retarget">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-cross-org-move" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The cross-org move
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -18243,6 +18260,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="retarget">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-cross-org-move" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The cross-org move
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -18356,7 +18390,9 @@ advisory.</p>
 <li><code>--repo</code> always names the <strong>affected</strong> repo, never where anything is
   created.</li>
 <li>The advisory is always created in <code>&lt;org&gt;/.github</code>, where <code>&lt;org&gt;</code> is the
-  owner of <code>--repo</code> (or of the <code>--from</code>, <code>--to</code> and <code>--drop</code> refs for <code>retarget</code>). The command
+  owner of <code>--repo</code> (or of the <code>--from</code> and <code>--drop</code> refs for <code>retarget</code>, whose
+  <code>--to</code> refs in another org move it there: see
+  <a href="#the-cross-org-move">The cross-org move</a>). The command
   checks that <code>&lt;org&gt;/.github</code> is public and otherwise refuses with:</li>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-security-record: &lt;org&gt;/.github is not public; security records need a public org .github (private orgs are unsupported)
@@ -18441,6 +18477,12 @@ human's own <code>gh</code> login is used.</p>
   exists. <code>--summary</code> is left out of that command, since no advisory is
   created on resume. Run the printed command; never re-run the original.</li>
 </ul>
+<p><strong>Move lines.</strong> Before any GitHub call, <code>create</code> refuses (exit 1, with
+nothing created) a <code>--body-file</code>, <code>--details-file</code> or <code>--summary</code> that
+has an exact <code>Moved from: &lt;GHSA-id&gt;</code> or
+<code>Moved to: &lt;org&gt;/.github &lt;GHSA-id&gt;</code> line, with <code>--resume</code> too. Only a
+cross-org <code>retarget</code> writes those lines, as <code>note</code> also enforces. The
+message names the file or flag and never quotes its text.</p>
 <p><strong>Attach mode</strong> (<code>--issue</code> without <code>--resume</code>) attaches a new advisory to
 an existing issue instead of creating one. It adds the <code>security</code> label
 and the <code>Security advisory:</code> line to that issue, then writes the tracking
@@ -18545,8 +18587,10 @@ planning handoff both use it.</p>
 </tr>
 </tbody>
 </table>
-<p>Every ref must be a full <code>owner/repo#N</code> ref, and all of them must be
-in one org. The refs are single-quoted so the command pastes into any
+<p>Every ref must be a full <code>owner/repo#N</code> ref. <code>--from</code> and every
+<code>--drop</code> must be in one org, the advisory's, and every <code>--to</code> in one org;
+when that is another org, the retarget is a
+<a href="#the-cross-org-move">cross-org move</a>. The refs are single-quoted so the command pastes into any
 shell: unquoted, the <code>#</code> is a glob operator in zsh with <code>EXTENDED_GLOB</code>
 set. The <code>retarget</code> commands that <code>vrg-intake-route</code> prints for an
 advisory it could not retarget are quoted the same way.</p>
@@ -18627,8 +18671,74 @@ transferred issue is replaced in the tracking lines but never unmarked,
 because the old number now leads to the moved issue itself. Its recovery
 commands name that old number as <code>--from</code>; without <code>renamed=</code> the old
 number is the source, and its unmark finds the issue already at a target.</p>
+<h3 id="the-cross-org-move">The cross-org move<a class="headerlink" href="#the-cross-org-move" title="Permanent link">&para;</a></h3>
+<p>When every <code>--to</code> is in an org other than the advisory's, <code>retarget</code>
+moves the advisory to that org's <code>.github</code> (epic
+vergil-project/.github#1417). GitHub cannot move an advisory, so the move
+copies it. A <code>--to</code> set spanning orgs is refused before any read:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-security-record: advisory &lt;GHSA-id&gt;: the --to issues span orgs (&lt;org&gt;, &lt;org&gt;), and every fix of one advisory must be in one org. Either duplicate the advisory into each org, each copy tracking that org's own fix tasks, or break the finding up into separate advisories
+</code></pre></div>
+<p>Every check runs before the first write, and each refusal exits 1:</p>
+<ul>
+<li>The original must exist, be a <code>draft</code> and not an external report, with
+  at most one <code>Moved to:</code> line. A <code>closed</code> original carrying the line is
+  a finished move, re-run.</li>
+<li>The original must not itself be a copy a move made (an advisory with a
+  <code>Moved from:</code> line). A copy never moves again: its original's
+  <code>Moved to:</code> line would name an advisory that tracks nothing, and <code>sync</code>
+  would report that original broken for good. The refusal names the way
+  out, one copy of the finding per org: keep the copy tracking its own
+  org's fix tasks and create a separate advisory in the new org.</li>
+<li>The source check and the open-issue check, as above. Once a re-run
+  finds the original's tracking lines already removed, <code>--from</code> must
+  carry the <code>Security record moved to &lt;refs&gt;</code> comment for exactly the
+  <code>--to</code> set. The open-issue refusal for a move prints the same command,
+  since a move closes the original and cannot keep tracking an open
+  issue in its own org:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>vrg-security-record: advisory &lt;GHSA-id&gt;: this would stop tracking the open issue &lt;ref&gt;; a move to &lt;org&gt;/.github closes this advisory, so it cannot keep tracking an issue in &lt;org&gt;. Close or retarget that work first, then run: vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;ref&gt;' --to '&lt;ref&gt;' …. Leaving an open issue untracked is the human's decision
+</code></pre></div>
+<ul>
+<li>The fix org's <code>.github</code> must be public. Its advisories are listed, and
+  each one with a <code>Moved from: &lt;GHSA-id&gt;</code> line naming this advisory alone
+  on its line is a candidate. One candidate is reused only when it is a
+  <code>draft</code> and not an external report; more than one candidate, or any
+  that is an external report or in another state, refuses the move,
+  naming each, and nothing is created. A reused copy must also be the one
+  the original's <code>Moved to:</code> line names, when it has one, and track no
+  issue or exactly the <code>--to</code> set.</li>
+<li>With no copy to reuse, the original's severity must be <code>critical</code>,
+  <code>high</code>, <code>medium</code> or <code>low</code>.</li>
+</ul>
+<p>Then, each step only once the one before succeeded, every fix-org call
+under that org's token and every other under the advisory's:</p>
+<ol>
+<li><strong>Create</strong> the copy, unless one is reused: a draft in the fix org's
+   <code>.github</code> with the original's summary, its details less the
+   <code>Tracking issue:</code> lines plus <code>Moved from: &lt;GHSA-id&gt;</code>, its severity, and
+   the first <code>--to</code>'s repo as the affected repo. The create is sent
+   exactly once.</li>
+<li><strong>Hand it on</strong>: mark every <code>--to</code> with the copy's
+   <code>Security advisory: &lt;fix-org&gt;/.github &lt;new GHSA-id&gt;</code> line and give the
+   copy one <code>Tracking issue:</code> line per <code>--to</code>.</li>
+<li><strong>Close the original</strong>: write <code>Moved to: &lt;fix-org&gt;/.github &lt;new
+   GHSA-id&gt;</code> on it (its tracking lines kept last), unmark every dropped
+   issue, <code>--from</code> last, remove its tracking lines, and set it <code>closed</code>.</li>
+</ol>
+<p>A failure at any step exits 1 naming the advisory and the step; the
+identical command finishes the move, reusing the copy by its
+<code>Moved from:</code> line, and writes nothing once the move is done. On success
+it prints any transfer notes, then
+<code>Moved &lt;GHSA-id&gt; to &lt;fix-org&gt;/.github as &lt;new GHSA-id&gt;, tracked by &lt;refs&gt;; &lt;GHSA-id&gt; is closed as moved.</code></p>
+<p>The library's <code>retarget</code> returns the transfer notes followed by the
+original's <code>Moved to:</code> line; <code>fix_org</code> is the one-org check, and
+<code>moved_from_line</code>, <code>moved_to_line</code>, <code>parse_moved_from</code> and
+<code>parse_moved_to</code> build and read the two lines, and <code>refuse_move_lines</code>
+refuses caller text holding either one. Only the move writes them:
+<code>note</code> refuses a note holding either line, and <code>create</code> refuses a body
+file, details file or <code>--summary</code> holding one (see <a href="#create">create</a>).</p>
 <h2 id="sync">sync<a class="headerlink" href="#sync" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-security-record<span class="w"> </span>sync<span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vrg-security-record<span class="w"> </span>sync<span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
 </code></pre></div>
 <p>Runs the security-records pass over the current repo's org (from its
 <code>origin</code> remote; there is no <code>--org</code> flag). It lists the advisories in
@@ -18639,6 +18749,15 @@ advisory between <code>draft</code> and <code>closed</code>: it never changes a 
 <code>withdrawn</code> or <code>triage</code> advisory, or an unpaired external report, which
 it lists as <code>unpaired external report (left untouched)</code>. Broken pairs are
 listed as <code>- broken: &lt;GHSA-id or issue ref&gt;: &lt;problem&gt;</code>, never repaired.</p>
+<p><strong>Moved advisories.</strong> An advisory that is not an external report and
+carries one <code>Moved to: &lt;org&gt;/.github &lt;GHSA-id&gt;</code> line is moved, a terminal
+state: it is never synced and never broken for tracking nothing. The pass
+lists each org's <code>.github</code> it names once, under that org's token, and
+reports <code>- broken: &lt;GHSA-id&gt;: moved to &lt;org&gt;/.github &lt;GHSA-id&gt;, which
+does not exist</code> (or <code>which has no Moved from: &lt;GHSA-id&gt; line</code>, or <code>which
+tracks no issue</code>) for a copy that does not hold it. An advisory with more
+than one <code>Moved to:</code> line is broken. A failed read of the other org fails
+the pass.</p>
 <p><strong>The close guard.</strong> A draft advisory whose tracked issues are all closed
 stays <code>draft</code> when any of them is a queue item (its native parent is a
 live intake, planning or deferred epic, or a per-quarter archive of one,
@@ -18646,7 +18765,7 @@ recognized by its <code>archive</code> label or its stamped title) or was closed
 with any reason other than completed. The parent is read only for an
 issue closed as completed. Each advisory the guard holds is listed by
 GHSA ID and the issue refs that fired it, with the next step:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>- held: GHSA-xxxx-xxxx-xxxx (org/repo#12): retarget it to a fix task, or close it with vrg-security-record close
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>- held: GHSA-xxxx-xxxx-xxxx (org/repo#12): retarget it to a fix task, or close it with vrg-security-record close
 </code></pre></div>
 <p>A hold does not fail the pass. The guard only stops a move to <code>closed</code>:
 an advisory already <code>closed</code> (a human closed it with
@@ -18684,8 +18803,8 @@ runs <code>sync</code> on a schedule: the human or the user agent runs it, after
 closing or reopening a <code>security</code> issue and regularly in any case, and
 <code>vrg-epic-audit</code> previews it read-only.</p>
 <h2 id="close">close<a class="headerlink" href="#close" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vrg-security-record<span class="w"> </span>close<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"the work it tracked was dropped with its epic"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>vrg-security-record<span class="w"> </span>close<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"the work it tracked was dropped with its epic"</span>
 </code></pre></div>
 <p>Closes a draft advisory and leaves an audit trail: a public comment with
 the GHSA ID and the reason on every issue the record tracks. It is how an
@@ -18739,7 +18858,7 @@ Before it, each transferred issue gets a line
 <p><code>close</code> needs the same <strong>Repository security advisories: Read and write</strong>
 as <code>sync</code>, and runs as the human's own <code>gh</code> login or the user App.</p>
 <h2 id="note">note<a class="headerlink" href="#note" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>vrg-security-record<span class="w"> </span>note<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span>--file<span class="w"> </span>note.md
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>vrg-security-record<span class="w"> </span>note<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span>--file<span class="w"> </span>note.md
 </code></pre></div>
 <p>Appends a dated note to an advisory's description, so a record can be
 kept accurate as designs change: a resolution later superseded, a
@@ -18773,6 +18892,9 @@ and <code>sync</code> read them as before.</p>
 <li>the file cannot be read, or holds no text;</li>
 <li>any line of the note is a <code>Tracking issue:</code> line, which would change
   what the record tracks: use <code>retarget</code> for that;</li>
+<li>any line of the note is a <code>Moved from:</code> or <code>Moved to:</code> line, which
+  would change where the record lives: only <code>retarget</code> writes those
+  lines, when it moves a record to another org;</li>
 <li>the advisory does not exist in <code>&lt;org&gt;/.github</code>;</li>
 <li>it is an external report, or in any state other than <code>draft</code> or
   <code>closed</code> (<code>published</code>, <code>withdrawn</code>, <code>triage</code>), which stay a human's
@@ -18815,8 +18937,8 @@ do.</p>
   (<code>advisory still tracks</code> for one, <code>advisories still track</code> for more),
   and ends with the retarget command:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt;
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>held: &lt;k&gt; advisories this planning issue names cannot be read (&lt;GHSA-id&gt;[, …]): re-run with a token that can read the repository's advisories, or have the human check it — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt;
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>held: &lt;k&gt; advisories this planning issue names cannot be read (&lt;GHSA-id&gt;[, …]): re-run with a token that can read the repository's advisories, or have the human check it — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt;
 </code></pre></div>
 <p>An item held both ways gives both parts, joined by a semicolon. A
   <code>Security advisory:</code> line on an issue without the <code>security</code> label,
