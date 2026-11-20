@@ -2,8 +2,9 @@
 
 Used when ``vrg-package`` builds or install-tests a Python product
 (:mod:`~vergil_tooling.lib.package.python_builder`,
-:mod:`~vergil_tooling.lib.package.install_test`); VM provisioning no longer sets
-up the package repository and uses only the path helpers here, to remove the old
+:mod:`~vergil_tooling.lib.package.install_test`). VM provisioning no longer sets
+up the package repository and uses none of the bootstrap: it uses only the path
+helpers and :func:`apt_get`, to purge the old vergil packages and remove their
 source and key. Every command goes through a :data:`Run` callable, so the
 sequence runs on this host (:func:`local_run`) or against a fake in tests.
 
