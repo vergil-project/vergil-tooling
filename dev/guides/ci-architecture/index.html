@@ -18639,13 +18639,17 @@ repository with no language uses the base image. On top of that image,
 <code>vrg-container-run</code> builds a per-branch cached image with
 vergil-tooling installed. Set <code>DOCKER_DEV_IMAGE</code> to use a different
 image.</p>
-<p>For a release version, the cached image installs the vergil-tooling package
-at that release, and a <code>vX.Y</code> line resolves first to the newest release on the line, so a new
-release rebuilds the cached image (see
+<p>Every ref is <code>uv tool install</code> from git on the image's uv-managed
+Python 3.15, the one the base image publishes in <code>VERGIL_CORE_PYTHON_DIR</code>,
+with interpreter downloads off. For a release version, the cached image
+installs that release's commit, constrained by the commit's own <code>uv.lock</code>,
+and a <code>vX.Y</code> line resolves first to the newest release on the line, so a
+new release rebuilds the cached image (see
 <a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>).
-The build checks that <code>vrg-*</code> runs from <code>/usr/bin</code> on vergil-python. A
-branch is <code>uv tool install</code> from git on the image's core vergil-python
-(<code>/opt/vergil/python/*/bin/python3</code>). The build log names the path it took.</p>
+A branch or other dev ref installs from git unconstrained. The <code>vrg-*</code>
+entry points land in <code>/usr/local/bin</code>, and the build checks that
+<code>vrg-whoami</code> resolves there and runs. The build log names the release
+tag and commit it installed (for a dev ref, the ref).</p>
 <p><code>vrg-validate</code> first runs the common checks: the
 <a href="../../reference/lint/repo-profile/">repo-profile</a> check, markdownlint,
 shellcheck, yamllint, hadolint, actionlint, and ansible-lint when the

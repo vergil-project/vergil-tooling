@@ -18801,7 +18801,7 @@ old <code>standard-tooling</code>/<code>st-*</code> naming):</p>
 </tr>
 <tr>
 <td><strong>Agent VM</strong> (Lima/cloud)</td>
-<td>Signed <code>vergil-tooling</code> package via <code>apt</code> from <a href="https://vergil-project.github.io/packages">https://vergil-project.github.io/packages</a>, pinned to the identity's release line or version</td>
+<td><code>vrg-vm</code> <code>uv tool install</code> from git of the identity's release line or version, resolved to one commit and constrained by its <code>uv.lock</code></td>
 <td>Agent sessions inside the VM</td>
 </tr>
 </tbody>
@@ -19082,9 +19082,12 @@ it. That tip has the same problem: it may be a later commit's.
 passed. A second wait would add nothing. It would also fail the stage on
 a docs publish failure that <code>confirm-develop</code> has already deferred.</p>
 <h4 id="a-promote-held-back-by-the-index">A promote held back by the index<a class="headerlink" href="#a-promote-held-back-by-the-index" title="Permanent link">&para;</a></h4>
-<p><code>promote</code> runs after <code>package-index</code>, so git-based installs of <code>vX.Y</code>
-(which follow the tag) and packaged installs (which take the newest
-<code>X.Y.*</code> in the index) get the same release from the moment the tag moves.
+<p><code>promote</code> runs after <code>package-index</code>, so consumers that follow the
+rolling <code>vX.Y</code> tag and packaged installs (which take the newest <code>X.Y.*</code>
+in the index) get the same release from the moment the tag moves.
+vergil-tooling's own installs follow neither: a <code>vX.Y</code> pin resolves to
+the newest <code>vX.Y.Z</code> tag with <code>git ls-remote</code>, so they get a release as
+soon as its tag exists.
 When <code>package-index</code> defers, <code>promote</code> skips and <code>vX.Y</code> stays on the
 previous release, so the two still agree. The deferral comment, the
 <code>close-finalize</code> outcome line and the <code>publish-status</code> error name the
@@ -19223,7 +19226,7 @@ get the fix on the next normal action:</p>
 </tr>
 <tr>
 <td>Dev container image</td>
-<td>The base images carry no vergil-tooling. The next <code>vrg-container-run</code> rebuilds the branch's cached image with the patch once it is in the package index: a <code>vX.Y</code> line pin in <code>vergil.toml</code> resolves to the newest release on the line (see <a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>). An exact <code>vX.Y.Z</code> pin stays put</td>
+<td>The base images carry no vergil-tooling. The next <code>vrg-container-run</code> rebuilds the branch's cached image with the patch as soon as its tag exists: a <code>vX.Y</code> line pin in <code>vergil.toml</code> resolves to the newest release on the line (see <a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>). An exact <code>vX.Y.Z</code> pin stays put</td>
 </tr>
 <tr>
 <td>Agent VM (Lima/cloud)</td>

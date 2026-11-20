@@ -18212,8 +18212,10 @@ them:</p>
 </code></pre></div>
 <p>See the <a href="../reference/dev/host/">vrg-host reference</a> for the dependency list
 and for pinning a tool that a new release has broken.</p>
-<p>On Linux, vergil-tooling is also published as a signed <code>.deb</code>/<code>.rpm</code>
-package (this is how Lima and cloud agent VMs get it). Follow the
+<p>vergil-tooling is also published as a signed <code>.deb</code>/<code>.rpm</code> package for
+Linux consumers outside Vergil. Vergil's own installs (the dev container
+cache, CI and the Lima and cloud agent VMs) use <code>uv</code> from git, not the
+package. To use the package, follow the
 <a href="https://github.com/vergil-project/packages#readme"><code>vergil-project/packages</code> README</a>
 to set up the apt or dnf repository. Check the downloaded signing key
 against the pinned primary fingerprint

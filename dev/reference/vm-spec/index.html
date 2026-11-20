@@ -18464,8 +18464,8 @@ any <code>[vm]</code> key marks the spec customized, which gives the repo a dedi
 <tr>
 <td><code>boot_disk</code></td>
 <td>string <code>"&lt;N&gt;GiB"</code></td>
-<td><em>(module default, ~30 GiB)</em></td>
-<td><strong>Ephemeral</strong> boot/root-disk size when off-platform. Optional — unset keeps the image default. Sizes the disk that holds scratch data living outside <code>volume</code></td>
+<td><em>(module default, 60 GiB)</em></td>
+<td><strong>Ephemeral</strong> boot/root-disk size when off-platform. Optional — unset uses the vergil-vm module default. Sizes the disk that holds scratch data living outside <code>volume</code></td>
 </tr>
 <tr>
 <td><code>boot_disk_type</code></td>
@@ -18559,7 +18559,8 @@ design spec is
   <code>volume</code> declared above. The Lima <code>disk</code> knob drives neither — use
   <code>volume</code> for the persistent disk and <code>boot_disk</code> for the ephemeral one.</li>
 <li><strong><code>boot_disk</code> sizes the ephemeral boot/root disk</strong> (optional). Unset,
-  the boot disk inherits the cloud image's default (~30 GiB); set it
+  the key is not passed and the boot disk takes the vergil-vm module
+  default (60 GiB, vergil-project/vergil-vm#433); set it
   (<code>"&lt;N&gt;GiB"</code>) to grow the disk for workloads whose scratch data lives
   <em>outside</em> the persistent <code>volume</code> — e.g. a nested-virt image pool and
   qcow2 overlays, which belong on the wipe-on-rebuild boot disk rather
