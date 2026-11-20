@@ -253,7 +253,7 @@ class FakeGitHub:
         private: frozenset[str] = frozenset(),
         no_install: frozenset[str] = frozenset(),
     ) -> None:
-        self.primary = {
+        self.primary: dict[str, Any] = {
             "labels": [{"name": name} for name in primary_labels],
             "state": primary_state,
             "title": primary_title,
@@ -261,6 +261,7 @@ class FakeGitHub:
         }
         self.home = dict(proxies_in_home or {})
         self.unlisted = unlisted
+        self.listing: object = None
         self.private = private
         self.no_install = no_install
         self.calls: list[tuple[str, str | None, Any]] = []
@@ -279,6 +280,8 @@ class FakeGitHub:
         self.calls.append(("read", org, args))
         if args[:2] == ("issue", "list"):
             assert args[3] == HOME
+            if self.listing is not None:
+                return self.listing
             return [
                 {"number": number, "state": proxy["state"], "body": proxy["body"]}
                 for number, proxy in sorted(self.home.items())
@@ -475,9 +478,7 @@ def test_proxy_for_rerun_is_noop() -> None:
 
 
 def test_proxy_for_untrusted_comment_does_not_count() -> None:
-    fake = FakeGitHub(
-        comments=[_recorded(login="mallory")], proxies_in_home={320: _home_proxy()}
-    )
+    fake = FakeGitHub(comments=[_recorded(login="mallory")], proxies_in_home={320: _home_proxy()})
     assert fake.create().commented
 
 
@@ -540,12 +541,23 @@ def test_proxy_for_ensures_labels_before_create() -> None:
     fake = FakeGitHub()
     fake.create()
     kinds = [(kind, org) for kind, org, _ in fake.writes()]
-    assert kinds[:2] == [("ensure_labels", "logical-minds-foundry"), ("create", "logical-minds-foundry")]
+    assert kinds[:2] == [
+        ("ensure_labels", "logical-minds-foundry"),
+        ("create", "logical-minds-foundry"),
+    ]
     assert fake.writes()[0][2] == (HOME, ("epic", "proxy"))
 
 
 def test_proxy_for_truncated_listing_raises() -> None:
     fake = FakeGitHub(proxies_in_home={n: _home_proxy("CLOSED") for n in range(1, 1001)})
     with pytest.raises(EpicListTruncatedError, match="limit"):
+        fake.create()
+    assert fake.writes() == []
+
+
+def test_proxy_for_non_list_listing_raises() -> None:
+    fake = FakeGitHub()
+    fake.listing = {"message": "odd"}
+    with pytest.raises(ProxyLinkError, match="unexpected 'gh issue list'"):
         fake.create()
     assert fake.writes() == []

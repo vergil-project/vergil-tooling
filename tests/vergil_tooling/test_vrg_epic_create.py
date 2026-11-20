@@ -162,9 +162,7 @@ def test_proxy_for_closed_proxy_reopened(capsys: pytest.CaptureFixture[str]) -> 
 @pytest.mark.parametrize(
     "error", [proxies.ProxyRefusedError("nope"), proxies.ProxyLinkError("drift")]
 )
-def test_proxy_for_refusal_exits_1(
-    error: Exception, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_proxy_for_refusal_exits_1(error: Exception, capsys: pytest.CaptureFixture[str]) -> None:
     with patch(f"{_MOD}.proxies.create_proxy", side_effect=error):
         rc = main(_PROXY_ARGS)
     assert rc == 1
