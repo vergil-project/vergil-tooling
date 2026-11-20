@@ -18793,8 +18793,11 @@ remembered.</p>
 <p><strong>Release install</strong> (any release version):</p>
 <ul>
 <li><code>vrg-vm</code> resolves the version on the host, once, with
-  <code>git ls-remote</code>: <code>vX.Y</code> (a release line) to the newest <code>vX.Y.Z</code> tag,
-  <code>vX.Y.Z</code> (an exact release) to itself, each to its commit SHA.</li>
+  <code>git ls-remote</code>: <code>vX.Y</code> (a release line) to the <code>vX.Y.Z</code> tag on the
+  commit its rolling tag <code>vX.Y</code> names (never simply the newest, so a
+  line demoted with <code>vrg-promote</code> is followed), <code>vX.Y.Z</code> (an exact
+  release) to itself, each to its commit SHA. A line whose rolling tag is
+  missing, or whose commit carries no <code>vX.Y.Z</code> tag, fails.</li>
 <li>The VM installs that one commit (<code>git+…@&lt;sha&gt;</code>), constrained by the
   commit's own <code>uv.lock</code>, which it reads with a shallow fetch of the
   commit and <code>uv export</code>. The install logs the tag and the SHA.</li>
@@ -18807,7 +18810,7 @@ remembered.</p>
 <li>Once the install passes its check (below), the dev-ref marker
   <code>~/.config/vergil/tooling-dev-ref</code> is removed.</li>
 <li><code>vrg-vm update</code> re-runs the same steps, which moves a line pin to the
-  line's newest release.</li>
+  release the line's rolling tag names.</li>
 </ul>
 <p><strong>The check.</strong> After every install, <code>vrg-whoami</code> must resolve to
 <code>~/.local/bin/vrg-whoami</code> and <code>vrg-whoami --mode</code> must run. A

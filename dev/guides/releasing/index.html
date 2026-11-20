@@ -18851,7 +18851,7 @@ old <code>standard-tooling</code>/<code>st-*</code> naming):</p>
 <tbody>
 <tr>
 <td><strong>Developer host</strong> (macOS)</td>
-<td><code>vrg-tooling-install vX.Y.Z</code>: <code>uv tool install</code> from git of the exact release tag's commit, constrained by that commit's <code>uv.lock</code>; the release's consumer refresh runs it</td>
+<td><code>vrg-tooling-install vX.Y.Z</code> (or <code>vX.Y</code>, the release its rolling tag names): <code>uv tool install</code> from git of the exact release tag's commit, constrained by that commit's <code>uv.lock</code>; the release's consumer refresh runs it</td>
 <td>Host-side commands: <code>vrg-container-run</code>, <code>vrg-commit</code>, <code>vrg-submit-pr</code>, <code>vrg-release</code>, <code>vrg-finalize-pr</code>, <code>vrg-host</code></td>
 </tr>
 <tr>
@@ -18873,7 +18873,10 @@ Mac with the just-released version (<code>vrg-tooling-install v&lt;VERSION&gt;</
 followed by <code>vrg-vm update --all</code>), so the release installs itself on the
 host. It fetches the exact tag (which cannot move, under tag protection, so
 it needs no <code>git ls-remote</code>), installs the commit that tag names with that
-commit's <code>uv.lock</code> as constraints, and runs on uv's managed 3.15.</p>
+commit's <code>uv.lock</code> as constraints, and runs on uv's managed 3.15. Given a
+line, <code>vrg-tooling-install vX.Y</code> first reads the rolling tag <code>vX.Y</code> with one
+<code>git ls-remote</code>, takes the one <code>vX.Y.Z</code> tag on the commit it names, and then
+installs and reports that exact release.</p>
 <p>A fresh host has no <code>vrg-tooling-install</code> yet, and an installed one that
 fails cannot fix itself. Both install by hand (see
 <a href="../../getting-started/">Getting Started</a>), with <code>VERSION</code> set to the
@@ -19139,9 +19142,11 @@ a docs publish failure that <code>confirm-develop</code> has already deferred.</
 <p><code>promote</code> runs after <code>package-index</code>, so consumers that follow the
 rolling <code>vX.Y</code> tag and packaged installs (which take the newest <code>X.Y.*</code>
 in the index) get the same release from the moment the tag moves.
-vergil-tooling's own installs follow neither: a <code>vX.Y</code> pin resolves to
-the newest <code>vX.Y.Z</code> tag with <code>git ls-remote</code>, so they get a release as
-soon as its tag exists.
+vergil-tooling's own installs follow the rolling tag too: a <code>vX.Y</code> pin
+reads the tag <code>vX.Y</code> with <code>git ls-remote</code> and installs the <code>vX.Y.Z</code> release
+on the commit it names, never simply the newest <code>vX.Y.Z</code>, so a line
+demoted with <code>vrg-promote</code> is followed by the dev-container cache,
+<code>vrg-vm</code> and <code>vrg-tooling-install</code> alike.
 When <code>package-index</code> defers, <code>promote</code> skips and <code>vX.Y</code> stays on the
 previous release, so the two still agree. The deferral comment, the
 <code>close-finalize</code> outcome line and the <code>publish-status</code> error name the
@@ -19280,11 +19285,11 @@ get the fix on the next normal action:</p>
 </tr>
 <tr>
 <td>Dev container image</td>
-<td>The base images carry no vergil-tooling. The next <code>vrg-container-run</code> rebuilds the branch's cached image with the patch as soon as its tag exists: a <code>vX.Y</code> line pin in <code>vergil.toml</code> resolves to the newest release on the line (see <a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>). An exact <code>vX.Y.Z</code> pin stays put</td>
+<td>The base images carry no vergil-tooling. The next <code>vrg-container-run</code> rebuilds the branch's cached image with the patch once <code>promote</code> moves the rolling <code>vX.Y</code> tag to it: a <code>vX.Y</code> line pin in <code>vergil.toml</code> resolves to the release that tag names (see <a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>). An exact <code>vX.Y.Z</code> pin stays put</td>
 </tr>
 <tr>
 <td>Agent VM (Lima/cloud)</td>
-<td><code>vrg-vm update</code>, which the release's consumer refresh runs on every VM (<code>vrg-vm update --all</code>): a <code>vX.Y</code> line pin resolves to the patch tag as soon as it exists; an exact <code>vX.Y.Z</code> pin stays put</td>
+<td><code>vrg-vm update</code>, which the release's consumer refresh runs on every VM (<code>vrg-vm update --all</code>): a <code>vX.Y</code> line pin resolves to the patch once <code>promote</code> moves the rolling <code>vX.Y</code> tag to it; an exact <code>vX.Y.Z</code> pin stays put</td>
 </tr>
 </tbody>
 </table>
@@ -19328,7 +19333,7 @@ only handles patches within a minor.</p>
 </tr>
 <tr>
 <td>Dev container image</td>
-<td>Set <code>[dependencies].vergil</code> in <code>vergil.toml</code> to <code>v1.4</code>; <code>vergil.toml</code> is part of the cache key, so the next <code>vrg-container-run</code> rebuilds the branch's cached image with the newest <code>v1.4</code> release</td>
+<td>Set <code>[dependencies].vergil</code> in <code>vergil.toml</code> to <code>v1.4</code>; <code>vergil.toml</code> is part of the cache key, so the next <code>vrg-container-run</code> rebuilds the branch's cached image with the release the rolling <code>v1.4</code> tag names</td>
 </tr>
 <tr>
 <td>Agent VM (Lima/cloud)</td>
