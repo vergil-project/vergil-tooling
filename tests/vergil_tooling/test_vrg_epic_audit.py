@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_epic_audit import main
-from vergil_tooling.lib import github
+from vergil_tooling.lib import epic_audit, github, proxies
 from vergil_tooling.lib.epic_audit import (
     EpicDocsFinding,
     MisplacedArchive,
@@ -27,6 +27,9 @@ if TYPE_CHECKING:
 
 _MOD = "vergil_tooling.bin.vrg_epic_audit"
 _SEC = f"{_MOD}.security_records"
+_PX = "vergil_tooling.lib.proxies"
+# The real check, taken before the autouse fixture stubs it out.
+_PROXY_LINK_DRIFT = epic_audit.proxy_link_drift
 
 
 @pytest.fixture(autouse=True)
@@ -49,6 +52,10 @@ def standing_drain() -> Iterator[MagicMock]:
         patch(f"{_SEC}.security_issues", return_value=[]),
         patch(f"{_SEC}.advisory_home", side_effect=lambda org: f"{org}/.github"),
         patch(f"{_SEC}.list_advisories", return_value=[]),
+        # No epic names a proxy and none is one; the org has no proxy link drift.
+        patch(f"{_PX}.proxies_of", return_value=()),
+        patch(f"{_PX}.is_proxy_ref", return_value=False),
+        patch(f"{_MOD}.epic_audit.proxy_link_drift", return_value=[]),
     ):
         yield mock_drain
 
@@ -1122,3 +1129,156 @@ def test_report_only_mode_refuses_private_home(capsys: pytest.CaptureFixture[str
         rc = _run_report(issues=[_security_issue()], advisories=[], write=MagicMock())
     assert rc == 1
     assert "org/.github is not public" in capsys.readouterr().err
+
+
+def _no_op_writers() -> dict[str, MagicMock]:
+    """The orphan pass's writers, each a no-op, for a --close run that is not about them."""
+    names = ("nativize_parents", "strip_retired_labels", "move_public_queues", "attach_orphans")
+    return {name: MagicMock(return_value=0) for name in names}
+
+
+# --- proxies (epic .github#1417) --------------------------------------------------
+
+_PRIMARY = IssueRef("vergil-project", ".github", 1417)
+_PROXY = IssueRef("logical-minds-foundry", ".github", 320)
+
+
+def test_vrg_epic_audit_epic_lists_proxy_children(capsys: pytest.CaptureFixture[str]) -> None:
+    def child_states(epic: IssueRef) -> list[ChildState]:
+        if epic == _PRIMARY:
+            return [ChildState(IssueRef("vergil-project", "vergil-tooling", 1), "OPEN", "own")]
+        return [ChildState(IssueRef("logical-minds-foundry", "mq-rest-admin", 7), "OPEN", "px")]
+
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
+        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        patch(f"{_MOD}.epics.child_states", side_effect=child_states),
+        patch(f"{_PX}.proxies_of", side_effect=lambda ref: (_PROXY,) if ref == _PRIMARY else ()),
+        patch(f"{_PX}.primary_of", return_value=_PRIMARY),
+        patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref == _PROXY),
+    ):
+        rc = main(["--epic", _PRIMARY.slug])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "primary" not in payload
+    assert [(c["repo"], c["number"]) for c in payload["children"]] == [
+        ("logical-minds-foundry/mq-rest-admin", 7),
+        ("vergil-project/vergil-tooling", 1),
+    ]
+
+
+def test_vrg_epic_audit_epic_link_drift_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
+        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        patch(f"{_MOD}.epics.child_states", return_value=[]) as cs,
+        patch(f"{_PX}.proxies_of", return_value=(_PROXY,)),
+        patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref == _PROXY),
+        patch(f"{_PX}.primary_of", return_value=IssueRef("vergil-project", ".github", 9)),
+    ):
+        rc = main(["--epic", _PRIMARY.slug])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""  # no JSON
+    assert captured.err == (
+        "vrg-epic-audit: proxy link drift: vergil-project/.github#1417 lists the proxy"
+        " logical-minds-foundry/.github#320, whose 'Primary:' line names"
+        " vergil-project/.github#9\n"
+    )
+    cs.assert_not_called()
+
+
+def test_vrg_epic_audit_epic_on_proxy_reports_primary(capsys: pytest.CaptureFixture[str]) -> None:
+    children = [ChildState(IssueRef("logical-minds-foundry", "mq-rest-admin", 7), "OPEN", "px")]
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="logical-minds-foundry/.github"),
+        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        patch(f"{_MOD}.epics.child_states", return_value=children),
+        patch(f"{_PX}.proxies_of", side_effect=lambda ref: (_PROXY,) if ref == _PRIMARY else ()),
+        patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref == _PROXY),
+        patch(f"{_PX}.primary_of", return_value=_PRIMARY),
+    ):
+        rc = main(["--epic", _PROXY.slug])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["epic"] == _PROXY.slug
+    assert payload["primary"] == _PRIMARY.slug
+    assert [c["number"] for c in payload["children"]] == [7]
+
+
+def test_vrg_epic_audit_epic_on_proxy_without_primary_comment_exits_1(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="logical-minds-foundry/.github"),
+        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        patch(f"{_MOD}.epics.child_states", return_value=[]),
+        patch(f"{_PX}.proxies_of", return_value=()),
+        patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref == _PROXY),
+        patch(f"{_PX}.primary_of", return_value=_PRIMARY),
+    ):
+        rc = main(["--epic", _PROXY.slug])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "has no trusted 'Proxy: logical-minds-foundry/.github#320' comment" in captured.err
+
+
+def test_org_audit_reports_proxy_link_drift(capsys: pytest.CaptureFixture[str]) -> None:
+    # An open proxy whose primary lacks its Proxy: comment is reported; the
+    # read-only report still exits 0.
+    listing = [{"number": 320, "state": "OPEN", "labels": ["epic", "proxy"]}]
+    with (
+        _patched(_report_patches()),
+        patch(f"{_MOD}.github.detect_org", return_value="logical-minds-foundry"),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epic_audit.list_home_epics", return_value=listing),
+        patch(f"{_MOD}.epic_audit.proxy_link_drift", wraps=_PROXY_LINK_DRIFT) as drift,
+        patch(f"{_PX}.primary_of", return_value=_PRIMARY),
+        patch(f"{_PX}.proxies_of", return_value=()),
+    ):
+        rc = main([])
+    assert rc == 0
+    drift.assert_called_once_with("logical-minds-foundry/.github", listing=listing)
+    out = capsys.readouterr().out
+    assert "## Proxy link drift" in out
+    assert (
+        "- proxy logical-minds-foundry/.github#320 names vergil-project/.github#1417 as its"
+        " primary, but vergil-project/.github#1417 has no trusted"
+        " 'Proxy: logical-minds-foundry/.github#320' comment"
+    ) in out
+
+
+def test_sweep_close_skips_proxy_link_drift(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VRG_EPIC_SWEEP", "1")
+    drift = MagicMock(return_value=[])
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=False),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        patch(f"{_MOD}.epic_audit.proxy_link_drift", drift),
+        _patched(_close_patches(**_no_op_writers())),
+    ):
+        assert main(["--close"]) == 0
+    drift.assert_not_called()
+
+
+def test_vrg_epic_audit_epic_proxy_link_error_while_listing_exits_1(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The link check passed, but the listing hit a broken link (a proxy edited
+    # in between): still exit 1 with no JSON.
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
+        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        patch(f"{_MOD}.epic_audit.proxy_link_problems", return_value=[]),
+        patch(
+            f"{_MOD}.epic_audit.epic_children",
+            side_effect=proxies.ProxyLinkError("proxy has no 'Primary:' line"),
+        ),
+    ):
+        rc = main(["--epic", _PRIMARY.slug])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "vrg-epic-audit: proxy link drift: proxy has no 'Primary:' line\n"

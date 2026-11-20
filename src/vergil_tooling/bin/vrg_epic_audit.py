@@ -11,7 +11,14 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 
-from vergil_tooling.lib import epic_audit, epics, github, identity_mode, security_records
+from vergil_tooling.lib import (
+    epic_audit,
+    epics,
+    github,
+    identity_mode,
+    proxies,
+    security_records,
+)
 from vergil_tooling.lib.cli import cli_main
 
 _DEFAULT_WINDOW_DAYS = 30
@@ -48,8 +55,7 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        print(epic_audit.render_epic_children(epic, epics.child_states(epic)))
-        return 0
+        return _epic_listing(epic)
     # Gate the write path before any network work so a rejected agent run is
     # cheap and unambiguous. A human may close interactively; the scheduled
     # reconciliation sweep (ops-epic-sweep) closes via the _SWEEP_ENV signal.
@@ -86,6 +92,30 @@ def main(argv: list[str] | None = None) -> int:
     # which silently under-reported its private work (#3513).
     with github.target_org(org):
         return _audit(args, org)
+
+
+def _epic_listing(epic: epics.IssueRef) -> int:
+    """Print *epic*'s children, its proxies' included, as JSON; exit 1 on link drift.
+
+    A ``Primary:``/``Proxy:`` disagreement fails the listing, never only reports
+    it, so the retrospective gate stops on it (epic vergil-project/.github#1417):
+    the problems go to stderr and no JSON is printed. On a proxy the JSON names
+    its primary.
+    """
+    problems = epic_audit.proxy_link_problems(epic)
+    if problems:
+        for problem in problems:
+            print(f"vrg-epic-audit: proxy link drift: {problem}", file=sys.stderr)
+        return 1
+    try:
+        children = epic_audit.epic_children(epic)
+        with github.target_org(epic.owner):
+            primary = proxies.primary_of(epic) if proxies.is_proxy_ref(epic) else None
+    except proxies.ProxyLinkError as exc:
+        print(f"vrg-epic-audit: proxy link drift: {exc}", file=sys.stderr)
+        return 1
+    print(epic_audit.render_epic_children(epic, children, primary=primary))
+    return 0
 
 
 def _audit(args: argparse.Namespace, org: str) -> int:
@@ -201,6 +231,8 @@ def _audit(args: argparse.Namespace, org: str) -> int:
             private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
             misplaced=epic_audit.misplaced_archives(org, issues=issues),
             epic_docs_findings=epic_audit.epic_documents(org, home=home, listing=home_epics),
+            # It reads trusted comments, so it runs only here, never under --close.
+            proxy_link_drift=epic_audit.proxy_link_drift(home, listing=home_epics),
             coverage_gap=gap,
         )
     )
@@ -277,7 +309,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "state}, ...]} — a stable array of objects (native sub-issues, with "
             "the portable Parent: reflink fallback), so "
             "'.children[] | select(.state==\"OPEN\")' lists the open children "
-            "without brittle jq against GitHub's raw subIssues shape. Read-only; "
+            "without brittle jq against GitHub's raw subIssues shape. The children "
+            "of every proxy epic the epic's trusted 'Proxy:' comments name are "
+            "listed beside its own, and on a proxy the JSON gains a "
+            '"primary": <slug> key. A Primary:/Proxy: link that is broken or '
+            "disagrees exits 1 with the problems on stderr and no JSON. Read-only; "
             "ignores the drift-audit flags."
         ),
     )

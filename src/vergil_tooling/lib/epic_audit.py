@@ -12,6 +12,11 @@ legitimate top-level kind or has an epic parent*: it nativizes body-only
 moves a now-public repo's self-homed queue items under ``.github``, attaches
 every orphan to its home's intake epic, and reports private-repo work under
 public ``.github`` epics.
+
+The proxy checks (epic vergil-project/.github#1417): :func:`epic_children` lists
+an epic's children with every proxy's beside them, :func:`proxy_link_problems`
+checks one epic's ``Primary:``/``Proxy:`` pair, and :func:`proxy_link_drift`
+checks every open proxy of a home.
 """
 
 from __future__ import annotations
@@ -23,7 +28,16 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from vergil_tooling.lib import epic_docs, epics, github, linkage, release, remote_config, roadmap
+from vergil_tooling.lib import (
+    epic_docs,
+    epics,
+    github,
+    linkage,
+    proxies,
+    release,
+    remote_config,
+    roadmap,
+)
 from vergil_tooling.lib.labels import RETIRED_LABELS
 
 # A closed-epic-with-open-child violation (issue #2259): the closed epic paired
@@ -1043,7 +1057,133 @@ def misplaced_archives(
     return found
 
 
-def render_epic_children(epic: epics.IssueRef, children: list[epics.ChildState]) -> str:
+# -- Proxy children and the link check (epic vergil-project/.github#1417) ------
+
+
+def _same_issue(a: epics.IssueRef, b: epics.IssueRef) -> bool:
+    """True iff *a* and *b* name one issue (GitHub owner and repo names ignore case)."""
+    return a.slug.lower() == b.slug.lower()
+
+
+def epic_children(epic: epics.IssueRef) -> list[epics.ChildState]:
+    """*epic*'s own children, then the children of every proxy its trusted comments name.
+
+    Each proxy is read under its own org's token, and its ``Primary:`` line must
+    name *epic*: a proxy whose link is broken or disagrees raises
+    :class:`proxies.ProxyLinkError`, never a silently shorter list. A failed
+    read, or a failed trusted-author load, propagates.
+    """
+    with github.target_org(epic.owner):
+        children = list(epics.child_states(epic))
+        listed = proxies.proxies_of(epic)
+    for proxy in listed:
+        with github.target_org(proxy.owner):
+            primary = proxies.primary_of(proxy)
+            if not _same_issue(primary, epic):
+                raise proxies.ProxyLinkError(
+                    f"{epic.slug} lists the proxy {proxy.slug}, whose 'Primary:' line names"
+                    f" {primary.slug}"
+                )
+            children += epics.child_states(proxy)
+    return children
+
+
+# A read that fails while checking a link is a link problem, reported, never skipped.
+_LINK_READ_ERRORS = (github.GitHubAPIError, github.NoInstallationError)
+
+
+def _proxy_side_problems(proxy: epics.IssueRef) -> list[str]:
+    """What is wrong with *proxy*'s link: its ``Primary:`` line, or the primary's comment."""
+    try:
+        with github.target_org(proxy.owner):
+            primary = proxies.primary_of(proxy)
+        with github.target_org(primary.owner):
+            listed = proxies.proxies_of(primary)
+    except proxies.ProxyLinkError as exc:
+        return [str(exc)]
+    except _LINK_READ_ERRORS as exc:
+        return [f"the link of proxy {proxy.slug} could not be read: {exc}"]
+    if any(_same_issue(ref, proxy) for ref in listed):
+        return []
+    return [
+        f"proxy {proxy.slug} names {primary.slug} as its primary, but {primary.slug} has no"
+        f" trusted '{proxies.proxy_line(proxy)}' comment"
+    ]
+
+
+def _primary_side_problems(primary: epics.IssueRef) -> list[str]:
+    """What is wrong with each proxy that *primary*'s trusted comments name."""
+    try:
+        with github.target_org(primary.owner):
+            listed = proxies.proxies_of(primary)
+    except proxies.ProxyLinkError as exc:
+        return [str(exc)]
+    problems: list[str] = []
+    for proxy in listed:
+        try:
+            with github.target_org(proxy.owner):
+                if not proxies.is_proxy_ref(proxy):
+                    problems.append(
+                        f"{primary.slug} lists {proxy.slug} as a proxy, which is not a proxy"
+                        f" epic (it lacks the 'epic' + '{epics.PROXY_LABEL}' labels)"
+                    )
+                    continue
+                named = proxies.primary_of(proxy)
+        except proxies.ProxyLinkError as exc:
+            problems.append(str(exc))
+            continue
+        except _LINK_READ_ERRORS as exc:
+            problems.append(
+                f"{primary.slug} lists the proxy {proxy.slug}, which could not be read: {exc}"
+            )
+            continue
+        if not _same_issue(named, primary):
+            problems.append(
+                f"{primary.slug} lists the proxy {proxy.slug}, whose 'Primary:' line names"
+                f" {named.slug}"
+            )
+    return problems
+
+
+def proxy_link_problems(epic: epics.IssueRef) -> list[str]:
+    """Every problem with *epic*'s ``Primary:``/``Proxy:`` links; ``[]`` when they agree.
+
+    For a primary (any epic that is not a proxy): each proxy its trusted
+    comments name must exist, be a proxy, and carry a ``Primary:`` line naming
+    *epic*. For a proxy: its ``Primary:`` line must resolve to an epic whose
+    trusted comments name the proxy. A link that cannot be parsed or read is a
+    problem, never a skipped item. A failed read of *epic* itself, or a failed
+    trusted-author load, propagates.
+    """
+    with github.target_org(epic.owner):
+        is_proxy = proxies.is_proxy_ref(epic)
+    return _proxy_side_problems(epic) if is_proxy else _primary_side_problems(epic)
+
+
+def proxy_link_drift(home: str, *, listing: list[epic_docs.EpicRecord] | None = None) -> list[str]:
+    """The link problems of every open proxy in *home* (report only).
+
+    *listing* is the home's :func:`list_home_epics`, shared with the other
+    per-epic checks; it is read here when not given. It reads trusted comments,
+    so the audit runs it only without ``--close``, never in the daily sweep.
+    """
+    home_owner, home_repo = home.split("/", 1)
+    if listing is None:
+        listing = list_home_epics(home)
+    problems: list[str] = []
+    for record in sorted(listing, key=lambda r: r["number"]):
+        if record["state"] != "OPEN" or not epics.is_proxy(set(record["labels"])):
+            continue
+        problems += _proxy_side_problems(epics.IssueRef(home_owner, home_repo, record["number"]))
+    return problems
+
+
+def render_epic_children(
+    epic: epics.IssueRef,
+    children: list[epics.ChildState],
+    *,
+    primary: epics.IssueRef | None = None,
+) -> str:
     """Machine-readable JSON enumeration of *epic*'s children with their state.
 
     Emits a stable, trivially-parseable object — the epic slug plus a ``children``
@@ -1057,20 +1197,24 @@ def render_epic_children(epic: epics.IssueRef, children: list[epics.ChildState])
     :func:`epics.child_states` (native sub-issues, reflink fallback), so the native
     vs portable mechanism is transparent to the caller. Entries are sorted by
     (owner, repo, number) so the output is deterministic across runs.
+
+    *primary* is given only for a proxy epic: the payload then gains a
+    ``"primary"`` key naming it, which merge review reads. Any other epic's
+    payload has no such key.
     """
     ordered = sorted(children, key=lambda c: (c.ref.owner, c.ref.repo, c.ref.number))
-    payload = {
-        "epic": epic.slug,
-        "children": [
-            {
-                "repo": f"{child.ref.owner}/{child.ref.repo}",
-                "number": child.ref.number,
-                "title": child.title,
-                "state": child.state,
-            }
-            for child in ordered
-        ],
-    }
+    payload: dict[str, object] = {"epic": epic.slug}
+    if primary is not None:
+        payload["primary"] = primary.slug
+    payload["children"] = [
+        {
+            "repo": f"{child.ref.owner}/{child.ref.repo}",
+            "number": child.ref.number,
+            "title": child.title,
+            "state": child.state,
+        }
+        for child in ordered
+    ]
     return json.dumps(payload, indent=2)
 
 
@@ -1093,6 +1237,7 @@ def render(
     private_under_public: list[str] | None = None,
     misplaced: list[MisplacedArchive] | None = None,
     epic_docs_findings: list[EpicDocsFinding] | None = None,
+    proxy_link_drift: list[str] | None = None,
     coverage_gap: str | None = None,
 ) -> str:
     """Format the drift + invariant report; a clean state says so explicitly.
@@ -1115,7 +1260,9 @@ def render(
     operational task with no recorded success comment). ``closed_epic_open_children``
     is the closed-epic-with-open-child invariant (issue #2259).
     ``epic_docs_findings`` are the :func:`epic_documents` problems (epic
-    .github#819). Each section appears only when it has something to report.
+    .github#819). ``proxy_link_drift`` is the report-only :func:`proxy_link_drift`
+    check (epic .github#1417). Each section appears only when it has something
+    to report.
     """
     epics_outside = epics_outside or []
     stray = stray or []
@@ -1129,6 +1276,7 @@ def render(
     private_under_public = private_under_public or []
     misplaced = misplaced or []
     epic_docs_findings = epic_docs_findings or []
+    proxy_link_drift = proxy_link_drift or []
     scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
     banner = (
         f"_Read-only audit of {scope} (merged PRs from the last "
@@ -1152,6 +1300,7 @@ def render(
             private_under_public,
             misplaced,
             epic_docs_findings,
+            proxy_link_drift,
         ]
     ):
         if coverage_gap is not None:
@@ -1229,6 +1378,7 @@ def render(
                 lines.append(f"- {closed_epic.slug} — open children: {open_kids}")
         lines += _render_private_under_public(private_under_public)
         lines += _render_misplaced_archives(misplaced)
+    lines += _render_proxy_link_drift(proxy_link_drift)
     lines += _render_epic_documents(epic_docs_findings, home or f"{org}/.github")
     lines.append("")
     return "\n".join(lines)
@@ -1250,6 +1400,20 @@ def _render_epic_documents(findings: list[EpicDocsFinding], home: str) -> list[s
         for f in sorted(findings, key=lambda f: f.number)
     ]
     return lines
+
+
+def _render_proxy_link_drift(problems: list[str]) -> list[str]:
+    """The ``## Proxy link drift`` section, one line per problem; none when clean."""
+    if not problems:
+        return []
+    return [
+        "",
+        "## Proxy link drift",
+        "",
+        "A proxy and its primary must name each other; fix each link by hand:",
+        "",
+        *[f"- {problem}" for problem in problems],
+    ]
 
 
 _PRIVATE_UNDER_PUBLIC_HEADING = (
