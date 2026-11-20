@@ -813,8 +813,10 @@ it.
 ### vrg-epic-rollup
 
 Close a just-closed task's parent epic when the epic is finite and all its
-tasks are closed. A no-op for any other issue (an `ad-hoc` epic never
-auto-closes), so it is safe on every issue close. Run by the `epic-rollup`
+tasks are closed. A no-op for any other issue (a standing epic such as
+`ad-hoc` never auto-closes, and a
+[proxy epic](../standards/github-issues.md#proxy-epics) stays open until its
+primary closes), so it is safe on every issue close. Run by the `epic-rollup`
 workflow on `issues.closed`.
 
 | Attribute | Value |
@@ -1103,7 +1105,8 @@ step of `epic-implement adhoc`, as the other queues are of `epic-review`.
 ### vrg-roadmap
 
 Print the generated project roadmap: the open epics in a repo's resolved
-epic home. The docs-refresh workflow publishes the same rendering.
+epic home, apart from the standing and proxy epics. The docs-refresh workflow
+publishes the same rendering.
 
 | Attribute | Value |
 |---|---|
@@ -1406,7 +1409,8 @@ stdout. It is read-only by default. **Drift** is a task still open although
 a merged PR that links it landed within the last `--window-days` days (a
 body's one linkage line, or every `Closes` line of a body with several, so
 each issue of a batch PR is checked), and
-an open finite epic whose children are all closed. The **invariant** checks
+an open finite epic whose children are all closed (a standing or
+[proxy epic](../standards/github-issues.md#proxy-epics) never is). The **invariant** checks
 are the [compliance invariants](../standards/github-issues.md#compliance-invariants):
 epics outside `.github`, stray `.github` issues, a closed epic with an open
 child, orphans, retired kind labels, body-only `Parent:` links, self-homed
@@ -1418,7 +1422,7 @@ operational tasks with no `Outcome: SUCCESS`.
 
 An **Epic documents** section checks the
 [Documents section](../standards/github-issues.md#the-documents-section) of
-every epic in the home, open and closed, apart from the standing and
+every epic in the home, open and closed, apart from the standing, proxy and
 `[archived]` epics. Each epic needs the section, well formed, with its three
 entries. On a closed epic, no entry may read `pending` and every link must
 name a file on its repo's default branch (a link to a directory, another

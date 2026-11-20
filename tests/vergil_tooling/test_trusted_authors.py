@@ -15,9 +15,11 @@ from vergil_tooling.bin.vrg_trusted_authors import main
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthors,
     TrustedAuthorsNotConfiguredError,
+    bare_login,
     load_trusted_authors,
     parse_trusted_authors,
     render_vm_file,
+    trusted_comment_bodies,
 )
 
 if TYPE_CHECKING:
@@ -180,3 +182,22 @@ class TestCli:
         captured = capsys.readouterr()
         assert captured.out == ""
         assert "'app/' prefix" in captured.err
+
+
+def test_bare_login_strips_app_prefix_only() -> None:
+    assert bare_login("app/example-agent") == "example-agent"
+    assert bare_login("example-agent") == "example-agent"
+    assert bare_login("example-app/agent") == "example-app/agent"
+
+
+def test_trusted_comment_bodies_keeps_trusted_in_order() -> None:
+    comments = [
+        {"author": {"login": "example-human"}, "body": "one"},
+        {"author": {"login": "mallory"}, "body": "forged"},
+        {"author": {"login": "app/example-agent"}, "body": "two"},
+        {"author": None, "body": "deleted account"},
+        {"body": "no author"},
+        {"author": {"login": "example-agent"}, "body": None},
+    ]
+    trusted = frozenset({"example-human", "example-agent"})
+    assert trusted_comment_bodies(comments, trusted) == ["one", "two", ""]

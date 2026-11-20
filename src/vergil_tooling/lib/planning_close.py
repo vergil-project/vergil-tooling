@@ -47,12 +47,12 @@ from typing import Any
 from vergil_tooling.lib import epic_size, epics, github, queue_view
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.queue_view import PLANNING_MARKER, parse_planning_markers
+from vergil_tooling.lib.trusted_authors import trusted_comment_bodies
 
 _PLANNING_LINE_RE = re.compile(
     rf"^\s*{re.escape(PLANNING_MARKER)}\s*([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)#([0-9]+)\s*$",
     re.MULTILINE,
 )
-_APP_PREFIX = "app/"
 
 
 @dataclass(frozen=True)
@@ -105,12 +105,7 @@ def _view(ref: IssueRef) -> dict[str, Any]:
 
 
 def _trusted_bodies(view: dict[str, Any], trusted: frozenset[str]) -> list[str]:
-    bodies: list[str] = []
-    for comment in view.get("comments") or []:
-        login = str((comment.get("author") or {}).get("login") or "")
-        if login.removeprefix(_APP_PREFIX) in trusted:
-            bodies.append(str(comment.get("body") or ""))
-    return bodies
+    return trusted_comment_bodies(view.get("comments") or [], trusted)
 
 
 def find(task: IssueRef) -> PlanningClose | None:

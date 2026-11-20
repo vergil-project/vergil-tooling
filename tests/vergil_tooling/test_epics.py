@@ -3634,3 +3634,34 @@ def test_drain_standing_org_covers_hoshin() -> None:
 
 def test_hoshin_epic_docs_skipped() -> None:
     assert epic_docs.is_skipped("Epic (hoshin): vergil-project", {"epic", "hoshin"})
+
+
+def test_rollup_skips_proxy() -> None:
+    # A proxy epic lives as long as its primary (vergil-project/.github#1417):
+    # with every task closed it stays open, and nothing drains or archives.
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "proxy"}),
+        patch("vergil_tooling.lib.epics.all_children_closed", return_value=True),
+        patch("vergil_tooling.lib.epics.drain_standing_child") as mock_drain,
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.rollup(TASK)
+    mock_run.assert_not_called()
+    mock_drain.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        ({"epic", "proxy"}, True),
+        ({"epic", "proxy", "ad-hoc"}, True),
+        ({"epic"}, False),
+        ({"proxy"}, False),
+        (set(), False),
+    ],
+)
+def test_is_proxy(labels: set[str], expected: bool) -> None:
+    assert epics.is_proxy(labels) is expected
+    assert epics.PROXY_LABEL == "proxy"

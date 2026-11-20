@@ -326,3 +326,33 @@ def test_render_escapes_milestone_title() -> None:
     out = roadmap.render([summary], "vergil-project")
     assert "## &lt;i&gt;v3&lt;/i&gt; \\| \\*x\\*" in out
     assert "<i>" not in out
+
+
+def test_gather_excludes_proxy() -> None:
+    # A proxy is not a development epic of its own (#1417): the roadmap lists
+    # its primary, never the proxy.
+    epic_list = [
+        {
+            "number": 40,
+            "title": "Convention",
+            "createdAt": "2026-06-28T10:00:00Z",
+            "milestone": None,
+            "labels": [{"name": "epic"}],
+            "url": "u40",
+        },
+        {
+            "number": 9,
+            "title": "Epic (proxy): keep ad-hoc queues standalone",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "milestone": None,
+            "labels": [{"name": "epic"}, {"name": "proxy"}],
+            "url": "u9",
+        },
+    ]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=epic_list),
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]) as mock_children,
+    ):
+        result = roadmap.gather("vergil-project")
+    assert [s.number for s in result] == [40]
+    mock_children.assert_called_once_with(epics.IssueRef("vergil-project", ".github", 40))

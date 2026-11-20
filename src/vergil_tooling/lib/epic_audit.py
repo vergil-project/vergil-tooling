@@ -181,6 +181,9 @@ def task_drift(since: str, *, org: str, today: date | None = None) -> list[TaskD
 def epic_drift(org: str | None = None, *, home: str | None = None) -> list[roadmap.EpicSummary]:
     """Open, non-perpetual epics whose children are all closed (should roll up).
 
+    A proxy epic is excluded with the standing epics (``roadmap.gather``): it
+    lives as long as its primary, so an all-closed proxy is not drift.
+
     Scoped to the resolved epic *home* (default: the org's ``.github``), so a
     ``--repo``-targeted audit sees only that repo's epics.
     """

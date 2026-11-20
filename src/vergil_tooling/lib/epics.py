@@ -1081,6 +1081,18 @@ def is_standing(labels: set[str]) -> bool:
     return standing_kind_of(labels) is not None
 
 
+# A proxy epic (vergil-project/.github#1417): a same-org umbrella for the tasks
+# another org's development epic (its primary) has in this org. It is not a
+# development epic: rollup, the sweep's drift close, the Documents audit and the
+# roadmap all skip it, and it lives as long as its primary (lib/proxies.py).
+PROXY_LABEL = "proxy"
+
+
+def is_proxy(labels: Collection[str]) -> bool:
+    """True iff *labels* mark a proxy epic (``epic`` + ``proxy``)."""
+    return "epic" in labels and PROXY_LABEL in labels
+
+
 def _queue_key(labels: set[str]) -> str | None:
     kind = standing_kind_of(labels)
     if kind in QUEUE_KINDS:
@@ -1875,14 +1887,20 @@ def rollup(task: IssueRef) -> None:
     perpetual and never auto-closes. Instead, the just-closed child of a **live**
     standing epic drains into its close-quarter archive of the same kind (the
     steady-state event path, :func:`drain_standing_child`). A parent that is
-    itself an archive is terminal and left untouched.
+    itself an archive is terminal and left untouched. A proxy epic
+    (:func:`is_proxy`) is never rolled up: it stays open until its primary closes.
     """
     parent = parent_of(task)
     if parent is None or not is_epic(parent):
         return
-    kind = standing_kind_of(_labels(parent))
+    labels = _labels(parent)
+    kind = standing_kind_of(labels)
     if kind is not None:
         drain_standing_child(kind, parent, task)
+        return
+    if is_proxy(labels):
+        # A proxy lives as long as its primary: its own org's daily sweep closes
+        # it once the primary is closed (vergil-project/.github#1417).
         return
     if all_children_closed(parent):
         print(f"Rolling up epic {parent.slug} — all child tasks closed.")

@@ -33,7 +33,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, get_args
 
-from vergil_tooling.lib.trusted_authors import load_trusted_authors
+from vergil_tooling.lib.trusted_authors import bare_login, load_trusted_authors
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -65,7 +65,6 @@ _DAY = r"\d{4}-\d{2}-\d{2}"
 _SIZING_RE = re.compile(rf"^{re.escape(SIZING_PREFIX)} {_DAY}:")
 _CLEARED_RE = re.compile(rf"^{re.escape(CLEARED_PREFIX)} {_DAY}:")
 _TASKS_RE = re.compile(r"^[1-9][0-9]*$")
-_APP_PREFIX = "app/"
 
 
 def label_for(size: Size) -> str:
@@ -213,10 +212,6 @@ def _parse_sizing(body: str) -> Sizing | str:
     return Sizing(tasks=tasks, confidence=confidence, reason=values[REASON_KEY])
 
 
-def _bare(login: str) -> str:
-    return login.removeprefix(_APP_PREFIX)
-
-
 def size_record(
     labels: Iterable[str],
     comments: Sequence[tuple[str, str]],
@@ -234,7 +229,7 @@ def size_record(
 
     latest: str | None = None
     for author, body in comments:
-        if _bare(author) not in trusted:
+        if bare_login(author) not in trusted:
             continue
         if _is_cleared(body):
             latest = None

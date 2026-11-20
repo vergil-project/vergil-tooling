@@ -212,6 +212,32 @@ one-off into the hoshin epic, by sentinel or by ref. Its closed children
 drain into per-quarter `Archive (hoshin): <org>` archives like the other
 standing kinds.
 
+### Proxy epics
+
+A **proxy epic** is a same-org umbrella for the tasks that a development epic
+in another org (its **primary**) has in this org. It is titled
+`Epic (proxy): <primary title without "Epic: ">`, labelled `epic` + `proxy`,
+and homes in the public `<owner>/.github`: proxies exist only between public
+repos. The link runs both ways, each side on a line alone on its line:
+
+- the proxy's body carries exactly one `Primary: <owner>/<repo>#<N>` line;
+- the primary records each proxy in a comment, never its body, carrying
+  `Proxy: <owner>/.github#<N>`. Only comments by a login that
+  `vrg-trusted-authors` lists count (a leading `app/` stripped), so a forged
+  comment on the public primary counts for nothing. A proxy is never removed
+  from the list: one created by mistake is closed and stays listed.
+
+A missing, duplicated or malformed `Primary:` line, one naming an issue that
+is not an epic, or a malformed trusted `Proxy:` line is an error in every tool
+that reads them, never a skipped item.
+
+A proxy is **not a development epic**. It lives as long as its primary, so
+the event-driven rollup (`vrg-epic-rollup`) and the daily sweep's drift close
+(`vrg-epic-audit --close`) never close it, the
+[Documents section](#the-documents-section) audit skips it (its primary
+carries the spec and plan), and the roadmap does not list it. It needs no
+bookends, because the primary carries them.
+
 ### Ad-hoc epic archiving
 
 A live ad-hoc epic accumulates closed children forever, so its "what's in
