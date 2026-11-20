@@ -149,9 +149,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "ad-hoc for an ad-hoc epic). The epic's category label is derived and "
             "applied too: 'epic-management' for an intake, planning, deferred or "
             "hoshin epic, 'epic-development' for a plain epic; neither may be given "
-            "with --label, and labels marking two categories are refused. With --proxy-for OWNER/REPO#N --repo "
-            "OWNER/REPO it instead ensures the proxy epic for that primary epic "
-            "in the target's org .github, and the 'Proxy:' comment on the primary; "
+            "with --label, and labels marking two categories are refused. With "
+            "--proxy-for OWNER/REPO#N --repo OWNER/REPO it instead ensures the "
+            "proxy epic for that primary epic in the target's org .github, and the 'Proxy:' comment on the primary; "
             "both repos must be public and in different orgs."
         ),
     )

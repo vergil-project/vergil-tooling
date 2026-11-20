@@ -3518,7 +3518,9 @@ def test_resolve_epic_ref_hoshin() -> None:
     mock_exists.assert_called_once_with("vergil-project", ".github")
     mock_public.assert_not_called()  # the hoshin home never depends on visibility
     mock_is_epic.assert_not_called()
-    mock_ensure.assert_called_once_with("vergil-project/.github", ["epic", "hoshin", "epic-management"])
+    mock_ensure.assert_called_once_with(
+        "vergil-project/.github", ["epic", "hoshin", "epic-management"]
+    )
     kwargs = mock_create.call_args.kwargs
     assert kwargs["repo"] == "vergil-project/.github"
     assert kwargs["title"] == "Epic (hoshin): vergil-project"
@@ -3731,7 +3733,7 @@ def test_category_labels_are_in_registry() -> None:
     }
     for label in epics.CATEGORY_LABELS.values():
         assert label in specs
-    assert epics.DERIVED_CATEGORY_LABELS == {"epic-development", "epic-management"}
+    assert set(epics.DERIVED_CATEGORY_LABELS) == {"epic-development", "epic-management"}
     assert specs["epic-development"]["description"] == (
         "Development epic: planned with epic-create, closes when its tasks close"
     )
@@ -3766,10 +3768,8 @@ def test_ensure_standing_epic_category_label_at_creation(kind: epics.StandingKin
         patch("vergil_tooling.lib.github.create_issue", side_effect=fake_create) as mock_create,
     ):
         epics.ensure_standing_epic(kind, "org/.github", "org")
-    if kind in _MANAGEMENT_KINDS:
-        expected = [*kind.labels, "epic-management"]
-    else:
-        expected = list(kind.labels)
+    management = kind in _MANAGEMENT_KINDS
+    expected = [*kind.labels, "epic-management"] if management else list(kind.labels)
     assert mock_create.call_args.kwargs["labels"] == expected
     mock_ensure.assert_called_once_with("org/.github", expected)
     assert calls == ["ensure", "create"]
@@ -3803,7 +3803,7 @@ def test_ensure_standing_epic_reuses_epic_without_category_label() -> None:
     # the lookup filters on the kind's labels only, so it is found and reused.
     seen: list[tuple[str, ...]] = []
 
-    def fake_list(*args: str) -> list[dict[str, object]]:
+    def fake_list(*args: str) -> list[dict[str, int | str]]:
         seen.append(args)
         return [_DEFERRED_ROW]
 

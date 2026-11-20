@@ -146,8 +146,9 @@ def test_main_sync_provisions_all_labels() -> None:
     # 25 after adding 'security' and 'security-disclosed' (issue #3677);
     # 29 after adding the four 'epic-size:*' labels (issue #4486);
     # 30 after adding 'hoshin' (issue #4797);
-    # 31 after adding the 'proxy' epic label (issue #4799).
-    assert len(label_calls) == 31
+    # 31 after adding the 'proxy' epic label (issue #4799);
+    # 33 after adding 'epic-development' and 'epic-management' (issue #4861).
+    assert len(label_calls) == 33
 
 
 def test_main_sync_uses_force_with_color_description() -> None:
