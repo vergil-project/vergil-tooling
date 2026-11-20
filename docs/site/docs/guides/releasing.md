@@ -60,11 +60,11 @@ Releases are tagged on `main`, and consumers pin to those tags.
 | `v1.3.0` | `main` | Release tag | Yes — pin in install commands |
 | `v1.3` | `main` | Rolling minor tag (force-updated each patch) | Yes — what consumers actually pin to |
 
-CD has also placed a `develop-v1.3.0` tag on the `develop` tip after
-each release.
-Those tags are being retired: nothing uses them, `vrg-release` neither
-requires nor reports one, and the changelog and release notes ignore
-any that remain. Never pin to a `develop-v*` tag.
+Earlier releases also placed a `develop-vX.Y.Z` tag on the `develop`
+tip. Those tags are retired: CD no longer creates them, the existing
+ones have been deleted, and `vrg-release` neither requires nor reports
+one. The changelog and release notes ignore any `develop-v*` tag that
+still turns up, and nothing should ever pin to one.
 
 A release's changes are the commits since the merge base of the
 release branch and the previous `vX.Y.Z` tag, so a PR merged to
