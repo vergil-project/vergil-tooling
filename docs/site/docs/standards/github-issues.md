@@ -35,7 +35,7 @@ In any repo with a `vergil.toml`, **every issue is either a legitimate top-level
 kind or has an epic parent.** The legitimate top-level kinds are:
 
 - **epics** (`epic` label), including the standing ad-hoc, intake, planning,
-  and deferred epics;
+  deferred and hoshin epics, and the [proxy epics](#proxy-epics);
 - **archives** (`archive` label) — the per-quarter buckets of closed standing-epic
   children;
 - **release tracking issues** (`release: X.Y.Z`), which `vrg-release` creates
@@ -494,7 +494,8 @@ so tools can find and replace it:
 - **One writer:** only [`vrg-epic-docs`](../reference/cli-tools-overview.md#vrg-epic-docs)
   writes the section, never a hand edit, so its format lives in one place.
 - **Scope:** every epic except the standing epics (ad hoc, intake, planning,
-  deferred, hoshin, and the retired `standing` label or `Epic (standing):` title) and
+  deferred, hoshin, and the retired `standing` label or `Epic (standing):` title),
+  [proxy epics](#proxy-epics) (their primary carries the documents) and
   `[archived]` epics. Task issues have no section.
 
 **Entry rules.** An entry is a link when the document exists. Otherwise its
@@ -695,6 +696,7 @@ vrg-queue planning  # open planning items: waiting / in-progress / ready-to-clos
 vrg-queue deferred  # open deferred items, least recently deferred first
 vrg-queue           # all three queues, in that order
 vrg-queue adhoc     # open tasks under every live ad-hoc epic, by repo
+vrg-queue hoshin    # open tasks under the org's hoshin epic
 ```
 
 It defaults to the current org's `.github` queues; `--repo <owner>/<repo>`
@@ -720,6 +722,14 @@ the repo roots: `--root DIR` (repeatable) names them, and the platform's roots
 are the default. With `--repo`, a public repo narrows the list to its own
 ad-hoc epic. The [CLI reference](../reference/cli-tools-overview.md#vrg-queue)
 gives the line format, the marks and the dispositions.
+
+`vrg-queue hoshin` lists the open tasks under the org's
+[hoshin epic](#standing-epics), the `Logbook:` tasks `/vergil:hoshin` files,
+with the same lines, states and marks as `vrg-queue adhoc`. Its home is always
+the org's `.github`, and the epic is looked up, never created: an org with
+none gives an empty list. With `--repo`, only the epic's tasks in that repo
+are listed. Like `adhoc`, it appears only when named. It is the listing for
+`/vergil:hoshin`'s stale-task check.
 
 ### Routing: `vrg-intake-route`
 
@@ -976,6 +986,7 @@ up to date (see
 | `planning` | Marks the standing planning epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `deferred` | Marks the standing deferred epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `hoshin` | Marks the standing hoshin epic (with `epic`) and its archives (with `archive`); never auto-closes |
+| `proxy` | Marks a [proxy epic](#proxy-epics) (with `epic`): a same-org umbrella for another org's epic tasks; open until its primary closes |
 | `in-progress` | Planning item whose `epic-create` session is underway |
 | `epic-size:S`, `epic-size:M`, `epic-size:L`, `epic-size:XL` | Planning or deferred item's estimated epic size: 1–9, 10–19, 20–39 or 40+ tasks (see [Epic size](#epic-size)) |
 | `archive` | Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred, hoshin); historical record |

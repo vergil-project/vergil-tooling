@@ -1129,9 +1129,9 @@ def queue_or_archive_kind(epic: IssueRef) -> str | None:
 def container_kind(epic: IssueRef) -> str | None:
     """The container kind of a live standing epic, else None.
 
-    ``"ad-hoc"``, ``"intake"``, ``"planning"`` or ``"deferred"`` when *epic* is
-    the live standing epic of that kind; None for a development (finite) epic,
-    an archive, or a non-epic. One label read.
+    ``"ad-hoc"``, ``"intake"``, ``"planning"``, ``"deferred"`` or ``"hoshin"``
+    when *epic* is the live standing epic of that kind; None for a development
+    (finite) epic, a proxy epic, an archive, or a non-epic. One label read.
     """
     kind = standing_kind_of(_labels(epic))
     return kind.key if kind is not None else None
