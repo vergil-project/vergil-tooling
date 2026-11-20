@@ -3,22 +3,21 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from tests.vergil_tooling.tooling_install_stubs import STUB_SHA, stub_bin
 from vergil_tooling.bin import vrg_tooling_install
+from vergil_tooling.lib import tooling_install
 from vergil_tooling.lib.tooling_install import (
     GIT_URL,
     Installed,
     ToolingInstallError,
     install_release,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _TAG = "v2.1.10"
 _UV_VARS = ("UV_PYTHON", "UV_PYTHON_PREFERENCE", "UV_NO_MANAGED_PYTHON")
@@ -128,6 +127,34 @@ def test_a_missing_tool_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     with pytest.raises(ToolingInstallError, match="git could not run"):
         install_release(_TAG)
+
+
+def test_an_install_that_cannot_run_raises(stubs: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    real_run = subprocess.run
+
+    def run(argv: tuple[str, ...], **kwargs: object) -> object:
+        if argv[:2] == ("uv", "tool"):
+            raise FileNotFoundError(2, "No such file or directory", "uv")
+        return real_run(argv, **kwargs)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(tooling_install.subprocess, "run", run)
+    with pytest.raises(ToolingInstallError, match=rf"uv tool install of {_TAG} .*could not run"):
+        install_release(_TAG)
+    assert _temp_left(stubs) == []
+
+
+def test_an_unreadable_export_raises(stubs: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    real_read = Path.read_text
+
+    def read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self.name == "constraints.txt":
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_read(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    with pytest.raises(ToolingInstallError, match="could not be read: .*Permission denied"):
+        install_release(_TAG)
+    assert [c for c in _calls(stubs, "uv") if c[0] == "tool"] == []
 
 
 def test_main_reports_the_install(stubs: Path, capsys: pytest.CaptureFixture[str]) -> None:

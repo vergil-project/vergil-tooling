@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 # ``STUB_REV_PARSE`` overrides it.
 STUB_SHA = "0123456789abcdef0123456789abcdef01234567"
 
-_LOG_ARGS ="log() { (IFS=$'\\t'; printf '%s\\n' \"$*\") >> \"$STUB_LOG\"; }"
+_LOG_ARGS = "log() { (IFS=$'\\t'; printf '%s\\n' \"$*\") >> \"$STUB_LOG\"; }"
 
 _GIT = f"""#!/bin/bash
 {_LOG_ARGS}

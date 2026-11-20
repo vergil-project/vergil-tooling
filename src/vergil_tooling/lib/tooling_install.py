@@ -21,13 +21,13 @@ The install is rendered as shell lines (:func:`install_lines`,
 container cache build and ``vrg-vm``. The lines run under ``bash`` and need
 no ``set -e``: each step that can fail names itself and exits non-zero.
 
-The Mac's install runs in Python instead (:func:`install_release`, behind
-``vrg-tooling-install``): ``vergil.toml``'s ``[publish].consumer-refresh``
-runs the installed ``vrg-tooling-install v<VERSION>``, so the installed
-vergil-tooling installs the just-released one (vergil-tooling#4827, which
-reverses spec §4.5's "nothing runs vergil-tooling to install vergil-tooling"
-for the Mac). The container and VM paths keep the rendered lines for now;
-vergil-project/.github#1435 looks at moving them to :func:`install_release`.
+:func:`install_release` runs the same released install in Python, here, for
+a host: ``vrg-tooling-install`` (vergil-tooling#4827). The Mac's consumer
+refresh (``vergil.toml``'s ``[publish].consumer-refresh``) is still the
+inline shell of spec §4.5 until vergil-tooling#4830 switches it to the
+installed ``vrg-tooling-install``. The container and VM paths keep the
+rendered lines for now; vergil-project/.github#1435 looks at moving them to
+:func:`install_release`.
 """
 
 from __future__ import annotations
@@ -458,8 +458,5 @@ def _check_constraints(path: Path, *, tag: str, sha: str) -> None:
         raise ToolingInstallError(msg)
     bad = [line for line in text.splitlines() if _NOT_THIRD_PARTY_RE.match(line)]
     if bad:
-        msg = (
-            f"the uv.lock export of {tag} (commit {sha}) names a non-registry "
-            f"package: {bad[0]!r}"
-        )
+        msg = f"the uv.lock export of {tag} (commit {sha}) names a non-registry package: {bad[0]!r}"
         raise ToolingInstallError(msg)

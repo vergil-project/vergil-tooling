@@ -15,15 +15,25 @@ primary-language = "python"
 [publish]
 release = true
 docs = true
-# The Mac installs the exact release tag, constrained by that tag's own uv.lock,
-# on uv's managed 3.15, with no uv config file or interpreter variable able to
-# change it (epic vergil-project/.github#1350, spec §4.1 and §4.2). The
-# installed vrg-tooling-install does it (vergil-tooling#4827): if the installed
-# copy is broken, install by hand (docs/site/docs/getting-started.md) while the
-# bug is fixed.
+# The Mac installs the exact release tag (immutable, so no ls-remote and no
+# SHA), constrained by that tag's own uv.lock, on uv's managed 3.15, with no uv
+# config file or interpreter variable able to change it (epic
+# vergil-project/.github#1350, spec §4.1, §4.2 and §4.5). Plain shell on
+# purpose: nothing runs vergil-tooling to install vergil-tooling. The same
+# lines are the documented first install (docs/site/docs/getting-started.md).
 consumer-refresh = """\
 # Reinstall the host tools at the just-released version, locked to its uv.lock
-vrg-tooling-install v<VERSION>
+(
+  set -euo pipefail
+  unset UV_PYTHON UV_PYTHON_PREFERENCE UV_NO_MANAGED_PYTHON
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  git init -q "$tmp/src"
+  git -C "$tmp/src" fetch -q --depth 1 https://github.com/vergil-project/vergil-tooling refs/tags/v<VERSION>
+  git -C "$tmp/src" checkout -q FETCH_HEAD
+  (cd "$tmp/src" && uv export --no-config --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt -o "$tmp/constraints.txt" >/dev/null)
+  uv tool install --force --no-config --python 3.15 --managed-python -c "$tmp/constraints.txt" "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v<VERSION>"
+)
 # Refresh all dev VMs
 vrg-vm update --all
 """

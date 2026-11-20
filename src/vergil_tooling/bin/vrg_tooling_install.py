@@ -6,9 +6,9 @@ commit under them on uv's managed Python 3.15, with no uv config file and no
 ``UV_PYTHON*`` variable able to change the interpreter
 (:func:`vergil_tooling.lib.tooling_install.install_release`).
 
-vergil-tooling's own release runs it on the Mac, through ``vergil.toml``'s
-``[publish].consumer-refresh``, with the just-released version. Any other host
-runs it by hand to move to a new release. It is the installed vergil-tooling
+A host runs it to move to a new release, and vergil-tooling#4830 makes
+vergil-tooling's own release run it on the Mac (``vergil.toml``'s
+``[publish].consumer-refresh``). It is the installed vergil-tooling
 installing the new one: if the installed copy is broken, install by hand
 (docs/site/docs/getting-started.md) while the bug is fixed.
 """
