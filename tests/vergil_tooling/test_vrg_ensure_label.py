@@ -144,8 +144,9 @@ def test_main_sync_provisions_all_labels() -> None:
     # 25 after adding 'intake', 'planning', and 'in-progress' (issue #2481);
     # 22 after removing the retired 'triage', 'idea', 'research' (issue #3546);
     # 25 after adding 'security' and 'security-disclosed' (issue #3677);
-    # 29 after adding the four 'epic-size:*' labels (issue #4486).
-    assert len(label_calls) == 29
+    # 29 after adding the four 'epic-size:*' labels (issue #4486);
+    # 30 after adding 'hoshin' (issue #4797).
+    assert len(label_calls) == 30
 
 
 def test_main_sync_uses_force_with_color_description() -> None:

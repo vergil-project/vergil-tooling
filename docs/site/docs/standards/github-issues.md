@@ -165,8 +165,10 @@ cross-forge fallback.
   closes the epic. A *managed
   task* (an issue with an `epic`-labelled parent) links its PR with `Closes`, so
   the task auto-closes on merge and the final close rolls its epic up.
-- **Perpetual (ad-hoc) epic** — a standing umbrella for unplanned work in one
-  repo. Titled `Epic (ad hoc): <repo>`, labelled `epic` + `ad-hoc`, one per repo,
+- **Perpetual (ad-hoc) epic** — a standing umbrella for standalone,
+  single-issue work in one repo: each task can be picked up, merged and
+  released on its own. A task owned by any epic or skill never goes there.
+  Titled `Epic (ad hoc): <repo>`, labelled `epic` + `ad-hoc`, one per repo,
   and it **never auto-closes**. Target it with `vrg-issue-create --epic adhoc`.
   (The older `standing` alias is **retired** — only `ad-hoc` remains.)
   `vrg-adhoc-epic ensure --repo <owner>/<repo>` creates a repo's ad-hoc epic
@@ -178,7 +180,7 @@ cross-forge fallback.
 
 ### Standing epics
 
-The ad-hoc epic is one of four kinds of **standing epic** — perpetual
+The ad-hoc epic is one of five kinds of **standing epic** — perpetual
 umbrellas that are created and reused idempotently, never auto-close, and never
 gate rollup:
 
@@ -188,17 +190,27 @@ gate rollup:
 | Intake | `Epic (intake): <name>` | `epic` + `intake` | one per queue home | captured, unreviewed items and every orphan the sweep finds |
 | Planning | `Epic (planning): <name>` | `epic` + `planning` | one per queue home | items waiting for or undergoing `epic-create` |
 | Deferred | `Epic (deferred): <name>` | `epic` + `deferred` | one per queue home | evaluated items parked until their revival conditions are met |
+| Hoshin | `Epic (hoshin): <org>` | `epic` + `hoshin` | one per org, always in `<org>/.github` | the `Logbook:` tasks `/vergil:hoshin` files and works |
 
 Intake, planning and deferred are the three **queue epics**. Their **queue
 home** follows the [epic-home rule](#epic-home-the-orggithub-rule): every
 public repo shares the org's set in `<org>/.github` (`<name>` is the org),
 while a **private** repo self-homes its own set (`<name>` is the repo), so
 private work never surfaces in a public issue. `vrg-issue-create --epic`
-accepts `adhoc`, `intake`, and `planning` as sentinels that resolve (creating
-if absent) the target repo's standing epic of that kind. It refuses
+accepts `adhoc`, `intake`, `planning` and `hoshin` as sentinels that resolve
+(creating if absent) the target repo's standing epic of that kind. It refuses
 `deferred`, as does `vrg-epic-move`: an item enters and leaves the deferred
 queue only through `vrg-intake-route`, which records the deferral (see
 [The deferred queue](#the-deferred-queue)).
+
+The **hoshin epic** is not a queue: its tasks are PR-workable, but only
+`/vergil:hoshin` files and works them, so no queue processor picks them up.
+It is homed in `<org>/.github` whatever the target repo's visibility, and
+named for the org. Only `vrg-issue-create` (hoshin's filing) and
+`vrg-epic-move` accept the `hoshin` sentinel; `vrg-intake-route` refuses a
+one-off into the hoshin epic, by sentinel or by ref. Its closed children
+drain into per-quarter `Archive (hoshin): <org>` archives like the other
+standing kinds.
 
 ### Ad-hoc epic archiving
 
@@ -305,7 +317,7 @@ Two existing call sites keep archives current with no dedicated cron:
   its close-quarter archive.
 - **Backstop + backfill.** The daily `vrg-epic-audit --close` sweep runs the
   org-wide drain for every standing kind (ad-hoc, intake, planning,
-  deferred): it
+  deferred, hoshin): it
   distributes any backlog the steady-state path missed and closes past-quarter
   archives. This is the same trusted sweep that closes other
   provably-complete drift, so it is allowed to mutate under the scheduled
@@ -440,7 +452,7 @@ so tools can find and replace it:
 - **One writer:** only [`vrg-epic-docs`](../reference/cli-tools-overview.md#vrg-epic-docs)
   writes the section, never a hand edit, so its format lives in one place.
 - **Scope:** every epic except the standing epics (ad hoc, intake, planning,
-  deferred, and the retired `standing` label or `Epic (standing):` title) and
+  deferred, hoshin, and the retired `standing` label or `Epic (standing):` title) and
   `[archived]` epics. Task issues have no section.
 
 **Entry rules.** An entry is a link when the document exists. Otherwise its
@@ -921,9 +933,10 @@ up to date (see
 | `intake` | Marks the standing intake epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `planning` | Marks the standing planning epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `deferred` | Marks the standing deferred epic (with `epic`) and its archives (with `archive`); never auto-closes |
+| `hoshin` | Marks the standing hoshin epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `in-progress` | Planning item whose `epic-create` session is underway |
 | `epic-size:S`, `epic-size:M`, `epic-size:L`, `epic-size:XL` | Planning or deferred item's estimated epic size: 1–9, 10–19, 20–39 or 40+ tasks (see [Epic size](#epic-size)) |
-| `archive` | Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred); historical record |
+| `archive` | Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred, hoshin); historical record |
 | `hotfix` | Emergency fix that skipped formal planning; flagged for retroactive review |
 | `validation` | Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed |
 | `deployment` | Deployment task: install/sync merged changes so they are usable; never auto-closed |
@@ -932,8 +945,8 @@ up to date (see
 | `security-disclosed` | Past issue that disclosed a security problem publicly; fixed, no private record |
 
 The parent epic carries an issue's state, so no label restates it. `intake`,
-`planning` and `deferred` label only the standing epics (and their archives),
-the way `ad-hoc`
+`planning`, `deferred` and `hoshin` label only the standing epics (and their
+archives), the way `ad-hoc`
 does. The per-item queue labels are `in-progress`, used only on planning
 items, and the `epic-size:*` family, used only on planning and deferred items
 and written only through `vrg-intake-route`. The former intake kind labels `triage`, `idea`, and `research` are
