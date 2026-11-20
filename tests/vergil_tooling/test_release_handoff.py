@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import io
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -14,7 +15,7 @@ from vergil_tooling.lib.release.handoff import consumer_refresh, run_consumer_re
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from unittest.mock import MagicMock
+
 
 _MOD = "vergil_tooling.lib.release.handoff"
 
@@ -191,6 +192,42 @@ def test_consumer_refresh_success_is_one_check_line(
     assert "refreshing VMs" not in out
 
 
+def _log_text(tmp_path: Path) -> str:
+    return next((tmp_path / ".vergil").glob("vrg-release-*.log")).read_text()
+
+
+def test_consumer_refresh_success_writes_the_full_run_to_the_log(
+    template: MagicMock, tmp_path: Path
+) -> None:
+    """The terminal is one check line, but the run log holds the commands,
+    their output (standard error included) and the exit status (#4812)."""
+    _set(template, "echo installing vergil-tooling <VERSION>\necho refreshing VMs >&2")
+    ctx = _ctx(tmp_path)
+    assert _run_stage(ctx, tmp_path) == 0
+    log = _log_text(tmp_path)
+    started = log.index("=== consumer-refresh: started ===")
+    ended = log.index("=== consumer-refresh: ok (")
+    stage = log[started:ended]
+    assert (
+        "consumer-refresh: running the commands:\n"
+        "  echo installing vergil-tooling 2.1.0\n"
+        "  echo refreshing VMs >&2\n"
+        "installing vergil-tooling 2.1.0\n"
+        "refreshing VMs\n"
+        "consumer-refresh: the commands exited 0\n"
+    ) in stage
+
+
+def test_consumer_refresh_failure_writes_the_full_run_to_the_log(
+    template: MagicMock, tmp_path: Path
+) -> None:
+    _set(template, "echo step one <VERSION>\necho to-stderr >&2\nexit 7")
+    ctx = _ctx(tmp_path)
+    assert _run_stage(ctx, tmp_path) == 1
+    log = _log_text(tmp_path)
+    assert "step one 2.1.0\nto-stderr\nconsumer-refresh: the commands exited 7\n" in log
+
+
 def test_consumer_refresh_failure_shows_full_output_and_fails(
     template: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -227,6 +264,19 @@ def test_run_consumer_refresh_merges_stderr_in_order(tmp_path: Path) -> None:
     rc, output = run_consumer_refresh("echo out1\necho err1 >&2\necho out2", cwd=tmp_path)
     assert rc == 0
     assert output == "out1\nerr1\nout2\n"
+
+
+def test_run_consumer_refresh_terminates_the_commands_on_interrupt(tmp_path: Path) -> None:
+    fake_proc = MagicMock()
+    fake_proc.stdout = io.StringIO("")
+    fake_proc.wait.side_effect = [KeyboardInterrupt, -15]
+    with (
+        patch(_MOD + ".subprocess.Popen", return_value=fake_proc),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        run_consumer_refresh("sleep 60", cwd=tmp_path)
+    fake_proc.terminate.assert_called_once_with()
+    assert fake_proc.wait.call_count == 2
 
 
 def test_run_consumer_refresh_runs_in_cwd_with_no_stdin(tmp_path: Path) -> None:

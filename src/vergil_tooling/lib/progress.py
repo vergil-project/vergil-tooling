@@ -427,6 +427,10 @@ class _Session:
             self.log.write(line)
             self.renderer.stage_line(line)
 
+    def handle_log_line(self, line: str) -> None:
+        with self._lock:
+            self.log.write(line)
+
     def handle_status(self, lines: Sequence[str], *, changed: bool, heartbeat: str) -> None:
         with self._lock:
             if changed:
@@ -447,6 +451,21 @@ def emit(line: str) -> None:
         session.handle_line(line)
     else:
         print(line)
+
+
+def log_only(line: str) -> None:
+    """Write one line to the active pipeline's run log, and not to the terminal.
+
+    For output a stage keeps off the terminal but must still leave in the
+    run log, which :func:`emit` would also render: vrg-release's
+    consumer-refresh stage, whose commands' output is one check line on the
+    terminal on success (issue #4812). The line goes to the same
+    :class:`RunLog`, under the same lock, as every emitted line. Outside a
+    running pipeline there is no run log, and it is a harmless no-op.
+    """
+    session = _session
+    if session is not None:
+        session.handle_log_line(line)
 
 
 def status_block(lines: Sequence[str], *, changed: bool, heartbeat: str) -> None:
