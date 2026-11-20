@@ -18985,7 +18985,10 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
    runs nothing and prints a warning not to advertise the version.
    After an earlier stage that failed (<code>promote</code>, say) it runs nothing
    either, and prints the commands below the summary to run once the
-   cause is fixed. On
+   cause is fixed. A failed <code>update-deps</code> is the exception: it prepares
+   the next version, so the release just published is still valid and
+   the refresh runs. The run still reports the <code>update-deps</code> failure and
+   exits 1 (see step 5). On
    success the stage is one <code>✓ consumer-refresh</code> line; on failure its
    full output is printed below the summary, the stage fails and
    <code>vrg-release</code> exits 1. Pass <code>--no-install</code> to have it print the
@@ -19079,7 +19082,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>consumer-refresh</code></td>
 <td>deferred</td>
-<td>Runs the <code>[publish].consumer-refresh</code> commands, last, once <code>promote</code> has moved <code>vX.Y</code> (prints them instead with <code>--no-install</code>). Holds, running nothing, while any publish is deferred, and only prints the commands after an earlier stage failed. Success is one check line; a failure prints the full output below the summary</td>
+<td>Runs the <code>[publish].consumer-refresh</code> commands, last, once <code>promote</code> has moved <code>vX.Y</code> (prints them instead with <code>--no-install</code>). Holds, running nothing, while any publish is deferred, and only prints the commands after an earlier stage failed, except <code>update-deps</code>, whose failure alone does not stop it. Success is one check line; a failure prints the full output below the summary</td>
 </tr>
 </tbody>
 </table>
