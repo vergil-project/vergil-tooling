@@ -1100,7 +1100,44 @@ class TestRebuild:
             "/home/user/projects",
             cpus=8,
             memory="24GiB",
-            disk=None,
+            disk="100GiB",  # the identity sets no disk: the base footprint's (#4810)
+        )
+
+    @pytest.mark.parametrize(("command", "status"), [("create", ""), ("rebuild", "Running")])
+    def test_shared_base_gets_the_base_footprint(
+        self, command: str, status: str, config_file: Path, tmp_path: Path
+    ) -> None:
+        """With no identity cpus/memory/disk, create and rebuild ask Lima for the
+        base footprint, not the template's defaults, and list reports it (#4810)."""
+        template = tmp_path / "template.yaml"
+        template.write_text("cpus: 4")
+        with (
+            patch("vergil_tooling.bin.vrg_vm.vm_status", return_value=status),
+            patch("vergil_tooling.bin.vrg_vm.delete_vm"),
+            patch("vergil_tooling.bin.vrg_vm.fetch_template", return_value=template),
+            patch("vergil_tooling.bin.vrg_vm.create_vm") as mock_create,
+            patch("vergil_tooling.bin.vrg_vm.start_vm"),
+            patch("vergil_tooling.bin.vrg_vm.inject_credentials"),
+            patch("vergil_tooling.bin.vrg_vm.install_tooling"),
+            patch("vergil_tooling.bin.vrg_vm.copy_claude_config"),
+            patch("vergil_tooling.bin.vrg_vm.stop_vm"),
+        ):
+            assert main([command, "--config", str(config_file)]) == 0
+        mock_create.assert_called_once_with(
+            "vergil-agent",
+            template,
+            "/home/user/projects",
+            cpus=4,
+            memory="4GiB",
+            disk="100GiB",
+        )
+        ident = Identity(vm_instance="vergil-agent", projects_dir="/home/user/projects")
+        base = next(r for r in _list_rows("vergil", ident, [], {}, {}) if r["scope"] == "base")
+        created = mock_create.call_args.kwargs
+        assert (base["cpus"], base["memory"], base["disk"]) == (
+            created["cpus"],
+            created["memory"],
+            created["disk"],
         )
 
 
