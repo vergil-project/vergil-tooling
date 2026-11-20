@@ -19251,13 +19251,27 @@ repos. The link runs both ways, each side on a line alone on its line:</p>
 </ul>
 <p>A missing, duplicated or malformed <code>Primary:</code> line, one naming an issue that
 is not an epic, or a malformed trusted <code>Proxy:</code> line is an error in every tool
-that reads them, never a skipped item.</p>
+that reads them, never a skipped item. <code>vrg-epic-audit --epic</code> lists a
+primary's proxy tasks beside its own and exits 1 when the two sides disagree,
+and the org-level <code>vrg-epic-audit</code> reports every open proxy whose link is
+broken.</p>
 <p>A proxy is <strong>not a development epic</strong>. It lives as long as its primary, so
 the event-driven rollup (<code>vrg-epic-rollup</code>) and the daily sweep's drift close
 (<code>vrg-epic-audit --close</code>) never close it, the
 <a href="#the-documents-section">Documents section</a> audit skips it (its primary
 carries the spec and plan), and the roadmap does not list it. It needs no
 bookends, because the primary carries them.</p>
+<p>A proxy's own org closes it: the daily sweep of its home
+(<code>vrg-epic-audit --close</code>) closes a proxy whose primary is closed and which
+has no open task. One that still has an open task after its primary closed is
+reported and left open. The primary's rollup never closes its proxies, since
+it runs in the primary's org.</p>
+<p>Another org's epic tasks belong under that org's proxy, and hoshin's logbook
+tasks under the hoshin epic, never under an ad-hoc epic. No marker or
+filing-time guard enforces this; <code>vrg-epic-audit</code> reports an open ad-hoc task
+that looks misplaced (a <code>Logbook:</code> title, or a body naming an epic in another
+org) for a human to rule on. A task ruled standalone gets a trusted comment
+with the line <code>Standalone-confirmed</code>, and the audit stops reporting it.</p>
 <h3 id="ad-hoc-epic-archiving">Ad-hoc epic archiving<a class="headerlink" href="#ad-hoc-epic-archiving" title="Permanent link">&para;</a></h3>
 <p>A live ad-hoc epic accumulates closed children forever, so its "what's in
 flight" signal drowns in finished work. To keep the umbrella honest, closed
