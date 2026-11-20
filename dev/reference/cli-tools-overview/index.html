@@ -22125,8 +22125,14 @@ the merge base.</p>
 <p>It reads the body of the <code>--issue</code> itself, as <code>issue_body</code>, and derives
 <code>epic_open_tasks</code> from the issue's native parent: when the parent carries
 <code>epic</code> and not <code>ad-hoc</code>, its open sub-issues, every page, as
-<code>{"ref", "title"}</code>, without the issue itself; otherwise <code>[]</code>. It refuses
-when the issue, its parent's labels or the sub-issues cannot be read.</p>
+<code>{"ref", "title"}</code>, without the issue itself; otherwise <code>[]</code>. When the
+parent is a proxy epic (it also carries <code>proxy</code>), the open tasks are
+instead those of the proxy's primary, its own and every proxy's, as
+<a href="#vrg-epic-audit"><code>vrg-epic-audit --epic</code></a> lists them in its <code>children</code>,
+again without the issue itself. It refuses when the issue, its parent's
+labels or the sub-issues cannot be read, and, for a proxy, when its
+<code>Primary:</code> line cannot be resolved, the primary has no trusted <code>Proxy:</code>
+comment naming it back, or any of the primary's proxy links is broken.</p>
 <p>It reads the comments of the <code>--issue</code> itself, every page, and keeps only
 those posted by the one human login of the trusted-authors configuration
 (see <a href="#vrg-trusted-authors"><code>vrg-trusted-authors</code></a>), oldest first, as
