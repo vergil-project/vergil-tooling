@@ -435,6 +435,12 @@ Every check runs before the first write:
   vulnerability report's text is its submitter's, so a line there proves
   nothing: a matching report, a copy in any other state, or more than one
   match refuses the move and names each one, and nothing is created.
+- **A copy never moves again.** An advisory carrying a `Moved from:`
+  line is refused: moving it on would leave its original's `Moved to:`
+  line naming an advisory that tracks nothing, which `sync` would report
+  as broken with no way to clear it. The refusal names the way out: keep
+  one copy of the finding per org, the copy tracking its own org's fix
+  tasks and a separate advisory in the new org tracking the work there.
 - Only a draft advisory moves. It also refuses a copy that already tracks
   other issues, an original whose `Moved to:` line names an advisory that
   is not its copy, and an original with no `critical`, `high`, `medium` or

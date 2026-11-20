@@ -830,10 +830,23 @@ def _read_move_fields(home: str, ghsa_id: str) -> tuple[str, str, object]:
 
 
 def _movable(home: str, ghsa_id: str, advisories: Sequence[Advisory]) -> Advisory:
-    """Advisory *ghsa_id* of *home*, refused unless it is a draft record, or a moved one."""
+    """Advisory *ghsa_id* of *home*, refused unless it is a draft record, or a moved one.
+
+    A copy an earlier move made (one with a ``Moved from:`` line) never
+    moves again: its original's ``Moved to:`` line would then name an
+    advisory that tracks nothing, and ``sync`` would report that original
+    broken with no way to clear it. The refusal names the way out.
+    """
     advisory = {a.ghsa_id: a for a in advisories}.get(ghsa_id)
     if advisory is None:
         raise RetargetRefusedError(f"advisory {ghsa_id} does not exist in {home}")
+    if advisory.moved_from:
+        raise RetargetRefusedError(
+            f"advisory {ghsa_id} is itself the copy of a move (it has a Moved from: "
+            f"{advisory.moved_from[0]} line), and a copy never moves again. Keep it "
+            "tracking the fix tasks of its own org and create a separate advisory in the "
+            "new org for the fix work there: one copy of the finding per org"
+        )
     if len(advisory.moved_to) > 1:
         raise RetargetRefusedError(
             f"advisory {ghsa_id} has more than one Moved to: line, so which copy holds it "

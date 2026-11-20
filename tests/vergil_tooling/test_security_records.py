@@ -2475,6 +2475,17 @@ def test_move_refuses_an_original_with_two_moved_to_lines(move: Move) -> None:
     assert move.issues.writes == []
 
 
+def test_move_refuses_an_original_that_is_itself_a_copy(move: Move) -> None:
+    move.issues.descriptions[GHSA] += f"\nMoved from: {SECOND}"
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        move.run()
+    message = str(excinfo.value)
+    assert f"is itself the copy of a move (it has a Moved from: {SECOND} line)" in message
+    assert "one copy of the finding per org" in message
+    assert move.issues.writes == []
+    assert move.created == []
+
+
 def test_move_refuses_a_moved_to_line_naming_no_copy(move: Move) -> None:
     move.issues.descriptions[GHSA] = (
         f"{SECRET}\n\nMoved to: fix/.github {SECOND}\n\nTracking issue: org/.github#10"

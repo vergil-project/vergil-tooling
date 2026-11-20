@@ -306,6 +306,12 @@ Every check runs before the first write, and each refusal exits 1:
 - The original must exist, be a `draft` and not an external report, with
   at most one `Moved to:` line. A `closed` original carrying the line is
   a finished move, re-run.
+- The original must not itself be a copy a move made (an advisory with a
+  `Moved from:` line). A copy never moves again: its original's
+  `Moved to:` line would name an advisory that tracks nothing, and `sync`
+  would report that original broken for good. The refusal names the way
+  out, one copy of the finding per org: keep the copy tracking its own
+  org's fix tasks and create a separate advisory in the new org.
 - The source check and the open-issue check, as above. Once a re-run
   finds the original's tracking lines already removed, `--from` must
   carry the `Security record moved to <refs>` comment for exactly the
