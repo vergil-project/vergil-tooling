@@ -1343,6 +1343,119 @@ def test_adhoc_items_never_mutate() -> None:
     run.assert_not_called()
 
 
+# -- hoshin_items ----------------------------------------------------------------
+
+_HOSHIN_EPIC = IssueRef("org", ".github", 500)
+
+
+def _worktree_signals(repo: str, clone: Path) -> in_flight.RepoSignals:
+    """Signals with a local ``feature/7-…`` branch, the worktree mark of task #7."""
+    return in_flight.RepoSignals(
+        repo, clone, frozenset(), frozenset(), frozenset(), frozenset({"feature/7-logbook"})
+    )
+
+
+def _hoshin(
+    epic: IssueRef | None,
+    children: list[ChildState],
+    views: dict[int, dict[str, Any]],
+    *,
+    repo: str | None = None,
+    signals: Any = _no_marks_signals,
+) -> tuple[list[queue_view.AdhocItem], MagicMock, MagicMock]:
+    """Run :func:`queue_view.hoshin_items` on ``org/.github`` against fakes."""
+    gh = _FakeGh(views)
+    with (
+        patch(f"{_MOD}.github.read_json", side_effect=gh),
+        patch(f"{_MOD}.epics.find_standing_epic", return_value=epic) as find,
+        patch(f"{_MOD}.epics.child_states", return_value=children) as kids,
+        patch(f"{_MOD}.epics.blockers_of", return_value=[]),
+        patch(f"{_MOD}.in_flight.find_clones", side_effect=_no_marks_clones),
+        patch(f"{_MOD}.in_flight.repo_signals", side_effect=signals),
+        patch(f"{_MOD}.epics.ensure_standing_epic") as ensure,
+    ):
+        items = queue_view.hoshin_items("org/.github", repo=repo, roots=[Path("/roots")])
+    ensure.assert_not_called()
+    find.assert_called_once_with(epics.HOSHIN, "org/.github", "org")
+    return items, find, kids
+
+
+def test_hoshin_items_lists_open_tasks() -> None:
+    children = [
+        ChildState(IssueRef("org", "docs", 7), "OPEN", "Logbook: 2026-11-18"),
+        ChildState(IssueRef("org", "docs", 6), "CLOSED", "Logbook: 2026-11-17"),
+    ]
+    views = {7: _view("Logbook: 2026-11-18", "2026-11-18T00:00:00Z")}
+    items, _, kids = _hoshin(_HOSHIN_EPIC, children, views, signals=_worktree_signals)
+    kids.assert_called_once_with(_HOSHIN_EPIC)
+    assert items == [
+        queue_view.AdhocItem(
+            ref=IssueRef("org", "docs", 7),
+            title="Logbook: 2026-11-18",
+            created_at="2026-11-18T00:00:00Z",
+            kind="task",
+            blocked_by=(),
+            state="in-flight",
+            marks=("worktree",),
+            disposition="resume",
+        )
+    ]
+
+
+def test_hoshin_items_no_epic_is_empty() -> None:
+    items, _, kids = _hoshin(None, [], {})
+    assert items == []
+    kids.assert_not_called()
+
+
+def test_hoshin_items_repo_filters_children() -> None:
+    children = [
+        ChildState(IssueRef("org", "docs", 7), "OPEN", "Logbook: 2026-11-18"),
+        ChildState(IssueRef("org", "vergil-tooling", 8), "OPEN", "stray"),
+    ]
+    # Only the docs task is fetched: the other repo's view would KeyError.
+    views = {7: _view("Logbook: 2026-11-18", "2026-11-18T00:00:00Z")}
+    items, _, _ = _hoshin(_HOSHIN_EPIC, children, views, repo="org/Docs")
+    assert [i.ref.slug for i in items] == ["org/docs#7"]
+
+
+def test_hoshin_items_without_repo_lists_every_repo() -> None:
+    children = [
+        ChildState(IssueRef("org", "vergil-tooling", 8), "OPEN", "stray"),
+        ChildState(IssueRef("org", "docs", 7), "OPEN", "Logbook: 2026-11-18"),
+    ]
+    views = {
+        7: _view("Logbook: 2026-11-18", "2026-11-18T00:00:00Z"),
+        8: _view("stray", "2026-11-01T00:00:00Z"),
+    }
+    items, _, _ = _hoshin(_HOSHIN_EPIC, children, views)
+    assert [i.ref.slug for i in items] == ["org/docs#7", "org/vergil-tooling#8"]
+
+
+def test_hoshin_items_rejects_a_bare_repo() -> None:
+    with pytest.raises(ValueError, match="owner/name"):
+        queue_view.hoshin_items("org/.github", repo="docs")
+
+
+def test_hoshin_items_ambiguous_epic_raises() -> None:
+    failure = epics.EpicTitleAmbiguousError("two hoshin epics", [_HOSHIN_EPIC])
+    with (
+        patch(f"{_MOD}.epics.find_standing_epic", side_effect=failure),
+        pytest.raises(epics.EpicTitleAmbiguousError, match="two hoshin epics"),
+    ):
+        queue_view.hoshin_items("org/.github")
+
+
+def test_hoshin_items_sub_issue_read_failure_raises() -> None:
+    failure = github.GitHubAPIError(1, ["gh", "api", "graphql"], "", "HTTP 502")
+    with (
+        patch(f"{_MOD}.epics.find_standing_epic", return_value=_HOSHIN_EPIC),
+        patch(f"{_MOD}.epics.child_states", side_effect=failure),
+        pytest.raises(github.GitHubAPIError, match="502"),
+    ):
+        queue_view.hoshin_items("org/.github")
+
+
 # -- render_adhoc_text / adhoc_to_json --------------------------------------------
 
 _ADHOC_ITEMS = [
