@@ -38,7 +38,8 @@ def consumer_refresh(ctx: ReleaseContext) -> None:
 
     On success the commands' output is not shown, so the stage is the one
     ``✓ consumer-refresh`` line. On failure the full output is shown and the
-    stage fails with the exit status.
+    stage fails with the exit status. Either way the run log holds the
+    commands, their full output and their exit status (issue #4812).
     """
     if ctx.deferred_publish_failures:
         remedy = publish_deferred_remedy(ctx, ctx.deferred_publish_failures)
@@ -120,17 +121,35 @@ def run_consumer_refresh(commands: str, *, cwd: Path) -> tuple[int, str]:
     (issues #1643, #1184). ``-u`` is left out so a command naming an unset
     shell variable is not turned into a spurious failure. Its standard output
     and error are captured together, in order, and returned with the exit
-    status; nothing is printed here. Standard input is closed, so a command
-    can never wait on the terminal under the progress renderer.
+    status. Standard input is closed, so a command can never wait on the
+    terminal under the progress renderer.
+
+    Nothing is shown on the terminal here, but the run goes to the run log
+    as it happens, success or failure (issue #4812): the commands, each
+    output line as it arrives (as :func:`progress.run` streams any other
+    command's output), and the exit status.
     """
+    progress.log_only(f"{PHASE}: running the commands:")
+    for command in commands.splitlines():
+        progress.log_only(f"  {command}")
     script = "set -eo pipefail\n" + commands
-    result = subprocess.run(  # noqa: S603
+    proc = subprocess.Popen(  # noqa: S603
         ("bash", "-c", script),  # noqa: S607
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         cwd=cwd,
-        check=False,
     )
-    return result.returncode, result.stdout or ""
+    lines: list[str] = []
+    try:
+        for line in proc.stdout or ():
+            lines.append(line)
+            progress.log_only(line.rstrip("\n"))
+        returncode = proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+        proc.wait()
+        raise
+    progress.log_only(f"{PHASE}: the commands exited {returncode}")
+    return returncode, "".join(lines)

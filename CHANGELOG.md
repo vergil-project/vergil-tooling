@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.330] - 2026-11-20
+
+### Bug fixes
+
+- give the shared base Lima VM the base footprint's disk, CPUs and memory (#4810)
+- compose a named Lima instance's overlay when vrg-vm list checks its spec (#4806)
+- write consumer-refresh's commands, output and exit status to the release log (#4819)
+
+### Documentation
+
+- reflect the uv install of vergil-tooling everywhere (#4710) (#4807)
+- correct repo_setup's docstring on who uses the bootstrap (#4818)
+
+### Features
+
+- add the hoshin standing epic (#4808)
+- add the proxy epic model and exempt proxies from rollup and the development-epic checks (#4809)
+- add vrg-queue hoshin (#4813)
+- add vrg-epic-create --proxy-for (#4814)
+- move an advisory to its fix's org on a cross-org retarget (#4816)
+- list proxy tasks among an epic's children and fail on proxy link drift (#4801)
+- close proxies whose primary has closed in the daily sweep (#4802)
+- report ad-hoc tasks that look misplaced (#4803)
+- resolve a proxy task's epic context through its primary (#4820)
+
 ## [2.1.329] - 2026-11-19
 
 ### Bug fixes

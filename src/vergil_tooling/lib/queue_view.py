@@ -1,4 +1,4 @@
-"""Read-only views of the intake, planning and deferred queues, and of the ad-hoc tasks.
+"""Read-only views of the intake, planning and deferred queues, and of the ad-hoc and hoshin tasks.
 
 The intake queue is the open children of a home's ``Epic (intake): <name>``
 standing epic, oldest first; every item is *waiting* (captured, not reviewed).
@@ -58,6 +58,12 @@ those labels whose title is not a live epic's (an archive, in its current or
 legacy form) is skipped. A home with no ad-hoc epic, or a ``repo`` with none,
 is an empty list, not an error. The marks are read only for repos with open
 ad-hoc tasks, each of which must have a main clone under the repo roots.
+
+The hoshin view is the open tasks under the home's ``Epic (hoshin): <org>``
+epic (``epic`` + ``hoshin``), the tasks ``/vergil:hoshin`` files, with the
+ad-hoc view's fields, states, marks, dispositions and order: both share one
+body. The epic is looked up, never created; a home with none is an empty
+list. With a ``repo``, only the epic's children in that repo are listed.
 
 Planning and deferred items carry an **epic size**
 (:mod:`vergil_tooling.lib.epic_size`): each view reads the item's labels and
@@ -662,15 +668,53 @@ def adhoc_items(
     truncated epic search or a repo with no main clone; nothing is shown
     short or wrongly ready.
     """
-    bare: str | None = None
+    bare = None if repo is None else _bare_name(repo)
+    return _standing_items(_adhoc_epics(home, bare), repo=None, roots=roots)
+
+
+def hoshin_items(
+    home: str, *, repo: str | None = None, roots: Sequence[Path] | None = None
+) -> list[AdhocItem]:
+    """The open tasks under *home*'s hoshin epic, as :func:`adhoc_items` gives them.
+
+    The epic is ``Epic (hoshin): <owner>``, *home*'s owner, looked up with
+    :func:`epics.find_standing_epic` (never created); a home with none gives
+    an empty list. The caller resolves *home*: for *repo*, with
+    :func:`epics.hoshin_home`, since a hoshin epic always lives in the org's
+    ``.github``, never in a self-homed private repo. With *repo*
+    (``owner/name``), only the epic's children in that repo are listed.
+    Fields, states, in-flight marks, dispositions, order and failures are
+    :func:`adhoc_items`'s.
+    """
     if repo is not None:
-        if "/" not in repo:
-            raise ValueError(f"repo must be 'owner/name' (got {repo!r})")
-        bare = repo.split("/", 1)[1]
+        _bare_name(repo)
+    owner = home.split("/", 1)[0]
+    epic = epics.find_standing_epic(epics.HOSHIN, home, owner)
+    return _standing_items([] if epic is None else [epic], repo=repo, roots=roots)
+
+
+def _bare_name(repo: str) -> str:
+    """The name part of an ``owner/name`` *repo*; a bare name is a ``ValueError``."""
+    if "/" not in repo:
+        raise ValueError(f"repo must be 'owner/name' (got {repo!r})")
+    return repo.split("/", 1)[1]
+
+
+def _standing_items(
+    epic_refs: Sequence[IssueRef], *, repo: str | None, roots: Sequence[Path] | None
+) -> list[AdhocItem]:
+    """The open children of *epic_refs* as tasks, by repo and oldest first.
+
+    The shared body of :func:`adhoc_items` and :func:`hoshin_items`. With
+    *repo* (``owner/name``), a child in any other repo is left out before it
+    is read (GitHub names ignore case). Every read failure raises.
+    """
     found: list[tuple[IssueRef, dict[str, Any], tuple[IssueRef, ...]]] = []
-    for epic in _adhoc_epics(home, bare):
+    for epic in epic_refs:
         for child in epics.child_states(epic):
             if child.state != "OPEN":
+                continue
+            if repo is not None and _repo_of(child.ref).casefold() != repo.casefold():
                 continue
             view = _view(child.ref, "title,createdAt,labels")
             open_blockers = tuple(

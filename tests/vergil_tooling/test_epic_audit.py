@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib import epic_audit, epic_docs, epics, github, roadmap
+from vergil_tooling.lib import epic_audit, epic_docs, epics, github, proxies, roadmap
 from vergil_tooling.lib.epic_audit import TaskDrift
 
 # The day the task_drift tests run on: inside the first week of their 2026-06-01
@@ -2255,3 +2255,594 @@ def test_stray_dotgithub_issue_refuses_a_list_that_may_be_truncated() -> None:
         pytest.raises(epics.EpicListTruncatedError, match="open issues of org/.github"),
     ):
         epic_audit.stray_dotgithub_issue("org", home="org/.github")
+
+
+def test_epic_drift_skips_proxy() -> None:
+    # A proxy whose tasks are all closed is not drift: it lives as long as its
+    # primary (#1417), so the daily sweep's drift close never closes it. The
+    # finite epic beside it, all closed too, still is drift.
+    epic_list = [
+        {
+            "number": 40,
+            "title": "Convention",
+            "createdAt": "2026-06-28T10:00:00Z",
+            "milestone": None,
+            "labels": [{"name": "epic"}],
+            "url": "u40",
+        },
+        {
+            "number": 9,
+            "title": "Epic (proxy): keep ad-hoc queues standalone",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "milestone": None,
+            "labels": [{"name": "epic"}, {"name": "proxy"}],
+            "url": "u9",
+        },
+    ]
+    closed = [epics.ChildState(epics.IssueRef("vergil-project", "vergil-tooling", 1), "CLOSED")]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=epic_list),
+        patch("vergil_tooling.lib.epics.child_states", return_value=closed),
+    ):
+        result = epic_audit.epic_drift("vergil-project", home="vergil-project/.github")
+    assert [e.number for e in result] == [40]
+
+
+# --- proxy children and the link check (epic .github#1417) ---------------------
+
+_PRIMARY = epics.IssueRef("vergil-project", ".github", 1417)
+_PROXY = epics.IssueRef("logical-minds-foundry", ".github", 320)
+_PX = "vergil_tooling.lib.proxies"
+
+
+def _child(owner: str, repo: str, number: int, state: str = "OPEN") -> epics.ChildState:
+    return epics.ChildState(epics.IssueRef(owner, repo, number), state, f"task {number}")
+
+
+def test_epic_children_includes_proxy_tasks() -> None:
+    # The primary's own children, then each proxy's, each read under its own
+    # org's token.
+    own = [_child("vergil-project", "vergil-tooling", 1)]
+    proxied = [_child("logical-minds-foundry", "mq-rest-admin", 7)]
+    seen: list[tuple[epics.IssueRef, str | None]] = []
+
+    def child_states(epic: epics.IssueRef) -> list[epics.ChildState]:
+        seen.append((epic, github._target_org.get()))
+        return own if epic == _PRIMARY else proxied
+
+    with (
+        patch("vergil_tooling.lib.epics.child_states", side_effect=child_states),
+        patch(f"{_PX}.proxies_of", return_value=(_PROXY,)),
+        patch(f"{_PX}.primary_of", return_value=_PRIMARY),
+    ):
+        children = epic_audit.epic_children(_PRIMARY)
+    assert children == own + proxied
+    assert seen == [(_PRIMARY, "vergil-project"), (_PROXY, "logical-minds-foundry")]
+
+
+def test_epic_children_without_proxies_is_child_states() -> None:
+    own = [_child("vergil-project", "vergil-tooling", 1)]
+    with (
+        patch("vergil_tooling.lib.epics.child_states", return_value=own),
+        patch(f"{_PX}.proxies_of", return_value=()),
+    ):
+        assert epic_audit.epic_children(_PRIMARY) == own
+
+
+def test_epic_children_bad_proxy_fails() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+        patch(f"{_PX}.proxies_of", return_value=(_PROXY,)),
+        patch(
+            f"{_PX}.primary_of",
+            side_effect=proxies.ProxyLinkError("proxy has no 'Primary:' line in its body"),
+        ),
+        pytest.raises(proxies.ProxyLinkError, match="no 'Primary:' line"),
+    ):
+        epic_audit.epic_children(_PRIMARY)
+
+
+def test_epic_children_proxy_naming_another_primary_fails() -> None:
+    other = epics.IssueRef("vergil-project", ".github", 9)
+    with (
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+        patch(f"{_PX}.proxies_of", return_value=(_PROXY,)),
+        patch(f"{_PX}.primary_of", return_value=other),
+        pytest.raises(
+            proxies.ProxyLinkError, match=r"'Primary:' line names vergil-project/\.github#9"
+        ),
+    ):
+        epic_audit.epic_children(_PRIMARY)
+
+
+def _link_problems(
+    epic: epics.IssueRef,
+    *,
+    proxy_refs: set[epics.IssueRef],
+    primary_of: Any,
+    proxies_of: Any,
+) -> list[str]:
+    with (
+        patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref in proxy_refs),
+        patch(f"{_PX}.primary_of", side_effect=primary_of),
+        patch(f"{_PX}.proxies_of", side_effect=proxies_of),
+    ):
+        return epic_audit.proxy_link_problems(epic)
+
+
+def test_proxy_link_problems_agreeing_pair_is_clean() -> None:
+    for epic in (_PRIMARY, _PROXY):
+        assert (
+            _link_problems(
+                epic,
+                proxy_refs={_PROXY},
+                primary_of=lambda _ref: _PRIMARY,
+                proxies_of=lambda ref: (_PROXY,) if ref == _PRIMARY else (),
+            )
+            == []
+        )
+
+
+def test_proxy_link_problems_proxy_without_comment_on_primary() -> None:
+    problems = _link_problems(
+        _PROXY, proxy_refs={_PROXY}, primary_of=lambda _ref: _PRIMARY, proxies_of=lambda _ref: ()
+    )
+    assert problems == [
+        "proxy logical-minds-foundry/.github#320 names vergil-project/.github#1417 as its"
+        " primary, but vergil-project/.github#1417 has no trusted"
+        " 'Proxy: logical-minds-foundry/.github#320' comment"
+    ]
+
+
+def test_proxy_link_problems_proxy_with_bad_primary_line() -> None:
+    def primary_of(_ref: epics.IssueRef) -> epics.IssueRef:
+        raise proxies.ProxyLinkError("proxy has 2 'Primary:' lines in its body")
+
+    problems = _link_problems(
+        _PROXY, proxy_refs={_PROXY}, primary_of=primary_of, proxies_of=lambda _ref: ()
+    )
+    assert problems == ["proxy has 2 'Primary:' lines in its body"]
+
+
+def test_proxy_link_problems_primary_lists_a_disagreeing_proxy() -> None:
+    other = epics.IssueRef("vergil-project", ".github", 9)
+    problems = _link_problems(
+        _PRIMARY,
+        proxy_refs={_PROXY},
+        primary_of=lambda _ref: other,
+        proxies_of=lambda _ref: (_PROXY,),
+    )
+    assert problems == [
+        "vergil-project/.github#1417 lists the proxy logical-minds-foundry/.github#320,"
+        " whose 'Primary:' line names vergil-project/.github#9"
+    ]
+
+
+def test_proxy_link_problems_primary_lists_a_non_proxy() -> None:
+    problems = _link_problems(
+        _PRIMARY,
+        proxy_refs=set(),
+        primary_of=lambda _ref: _PRIMARY,
+        proxies_of=lambda _ref: (_PROXY,),
+    )
+    assert len(problems) == 1
+    assert "which is not a proxy epic" in problems[0]
+
+
+def test_proxy_link_problems_primary_lists_a_missing_proxy() -> None:
+    def is_proxy_ref(ref: epics.IssueRef) -> bool:
+        if ref == _PROXY:
+            raise github.GitHubAPIError(1, "gh", "", "Could not resolve to an issue")
+        return False
+
+    with (
+        patch(f"{_PX}.is_proxy_ref", side_effect=is_proxy_ref),
+        patch(f"{_PX}.proxies_of", return_value=(_PROXY,)),
+    ):
+        problems = epic_audit.proxy_link_problems(_PRIMARY)
+    assert len(problems) == 1
+    assert problems[0].startswith(
+        "vergil-project/.github#1417 lists the proxy logical-minds-foundry/.github#320,"
+        " which could not be read:"
+    )
+
+
+def test_proxy_link_problems_malformed_trusted_proxy_line() -> None:
+    def proxies_of(_ref: epics.IssueRef) -> tuple[epics.IssueRef, ...]:
+        raise proxies.ProxyLinkError("malformed line in a comment on vergil-project/.github#1417")
+
+    problems = _link_problems(
+        _PRIMARY, proxy_refs=set(), primary_of=lambda _ref: _PRIMARY, proxies_of=proxies_of
+    )
+    assert problems == ["malformed line in a comment on vergil-project/.github#1417"]
+
+
+def _epic_record(number: int, state: str, labels: list[str]) -> dict[str, Any]:
+    return {"number": number, "state": state, "labels": labels}
+
+
+def test_proxy_link_drift_checks_only_open_proxies() -> None:
+    home = "logical-minds-foundry/.github"
+    listing = [
+        _epic_record(320, "OPEN", ["epic", "proxy"]),
+        _epic_record(321, "CLOSED", ["epic", "proxy"]),
+        _epic_record(5, "OPEN", ["epic"]),
+    ]
+    checked: list[epics.IssueRef] = []
+
+    def proxy_side(proxy: epics.IssueRef) -> list[str]:
+        checked.append(proxy)
+        return [f"problem with {proxy.slug}"]
+
+    with patch.object(epic_audit, "_proxy_side_problems", side_effect=proxy_side):
+        problems = epic_audit.proxy_link_drift(
+            home, listing=cast("list[epic_docs.EpicRecord]", listing)
+        )
+    assert checked == [_PROXY]
+    assert problems == ["problem with logical-minds-foundry/.github#320"]
+
+
+def test_render_reports_proxy_link_drift() -> None:
+    out = epic_audit.render(
+        [], [], org="org", window_days=30, proxy_link_drift=["proxy org/.github#3 is broken"]
+    )
+    assert "## Proxy link drift" in out
+    assert "- proxy org/.github#3 is broken" in out
+    assert "No drift" not in out
+
+
+def test_render_epic_children_primary_key_only_on_a_proxy() -> None:
+    children = [_child("logical-minds-foundry", "mq-rest-admin", 7)]
+    on_proxy = json.loads(epic_audit.render_epic_children(_PROXY, children, primary=_PRIMARY))
+    assert on_proxy["primary"] == "vergil-project/.github#1417"
+    assert list(on_proxy) == ["epic", "primary", "children"]
+    plain = json.loads(epic_audit.render_epic_children(_PRIMARY, children))
+    assert "primary" not in plain
+
+
+def test_proxy_link_drift_lists_the_home_when_not_given() -> None:
+    with (
+        patch.object(epic_audit, "list_home_epics", return_value=[]) as listing,
+        patch.object(epic_audit, "_proxy_side_problems") as proxy_side,
+    ):
+        assert epic_audit.proxy_link_drift("org/.github") == []
+    listing.assert_called_once_with("org/.github")
+    proxy_side.assert_not_called()
+
+
+def test_proxy_link_problems_unreadable_primary_of_a_proxy() -> None:
+    def proxies_of(_ref: epics.IssueRef) -> tuple[epics.IssueRef, ...]:
+        raise github.NoInstallationError("vergil-project", [])
+
+    problems = _link_problems(
+        _PROXY, proxy_refs={_PROXY}, primary_of=lambda _ref: _PRIMARY, proxies_of=proxies_of
+    )
+    assert len(problems) == 1
+    assert problems[0].startswith("the link of proxy logical-minds-foundry/.github#320 could not")
+
+
+def test_proxy_link_problems_primary_lists_a_proxy_with_a_bad_primary_line() -> None:
+    def primary_of(_ref: epics.IssueRef) -> epics.IssueRef:
+        raise proxies.ProxyLinkError(
+            "proxy logical-minds-foundry/.github#320 has no 'Primary:' line"
+        )
+
+    problems = _link_problems(
+        _PRIMARY, proxy_refs={_PROXY}, primary_of=primary_of, proxies_of=lambda _ref: (_PROXY,)
+    )
+    assert problems == ["proxy logical-minds-foundry/.github#320 has no 'Primary:' line"]
+
+
+# --- the sweep's proxy close pass (epic .github#1417) -----------------------------
+
+
+def _proxy_closures(
+    *, primary_state: str, children: list[epics.ChildState], primary_of: Any = None
+) -> tuple[list[epic_audit.ProxyClosure], list[str]]:
+    listing = [
+        {"number": 320, "state": "OPEN", "labels": ["epic", "proxy"]},
+        {"number": 321, "state": "CLOSED", "labels": ["epic", "proxy"]},
+        {"number": 5, "state": "OPEN", "labels": ["epic"]},
+    ]
+    with (
+        patch(f"{_PX}.primary_of", side_effect=primary_of or (lambda _ref: _PRIMARY)),
+        patch("vergil_tooling.lib.epics.issue_state", return_value=primary_state),
+        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+    ):
+        return epic_audit.proxy_closures(
+            "logical-minds-foundry/.github", listing=cast("list[epic_docs.EpicRecord]", listing)
+        )
+
+
+def test_proxy_closed_when_primary_closed_and_no_open_task() -> None:
+    closures, errors = _proxy_closures(
+        primary_state="CLOSED", children=[_child("logical-minds-foundry", "x", 1, "CLOSED")]
+    )
+    assert errors == []
+    assert closures == [epic_audit.ProxyClosure(_PROXY, _PRIMARY, 0)]
+    run = MagicMock()
+    with patch("vergil_tooling.lib.github.run", run):
+        drift = epic_audit.close_proxies(closures)
+    assert drift == []
+    run.assert_called_once_with(
+        "issue",
+        "close",
+        "320",
+        "--repo",
+        "logical-minds-foundry/.github",
+        "--comment",
+        "Closed by `vrg-epic-audit`: its primary epic vergil-project/.github#1417 is closed"
+        " and no task under this proxy is open.",
+    )
+
+
+def test_proxy_with_open_task_after_primary_closed_is_drift() -> None:
+    # A primary closed (completed or not planned) while a proxy task is open:
+    # the proxy stays open and is reported, never closed silently.
+    closures, errors = _proxy_closures(
+        primary_state="CLOSED",
+        children=[
+            _child("logical-minds-foundry", "x", 1, "OPEN"),
+            _child("logical-minds-foundry", "x", 2, "CLOSED"),
+        ],
+    )
+    assert errors == []
+    assert closures == [epic_audit.ProxyClosure(_PROXY, _PRIMARY, 1)]
+    run = MagicMock()
+    with patch("vergil_tooling.lib.github.run", run):
+        drift = epic_audit.close_proxies(closures)
+    run.assert_not_called()
+    assert drift == [
+        "logical-minds-foundry/.github#320 — its primary vergil-project/.github#1417 is closed,"
+        " but 1 task(s) under it are still open; left open"
+    ]
+
+
+def test_proxy_left_open_while_primary_open() -> None:
+    closures, errors = _proxy_closures(primary_state="OPEN", children=[])
+    assert (closures, errors) == ([], [])
+
+
+def test_proxy_bad_primary_line_is_an_error_not_raised() -> None:
+    def primary_of(_ref: epics.IssueRef) -> epics.IssueRef:
+        raise proxies.ProxyLinkError("proxy has no 'Primary:' line in its body")
+
+    closures, errors = _proxy_closures(primary_state="CLOSED", children=[], primary_of=primary_of)
+    assert closures == []
+    assert errors == ["proxy has no 'Primary:' line in its body"]
+
+
+def test_proxy_unreadable_primary_is_an_error_not_raised() -> None:
+    listing = [{"number": 320, "state": "OPEN", "labels": ["epic", "proxy"]}]
+    with (
+        patch(f"{_PX}.primary_of", return_value=_PRIMARY),
+        patch(
+            "vergil_tooling.lib.epics.issue_state",
+            side_effect=github.GitHubAPIError(1, "gh", "", "HTTP 404"),
+        ),
+        patch.object(epic_audit, "list_home_epics", return_value=listing) as list_epics,
+    ):
+        closures, errors = epic_audit.proxy_closures("logical-minds-foundry/.github")
+    list_epics.assert_called_once_with("logical-minds-foundry/.github")
+    assert closures == []
+    assert len(errors) == 1
+    assert errors[0].startswith("proxy logical-minds-foundry/.github#320 could not be judged:")
+
+
+def test_render_closed_reports_proxy_pass() -> None:
+    out = epic_audit.render_closed(
+        [],
+        org="org",
+        window_days=30,
+        proxies_closed=["org/.github#4"],
+        proxy_drift=["org/.github#5 — left open"],
+        proxy_errors=["proxy org/.github#3 broke"],
+    )
+    assert "## Proxies closed (primary closed, no open task)" in out
+    assert "- org/.github#4" in out
+    assert "**Proxies left open**" in out
+    assert "- org/.github#5 — left open" in out
+    assert "**Proxy link errors**" in out
+    assert "- proxy org/.github#3 broke" in out
+    assert "nothing to close" not in out
+
+
+# --- misplaced ad-hoc tasks (epic .github#1417, spec §4.8) ------------------------
+
+_LIVE_ADHOC_REF = epics.IssueRef("vergil-project", ".github", 50)
+_TRUSTED = frozenset({"wphillipmoore", "wphillipmoore-vergil-user"})
+
+
+def _adhoc_child(
+    number: int,
+    *,
+    title: str = "a task",
+    body: str = "",
+    labels: frozenset[str] = frozenset(),
+    parent: epics.IssueRef | None = _LIVE_ADHOC_REF,
+    repo: str = "vergil-tooling",
+) -> epic_audit.OpenIssue:
+    return epic_audit.OpenIssue(
+        ref=epics.IssueRef("vergil-project", repo, number),
+        title=title,
+        body=body,
+        labels=labels,
+        native_parent=parent,
+        public=True,
+    )
+
+
+_LIVE_ADHOC = epic_audit.OpenIssue(
+    ref=_LIVE_ADHOC_REF,
+    title="Epic (ad hoc): vergil-tooling",
+    body="",
+    labels=frozenset({"epic", "ad-hoc"}),
+    native_parent=None,
+    public=True,
+)
+
+
+def _misplaced(
+    issues: list[epic_audit.OpenIssue],
+    *,
+    epics_by_slug: dict[str, bool] | None = None,
+    comments: dict[int, list[dict[str, Any]]] | None = None,
+    unreadable: frozenset[str] = frozenset(),
+) -> tuple[list[epic_audit.MisplacedTask], MagicMock, MagicMock]:
+    epics_by_slug = epics_by_slug or {}
+    comments = comments or {}
+
+    def is_epic(ref: epics.IssueRef) -> bool:
+        if ref.slug in unreadable:
+            raise github.GitHubAPIError(1, "gh", "", "Could not resolve to an issue")
+        return epics_by_slug.get(ref.slug, False)
+
+    def read_json(*args: str) -> object:
+        assert args[:2] == ("issue", "view")
+        return {"comments": comments.get(int(args[2]), [])}
+
+    trusted = MagicMock(return_value=_TRUSTED)
+    run = MagicMock()
+    with (
+        patch("vergil_tooling.lib.epics.is_epic", side_effect=is_epic),
+        patch("vergil_tooling.lib.github.read_json", side_effect=read_json),
+        patch("vergil_tooling.lib.epic_size.trusted_logins", trusted),
+        patch("vergil_tooling.lib.github.run", run),
+    ):
+        found = epic_audit.misplaced_adhoc("vergil-project", issues=[_LIVE_ADHOC, *issues])
+    return found, trusted, run
+
+
+def test_misplaced_logbook_title() -> None:
+    found, _, _ = _misplaced([_adhoc_child(1, title="Logbook: 2026-11-19")])
+    assert found == [
+        epic_audit.MisplacedTask(
+            epics.IssueRef("vergil-project", "vergil-tooling", 1),
+            "titled `Logbook:`; it belongs under the hoshin epic",
+        )
+    ]
+
+
+def test_misplaced_cross_org_epic_ref() -> None:
+    body = (
+        "Part of logical-minds-foundry/.github#12, see also"
+        " https://github.com/logical-minds-foundry/.github/issues/12 and vergil-project/.github#1."
+    )
+    found, _, _ = _misplaced(
+        [_adhoc_child(2, body=body)],
+        epics_by_slug={"logical-minds-foundry/.github#12": True, "vergil-project/.github#1": True},
+    )
+    assert [m.reason for m in found] == [
+        "names logical-minds-foundry/.github#12, an epic in another org"
+    ]
+
+
+def test_misplaced_cross_org_url_form() -> None:
+    body = "Primary: https://github.com/other-org/.github/issues/7"
+    found, _, _ = _misplaced(
+        [_adhoc_child(2, body=body)], epics_by_slug={"other-org/.github#7": True}
+    )
+    assert [m.reason for m in found] == ["names other-org/.github#7, an epic in another org"]
+
+
+def test_cross_org_ref_to_non_epic_not_reported() -> None:
+    found, trusted, _ = _misplaced([_adhoc_child(3, body="Upstream bug: other-org/lib#99")])
+    assert found == []
+    trusted.assert_not_called()  # no candidate, so the trusted authors are never read
+
+
+def test_cross_org_ref_unreadable_reported() -> None:
+    found, _, _ = _misplaced(
+        [_adhoc_child(4, body="See secret-org/private#3")],
+        unreadable=frozenset({"secret-org/private#3"}),
+    )
+    assert [m.reason for m in found] == ["names secret-org/private#3, which could not be read"]
+
+
+def test_misplaced_only_under_a_live_adhoc_epic() -> None:
+    other_epic = epics.IssueRef("vergil-project", ".github", 1417)
+    found, _, _ = _misplaced(
+        [
+            _adhoc_child(5, title="Logbook: under a development epic", parent=other_epic),
+            _adhoc_child(6, title="Logbook: no parent", parent=None),
+        ]
+    )
+    assert found == []
+
+
+def test_standalone_confirmed_suppresses() -> None:
+    comments = {
+        7: [
+            {
+                "author": {"login": "app/wphillipmoore-vergil-user"},
+                "body": "Ruled:\nStandalone-confirmed\n",
+            }
+        ]
+    }
+    found, _, _ = _misplaced([_adhoc_child(7, title="Logbook: x")], comments=comments)
+    assert found == []
+
+
+def test_standalone_confirmed_untrusted_ignored() -> None:
+    comments = {
+        8: [
+            {"author": {"login": "mallory"}, "body": "Standalone-confirmed"},
+            {"author": {"login": "wphillipmoore"}, "body": "not Standalone-confirmed here"},
+        ]
+    }
+    found, _, _ = _misplaced([_adhoc_child(8, title="Logbook: x")], comments=comments)
+    assert len(found) == 1
+
+
+def test_misplaced_report_never_writes() -> None:
+    _, _, run = _misplaced(
+        [_adhoc_child(9, title="Logbook: x", body="other-org/.github#7")],
+        epics_by_slug={"other-org/.github#7": True},
+    )
+    run.assert_not_called()
+
+
+def test_misplaced_reads_each_cross_org_ref_once_and_enumerates_when_not_given() -> None:
+    issues = [
+        _LIVE_ADHOC,
+        _adhoc_child(10, body="other-org/.github#7"),
+        _adhoc_child(11, body="other-org/.github#7"),
+    ]
+    is_epic = MagicMock(return_value=False)
+    with (
+        patch.object(epic_audit, "open_issues", return_value=issues) as enum,
+        patch("vergil_tooling.lib.epics.is_epic", is_epic),
+    ):
+        assert epic_audit.misplaced_adhoc("vergil-project") == []
+    enum.assert_called_once_with("vergil-project")
+    is_epic.assert_called_once_with(epics.IssueRef("other-org", ".github", 7))
+
+
+def test_standalone_confirmed_bad_response_raises() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        pytest.raises(RuntimeError, match="unexpected 'gh issue view' response"),
+    ):
+        epic_audit._standalone_confirmed(epics.IssueRef("o", "r", 1), _TRUSTED)
+
+
+def test_render_reports_misplaced_adhoc() -> None:
+    task = epics.IssueRef("org", "tool", 3)
+    out = epic_audit.render(
+        [],
+        [],
+        org="org",
+        window_days=30,
+        misplaced_adhoc=[epic_audit.MisplacedTask(task, "titled `Logbook:`")],
+    )
+    assert "## Ad-hoc tasks that look misplaced (report only)" in out
+    assert "`Standalone-confirmed`" in out
+    assert "- org/tool#3 — titled `Logbook:`" in out
+
+
+def test_misplaced_loads_trusted_authors_once() -> None:
+    found, trusted, _ = _misplaced(
+        [_adhoc_child(12, title="Logbook: a"), _adhoc_child(13, title="Logbook: b")]
+    )
+    assert [m.task.number for m in found] == [12, 13]
+    trusted.assert_called_once_with()

@@ -11,12 +11,14 @@ from typing import Any
 import pytest
 
 from vergil_tooling.bin import vrg_merge_review_request
-from vergil_tooling.lib import github
+from vergil_tooling.lib import epic_audit, github, proxies
+from vergil_tooling.lib.epics import ChildState, IssueRef, parse_issue_ref
 from vergil_tooling.lib.github import GitHubAPIError, MissingGitHubTokenError
 from vergil_tooling.lib.merge_review import open_pr
 from vergil_tooling.lib.merge_review import request as req
 from vergil_tooling.lib.merge_review.result import parse_result
 from vergil_tooling.lib.progress import StageResult
+from vergil_tooling.lib.proxies import ProxyLinkError
 from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.validate_record import write_record
 
@@ -893,6 +895,148 @@ def test_task_outside_an_epic_has_no_epic_tasks(
     task_pages["task"] = _task(parent=parent)
     assert _built(_argv(repo), capsys)["epic_open_tasks"] == []
     assert [kind for kind, _vars in task_calls] == ["task"]
+
+
+PROXY = "acme/.github#9"
+PRIMARY = "other/.github#5"
+
+
+@pytest.fixture
+def proxy_links(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Fakes for the proxy readers: the primary, its listed proxies and its children.
+
+    The task's parent is ``PROXY`` (``epic`` + ``proxy``), whose primary is
+    ``PRIMARY``; the primary lists ``PROXY`` and ``acme/.github#11``. Each
+    fake records its argument under ``calls``; an ``Exception`` value under
+    a reader's key is raised instead.
+    """
+    links: dict[str, Any] = {
+        "primary": parse_issue_ref(PRIMARY, default_repo=""),
+        "proxies": (
+            parse_issue_ref(PROXY, default_repo=""),
+            parse_issue_ref("acme/.github#11", default_repo=""),
+        ),
+        "children": [
+            ChildState(parse_issue_ref("other/thing#1", default_repo=""), "OPEN", "Primary task"),
+            ChildState(parse_issue_ref(ISSUE, default_repo=""), "OPEN", "This task"),
+            ChildState(parse_issue_ref("acme/widget#43", default_repo=""), "CLOSED", "Done"),
+            ChildState(parse_issue_ref("acme/tool#3", default_repo=""), "OPEN", "Other proxy's"),
+        ],
+        "calls": [],
+    }
+
+    def answer(name: str, ref: IssueRef) -> Any:
+        links["calls"].append((name, ref.slug))
+        value = links[name]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(proxies, "primary_of", lambda ref: answer("primary", ref))
+    monkeypatch.setattr(proxies, "proxies_of", lambda ref: answer("proxies", ref))
+    monkeypatch.setattr(epic_audit, "epic_children", lambda ref: answer("children", ref))
+    return links
+
+
+def test_proxy_task_open_tasks_from_primary(
+    repo: Path,
+    capsys: Cap,
+    task_pages: dict[str, Any],
+    task_calls: list[Any],
+    proxy_links: dict[str, Any],
+) -> None:
+    task_pages["task"] = _task(parent=_parent(PROXY, labels=("epic", "proxy")))
+    request = _built(_argv(repo), capsys)
+    assert request["epic_open_tasks"] == [
+        {"ref": "other/thing#1", "title": "Primary task"},
+        {"ref": "acme/tool#3", "title": "Other proxy's"},
+    ]
+    assert proxy_links["calls"] == [
+        ("primary", PROXY),
+        ("proxies", PRIMARY),
+        ("children", PRIMARY),
+    ]
+    # The proxy's own sub-issues are never read: the primary's children hold them.
+    assert [kind for kind, _vars in task_calls] == ["task"]
+
+
+def test_proxy_task_open_tasks_leave_out_the_batch(
+    comment_pages: list[Any], task_pages: dict[str, Any], proxy_links: dict[str, Any]
+) -> None:
+    task_pages["task"] = _task(parent=_parent(PROXY, labels=("epic", "proxy")))
+    context = req.fetch_task_context(
+        parse_issue_ref(ISSUE, default_repo=""), [parse_issue_ref("Acme/Tool#3", default_repo="")]
+    )
+    assert context.epic_open_tasks == [{"ref": "other/thing#1", "title": "Primary task"}]
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        (
+            {"primary": ProxyLinkError(f"proxy {PROXY} has no 'Primary:' line in its body")},
+            f"proxy {PROXY} has no 'Primary:' line in its body",
+        ),
+        (
+            {"proxies": ()},
+            f"proxy {PROXY} names {PRIMARY} as its primary, but {PRIMARY} has no trusted"
+            f" 'Proxy: {PROXY}' comment",
+        ),
+        (
+            {"children": ProxyLinkError(f"{PRIMARY} lists the proxy acme/.github#11, whose")},
+            f"{PRIMARY} lists the proxy acme/.github#11, whose",
+        ),
+        (
+            {"proxies": GitHubAPIError(1, ["gh"], output="", stderr="HTTP 404")},
+            "HTTP 404",
+        ),
+        (
+            {"primary": github.NoInstallationError("other", ["acme"])},
+            "no installation for owner 'other'",
+        ),
+        (
+            {"proxies": TrustedAuthorsNotConfiguredError("no trusted authors configured")},
+            "no trusted authors configured",
+        ),
+    ],
+    ids=[
+        "no-primary-line",
+        "primary-does-not-name-proxy",
+        "another-proxy-broken",
+        "read-failure",
+        "no-installation",
+        "trusted-authors-unconfigured",
+    ],
+)
+def test_proxy_task_unresolvable_primary_raises(
+    repo: Path,
+    capsys: Cap,
+    task_pages: dict[str, Any],
+    proxy_links: dict[str, Any],
+    override: dict[str, Any],
+    message: str,
+) -> None:
+    task_pages["task"] = _task(parent=_parent(PROXY, labels=("epic", "proxy")))
+    proxy_links.update(override)
+    code, out, err = _run(_argv(repo), capsys)
+    assert code == 1
+    assert out == ""
+    assert "ERROR: cannot read the issue or its epic:" in err
+    assert message in err
+    assert not (_merge_review_dir(repo) / "request-review.json").exists()
+
+
+def test_plain_epic_task_unchanged(
+    repo: Path,
+    capsys: Cap,
+    task_pages: dict[str, Any],
+    task_calls: list[Any],
+    proxy_links: dict[str, Any],
+) -> None:
+    request = _built(_argv(repo), capsys)
+    assert request["epic_open_tasks"] == [{"ref": "acme/widget#43", "title": "The next task"}]
+    assert [kind for kind, _vars in task_calls] == ["task", "subs"]
+    assert proxy_links["calls"] == []
 
 
 def test_check_request_takes_the_body_and_tasks_from_github(

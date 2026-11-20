@@ -133,6 +133,17 @@ def test_registry_includes_retrospective_label() -> None:
     assert entry["description"], "retrospective label needs a description"
 
 
+def test_proxy_label_in_registry() -> None:
+    # The proxy epic's label (vergil-project/.github#1417): ensure_labels
+    # refuses a name the registry does not carry, so it must be provisioned.
+    entry = next(
+        (label for label in load_labels()["labels"] if label["name"] == "proxy"),
+        None,
+    )
+    assert entry is not None, "proxy label missing from the registry"
+    assert entry["description"], "proxy label needs a description"
+
+
 def test_label_descriptions_within_github_limit() -> None:
     # GitHub caps a label's description at 100 chars; a longer one fails
     # provisioning with HTTP 422 so vrg-ensure-label --sync cannot deploy it.

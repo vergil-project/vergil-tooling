@@ -29,11 +29,50 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Collection, Iterable, Mapping
 
 STANZA = "trusted_authors"
 VM_FILE_NAME = "trusted-authors.toml"
 _APP_PREFIX = "app/"
+
+
+def bare_login(login: str) -> str:
+    """*login* with a leading ``app/`` stripped, the form the configuration stores."""
+    return login.removeprefix(_APP_PREFIX)
+
+
+def trusted_comment_bodies(
+    comments: Iterable[Mapping[str, object]], trusted: Collection[str]
+) -> list[str]:
+    """The bodies of *comments* whose author is in *trusted*, in their order.
+
+    *comments* are ``gh issue view --json comments`` entries (``author.login``
+    and ``body``). A comment with no author (a deleted account) has the login
+    ``""``, which no trusted login matches.
+    """
+    bodies: list[str] = []
+    for comment in comments:
+        author = comment.get("author")
+        login = str(author.get("login") or "") if isinstance(author, dict) else ""
+        if bare_login(login) in trusted:
+            bodies.append(str(comment.get("body") or ""))
+    return bodies
+
+
+def trusted_comment_lines(
+    comments: Iterable[Mapping[str, object]], trusted: Collection[str]
+) -> list[str]:
+    """Every line of the trusted *comments* (:func:`trusted_comment_bodies`), stripped, in order.
+
+    The one reader of the machine-read comment lines, each alone on its line
+    (``Proxy:``, ``Standalone-confirmed``): a caller matches a stripped line,
+    so a marker inside prose never counts.
+    """
+    return [
+        line.strip()
+        for body in trusted_comment_bodies(comments, trusted)
+        for line in body.splitlines()
+    ]
 
 
 class TrustedAuthorsNotConfiguredError(Exception):

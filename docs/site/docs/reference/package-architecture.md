@@ -25,10 +25,13 @@ The main modules under `src/vergil_tooling/lib/`:
   [`vrg-whoami`](cli-tools-overview.md#vrg-whoami); `platform_env.py`
   resolves the platform.
 - **`epics.py`**: the epic/task model: the `StandingKind` table (the
-  ad-hoc, intake, planning and deferred standing epics and their
+  ad-hoc, intake, planning, deferred and hoshin standing epics and their
   per-quarter archives), epic and queue homes, sub-issue linking, rollup,
   and the parent-based queue-item check that `vrg-pr-workflow report-ready`
   and `vrg-submit-pr` use to refuse intake, planning and deferred items.
+- **`proxies.py`**: the proxy epic's link to its primary, read from the
+  proxy's `Primary:` body line and the primary's trusted `Proxy:` comments
+  (`epics.is_proxy` is the label test every development-epic check skips).
 - **`epic_audit.py`**, **`intake_route.py`** and **`queue_view.py`** build
   on `epics.py`: the `vrg-epic-audit` drift report and orphan pass, the
   `vrg-intake-route` mechanics and route table, and the `vrg-queue` views.

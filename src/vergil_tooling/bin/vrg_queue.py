@@ -1,4 +1,4 @@
-"""View the intake, planning and deferred queues, and the ad-hoc tasks (read-only).
+"""View the intake, planning and deferred queues, and the ad-hoc and hoshin tasks (read-only).
 
 ``vrg-queue intake`` lists the open items under the intake queue epic, oldest
 first. ``vrg-queue planning`` lists the open items under the planning queue
@@ -51,6 +51,13 @@ is not a review queue, so a bare ``vrg-queue`` never shows it. With
 ``--repo``, a public repo narrows the list to its own ad-hoc epic in the org's
 ``.github`` (none gives an empty list), and a self-homed private repo selects
 its own home.
+
+``vrg-queue hoshin`` lists the open tasks under the org's ``Epic (hoshin):
+<org>`` epic, the tasks ``/vergil:hoshin`` files, in the ad-hoc form, with the
+same flags (``--json``, ``--repo``, ``--root``). Its home is always the org's
+``.github``, never a self-homed private repo; with ``--repo``, only the epic's
+tasks in that repo are listed. An org with no hoshin epic yet gives an empty
+list. A bare ``vrg-queue`` never shows it.
 """
 
 from __future__ import annotations
@@ -81,8 +88,10 @@ if TYPE_CHECKING:
 # The one view ``--sort`` and ``--size`` apply to.
 _PLANNING = "planning"
 
-# The ad-hoc view: a choice of its own, never in _VIEWS, so a bare run never shows it.
+# The task views: choices of their own, never in _VIEWS, so a bare run never shows them.
 _ADHOC = "adhoc"
+_HOSHIN = "hoshin"
+_TASK_VIEWS = (_ADHOC, _HOSHIN)
 
 # Insertion order is the order a bare ``vrg-queue`` lists the queues in.
 _VIEWS = {
@@ -105,9 +114,9 @@ _VIEW_ERRORS = (
     ValueError,
 )
 
-# What the ad-hoc view can raise besides: an in-flight source it cannot read or
-# a repo with no main clone, and repo roots it cannot determine.
-_ADHOC_ERRORS = (*_VIEW_ERRORS, in_flight.InFlightError, live_branches.RepoSetError)
+# What the task views can raise besides: an in-flight source they cannot read or
+# a repo with no main clone, and repo roots they cannot determine.
+_TASK_ERRORS = (*_VIEW_ERRORS, in_flight.InFlightError, live_branches.RepoSetError)
 
 
 @cli_main
@@ -132,10 +141,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         target = f"{github.current_repo().split('/', 1)[0]}/.github"
     owner = target.split("/", 1)[0]
-    if args.queue == _ADHOC:
-        return _adhoc(owner, repo=args.repo, roots=args.root, as_json=args.json)
+    if args.queue in _TASK_VIEWS:
+        return _tasks(args.queue, owner, repo=args.repo, roots=args.root, as_json=args.json)
     if args.root is not None:
-        print("vrg-queue: --root applies only to adhoc", file=sys.stderr)
+        print(f"vrg-queue: --root applies only to {' and '.join(_TASK_VIEWS)}", file=sys.stderr)
         return 1
     # Bare mode: None marks a queue whose epic does not exist yet.
     results: dict[str, list[QueueItem] | None] = {}
@@ -212,12 +221,16 @@ def _report_size_errors(items: Iterable[QueueItem]) -> int:
     return 2 if errors else 0
 
 
-def _adhoc(owner: str, *, repo: str | None, roots: Sequence[Path] | None, as_json: bool) -> int:
-    """Show the ad-hoc tasks: the org's, or one ``owner/name`` *repo*'s.
+def _tasks(
+    view: str, owner: str, *, repo: str | None, roots: Sequence[Path] | None, as_json: bool
+) -> int:
+    """Show the ad-hoc or hoshin tasks (*view*): the org's, or one ``owner/name`` *repo*'s.
 
     Without *repo* the home is the org's ``.github``, which must exist. With
-    it, the home is the repo's epic home: the org's ``.github`` for a public
-    repo, narrowed to its own ad-hoc epic, or a self-homed private repo itself.
+    it, an ad-hoc home is the repo's epic home: the org's ``.github`` for a
+    public repo, narrowed to its own ad-hoc epic, or a self-homed private repo
+    itself. A hoshin home is always the org's ``.github``
+    (:func:`epics.hoshin_home`), its epic's children narrowed to *repo*.
     *roots* (``--root``) replace the platform's repo roots for the clones the
     in-flight marks are read from.
     """
@@ -227,18 +240,23 @@ def _adhoc(owner: str, *, repo: str | None, roots: Sequence[Path] | None, as_jso
             name = owner
         else:
             name = repo.split("/", 1)[1]
-            home = epics.resolve_epic_home(owner, name)
+            home = (
+                epics.hoshin_home(repo)[0]
+                if view == _HOSHIN
+                else epics.resolve_epic_home(owner, name)
+            )
         try:
-            items = queue_view.adhoc_items(home, repo=repo, roots=roots)
+            read = queue_view.hoshin_items if view == _HOSHIN else queue_view.adhoc_items
+            items = read(home, repo=repo, roots=roots)
         except github.MissingGitHubTokenError:
             raise
-        except _ADHOC_ERRORS as exc:
-            _report_failure(_ADHOC, home, name, exc)
+        except _TASK_ERRORS as exc:
+            _report_failure(view, home, name, exc)
             return 1
     if as_json:
         print(json.dumps(queue_view.adhoc_to_json(items), indent=2))
         return 0
-    print(f"{_ADHOC} queue for {name} in {home}: {len(items)} open task(s)")
+    print(f"{view} queue for {name} in {home}: {len(items)} open task(s)")
     if items:
         print(queue_view.render_adhoc_text(items, now=datetime.now(UTC)))
     return 0
@@ -285,13 +303,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "(waiting / in-progress / ready-to-close), or the deferred queue "
             "(least recently deferred first). With no queue named, show all "
             "three. 'adhoc' shows the open ad-hoc tasks (ready / blocked / in-flight), "
-            "grouped by repo; it is shown only when named. Read-only."
+            "grouped by repo, and 'hoshin' the open tasks under the hoshin epic "
+            "in the same form; each is shown only when named. Read-only."
         ),
     )
     parser.add_argument(
         "queue",
         nargs="?",
-        choices=[*_VIEWS, _ADHOC],
+        choices=[*_VIEWS, *_TASK_VIEWS],
         help="Which queue to show (default: intake, planning and deferred, in order)",
     )
     parser.add_argument(
@@ -299,7 +318,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Show this repo's queue home (owner/name); a self-homed private repo "
             "has its own queues. With adhoc, a public repo narrows the list to "
-            "its own ad-hoc epic. Default: the current org's .github queues."
+            "its own ad-hoc epic; with hoshin, the org's hoshin epic is narrowed "
+            "to the repo's tasks. Default: the current org's .github queues."
         ),
     )
     parser.add_argument(
@@ -308,7 +328,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         metavar="DIR",
         help=(
-            "adhoc only: a projects directory (or repo) to find each repo's main "
+            "adhoc and hoshin only: a projects directory (or repo) to find each repo's main "
             "clone under, for the in-flight marks; repeatable. Replaces the "
             "platform default (/vergil/projects on a cloud VM, the projects mount "
             "on a Lima VM; none on a physical host)."

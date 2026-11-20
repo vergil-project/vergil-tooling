@@ -12,13 +12,19 @@ neutral ``security``-labelled intake issue carrying only a pointer to it.
   already exists. A failure after the advisory exists prints the exact command
   that finishes the pair and exits 1. ``create`` makes the advisory's first
   pairing only: one that already tracks another issue is refused before any
-  issue is created, marked or linked.
+  issue is created, marked or linked. A body file, details file or summary
+  holding a ``Moved from:`` or ``Moved to:`` line is refused before any
+  GitHub call, with ``--resume`` too: only a move writes those lines.
 - ``list`` names advisories by GHSA ID, state, affected repo and tracked
   issues; ``--details`` adds each summary and is refused under the sweep.
 - ``show`` prints one pair with its details, to the terminal only.
 - ``retarget`` moves an advisory's tracking from ``--from``, an issue it
   tracks, to new issues. It refuses an untracked source, and stopping
-  tracking an open issue that no ``--drop`` names, before any write.
+  tracking an open issue that no ``--drop`` names, before any write. When
+  every ``--to`` is in another org it moves the advisory to that org's
+  ``.github`` (a copy with ``Moved from:``; the original closed with
+  ``Moved to:``); ``--to`` issues spanning orgs are refused (epic
+  vergil-project/.github#1417).
 - ``close`` closes a draft advisory whose issues are all closed, with a
   required ``--reason``: it first posts ``Security record <GHSA> closed:
   <reason>`` on every issue the record tracks, the audit trail
@@ -238,8 +244,13 @@ def _create(args: argparse.Namespace) -> int:
     attach = _full_ref(args.issue, "--issue") if args.issue is not None else None
     body = _read_file(args.body_file, "--body-file")
     details = _read_file(args.details_file, "--details-file")
+    # Only a move writes these lines, so the caller's text may not, with
+    # --resume too: the resume command re-reads the same files.
+    security_records.refuse_move_lines(body, "--body-file", _RefusedError)
+    security_records.refuse_move_lines(details, "--details-file", _RefusedError)
     # With --resume the advisory already exists, so no summary is needed.
     summary = _summary_of(args, details) if args.resume is None else ""
+    security_records.refuse_move_lines(summary, "--summary", _RefusedError)
     with github.target_org(org):
         home = security_records.advisory_home(org)
         queue_home = epics.queue_home(args.repo)[0]
@@ -447,8 +458,11 @@ def _retarget(args: argparse.Namespace) -> int:
     targets = [_full_ref(text, "--to") for text in args.to]
     drop = [_full_ref(text, "--drop") for text in args.drop or ()]
     try:
-        org = epics.single_target_org(source, *targets, *drop)
-    except ValueError as exc:
+        # The advisory lives in the org of --from and every issue it drops;
+        # the --to issues may all be in one other org, which moves it there.
+        org = epics.single_target_org(source, *drop)
+        to_org = security_records.fix_org(ghsa_id, targets)
+    except (ValueError, security_records.RetargetRefusedError) as exc:
         raise _RefusedError(str(exc)) from None
     with github.target_org(org):
         home = security_records.advisory_home(org)
@@ -457,9 +471,21 @@ def _retarget(args: argparse.Namespace) -> int:
         except security_records.RetargetError as exc:
             print(f"{_PROG}: {_reason(exc)}", file=sys.stderr)
             return 1
-    for note in notes:
+    refs = ", ".join(ref.slug for ref in targets)
+    if to_org == org:
+        for note in notes:
+            print(f"{ghsa_id}: {note}.")
+        print(f"Retargeted {ghsa_id} to {refs}.")
+        return 0
+    # A move's last note is the original's Moved to: line, naming the copy.
+    *transfers, moved = notes
+    (_copy_org, copy_id), *_rest = security_records.parse_moved_to(moved)
+    for note in transfers:
         print(f"{ghsa_id}: {note}.")
-    print(f"Retargeted {ghsa_id} to {', '.join(ref.slug for ref in targets)}.")
+    print(
+        f"Moved {ghsa_id} to {to_org}/.github as {copy_id}, tracked by {refs}; "
+        f"{ghsa_id} is closed as moved."
+    )
     return 0
 
 
@@ -565,7 +591,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "and stopping tracking an open issue (other than --from) that no --drop "
             "names; each refusal prints the command that would succeed. A re-run with "
             "the same arguments finishes an interrupted retarget. Leaving an open "
-            "issue untracked with --drop is the human's decision."
+            "issue untracked with --drop is the human's decision. Every --to must be "
+            "in one org; when that is not the advisory's org, the advisory moves "
+            "there: a copy with a 'Moved from:' line is created in that org's .github "
+            "and tracks the --to set, and the original gets a 'Moved to:' line and is "
+            "closed."
         ),
     )
     retarget.add_argument("ghsa", help="The advisory's GHSA ID")
@@ -612,7 +642,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "this repo's org's .github, under a 'Note (<YYYY-MM-DD>):' header (UTC), "
             "keeping the 'Tracking issue:' lines last. It is append-only: the existing "
             "text is never changed. It refuses an empty note, a note with a "
-            "'Tracking issue:' line, a missing advisory, an external report and any "
+            "'Tracking issue:', 'Moved from:' or 'Moved to:' line, a missing advisory, "
+            "an external report and any "
             "other state. A re-run with the same file on the same day adds nothing "
             "while that note is still the advisory's last. "
             "It prints only the GHSA ID and the advisory home, never the note."

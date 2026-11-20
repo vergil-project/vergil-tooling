@@ -1806,6 +1806,28 @@ def test_route_one_off_refuses_cross_org_epic(env: Env) -> None:
     env.resolve_epic_ref.assert_not_called()
 
 
+def test_one_off_refuses_hoshin_sentinel(env: Env) -> None:
+    with pytest.raises(RouteRefusedError, match="/vergil:hoshin"):
+        route(ITEM, OneOff(repo="org/tool", epic="hoshin"), today=TODAY)
+    # Refused by name before anything resolves: no epic is created.
+    env.resolve_epic_ref.assert_not_called()
+    env.create_issue.assert_not_called()
+    assert _transfer_calls(env) == []
+    env.add_child.assert_not_called()
+    env.reparent_child.assert_not_called()
+
+
+def test_one_off_refuses_hoshin_epic_ref(env: Env) -> None:
+    hoshin = IssueRef("org", ".github", 77)
+    env.kinds[hoshin] = "hoshin"
+    env.resolve_epic_ref.return_value = hoshin
+    with pytest.raises(RouteRefusedError, match="org/.github#77 is the hoshin epic"):
+        route(ITEM, OneOff(repo="org/tool", epic="org/.github#77"), today=TODAY)
+    assert _transfer_calls(env) == []
+    env.add_child.assert_not_called()
+    env.reparent_child.assert_not_called()
+
+
 def test_route_one_off_refuses_queue_epic(env: Env) -> None:
     env.resolve_epic_ref.return_value = INTAKE
     with pytest.raises(RouteRefusedError, match="queue epic"):

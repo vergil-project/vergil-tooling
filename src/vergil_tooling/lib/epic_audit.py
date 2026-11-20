@@ -12,6 +12,11 @@ legitimate top-level kind or has an epic parent*: it nativizes body-only
 moves a now-public repo's self-homed queue items under ``.github``, attaches
 every orphan to its home's intake epic, and reports private-repo work under
 public ``.github`` epics.
+
+The proxy checks (epic vergil-project/.github#1417): :func:`epic_children` lists
+an epic's children with every proxy's beside them, :func:`proxy_link_problems`
+checks one epic's ``Primary:``/``Proxy:`` pair, and :func:`proxy_link_drift`
+checks every open proxy of a home.
 """
 
 from __future__ import annotations
@@ -23,8 +28,19 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from vergil_tooling.lib import epic_docs, epics, github, linkage, release, remote_config, roadmap
+from vergil_tooling.lib import (
+    epic_docs,
+    epic_size,
+    epics,
+    github,
+    linkage,
+    proxies,
+    release,
+    remote_config,
+    roadmap,
+)
 from vergil_tooling.lib.labels import RETIRED_LABELS
+from vergil_tooling.lib.trusted_authors import trusted_comment_lines
 
 # A closed-epic-with-open-child violation (issue #2259): the closed epic paired
 # with the tuple of its still-open children.
@@ -180,6 +196,9 @@ def task_drift(since: str, *, org: str, today: date | None = None) -> list[TaskD
 
 def epic_drift(org: str | None = None, *, home: str | None = None) -> list[roadmap.EpicSummary]:
     """Open, non-perpetual epics whose children are all closed (should roll up).
+
+    A proxy epic is excluded with the standing epics (``roadmap.gather``): it
+    lives as long as its primary, so an all-closed proxy is not drift.
 
     Scoped to the resolved epic *home* (default: the org's ``.github``), so a
     ``--repo``-targeted audit sees only that repo's epics.
@@ -1040,7 +1059,326 @@ def misplaced_archives(
     return found
 
 
-def render_epic_children(epic: epics.IssueRef, children: list[epics.ChildState]) -> str:
+# -- Misplaced ad-hoc tasks (epic vergil-project/.github#1417, spec §4.8) ------
+
+STANDALONE_CONFIRMED = "Standalone-confirmed"
+_LOGBOOK_PREFIX = "Logbook:"
+# An issue a task body names: ``owner/repo#N`` or a github.com issue URL. The
+# lookbehind keeps a slug from starting inside a path or a longer word.
+_BODY_ISSUE_RE = re.compile(
+    r"(?<![\w./-])([A-Za-z0-9-]+)/([A-Za-z0-9._-]+)#([0-9]+)\b"
+    r"|https://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9._-]+)/issues/([0-9]+)\b"
+)
+
+
+@dataclass(frozen=True)
+class MisplacedTask:
+    """An open task under a live ad-hoc epic that looks misplaced, and why."""
+
+    task: epics.IssueRef
+    reason: str
+
+
+def _cross_org_refs(body: str, org: str) -> list[epics.IssueRef]:
+    """The issues *body* names outside *org*, in first-mention order, without repeats."""
+    found: dict[str, epics.IssueRef] = {}
+    for match in _BODY_ISSUE_RE.finditer(body):
+        groups = match.groups()
+        owner, repo, number = groups[:3] if groups[0] is not None else groups[3:]
+        if owner.lower() == org.lower():
+            continue
+        ref = epics.IssueRef(owner, repo, int(number))
+        found.setdefault(ref.slug.lower(), ref)
+    return list(found.values())
+
+
+def _standalone_confirmed(task: epics.IssueRef, trusted: frozenset[str]) -> bool:
+    """True iff a trusted comment on *task* carries ``Standalone-confirmed`` alone on its line."""
+    with github.target_org(task.owner):
+        raw = github.read_json(
+            "issue", "view", str(task.number), "--repo", f"{task.owner}/{task.repo}",
+            "--json", "comments",
+        )  # fmt: skip
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"unexpected 'gh issue view' response for {task.slug}: {raw!r}")
+    comments: Any = raw.get("comments") or []
+    lines = trusted_comment_lines(comments, trusted)
+    return STANDALONE_CONFIRMED in lines
+
+
+def misplaced_adhoc(org: str, *, issues: list[OpenIssue] | None = None) -> list[MisplacedTask]:
+    """Open tasks under a live ad-hoc epic that look misplaced (report only, spec §4.8).
+
+    A task is a candidate when its title starts ``Logbook:`` (it belongs under
+    the hoshin epic) or its body names an ``epic``-labelled issue in another
+    org (it belongs under a proxy). A cross-org ref whose labels cannot be
+    read (private, deleted, an org the App cannot reach) is a candidate of its
+    own, never raised and never skipped. A candidate is dropped when a trusted
+    comment on it carries ``Standalone-confirmed`` alone on its line: the
+    human ruled it standalone. Nothing is refused, moved, closed or labelled.
+
+    It reads the trusted authors (only once a candidate is found), so the audit
+    runs it only without ``--close``: the daily sweep has no trusted-authors
+    configuration. *issues* is the shared :func:`open_issues` enumeration.
+    """
+    if issues is None:
+        issues = open_issues(org)
+    live_adhoc = {
+        issue.ref for issue in issues if epics.standing_kind_of(set(issue.labels)) is epics.ADHOC
+    }
+    epic_label: dict[str, bool | None] = {}  # cross-org ref -> is an epic; None if unreadable
+    trusted: frozenset[str] | None = None
+    found: list[MisplacedTask] = []
+    for issue in sorted(issues, key=lambda i: (i.ref.owner, i.ref.repo, i.ref.number)):
+        if issue.native_parent not in live_adhoc:
+            continue
+        reasons: list[str] = []
+        if issue.title.startswith(_LOGBOOK_PREFIX):
+            reasons.append(f"titled `{_LOGBOOK_PREFIX}`; it belongs under the hoshin epic")
+        for ref in _cross_org_refs(issue.body, issue.ref.owner):
+            key = ref.slug.lower()
+            if key not in epic_label:
+                try:
+                    with github.target_org(ref.owner):
+                        epic_label[key] = epics.is_epic(ref)
+                except _LINK_READ_ERRORS:
+                    epic_label[key] = None
+            if epic_label[key] is None:
+                reasons.append(f"names {ref.slug}, which could not be read")
+            elif epic_label[key]:
+                reasons.append(f"names {ref.slug}, an epic in another org")
+        if not reasons:
+            continue
+        if trusted is None:
+            trusted = epic_size.trusted_logins()
+        if _standalone_confirmed(issue.ref, trusted):
+            continue
+        found += [MisplacedTask(task=issue.ref, reason=reason) for reason in reasons]
+    return found
+
+
+# -- Proxy children and the link check (epic vergil-project/.github#1417) ------
+
+
+def _same_issue(a: epics.IssueRef, b: epics.IssueRef) -> bool:
+    """True iff *a* and *b* name one issue (GitHub owner and repo names ignore case)."""
+    return a.slug.lower() == b.slug.lower()
+
+
+def epic_children(epic: epics.IssueRef) -> list[epics.ChildState]:
+    """*epic*'s own children, then the children of every proxy its trusted comments name.
+
+    Each proxy is read under its own org's token, and its ``Primary:`` line must
+    name *epic*: a proxy whose link is broken or disagrees raises
+    :class:`proxies.ProxyLinkError`, never a silently shorter list. A failed
+    read, or a failed trusted-author load, propagates.
+    """
+    with github.target_org(epic.owner):
+        children = list(epics.child_states(epic))
+        listed = proxies.proxies_of(epic)
+    for proxy in listed:
+        with github.target_org(proxy.owner):
+            primary = proxies.primary_of(proxy)
+            if not _same_issue(primary, epic):
+                raise proxies.ProxyLinkError(
+                    f"{epic.slug} lists the proxy {proxy.slug}, whose 'Primary:' line names"
+                    f" {primary.slug}"
+                )
+            children += epics.child_states(proxy)
+    return children
+
+
+# A read that fails while checking a link is a link problem, reported, never skipped.
+_LINK_READ_ERRORS = (github.GitHubAPIError, github.NoInstallationError)
+
+
+def _proxy_side_problems(proxy: epics.IssueRef) -> list[str]:
+    """What is wrong with *proxy*'s link: its ``Primary:`` line, or the primary's comment."""
+    try:
+        with github.target_org(proxy.owner):
+            primary = proxies.primary_of(proxy)
+        with github.target_org(primary.owner):
+            listed = proxies.proxies_of(primary)
+    except proxies.ProxyLinkError as exc:
+        return [str(exc)]
+    except _LINK_READ_ERRORS as exc:
+        return [f"the link of proxy {proxy.slug} could not be read: {exc}"]
+    if any(_same_issue(ref, proxy) for ref in listed):
+        return []
+    return [proxies.unlisted_message(proxy, primary)]
+
+
+def _primary_side_problems(primary: epics.IssueRef) -> list[str]:
+    """What is wrong with each proxy that *primary*'s trusted comments name."""
+    try:
+        with github.target_org(primary.owner):
+            listed = proxies.proxies_of(primary)
+    except proxies.ProxyLinkError as exc:
+        return [str(exc)]
+    problems: list[str] = []
+    for proxy in listed:
+        try:
+            with github.target_org(proxy.owner):
+                if not proxies.is_proxy_ref(proxy):
+                    problems.append(
+                        f"{primary.slug} lists {proxy.slug} as a proxy, which is not a proxy"
+                        f" epic (it lacks the 'epic' + '{epics.PROXY_LABEL}' labels)"
+                    )
+                    continue
+                named = proxies.primary_of(proxy)
+        except proxies.ProxyLinkError as exc:
+            problems.append(str(exc))
+            continue
+        except _LINK_READ_ERRORS as exc:
+            problems.append(
+                f"{primary.slug} lists the proxy {proxy.slug}, which could not be read: {exc}"
+            )
+            continue
+        if not _same_issue(named, primary):
+            problems.append(
+                f"{primary.slug} lists the proxy {proxy.slug}, whose 'Primary:' line names"
+                f" {named.slug}"
+            )
+    return problems
+
+
+def proxy_link_problems(epic: epics.IssueRef) -> list[str]:
+    """Every problem with *epic*'s ``Primary:``/``Proxy:`` links; ``[]`` when they agree.
+
+    For a primary (any epic that is not a proxy): each proxy its trusted
+    comments name must exist, be a proxy, and carry a ``Primary:`` line naming
+    *epic*. For a proxy: its ``Primary:`` line must resolve to an epic whose
+    trusted comments name the proxy. A link that cannot be parsed or read is a
+    problem, never a skipped item. A failed read of *epic* itself, or a failed
+    trusted-author load, propagates.
+    """
+    with github.target_org(epic.owner):
+        is_proxy = proxies.is_proxy_ref(epic)
+    return _proxy_side_problems(epic) if is_proxy else _primary_side_problems(epic)
+
+
+def proxy_link_drift(home: str, *, listing: list[epic_docs.EpicRecord] | None = None) -> list[str]:
+    """The link problems of every open proxy in *home* (report only).
+
+    *listing* is the home's :func:`list_home_epics`, shared with the other
+    per-epic checks; it is read here when not given. It reads trusted comments,
+    so the audit runs it only without ``--close``, never in the daily sweep.
+    """
+    home_owner, home_repo = home.split("/", 1)
+    if listing is None:
+        listing = list_home_epics(home)
+    problems: list[str] = []
+    for record in sorted(listing, key=lambda r: r["number"]):
+        if record["state"] != "OPEN" or not epics.is_proxy(set(record["labels"])):
+            continue
+        problems += _proxy_side_problems(epics.IssueRef(home_owner, home_repo, record["number"]))
+    return problems
+
+
+# -- The sweep's proxy close pass (epic vergil-project/.github#1417) -----------
+
+
+@dataclass(frozen=True)
+class ProxyClosure:
+    """An open proxy whose primary has closed, and how many of its tasks are open."""
+
+    proxy: epics.IssueRef
+    primary: epics.IssueRef
+    open_tasks: int
+
+
+def proxy_closures(
+    home: str, *, listing: list[epic_docs.EpicRecord] | None = None
+) -> tuple[list[ProxyClosure], list[str]]:
+    """Each open proxy in *home* whose primary is closed, and the proxies that could not be judged.
+
+    Returns ``(closures, proxy_errors)``. A proxy lives as long as its primary,
+    so only a closed primary makes it a candidate; its open tasks are counted
+    so :func:`close_proxies` closes only an empty one. A proxy whose
+    ``Primary:`` link fails (malformed, not an epic, or unreadable) is one line
+    of *proxy_errors*, never raised, so one broken proxy cannot stop the
+    sweep's other passes, as :func:`epics.drain_standing_org` treats a
+    corrupted home; the caller fails the run once every pass has run. It reads
+    no comment, so it needs no trusted-authors configuration.
+
+    *listing* is the home's :func:`list_home_epics`; it is read here when not
+    given.
+    """
+    home_owner, home_repo = home.split("/", 1)
+    if listing is None:
+        listing = list_home_epics(home)
+    closures: list[ProxyClosure] = []
+    errors: list[str] = []
+    for record in sorted(listing, key=lambda r: r["number"]):
+        if record["state"] != "OPEN" or not epics.is_proxy(set(record["labels"])):
+            continue
+        proxy = epics.IssueRef(home_owner, home_repo, record["number"])
+        try:
+            with github.target_org(proxy.owner):
+                primary = proxies.primary_of(proxy)
+            with github.target_org(primary.owner):
+                primary_state = epics.issue_state(primary)
+            if primary_state != "CLOSED":
+                continue
+            with github.target_org(proxy.owner):
+                open_tasks = sum(1 for c in epics.child_states(proxy) if c.state == "OPEN")
+        except proxies.ProxyLinkError as exc:
+            errors.append(str(exc))
+            continue
+        except _LINK_READ_ERRORS as exc:
+            errors.append(f"proxy {proxy.slug} could not be judged: {exc}")
+            continue
+        closures.append(ProxyClosure(proxy=proxy, primary=primary, open_tasks=open_tasks))
+    return closures, errors
+
+
+_PROXY_CLOSE_COMMENT = (
+    "Closed by `vrg-epic-audit`: its primary epic {primary} is closed and no task under"
+    " this proxy is open."
+)
+
+
+def proxy_drift_line(closure: ProxyClosure) -> str:
+    """The report line for a proxy left open because a task under it is still open."""
+    return (
+        f"{closure.proxy.slug} — its primary {closure.primary.slug} is closed, but"
+        f" {closure.open_tasks} task(s) under it are still open; left open"
+    )
+
+
+def close_proxies(closures: list[ProxyClosure]) -> list[str]:
+    """Close each proxy of *closures* with no open task; return the rest as drift lines.
+
+    A proxy with an open task after its primary closed is never closed
+    silently: it stays open and its line is returned for the report. Each
+    close leaves a comment and runs under the proxy's org token. This performs
+    outward-effecting GitHub writes; the caller gates it to a human or the sweep.
+    """
+    drift: list[str] = []
+    for closure in closures:
+        if closure.open_tasks:
+            drift.append(proxy_drift_line(closure))
+            continue
+        proxy = closure.proxy
+        with github.target_org(proxy.owner):
+            github.run(
+                "issue",
+                "close",
+                str(proxy.number),
+                "--repo",
+                f"{proxy.owner}/{proxy.repo}",
+                "--comment",
+                _PROXY_CLOSE_COMMENT.format(primary=closure.primary.slug),
+            )
+    return drift
+
+
+def render_epic_children(
+    epic: epics.IssueRef,
+    children: list[epics.ChildState],
+    *,
+    primary: epics.IssueRef | None = None,
+) -> str:
     """Machine-readable JSON enumeration of *epic*'s children with their state.
 
     Emits a stable, trivially-parseable object — the epic slug plus a ``children``
@@ -1054,20 +1392,24 @@ def render_epic_children(epic: epics.IssueRef, children: list[epics.ChildState])
     :func:`epics.child_states` (native sub-issues, reflink fallback), so the native
     vs portable mechanism is transparent to the caller. Entries are sorted by
     (owner, repo, number) so the output is deterministic across runs.
+
+    *primary* is given only for a proxy epic: the payload then gains a
+    ``"primary"`` key naming it, which merge review reads. Any other epic's
+    payload has no such key.
     """
     ordered = sorted(children, key=lambda c: (c.ref.owner, c.ref.repo, c.ref.number))
-    payload = {
-        "epic": epic.slug,
-        "children": [
-            {
-                "repo": f"{child.ref.owner}/{child.ref.repo}",
-                "number": child.ref.number,
-                "title": child.title,
-                "state": child.state,
-            }
-            for child in ordered
-        ],
-    }
+    payload: dict[str, object] = {"epic": epic.slug}
+    if primary is not None:
+        payload["primary"] = primary.slug
+    payload["children"] = [
+        {
+            "repo": f"{child.ref.owner}/{child.ref.repo}",
+            "number": child.ref.number,
+            "title": child.title,
+            "state": child.state,
+        }
+        for child in ordered
+    ]
     return json.dumps(payload, indent=2)
 
 
@@ -1090,6 +1432,10 @@ def render(
     private_under_public: list[str] | None = None,
     misplaced: list[MisplacedArchive] | None = None,
     epic_docs_findings: list[EpicDocsFinding] | None = None,
+    proxy_link_drift: list[str] | None = None,
+    proxy_closures: list[ProxyClosure] | None = None,
+    proxy_errors: list[str] | None = None,
+    misplaced_adhoc: list[MisplacedTask] | None = None,
     coverage_gap: str | None = None,
 ) -> str:
     """Format the drift + invariant report; a clean state says so explicitly.
@@ -1112,7 +1458,11 @@ def render(
     operational task with no recorded success comment). ``closed_epic_open_children``
     is the closed-epic-with-open-child invariant (issue #2259).
     ``epic_docs_findings`` are the :func:`epic_documents` problems (epic
-    .github#819). Each section appears only when it has something to report.
+    .github#819). ``proxy_link_drift`` is the report-only :func:`proxy_link_drift`
+    check (epic .github#1417); ``proxy_closures`` and ``proxy_errors`` preview
+    the ``--close`` proxy close pass (:func:`proxy_closures`), and
+    ``misplaced_adhoc`` is the report-only :func:`misplaced_adhoc` check. Each section
+    appears only when it has something to report.
     """
     epics_outside = epics_outside or []
     stray = stray or []
@@ -1126,6 +1476,10 @@ def render(
     private_under_public = private_under_public or []
     misplaced = misplaced or []
     epic_docs_findings = epic_docs_findings or []
+    proxy_link_drift = proxy_link_drift or []
+    proxy_closures = proxy_closures or []
+    proxy_errors = proxy_errors or []
+    misplaced_adhoc = misplaced_adhoc or []
     scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
     banner = (
         f"_Read-only audit of {scope} (merged PRs from the last "
@@ -1149,6 +1503,10 @@ def render(
             private_under_public,
             misplaced,
             epic_docs_findings,
+            proxy_link_drift,
+            proxy_closures,
+            proxy_errors,
+            misplaced_adhoc,
         ]
     ):
         if coverage_gap is not None:
@@ -1191,6 +1549,8 @@ def render(
                 or "none"
             )
             lines.append(f"- {status.epic.slug} — runnable: {runnable}; blocked: {blocked}")
+    lines += _render_proxy_closures(proxy_closures)
+    lines += _render_proxy_errors(proxy_errors)
     lines += _render_orphan_pass(orphans, retired_labels, body_only, public_queues)
     if (
         epics_outside
@@ -1226,6 +1586,8 @@ def render(
                 lines.append(f"- {closed_epic.slug} — open children: {open_kids}")
         lines += _render_private_under_public(private_under_public)
         lines += _render_misplaced_archives(misplaced)
+    lines += _render_proxy_link_drift(proxy_link_drift)
+    lines += _render_misplaced_adhoc(misplaced_adhoc)
     lines += _render_epic_documents(epic_docs_findings, home or f"{org}/.github")
     lines.append("")
     return "\n".join(lines)
@@ -1247,6 +1609,60 @@ def _render_epic_documents(findings: list[EpicDocsFinding], home: str) -> list[s
         for f in sorted(findings, key=lambda f: f.number)
     ]
     return lines
+
+
+def _render_proxy_link_drift(problems: list[str]) -> list[str]:
+    """The ``## Proxy link drift`` section, one line per problem; none when clean."""
+    if not problems:
+        return []
+    return [
+        "",
+        "## Proxy link drift",
+        "",
+        "A proxy and its primary must name each other; fix each link by hand:",
+        "",
+        *[f"- {problem}" for problem in problems],
+    ]
+
+
+def _render_misplaced_adhoc(misplaced: list[MisplacedTask]) -> list[str]:
+    """The misplaced ad-hoc task report, one line per reason; none when clean."""
+    if not misplaced:
+        return []
+    return [
+        "",
+        "## Ad-hoc tasks that look misplaced (report only)",
+        "",
+        "Move each misplaced task under its proxy or hoshin epic; for a task you rule"
+        f" standalone, post a comment with the line `{STANDALONE_CONFIRMED}` alone on its line:",
+        "",
+        *[f"- {m.task.slug} — {m.reason}" for m in misplaced],
+    ]
+
+
+def _render_proxy_closures(closures: list[ProxyClosure]) -> list[str]:
+    """The ``--close`` proxy close pass preview: what it would close and leave open."""
+    if not closures:
+        return []
+    lines = ["", "## Proxies whose primary has closed (`--close` closes the empty ones)", ""]
+    for closure in closures:
+        if closure.open_tasks:
+            lines.append(f"- {proxy_drift_line(closure)}")
+        else:
+            lines.append(f"- {closure.proxy.slug} — its primary {closure.primary.slug} is closed")
+    return lines
+
+
+def _render_proxy_errors(errors: list[str]) -> list[str]:
+    """The ``## Proxy link errors`` section: proxies the close pass could not judge."""
+    if not errors:
+        return []
+    return [
+        "",
+        "## Proxy link errors (the run fails; fix each link by hand)",
+        "",
+        *[f"- {error}" for error in errors],
+    ]
 
 
 _PRIVATE_UNDER_PUBLIC_HEADING = (
@@ -1404,6 +1820,9 @@ def render_closed(
     reopened: list[str] | None = None,
     private_under_public: list[str] | None = None,
     misplaced: list[MisplacedArchive] | None = None,
+    proxies_closed: list[str] | None = None,
+    proxy_drift: list[str] | None = None,
+    proxy_errors: list[str] | None = None,
 ) -> str:
     """Summarize a ``--close`` run: what was closed and what was reopened.
 
@@ -1411,14 +1830,31 @@ def render_closed(
     epics that were wrongly closed while a child was still open, now reopened.
     ``private_under_public`` and ``misplaced`` are report-only (never acted on),
     surfaced here too so the scheduled sweep's log carries them.
+
+    ``proxies_closed`` are the proxies :func:`close_proxies` closed;
+    ``proxy_drift`` the ones it left open with an open task, and
+    ``proxy_errors`` the ones :func:`proxy_closures` could not judge.
     """
+    proxies_closed = proxies_closed or []
+    proxy_drift = proxy_drift or []
+    proxy_errors = proxy_errors or []
     reopened = reopened or []
     private_under_public = private_under_public or []
     misplaced = misplaced or []
     scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
     banner = f"_Closed drift on {scope} (merged PRs from the last {window_days} days)._"
     header = ["# Epic/task drift audit — closed", "", banner, ""]
-    if not closed and not reopened and not private_under_public and not misplaced:
+    if not any(
+        [
+            closed,
+            reopened,
+            private_under_public,
+            misplaced,
+            proxies_closed,
+            proxy_drift,
+            proxy_errors,
+        ]
+    ):
         return "\n".join([*header, "_No drift — nothing to close._", ""])
     lines = [*header]
     if closed:
@@ -1430,9 +1866,22 @@ def render_closed(
             *[f"- {slug}" for slug in reopened],
             "",
         ]
-    if private_under_public or misplaced:
+    if proxies_closed:
+        lines += [
+            "## Proxies closed (primary closed, no open task)",
+            "",
+            *[f"- {slug}" for slug in proxies_closed],
+            "",
+        ]
+    if private_under_public or misplaced or proxy_drift or proxy_errors:
         lines += ["## Needs a human (report only)", ""]
         lines += _render_private_under_public(private_under_public)
         lines += _render_misplaced_archives(misplaced)
+        if proxy_drift:
+            lines.append("**Proxies left open** — the primary closed with a task still open:")
+            lines += [f"- {line}" for line in proxy_drift]
+        if proxy_errors:
+            lines.append("**Proxy link errors** — the run fails; fix each link by hand:")
+            lines += [f"- {error}" for error in proxy_errors]
         lines.append("")
     return "\n".join(lines)

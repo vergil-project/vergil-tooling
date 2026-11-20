@@ -14,7 +14,7 @@ old `standard-tooling`/`st-*` naming):
 |---|---|---|
 | **Developer host** (macOS) | `uv tool install` from the git URL of the exact release tag, constrained by that tag's `uv.lock`; the release's consumer refresh runs it | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr`, `vrg-host` |
 | **Container runtime** (all languages) | `vrg-container-run` cache-first install of the version `vergil.toml` names, in a per-branch cached image | `vrg-*` inside the dev container, locally and in CI, for every consumer |
-| **Agent VM** (Lima/cloud) | Signed `vergil-tooling` package via `apt` from <https://vergil-project.github.io/packages>, pinned to the identity's release line or version | Agent sessions inside the VM |
+| **Agent VM** (Lima/cloud) | `vrg-vm` `uv tool install` from git of the identity's release line or version, resolved to one commit and constrained by its `uv.lock` | Agent sessions inside the VM |
 
 The canonical host install (see [Getting Started](../getting-started.md)),
 with `VERSION` set to the release, for example `2.1.10`:
@@ -226,9 +226,12 @@ a docs publish failure that `confirm-develop` has already deferred.
 
 #### A promote held back by the index
 
-`promote` runs after `package-index`, so git-based installs of `vX.Y`
-(which follow the tag) and packaged installs (which take the newest
-`X.Y.*` in the index) get the same release from the moment the tag moves.
+`promote` runs after `package-index`, so consumers that follow the
+rolling `vX.Y` tag and packaged installs (which take the newest `X.Y.*`
+in the index) get the same release from the moment the tag moves.
+vergil-tooling's own installs follow neither: a `vX.Y` pin resolves to
+the newest `vX.Y.Z` tag with `git ls-remote`, so they get a release as
+soon as its tag exists.
 When `package-index` defers, `promote` skips and `vX.Y` stays on the
 previous release, so the two still agree. The deferral comment, the
 `close-finalize` outcome line and the `publish-status` error name the
@@ -367,7 +370,7 @@ get the fix on the next normal action:
 |---|---|
 | Developer host | The release's consumer refresh installs the exact patch tag on the Mac that ran it; any other host reruns the [canonical host install](#deployment-targets) with the new `VERSION` (`vrg-host` reports the installed version but never upgrades it) |
 | Python repo `.venv` | `uv lock --upgrade-package vergil-tooling` (typically batched with other dep bumps) |
-| Dev container image | The base images carry no vergil-tooling. The next `vrg-container-run` rebuilds the branch's cached image with the patch once it is in the package index: a `vX.Y` line pin in `vergil.toml` resolves to the newest release on the line (see [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)). An exact `vX.Y.Z` pin stays put |
+| Dev container image | The base images carry no vergil-tooling. The next `vrg-container-run` rebuilds the branch's cached image with the patch as soon as its tag exists: a `vX.Y` line pin in `vergil.toml` resolves to the newest release on the line (see [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)). An exact `vX.Y.Z` pin stays put |
 | Agent VM (Lima/cloud) | `vrg-vm update`, which the release's consumer refresh runs on every VM (`vrg-vm update --all`): a `vX.Y` line pin resolves to the patch tag as soon as it exists; an exact `vX.Y.Z` pin stays put |
 
 ## Minor release — opt-in for new features

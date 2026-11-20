@@ -68,7 +68,7 @@ any `[vm]` key marks the spec customized, which gives the repo a dedicated VM.
 | `region` | string | *(none)* | Provider-native region when off-platform (e.g. `"us-central1"`) |
 | `instance` | string | *(none)* | Provider-native, nested-virt-capable instance type when off-platform (e.g. `"n2-standard-16"`) |
 | `volume` | string `"<N>GiB"` | *(none)* | **Persistent** block-volume size when off-platform — created once, reused, outlives the VM. Does **not** fall back to `disk` |
-| `boot_disk` | string `"<N>GiB"` | *(module default, ~30 GiB)* | **Ephemeral** boot/root-disk size when off-platform. Optional — unset keeps the image default. Sizes the disk that holds scratch data living outside `volume` |
+| `boot_disk` | string `"<N>GiB"` | *(module default, 60 GiB)* | **Ephemeral** boot/root-disk size when off-platform. Optional — unset uses the vergil-vm module default. Sizes the disk that holds scratch data living outside `volume` |
 | `boot_disk_type` | string | *(module default)* | **Ephemeral** boot/root-disk type when off-platform, provider-native (GCP `"pd-ssd"`, Azure `"Premium_LRS"`). Optional; checked against the provider's allowed set (see below) |
 
 The vergil-vm template owns *how* declarative installs happen — repos
@@ -164,7 +164,8 @@ memory    = "64GiB"
   `volume` declared above. The Lima `disk` knob drives neither — use
   `volume` for the persistent disk and `boot_disk` for the ephemeral one.
 - **`boot_disk` sizes the ephemeral boot/root disk** (optional). Unset,
-  the boot disk inherits the cloud image's default (~30 GiB); set it
+  the key is not passed and the boot disk takes the vergil-vm module
+  default (60 GiB, vergil-project/vergil-vm#433); set it
   (`"<N>GiB"`) to grow the disk for workloads whose scratch data lives
   *outside* the persistent `volume` — e.g. a nested-virt image pool and
   qcow2 overlays, which belong on the wipe-on-rebuild boot disk rather

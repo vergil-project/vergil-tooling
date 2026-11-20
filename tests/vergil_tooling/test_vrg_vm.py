@@ -1100,7 +1100,44 @@ class TestRebuild:
             "/home/user/projects",
             cpus=8,
             memory="24GiB",
-            disk=None,
+            disk="100GiB",  # the identity sets no disk: the base footprint's (#4810)
+        )
+
+    @pytest.mark.parametrize(("command", "status"), [("create", ""), ("rebuild", "Running")])
+    def test_shared_base_gets_the_base_footprint(
+        self, command: str, status: str, config_file: Path, tmp_path: Path
+    ) -> None:
+        """With no identity cpus/memory/disk, create and rebuild ask Lima for the
+        base footprint, not the template's defaults, and list reports it (#4810)."""
+        template = tmp_path / "template.yaml"
+        template.write_text("cpus: 4")
+        with (
+            patch("vergil_tooling.bin.vrg_vm.vm_status", return_value=status),
+            patch("vergil_tooling.bin.vrg_vm.delete_vm"),
+            patch("vergil_tooling.bin.vrg_vm.fetch_template", return_value=template),
+            patch("vergil_tooling.bin.vrg_vm.create_vm") as mock_create,
+            patch("vergil_tooling.bin.vrg_vm.start_vm"),
+            patch("vergil_tooling.bin.vrg_vm.inject_credentials"),
+            patch("vergil_tooling.bin.vrg_vm.install_tooling"),
+            patch("vergil_tooling.bin.vrg_vm.copy_claude_config"),
+            patch("vergil_tooling.bin.vrg_vm.stop_vm"),
+        ):
+            assert main([command, "--config", str(config_file)]) == 0
+        mock_create.assert_called_once_with(
+            "vergil-agent",
+            template,
+            "/home/user/projects",
+            cpus=4,
+            memory="4GiB",
+            disk="100GiB",
+        )
+        ident = Identity(vm_instance="vergil-agent", projects_dir="/home/user/projects")
+        base = next(r for r in _list_rows("vergil", ident, [], {}, {}) if r["scope"] == "base")
+        created = mock_create.call_args.kwargs
+        assert (base["cpus"], base["memory"], base["disk"]) == (
+            created["cpus"],
+            created["memory"],
+            created["disk"],
         )
 
 
@@ -3270,6 +3307,19 @@ volume = "200GiB"
 """
 
 
+# The shape of the real repo behind #4806: the role sizes the box, and the named
+# Lima instance adds only a disk, which the base tiers do not carry.
+_NAMED_DISK_VM = """
+[vm.vergil-user]
+cpus = 24
+memory = "64GiB"
+packages = ["qemu-system-x86"]
+
+[vm.vergil-user.instances.local]
+disk = "300GiB"
+"""
+
+
 def _named_args(config: Path, workspace: str, name: str) -> argparse.Namespace:
     return argparse.Namespace(
         config=config, identity=None, workspace=workspace, command="session", name=name
@@ -3895,6 +3945,57 @@ class TestListRows:
         probes = {"vergil-user.o.gone": (1, 0, None)}
         rows = _list_rows("vergil-user", ident, dedic, status, probes)
         assert self._row(rows, "o/gone")["agents"] == "1"
+
+    def _rebuilt_named(
+        self, tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[Path, Target, str]:
+        """Build lmf/lab's `local` instance through the create/rebuild path.
+
+        create_vm is stubbed to make the Lima instance dir (as limactl create
+        does) and keep the fingerprint it was asked to stamp, so the sidecar
+        that list reads the instance name back from is the real one.
+        """
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", _NAMED_DISK_VM)
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_named_args(cfg, "lmf/lab", "local"))
+        stamped: list[str] = []
+
+        def fake_create(instance: str, *_a: object, **kw: object) -> None:
+            (home / ".lima" / instance).mkdir(parents=True)
+            stamped.append(str(kw["fingerprint"]))
+
+        monkeypatch.setattr("vergil_tooling.bin.vrg_vm.create_vm", fake_create)
+        _create_from_target(target, tmp_path / "t.yaml")
+        return projects, target, stamped[0]
+
+    def test_named_instance_is_ok_right_after_rebuild(
+        self, tmp_path: Path, short_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A named instance whose overlay sets a scalar (here disk) reads ok
+        against the fingerprint create/rebuild stamped, with the overlay's
+        disk in the row (#4806)."""
+        projects, target, stamped = self._rebuilt_named(tmp_path, short_home, monkeypatch)
+        dedic = discover_dedicated("vergil-user", [target.instance], str(projects))
+        status = {target.instance: "Running"}
+        probes = {target.instance: (0, 0, stamped)}
+        rows = _list_rows("vergil-user", target.identity, dedic, status, probes)
+        row = self._row(rows, "lmf/lab")
+        assert row["instance"] == "local"
+        assert row["spec"] == "ok"
+        assert (row["cpus"], row["memory"], row["disk"]) == (24, "64GiB", "300GiB")
+
+    def test_named_instance_no_longer_declared_is_orphaned(
+        self, tmp_path: Path, short_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        projects, target, _stamped = self._rebuilt_named(tmp_path, short_home, monkeypatch)
+        (projects / "lmf" / "lab" / "vergil.toml").write_text(
+            _REPO_TOML_HEAD + "\n[vm.vergil-user]\ncpus = 24\n"
+        )
+        dedic = discover_dedicated("vergil-user", [target.instance], str(projects))
+        assert [(d.state, d.stanza) for d in dedic] == [("orphaned", None)]
+        rows = _list_rows("vergil-user", target.identity, dedic, {}, {})
+        assert self._row(rows, "lmf/lab")["spec"] == "orphaned"
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
     def test_start_aborts_when_dedicated_missing(self, _status: MagicMock, tmp_path: Path) -> None:

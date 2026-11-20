@@ -11,7 +11,14 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 
-from vergil_tooling.lib import epic_audit, epics, github, identity_mode, security_records
+from vergil_tooling.lib import (
+    epic_audit,
+    epics,
+    github,
+    identity_mode,
+    proxies,
+    security_records,
+)
 from vergil_tooling.lib.cli import cli_main
 
 _DEFAULT_WINDOW_DAYS = 30
@@ -48,8 +55,7 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        print(epic_audit.render_epic_children(epic, epics.child_states(epic)))
-        return 0
+        return _epic_listing(epic)
     # Gate the write path before any network work so a rejected agent run is
     # cheap and unambiguous. A human may close interactively; the scheduled
     # reconciliation sweep (ops-epic-sweep) closes via the _SWEEP_ENV signal.
@@ -88,6 +94,30 @@ def main(argv: list[str] | None = None) -> int:
         return _audit(args, org)
 
 
+def _epic_listing(epic: epics.IssueRef) -> int:
+    """Print *epic*'s children, its proxies' included, as JSON; exit 1 on link drift.
+
+    A ``Primary:``/``Proxy:`` disagreement fails the listing, never only reports
+    it, so the retrospective gate stops on it (epic vergil-project/.github#1417):
+    the problems go to stderr and no JSON is printed. On a proxy the JSON names
+    its primary.
+    """
+    problems = epic_audit.proxy_link_problems(epic)
+    if problems:
+        for problem in problems:
+            print(f"vrg-epic-audit: proxy link drift: {problem}", file=sys.stderr)
+        return 1
+    try:
+        children = epic_audit.epic_children(epic)
+        with github.target_org(epic.owner):
+            primary = proxies.primary_of(epic) if proxies.is_proxy_ref(epic) else None
+    except proxies.ProxyLinkError as exc:
+        print(f"vrg-epic-audit: proxy link drift: {exc}", file=sys.stderr)
+        return 1
+    print(epic_audit.render_epic_children(epic, children, primary=primary))
+    return 0
+
+
 def _audit(args: argparse.Namespace, org: str) -> int:
     """The drift audit (and, with ``--close``, its passes) of *org*, under its token."""
     if args.repo:
@@ -116,8 +146,16 @@ def _audit(args: argparse.Namespace, org: str) -> int:
     closed_epic_open_children = epic_audit.closed_epic_open_child(
         org, home=home, listing=home_epics
     )
+    # The proxy close pass (epic .github#1417): an open proxy whose primary has
+    # closed. A proxy whose link fails is collected, never raised mid-run, so
+    # every other pass still runs; the exit status reflects it at the end.
+    proxy_plan, proxy_errors = epic_audit.proxy_closures(home, listing=home_epics)
+    for error in proxy_errors:
+        print(f"vrg-epic-audit: proxy link error: {error}", file=sys.stderr)
     if args.close:
         closed = epic_audit.close_drift(tasks, epics_drift, org=org, home=home)
+        proxy_drift = epic_audit.close_proxies(proxy_plan)
+        proxies_closed = [c.proxy.slug for c in proxy_plan if not c.open_tasks]
         # Remediate the closed-epic-with-open-child invariant (issue #2259): reopen
         # each epic that was wrongly closed while a child was still open.
         reopened = epic_audit.reopen_epics_with_open_children(closed_epic_open_children)
@@ -151,12 +189,16 @@ def _audit(args: argparse.Namespace, org: str) -> int:
                 reopened=reopened,
                 private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
                 misplaced=epic_audit.misplaced_archives(org, issues=issues),
+                proxies_closed=proxies_closed,
+                proxy_drift=proxy_drift,
+                proxy_errors=proxy_errors,
             )
         )
         # No security-records pass here: it lists and writes security advisories,
         # which the sweep's scoped token cannot do (vergil-tooling#4313). The
         # human or the user agent runs it with vrg-security-record sync.
-        return _apply_orphan_pass(org, issues)
+        orphan_rc = _apply_orphan_pass(org, issues)
+        return 1 if proxy_errors else orphan_rc
     epics_outside = epic_audit.epic_outside_dotgithub(org)
     stray = epic_audit.stray_dotgithub_issue(org, home=home)
     pending_operational = epic_audit.operational_pending(org, home=home)
@@ -201,11 +243,17 @@ def _audit(args: argparse.Namespace, org: str) -> int:
             private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
             misplaced=epic_audit.misplaced_archives(org, issues=issues),
             epic_docs_findings=epic_audit.epic_documents(org, home=home, listing=home_epics),
+            # It reads trusted comments, so it runs only here, never under --close.
+            proxy_link_drift=epic_audit.proxy_link_drift(home, listing=home_epics),
+            proxy_closures=proxy_plan,
+            proxy_errors=proxy_errors,
+            # It reads trusted comments too, so it never runs under --close.
+            misplaced_adhoc=epic_audit.misplaced_adhoc(org, issues=issues),
             coverage_gap=gap,
         )
     )
-    # A partial preview never exits clean (#3513).
-    return 1 if gap is not None else security_rc
+    # A partial preview never exits clean (#3513), nor one with a broken proxy link.
+    return 1 if gap is not None or proxy_errors else security_rc
 
 
 def _apply_orphan_pass(org: str, issues: list[epic_audit.OpenIssue]) -> int:
@@ -277,7 +325,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "state}, ...]} — a stable array of objects (native sub-issues, with "
             "the portable Parent: reflink fallback), so "
             "'.children[] | select(.state==\"OPEN\")' lists the open children "
-            "without brittle jq against GitHub's raw subIssues shape. Read-only; "
+            "without brittle jq against GitHub's raw subIssues shape. The children "
+            "of every proxy epic the epic's trusted 'Proxy:' comments name are "
+            "listed beside its own, and on a proxy the JSON gains a "
+            '"primary": <slug> key. A Primary:/Proxy: link that is broken or '
+            "disagrees exits 1 with the problems on stderr and no JSON. Read-only; "
             "ignores the drift-audit flags."
         ),
     )
@@ -296,7 +348,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help=(
             "Close the drifted task issues and rolled-up epics, and reopen any "
             "epic wrongly closed while a child was still open (with an "
-            "explanatory comment on each), instead of only reporting them. Then "
+            "explanatory comment on each), instead of only reporting them. Close "
+            "each proxy epic whose primary has closed and which has no open task "
+            "(one with an open task is reported and left open). Then "
             "run the org-wide orphan pass: link body-only Parent: lines natively, "
             "remove the retired triage/idea/research labels, move now-public "
             "repos' queue items under .github, and attach every orphan to its "

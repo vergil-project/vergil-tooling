@@ -53,6 +53,10 @@ routes each container allows:
   does not list or a queue epic of its own or its org's queue home still
   lists, links it under the target (if missing), only then removes the stale
   queue listing, and reads it back twice, instead of being refused (#4291).
+  A one-off never goes under the hoshin epic, which holds only the hoshin
+  review's logbook tasks: the ``hoshin`` sentinel is refused by name before
+  anything resolves, so a refused route creates nothing, and an explicit ref
+  to a hoshin epic is refused once it resolves.
 - **planning** — reparent onto the planning epic of the same queue home,
   from intake, deferred or ad hoc (an ad-hoc task found too big for one PR,
   #4598, refused while an open PR would close it), or an unparented issue.
@@ -150,6 +154,11 @@ BRAINSTORM_EPIC_COMMENT = "Follow-on brainstorm handed to planning: {item} (now 
 BRAINSTORM_ITEM_COMMENT = "Handed to planning from: {epic}"
 # The kind _check_eligible returns for a follow-on brainstorm under a development epic.
 _DEVELOPMENT = "development"
+# The refusal of a one-off into the hoshin epic (epic vergil-project/.github#1417).
+HOSHIN_REFUSAL = (
+    "{epic} is the hoshin epic, which holds only the logbook tasks /vergil:hoshin "
+    "files and works; a one-off goes under an ad-hoc or finite epic"
+)
 
 # A transfer carries the old parent over eventually, not atomically: a link
 # made right after it can be overwritten seconds later (#3556). Each settle
@@ -257,6 +266,10 @@ def _repo_of(ref: IssueRef) -> str:
 
 
 def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
+    if isinstance(action, OneOff) and action.epic == epics.HOSHIN.sentinel:
+        # Refused by name before anything resolves: resolving the sentinel
+        # would create the hoshin epic.
+        raise RouteRefusedError(HOSHIN_REFUSAL.format(epic=f"--epic {action.epic}"))
     parent = epics.parent_of(ref)
     try:
         kind = _check_eligible(ref, action, parent)
@@ -764,6 +777,8 @@ def _move_one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) ->
             f"{epic.slug} is a queue epic; a one-off goes under an ad-hoc or finite epic "
             "(use the planning route for planning)"
         )
+    if epics.container_kind(epic) == epics.HOSHIN.key:
+        raise RouteRefusedError(HOSHIN_REFUSAL.format(epic=epic.slug))
     if dest == source:
         _link_and_check(ref, epic, ref, old_parent)
         return RouteResult(final=ref, moved_by="none")

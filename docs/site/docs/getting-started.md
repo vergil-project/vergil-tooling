@@ -80,8 +80,10 @@ vrg-host upgrade --all     # upgrade the tools vrg-host manages
 See the [vrg-host reference](reference/dev/host.md) for the dependency list
 and for pinning a tool that a new release has broken.
 
-On Linux, vergil-tooling is also published as a signed `.deb`/`.rpm`
-package (this is how Lima and cloud agent VMs get it). Follow the
+vergil-tooling is also published as a signed `.deb`/`.rpm` package for
+Linux consumers outside Vergil. Vergil's own installs (the dev container
+cache, CI and the Lima and cloud agent VMs) use `uv` from git, not the
+package. To use the package, follow the
 [`vergil-project/packages` README](https://github.com/vergil-project/packages#readme)
 to set up the apt or dnf repository. Check the downloaded signing key
 against the pinned primary fingerprint
