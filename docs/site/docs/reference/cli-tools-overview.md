@@ -708,6 +708,16 @@ Create a top-level epic (labelled `epic`, no parent) in its home repo:
 `<org>/.github` for a public target, the target repo itself when private.
 The sanctioned path for creating epics, used by the `epic-create` skill.
 
+The epic also gets its **category label**, derived from its other labels:
+`epic-management` for an intake, planning, deferred or hoshin epic (`--label
+intake` and so on), `epic-development` for a plain epic, and nothing more for
+an ad-hoc epic, whose `ad-hoc` label is its category label. Every label is
+created in the home from the label registry before the epic is. It refuses,
+creating nothing, a `--label epic-development` or `--label epic-management`
+(the category label is never given by the caller) and labels that mark two
+categories at once (for example `--label ad-hoc --label proxy`). The category
+labels are for display only: no tool reads them to decide behaviour.
+
 `--proxy-for OWNER/REPO#N --repo OWNER/NAME` instead ensures the **proxy
 epic** for a development epic in another org (its primary): an epic in the
 target's `<owner>/.github`, titled `Epic (proxy): OWNER/REPO#N — <primary
@@ -732,7 +742,7 @@ under that org's App token. The title and body are derived, so it takes no
 | Source | `vergil_tooling.bin.vrg_epic_create` |
 | Args | `--title` (required unless `--proxy-for`), `--body` / `--body-file`, `--repo OWNER/NAME`, `--label` (repeatable), `--assignee` (repeatable), `--proxy-for OWNER/REPO#N` (needs `--repo`) |
 | Preconditions | GitHub App credentials for the target org (with `--proxy-for`, for both orgs) |
-| Failure mode | Error on stderr; a `--proxy-for` refusal or link error writes nothing |
+| Failure mode | Error on stderr; a refused label set writes nothing, a failed label create creates no epic, and a `--proxy-for` refusal or link error writes nothing |
 | Exit codes | 0 created (or, with `--proxy-for`, ensured), 1 error or refusal |
 | Status | Active |
 

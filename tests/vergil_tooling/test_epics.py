@@ -1438,7 +1438,7 @@ def test_ensure_adhoc_epic_create_self_heals_labels() -> None:
         patch("vergil_tooling.lib.github.create_issue", return_value=created),
     ):
         epics.ensure_adhoc_epic("org/tooling")
-    mock_ensure.assert_called_once_with("org/.github", ("epic", "ad-hoc"))
+    mock_ensure.assert_called_once_with("org/.github", ["epic", "ad-hoc"])
 
 
 def test_ensure_adhoc_archive_heals_legacy_in_place() -> None:
@@ -2303,11 +2303,11 @@ def test_ensure_intake_epic_private_repo_creates_in_self() -> None:
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
         assert epics.ensure_intake_epic("org/secret") == IssueRef("org", "secret", 4)
-    mock_ensure.assert_called_once_with("org/secret", ("epic", "intake"))
+    mock_ensure.assert_called_once_with("org/secret", ["epic", "intake", "epic-management"])
     kwargs = mock_create.call_args.kwargs
     assert kwargs["repo"] == "org/secret"
     assert kwargs["title"] == "Epic (intake): secret"
-    assert kwargs["labels"] == ["epic", "intake"]
+    assert kwargs["labels"] == ["epic", "intake", "epic-management"]
     assert kwargs["body"].startswith("Perpetual intake queue for secret:")
 
 
@@ -2326,10 +2326,10 @@ def test_ensure_planning_epic_creates_when_absent() -> None:
     kwargs = mock_create.call_args.kwargs
     assert kwargs["repo"] == "org/.github"
     assert kwargs["title"] == "Epic (planning): org"
-    assert kwargs["labels"] == ["epic", "planning"]
+    assert kwargs["labels"] == ["epic", "planning", "epic-management"]
     assert kwargs["body"].startswith("Perpetual planning queue for org:")
     ensured = [c.args for c in mock_ensure.call_args_list]
-    assert ("org/.github", ("epic", "planning")) in ensured
+    assert ("org/.github", ["epic", "planning", "epic-management"]) in ensured
     assert ("org/.github", ("in-progress",)) in ensured
 
 
@@ -3406,10 +3406,10 @@ def test_ensure_deferred_epic_creates_with_kind_labels() -> None:
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
         assert epics.ensure_deferred_epic("org/tool") == IssueRef("org", ".github", 10)
-    mock_ensure.assert_called_once_with("org/.github", ("epic", "deferred"))
+    mock_ensure.assert_called_once_with("org/.github", ["epic", "deferred", "epic-management"])
     kwargs = mock_create.call_args.kwargs
     assert kwargs["title"] == "Epic (deferred): org"
-    assert kwargs["labels"] == ["epic", "deferred"]
+    assert kwargs["labels"] == ["epic", "deferred", "epic-management"]
     assert kwargs["body"].startswith("Perpetual deferred queue for org:")
 
 
@@ -3518,11 +3518,11 @@ def test_resolve_epic_ref_hoshin() -> None:
     mock_exists.assert_called_once_with("vergil-project", ".github")
     mock_public.assert_not_called()  # the hoshin home never depends on visibility
     mock_is_epic.assert_not_called()
-    mock_ensure.assert_called_once_with("vergil-project/.github", ("epic", "hoshin"))
+    mock_ensure.assert_called_once_with("vergil-project/.github", ["epic", "hoshin", "epic-management"])
     kwargs = mock_create.call_args.kwargs
     assert kwargs["repo"] == "vergil-project/.github"
     assert kwargs["title"] == "Epic (hoshin): vergil-project"
-    assert kwargs["labels"] == ["epic", "hoshin"]
+    assert kwargs["labels"] == ["epic", "hoshin", "epic-management"]
     assert kwargs["body"].startswith("Perpetual hoshin epic for vergil-project:")
 
 
@@ -3665,3 +3665,159 @@ def test_rollup_skips_proxy() -> None:
 def test_is_proxy(labels: set[str], expected: bool) -> None:
     assert epics.is_proxy(labels) is expected
     assert epics.PROXY_LABEL == "proxy"
+
+
+# -- epic_category: the category label of an epic (vergil-project/.github#1450) --
+
+
+def test_epic_category_plain_epic_is_development() -> None:
+    assert epics.epic_category({"epic"}, "Epic: X") == "development"
+
+
+@pytest.mark.parametrize("kind", ["intake", "planning", "deferred", "hoshin"])
+def test_epic_category_each_management_kind(kind: str) -> None:
+    assert epics.epic_category({"epic", kind}, f"Epic ({kind}): org") == "management"
+
+
+def test_epic_category_adhoc_and_proxy() -> None:
+    assert epics.epic_category({"epic", "ad-hoc"}, "Epic (ad hoc): t") == "ad-hoc"
+    assert epics.epic_category({"epic", "proxy"}, "Epic (proxy): x") == "proxy"
+
+
+def test_epic_category_not_an_epic_is_none() -> None:
+    assert epics.epic_category({"intake"}, "anything") is None
+    assert epics.epic_category({"archive", "intake"}, "anything") is None
+
+
+def test_epic_category_stamped_archive_title_is_none() -> None:
+    # A legacy archive that kept `epic` but lost `archive`: its stamped title is
+    # the only marker, and it is still an archive, never an epic.
+    title = "Archive (intake): org — 2026-Q4 (2)"
+    assert epics.is_stamped_archive_title(title)
+    assert epics.epic_category({"epic", "intake"}, title) is None
+
+
+@pytest.mark.parametrize(
+    ("labels", "markers"),
+    [
+        ({"epic", "ad-hoc", "proxy"}, ("ad-hoc", "proxy")),
+        ({"epic", "intake", "proxy"}, ("intake", "proxy")),
+    ],
+)
+def test_epic_category_ambiguous_raises(labels: set[str], markers: tuple[str, str]) -> None:
+    with pytest.raises(epics.AmbiguousEpicCategoryError) as excinfo:
+        epics.epic_category(labels, "Epic: X")
+    for marker in markers:
+        assert marker in str(excinfo.value)
+
+
+def test_epic_category_two_management_kinds_is_management() -> None:
+    assert epics.epic_category({"epic", "intake", "planning"}, "Epic: X") == "management"
+
+
+def test_epic_category_ignores_new_category_labels() -> None:
+    # Display only (spec §2.3): the derived labels are never read.
+    assert epics.epic_category({"epic", "epic-management"}, "Epic: X") == "development"
+    assert epics.epic_category({"epic", "intake", "epic-development"}, "Epic: X") == "management"
+
+
+def test_category_labels_are_in_registry() -> None:
+    specs = {label["name"]: label for label in load_labels()["labels"]}
+    assert dict(epics.CATEGORY_LABELS) == {
+        "management": "epic-management",
+        "ad-hoc": "ad-hoc",
+        "proxy": "proxy",
+        "development": "epic-development",
+    }
+    for label in epics.CATEGORY_LABELS.values():
+        assert label in specs
+    assert epics.DERIVED_CATEGORY_LABELS == {"epic-development", "epic-management"}
+    assert specs["epic-development"]["description"] == (
+        "Development epic: planned with epic-create, closes when its tasks close"
+    )
+    assert specs["epic-management"]["description"] == (
+        "Management epic: the intake, planning, deferred or hoshin epic; never auto-closes"
+    )
+    colours = {specs[name]["color"] for name in ("epic-development", "epic-management")}
+    assert len(colours | {specs["ad-hoc"]["color"], specs["proxy"]["color"]}) == 4
+
+
+_MANAGEMENT_KINDS = {epics.INTAKE, epics.PLANNING, epics.DEFERRED, epics.HOSHIN}
+
+
+@pytest.mark.parametrize("kind", epics.STANDING_KINDS, ids=lambda kind: kind.key)
+def test_ensure_standing_epic_category_label_at_creation(kind: epics.StandingKind) -> None:
+    title = f"{kind.title_prefix}org"
+    calls: list[str] = []
+
+    def fake_ensure(*_args: object) -> None:
+        calls.append("ensure")
+
+    def fake_create(**_kwargs: object) -> str:
+        calls.append("create")
+        return _DEFERRED_URL
+
+    with (
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=[[], [{"number": 10, "title": title}]],
+        ),
+        patch("vergil_tooling.lib.epics.ensure_labels", side_effect=fake_ensure) as mock_ensure,
+        patch("vergil_tooling.lib.github.create_issue", side_effect=fake_create) as mock_create,
+    ):
+        epics.ensure_standing_epic(kind, "org/.github", "org")
+    if kind in _MANAGEMENT_KINDS:
+        expected = [*kind.labels, "epic-management"]
+    else:
+        expected = list(kind.labels)
+    assert mock_create.call_args.kwargs["labels"] == expected
+    mock_ensure.assert_called_once_with("org/.github", expected)
+    assert calls == ["ensure", "create"]
+
+
+def test_ensure_standing_epic_category_label_kinds_are_the_management_kinds() -> None:
+    # Pins the parametrization above: every standing kind is covered, and the
+    # kinds given epic-management are exactly the four management kinds.
+    given = set()
+    for kind in epics.STANDING_KINDS:
+        title = f"{kind.title_prefix}org"
+        with (
+            patch(
+                "vergil_tooling.lib.github.read_json",
+                side_effect=[[], [{"number": 10, "title": title}]],
+            ),
+            patch("vergil_tooling.lib.epics.ensure_labels"),
+            patch(
+                "vergil_tooling.lib.github.create_issue", return_value=_DEFERRED_URL
+            ) as mock_create,
+        ):
+            epics.ensure_standing_epic(kind, "org/.github", "org")
+        if "epic-management" in mock_create.call_args.kwargs["labels"]:
+            given.add(kind)
+    assert given == _MANAGEMENT_KINDS
+    assert set(epics.STANDING_KINDS) == {*_MANAGEMENT_KINDS, epics.ADHOC}
+
+
+def test_ensure_standing_epic_reuses_epic_without_category_label() -> None:
+    # Every existing standing epic lacks epic-management until the one-off runs:
+    # the lookup filters on the kind's labels only, so it is found and reused.
+    seen: list[tuple[str, ...]] = []
+
+    def fake_list(*args: str) -> list[dict[str, object]]:
+        seen.append(args)
+        return [_DEFERRED_ROW]
+
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=fake_list),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+    ):
+        got = epics.ensure_standing_epic(epics.DEFERRED, "org/.github", "org")
+    assert got == IssueRef("org", ".github", 10)
+    mock_create.assert_not_called()
+    mock_ensure.assert_not_called()
+    assert seen
+    for args in seen:
+        passed = [args[i + 1] for i, arg in enumerate(args) if arg == "--label"]
+        assert passed
+        assert set(passed) <= set(epics.DEFERRED.labels)
