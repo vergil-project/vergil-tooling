@@ -1,4 +1,8 @@
-"""vrg-tooling-install: the Mac's locked install of an exact release (vergil-tooling#4827)."""
+"""vrg-tooling-install: the Mac's locked install of a release (vergil-tooling#4827).
+
+A line ``vX.Y`` installs the exact release its rolling tag names (epic
+vergil-project/.github#1440, spec §4.6).
+"""
 
 from __future__ import annotations
 
@@ -6,7 +10,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -19,6 +23,9 @@ from vergil_tooling.lib.tooling_install import (
     ToolingInstallError,
     install_release,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _TAG = "v2.1.10"
 _UV_VARS = ("UV_PYTHON", "UV_PYTHON_PREFERENCE", "UV_NO_MANAGED_PYTHON")
@@ -87,11 +94,59 @@ def test_installs_the_tag_commit_with_its_lock(stubs: Path) -> None:
     assert _temp_left(stubs) == []
 
 
-@pytest.mark.parametrize("tag", ["v2.1", "2.1.10", "develop", "v2.1.10-rc1"])
-def test_refuses_anything_but_an_exact_tag(stubs: Path, tag: str) -> None:
-    with pytest.raises(ToolingInstallError, match="not an exact release tag"):
-        install_release(tag)
+@pytest.mark.parametrize("tag", ["2.1.10", "develop", "v2.1.10-rc1", "v2"])
+def test_refuses_anything_but_a_release(stubs: Path, tag: str) -> None:
+    with pytest.raises(ToolingInstallError, match=r"not a release \(vX\.Y or vX\.Y\.Z\)"):
+        install_release(tag, ls_remote=_no_listing)
     assert _calls(stubs, "git") == []
+
+
+def _no_listing(url: str, pattern: str) -> str:
+    msg = f"unexpected ls-remote: {url} {pattern}"
+    raise AssertionError(msg)
+
+
+def _line_listing(line_sha: str) -> Callable[[str, str], str]:
+    """A listing where v2.1 names v2.1.10 (on *line_sha*), while v2.1.11 is newer."""
+
+    def ls_remote(_url: str, pattern: str) -> str:
+        assert pattern == "refs/tags/v2.1*"
+        return (
+            f"{line_sha}\trefs/tags/v2.1.10\n{'e' * 40}\trefs/tags/v2.1.11\n"
+            f"{line_sha}\trefs/tags/v2.1\n"
+        )
+
+    return ls_remote
+
+
+def test_install_release_line_installs_and_reports_exact_tag(stubs: Path) -> None:
+    assert install_release("v2.1", ls_remote=_line_listing(STUB_SHA)) == Installed(
+        tag=_TAG, sha=STUB_SHA
+    )
+    git = _calls(stubs, "git")
+    assert git[1][-1] == f"refs/tags/{_TAG}"
+    (install,) = [c for c in _calls(stubs, "uv") if c[0] == "tool"]
+    assert install[-1] == f"vergil-tooling @ git+{GIT_URL}@{STUB_SHA}"
+
+
+def test_install_release_line_uses_git_ls_remote_by_default(
+    stubs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tooling_install, "git_ls_remote", _line_listing(STUB_SHA))
+    assert install_release("v2.1").tag == _TAG
+
+
+def test_install_release_line_that_does_not_resolve_installs_nothing(stubs: Path) -> None:
+    with pytest.raises(ToolingInstallError, match="the line tag v2.2 does not exist"):
+        install_release("v2.2", ls_remote=lambda _u, _p: f"{STUB_SHA}\trefs/tags/v2.2.0\n")
+    assert _calls(stubs, "git") == []
+
+
+def test_install_release_line_refuses_a_checkout_off_the_line_commit(stubs: Path) -> None:
+    with pytest.raises(ToolingInstallError, match=r"not the commit a{40} the line's tag names"):
+        install_release("v2.1", ls_remote=_line_listing("a" * 40))
+    assert [c for c in _calls(stubs, "uv") if c[0] == "tool"] == []
+    assert _temp_left(stubs) == []
 
 
 @pytest.mark.parametrize(
@@ -178,4 +233,22 @@ def test_main_needs_a_tag(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc:
         vrg_tooling_install.main([])
     assert exc.value.code == 2
-    assert "vX.Y.Z" in capsys.readouterr().err
+    assert "vX.Y or vX.Y.Z" in capsys.readouterr().err
+
+
+def test_vrg_tooling_install_help_names_line(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        vrg_tooling_install.main(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "vX.Y or vX.Y.Z" in out
+    assert "a release line, e.g. v2.1" in out
+
+
+def test_main_reports_the_exact_tag_a_line_installs(
+    stubs: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(tooling_install, "git_ls_remote", _line_listing(STUB_SHA))
+    assert vrg_tooling_install.main(["v2.1"]) == 0
+    out = capsys.readouterr().out
+    assert f"vrg-tooling-install: installed {_TAG} (commit {STUB_SHA})" in out

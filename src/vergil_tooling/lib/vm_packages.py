@@ -5,7 +5,8 @@ Every VM install is ``uv tool install`` of one commit, rendered by
 spec §4.5):
 
 - a **line** (``vX.Y``) or an **exact** release (``vX.Y.Z``) is resolved on the
-  host, once, to its tag and commit SHA, and installs that commit constrained
+  host, once, to its tag and commit SHA (a line through its rolling tag, to the
+  release that tag names), and installs that commit constrained
   by its own ``uv.lock``. It clears the dev-ref marker;
 - anything else (``develop``, a feature branch) is an explicit **dev** install
   of that git ref, unconstrained. It records its ref so every ``vrg-vm``
@@ -141,7 +142,8 @@ def _check(transport: Transport) -> None:
 def released_install(transport: Transport, ref: str) -> None:
     """Install the release ``ref`` names with uv, check it, and clear the dev-ref marker.
 
-    A line resolves to its newest ``vX.Y.Z``; the install is that one commit,
+    A line resolves to the ``vX.Y.Z`` its rolling tag names (a demoted line
+    included); the install is that one commit,
     constrained by its ``uv.lock``. The marker is cleared only once the check
     passes, so a failed install still reports the dev install it left.
     """

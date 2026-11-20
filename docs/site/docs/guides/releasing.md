@@ -12,7 +12,7 @@ old `standard-tooling`/`st-*` naming):
 
 | Target | Install mechanism | Who uses it |
 |---|---|---|
-| **Developer host** (macOS) | `vrg-tooling-install vX.Y.Z`: `uv tool install` from git of the exact release tag's commit, constrained by that commit's `uv.lock`; the release's consumer refresh runs it | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr`, `vrg-host` |
+| **Developer host** (macOS) | `vrg-tooling-install vX.Y.Z` (or `vX.Y`, the release its rolling tag names): `uv tool install` from git of the exact release tag's commit, constrained by that commit's `uv.lock`; the release's consumer refresh runs it | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr`, `vrg-host` |
 | **Container runtime** (all languages) | `vrg-container-run` cache-first install of the version `vergil.toml` names, in a per-branch cached image | `vrg-*` inside the dev container, locally and in CI, for every consumer |
 | **Agent VM** (Lima/cloud) | `vrg-vm` `uv tool install` from git of the identity's release line or version, resolved to one commit and constrained by its `uv.lock` | Agent sessions inside the VM |
 
@@ -23,7 +23,10 @@ Mac with the just-released version (`vrg-tooling-install v<VERSION>`,
 followed by `vrg-vm update --all`), so the release installs itself on the
 host. It fetches the exact tag (which cannot move, under tag protection, so
 it needs no `git ls-remote`), installs the commit that tag names with that
-commit's `uv.lock` as constraints, and runs on uv's managed 3.15.
+commit's `uv.lock` as constraints, and runs on uv's managed 3.15. Given a
+line, `vrg-tooling-install vX.Y` first reads the rolling tag `vX.Y` with one
+`git ls-remote`, takes the one `vX.Y.Z` tag on the commit it names, and then
+installs and reports that exact release.
 
 A fresh host has no `vrg-tooling-install` yet, and an installed one that
 fails cannot fix itself. Both install by hand (see
@@ -229,9 +232,11 @@ a docs publish failure that `confirm-develop` has already deferred.
 `promote` runs after `package-index`, so consumers that follow the
 rolling `vX.Y` tag and packaged installs (which take the newest `X.Y.*`
 in the index) get the same release from the moment the tag moves.
-vergil-tooling's own installs follow neither: a `vX.Y` pin resolves to
-the newest `vX.Y.Z` tag with `git ls-remote`, so they get a release as
-soon as its tag exists.
+vergil-tooling's own installs follow the rolling tag too: a `vX.Y` pin
+reads the tag `vX.Y` with `git ls-remote` and installs the `vX.Y.Z` release
+on the commit it names, never simply the newest `vX.Y.Z`, so a line
+demoted with `vrg-promote` is followed by the dev-container cache,
+`vrg-vm` and `vrg-tooling-install` alike.
 When `package-index` defers, `promote` skips and `vX.Y` stays on the
 previous release, so the two still agree. The deferral comment, the
 `close-finalize` outcome line and the `publish-status` error name the
@@ -370,8 +375,8 @@ get the fix on the next normal action:
 |---|---|
 | Developer host | The release's consumer refresh installs the exact patch tag on the Mac that ran it; any other host runs [`vrg-tooling-install vX.Y.Z`](#deployment-targets) with the new version (`vrg-host` reports the installed version but never upgrades it) |
 | Python repo `.venv` | `uv lock --upgrade-package vergil-tooling` (typically batched with other dep bumps) |
-| Dev container image | The base images carry no vergil-tooling. The next `vrg-container-run` rebuilds the branch's cached image with the patch as soon as its tag exists: a `vX.Y` line pin in `vergil.toml` resolves to the newest release on the line (see [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)). An exact `vX.Y.Z` pin stays put |
-| Agent VM (Lima/cloud) | `vrg-vm update`, which the release's consumer refresh runs on every VM (`vrg-vm update --all`): a `vX.Y` line pin resolves to the patch tag as soon as it exists; an exact `vX.Y.Z` pin stays put |
+| Dev container image | The base images carry no vergil-tooling. The next `vrg-container-run` rebuilds the branch's cached image with the patch once `promote` moves the rolling `vX.Y` tag to it: a `vX.Y` line pin in `vergil.toml` resolves to the release that tag names (see [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)). An exact `vX.Y.Z` pin stays put |
+| Agent VM (Lima/cloud) | `vrg-vm update`, which the release's consumer refresh runs on every VM (`vrg-vm update --all`): a `vX.Y` line pin resolves to the patch once `promote` moves the rolling `vX.Y` tag to it; an exact `vX.Y.Z` pin stays put |
 
 ## Minor release — opt-in for new features
 
@@ -404,7 +409,7 @@ Minor bumps are **deliberate opt-in** at every deployment target:
 |---|---|
 | Developer host | Nothing to change: the host installs an exact tag, never a line. The release's consumer refresh installs `v1.4.0` on the Mac that ran it; any other host runs [`vrg-tooling-install v1.4.0`](#deployment-targets) |
 | Python repo `.venv` | Edit `pyproject.toml` `[tool.uv.sources]` to `tag = "v1.4"`, then `uv lock --upgrade-package vergil-tooling` |
-| Dev container image | Set `[dependencies].vergil` in `vergil.toml` to `v1.4`; `vergil.toml` is part of the cache key, so the next `vrg-container-run` rebuilds the branch's cached image with the newest `v1.4` release |
+| Dev container image | Set `[dependencies].vergil` in `vergil.toml` to `v1.4`; `vergil.toml` is part of the cache key, so the next `vrg-container-run` rebuilds the branch's cached image with the release the rolling `v1.4` tag names |
 | Agent VM (Lima/cloud) | Set the identity's `vergil` version (in `identities.toml`) to `v1.4`, then `vrg-vm rebuild`, which installs and records the new line. A plain `vrg-vm update` keeps upgrading within the line recorded at install time, and `vrg-vm update --tag v1.4` is a one-off override that is not remembered (see [VM spec](../reference/vm-spec.md#vergil-tooling-inside-the-vm)) |
 
 The release author should announce the minor bump in the GitHub

@@ -14,7 +14,8 @@ def _no_network(url: str, pattern: str) -> str:
     raise AssertionError(msg)
 
 
-def test_a_line_resolves_to_its_newest_tag_and_its_commit() -> None:
+def test_a_line_resolves_to_the_release_its_tag_names_and_its_commit() -> None:
+    # The fixture's rolling tags sit on each line's newest release, as promoted.
     calls: list[tuple[str, str]] = []
     listing = fixture_ls_remote(("v2.1.9", "v2.1.10", "v2.1.320", "v2.2.0", "v2.10.0"))
 
@@ -27,6 +28,15 @@ def test_a_line_resolves_to_its_newest_tag_and_its_commit() -> None:
         ref="v2.1", kind="line", tag="v2.1.320", sha=fixture_tooling_sha("v2.1.320")
     )
     assert calls == [(GIT_URL, "refs/tags/v2.1*")]
+
+
+def test_resolve_tooling_tag_follows_demoted_line() -> None:
+    # v2.1 was demoted with vrg-promote to v2.1.10; v2.1.320 is newer.
+    listing = fixture_ls_remote(("v2.1.9", "v2.1.10", "v2.1.320"), lines={"v2.1": "v2.1.10"})
+    resolved = resolve_tooling_tag("v2.1", ls_remote=listing)
+    assert resolved == ResolvedRef(
+        ref="v2.1", kind="line", tag="v2.1.10", sha=fixture_tooling_sha("v2.1.10")
+    )
 
 
 def test_a_line_resolves_through_the_default_listing_seam() -> None:
