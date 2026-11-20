@@ -229,7 +229,10 @@ repos. The link runs both ways, each side on a line alone on its line:
 
 A missing, duplicated or malformed `Primary:` line, one naming an issue that
 is not an epic, or a malformed trusted `Proxy:` line is an error in every tool
-that reads them, never a skipped item.
+that reads them, never a skipped item. `vrg-epic-audit --epic` lists a
+primary's proxy tasks beside its own and exits 1 when the two sides disagree,
+and the org-level `vrg-epic-audit` reports every open proxy whose link is
+broken.
 
 A proxy is **not a development epic**. It lives as long as its primary, so
 the event-driven rollup (`vrg-epic-rollup`) and the daily sweep's drift close

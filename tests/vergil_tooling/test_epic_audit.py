@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib import epic_audit, epic_docs, epics, github, roadmap
+from vergil_tooling.lib import epic_audit, epic_docs, epics, github, proxies, roadmap
 from vergil_tooling.lib.epic_audit import TaskDrift
 
 # The day the task_drift tests run on: inside the first week of their 2026-06-01
@@ -2286,3 +2286,248 @@ def test_epic_drift_skips_proxy() -> None:
     ):
         result = epic_audit.epic_drift("vergil-project", home="vergil-project/.github")
     assert [e.number for e in result] == [40]
+
+
+# --- proxy children and the link check (epic .github#1417) ---------------------
+
+_PRIMARY = epics.IssueRef("vergil-project", ".github", 1417)
+_PROXY = epics.IssueRef("logical-minds-foundry", ".github", 320)
+_PX = "vergil_tooling.lib.proxies"
+
+
+def _child(owner: str, repo: str, number: int, state: str = "OPEN") -> epics.ChildState:
+    return epics.ChildState(epics.IssueRef(owner, repo, number), state, f"task {number}")
+
+
+def test_epic_children_includes_proxy_tasks() -> None:
+    # The primary's own children, then each proxy's, each read under its own
+    # org's token.
+    own = [_child("vergil-project", "vergil-tooling", 1)]
+    proxied = [_child("logical-minds-foundry", "mq-rest-admin", 7)]
+    seen: list[tuple[epics.IssueRef, str | None]] = []
+
+    def child_states(epic: epics.IssueRef) -> list[epics.ChildState]:
+        seen.append((epic, github._target_org.get()))
+        return own if epic == _PRIMARY else proxied
+
+    with (
+        patch("vergil_tooling.lib.epics.child_states", side_effect=child_states),
+        patch(f"{_PX}.proxies_of", return_value=(_PROXY,)),
+        patch(f"{_PX}.primary_of", return_value=_PRIMARY),
+    ):
+        children = epic_audit.epic_children(_PRIMARY)
+    assert children == own + proxied
+    assert seen == [(_PRIMARY, "vergil-project"), (_PROXY, "logical-minds-foundry")]
+
+
+def test_epic_children_without_proxies_is_child_states() -> None:
+    own = [_child("vergil-project", "vergil-tooling", 1)]
+    with (
+        patch("vergil_tooling.lib.epics.child_states", return_value=own),
+        patch(f"{_PX}.proxies_of", return_value=()),
+    ):
+        assert epic_audit.epic_children(_PRIMARY) == own
+
+
+def test_epic_children_bad_proxy_fails() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+        patch(f"{_PX}.proxies_of", return_value=(_PROXY,)),
+        patch(
+            f"{_PX}.primary_of",
+            side_effect=proxies.ProxyLinkError("proxy has no 'Primary:' line in its body"),
+        ),
+        pytest.raises(proxies.ProxyLinkError, match="no 'Primary:' line"),
+    ):
+        epic_audit.epic_children(_PRIMARY)
+
+
+def test_epic_children_proxy_naming_another_primary_fails() -> None:
+    other = epics.IssueRef("vergil-project", ".github", 9)
+    with (
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+        patch(f"{_PX}.proxies_of", return_value=(_PROXY,)),
+        patch(f"{_PX}.primary_of", return_value=other),
+        pytest.raises(
+            proxies.ProxyLinkError, match=r"'Primary:' line names vergil-project/\.github#9"
+        ),
+    ):
+        epic_audit.epic_children(_PRIMARY)
+
+
+def _link_problems(
+    epic: epics.IssueRef,
+    *,
+    proxy_refs: set[epics.IssueRef],
+    primary_of: Any,
+    proxies_of: Any,
+) -> list[str]:
+    with (
+        patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref in proxy_refs),
+        patch(f"{_PX}.primary_of", side_effect=primary_of),
+        patch(f"{_PX}.proxies_of", side_effect=proxies_of),
+    ):
+        return epic_audit.proxy_link_problems(epic)
+
+
+def test_proxy_link_problems_agreeing_pair_is_clean() -> None:
+    for epic in (_PRIMARY, _PROXY):
+        assert (
+            _link_problems(
+                epic,
+                proxy_refs={_PROXY},
+                primary_of=lambda _ref: _PRIMARY,
+                proxies_of=lambda ref: (_PROXY,) if ref == _PRIMARY else (),
+            )
+            == []
+        )
+
+
+def test_proxy_link_problems_proxy_without_comment_on_primary() -> None:
+    problems = _link_problems(
+        _PROXY, proxy_refs={_PROXY}, primary_of=lambda _ref: _PRIMARY, proxies_of=lambda _ref: ()
+    )
+    assert problems == [
+        "proxy logical-minds-foundry/.github#320 names vergil-project/.github#1417 as its"
+        " primary, but vergil-project/.github#1417 has no trusted"
+        " 'Proxy: logical-minds-foundry/.github#320' comment"
+    ]
+
+
+def test_proxy_link_problems_proxy_with_bad_primary_line() -> None:
+    def primary_of(_ref: epics.IssueRef) -> epics.IssueRef:
+        raise proxies.ProxyLinkError("proxy has 2 'Primary:' lines in its body")
+
+    problems = _link_problems(
+        _PROXY, proxy_refs={_PROXY}, primary_of=primary_of, proxies_of=lambda _ref: ()
+    )
+    assert problems == ["proxy has 2 'Primary:' lines in its body"]
+
+
+def test_proxy_link_problems_primary_lists_a_disagreeing_proxy() -> None:
+    other = epics.IssueRef("vergil-project", ".github", 9)
+    problems = _link_problems(
+        _PRIMARY,
+        proxy_refs={_PROXY},
+        primary_of=lambda _ref: other,
+        proxies_of=lambda _ref: (_PROXY,),
+    )
+    assert problems == [
+        "vergil-project/.github#1417 lists the proxy logical-minds-foundry/.github#320,"
+        " whose 'Primary:' line names vergil-project/.github#9"
+    ]
+
+
+def test_proxy_link_problems_primary_lists_a_non_proxy() -> None:
+    problems = _link_problems(
+        _PRIMARY,
+        proxy_refs=set(),
+        primary_of=lambda _ref: _PRIMARY,
+        proxies_of=lambda _ref: (_PROXY,),
+    )
+    assert len(problems) == 1
+    assert "which is not a proxy epic" in problems[0]
+
+
+def test_proxy_link_problems_primary_lists_a_missing_proxy() -> None:
+    def is_proxy_ref(ref: epics.IssueRef) -> bool:
+        if ref == _PROXY:
+            raise github.GitHubAPIError(1, "gh", "", "Could not resolve to an issue")
+        return False
+
+    with (
+        patch(f"{_PX}.is_proxy_ref", side_effect=is_proxy_ref),
+        patch(f"{_PX}.proxies_of", return_value=(_PROXY,)),
+    ):
+        problems = epic_audit.proxy_link_problems(_PRIMARY)
+    assert len(problems) == 1
+    assert problems[0].startswith(
+        "vergil-project/.github#1417 lists the proxy logical-minds-foundry/.github#320,"
+        " which could not be read:"
+    )
+
+
+def test_proxy_link_problems_malformed_trusted_proxy_line() -> None:
+    def proxies_of(_ref: epics.IssueRef) -> tuple[epics.IssueRef, ...]:
+        raise proxies.ProxyLinkError("malformed line in a comment on vergil-project/.github#1417")
+
+    problems = _link_problems(
+        _PRIMARY, proxy_refs=set(), primary_of=lambda _ref: _PRIMARY, proxies_of=proxies_of
+    )
+    assert problems == ["malformed line in a comment on vergil-project/.github#1417"]
+
+
+def _epic_record(number: int, state: str, labels: list[str]) -> dict[str, Any]:
+    return {"number": number, "state": state, "labels": labels}
+
+
+def test_proxy_link_drift_checks_only_open_proxies() -> None:
+    home = "logical-minds-foundry/.github"
+    listing = [
+        _epic_record(320, "OPEN", ["epic", "proxy"]),
+        _epic_record(321, "CLOSED", ["epic", "proxy"]),
+        _epic_record(5, "OPEN", ["epic"]),
+    ]
+    checked: list[epics.IssueRef] = []
+
+    def proxy_side(proxy: epics.IssueRef) -> list[str]:
+        checked.append(proxy)
+        return [f"problem with {proxy.slug}"]
+
+    with patch.object(epic_audit, "_proxy_side_problems", side_effect=proxy_side):
+        problems = epic_audit.proxy_link_drift(
+            home, listing=cast("list[epic_docs.EpicRecord]", listing)
+        )
+    assert checked == [_PROXY]
+    assert problems == ["problem with logical-minds-foundry/.github#320"]
+
+
+def test_render_reports_proxy_link_drift() -> None:
+    out = epic_audit.render(
+        [], [], org="org", window_days=30, proxy_link_drift=["proxy org/.github#3 is broken"]
+    )
+    assert "## Proxy link drift" in out
+    assert "- proxy org/.github#3 is broken" in out
+    assert "No drift" not in out
+
+
+def test_render_epic_children_primary_key_only_on_a_proxy() -> None:
+    children = [_child("logical-minds-foundry", "mq-rest-admin", 7)]
+    on_proxy = json.loads(epic_audit.render_epic_children(_PROXY, children, primary=_PRIMARY))
+    assert on_proxy["primary"] == "vergil-project/.github#1417"
+    assert list(on_proxy) == ["epic", "primary", "children"]
+    plain = json.loads(epic_audit.render_epic_children(_PRIMARY, children))
+    assert "primary" not in plain
+
+
+def test_proxy_link_drift_lists_the_home_when_not_given() -> None:
+    with (
+        patch.object(epic_audit, "list_home_epics", return_value=[]) as listing,
+        patch.object(epic_audit, "_proxy_side_problems") as proxy_side,
+    ):
+        assert epic_audit.proxy_link_drift("org/.github") == []
+    listing.assert_called_once_with("org/.github")
+    proxy_side.assert_not_called()
+
+
+def test_proxy_link_problems_unreadable_primary_of_a_proxy() -> None:
+    def proxies_of(_ref: epics.IssueRef) -> tuple[epics.IssueRef, ...]:
+        raise github.NoInstallationError("vergil-project", [])
+
+    problems = _link_problems(
+        _PROXY, proxy_refs={_PROXY}, primary_of=lambda _ref: _PRIMARY, proxies_of=proxies_of
+    )
+    assert len(problems) == 1
+    assert problems[0].startswith("the link of proxy logical-minds-foundry/.github#320 could not")
+
+
+def test_proxy_link_problems_primary_lists_a_proxy_with_a_bad_primary_line() -> None:
+    def primary_of(_ref: epics.IssueRef) -> epics.IssueRef:
+        raise proxies.ProxyLinkError(
+            "proxy logical-minds-foundry/.github#320 has no 'Primary:' line"
+        )
+
+    problems = _link_problems(
+        _PRIMARY, proxy_refs={_PROXY}, primary_of=primary_of, proxies_of=lambda _ref: (_PROXY,)
+    )
+    assert problems == ["proxy logical-minds-foundry/.github#320 has no 'Primary:' line"]
