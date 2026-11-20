@@ -21190,8 +21190,9 @@ epic is created and at each docs PR handoff.</p>
 <p><code>backfill (--org ORG | --repo OWNER/REPO)</code> writes the section on every epic
 of an epic home, open and closed: <code>--org</code> works on the org's <code>.github</code>, and
 <code>--repo</code> on a private repo that keeps its own epics. It skips the standing
-epics (ad hoc, intake, planning, deferred, the retired <code>standing</code> label, and
-titles starting <code>Epic (standing):</code>) and <code>[archived]</code> epics. For each epic it
+epics (ad hoc, intake, planning, deferred, hoshin, the retired <code>standing</code>
+label, and titles starting <code>Epic (standing):</code>), proxy epics and <code>[archived]</code>
+epics. For each epic it
 looks for the documents, in order:</p>
 <ol>
 <li>the directory <code>epics/&lt;N&gt;-*/</code> in the home repo's default branch;</li>
@@ -22363,11 +22364,11 @@ disagrees, cannot be parsed or cannot be read exits 1, with the problems on
 stderr and no JSON, so the retrospective gate stops on it.</p>
 <p><code>--close</code> applies the fixes, in order:</p>
 <ol>
-<li>Close the drifted tasks and rolled-up epics, and reopen each epic closed
-   while a child was still open, with an explanatory comment on each. Then
-   close each open proxy epic in the home whose primary has closed and which
-   has no open task, with a comment. A proxy that still has an open task is
-   reported and left open, never closed silently.</li>
+<li>Close the drifted tasks and rolled-up epics. Then close each open proxy
+   epic in the home whose primary has closed and which has no open task; a
+   proxy that still has an open task is reported and left open, never closed
+   silently. Then reopen each epic closed while a child was still open. Each
+   close and reopen carries an explanatory comment.</li>
 <li>Drain the closed children of the ad-hoc, intake, planning, deferred and
    hoshin epics into per-quarter archives, and close past archives (see
    <a href="../../standards/github-issues/#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>).</li>
