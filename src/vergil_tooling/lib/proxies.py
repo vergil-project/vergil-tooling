@@ -67,6 +67,14 @@ def proxy_line(proxy: IssueRef) -> str:
     return f"{PROXY_MARKER} {proxy.slug}"
 
 
+def unlisted_message(proxy: IssueRef, primary: IssueRef) -> str:
+    """The error for a *proxy* naming *primary*, whose trusted comments do not name it back."""
+    return (
+        f"proxy {proxy.slug} names {primary.slug} as its primary, but {primary.slug} has no"
+        f" trusted '{proxy_line(proxy)}' comment"
+    )
+
+
 def _view(ref: IssueRef, fields: str) -> dict[str, Any]:
     raw = github.read_json(
         "issue", "view", str(ref.number), "--repo", f"{ref.owner}/{ref.repo}", "--json", fields

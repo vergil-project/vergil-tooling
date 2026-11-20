@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import epic_audit, epics, github, proxies
 from vergil_tooling.lib.epics import parse_issue_ref
 from vergil_tooling.lib.merge_review.result import ResultError, parse_result
 from vergil_tooling.lib.merge_review.schema import REQUEST_SCHEMA, earlier_steps
@@ -144,29 +144,68 @@ def fetch_task_context(issue: IssueRef, batch: Sequence[IssueRef] = ()) -> TaskC
     label and not ``ad-hoc``; its open tasks are then the parent's open
     sub-issues, every page, as ``{"ref": "owner/name#N", "title": "..."}``,
     leaving out the task itself and every issue of its *batch* PR, whose
-    scopes the request carries. A task with no native parent, or whose
-    parent is not such an epic, has none. Nothing is taken from a file the
-    agent wrote. A read failure or an unexpected shape is a refusal, never an
-    empty body or an empty list; a missing GitHub token propagates to the
-    CLI's auth-error boundary.
+    scopes the request carries. When that parent is a **proxy** (it also
+    carries ``proxy``), they are instead the open children of the proxy's
+    primary, its own and every proxy's, as ``vrg-epic-audit --epic`` lists
+    them (:func:`_primary_open_tasks`). A task with no native parent, or
+    whose parent is not such an epic, has none. Nothing is taken from a file
+    the agent wrote. A read failure, an unexpected shape or a broken proxy
+    link is a refusal, never an empty body or an empty list; a missing GitHub
+    token propagates to the CLI's auth-error boundary.
     """
     left_out = {ref.slug.lower() for ref in (issue, *batch)}
     try:
         with github.target_org(issue.owner):
-            body, parent = _fetch_task(issue)
-            tasks = [] if parent is None else _open_sub_issues(parent, left_out)
+            body, parent, is_proxy = _fetch_task(issue)
+        if parent is None:
+            tasks = []
+        elif is_proxy:
+            tasks = _primary_open_tasks(parent, left_out)
+        else:
+            with github.target_org(issue.owner):
+                tasks = _open_sub_issues(parent, left_out)
     except github.MissingGitHubTokenError:
         raise
-    except (github.GitHubAPIError, RuntimeError) as exc:  # RuntimeError: a GraphQL error
+    except github.NoInstallationError as exc:
+        _unreadable(github.no_installation_message(exc))
+    except (
+        TrustedAuthorsNotConfiguredError,
+        github.GitHubAPIError,
+        RuntimeError,  # a GraphQL error, or a broken proxy link (ProxyLinkError)
+    ) as exc:
         _unreadable(str(exc))
     return TaskContext(issue_body=body, epic_open_tasks=tasks)
+
+
+def _primary_open_tasks(proxy: IssueRef, left_out: set[str]) -> list[dict[str, str]]:
+    """The open children of *proxy*'s primary, its own and its proxies', without *left_out*.
+
+    The primary comes from the proxy's ``Primary:`` line
+    (:func:`proxies.primary_of`), and its trusted ``Proxy:`` comments must name
+    *proxy* back; the children are :func:`epic_audit.epic_children`'s, which
+    checks every listed proxy's ``Primary:`` line the same way. A broken link
+    on either side raises :class:`proxies.ProxyLinkError`, never a shorter
+    list. Each read runs under the token of the org it touches. *left_out*
+    holds lowercased ``owner/name#N`` slugs.
+    """
+    with github.target_org(proxy.owner):
+        primary = proxies.primary_of(proxy)
+    with github.target_org(primary.owner):
+        listed = proxies.proxies_of(primary)
+    if proxy.slug.lower() not in {ref.slug.lower() for ref in listed}:
+        raise proxies.ProxyLinkError(proxies.unlisted_message(proxy, primary))
+    return [
+        {"ref": child.ref.slug, "title": child.title}
+        for child in epic_audit.epic_children(primary)
+        if child.state.upper() == "OPEN" and child.ref.slug.lower() not in left_out
+    ]
 
 
 def fetch_issue_body(issue: IssueRef) -> str:
     """Read *issue*'s body from GitHub, refusing as :func:`fetch_task_context` does."""
     try:
         with github.target_org(issue.owner):
-            body, _parent = _fetch_task(issue)
+            body, _parent, _is_proxy = _fetch_task(issue)
     except github.MissingGitHubTokenError:
         raise
     except (github.GitHubAPIError, RuntimeError) as exc:  # RuntimeError: a GraphQL error
@@ -223,8 +262,8 @@ def _ref_of(number: object, repository: object, where: str) -> IssueRef:
         _unreadable(f"{where}: an issue has no usable ref")
 
 
-def _fetch_task(issue: IssueRef) -> tuple[str, IssueRef | None]:
-    """*issue*'s body and, when it is under an epic, that epic's ref."""
+def _fetch_task(issue: IssueRef) -> tuple[str, IssueRef | None, bool]:
+    """*issue*'s body and, when it is under an epic, that epic's ref and whether it is a proxy."""
     where = issue.slug
     data = github.graphql(_TASK_QUERY, owner=issue.owner, name=issue.repo, number=issue.number)
     node = _issue_node(data, where)
@@ -233,7 +272,7 @@ def _fetch_task(issue: IssueRef) -> tuple[str, IssueRef | None]:
         _unreadable(f"{where}: the issue has no body string")
     parent = node.get("parent")
     if parent is None:
-        return body, None
+        return body, None, False
     if not isinstance(parent, dict):
         _unreadable(f"{where}: its parent is not an object")
     parent_ref = _ref_of(parent.get("number"), parent.get("repository"), where)
@@ -248,8 +287,9 @@ def _fetch_task(issue: IssueRef) -> tuple[str, IssueRef | None]:
         if not isinstance(name, str):
             _unreadable(f"{parent_ref.slug}: a label has no name")
         names.add(name)
-    under_epic = "epic" in names and "ad-hoc" not in names
-    return body, parent_ref if under_epic else None
+    if "epic" not in names or "ad-hoc" in names:
+        return body, None, False
+    return body, parent_ref, epics.is_proxy(names)
 
 
 def _open_sub_issues(epic: IssueRef, left_out: set[str]) -> list[dict[str, str]]:

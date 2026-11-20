@@ -1376,8 +1376,14 @@ the merge base.
 It reads the body of the `--issue` itself, as `issue_body`, and derives
 `epic_open_tasks` from the issue's native parent: when the parent carries
 `epic` and not `ad-hoc`, its open sub-issues, every page, as
-`{"ref", "title"}`, without the issue itself; otherwise `[]`. It refuses
-when the issue, its parent's labels or the sub-issues cannot be read.
+`{"ref", "title"}`, without the issue itself; otherwise `[]`. When the
+parent is a proxy epic (it also carries `proxy`), the open tasks are
+instead those of the proxy's primary, its own and every proxy's, as
+[`vrg-epic-audit --epic`](#vrg-epic-audit) lists them in its `children`,
+again without the issue itself. It refuses when the issue, its parent's
+labels or the sub-issues cannot be read, and, for a proxy, when its
+`Primary:` line cannot be resolved, the primary has no trusted `Proxy:`
+comment naming it back, or any of the primary's proxy links is broken.
 
 It reads the comments of the `--issue` itself, every page, and keeps only
 those posted by the one human login of the trusted-authors configuration

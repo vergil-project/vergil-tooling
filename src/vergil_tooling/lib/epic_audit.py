@@ -1205,10 +1205,7 @@ def _proxy_side_problems(proxy: epics.IssueRef) -> list[str]:
         return [f"the link of proxy {proxy.slug} could not be read: {exc}"]
     if any(_same_issue(ref, proxy) for ref in listed):
         return []
-    return [
-        f"proxy {proxy.slug} names {primary.slug} as its primary, but {primary.slug} has no"
-        f" trusted '{proxies.proxy_line(proxy)}' comment"
-    ]
+    return [proxies.unlisted_message(proxy, primary)]
 
 
 def _primary_side_problems(primary: epics.IssueRef) -> list[str]:
