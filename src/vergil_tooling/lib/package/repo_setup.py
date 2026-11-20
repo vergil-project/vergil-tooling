@@ -1,8 +1,11 @@
 """Bootstrap trust in an org package repository (spec §7.4, §9).
 
-Reused by VM provisioning, install tests and builders. Every command goes
-through a :data:`Run` callable, so the same sequence runs on this host
-(:func:`local_run`) or inside a guest (``Transport.run``).
+Used when ``vrg-package`` builds or install-tests a Python product
+(:mod:`~vergil_tooling.lib.package.python_builder`,
+:mod:`~vergil_tooling.lib.package.install_test`); VM provisioning no longer sets
+up the package repository and uses only the path helpers here, to remove the old
+source and key. Every command goes through a :data:`Run` callable, so the
+sequence runs on this host (:func:`local_run`) or against a fake in tests.
 
 The sequence is: install any missing prerequisites, download
 ``keys/<vendor>.asc``, check that it holds exactly one primary key whose
