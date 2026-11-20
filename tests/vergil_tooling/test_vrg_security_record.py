@@ -405,6 +405,58 @@ def test_create_refuses_unreadable_file(
     assert "cannot read --body-file" in capsys.readouterr().err
 
 
+_MOVE_LINES = (f"Moved from: {OTHER}", f"Moved to: fix/.github {OTHER}")
+
+
+@pytest.mark.parametrize("resume", [(), ("--resume", GHSA)], ids=["fresh", "resume"])
+@pytest.mark.parametrize("line", _MOVE_LINES, ids=["moved-from", "moved-to"])
+@pytest.mark.parametrize("flag", ["--body-file", "--details-file"])
+def test_create_refuses_a_move_line_in_a_file(  # noqa: PLR0913 - pytest fixtures and params
+    env: MagicMock,
+    files: dict[str, str],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    flag: str,
+    line: str,
+    resume: tuple[str, ...],
+) -> None:
+    path = tmp_path / "forged.md"
+    path.write_text(f"{SECRET}\n\n{line}\n")
+    argv = _create_argv(files, *resume)
+    argv[argv.index(flag) + 1] = str(path)
+    assert main(argv) == 1
+    err = capsys.readouterr().err
+    assert f"{flag} has a 'Moved from:' or 'Moved to:' line" in err
+    assert "only retarget writes those lines" in err
+    assert SECRET not in err
+    assert "--resume" not in err
+    env.advisory_home.assert_not_called()
+    env.create_advisory.assert_not_called()
+    env.create_issue.assert_not_called()
+
+
+@pytest.mark.parametrize("line", _MOVE_LINES, ids=["moved-from", "moved-to"])
+def test_create_refuses_a_move_line_as_summary(
+    env: MagicMock, files: dict[str, str], capsys: pytest.CaptureFixture[str], line: str
+) -> None:
+    assert main(_create_argv(files, "--summary", line)) == 1
+    err = capsys.readouterr().err
+    assert "--summary has a 'Moved from:' or 'Moved to:' line" in err
+    env.advisory_home.assert_not_called()
+    env.create_advisory.assert_not_called()
+
+
+def test_create_allows_a_move_line_mentioned_mid_line(
+    env: MagicMock, files: dict[str, str], tmp_path: Path
+) -> None:
+    path = tmp_path / "details.md"
+    path.write_text(f"{SECRET}\n\nSee the line Moved from: {OTHER} in the copy.\n")
+    argv = _create_argv(files)
+    argv[argv.index("--details-file") + 1] = str(path)
+    assert main(argv) == 0
+    env.create_advisory.assert_called_once()
+
+
 def test_create_no_installation_is_reported(
     env: MagicMock, files: dict[str, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -690,7 +742,7 @@ def test_retarget_cli_failure_exits_nonzero(
         (["retarget", GHSA, "--from", EXISTING.slug, "--to", "#1"], "--to must be owner/repo#N"),
         (
             ["retarget", GHSA, "--from", EXISTING.slug, "--to", "org/a#1", "--to", "other/b#2"],
-            "cross-org",
+            "the --to issues span orgs (org, other)",
         ),
     ],
 )
@@ -728,13 +780,48 @@ def test_cli_retarget_refusal_exits_nonzero(
     assert "is not an issue it tracks" in capsys.readouterr().err
 
 
+_FIX = IssueRef("fix", ".github", 20)
+_FIX2 = IssueRef("fix", "tool", 21)
+_COPY = "GHSA-c0py-2345-wxyz"
+
+
+def test_cli_retarget_to_another_org_moves_the_advisory(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    note = f"{EXISTING.slug} was transferred to org/tool#56: followed the transfer"
+    env.retarget.return_value = (note, security_records.moved_to_line("fix/.github", _COPY))
+    argv = ["retarget", GHSA, "--from", EXISTING.slug, "--to", _FIX.slug, "--to", _FIX2.slug]
+    with patch(f"{_GH}.target_org", wraps=github.target_org) as target_org:
+        assert main(argv) == 0
+    # The CLI enters the advisory's own org; the library enters the fix org.
+    target_org.assert_called_once_with("org")
+    env.advisory_home.assert_called_once_with("org")
+    env.retarget.assert_called_once_with(HOME, GHSA, [_FIX, _FIX2], source=EXISTING, drop=[])
+    assert capsys.readouterr().out == (
+        f"{GHSA}: {note}.\n"
+        f"Moved {GHSA} to fix/.github as {_COPY}, tracked by {_FIX.slug}, {_FIX2.slug}; "
+        f"{GHSA} is closed as moved.\n"
+    )
+
+
+def test_cli_retarget_targets_spanning_orgs_are_refused(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    argv = ["retarget", GHSA, "--from", EXISTING.slug, "--to", ISSUE.slug, "--to", _FIX.slug]
+    assert main(argv) == 1
+    err = capsys.readouterr().err
+    assert "duplicate the advisory into each org" in err
+    assert "break the finding up into separate advisories" in err
+    env.retarget.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("argv", "message"),
     [
         (["--from", "#1", "--to", "org/a#1"], "--from must be owner/repo#N"),
         (["--from", "org/a#2", "--to", "org/a#1", "--drop", "#3"], "--drop must be owner/repo#N"),
-        (["--from", "other/b#2", "--to", "org/a#1"], "cross-org"),
         (["--from", "org/a#2", "--to", "org/a#1", "--drop", "other/b#3"], "cross-org"),
+        (["--from", "org/a#2", "--to", "fix/a#1", "--drop", "fix/b#3"], "cross-org"),
     ],
 )
 def test_cli_retarget_refuses_a_bad_source_or_drop(
@@ -1184,6 +1271,10 @@ def test_note_cli_failure_exits_nonzero_without_the_note(
         (
             f"{_NOTE}\nTracking issue: org/tool#12\n",
             "--file: the note has a 'Tracking issue:' line",
+        ),
+        *(
+            (f"{_NOTE}\n{line}\n", "--file: the note has a 'Moved from:' or 'Moved to:' line")
+            for line in _MOVE_LINES
         ),
     ],
 )

@@ -1013,7 +1013,9 @@ vergil-project/.github#517). `create` makes the pair (or attaches an
 advisory to an existing issue, or resumes an unfinished pair), `list` and
 `show` read records, `retarget` moves an advisory's tracking from an issue
 it tracks (`--from`) to new issues, refusing to stop tracking an open
-issue unless `--drop` names it, `sync` sets each paired advisory's state from its issues and
+issue unless `--drop` names it, and moves the advisory to another org's
+`.github` when every `--to` is there (a copy with a `Moved from:` line;
+the original closed with `Moved to:`), `sync` sets each paired advisory's state from its issues and
 reports broken pairs (`--dry-run` previews it), and `close` closes a draft
 advisory whose issues are all closed, posting the GHSA ID and a required
 `--reason` on each of them first, and `note` appends a dated private note
@@ -1025,8 +1027,8 @@ from a file to an advisory's description (append-only). Advisory text is printed
 |---|---|
 | Source | `vergil_tooling.bin.vrg_security_record` (library: `lib/security_records.py`) |
 | Args | `create --repo --title --body-file --details-file --severity [--summary] [--issue] [--resume]`; `list [--repo] [--state draft\|closed\|all] [--details]`; `show GHSA-ID\|OWNER/REPO#N`; `retarget GHSA-ID --from REF --to REF [--to REF …] [--drop REF …]`; `sync [--dry-run]`; `close GHSA-ID --reason TEXT`; `note GHSA-ID --file FILE` |
-| Preconditions | The org's `.github` is public; Repository security advisories: Read and write on the identity's App (or a human `gh` login with access) |
-| Failure mode | A partial pair exits 1 naming what exists and the exact `--resume` command that finishes it; a private `.github`, a duplicate draft, or `--details` under `VRG_EPIC_SWEEP` is refused; `retarget` refuses, before any write, a `--from` the advisory does not track and dropping an open tracked issue, printing the command that would succeed; `create` refuses an advisory that already tracks another issue; `sync` exits 1 on a broken pair after syncing the rest |
+| Preconditions | The org's `.github` is public; Repository security advisories: Read and write on the identity's App (or a human `gh` login with access), in both orgs for a cross-org `retarget` |
+| Failure mode | A partial pair exits 1 naming what exists and the exact `--resume` command that finishes it; a private `.github`, a duplicate draft, or `--details` under `VRG_EPIC_SWEEP` is refused; `retarget` refuses, before any write, a `--from` the advisory does not track and dropping an open tracked issue, printing the command that would succeed, and `--to` refs spanning orgs, naming the two ways out; a cross-org `retarget` that fails partway is finished by the identical command; `create` refuses an advisory that already tracks another issue, and `create` and `note` refuse caller text holding a `Moved from:` or `Moved to:` line; `sync` exits 1 on a broken pair after syncing the rest |
 | Exit codes | 0 success, 1 refused or error, 2 bad arguments |
 | Status | Active |
 

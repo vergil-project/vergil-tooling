@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 import traceback
 from dataclasses import fields
 from datetime import date
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -32,15 +33,20 @@ from vergil_tooling.lib.security_records import (
     close_record,
     create_advisory,
     find_duplicate,
+    fix_org,
     guard_check,
     list_advisories,
     mark_issue,
+    moved_from_line,
+    moved_to_line,
     note_header,
     note_record,
     pair,
     pair_check,
     parse_advisory_lines,
     parse_advisory_refs,
+    parse_moved_from,
+    parse_moved_to,
     parse_tracking,
     pending_syncs,
     read_text,
@@ -53,6 +59,9 @@ from vergil_tooling.lib.security_records import (
     unmark_issue,
     with_note,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 HOME = "org/.github"
 GHSA = "GHSA-abcd-2345-wxyz"
@@ -309,7 +318,9 @@ def test_list_advisories_projection_against_jq() -> None:
             "state": "draft",
             "summary": SECRET,
             "description": f"{SECRET}\r\nTracking issue: org/.github#10\r\n"
-            f"Tracking issue: org/x#1 {SECRET}\nTracking issue: org/tool#12  \n",
+            f"Tracking issue: org/x#1 {SECRET}\nTracking issue: org/tool#12  \n"
+            f"Moved from: {OTHER}\r\n> Moved from: {GHSA}\nMoved to: fix/.github {OTHER} \n"
+            f"Moved to: fix/.github {OTHER} {SECRET}\nMoved from: {OTHER}x\n",
             "vulnerabilities": [{"package": {"ecosystem": "other", "name": "tool"}}],
             "submission": None,
         },
@@ -334,13 +345,41 @@ def test_list_advisories_projection_against_jq() -> None:
     assert rows[0]["affected"] == "tool"
     assert rows[0]["submission"] is False
     assert len(rows[0]["tracking"]) == 2
+    assert rows[0]["moved_from"] == [f"Moved from: {OTHER}"]
+    assert rows[0]["moved_to"] == [f"Moved to: fix/.github {OTHER} "]
     assert rows[1] == {
         "ghsa_id": OTHER,
         "state": "triage",
         "affected": None,
         "submission": True,
         "tracking": [],
+        "moved_from": [],
+        "moved_to": [],
     }
+
+
+def test_list_advisories_parses_the_move_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = [
+        {
+            "ghsa_id": GHSA,
+            "state": "closed",
+            "submission": False,
+            "moved_from": [f"Moved from: {OTHER}"],
+            "moved_to": [f"Moved to: fix/.github {OTHER}\r"],
+        }
+    ]
+    monkeypatch.setattr(github, "read_json_paginated", MagicMock(return_value=rows))
+    assert list_advisories(HOME) == [
+        Advisory(
+            GHSA,
+            "closed",
+            None,
+            (),
+            external=False,
+            moved_from=(OTHER,),
+            moved_to=(("fix", OTHER),),
+        )
+    ]
 
 
 def test_list_advisories_rejects_a_malformed_row(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -432,6 +471,7 @@ class Issues:
         self.descriptions: dict[str, str] = {}
         self.writes: list[tuple[str, str, dict[str, object]]] = []
         self.fail_on: str | None = None
+        self.severity: str | None = "high"
         self.ensure_labels = MagicMock()
         monkeypatch.setattr(labels, "ensure_labels", self.ensure_labels)
         monkeypatch.setattr(github, "read_json", self.read_json)
@@ -468,7 +508,7 @@ class Issues:
         if "security-advisories" in endpoint:
             ghsa_id = endpoint.rsplit("/", 1)[1]
             description = self.descriptions.get(ghsa_id, self.description)
-            return {"summary": SECRET, "description": description}
+            return {"summary": SECRET, "description": description, "severity": self.severity}
         ref = self._ref(endpoint)
         ref = self.moved.get(ref, ref)
         return {
@@ -2073,3 +2113,619 @@ def test_note_list_failure_is_scrubbed(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(NoteError, match="reading the advisories failed") as excinfo:
         note_record(HOME, GHSA, NOTE, DAY)
     assert SECRET not in "".join(traceback.format_exception(excinfo.value))
+
+
+# --- the cross-org move (epic vergil-project/.github#1417, spec 4.6) ---------------
+
+FIX_HOME = "fix/.github"
+FIX = IssueRef("fix", ".github", 20)
+FIX2 = IssueRef("fix", "tool", 21)
+COPY = "GHSA-c0py-2345-wxyz"
+SECOND = "GHSA-c0py-6789-wxyz"
+MOVED_COMMENT = "Security record moved to fix/.github#20, fix/tool#21"
+
+
+class Move:
+    """Two advisory homes over :class:`Issues`: the original's org and the fix org.
+
+    Each advisory lives in one home with a state and a description; the list
+    reads derive from the description exactly as the ``--jq`` projection does,
+    a create adds a copy, and every write records the org its token was for.
+    """
+
+    def __init__(self, issues: Issues, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.issues = issues
+        self.homes: dict[str, str] = {GHSA: HOME}
+        issues.states[GHSA] = "draft"
+        self.external: set[str] = set()
+        self.next_ids = [COPY, SECOND]
+        self.created: list[tuple[str, dict[str, object]]] = []
+        self.org: str | None = None
+        self.write_orgs: list[tuple[str | None, str, str]] = []
+        issues.descriptions[GHSA] = f"{SECRET}\n\nTracking issue: org/.github#10"
+        issues.add(A, f"Planning.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+        issues.add(FIX, "Fix one.")
+        issues.add(FIX2, "Fix two.")
+        inner_write = issues.write_json
+
+        def write_json(method: str, endpoint: str, body: dict[str, object]) -> None:
+            inner_write(method, endpoint, body)
+            self.write_orgs.append((self.org, method, endpoint))
+
+        monkeypatch.setattr(github, "write_json", write_json)
+        monkeypatch.setattr(github, "post_json_once", self.post_json_once)
+        monkeypatch.setattr(github, "repo_visibility", lambda _repo: "PUBLIC")
+        monkeypatch.setattr(security_records, "list_advisories", self.list_advisories)
+        monkeypatch.setattr(github, "target_org", self.target_org)
+
+    @contextlib.contextmanager
+    def target_org(self, org: str | None) -> Generator[None]:
+        before, self.org = self.org, org
+        try:
+            yield
+        finally:
+            self.org = before
+
+    def add(self, ghsa_id: str, home: str, description: str, state: str = "draft") -> None:
+        self.homes[ghsa_id] = home
+        self.issues.descriptions[ghsa_id] = description
+        self.issues.states[ghsa_id] = state
+
+    def post_json_once(self, endpoint: str, body: dict[str, object]) -> dict[str, object]:
+        self.issues._maybe_fail(f"POST {endpoint}")
+        home = "/".join(endpoint.split("/")[1:3])
+        ghsa_id = self.next_ids.pop(0)
+        self.created.append((home, body))
+        self.write_orgs.append((self.org, "POST", endpoint))
+        self.add(ghsa_id, home, str(body["description"]))
+        return {"ghsa_id": ghsa_id}
+
+    def list_advisories(self, home: str) -> list[Advisory]:
+        self.issues._maybe_fail(f"LIST {home}")
+        found: list[Advisory] = []
+        for ghsa_id, where in sorted(self.homes.items()):
+            if where != home:
+                continue
+            state = self.issues.states.get(ghsa_id, "draft")
+            text = self.issues.descriptions[ghsa_id]
+            found.append(
+                Advisory(
+                    ghsa_id,
+                    state,
+                    "tool",
+                    parse_tracking(text),
+                    external=ghsa_id in self.external or state == "triage",
+                    moved_from=parse_moved_from(text),
+                    moved_to=parse_moved_to(text),
+                )
+            )
+        return found
+
+    def run(self, *, drop: tuple[IssueRef, ...] = ()) -> tuple[str, ...]:
+        return retarget(HOME, GHSA, (FIX, FIX2), source=A, drop=drop)
+
+
+@pytest.fixture
+def move(issues: Issues, monkeypatch: pytest.MonkeyPatch) -> Move:
+    return Move(issues, monkeypatch)
+
+
+def _assert_moved(move: Move, copy_id: str = COPY) -> None:
+    issues = move.issues
+    assert issues.descriptions[copy_id] == (
+        f"{SECRET}\n\nMoved from: {GHSA}\n\nTracking issue: fix/.github#20\n"
+        "Tracking issue: fix/tool#21"
+    )
+    for ref in (FIX, FIX2):
+        assert issues.labels[ref] == {"security"}
+        assert parse_advisory_lines(issues.bodies[ref]) == (("fix", copy_id),)
+    assert issues.descriptions[GHSA] == f"{SECRET}\n\nMoved to: fix/.github {copy_id}"
+    assert issues.states[GHSA] == "closed"
+    assert issues.states[copy_id] == "draft"
+    assert issues.labels[A] == set()
+    assert issues.bodies[A] == "Planning."
+    assert issues.comments[A] == [MOVED_COMMENT]
+
+
+def test_move_lines_are_exact() -> None:
+    assert moved_from_line(GHSA) == f"Moved from: {GHSA}"
+    assert moved_to_line(FIX_HOME, COPY) == f"Moved to: fix/.github {COPY}"
+    text = f"x\nMoved from: {GHSA} \r\nMoved to: fix/.github {COPY}\n> Moved from: {OTHER}"
+    assert parse_moved_from(text) == (GHSA,)
+    assert parse_moved_to(text) == (("fix", COPY),)
+    assert parse_moved_to(f"Moved to: fix/tool {COPY}") == ()
+
+
+def test_move_creates_in_fix_org_with_moved_from(move: Move) -> None:
+    notes = move.run()
+    assert notes == (moved_to_line(FIX_HOME, COPY),)
+    [(home, body)] = move.created
+    assert home == FIX_HOME
+    assert body["summary"] == SECRET
+    assert body["severity"] == "high"
+    assert body["description"] == f"{SECRET}\n\nMoved from: {GHSA}"
+    assert body["vulnerabilities"] == [{"package": {"ecosystem": "other", "name": ".github"}}]
+    _assert_moved(move)
+    # Every write in the fix org ran under its token, every other under the original's.
+    for org, _method, endpoint in move.write_orgs:
+        assert org == endpoint.split("/")[1], endpoint
+
+
+def test_move_writes_moved_to_then_closes_original(move: Move) -> None:
+    move.run()
+    advisory = f"repos/org/.github/security-advisories/{GHSA}"
+    original = [
+        (method, endpoint, body)
+        for method, endpoint, body in move.issues.writes
+        if endpoint.startswith("repos/org/")
+    ]
+    assert [(m, e) for m, e, _ in original] == [
+        ("PATCH", advisory),
+        ("POST", "repos/org/.github/issues/10/comments"),
+        ("PATCH", "repos/org/.github/issues/10"),
+        ("PATCH", advisory),
+        ("PATCH", advisory),
+    ]
+    # The Moved to: line lands while the original still tracks --from.
+    assert original[0][2] == {
+        "description": (
+            f"{SECRET}\n\nMoved to: fix/.github {COPY}\n\nTracking issue: org/.github#10"
+        )
+    }
+    assert original[3][2] == {"description": f"{SECRET}\n\nMoved to: fix/.github {COPY}"}
+    assert original[4][2] == {"state": "closed"}
+    # The copy exists and tracks its fix before the original changes at all.
+    first_original = move.write_orgs.index(("org", "PATCH", advisory))
+    fix_writes = [i for i, (org, _m, _e) in enumerate(move.write_orgs) if org == "fix"]
+    assert fix_writes
+    assert max(fix_writes) < first_original
+
+
+@pytest.mark.parametrize(
+    "fail_on",
+    [
+        "POST repos/fix/.github/issues/20/labels",
+        "PATCH repos/fix/tool/issues/21",
+        f"PATCH repos/fix/.github/security-advisories/{COPY}",
+        f"PATCH repos/org/.github/security-advisories/{GHSA}",
+        "POST repos/org/.github/issues/10/comments",
+        "PATCH repos/org/.github/issues/10",
+    ],
+)
+def test_move_rerun_reuses_moved_from(move: Move, fail_on: str) -> None:
+    """A re-run after the copy exists but before the original closes reuses the copy."""
+    move.issues.fail_on = fail_on
+    with pytest.raises(RetargetError) as excinfo:
+        move.run()
+    assert not isinstance(excinfo.value, RetargetRefusedError)
+    assert SECRET not in "".join(traceback.format_exception(excinfo.value))
+    assert len(move.created) == 1
+    move.issues.fail_on = None
+    assert move.run() == (moved_to_line(FIX_HOME, COPY),)
+    assert len(move.created) == 1
+    _assert_moved(move)
+
+
+def test_move_rerun_after_tracking_removed_closes_it(
+    move: Move, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = security_records.set_state
+    failing = MagicMock(side_effect=github.GitHubAPIError(1, ("gh",), SECRET, "HTTP 500"))
+    monkeypatch.setattr(security_records, "set_state", failing)
+    with pytest.raises(RetargetError, match="setting the state to closed failed"):
+        move.run()
+    assert move.issues.states[GHSA] == "draft"
+    assert parse_tracking(move.issues.descriptions[GHSA]) == ()
+    monkeypatch.setattr(security_records, "set_state", real)
+    move.run()
+    assert len(move.created) == 1
+    _assert_moved(move)
+
+
+def test_move_rerun_after_success_writes_nothing(move: Move) -> None:
+    move.run()
+    before = len(move.write_orgs)
+    assert move.run() == (moved_to_line(FIX_HOME, COPY),)
+    assert len(move.write_orgs) == before
+    assert len(move.created) == 1
+
+
+def test_move_create_failure_rerun_finds_the_copy(
+    move: Move, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A create whose response was lost left the copy; the re-run finds it, never a second."""
+
+    def lost(endpoint: str, body: dict[str, object]) -> dict[str, object]:
+        move.post_json_once(endpoint, body)
+        raise github.GitHubAPIError(1, ("gh", "api", endpoint), SECRET, "HTTP 502")
+
+    monkeypatch.setattr(github, "post_json_once", lost)
+    with pytest.raises(RetargetError, match=f"creating its copy in {FIX_HOME} failed") as excinfo:
+        move.run()
+    assert SECRET not in "".join(traceback.format_exception(excinfo.value))
+    monkeypatch.setattr(github, "post_json_once", move.post_json_once)
+    move.run()
+    assert len(move.created) == 1
+    _assert_moved(move)
+
+
+@pytest.mark.parametrize(
+    ("state", "external", "kind"),
+    [
+        ("triage", False, "an external report"),
+        ("draft", True, "an external report"),
+        ("closed", False, "closed"),
+    ],
+)
+def test_move_ignores_external_report_with_moved_from(
+    move: Move,
+    state: str,
+    external: bool,
+    kind: str,  # noqa: FBT001
+) -> None:
+    """A report carrying the line, or a copy no longer a draft, is never reused."""
+    move.add(SECOND, FIX_HOME, f"Outside text.\n\nMoved from: {GHSA}", state)
+    if external:
+        move.external.add(SECOND)
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        move.run()
+    message = str(excinfo.value)
+    assert f"{SECOND} ({kind})" in message
+    assert "reuses none of these" in message
+    assert move.issues.writes == []
+    assert move.created == []
+    assert SECRET not in message
+
+
+def test_move_two_moved_from_refused(move: Move) -> None:
+    move.add(COPY, FIX_HOME, f"One.\n\nMoved from: {GHSA}")
+    move.add(SECOND, FIX_HOME, f"Two.\n\nMoved from: {GHSA}")
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        move.run()
+    assert f"{COPY} (draft), {SECOND} (draft)" in str(excinfo.value)
+    assert move.issues.writes == []
+    assert move.created == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"> Moved from: {GHSA}",
+        f"Moved from: {GHSA} and more",
+        f"see Moved from: {GHSA}",
+        f"Moved from: {OTHER}",
+    ],
+)
+def test_move_moved_from_not_alone_ignored(move: Move, line: str) -> None:
+    move.next_ids = [SECOND]
+    move.add(COPY, FIX_HOME, f"Unrelated.\n\n{line}")
+    move.run()
+    assert [home for home, _body in move.created] == [FIX_HOME]
+    _assert_moved(move, SECOND)
+    assert move.issues.descriptions[COPY] == f"Unrelated.\n\n{line}"
+    assert not [w for w in move.issues.writes if COPY in w[1]]
+
+
+def test_move_keeps_drop_rule(move: Move) -> None:
+    move.issues.descriptions[GHSA] = (
+        f"{SECRET}\n\nTracking issue: org/.github#10\nTracking issue: org/.github#11"
+    )
+    move.issues.add(B, f"Open work.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        move.run()
+    message = str(excinfo.value)
+    assert "this would stop tracking the open issue org/.github#11" in message
+    assert "a move to fix/.github closes this advisory" in message
+    command = (
+        f"vrg-security-record retarget {GHSA} --from 'org/.github#10' "
+        "--to 'fix/.github#20' --to 'fix/tool#21'"
+    )
+    assert f"run: {command}." in message
+    assert "--drop" not in message
+    assert "Leaving an open issue untracked is the human's decision" in message
+    assert move.issues.writes == []
+    assert move.created == []
+    # Naming it with --drop is the human's call; the move then unmarks it too.
+    move.run(drop=(B,))
+    assert move.issues.labels[B] == set()
+    assert move.issues.comments[B] == [MOVED_COMMENT]
+    assert move.issues.states[GHSA] == "closed"
+
+
+def test_move_drop_refusal_repeats_the_given_drops(move: Move) -> None:
+    third = IssueRef("org", "tool", 13)
+    move.issues.descriptions[GHSA] = (
+        f"{SECRET}\n\nTracking issue: org/.github#10\nTracking issue: org/.github#11\n"
+        "Tracking issue: org/tool#13"
+    )
+    move.issues.add(B, advisory_line(HOME, GHSA), {"security"})
+    move.issues.add(third, advisory_line(HOME, GHSA), {"security"})
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        move.run(drop=(third,))
+    assert "--drop 'org/tool#13'" in str(excinfo.value)
+    assert "open issue org/.github#11" in str(excinfo.value)
+
+
+def test_targets_span_orgs_refused(move: Move) -> None:
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        retarget(HOME, GHSA, (C, FIX), source=A)
+    message = str(excinfo.value)
+    assert "span orgs (fix, org)" in message
+    assert "duplicate the advisory into each org" in message
+    assert "each copy tracking that org's own fix tasks" in message
+    assert "break the finding up into separate advisories" in message
+    assert move.issues.writes == []
+    assert fix_org(GHSA, (FIX, FIX2)) == "fix"
+
+
+@pytest.mark.parametrize("state", ["published", "withdrawn", "closed"])
+def test_move_refuses_an_original_it_must_not_move(move: Move, state: str) -> None:
+    move.issues.states[GHSA] = state
+    with pytest.raises(RetargetRefusedError, match=f"is in state {state}; a move hands on"):
+        move.run()
+    assert move.issues.writes == []
+
+
+def test_move_refuses_an_original_with_two_moved_to_lines(move: Move) -> None:
+    move.issues.descriptions[GHSA] += (
+        f"\nMoved to: fix/.github {COPY}\nMoved to: fix/.github {SECOND}"
+    )
+    with pytest.raises(RetargetRefusedError, match="more than one Moved to: line"):
+        move.run()
+    assert move.issues.writes == []
+
+
+def test_move_refuses_an_original_that_is_itself_a_copy(move: Move) -> None:
+    move.issues.descriptions[GHSA] += f"\nMoved from: {SECOND}"
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        move.run()
+    message = str(excinfo.value)
+    assert f"is itself the copy of a move (it has a Moved from: {SECOND} line)" in message
+    assert "one copy of the finding per org" in message
+    assert move.issues.writes == []
+    assert move.created == []
+
+
+def test_move_refuses_a_moved_to_line_naming_no_copy(move: Move) -> None:
+    move.issues.descriptions[GHSA] = (
+        f"{SECRET}\n\nMoved to: fix/.github {SECOND}\n\nTracking issue: org/.github#10"
+    )
+    with pytest.raises(RetargetRefusedError, match=f"already moved to fix/.github {SECOND}"):
+        move.run()
+    assert move.issues.writes == []
+    assert move.created == []
+
+
+def test_move_refuses_a_copy_tracking_other_issues(move: Move) -> None:
+    move.add(COPY, FIX_HOME, f"{SECRET}\n\nMoved from: {GHSA}\n\nTracking issue: fix/tool#99")
+    with pytest.raises(RetargetRefusedError, match="already tracks fix/tool#99"):
+        move.run()
+    assert move.issues.writes == []
+
+
+def test_move_refuses_an_unrelated_source_once_tracking_is_gone(move: Move) -> None:
+    move.run()
+    move.issues.add(B, "Unrelated.")
+    with pytest.raises(RetargetRefusedError, match="is not the source of a move"):
+        retarget(HOME, GHSA, (FIX, FIX2), source=B)
+
+
+@pytest.mark.parametrize("severity", [None, "moderate"])
+def test_move_refuses_a_severity_the_copy_cannot_take(move: Move, severity: str | None) -> None:
+    move.issues.severity = severity
+    with pytest.raises(RetargetRefusedError, match="set its severity first"):
+        move.run()
+    assert move.issues.writes == []
+    assert move.created == []
+
+
+def test_move_refuses_a_missing_original(move: Move) -> None:
+    del move.homes[GHSA]
+    with pytest.raises(RetargetRefusedError, match=f"{GHSA} does not exist in {HOME}"):
+        move.run()
+    assert move.issues.writes == []
+
+
+def test_move_fails_on_an_unreadable_original(move: Move, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(github, "read_json", MagicMock(return_value={"summary": None}))
+    with pytest.raises(RetargetError, match="reading the advisory failed: .* no summary"):
+        move.run()
+    assert move.issues.writes == []
+
+
+def test_move_refuses_an_untracked_source(move: Move) -> None:
+    move.issues.add(B, "Unrelated.")
+    with pytest.raises(RetargetRefusedError, match="is not an issue it tracks"):
+        retarget(HOME, GHSA, (FIX, FIX2), source=B)
+    assert move.issues.writes == []
+
+
+def test_move_needs_a_public_fix_home(move: Move, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        github, "repo_visibility", lambda repo: "PRIVATE" if "fix" in repo else "PUBLIC"
+    )
+    with pytest.raises(PrivateHomeError):
+        move.run()
+    assert move.issues.writes == []
+
+
+def test_same_org_retarget_unchanged(issues: Issues, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A retarget inside one org lists no advisory, creates none and moves nothing."""
+    for name in ("list_advisories", "create_advisory"):
+        monkeypatch.setattr(security_records, name, MagicMock(side_effect=AssertionError(name)))
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.add(C, "")
+    assert retarget(HOME, GHSA, (C,), source=A) == ()
+    assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
+    assert issues.states == {}
+    assert "Moved" not in issues.description
+
+
+# --- moved: classification and sync ------------------------------------------------
+
+
+def _moved(
+    ghsa: str = GHSA, to: tuple[tuple[str, str], ...] = (("fix", COPY),), **kw: Any
+) -> Advisory:
+    return Advisory(
+        ghsa,
+        kw.get("state", "closed"),
+        "tool",
+        kw.get("tracking", ()),
+        external=kw.get("external", False),
+        moved_to=to,
+    )
+
+
+def test_classify_moved_not_broken() -> None:
+    advisory = _moved()
+    assert classify([advisory], []) == Classification(
+        paired=[], external=[], broken=[], moved=[advisory]
+    )
+    # Mid-move it may still track an issue that names it: still moved, not paired.
+    midway = _moved(state="draft", tracking=(A,))
+    result = classify([midway], [_iss(A)])
+    assert result.moved == [midway]
+    assert result.broken == []
+    assert result.paired == []
+
+
+def test_classify_two_moved_to_lines_broken() -> None:
+    advisory = _moved(to=(("fix", COPY), ("fix", SECOND)))
+    result = classify([advisory], [])
+    assert result.broken == [f"{GHSA}: more than one Moved to: line"]
+    assert result.moved == []
+
+
+def test_classify_external_report_with_moved_to_stays_external() -> None:
+    advisory = _moved(state="triage", external=True)
+    result = classify([advisory], [])
+    assert result.external == [advisory]
+    assert result.moved == []
+
+
+def _moved_pass(
+    monkeypatch: pytest.MonkeyPatch, homes: dict[str, list[Advisory]], *, apply: bool = True
+) -> tuple[int, MagicMock, list[str | None]]:
+    write = MagicMock()
+    orgs: list[str | None] = []
+    current: list[str | None] = [None]
+
+    @contextlib.contextmanager
+    def target_org(org: str | None) -> Generator[None]:
+        current.append(org)
+        try:
+            yield
+        finally:
+            current.pop()
+
+    def list_advisories(home: str) -> list[Advisory]:
+        orgs.append(current[-1])
+        return homes[home]
+
+    monkeypatch.setattr(security_records, "security_issues", lambda _org: [])
+    monkeypatch.setattr(github, "repo_exists", lambda *_a: True)
+    monkeypatch.setattr(security_records, "advisory_home", lambda org: f"{org}/.github")
+    monkeypatch.setattr(security_records, "list_advisories", list_advisories)
+    monkeypatch.setattr(github, "target_org", target_org)
+    monkeypatch.setattr(github, "write_json", write)
+    return records_pass("org", apply=apply, prog="prog"), write, orgs
+
+
+def _copy(**kw: Any) -> Advisory:
+    return Advisory(
+        COPY,
+        "draft",
+        "tool",
+        kw.get("tracking", (FIX,)),
+        external=False,
+        moved_from=kw.get("moved_from", (GHSA,)),
+    )
+
+
+def test_sync_passes_a_moved_advisory_whose_copy_holds_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    homes = {HOME: [_moved()], FIX_HOME: [_copy()]}
+    rc, write, orgs = _moved_pass(monkeypatch, homes)
+    assert rc == 0
+    write.assert_not_called()
+    assert orgs == [None, "fix"]
+    out = capsys.readouterr().out
+    assert "0 advisory states synced, 0 broken pairs, 0 held, 0 errors." in out
+    assert "- broken:" not in out
+
+
+@pytest.mark.parametrize(
+    ("copies", "problem"),
+    [
+        ([], "which does not exist"),
+        ([_copy(moved_from=())], f"which has no Moved from: {GHSA} line"),
+        ([_copy(tracking=())], "which tracks no issue"),
+    ],
+)
+def test_sync_reports_moved_target_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    copies: list[Advisory],
+    problem: str,
+) -> None:
+    homes = {HOME: [_moved()], FIX_HOME: copies}
+    rc, write, _orgs = _moved_pass(monkeypatch, homes)
+    assert rc == 1
+    write.assert_not_called()
+    out = capsys.readouterr().out
+    assert "0 advisory states synced, 1 broken pair, 0 held, 0 errors." in out
+    assert f"- broken: {GHSA}: moved to fix/.github {COPY}, {problem}" in out
+    rc, _write, _orgs = _moved_pass(monkeypatch, homes, apply=False)
+    assert rc == 0
+
+
+def test_sync_reads_each_moved_to_home_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    other = _moved(OTHER, to=(("fix", SECOND),))
+    second = Advisory(SECOND, "closed", "tool", (FIX2,), external=False, moved_from=(OTHER,))
+    homes = {HOME: [_moved(), other], FIX_HOME: [_copy(), second]}
+    rc, _write, orgs = _moved_pass(monkeypatch, homes)
+    assert rc == 0
+    assert orgs == [None, "fix"]
+
+
+def test_sync_moved_to_home_read_failure_fails_the_pass(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Homes(dict[str, list[Advisory]]):
+        def __missing__(self, home: str) -> list[Advisory]:
+            raise github.GitHubAPIError(1, ("gh", "api", home), None, "HTTP 403")
+
+    rc, write, _orgs = _moved_pass(monkeypatch, Homes({HOME: [_moved()]}), apply=False)
+    assert rc == 1
+    write.assert_not_called()
+    err = capsys.readouterr().err
+    assert "prog: security records pass failed" in err
+    assert "HTTP 403" in err
+
+
+def test_note_refuses_a_move_line() -> None:
+    for line in (f"Moved from: {GHSA}", f"Moved to: fix/.github {COPY}"):
+        with pytest.raises(NoteError, match="would change where the record lives"):
+            check_note(f"Some text.\n{line}\n")
+    assert check_note(f"mid-line Moved from: {GHSA} mention") == (
+        f"mid-line Moved from: {GHSA} mention"
+    )
+
+
+def test_refuse_move_lines_raises_the_given_error_without_quoting() -> None:
+    class RefusedError(Exception):
+        pass
+
+    for line in (f"Moved from: {GHSA}", f"Moved to: fix/.github {COPY} \r"):
+        with pytest.raises(RefusedError, match="^--details-file has a .Moved from:. or") as excinfo:
+            security_records.refuse_move_lines(
+                f"{SECRET}\n{line}\n", "--details-file", RefusedError
+            )
+        assert SECRET not in str(excinfo.value)
+        assert "only retarget writes those lines" in str(excinfo.value)
+    # A mention inside a line is not a move line.
+    security_records.refuse_move_lines(
+        f"see Moved from: {GHSA}\n> Moved to: fix/.github {COPY}", "x", RefusedError
+    )
