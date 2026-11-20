@@ -30,6 +30,7 @@ _SEC = f"{_MOD}.security_records"
 _PX = "vergil_tooling.lib.proxies"
 # The real check, taken before the autouse fixture stubs it out.
 _PROXY_LINK_DRIFT = epic_audit.proxy_link_drift
+_PROXY_CLOSURES = epic_audit.proxy_closures
 
 
 @pytest.fixture(autouse=True)
@@ -56,6 +57,7 @@ def standing_drain() -> Iterator[MagicMock]:
         patch(f"{_PX}.proxies_of", return_value=()),
         patch(f"{_PX}.is_proxy_ref", return_value=False),
         patch(f"{_MOD}.epic_audit.proxy_link_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.proxy_closures", return_value=([], [])),
     ):
         yield mock_drain
 
@@ -1282,3 +1284,145 @@ def test_vrg_epic_audit_epic_proxy_link_error_while_listing_exits_1(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == "vrg-epic-audit: proxy link drift: proxy has no 'Primary:' line\n"
+
+
+# --- the sweep's proxy close pass (epic .github#1417) -----------------------------
+
+_CLOSED_PRIMARY = IssueRef("vergil-project", ".github", 1417)
+
+
+def _proxy_listing(*numbers: int) -> list[dict[str, Any]]:
+    return [{"number": n, "state": "OPEN", "labels": ["epic", "proxy"]} for n in numbers]
+
+
+def test_proxy_unreadable_primary_reported_and_run_fails(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One proxy's Primary: line is broken, the other's primary is closed and
+    # empty: the good one is closed, the broken one is on stderr and in the
+    # closed report, and the run exits 1 once every pass has run.
+    monkeypatch.setenv("VRG_EPIC_SWEEP", "1")
+
+    def primary_of(ref: IssueRef) -> IssueRef:
+        if ref.number == 3:
+            raise proxies.ProxyLinkError("proxy org/.github#3 has no 'Primary:' line in its body")
+        return _CLOSED_PRIMARY
+
+    run = MagicMock()
+    writers = _no_op_writers()
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=False),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        patch(f"{_MOD}.epic_audit.list_home_epics", return_value=_proxy_listing(3, 4)),
+        patch(f"{_MOD}.epic_audit.proxy_closures", wraps=_PROXY_CLOSURES),
+        patch(f"{_PX}.primary_of", side_effect=primary_of),
+        patch(f"{_MOD}.epic_audit.epics.issue_state", return_value="CLOSED"),
+        patch(f"{_MOD}.epic_audit.epics.child_states", return_value=[]),
+        patch(f"{_MOD}.epic_audit.github.run", run),
+        _patched(_close_patches(**writers)),
+    ):
+        rc = main(["--close"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.err == (
+        "vrg-epic-audit: proxy link error: proxy org/.github#3 has no 'Primary:' line in its body\n"
+    )
+    assert "## Proxies closed (primary closed, no open task)" in captured.out
+    assert "- org/.github#4" in captured.out
+    assert "- proxy org/.github#3 has no 'Primary:' line in its body" in captured.out
+    assert run.call_count == 1
+    assert run.call_args.args[:5] == ("issue", "close", "4", "--repo", "org/.github")
+    for writer in writers.values():
+        writer.assert_called_once()
+
+
+def test_proxy_link_error_does_not_stop_other_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VRG_EPIC_SWEEP", "1")
+    reopen = MagicMock(return_value=[])
+    close_proxies = MagicMock(return_value=[])
+    writers = _no_op_writers()
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=False),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]) as drain,
+        patch(
+            f"{_MOD}.epic_audit.proxy_closures", return_value=([], ["proxy org/.github#3 broke"])
+        ),
+        patch(f"{_MOD}.epic_audit.close_proxies", close_proxies),
+        _patched(_close_patches(reopen_epics_with_open_children=reopen, **writers)),
+    ):
+        rc = main(["--close"])
+    assert rc == 1
+    reopen.assert_called_once()
+    drain.assert_called_once()
+    close_proxies.assert_called_once_with([])
+    for writer in writers.values():
+        writer.assert_called_once()
+
+
+def test_close_runs_close_proxies_after_close_drift(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VRG_EPIC_SWEEP", "1")
+    order: list[str] = []
+    plan = [
+        epic_audit.ProxyClosure(IssueRef("org", ".github", 4), _CLOSED_PRIMARY, 0),
+    ]
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=False),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        patch(f"{_MOD}.epic_audit.proxy_closures", return_value=(plan, [])),
+        patch(
+            f"{_MOD}.epic_audit.close_proxies",
+            side_effect=lambda closures: order.append("proxies") or [],
+        ) as close_proxies,
+        _patched(
+            _close_patches(
+                close_drift=MagicMock(side_effect=lambda *_a, **_k: order.append("drift") or []),
+                **_no_op_writers(),
+            )
+        ),
+    ):
+        assert main(["--close"]) == 0
+    assert order == ["drift", "proxies"]
+    close_proxies.assert_called_once_with(plan)
+
+
+def test_preview_lists_proxy_closures(capsys: pytest.CaptureFixture[str]) -> None:
+    plan = [
+        epic_audit.ProxyClosure(IssueRef("org", ".github", 4), _CLOSED_PRIMARY, 0),
+        epic_audit.ProxyClosure(IssueRef("org", ".github", 5), _CLOSED_PRIMARY, 2),
+    ]
+    close_proxies = MagicMock()
+    with (
+        _patched(_report_patches()),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epic_audit.proxy_closures", return_value=(plan, [])),
+        patch(f"{_MOD}.epic_audit.close_proxies", close_proxies),
+    ):
+        rc = main([])
+    assert rc == 0
+    close_proxies.assert_not_called()
+    out = capsys.readouterr().out
+    assert "## Proxies whose primary has closed (`--close` closes the empty ones)" in out
+    assert "- org/.github#4 — its primary vergil-project/.github#1417 is closed" in out
+    assert (
+        "- org/.github#5 — its primary vergil-project/.github#1417 is closed, but 2 task(s)"
+        " under it are still open; left open"
+    ) in out
+
+
+def test_preview_with_a_proxy_link_error_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        _patched(_report_patches()),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(
+            f"{_MOD}.epic_audit.proxy_closures", return_value=([], ["proxy org/.github#3 broke"])
+        ),
+    ):
+        rc = main([])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.err == "vrg-epic-audit: proxy link error: proxy org/.github#3 broke\n"
+    assert "## Proxy link errors (the run fails; fix each link by hand)" in captured.out
+    assert "- proxy org/.github#3 broke" in captured.out

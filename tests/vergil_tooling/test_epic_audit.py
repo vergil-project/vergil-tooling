@@ -2531,3 +2531,117 @@ def test_proxy_link_problems_primary_lists_a_proxy_with_a_bad_primary_line() -> 
         _PRIMARY, proxy_refs={_PROXY}, primary_of=primary_of, proxies_of=lambda _ref: (_PROXY,)
     )
     assert problems == ["proxy logical-minds-foundry/.github#320 has no 'Primary:' line"]
+
+
+# --- the sweep's proxy close pass (epic .github#1417) -----------------------------
+
+
+def _proxy_closures(
+    *, primary_state: str, children: list[epics.ChildState], primary_of: Any = None
+) -> tuple[list[epic_audit.ProxyClosure], list[str]]:
+    listing = [
+        {"number": 320, "state": "OPEN", "labels": ["epic", "proxy"]},
+        {"number": 321, "state": "CLOSED", "labels": ["epic", "proxy"]},
+        {"number": 5, "state": "OPEN", "labels": ["epic"]},
+    ]
+    with (
+        patch(f"{_PX}.primary_of", side_effect=primary_of or (lambda _ref: _PRIMARY)),
+        patch("vergil_tooling.lib.epics.issue_state", return_value=primary_state),
+        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+    ):
+        return epic_audit.proxy_closures(
+            "logical-minds-foundry/.github", listing=cast("list[epic_docs.EpicRecord]", listing)
+        )
+
+
+def test_proxy_closed_when_primary_closed_and_no_open_task() -> None:
+    closures, errors = _proxy_closures(
+        primary_state="CLOSED", children=[_child("logical-minds-foundry", "x", 1, "CLOSED")]
+    )
+    assert errors == []
+    assert closures == [epic_audit.ProxyClosure(_PROXY, _PRIMARY, 0)]
+    run = MagicMock()
+    with patch("vergil_tooling.lib.github.run", run):
+        drift = epic_audit.close_proxies(closures)
+    assert drift == []
+    run.assert_called_once_with(
+        "issue",
+        "close",
+        "320",
+        "--repo",
+        "logical-minds-foundry/.github",
+        "--comment",
+        "Closed by `vrg-epic-audit`: its primary epic vergil-project/.github#1417 is closed"
+        " and no task under this proxy is open.",
+    )
+
+
+def test_proxy_with_open_task_after_primary_closed_is_drift() -> None:
+    # A primary closed (completed or not planned) while a proxy task is open:
+    # the proxy stays open and is reported, never closed silently.
+    closures, errors = _proxy_closures(
+        primary_state="CLOSED",
+        children=[
+            _child("logical-minds-foundry", "x", 1, "OPEN"),
+            _child("logical-minds-foundry", "x", 2, "CLOSED"),
+        ],
+    )
+    assert errors == []
+    assert closures == [epic_audit.ProxyClosure(_PROXY, _PRIMARY, 1)]
+    run = MagicMock()
+    with patch("vergil_tooling.lib.github.run", run):
+        drift = epic_audit.close_proxies(closures)
+    run.assert_not_called()
+    assert drift == [
+        "logical-minds-foundry/.github#320 — its primary vergil-project/.github#1417 is closed,"
+        " but 1 task(s) under it are still open; left open"
+    ]
+
+
+def test_proxy_left_open_while_primary_open() -> None:
+    closures, errors = _proxy_closures(primary_state="OPEN", children=[])
+    assert (closures, errors) == ([], [])
+
+
+def test_proxy_bad_primary_line_is_an_error_not_raised() -> None:
+    def primary_of(_ref: epics.IssueRef) -> epics.IssueRef:
+        raise proxies.ProxyLinkError("proxy has no 'Primary:' line in its body")
+
+    closures, errors = _proxy_closures(primary_state="CLOSED", children=[], primary_of=primary_of)
+    assert closures == []
+    assert errors == ["proxy has no 'Primary:' line in its body"]
+
+
+def test_proxy_unreadable_primary_is_an_error_not_raised() -> None:
+    listing = [{"number": 320, "state": "OPEN", "labels": ["epic", "proxy"]}]
+    with (
+        patch(f"{_PX}.primary_of", return_value=_PRIMARY),
+        patch(
+            "vergil_tooling.lib.epics.issue_state",
+            side_effect=github.GitHubAPIError(1, "gh", "", "HTTP 404"),
+        ),
+        patch.object(epic_audit, "list_home_epics", return_value=listing) as list_epics,
+    ):
+        closures, errors = epic_audit.proxy_closures("logical-minds-foundry/.github")
+    list_epics.assert_called_once_with("logical-minds-foundry/.github")
+    assert closures == []
+    assert len(errors) == 1
+    assert errors[0].startswith("proxy logical-minds-foundry/.github#320 could not be judged:")
+
+
+def test_render_closed_reports_proxy_pass() -> None:
+    out = epic_audit.render_closed(
+        [],
+        org="org",
+        window_days=30,
+        proxies_closed=["org/.github#4"],
+        proxy_drift=["org/.github#5 — left open"],
+        proxy_errors=["proxy org/.github#3 broke"],
+    )
+    assert "## Proxies closed (primary closed, no open task)" in out
+    assert "- org/.github#4" in out
+    assert "**Proxies left open**" in out
+    assert "- org/.github#5 — left open" in out
+    assert "**Proxy link errors**" in out
+    assert "- proxy org/.github#3 broke" in out
+    assert "nothing to close" not in out

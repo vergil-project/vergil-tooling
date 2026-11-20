@@ -241,6 +241,12 @@ the event-driven rollup (`vrg-epic-rollup`) and the daily sweep's drift close
 carries the spec and plan), and the roadmap does not list it. It needs no
 bookends, because the primary carries them.
 
+A proxy's own org closes it: the daily sweep of its home
+(`vrg-epic-audit --close`) closes a proxy whose primary is closed and which
+has no open task. One that still has an open task after its primary closed is
+reported and left open. The primary's rollup never closes its proxies, since
+it runs in the primary's org.
+
 ### Ad-hoc epic archiving
 
 A live ad-hoc epic accumulates closed children forever, so its "what's in
