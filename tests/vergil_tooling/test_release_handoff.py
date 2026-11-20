@@ -191,6 +191,42 @@ def test_consumer_refresh_success_is_one_check_line(
     assert "refreshing VMs" not in out
 
 
+def _log_text(tmp_path: Path) -> str:
+    return next((tmp_path / ".vergil").glob("vrg-release-*.log")).read_text()
+
+
+def test_consumer_refresh_success_writes_the_full_run_to_the_log(
+    template: MagicMock, tmp_path: Path
+) -> None:
+    """The terminal is one check line, but the run log holds the commands,
+    their output (standard error included) and the exit status (#4812)."""
+    _set(template, "echo installing vergil-tooling <VERSION>\necho refreshing VMs >&2")
+    ctx = _ctx(tmp_path)
+    assert _run_stage(ctx, tmp_path) == 0
+    log = _log_text(tmp_path)
+    started = log.index("=== consumer-refresh: started ===")
+    ended = log.index("=== consumer-refresh: ok (")
+    stage = log[started:ended]
+    assert (
+        "consumer-refresh: running the commands:\n"
+        "  echo installing vergil-tooling 2.1.0\n"
+        "  echo refreshing VMs >&2\n"
+        "installing vergil-tooling 2.1.0\n"
+        "refreshing VMs\n"
+        "consumer-refresh: the commands exited 0\n"
+    ) in stage
+
+
+def test_consumer_refresh_failure_writes_the_full_run_to_the_log(
+    template: MagicMock, tmp_path: Path
+) -> None:
+    _set(template, "echo step one <VERSION>\necho to-stderr >&2\nexit 7")
+    ctx = _ctx(tmp_path)
+    assert _run_stage(ctx, tmp_path) == 1
+    log = _log_text(tmp_path)
+    assert "step one 2.1.0\nto-stderr\nconsumer-refresh: the commands exited 7\n" in log
+
+
 def test_consumer_refresh_failure_shows_full_output_and_fails(
     template: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

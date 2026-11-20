@@ -634,6 +634,21 @@ def test_note_without_session_is_noop() -> None:
     progress.note("nothing is listening")  # must not raise
 
 
+def test_log_only_reaches_the_log_and_not_the_terminal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stages = [Stage("quiet", lambda ctx: progress.log_only("for the log alone"), mode="fail_defer")]
+    assert _pipeline(tmp_path, stages, _args()) == 0
+    assert "for the log alone" not in capsys.readouterr().out
+    log_text = next((tmp_path / ".vergil").glob("test-cmd-*.log")).read_text()
+    assert "=== quiet: started ===\nfor the log alone\n=== quiet: ok (" in log_text
+
+
+def test_log_only_without_session_is_noop(capsys: pytest.CaptureFixture[str]) -> None:
+    progress.log_only("nothing is listening")  # must not raise
+    assert capsys.readouterr().out == ""
+
+
 def _stage_failed(_ctx: object) -> None:
     raise progress.StageFailedError("no PR opened: the push was refused")
 
