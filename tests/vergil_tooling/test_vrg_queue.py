@@ -464,7 +464,7 @@ def test_vrg_queue_adhoc_text_and_json(
     ]
 
 
-def test_vrg_queue_bare_does_not_list_adhoc(capsys: pytest.CaptureFixture[str]) -> None:
+def test_vrg_queue_bare_does_not_list_adhoc_or_hoshin(capsys: pytest.CaptureFixture[str]) -> None:
     views = {
         "intake": lambda _h, _n: [],
         "planning": lambda _h, _n: [],
@@ -475,13 +475,16 @@ def test_vrg_queue_bare_does_not_list_adhoc(capsys: pytest.CaptureFixture[str]) 
         patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
         patch.dict(f"{_MOD}._VIEWS", views),
         patch(f"{_MOD}.queue_view.adhoc_items") as items,
+        patch(f"{_MOD}.queue_view.hoshin_items") as hoshin,
     ):
         assert main([]) == 0
         text = capsys.readouterr().out
         assert main(["--json"]) == 0
         data = json.loads(capsys.readouterr().out)
     items.assert_not_called()
+    hoshin.assert_not_called()
     assert "adhoc" not in text
+    assert "hoshin" not in text
     assert list(data) == ["intake", "planning", "deferred"]
 
 
@@ -571,7 +574,7 @@ def test_vrg_queue_adhoc_passes_roots() -> None:
 def test_vrg_queue_root_only_applies_to_adhoc(capsys: pytest.CaptureFixture[str]) -> None:
     with patch(f"{_MOD}.github.current_repo", return_value="org/tool"):
         assert main(["intake", "--root", "/a"]) == 1
-    assert capsys.readouterr().err == "vrg-queue: --root applies only to adhoc\n"
+    assert capsys.readouterr().err == "vrg-queue: --root applies only to adhoc and hoshin\n"
 
 
 def test_vrg_queue_adhoc_no_repo_roots_fails(capsys: pytest.CaptureFixture[str]) -> None:
@@ -602,6 +605,96 @@ def test_vrg_queue_adhoc_repo_without_clone_exits_1(capsys: pytest.CaptureFixtur
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "no main clone under /r" in captured.err
+
+
+# -- vrg-queue hoshin -------------------------------------------------------------
+
+_HOSHIN_ITEM = AdhocItem(
+    ref=IssueRef("vergil-project", "docs", 7),
+    title="Logbook: 2026-11-18",
+    created_at="2026-11-18T00:00:00Z",
+    kind="task",
+    blocked_by=(),
+    state="in-flight",
+    marks=("worktree",),
+    disposition="resume",
+)
+
+
+def test_parse_args_accepts_hoshin() -> None:
+    assert parse_args(["hoshin"]).queue == "hoshin"
+
+
+def test_vrg_queue_hoshin_json(capsys: pytest.CaptureFixture[str]) -> None:
+    seen: list[str | None] = []
+
+    def _items(home: str, *, repo: str | None = None, roots: Any = None) -> list[AdhocItem]:
+        seen.append(github._target_org.get())
+        return [_HOSHIN_ITEM]
+
+    with (
+        patch(f"{_MOD}.github.current_repo") as cur,
+        patch(
+            f"{_MOD}.epics.hoshin_home", return_value=("vergil-project/.github", "vergil-project")
+        ) as home,
+        patch(f"{_MOD}.epics.resolve_epic_home") as epic_home,
+        patch(f"{_MOD}.queue_view.adhoc_items") as adhoc,
+        patch(f"{_MOD}.queue_view.hoshin_items", side_effect=_items) as items,
+    ):
+        rc = main(
+            ["hoshin", "--json", "--repo", "vergil-project/docs", "--root", "/r"],
+        )
+    assert rc == 0
+    cur.assert_not_called()
+    # The hoshin home is the org's .github, never the repo's own epic home.
+    home.assert_called_once_with("vergil-project/docs")
+    epic_home.assert_not_called()
+    adhoc.assert_not_called()
+    items.assert_called_once_with(
+        "vergil-project/.github", repo="vergil-project/docs", roots=[Path("/r")]
+    )
+    assert seen == ["vergil-project"]
+    assert json.loads(capsys.readouterr().out) == queue_view.adhoc_to_json([_HOSHIN_ITEM])
+
+
+def test_vrg_queue_hoshin_text(
+    capsys: pytest.CaptureFixture[str], dotgithub_exists: MagicMock
+) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.queue_view.hoshin_items", return_value=[_HOSHIN_ITEM]) as items,
+    ):
+        assert main(["hoshin"]) == 0
+    items.assert_called_once_with("org/.github", repo=None, roots=None)
+    dotgithub_exists.assert_called_with("org", ".github")
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "hoshin queue for org in org/.github: 1 open task(s)"
+    assert lines[1].startswith("vergil-project/docs#7  ")
+    assert lines[1].endswith("in-flight  task  Logbook: 2026-11-18  — resume: worktree")
+    assert len(lines) == 2
+
+
+def test_vrg_queue_hoshin_no_epic_is_empty(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.queue_view.hoshin_items", return_value=[]),
+    ):
+        assert main(["hoshin"]) == 0
+    assert capsys.readouterr().out == "hoshin queue for org in org/.github: 0 open task(s)\n"
+
+
+def test_vrg_queue_hoshin_read_failure_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
+    exc = github.GitHubAPIError(1, ["gh", "api", "graphql"], "", "HTTP 502")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.queue_view.hoshin_items", side_effect=exc),
+    ):
+        assert main(["hoshin"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        f"vrg-queue: hoshin queue for org in org/.github could not be read: {exc}\n"
+    )
 
 
 # -- epic size: exit 2, --sort, --size --------------------------------------------
