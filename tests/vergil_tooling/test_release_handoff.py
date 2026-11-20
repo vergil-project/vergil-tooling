@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import io
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -14,7 +15,7 @@ from vergil_tooling.lib.release.handoff import consumer_refresh, run_consumer_re
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from unittest.mock import MagicMock
+
 
 _MOD = "vergil_tooling.lib.release.handoff"
 
@@ -263,6 +264,19 @@ def test_run_consumer_refresh_merges_stderr_in_order(tmp_path: Path) -> None:
     rc, output = run_consumer_refresh("echo out1\necho err1 >&2\necho out2", cwd=tmp_path)
     assert rc == 0
     assert output == "out1\nerr1\nout2\n"
+
+
+def test_run_consumer_refresh_terminates_the_commands_on_interrupt(tmp_path: Path) -> None:
+    fake_proc = MagicMock()
+    fake_proc.stdout = io.StringIO("")
+    fake_proc.wait.side_effect = [KeyboardInterrupt, -15]
+    with (
+        patch(_MOD + ".subprocess.Popen", return_value=fake_proc),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        run_consumer_refresh("sleep 60", cwd=tmp_path)
+    fake_proc.terminate.assert_called_once_with()
+    assert fake_proc.wait.call_count == 2
 
 
 def test_run_consumer_refresh_runs_in_cwd_with_no_stdin(tmp_path: Path) -> None:
