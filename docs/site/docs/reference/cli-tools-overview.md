@@ -1467,7 +1467,9 @@ home's epics once, under the home owner's App token, for this check and the
 closed-epic-with-open-child check.
 
 The report previews, without
-writing, the ad-hoc and queue-epic drains that `--close` would run, and the
+writing, the proxies whose primary has closed (the ones `--close` would close
+and the ones it would leave open), the ad-hoc and queue-epic drains that
+`--close` would run, and the
 security-records pass of `vrg-security-record sync` (`--close` does not run
 it).
 
@@ -1503,7 +1505,10 @@ stderr and no JSON, so the retrospective gate stops on it.
 `--close` applies the fixes, in order:
 
 1. Close the drifted tasks and rolled-up epics, and reopen each epic closed
-   while a child was still open, with an explanatory comment on each.
+   while a child was still open, with an explanatory comment on each. Then
+   close each open proxy epic in the home whose primary has closed and which
+   has no open task, with a comment. A proxy that still has an open task is
+   reported and left open, never closed silently.
 2. Drain the closed children of the ad-hoc, intake, planning, deferred and
    hoshin epics into per-quarter archives, and close past archives (see
    [Ad-hoc epic archiving](../standards/github-issues.md#ad-hoc-epic-archiving)).
@@ -1525,7 +1530,7 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 | Source | `vergil_tooling.bin.vrg_epic_audit` (checks and passes: `lib/epic_audit.py`; security pass: `lib/security_records.py`) |
 | Args | `--window-days N` (positive; default 30), `--repo OWNER/NAME`, `--epic REF`, `--close` |
 | Preconditions | Run inside a repo in the target org; GitHub App credentials for that org. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The read-only report's security-records preview needs Repository security advisories: Read; `--close` needs no advisories access |
-| Failure mode | `--close` in an agent session is refused before any network call; a `--repo` without `/`, an org that cannot be detected, or an org with no `.github` home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and `--close` is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. With `--epic`, a ref that is not an epic, or proxy link drift, exits 1 |
+| Failure mode | `--close` in an agent session is refused before any network call; a `--repo` without `/`, an org that cannot be detected, or an org with no `.github` home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and `--close` is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose `Primary:` link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without `--close`. With `--epic`, a ref that is not an epic, or proxy link drift, exits 1 |
 | Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, incomplete coverage, a pass failed, or error, 2 bad arguments |
 | Status | Active |
 

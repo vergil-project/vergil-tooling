@@ -146,8 +146,16 @@ def _audit(args: argparse.Namespace, org: str) -> int:
     closed_epic_open_children = epic_audit.closed_epic_open_child(
         org, home=home, listing=home_epics
     )
+    # The proxy close pass (epic .github#1417): an open proxy whose primary has
+    # closed. A proxy whose link fails is collected, never raised mid-run, so
+    # every other pass still runs; the exit status reflects it at the end.
+    proxy_plan, proxy_errors = epic_audit.proxy_closures(home, listing=home_epics)
+    for error in proxy_errors:
+        print(f"vrg-epic-audit: proxy link error: {error}", file=sys.stderr)
     if args.close:
         closed = epic_audit.close_drift(tasks, epics_drift, org=org, home=home)
+        proxy_drift = epic_audit.close_proxies(proxy_plan)
+        proxies_closed = [c.proxy.slug for c in proxy_plan if not c.open_tasks]
         # Remediate the closed-epic-with-open-child invariant (issue #2259): reopen
         # each epic that was wrongly closed while a child was still open.
         reopened = epic_audit.reopen_epics_with_open_children(closed_epic_open_children)
@@ -181,12 +189,16 @@ def _audit(args: argparse.Namespace, org: str) -> int:
                 reopened=reopened,
                 private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
                 misplaced=epic_audit.misplaced_archives(org, issues=issues),
+                proxies_closed=proxies_closed,
+                proxy_drift=proxy_drift,
+                proxy_errors=proxy_errors,
             )
         )
         # No security-records pass here: it lists and writes security advisories,
         # which the sweep's scoped token cannot do (vergil-tooling#4313). The
         # human or the user agent runs it with vrg-security-record sync.
-        return _apply_orphan_pass(org, issues)
+        orphan_rc = _apply_orphan_pass(org, issues)
+        return 1 if proxy_errors else orphan_rc
     epics_outside = epic_audit.epic_outside_dotgithub(org)
     stray = epic_audit.stray_dotgithub_issue(org, home=home)
     pending_operational = epic_audit.operational_pending(org, home=home)
@@ -233,11 +245,13 @@ def _audit(args: argparse.Namespace, org: str) -> int:
             epic_docs_findings=epic_audit.epic_documents(org, home=home, listing=home_epics),
             # It reads trusted comments, so it runs only here, never under --close.
             proxy_link_drift=epic_audit.proxy_link_drift(home, listing=home_epics),
+            proxy_closures=proxy_plan,
+            proxy_errors=proxy_errors,
             coverage_gap=gap,
         )
     )
-    # A partial preview never exits clean (#3513).
-    return 1 if gap is not None else security_rc
+    # A partial preview never exits clean (#3513), nor one with a broken proxy link.
+    return 1 if gap is not None or proxy_errors else security_rc
 
 
 def _apply_orphan_pass(org: str, issues: list[epic_audit.OpenIssue]) -> int:
@@ -332,7 +346,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help=(
             "Close the drifted task issues and rolled-up epics, and reopen any "
             "epic wrongly closed while a child was still open (with an "
-            "explanatory comment on each), instead of only reporting them. Then "
+            "explanatory comment on each), instead of only reporting them. Close "
+            "each proxy epic whose primary has closed and which has no open task "
+            "(one with an open task is reported and left open). Then "
             "run the org-wide orphan pass: link body-only Parent: lines natively, "
             "remove the retired triage/idea/research labels, move now-public "
             "repos' queue items under .github, and attach every orphan to its "

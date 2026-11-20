@@ -1178,6 +1178,104 @@ def proxy_link_drift(home: str, *, listing: list[epic_docs.EpicRecord] | None = 
     return problems
 
 
+# -- The sweep's proxy close pass (epic vergil-project/.github#1417) -----------
+
+
+@dataclass(frozen=True)
+class ProxyClosure:
+    """An open proxy whose primary has closed, and how many of its tasks are open."""
+
+    proxy: epics.IssueRef
+    primary: epics.IssueRef
+    open_tasks: int
+
+
+def proxy_closures(
+    home: str, *, listing: list[epic_docs.EpicRecord] | None = None
+) -> tuple[list[ProxyClosure], list[str]]:
+    """Each open proxy in *home* whose primary is closed, and the proxies that could not be judged.
+
+    Returns ``(closures, proxy_errors)``. A proxy lives as long as its primary,
+    so only a closed primary makes it a candidate; its open tasks are counted
+    so :func:`close_proxies` closes only an empty one. A proxy whose
+    ``Primary:`` link fails (malformed, not an epic, or unreadable) is one line
+    of *proxy_errors*, never raised, so one broken proxy cannot stop the
+    sweep's other passes, as :func:`epics.drain_standing_org` treats a
+    corrupted home; the caller fails the run once every pass has run. It reads
+    no comment, so it needs no trusted-authors configuration.
+
+    *listing* is the home's :func:`list_home_epics`; it is read here when not
+    given.
+    """
+    home_owner, home_repo = home.split("/", 1)
+    if listing is None:
+        listing = list_home_epics(home)
+    closures: list[ProxyClosure] = []
+    errors: list[str] = []
+    for record in sorted(listing, key=lambda r: r["number"]):
+        if record["state"] != "OPEN" or not epics.is_proxy(set(record["labels"])):
+            continue
+        proxy = epics.IssueRef(home_owner, home_repo, record["number"])
+        try:
+            with github.target_org(proxy.owner):
+                primary = proxies.primary_of(proxy)
+            with github.target_org(primary.owner):
+                primary_state = epics.issue_state(primary)
+            if primary_state != "CLOSED":
+                continue
+            with github.target_org(proxy.owner):
+                open_tasks = sum(1 for c in epics.child_states(proxy) if c.state == "OPEN")
+        except proxies.ProxyLinkError as exc:
+            errors.append(str(exc))
+            continue
+        except _LINK_READ_ERRORS as exc:
+            errors.append(f"proxy {proxy.slug} could not be judged: {exc}")
+            continue
+        closures.append(ProxyClosure(proxy=proxy, primary=primary, open_tasks=open_tasks))
+    return closures, errors
+
+
+_PROXY_CLOSE_COMMENT = (
+    "Closed by `vrg-epic-audit`: its primary epic {primary} is closed and no task under"
+    " this proxy is open."
+)
+
+
+def proxy_drift_line(closure: ProxyClosure) -> str:
+    """The report line for a proxy left open because a task under it is still open."""
+    return (
+        f"{closure.proxy.slug} — its primary {closure.primary.slug} is closed, but"
+        f" {closure.open_tasks} task(s) under it are still open; left open"
+    )
+
+
+def close_proxies(closures: list[ProxyClosure]) -> list[str]:
+    """Close each proxy of *closures* with no open task; return the rest as drift lines.
+
+    A proxy with an open task after its primary closed is never closed
+    silently: it stays open and its line is returned for the report. Each
+    close leaves a comment and runs under the proxy's org token. This performs
+    outward-effecting GitHub writes; the caller gates it to a human or the sweep.
+    """
+    drift: list[str] = []
+    for closure in closures:
+        if closure.open_tasks:
+            drift.append(proxy_drift_line(closure))
+            continue
+        proxy = closure.proxy
+        with github.target_org(proxy.owner):
+            github.run(
+                "issue",
+                "close",
+                str(proxy.number),
+                "--repo",
+                f"{proxy.owner}/{proxy.repo}",
+                "--comment",
+                _PROXY_CLOSE_COMMENT.format(primary=closure.primary.slug),
+            )
+    return drift
+
+
 def render_epic_children(
     epic: epics.IssueRef,
     children: list[epics.ChildState],
@@ -1238,6 +1336,8 @@ def render(
     misplaced: list[MisplacedArchive] | None = None,
     epic_docs_findings: list[EpicDocsFinding] | None = None,
     proxy_link_drift: list[str] | None = None,
+    proxy_closures: list[ProxyClosure] | None = None,
+    proxy_errors: list[str] | None = None,
     coverage_gap: str | None = None,
 ) -> str:
     """Format the drift + invariant report; a clean state says so explicitly.
@@ -1261,8 +1361,9 @@ def render(
     is the closed-epic-with-open-child invariant (issue #2259).
     ``epic_docs_findings`` are the :func:`epic_documents` problems (epic
     .github#819). ``proxy_link_drift`` is the report-only :func:`proxy_link_drift`
-    check (epic .github#1417). Each section appears only when it has something
-    to report.
+    check (epic .github#1417); ``proxy_closures`` and ``proxy_errors`` preview
+    the ``--close`` proxy close pass (:func:`proxy_closures`). Each section
+    appears only when it has something to report.
     """
     epics_outside = epics_outside or []
     stray = stray or []
@@ -1277,6 +1378,8 @@ def render(
     misplaced = misplaced or []
     epic_docs_findings = epic_docs_findings or []
     proxy_link_drift = proxy_link_drift or []
+    proxy_closures = proxy_closures or []
+    proxy_errors = proxy_errors or []
     scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
     banner = (
         f"_Read-only audit of {scope} (merged PRs from the last "
@@ -1301,6 +1404,8 @@ def render(
             misplaced,
             epic_docs_findings,
             proxy_link_drift,
+            proxy_closures,
+            proxy_errors,
         ]
     ):
         if coverage_gap is not None:
@@ -1343,6 +1448,8 @@ def render(
                 or "none"
             )
             lines.append(f"- {status.epic.slug} — runnable: {runnable}; blocked: {blocked}")
+    lines += _render_proxy_closures(proxy_closures)
+    lines += _render_proxy_errors(proxy_errors)
     lines += _render_orphan_pass(orphans, retired_labels, body_only, public_queues)
     if (
         epics_outside
@@ -1413,6 +1520,31 @@ def _render_proxy_link_drift(problems: list[str]) -> list[str]:
         "A proxy and its primary must name each other; fix each link by hand:",
         "",
         *[f"- {problem}" for problem in problems],
+    ]
+
+
+def _render_proxy_closures(closures: list[ProxyClosure]) -> list[str]:
+    """The ``--close`` proxy close pass preview: what it would close and leave open."""
+    if not closures:
+        return []
+    lines = ["", "## Proxies whose primary has closed (`--close` closes the empty ones)", ""]
+    for closure in closures:
+        if closure.open_tasks:
+            lines.append(f"- {proxy_drift_line(closure)}")
+        else:
+            lines.append(f"- {closure.proxy.slug} — its primary {closure.primary.slug} is closed")
+    return lines
+
+
+def _render_proxy_errors(errors: list[str]) -> list[str]:
+    """The ``## Proxy link errors`` section: proxies the close pass could not judge."""
+    if not errors:
+        return []
+    return [
+        "",
+        "## Proxy link errors (the run fails; fix each link by hand)",
+        "",
+        *[f"- {error}" for error in errors],
     ]
 
 
@@ -1571,6 +1703,9 @@ def render_closed(
     reopened: list[str] | None = None,
     private_under_public: list[str] | None = None,
     misplaced: list[MisplacedArchive] | None = None,
+    proxies_closed: list[str] | None = None,
+    proxy_drift: list[str] | None = None,
+    proxy_errors: list[str] | None = None,
 ) -> str:
     """Summarize a ``--close`` run: what was closed and what was reopened.
 
@@ -1578,14 +1713,31 @@ def render_closed(
     epics that were wrongly closed while a child was still open, now reopened.
     ``private_under_public`` and ``misplaced`` are report-only (never acted on),
     surfaced here too so the scheduled sweep's log carries them.
+
+    ``proxies_closed`` are the proxies :func:`close_proxies` closed;
+    ``proxy_drift`` the ones it left open with an open task, and
+    ``proxy_errors`` the ones :func:`proxy_closures` could not judge.
     """
+    proxies_closed = proxies_closed or []
+    proxy_drift = proxy_drift or []
+    proxy_errors = proxy_errors or []
     reopened = reopened or []
     private_under_public = private_under_public or []
     misplaced = misplaced or []
     scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
     banner = f"_Closed drift on {scope} (merged PRs from the last {window_days} days)._"
     header = ["# Epic/task drift audit — closed", "", banner, ""]
-    if not closed and not reopened and not private_under_public and not misplaced:
+    if not any(
+        [
+            closed,
+            reopened,
+            private_under_public,
+            misplaced,
+            proxies_closed,
+            proxy_drift,
+            proxy_errors,
+        ]
+    ):
         return "\n".join([*header, "_No drift — nothing to close._", ""])
     lines = [*header]
     if closed:
@@ -1597,9 +1749,22 @@ def render_closed(
             *[f"- {slug}" for slug in reopened],
             "",
         ]
-    if private_under_public or misplaced:
+    if proxies_closed:
+        lines += [
+            "## Proxies closed (primary closed, no open task)",
+            "",
+            *[f"- {slug}" for slug in proxies_closed],
+            "",
+        ]
+    if private_under_public or misplaced or proxy_drift or proxy_errors:
         lines += ["## Needs a human (report only)", ""]
         lines += _render_private_under_public(private_under_public)
         lines += _render_misplaced_archives(misplaced)
+        if proxy_drift:
+            lines.append("**Proxies left open** — the primary closed with a task still open:")
+            lines += [f"- {line}" for line in proxy_drift]
+        if proxy_errors:
+            lines.append("**Proxy link errors** — the run fails; fix each link by hand:")
+            lines += [f"- {error}" for error in proxy_errors]
         lines.append("")
     return "\n".join(lines)
