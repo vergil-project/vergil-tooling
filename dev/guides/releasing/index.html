@@ -18919,11 +18919,11 @@ See <a href="../../reference/vm-spec/#vergil-tooling-inside-the-vm">vergil-tooli
 </tr>
 </tbody>
 </table>
-<p>CD has also placed a <code>develop-v1.3.0</code> tag on the <code>develop</code> tip after
-each release.
-Those tags are being retired: nothing uses them, <code>vrg-release</code> neither
-requires nor reports one, and the changelog and release notes ignore
-any that remain. Never pin to a <code>develop-v*</code> tag.</p>
+<p>Earlier releases also placed a <code>develop-vX.Y.Z</code> tag on the <code>develop</code>
+tip. Those tags are retired: CD no longer creates them, the existing
+ones have been deleted, and <code>vrg-release</code> neither requires nor reports
+one. The changelog and release notes ignore any <code>develop-v*</code> tag that
+still turns up, and nothing should ever pin to one.</p>
 <p>A release's changes are the commits since the merge base of the
 release branch and the previous <code>vX.Y.Z</code> tag, so a PR merged to
 <code>develop</code> while a release was in flight appears in the next release.
