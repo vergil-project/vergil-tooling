@@ -12,34 +12,33 @@ old `standard-tooling`/`st-*` naming):
 
 | Target | Install mechanism | Who uses it |
 |---|---|---|
-| **Developer host** (macOS) | `uv tool install` from the git URL of the exact release tag, constrained by that tag's `uv.lock`; the release's consumer refresh runs it | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr`, `vrg-host` |
+| **Developer host** (macOS) | `vrg-tooling-install vX.Y.Z`: `uv tool install` from git of the exact release tag's commit, constrained by that commit's `uv.lock`; the release's consumer refresh runs it | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr`, `vrg-host` |
 | **Container runtime** (all languages) | `vrg-container-run` cache-first install of the version `vergil.toml` names, in a per-branch cached image | `vrg-*` inside the dev container, locally and in CI, for every consumer |
 | **Agent VM** (Lima/cloud) | `vrg-vm` `uv tool install` from git of the identity's release line or version, resolved to one commit and constrained by its `uv.lock` | Agent sessions inside the VM |
 
-The canonical host install (see [Getting Started](../getting-started.md)),
-with `VERSION` set to the release, for example `2.1.10`:
+The host install is
+[`vrg-tooling-install`](../reference/cli-tools-overview.md#vrg-tooling-install).
+`vergil.toml`'s `[publish].consumer-refresh` runs the installed one on the
+Mac with the just-released version (`vrg-tooling-install v<VERSION>`,
+followed by `vrg-vm update --all`), so the release installs itself on the
+host. It fetches the exact tag (which cannot move, under tag protection, so
+it needs no `git ls-remote`), installs the commit that tag names with that
+commit's `uv.lock` as constraints, and runs on uv's managed 3.15.
+
+A fresh host has no `vrg-tooling-install` yet, and an installed one that
+fails cannot fix itself. Both install by hand (see
+[Getting Started](../getting-started.md)), with `VERSION` set to the
+release, for example `2.1.10`:
 
 ```bash
 VERSION=X.Y.Z
-(
-  set -euo pipefail
-  unset UV_PYTHON UV_PYTHON_PREFERENCE UV_NO_MANAGED_PYTHON
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
-  git init -q "$tmp/src"
-  git -C "$tmp/src" fetch -q --depth 1 https://github.com/vergil-project/vergil-tooling refs/tags/v${VERSION}
-  git -C "$tmp/src" checkout -q FETCH_HEAD
-  (cd "$tmp/src" && uv export --no-config --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt -o "$tmp/constraints.txt" >/dev/null)
-  uv tool install --force --no-config --python 3.15 --managed-python -c "$tmp/constraints.txt" "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v${VERSION}"
-)
+env -u UV_PYTHON -u UV_PYTHON_PREFERENCE -u UV_NO_MANAGED_PYTHON \
+  uv tool install --force --no-config --python 3.15 --managed-python \
+  "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v${VERSION}"
+vrg-tooling-install "v${VERSION}"
 ```
 
-The exact tag cannot move (tag protection), so the Mac needs no
-`git ls-remote` and no SHA; the lines still install with that tag's own
-`uv.lock` as constraints and on uv's managed 3.15. These are the same
-lines as `vergil.toml`'s `[publish].consumer-refresh`, which each release
-runs on the Mac with the just-released version (followed by
-`vrg-vm update --all`), so the release installs itself on the host.
+The first line installs the tag unlocked; the second reinstalls it locked.
 
 On an agent VM, a release installs with uv too: `vrg-vm` resolves the
 version to one commit, installs it with that commit's `uv.lock`, and
@@ -369,7 +368,7 @@ get the fix on the next normal action:
 
 | Consumer | When the patch lands |
 |---|---|
-| Developer host | The release's consumer refresh installs the exact patch tag on the Mac that ran it; any other host reruns the [canonical host install](#deployment-targets) with the new `VERSION` (`vrg-host` reports the installed version but never upgrades it) |
+| Developer host | The release's consumer refresh installs the exact patch tag on the Mac that ran it; any other host runs [`vrg-tooling-install vX.Y.Z`](#deployment-targets) with the new version (`vrg-host` reports the installed version but never upgrades it) |
 | Python repo `.venv` | `uv lock --upgrade-package vergil-tooling` (typically batched with other dep bumps) |
 | Dev container image | The base images carry no vergil-tooling. The next `vrg-container-run` rebuilds the branch's cached image with the patch as soon as its tag exists: a `vX.Y` line pin in `vergil.toml` resolves to the newest release on the line (see [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)). An exact `vX.Y.Z` pin stays put |
 | Agent VM (Lima/cloud) | `vrg-vm update`, which the release's consumer refresh runs on every VM (`vrg-vm update --all`): a `vX.Y` line pin resolves to the patch tag as soon as it exists; an exact `vX.Y.Z` pin stays put |
@@ -394,7 +393,7 @@ only handles patches within a minor.
    updated to `v1.4`. This is a per-repo decision — consumers who
    prefer to stay on `v1.3` can keep doing so until they're ready.
 3. Update anywhere the documentation pins a minor to the new tag.
-   The canonical host install in `getting-started.md` names an exact
+   The host install by hand in `getting-started.md` names an exact
    `VERSION` placeholder, not a line, and needs no change.
 
 ### Consumer steps
@@ -403,7 +402,7 @@ Minor bumps are **deliberate opt-in** at every deployment target:
 
 | Consumer | What changes |
 |---|---|
-| Developer host | Nothing to change: the host installs an exact tag, never a line. The release's consumer refresh installs `v1.4.0` on the Mac that ran it; any other host reruns the [canonical host install](#deployment-targets) with `VERSION=1.4.0` |
+| Developer host | Nothing to change: the host installs an exact tag, never a line. The release's consumer refresh installs `v1.4.0` on the Mac that ran it; any other host runs [`vrg-tooling-install v1.4.0`](#deployment-targets) |
 | Python repo `.venv` | Edit `pyproject.toml` `[tool.uv.sources]` to `tag = "v1.4"`, then `uv lock --upgrade-package vergil-tooling` |
 | Dev container image | Set `[dependencies].vergil` in `vergil.toml` to `v1.4`; `vergil.toml` is part of the cache key, so the next `vrg-container-run` rebuilds the branch's cached image with the newest `v1.4` release |
 | Agent VM (Lima/cloud) | Set the identity's `vergil` version (in `identities.toml`) to `v1.4`, then `vrg-vm rebuild`, which installs and records the new line. A plain `vrg-vm update` keeps upgrading within the line recorded at install time, and `vrg-vm update --tag v1.4` is a one-off override that is not remembered (see [VM spec](../reference/vm-spec.md#vergil-tooling-inside-the-vm)) |
