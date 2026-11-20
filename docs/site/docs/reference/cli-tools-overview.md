@@ -710,13 +710,16 @@ The sanctioned path for creating epics, used by the `epic-create` skill.
 
 `--proxy-for OWNER/REPO#N --repo OWNER/NAME` instead ensures the **proxy
 epic** for a development epic in another org (its primary): an epic in the
-target's `<owner>/.github`, titled `Epic (proxy): <primary title without
-"Epic: ">` and labelled `epic` + `proxy`, whose body carries the line
-`Primary: OWNER/REPO#N`. It then posts a comment on the primary carrying
+target's `<owner>/.github`, titled `Epic (proxy): OWNER/REPO#N — <primary
+title without "Epic: ">` and labelled `epic` + `proxy`, whose body carries the
+line `Primary: OWNER/REPO#N`. It then posts a comment on the primary carrying
 `Proxy: <owner>/.github#<N>`, alone on its line. An open proxy for the primary
-is reused and a closed one is reopened (it prints which), and the comment is
-posted only when no trusted comment on the primary already names the proxy,
-so a re-run writes nothing. It refuses, before any write, a primary in the
+is reused and a closed one is reopened (it prints which). A reused or reopened
+proxy whose title differs from the derived one is retitled, so a re-run brings
+an older proxy up to date; a proxy is found by its `Primary:` line and labels,
+never its title. The comment is posted only when no trusted comment on the
+primary already names the proxy, so a re-run on an up-to-date proxy writes
+nothing. It refuses, before any write, a primary in the
 target's own org, a primary that is not an open development epic (a standing
 epic, a proxy, an archive or a closed epic), and a private primary repo,
 target or `.github`: a proxy exists only between public repos, and the task

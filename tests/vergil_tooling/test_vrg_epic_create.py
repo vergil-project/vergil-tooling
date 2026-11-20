@@ -127,8 +127,16 @@ _PROXY = IssueRef("logical-minds-foundry", ".github", 320)
 _PROXY_ARGS = ["--proxy-for", "vergil-project/.github#1417", "--repo", "logical-minds-foundry/x"]
 
 
-def _result(*, created: bool = False, reopened: bool = False, commented: bool = False) -> object:
-    return proxies.ProxyResult(_PROXY, created=created, reopened=reopened, commented=commented)
+def _result(
+    *,
+    created: bool = False,
+    reopened: bool = False,
+    retitled: bool = False,
+    commented: bool = False,
+) -> object:
+    return proxies.ProxyResult(
+        _PROXY, created=created, reopened=reopened, retitled=retitled, commented=commented
+    )
 
 
 def test_proxy_for_creates_and_comments(capsys: pytest.CaptureFixture[str]) -> None:
@@ -157,6 +165,20 @@ def test_proxy_for_closed_proxy_reopened(capsys: pytest.CaptureFixture[str]) -> 
         rc = main(_PROXY_ARGS)
     assert rc == 0
     assert "Reopened proxy logical-minds-foundry/.github#320" in capsys.readouterr().out
+
+
+def test_proxy_for_retitled_proxy_prints_it(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.proxies.create_proxy", return_value=_result(retitled=True)):
+        rc = main(_PROXY_ARGS)
+    assert rc == 0
+    assert "Retitled proxy logical-minds-foundry/.github#320" in capsys.readouterr().out
+
+
+def test_proxy_for_current_title_prints_no_retitle(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.proxies.create_proxy", return_value=_result()):
+        rc = main(_PROXY_ARGS)
+    assert rc == 0
+    assert "Retitled" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
