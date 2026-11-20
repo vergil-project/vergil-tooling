@@ -15,7 +15,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-_LOG_ARGS = "log() { (IFS=$'\\t'; printf '%s\\n' \"$*\") >> \"$STUB_LOG\"; }"
+# The commit ``git rev-parse`` reports in a stubbed checkout, unless
+# ``STUB_REV_PARSE`` overrides it.
+STUB_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+_LOG_ARGS ="log() { (IFS=$'\\t'; printf '%s\\n' \"$*\") >> \"$STUB_LOG\"; }"
 
 _GIT = f"""#!/bin/bash
 {_LOG_ARGS}
@@ -27,6 +31,10 @@ if [ "$1" = ls-remote ]; then
 fi
 if [ "$1" = init ]; then mkdir -p "${{@: -1}}"; exit 0; fi
 if [ "$1" = -C ] && [ "$3" = fetch ]; then exit "${{STUB_FETCH_RC:-0}}"; fi
+if [ "$1" = -C ] && [ "$3" = rev-parse ]; then
+  printf '%s\\n' "${{STUB_REV_PARSE-{STUB_SHA}}}"
+  exit 0
+fi
 exit 0
 """
 
