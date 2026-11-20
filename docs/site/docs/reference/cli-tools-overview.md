@@ -2006,26 +2006,32 @@ The base images carry no vergil-tooling: the cache build installs the
 release that `vergil.toml`'s `[dependencies].vergil` pin names (or
 `VRG_DOCKER_INSTALL_TAG`, when set). A line pin such as `v2.1` floats, so
 every `build`, `status` and `vrg-container-run` resolves it to the newest
-release on the line before it looks at the cache. It reads the vergil
-package index (`https://vergil-project.github.io/packages/deb/dists/<suite>/main/binary-<arch>/Packages`,
-for the host's architecture) and takes the newest release that every Ubuntu
-suite lists. That release, such as `v2.1.320`, is part of the cache key, the
-build installs exactly it, and the image records it. So when a release lands
-on the line, the next run rebuilds each branch's cache with it, and `status`
+release on the line before it looks at the cache. It resolves the line
+once, with one `git ls-remote` of the vergil-tooling repository, to the
+newest `vX.Y.Z` tag and that tag's commit SHA; it reads no package index.
+That release, such as `v2.1.320`, and its SHA are both part of the cache
+key, the build installs exactly that commit, constrained by the commit's own
+`uv.lock`, and the image records the release. So when a release lands on
+the line, the next run rebuilds each branch's cache with it, and `status`
 reports the old cache `stale`, naming the release it holds and the one the
 pin installs now (issue #4550).
 
-An exact pin (`v2.1.320`) is its own release and needs no lookup. A dev
-ref (`develop`, a branch) is installed from git and is not resolved: a cache
-built from a dev ref is not rebuilt when that ref moves.
+An exact pin (`v2.1.320`) is its own release and needs no lookup: its cache
+key is the tag alone, which tag protection keeps immutable, and the build
+resolves its SHA. So an exact pin finds its cached image with no network
+call. A dev ref (`develop`, a branch) is installed from git and is not
+resolved: a cache built from a dev ref is not rebuilt when that ref moves.
 
-The index is read on every run, never cached, like the base image pull and
-the version window. When it cannot be read (offline, or the index is down),
-or the line has no release in it, `build`, `status` and `vrg-container-run`
-fail with the cause and exit 1. They never fall back to the release the
-cached image holds. To work without the index, pin an exact release with
-`VRG_DOCKER_INSTALL_TAG`: the error names the release this branch's cached
-image holds, and pinning that release reuses the image as it is.
+A line pin is resolved on every run, never cached, like the base image pull
+and the version window. When it cannot be resolved (offline, or GitHub
+cannot be reached), or the line has no release tag, `build`, `status` and
+`vrg-container-run` fail with the cause and exit 1. They never fall back to
+the release the cached image holds. To work without the network, pin an
+exact release with `VRG_DOCKER_INSTALL_TAG`: its cache needs one build with
+the network, and is then found offline. An image built under the line pin
+is not reused, since the line pin's key also holds the commit. The error
+names the release this branch's cached image holds, so you can pin it once
+the network is back.
 `VRG_ALLOW_STALE_BASE`, which lets a run use the local base image when its
 pull fails, does not cover this lookup.
 

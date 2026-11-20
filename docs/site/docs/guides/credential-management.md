@@ -443,10 +443,9 @@ repository, organization, or environment secret that held it.
 `PACKAGE_SIGNING_*` live in the `package-signing` environment. The
 package signing key is more involved to replace than the others,
 because clients pin it. Its primary fingerprint is pinned in
-vergil-tooling, checked by `vrg-vm`, published in
+vergil-tooling (`lib/package/orgs.py`), published in
 [Getting Started](../getting-started.md), and shipped in the
-`vergil-archive-keyring` package (see
-[VM spec](../reference/vm-spec.md)). Replacing it means changing all
+`vergil-archive-keyring` package. Replacing it means changing all
 of those together.
 
 ### Reviewing activity

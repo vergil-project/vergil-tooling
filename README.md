@@ -54,8 +54,9 @@ Python 3.15. A consuming repo adds no install step of its own.
 - `vrg-host` — Report, upgrade and pin the macOS host dependencies
   (`status`, `upgrade`, `pin`, `unpin`)
 
-Lima and cloud agent VMs install vergil-tooling as a signed apt package
-rather than with `uv`; see the
+Lima and cloud agent VMs install vergil-tooling with `uv` from git too,
+through `vrg-vm`, constrained by the release's `uv.lock`. The signed
+`.deb`/`.rpm` package is still published for other consumers; see the
 [`vergil-project/packages` README](https://github.com/vergil-project/packages#readme).
 
 ## Claude Code hook guard
