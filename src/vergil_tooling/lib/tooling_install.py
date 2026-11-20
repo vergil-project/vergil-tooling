@@ -21,21 +21,29 @@ The install is rendered as shell lines (:func:`install_lines`,
 container cache build and ``vrg-vm``. The lines run under ``bash`` and need
 no ``set -e``: each step that can fail names itself and exits non-zero.
 
-The Mac's consumer refresh (``vergil.toml``'s ``[publish].consumer-refresh``)
-is the one install that does not use this module: it is plain shell, so
-nothing runs vergil-tooling to install vergil-tooling (spec §4.5).
+:func:`install_release` runs the same released install in Python, here, for
+a host: ``vrg-tooling-install`` (vergil-tooling#4827). The Mac's consumer
+refresh (``vergil.toml``'s ``[publish].consumer-refresh``) is still the
+inline shell of spec §4.5 until vergil-tooling#4830 switches it to the
+installed ``vrg-tooling-install``. The container and VM paths keep the
+rendered lines for now; vergil-project/.github#1435 looks at moving them to
+:func:`install_release`.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 GIT_URL = "https://github.com/vergil-project/vergil-tooling"
 
@@ -50,6 +58,8 @@ _HOME_PREFIX = "$HOME/"
 # A constraints line that names the project itself, an editable, a local path
 # or a git source: none belongs in a third-party constraints file.
 _NOT_THIRD_PARTY = r"^(-e[[:space:]]|vergil-tooling([[:space:]=@;<>!~]|$)|\.|/|git\+)"
+# The same test as _NOT_THIRD_PARTY (a POSIX ERE for grep), for Python.
+_NOT_THIRD_PARTY_RE = re.compile(r"^(-e\s|vergil-tooling([\s=@;<>!~]|$)|\.|/|git\+)")
 _MESSAGE_VARS = {
     "<sha>": "${vt_sha}",
     "<found>": "${vt_found:-nothing}",
@@ -335,3 +345,118 @@ def check_lines(bin_dir: str) -> list[str]:
         f"|| {_fail('vrg-whoami resolves to <found>, not <expected>')}",
         f"vrg-whoami --mode >/dev/null || {_fail('<expected> --mode failed')}",
     ]
+
+
+@dataclass(frozen=True)
+class Installed:
+    """What :func:`install_release` installed: the release tag and its commit."""
+
+    tag: str
+    sha: str
+
+
+def install_release(tag: str, *, environ: Mapping[str, str] | None = None) -> Installed:
+    """Install the exact release *tag* with uv here, locked to that tag's ``uv.lock``.
+
+    In a temporary directory it shallow-fetches *tag* over git, reads the
+    commit the tag names, exports that commit's ``uv.lock`` as constraints and
+    runs ``uv tool install --force --no-config --python 3.15 --managed-python``
+    of that commit under them. The code and the lock therefore come from one
+    commit. ``UV_PYTHON``, ``UV_PYTHON_PREFERENCE`` and
+    ``UV_NO_MANAGED_PYTHON`` are removed from the environment each command
+    sees (*environ*, or ``os.environ``), so no interpreter variable can change
+    or block the install. The temporary directory is removed however the
+    install ends.
+
+    Every failure raises :class:`ToolingInstallError` naming the step that
+    failed and its error output: a *tag* that is not ``vX.Y.Z``, a failed git
+    or uv command, a tag that names no commit, an empty constraints export,
+    or one that names a non-registry package. ``uv tool install``'s own output
+    goes straight to this process's standard output and error.
+
+    The running ``vrg-tooling-install`` is itself an installed vergil-tooling,
+    which the install replaces: nothing is imported after it.
+    """
+    if classify_ref(tag) != "exact":
+        msg = f"{tag!r} is not an exact release tag (vX.Y.Z)"
+        raise ToolingInstallError(msg)
+    source = os.environ if environ is None else environ
+    env = {name: value for name, value in source.items() if name not in _UV_VARS}
+    with tempfile.TemporaryDirectory(prefix="vrg-tooling-install-") as tmp:
+        src = Path(tmp) / "src"
+        constraints = Path(tmp) / "constraints.txt"
+        _run_step(("git", "init", "-q", str(src)), env=env, what="creating a git repository")
+        _run_step(
+            ("git", "-C", str(src), "fetch", "-q", "--depth", "1", GIT_URL, f"refs/tags/{tag}"),
+            env=env,
+            what=f"fetching tag {tag} from {GIT_URL}",
+        )
+        _run_step(
+            ("git", "-C", str(src), "checkout", "-q", "FETCH_HEAD"),
+            env=env,
+            what=f"checking out tag {tag}",
+        )
+        sha = _run_step(
+            ("git", "-C", str(src), "rev-parse", "HEAD"),
+            env=env,
+            what=f"reading the commit of tag {tag}",
+        ).strip()
+        if not _SHA.fullmatch(sha):
+            msg = f"tag {tag} from {GIT_URL} checked out as {sha!r}, not a commit SHA"
+            raise ToolingInstallError(msg)
+        _run_step(
+            (*shlex.split(_EXPORT), "-o", str(constraints)),
+            env=env,
+            cwd=src,
+            what=f"exporting the uv.lock of {tag} (commit {sha})",
+        )
+        _check_constraints(constraints, tag=tag, sha=sha)
+        spec = f"{_PACKAGE} @ git+{GIT_URL}@{sha}"
+        argv = (
+            *("uv", "tool", "install", "--force", "--no-config"),
+            *("--python", _PYTHON, "--managed-python", "-c", str(constraints), spec),
+        )
+        sys.stdout.flush()
+        try:
+            result = subprocess.run(argv, env=env, check=False)  # noqa: S603
+        except OSError as exc:
+            msg = f"uv tool install of {tag} (commit {sha}) could not run: {exc}"
+            raise ToolingInstallError(msg) from exc
+        if result.returncode != 0:
+            msg = f"uv tool install of {tag} (commit {sha}) failed (exit {result.returncode})"
+            raise ToolingInstallError(msg)
+    return Installed(tag=tag, sha=sha)
+
+
+def _run_step(
+    argv: tuple[str, ...], *, env: Mapping[str, str], what: str, cwd: Path | None = None
+) -> str:
+    """Run one install step, capturing its output; its stdout, or raise naming *what*."""
+    try:
+        result = subprocess.run(  # noqa: S603
+            argv, capture_output=True, text=True, env=env, cwd=cwd, check=False
+        )
+    except OSError as exc:
+        msg = f"{what} failed: {argv[0]} could not run: {exc}"
+        raise ToolingInstallError(msg) from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no error output"
+        msg = f"{what} failed (exit {result.returncode}): {detail}"
+        raise ToolingInstallError(msg)
+    return result.stdout
+
+
+def _check_constraints(path: Path, *, tag: str, sha: str) -> None:
+    """Raise unless *path* is a non-empty export naming registry packages only."""
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        msg = f"the uv.lock export of {tag} (commit {sha}) could not be read: {exc}"
+        raise ToolingInstallError(msg) from exc
+    if not text.strip():
+        msg = f"the uv.lock export of {tag} (commit {sha}) is empty"
+        raise ToolingInstallError(msg)
+    bad = [line for line in text.splitlines() if _NOT_THIRD_PARTY_RE.match(line)]
+    if bad:
+        msg = f"the uv.lock export of {tag} (commit {sha}) names a non-registry package: {bad[0]!r}"
+        raise ToolingInstallError(msg)

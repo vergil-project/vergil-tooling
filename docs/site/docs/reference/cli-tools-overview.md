@@ -2246,6 +2246,27 @@ Runs unprivileged and refuses `sudo`/`doas`/`su`/`pkexec`. See the
 | Exit codes | `status`: 0 OK, 1 warnings, 2 errors; `upgrade`: 0 done, 1 a named dependency refused, 2 failure; `pin`/`unpin`: 0 success, 1 refused; `plugins`: 0 refreshed and verified, 1 refused (agent identity), 2 failure |
 | Status | Active |
 
+### vrg-tooling-install
+
+Install an exact vergil-tooling release on this host with uv, locked to that
+release's `uv.lock`. In a temporary directory it shallow-fetches the tag over
+git, reads the commit the tag names, exports that commit's `uv.lock` as
+constraints (refusing an empty export or one naming a non-registry package),
+and runs `uv tool install --force --no-config --python 3.15 --managed-python`
+of that commit under them, with `UV_PYTHON`, `UV_PYTHON_PREFERENCE` and
+`UV_NO_MANAGED_PYTHON` cleared. Run it to move a host to a new release. A
+fresh host, or one whose installed copy fails, installs by hand (see
+[Getting Started](../getting-started.md)).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_tooling_install` |
+| Args | `vX.Y.Z` (an exact release tag) |
+| Preconditions | `git` and `uv` on PATH; network access to github.com |
+| Failure mode | Names the failed step (fetch, checkout, lock export, constraints check or install) and its error output on stderr; the temporary directory is removed either way |
+| Exit codes | 0 installed; 1 a step failed or the tag is not `vX.Y.Z`; 2 usage error |
+| Status | Active |
+
 ### vrg-generate-commands
 
 Generate MQSC command methods for all language ports (Python,

@@ -91,7 +91,6 @@ def test_confirm_main_success() -> None:
     assert ctx.cd_run_id == "12345"
     assert ctx.cd_run_url == "https://github.com/o/r/actions/runs/12345"
     assert ctx.tag == "v2.1.0"
-    assert ctx.develop_tag == "develop-v2.1.0"
     assert ctx.release_url == "https://github.com/o/r/releases/tag/v2.1.0"
 
 
@@ -178,9 +177,9 @@ def test_confirm_main_fails_tag_missing() -> None:
         confirm_main(ctx)
 
 
-def test_confirm_main_fails_develop_tag_missing() -> None:
+def test_confirm_main_does_not_require_develop_tag() -> None:
+    """Only the release tag is checked: no ``develop-v*`` tag is required (#4770)."""
     ctx = _ctx()
-    ref_exists_calls = iter([True, False])
     with (
         patch(
             _MOD + ".github.read_output",
@@ -194,10 +193,12 @@ def test_confirm_main_fails_develop_tag_missing() -> None:
         patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
-        patch(_MOD + ".git.ref_exists", side_effect=ref_exists_calls),
-        pytest.raises(ReleaseError, match="Develop boundary tag"),
+        patch(_MOD + ".git.ref_exists", side_effect=lambda ref: ref == "v2.1.0") as ref_exists,
     ):
         confirm_main(ctx)
+
+    assert [c.args[0] for c in ref_exists.call_args_list] == ["v2.1.0"]
+    assert ctx.tag == "v2.1.0"
 
 
 def test_confirm_develop_success() -> None:

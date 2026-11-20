@@ -11,7 +11,11 @@ import pytest
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
-from vergil_tooling.lib.release.handoff import consumer_refresh, run_consumer_refresh
+from vergil_tooling.lib.release.handoff import (
+    blocking_failures,
+    consumer_refresh,
+    run_consumer_refresh,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -157,8 +161,43 @@ def test_consumer_refresh_not_run_after_a_failed_stage(template: MagicMock) -> N
     m_run.assert_not_called()
     assert ctx.consumer_refresh_commands == "uv tool install pkg@v2.1.0"
     message = ctx.consumer_refresh_message or ""
-    assert "not run: earlier stages failed: promote, update-deps" in message
+    # Only the stages that hold the refresh back are named (issue #4828).
+    assert "not run: earlier stages failed: promote)." in message
+    assert "update-deps" not in message
     assert "uv tool install pkg@v2.1.0" in message
+
+
+def test_consumer_refresh_runs_when_only_update_deps_failed(template: MagicMock) -> None:
+    """update-deps prepares the next version, so its failure alone leaves the
+    published release valid: the refresh still runs (issue #4828)."""
+    _set(template, "uv tool install pkg@v<VERSION>")
+    ctx = _ctx()
+    ctx.deferred_failures = ["update-deps"]
+    with patch(_MOD + ".run_consumer_refresh", return_value=(0, "")) as m_run:
+        consumer_refresh(ctx)
+    m_run.assert_called_once_with("uv tool install pkg@v2.1.0", cwd=ctx.repo_root)
+    assert ctx.consumer_refresh_message is None
+
+
+def test_consumer_refresh_honours_no_install_when_only_update_deps_failed(
+    template: MagicMock,
+) -> None:
+    _set(template, "uv tool install pkg@v<VERSION>")
+    ctx = _ctx()
+    ctx.deferred_failures = ["update-deps"]
+    ctx.install = False
+    with patch(_MOD + ".run_consumer_refresh") as m_run:
+        consumer_refresh(ctx)
+    m_run.assert_not_called()
+    assert "not run: --no-install" in (ctx.consumer_refresh_message or "")
+
+
+def test_blocking_failures_drops_only_the_optional_stages() -> None:
+    ctx = _ctx()
+    ctx.deferred_failures = ["confirm-develop", "update-deps", "promote"]
+    assert blocking_failures(ctx) == ["confirm-develop", "promote"]
+    ctx.deferred_failures = ["update-deps"]
+    assert blocking_failures(ctx) == []
 
 
 # -- through the pipeline: one check line, or the full output and a failure ------

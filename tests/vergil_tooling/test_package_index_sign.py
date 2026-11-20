@@ -6,6 +6,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -17,7 +18,7 @@ from vergil_tooling.lib.package.index import sign
 from vergil_tooling.lib.package.repo_setup import local_run
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 
 class _Recorder:
@@ -148,6 +149,71 @@ def test_signing_failure_is_fatal_and_deletes_the_passphrase_file(
 
 # --- real gpg ------------------------------------------------------------------
 
+# Why the real-gpg test retries a sign step once (#4825).
+#
+# Once, in an xdist worker during a release's update-deps validation, gpg-agent
+# refused the correct loopback passphrase on the first clearsign after the
+# import: "signing failed: Bad passphrase". That first use is where the agent
+# converts the imported key (stored openpgp-native by a --batch import) and
+# checks the passphrase. The investigation could not reproduce it: the test
+# alone (15 runs), the full suite with -n auto (10 runs), about 1,150 runs of
+# the same gpg sequence in shell (12-way parallel, with CPU hogs, and alongside
+# six full-suite runs with agent debug logging), 1,800 more on freshly generated
+# keys, and a sweep of pinned S2K counts all passed. No mechanism in our code
+# was proven, and production signing showed no such failure, so sign.py is
+# unchanged. The test retries a sign step once, only on "Bad passphrase", and
+# warns loudly when it does; a second failure fails the test.
+
+_RACE = "gpg-agent refused the correct passphrase (the #4825 race); retrying once"
+
+
+class GpgAgentBadPassphraseRace(UserWarning):
+    """A sign step hit the #4825 gpg-agent "Bad passphrase" race and was retried."""
+
+
+def _sign_retrying_bad_passphrase(step: Callable[[], None]) -> None:
+    """Run ``step``; on a "Bad passphrase" PackageError, warn and run it once more."""
+    try:
+        step()
+    except PackageError as exc:
+        if "Bad passphrase" not in str(exc):
+            raise
+        warnings.warn(f"{_RACE}: {exc}", GpgAgentBadPassphraseRace, stacklevel=2)
+        step()
+
+
+def test_sign_retry_passes_through_a_first_success() -> None:
+    step = MagicMock()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _sign_retrying_bad_passphrase(step)
+    step.assert_called_once_with()
+
+
+def test_sign_retry_warns_and_retries_once_on_bad_passphrase() -> None:
+    step = MagicMock(side_effect=[PackageError("clearsigning R failed: Bad passphrase"), None])
+    with pytest.warns(GpgAgentBadPassphraseRace, match=r"#4825 race.*Bad passphrase"):
+        _sign_retrying_bad_passphrase(step)
+    assert step.call_count == 2
+
+
+def test_sign_retry_fails_when_the_retry_fails_too() -> None:
+    err = PackageError("clearsigning R failed: Bad passphrase")
+    step = MagicMock(side_effect=[err, err])
+    with (
+        pytest.warns(GpgAgentBadPassphraseRace),
+        pytest.raises(PackageError, match=r"Bad passphrase"),
+    ):
+        _sign_retrying_bad_passphrase(step)
+    assert step.call_count == 2
+
+
+def test_sign_retry_never_retries_another_error() -> None:
+    step = MagicMock(side_effect=PackageError("clearsigning R failed: no secret key"))
+    with pytest.raises(PackageError, match=r"no secret key"):
+        _sign_retrying_bad_passphrase(step)
+    step.assert_called_once_with()
+
 
 @pytest.fixture
 def gnupghome(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
@@ -186,8 +252,10 @@ def test_real_gpg_round_trip(
     sign.import_key(local_run)
     release = tmp_path / "Release"
     release.write_text("Suite: noble\n")
-    sign.clearsign(local_run, release, tmp_path / "InRelease")
-    sign.detach(local_run, release, tmp_path / "Release.gpg")
+    _sign_retrying_bad_passphrase(
+        lambda: sign.clearsign(local_run, release, tmp_path / "InRelease")
+    )
+    _sign_retrying_bad_passphrase(lambda: sign.detach(local_run, release, tmp_path / "Release.gpg"))
 
     assert "BEGIN PGP SIGNED MESSAGE" in (tmp_path / "InRelease").read_text()
     assert "BEGIN PGP SIGNATURE" in (tmp_path / "Release.gpg").read_text()

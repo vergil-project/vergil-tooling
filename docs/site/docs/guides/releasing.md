@@ -54,27 +54,26 @@ See [vergil-tooling inside the VM](../reference/vm-spec.md#vergil-tooling-inside
 
 ## Tag scheme — what's user-facing, what isn't
 
-Two parallel tag families exist in the repo. Consumers only see and
-use the first; the second is an internal marker of where `develop`
-stood when a release was published.
+Releases are tagged on `main`, and consumers pin to those tags.
 
 | Tag pattern | Where | Purpose | User-facing? |
 |---|---|---|---|
 | `v1.3.0` | `main` | Release tag | Yes — pin in install commands |
 | `v1.3` | `main` | Rolling minor tag (force-updated each patch) | Yes — what consumers actually pin to |
-| `develop-v1.3.0` | `develop` | Marks the `develop` tip when the release was published | No — internal |
 
-The `develop-` prefix is invisible to install / consumption; never
-pin to a `develop-v*` tag.
+CD has also placed a `develop-v1.3.0` tag on the `develop` tip after
+each release.
+Those tags are being retired: nothing uses them, `vrg-release` neither
+requires nor reports one, and the changelog and release notes ignore
+any that remain. Never pin to a `develop-v*` tag.
 
-The changelog and release notes do not use the `develop-v*` tags as
-their boundary. CD places one on the `develop` tip after the release
-has merged, so a PR merged to `develop` while the release was in flight
-would sit behind it without having shipped. A release's changes are
-instead the commits since the merge base of the release branch and the
-previous `vX.Y.Z` tag, so such a PR appears in the next release. The
-new section is added to the top of `CHANGELOG.md`; the entries of
-earlier releases are kept as they were published.
+A release's changes are the commits since the merge base of the
+release branch and the previous `vX.Y.Z` tag, so a PR merged to
+`develop` while a release was in flight appears in the next release.
+The changelog heading and the release notes title carry the bare
+version (`## [1.3.1] - <date>`, `# Release 1.3.1 (<date>)`). The new
+section is added to the top of `CHANGELOG.md`; the entries of earlier
+releases are kept as they were published.
 
 ## Patch release — the common path
 
@@ -110,7 +109,6 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
    - CD on `main` creates the release tag (`v1.3.1`).
    - The rolling minor tag (`v1.3`) is **force-updated** to point at
      the new release.
-   - The boundary tag (`develop-v1.3.1`) is created on `develop`.
    - The Documentation workflow publishes the new release notes to
      the docs site under `releases/v1.3.1`.
    - **Repos with `[package]`** (vergil-tooling is one) also publish
@@ -163,7 +161,10 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
    runs nothing and prints a warning not to advertise the version.
    After an earlier stage that failed (`promote`, say) it runs nothing
    either, and prints the commands below the summary to run once the
-   cause is fixed. On
+   cause is fixed. A failed `update-deps` is the exception: it prepares
+   the next version, so the release just published is still valid and
+   the refresh runs. The run still reports the `update-deps` failure and
+   exits 1 (see step 5). On
    success the stage is one `✓ consumer-refresh` line; on failure its
    full output is printed below the summary, the stage fails and
    `vrg-release` exits 1. Pass `--no-install` to have it print the
@@ -198,7 +199,7 @@ issue and ticks its box in the issue's stage checklist.
 | `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only` |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
 | `publish-status` | deferred | Repeats any deferred publish failure, and any dependency-update failure, so neither is lost |
-| `consumer-refresh` | deferred | Runs the `[publish].consumer-refresh` commands, last, once `promote` has moved `vX.Y` (prints them instead with `--no-install`). Holds, running nothing, while any publish is deferred, and only prints the commands after an earlier stage failed. Success is one check line; a failure prints the full output below the summary |
+| `consumer-refresh` | deferred | Runs the `[publish].consumer-refresh` commands, last, once `promote` has moved `vX.Y` (prints them instead with `--no-install`). Holds, running nothing, while any publish is deferred, and only prints the commands after an earlier stage failed, except `update-deps`, whose failure alone does not stop it. Success is one check line; a failure prints the full output below the summary |
 
 `close-finalize` leaves the tracking issue open, and skips the cleanup,
 when an earlier stage has failed, so the release can be resumed with

@@ -4,12 +4,13 @@ A release's changes are the commits on the release branch that the previous
 release does not contain: the range from the merge base of ``HEAD`` and the
 previous ``vX.Y.Z`` tag (:func:`release_boundary`) to ``HEAD``.
 
-The ``develop-vX.Y.Z`` tags are not the boundary. CD places one on the
-``develop`` tip after the release has merged, so a PR merged to ``develop``
-while the release was in flight sits behind it although ``vX.Y.Z`` does not
-contain it, and a tag-bounded range would drop it from both releases (#3805).
-git-cliff is therefore given the commit range explicitly and told to ignore
-those tags; ``--tag`` only names the new release.
+git-cliff is given that commit range explicitly; ``--tag v<version>`` only
+names the new release, and the bundled templates strip its ``v``. Releases
+have also left a ``develop-vX.Y.Z`` tag on the ``develop`` tip, which was
+once the boundary. It sat past any PR merged to ``develop`` while the release
+was in flight, so a range bounded by it dropped such a PR from both releases
+(#3805). vrg-release no longer needs those tags, but git-cliff is still told
+to ignore any that remain, so that they never split a range (#4770).
 
 git-cliff is not a host dependency: it runs in the repo's dev container
 through ``vrg-container-run``, which mounts the repo root as the container's
@@ -39,8 +40,9 @@ CHANGELOG_FILE = "CHANGELOG.md"
 # Where the bundled cliff configs are mounted, read-only, in the dev container.
 CONFIG_MOUNT = "/opt/vergil-cliff"
 
-# The develop-side boundary tags, as cliff.toml's tag_pattern matches them.
-BOUNDARY_TAG_PATTERN = "develop-v[0-9].*"
+# The ``develop-vX.Y.Z`` tags earlier releases left on develop, which
+# git-cliff ignores while any remain.
+DEVELOP_TAG_PATTERN = "develop-v[0-9].*"
 
 _RELEASE_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
@@ -57,7 +59,7 @@ def _parse_release(version: str) -> tuple[int, int, int]:
 def previous_release_tag(repo_root: Path, version: str) -> str | None:
     """Return the highest ``vX.Y.Z`` tag below *version*, or ``None`` if there is none.
 
-    Rolling tags (``v1.3``), boundary tags (``develop-v…``) and pre-release
+    Rolling tags (``v1.3``), ``develop-v…`` tags and pre-release
     suffixes are not releases and are never chosen.
     """
     current = _parse_release(version)
@@ -90,7 +92,7 @@ def release_boundary(repo_root: Path, version: str) -> str | None:
 
 
 def _tag_args(version: str) -> tuple[str, ...]:
-    return ("--tag", f"develop-v{version}", "--ignore-tags", BOUNDARY_TAG_PATTERN)
+    return ("--tag", f"v{version}", "--ignore-tags", DEVELOP_TAG_PATTERN)
 
 
 def _range(base: str | None) -> tuple[str, ...]:
