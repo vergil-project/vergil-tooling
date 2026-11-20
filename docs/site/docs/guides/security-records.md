@@ -102,7 +102,8 @@ The GHSA ID reveals only that a record exists. Don't edit these lines by
 hand; `vrg-security-record` writes and moves them. The same holds for the
 two lines a move to another org writes, `Moved from: <GHSA-id>` on the
 copy and `Moved to: <org>/.github <GHSA-id>` on the original (see
-[Moving a record to another org](#moving-a-record-to-another-org)).
+[Moving a record to another org](#moving-a-record-to-another-org)):
+`create` and `note` refuse text holding either line.
 
 ### The labels
 
@@ -304,7 +305,10 @@ note is private, like the rest of the advisory: write it to a scratch
 file outside the repo, never in a commit, an issue or a PR, and delete
 the file once `note` reports `Noted <GHSA-id> in <org>/.github.` To move
 a record's tracking, use `retarget`, not a note: `note` refuses a note
-with a `Tracking issue:` line. See the
+with a `Tracking issue:` line, and a note with a `Moved from:` or
+`Moved to:` line, which only a move to another org writes (`create`
+refuses those two lines in its body file, details file and summary). See
+the
 [CLI reference](../reference/dev/security-record.md#note).
 
 ### When the issue moves

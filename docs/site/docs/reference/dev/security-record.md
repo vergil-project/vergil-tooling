@@ -108,6 +108,13 @@ On success it prints `Recorded <GHSA-id> in <org>/.github, tracked by
   exists. `--summary` is left out of that command, since no advisory is
   created on resume. Run the printed command; never re-run the original.
 
+**Move lines.** Before any GitHub call, `create` refuses (exit 1, with
+nothing created) a `--body-file`, `--details-file` or `--summary` that
+has an exact `Moved from: <GHSA-id>` or
+`Moved to: <org>/.github <GHSA-id>` line, with `--resume` too. Only a
+cross-org `retarget` writes those lines, as `note` also enforces. The
+message names the file or flag and never quotes its text.
+
 **Attach mode** (`--issue` without `--resume`) attaches a new advisory to
 an existing issue instead of creating one. It adds the `security` label
 and the `Security advisory:` line to that issue, then writes the tracking
@@ -358,8 +365,10 @@ it prints any transfer notes, then
 The library's `retarget` returns the transfer notes followed by the
 original's `Moved to:` line; `fix_org` is the one-org check, and
 `moved_from_line`, `moved_to_line`, `parse_moved_from` and
-`parse_moved_to` build and read the two lines. `note` refuses a note
-holding either line.
+`parse_moved_to` build and read the two lines, and `refuse_move_lines`
+refuses caller text holding either one. Only the move writes them:
+`note` refuses a note holding either line, and `create` refuses a body
+file, details file or `--summary` holding one (see [create](#create)).
 
 ## sync
 
@@ -509,6 +518,9 @@ It refuses, changing nothing, when:
 - the file cannot be read, or holds no text;
 - any line of the note is a `Tracking issue:` line, which would change
   what the record tracks: use `retarget` for that;
+- any line of the note is a `Moved from:` or `Moved to:` line, which
+  would change where the record lives: only `retarget` writes those
+  lines, when it moves a record to another org;
 - the advisory does not exist in `<org>/.github`;
 - it is an external report, or in any state other than `draft` or
   `closed` (`published`, `withdrawn`, `triage`), which stay a human's

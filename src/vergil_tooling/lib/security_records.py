@@ -921,7 +921,8 @@ def _move(  # noqa: PLR0913 - retarget's inputs, passed on unchanged
 
     - the original must be a ``draft``, not an external report, with at most
       one ``Moved to:`` line (a ``closed`` one carrying the line is a
-      finished move, re-run);
+      finished move, re-run), and must not itself be the copy an earlier
+      move made, one with a ``Moved from:`` line (:func:`_movable`);
     - the **source check** and **drop check** of :func:`retarget`, so a move
       never closes an advisory that still tracks open work no ``--drop``
       names; once the original's tracking lines are gone, *source* must be
@@ -1545,12 +1546,26 @@ def check_note(note: str) -> str:
             "the note has a 'Tracking issue:' line, which would change what the record "
             "tracks; use retarget to move a record's tracking"
         )
-    if _MOVED_FROM_RE.search(text) or _MOVED_TO_RE.search(text):
-        raise NoteError(
-            "the note has a 'Moved from:' or 'Moved to:' line, which would change where "
-            "the record lives; use retarget to move a record to another org"
-        )
+    refuse_move_lines(text, "the note", NoteError)
     return text
+
+
+def refuse_move_lines(text: str, what: str, error: type[Exception]) -> None:
+    """Raise *error* when any line of *text* is an exact ``Moved from:`` or ``Moved to:`` line.
+
+    Only a cross-org :func:`retarget` writes those lines. Caller text holding
+    one would change where the record lives, or pass for the copy an earlier
+    move made. Every writer of advisory text from caller input runs this
+    check: :func:`check_note`, and ``vrg-security-record create`` on its
+    details file, summary and issue body (with ``--resume`` too). *what*
+    names the text in the message, which never quotes it.
+    """
+    if _MOVED_FROM_RE.search(text) or _MOVED_TO_RE.search(text):
+        raise error(
+            f"{what} has a 'Moved from:' or 'Moved to:' line, which would change where "
+            "the record lives; only retarget writes those lines, when it moves a record "
+            "to another org"
+        )
 
 
 def with_note(description: str, note: str, day: date) -> str:

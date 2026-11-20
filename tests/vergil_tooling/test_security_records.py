@@ -2712,3 +2712,20 @@ def test_note_refuses_a_move_line() -> None:
     assert check_note(f"mid-line Moved from: {GHSA} mention") == (
         f"mid-line Moved from: {GHSA} mention"
     )
+
+
+def test_refuse_move_lines_raises_the_given_error_without_quoting() -> None:
+    class RefusedError(Exception):
+        pass
+
+    for line in (f"Moved from: {GHSA}", f"Moved to: fix/.github {COPY} \r"):
+        with pytest.raises(RefusedError, match="^--details-file has a .Moved from:. or") as excinfo:
+            security_records.refuse_move_lines(
+                f"{SECRET}\n{line}\n", "--details-file", RefusedError
+            )
+        assert SECRET not in str(excinfo.value)
+        assert "only retarget writes those lines" in str(excinfo.value)
+    # A mention inside a line is not a move line.
+    security_records.refuse_move_lines(
+        f"see Moved from: {GHSA}\n> Moved to: fix/.github {COPY}", "x", RefusedError
+    )

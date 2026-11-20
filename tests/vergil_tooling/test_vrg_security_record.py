@@ -405,6 +405,58 @@ def test_create_refuses_unreadable_file(
     assert "cannot read --body-file" in capsys.readouterr().err
 
 
+_MOVE_LINES = (f"Moved from: {OTHER}", f"Moved to: fix/.github {OTHER}")
+
+
+@pytest.mark.parametrize("resume", [(), ("--resume", GHSA)], ids=["fresh", "resume"])
+@pytest.mark.parametrize("line", _MOVE_LINES, ids=["moved-from", "moved-to"])
+@pytest.mark.parametrize("flag", ["--body-file", "--details-file"])
+def test_create_refuses_a_move_line_in_a_file(  # noqa: PLR0913 - pytest fixtures and params
+    env: MagicMock,
+    files: dict[str, str],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    flag: str,
+    line: str,
+    resume: tuple[str, ...],
+) -> None:
+    path = tmp_path / "forged.md"
+    path.write_text(f"{SECRET}\n\n{line}\n")
+    argv = _create_argv(files, *resume)
+    argv[argv.index(flag) + 1] = str(path)
+    assert main(argv) == 1
+    err = capsys.readouterr().err
+    assert f"{flag} has a 'Moved from:' or 'Moved to:' line" in err
+    assert "only retarget writes those lines" in err
+    assert SECRET not in err
+    assert "--resume" not in err
+    env.advisory_home.assert_not_called()
+    env.create_advisory.assert_not_called()
+    env.create_issue.assert_not_called()
+
+
+@pytest.mark.parametrize("line", _MOVE_LINES, ids=["moved-from", "moved-to"])
+def test_create_refuses_a_move_line_as_summary(
+    env: MagicMock, files: dict[str, str], capsys: pytest.CaptureFixture[str], line: str
+) -> None:
+    assert main(_create_argv(files, "--summary", line)) == 1
+    err = capsys.readouterr().err
+    assert "--summary has a 'Moved from:' or 'Moved to:' line" in err
+    env.advisory_home.assert_not_called()
+    env.create_advisory.assert_not_called()
+
+
+def test_create_allows_a_move_line_mentioned_mid_line(
+    env: MagicMock, files: dict[str, str], tmp_path: Path
+) -> None:
+    path = tmp_path / "details.md"
+    path.write_text(f"{SECRET}\n\nSee the line Moved from: {OTHER} in the copy.\n")
+    argv = _create_argv(files)
+    argv[argv.index("--details-file") + 1] = str(path)
+    assert main(argv) == 0
+    env.create_advisory.assert_called_once()
+
+
 def test_create_no_installation_is_reported(
     env: MagicMock, files: dict[str, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1219,6 +1271,10 @@ def test_note_cli_failure_exits_nonzero_without_the_note(
         (
             f"{_NOTE}\nTracking issue: org/tool#12\n",
             "--file: the note has a 'Tracking issue:' line",
+        ),
+        *(
+            (f"{_NOTE}\n{line}\n", "--file: the note has a 'Moved from:' or 'Moved to:' line")
+            for line in _MOVE_LINES
         ),
     ],
 )

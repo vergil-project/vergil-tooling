@@ -12,7 +12,9 @@ neutral ``security``-labelled intake issue carrying only a pointer to it.
   already exists. A failure after the advisory exists prints the exact command
   that finishes the pair and exits 1. ``create`` makes the advisory's first
   pairing only: one that already tracks another issue is refused before any
-  issue is created, marked or linked.
+  issue is created, marked or linked. A body file, details file or summary
+  holding a ``Moved from:`` or ``Moved to:`` line is refused before any
+  GitHub call, with ``--resume`` too: only a move writes those lines.
 - ``list`` names advisories by GHSA ID, state, affected repo and tracked
   issues; ``--details`` adds each summary and is refused under the sweep.
 - ``show`` prints one pair with its details, to the terminal only.
@@ -242,8 +244,13 @@ def _create(args: argparse.Namespace) -> int:
     attach = _full_ref(args.issue, "--issue") if args.issue is not None else None
     body = _read_file(args.body_file, "--body-file")
     details = _read_file(args.details_file, "--details-file")
+    # Only a move writes these lines, so the caller's text may not, with
+    # --resume too: the resume command re-reads the same files.
+    security_records.refuse_move_lines(body, "--body-file", _RefusedError)
+    security_records.refuse_move_lines(details, "--details-file", _RefusedError)
     # With --resume the advisory already exists, so no summary is needed.
     summary = _summary_of(args, details) if args.resume is None else ""
+    security_records.refuse_move_lines(summary, "--summary", _RefusedError)
     with github.target_org(org):
         home = security_records.advisory_home(org)
         queue_home = epics.queue_home(args.repo)[0]
@@ -635,7 +642,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "this repo's org's .github, under a 'Note (<YYYY-MM-DD>):' header (UTC), "
             "keeping the 'Tracking issue:' lines last. It is append-only: the existing "
             "text is never changed. It refuses an empty note, a note with a "
-            "'Tracking issue:' line, a missing advisory, an external report and any "
+            "'Tracking issue:', 'Moved from:' or 'Moved to:' line, a missing advisory, "
+            "an external report and any "
             "other state. A re-run with the same file on the same day adds nothing "
             "while that note is still the advisory's last. "
             "It prints only the GHSA ID and the advisory home, never the note."
