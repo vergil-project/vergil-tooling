@@ -78,8 +78,8 @@ Every ref is `uv tool install` from git on the image's uv-managed
 Python 3.15, the one the base image publishes in `VERGIL_CORE_PYTHON_DIR`,
 with interpreter downloads off. For a release version, the cached image
 installs that release's commit, constrained by the commit's own `uv.lock`,
-and a `vX.Y` line resolves first to the newest release on the line, so a
-new release rebuilds the cached image (see
+and a `vX.Y` line resolves first to the release its rolling tag names, so a
+release promoted to the line rebuilds the cached image (see
 [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)).
 A branch or other dev ref installs from git unconstrained. The `vrg-*`
 entry points land in `/usr/local/bin`, and the build checks that

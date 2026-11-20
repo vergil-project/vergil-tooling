@@ -59,16 +59,60 @@ def _env_of(run: Run, index: int) -> dict[str, str]:
 # -- resolve ----------------------------------------------------------------
 
 
-def test_resolve_line_picks_newest_patch_and_its_sha() -> None:
-    r = resolve("v2.1", ls_remote=fake({"v2.1.9": "a" * 40, "v2.1.10": "b" * 40}))
+def test_resolve_line_takes_the_release_on_its_tag_and_its_sha() -> None:
+    tags = {"v2.1.9": "a" * 40, "v2.1.10": "b" * 40, "v2.1": "b" * 40}
+    r = resolve("v2.1", ls_remote=fake(tags))
     assert (r.tag, r.sha) == ("v2.1.10", "b" * 40)
     assert r.kind == "line"
 
 
+def test_resolve_line_follows_tag_not_newest() -> None:
+    # v2.1 is an annotated tag (the release's tag object, as a promote pushes
+    # it) peeling to the commit of v2.1.300, while v2.1.301 exists.
+    old, new = "3" * 40, "4" * 40
+    listing = (
+        f"{TAG_OBJECT}\trefs/tags/v2.1\n{old}\trefs/tags/v2.1^{{}}\n"
+        f"{TAG_OBJECT}\trefs/tags/v2.1.300\n{old}\trefs/tags/v2.1.300^{{}}\n"
+        f"{'e' * 40}\trefs/tags/v2.1.301\n{new}\trefs/tags/v2.1.301^{{}}\n"
+    )
+    r = resolve("v2.1", ls_remote=lambda _url, _pattern: listing)
+    assert r == ResolvedRef(ref="v2.1", kind="line", tag="v2.1.300", sha=old)
+
+
 def test_resolve_line_ignores_other_lines_and_suffixed_tags() -> None:
-    tags = {"v2.1.3": "a" * 40, "v2.10.0": "b" * 40, "v2.1.4-rc1": "e" * 40}
+    tags = {
+        "v2.1.3": "a" * 40,
+        "v2.10.0": "a" * 40,
+        "v2.10": "a" * 40,
+        "v2.1.4-rc1": "a" * 40,
+        "v2.1": "a" * 40,
+    }
     r = resolve("v2.1", ls_remote=fake(tags))
     assert (r.tag, r.sha) == ("v2.1.3", "a" * 40)
+
+
+def test_resolve_line_without_tag_raises() -> None:
+    # The line's releases exist but its rolling tag does not: no fallback to a patch.
+    with pytest.raises(ToolingInstallError) as excinfo:
+        resolve("v3.2", ls_remote=fake({"v3.2.0": SHA, "v3.2.1": "b" * 40}))
+    assert str(excinfo.value) == (
+        f"no release tag for v3.2 at {GIT_URL}: the line tag v3.2 does not exist"
+    )
+
+
+def test_resolve_line_commit_without_release_tag_raises() -> None:
+    with pytest.raises(ToolingInstallError) as excinfo:
+        resolve("v2.1", ls_remote=fake({"v2.1.9": "a" * 40, "v2.1": SHA}))
+    assert str(excinfo.value) == (
+        f"the line tag v2.1 at {GIT_URL} names commit {SHA}, which carries none "
+        "of the v2.1.Z release tags, not exactly one"
+    )
+
+
+def test_resolve_line_commit_with_two_release_tags_raises() -> None:
+    tags = {"v2.1.9": SHA, "v2.1.10": SHA, "v2.1": SHA}
+    with pytest.raises(ToolingInstallError, match=r"several \(v2\.1\.10, v2\.1\.9\)"):
+        resolve("v2.1", ls_remote=fake(tags))
 
 
 def test_resolve_uses_the_peeled_commit_of_an_annotated_tag() -> None:
@@ -78,14 +122,17 @@ def test_resolve_uses_the_peeled_commit_of_an_annotated_tag() -> None:
 
 
 def test_resolve_skips_non_tag_and_malformed_lines() -> None:
-    listing = f"warning: noise\n{'a' * 40}\trefs/heads/v2.1.11\n{SHA}\trefs/tags/v2.1.10\n"
+    listing = (
+        f"warning: noise\n{SHA}\trefs/heads/v2.1.11\n{SHA}\trefs/tags/v2.1.10\n"
+        f"{SHA}\trefs/tags/v2.1\n"
+    )
     r = resolve("v2.1", ls_remote=lambda _url, _pattern: listing)
     assert (r.tag, r.sha) == ("v2.1.10", SHA)
 
 
 def test_resolve_makes_one_ls_remote_call_on_the_git_url() -> None:
     calls: list[tuple[str, str]] = []
-    resolve("v2.1", ls_remote=fake({"v2.1.0": SHA}, calls))
+    resolve("v2.1", ls_remote=fake({"v2.1.0": SHA, "v2.1": SHA}, calls))
     assert calls == [(GIT_URL, "refs/tags/v2.1*")]
 
 
@@ -103,7 +150,7 @@ def test_resolve_line_ls_remote_failure_is_loud() -> None:
 
 def test_resolve_line_with_no_tag_on_the_line_is_loud() -> None:
     with pytest.raises(ToolingInstallError, match=r"no release tag for v2\.2 at https://"):
-        resolve("v2.2", ls_remote=fake({"v2.1.9": SHA}))
+        resolve("v2.2", ls_remote=fake({"v2.1.9": SHA, "v2.1": SHA}))
 
 
 def test_resolve_exact_missing_tag_is_loud() -> None:

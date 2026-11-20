@@ -1109,8 +1109,8 @@ def _resolve_tooling(
 ) -> tuple[str, ResolvedRef | None]:
     """Return ``(pin, resolved)`` for the cache of *repo_root*; see :class:`CacheKey`.
 
-    A line pin is resolved once, with ``git ls-remote``, to its newest tag and
-    commit. An exact pin is resolved with no network call
+    A line pin is resolved once, with ``git ls-remote``, to the release tag its
+    rolling tag names and that commit. An exact pin is resolved with no network call
     (:func:`~vergil_tooling.lib.tooling_install.unresolved`): its key is the
     tag, and the build resolves its SHA. ``("", None)`` for the self-repo.
 

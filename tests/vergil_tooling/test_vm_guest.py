@@ -615,7 +615,9 @@ class _MidTransitionVm:
 @pytest.fixture
 def ls_remote(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        tooling_install, "git_ls_remote", lambda _u, _p: f"{_SHA}\trefs/tags/v2.1.10\n"
+        tooling_install,
+        "git_ls_remote",
+        lambda _u, _p: f"{_SHA}\trefs/tags/v2.1.10\n{_SHA}\trefs/tags/v2.1\n",
     )
 
 

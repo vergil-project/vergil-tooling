@@ -2075,15 +2075,19 @@ it cleans a branch's images (issue #4162).
 
 The base images carry no vergil-tooling: the cache build installs the
 release that `vergil.toml`'s `[dependencies].vergil` pin names (or
-`VRG_DOCKER_INSTALL_TAG`, when set). A line pin such as `v2.1` floats, so
-every `build`, `status` and `vrg-container-run` resolves it to the newest
-release on the line before it looks at the cache. It resolves the line
-once, with one `git ls-remote` of the vergil-tooling repository, to the
-newest `vX.Y.Z` tag and that tag's commit SHA; it reads no package index.
+`VRG_DOCKER_INSTALL_TAG`, when set). A line pin such as `v2.1` floats with
+its rolling tag, so every `build`, `status` and `vrg-container-run` resolves
+it to the release that tag names before it looks at the cache. It resolves
+the line once, with one `git ls-remote` of the vergil-tooling repository,
+reading the tag `v2.1` itself, peeled to its commit, and taking the one
+`vX.Y.Z` tag on that commit and its SHA; it never simply takes the newest
+`vX.Y.Z`, and it reads no package index. A line whose rolling tag is
+missing, or whose commit carries no `vX.Y.Z` tag, is an error.
 That release, such as `v2.1.320`, and its SHA are both part of the cache
 key, the build installs exactly that commit, constrained by the commit's own
-`uv.lock`, and the image records the release. So when a release lands on
-the line, the next run rebuilds each branch's cache with it, and `status`
+`uv.lock`, and the image records the release. So when `promote` moves the
+line to a release, or `vrg-promote` demotes it to an older one, the next
+run rebuilds each branch's cache with it, and `status`
 reports the old cache `stale`, naming the release it holds and the one the
 pin installs now (issue #4550).
 
@@ -2252,8 +2256,12 @@ Runs unprivileged and refuses `sudo`/`doas`/`su`/`pkexec`. See the
 
 ### vrg-tooling-install
 
-Install an exact vergil-tooling release on this host with uv, locked to that
-release's `uv.lock`. In a temporary directory it shallow-fetches the tag over
+Install a vergil-tooling release on this host with uv, locked to that
+release's `uv.lock`. It takes an exact release `vX.Y.Z` or a line `vX.Y`. A
+line is first resolved, with one `git ls-remote`, through its rolling tag
+`vX.Y` to the one `vX.Y.Z` tag on the commit that tag names (the resolver
+the dev-container cache and `vrg-vm` use), and that exact release is what it
+installs and reports. In a temporary directory it shallow-fetches the tag over
 git, reads the commit the tag names, exports that commit's `uv.lock` as
 constraints (refusing an empty export or one naming a non-registry package),
 and runs `uv tool install --force --no-config --python 3.15 --managed-python`
@@ -2266,10 +2274,10 @@ fresh host, or one whose installed copy fails, installs by hand (see
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_tooling_install` |
-| Args | `vX.Y.Z` (an exact release tag) |
+| Args | `vX.Y` (a release line) or `vX.Y.Z` (an exact release tag) |
 | Preconditions | `git` and `uv` on PATH; network access to github.com |
-| Failure mode | Names the failed step (fetch, checkout, lock export, constraints check or install) and its error output on stderr; the temporary directory is removed either way |
-| Exit codes | 0 installed; 1 a step failed or the tag is not `vX.Y.Z`; 2 usage error |
+| Failure mode | Names the failed step (line resolution, fetch, checkout, lock export, constraints check or install) and its error output on stderr; the temporary directory is removed either way |
+| Exit codes | 0 installed; 1 a step failed, the line did not resolve, or the argument is neither `vX.Y` nor `vX.Y.Z`; 2 usage error |
 | Status | Active |
 
 ### vrg-generate-commands
