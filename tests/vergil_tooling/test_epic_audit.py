@@ -2645,3 +2645,204 @@ def test_render_closed_reports_proxy_pass() -> None:
     assert "**Proxy link errors**" in out
     assert "- proxy org/.github#3 broke" in out
     assert "nothing to close" not in out
+
+
+# --- misplaced ad-hoc tasks (epic .github#1417, spec §4.8) ------------------------
+
+_LIVE_ADHOC_REF = epics.IssueRef("vergil-project", ".github", 50)
+_TRUSTED = frozenset({"wphillipmoore", "wphillipmoore-vergil-user"})
+
+
+def _adhoc_child(
+    number: int,
+    *,
+    title: str = "a task",
+    body: str = "",
+    labels: frozenset[str] = frozenset(),
+    parent: epics.IssueRef | None = _LIVE_ADHOC_REF,
+    repo: str = "vergil-tooling",
+) -> epic_audit.OpenIssue:
+    return epic_audit.OpenIssue(
+        ref=epics.IssueRef("vergil-project", repo, number),
+        title=title,
+        body=body,
+        labels=labels,
+        native_parent=parent,
+        public=True,
+    )
+
+
+_LIVE_ADHOC = epic_audit.OpenIssue(
+    ref=_LIVE_ADHOC_REF,
+    title="Epic (ad hoc): vergil-tooling",
+    body="",
+    labels=frozenset({"epic", "ad-hoc"}),
+    native_parent=None,
+    public=True,
+)
+
+
+def _misplaced(
+    issues: list[epic_audit.OpenIssue],
+    *,
+    epics_by_slug: dict[str, bool] | None = None,
+    comments: dict[int, list[dict[str, Any]]] | None = None,
+    unreadable: frozenset[str] = frozenset(),
+) -> tuple[list[epic_audit.MisplacedTask], MagicMock, MagicMock]:
+    epics_by_slug = epics_by_slug or {}
+    comments = comments or {}
+
+    def is_epic(ref: epics.IssueRef) -> bool:
+        if ref.slug in unreadable:
+            raise github.GitHubAPIError(1, "gh", "", "Could not resolve to an issue")
+        return epics_by_slug.get(ref.slug, False)
+
+    def read_json(*args: str) -> object:
+        assert args[:2] == ("issue", "view")
+        return {"comments": comments.get(int(args[2]), [])}
+
+    trusted = MagicMock(return_value=_TRUSTED)
+    run = MagicMock()
+    with (
+        patch("vergil_tooling.lib.epics.is_epic", side_effect=is_epic),
+        patch("vergil_tooling.lib.github.read_json", side_effect=read_json),
+        patch("vergil_tooling.lib.epic_size.trusted_logins", trusted),
+        patch("vergil_tooling.lib.github.run", run),
+    ):
+        found = epic_audit.misplaced_adhoc("vergil-project", issues=[_LIVE_ADHOC, *issues])
+    return found, trusted, run
+
+
+def test_misplaced_logbook_title() -> None:
+    found, _, _ = _misplaced([_adhoc_child(1, title="Logbook: 2026-11-19")])
+    assert found == [
+        epic_audit.MisplacedTask(
+            epics.IssueRef("vergil-project", "vergil-tooling", 1),
+            "titled `Logbook:`; it belongs under the hoshin epic",
+        )
+    ]
+
+
+def test_misplaced_cross_org_epic_ref() -> None:
+    body = (
+        "Part of logical-minds-foundry/.github#12, see also"
+        " https://github.com/logical-minds-foundry/.github/issues/12 and vergil-project/.github#1."
+    )
+    found, _, _ = _misplaced(
+        [_adhoc_child(2, body=body)],
+        epics_by_slug={"logical-minds-foundry/.github#12": True, "vergil-project/.github#1": True},
+    )
+    assert [m.reason for m in found] == [
+        "names logical-minds-foundry/.github#12, an epic in another org"
+    ]
+
+
+def test_misplaced_cross_org_url_form() -> None:
+    body = "Primary: https://github.com/other-org/.github/issues/7"
+    found, _, _ = _misplaced(
+        [_adhoc_child(2, body=body)], epics_by_slug={"other-org/.github#7": True}
+    )
+    assert [m.reason for m in found] == ["names other-org/.github#7, an epic in another org"]
+
+
+def test_cross_org_ref_to_non_epic_not_reported() -> None:
+    found, trusted, _ = _misplaced([_adhoc_child(3, body="Upstream bug: other-org/lib#99")])
+    assert found == []
+    trusted.assert_not_called()  # no candidate, so the trusted authors are never read
+
+
+def test_cross_org_ref_unreadable_reported() -> None:
+    found, _, _ = _misplaced(
+        [_adhoc_child(4, body="See secret-org/private#3")],
+        unreadable=frozenset({"secret-org/private#3"}),
+    )
+    assert [m.reason for m in found] == ["names secret-org/private#3, which could not be read"]
+
+
+def test_misplaced_only_under_a_live_adhoc_epic() -> None:
+    other_epic = epics.IssueRef("vergil-project", ".github", 1417)
+    found, _, _ = _misplaced(
+        [
+            _adhoc_child(5, title="Logbook: under a development epic", parent=other_epic),
+            _adhoc_child(6, title="Logbook: no parent", parent=None),
+        ]
+    )
+    assert found == []
+
+
+def test_standalone_confirmed_suppresses() -> None:
+    comments = {
+        7: [
+            {
+                "author": {"login": "app/wphillipmoore-vergil-user"},
+                "body": "Ruled:\nStandalone-confirmed\n",
+            }
+        ]
+    }
+    found, _, _ = _misplaced([_adhoc_child(7, title="Logbook: x")], comments=comments)
+    assert found == []
+
+
+def test_standalone_confirmed_untrusted_ignored() -> None:
+    comments = {
+        8: [
+            {"author": {"login": "mallory"}, "body": "Standalone-confirmed"},
+            {"author": {"login": "wphillipmoore"}, "body": "not Standalone-confirmed here"},
+        ]
+    }
+    found, _, _ = _misplaced([_adhoc_child(8, title="Logbook: x")], comments=comments)
+    assert len(found) == 1
+
+
+def test_misplaced_report_never_writes() -> None:
+    _, _, run = _misplaced(
+        [_adhoc_child(9, title="Logbook: x", body="other-org/.github#7")],
+        epics_by_slug={"other-org/.github#7": True},
+    )
+    run.assert_not_called()
+
+
+def test_misplaced_reads_each_cross_org_ref_once_and_enumerates_when_not_given() -> None:
+    issues = [
+        _LIVE_ADHOC,
+        _adhoc_child(10, body="other-org/.github#7"),
+        _adhoc_child(11, body="other-org/.github#7"),
+    ]
+    is_epic = MagicMock(return_value=False)
+    with (
+        patch.object(epic_audit, "open_issues", return_value=issues) as enum,
+        patch("vergil_tooling.lib.epics.is_epic", is_epic),
+    ):
+        assert epic_audit.misplaced_adhoc("vergil-project") == []
+    enum.assert_called_once_with("vergil-project")
+    is_epic.assert_called_once_with(epics.IssueRef("other-org", ".github", 7))
+
+
+def test_standalone_confirmed_bad_response_raises() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        pytest.raises(RuntimeError, match="unexpected 'gh issue view' response"),
+    ):
+        epic_audit._standalone_confirmed(epics.IssueRef("o", "r", 1), _TRUSTED)
+
+
+def test_render_reports_misplaced_adhoc() -> None:
+    task = epics.IssueRef("org", "tool", 3)
+    out = epic_audit.render(
+        [],
+        [],
+        org="org",
+        window_days=30,
+        misplaced_adhoc=[epic_audit.MisplacedTask(task, "titled `Logbook:`")],
+    )
+    assert "## Ad-hoc tasks that look misplaced (report only)" in out
+    assert "`Standalone-confirmed`" in out
+    assert "- org/tool#3 — titled `Logbook:`" in out
+
+
+def test_misplaced_loads_trusted_authors_once() -> None:
+    found, trusted, _ = _misplaced(
+        [_adhoc_child(12, title="Logbook: a"), _adhoc_child(13, title="Logbook: b")]
+    )
+    assert [m.task.number for m in found] == [12, 13]
+    trusted.assert_called_once_with()
