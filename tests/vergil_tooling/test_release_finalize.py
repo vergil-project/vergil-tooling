@@ -28,7 +28,6 @@ def _ctx() -> ReleaseContext:
     ctx.release_pr_url = "https://github.com/owner/repo/pull/100"
     ctx.bump_pr_url = "https://github.com/owner/repo/pull/101"
     ctx.tag = "v2.1.0"
-    ctx.develop_tag = "develop-v2.1.0"
     ctx.release_url = "https://github.com/owner/repo/releases/tag/v2.1.0"
     ctx.cd_run_url = "https://github.com/owner/repo/actions/runs/123"
     return ctx
@@ -104,13 +103,11 @@ def test_release_cleanup_call_has_no_no_wait_cd() -> None:
 def test_build_summary_omits_none_fields() -> None:
     ctx = _ctx()
     ctx.tag = None
-    ctx.develop_tag = None
     ctx.release_url = None
     ctx.cd_run_url = None
     ctx.develop_cd_run_url = None
     summary = _build_summary(ctx)
     assert "Release tag" not in summary
-    assert "Develop boundary tag" not in summary
     assert "GitHub Release" not in summary
     assert "CD workflow" not in summary
 

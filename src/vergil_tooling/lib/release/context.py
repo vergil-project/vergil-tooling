@@ -46,7 +46,6 @@ class ReleaseContext:
     cd_run_id: str | None = None
     cd_run_url: str | None = None
     tag: str | None = None
-    develop_tag: str | None = None
     release_url: str | None = None
 
     develop_cd_run_id: str | None = None

@@ -14,8 +14,8 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib.changelog import (
-    BOUNDARY_TAG_PATTERN,
     CONFIG_MOUNT,
+    DEVELOP_TAG_PATTERN,
     RELEASE_NOTES_DIR,
     generate_changelog,
     generate_release_notes,
@@ -106,8 +106,8 @@ def test_generate_changelog_prepends_from_the_boundary(tmp_path: Path) -> None:
         generate_changelog(tmp_path, "2.0.34")
     args = _cliff_args(mock_run)
     assert args[2] == "git-cliff"
-    assert args[args.index("--tag") + 1] == "develop-v2.0.34"
-    assert args[args.index("--ignore-tags") + 1] == BOUNDARY_TAG_PATTERN
+    assert args[args.index("--tag") + 1] == "v2.0.34"
+    assert args[args.index("--ignore-tags") + 1] == DEVELOP_TAG_PATTERN
     assert args[args.index("--prepend") + 1] == "CHANGELOG.md"
     assert "-o" not in args
     assert args[-1] == "abc123..HEAD"
@@ -168,8 +168,8 @@ def test_generate_release_notes_uses_the_boundary_range(tmp_path: Path) -> None:
         result = generate_release_notes(tmp_path, "2.0.34")
     assert result == output
     args = _cliff_args(mock_run)
-    assert args[args.index("--tag") + 1] == "develop-v2.0.34"
-    assert args[args.index("--ignore-tags") + 1] == BOUNDARY_TAG_PATTERN
+    assert args[args.index("--tag") + 1] == "v2.0.34"
+    assert args[args.index("--ignore-tags") + 1] == DEVELOP_TAG_PATTERN
     assert args[args.index("-o") + 1] == f"{RELEASE_NOTES_DIR}/v2.0.34.md"
     assert "--unreleased" not in args
     assert args[-1] == "abc123..HEAD"
@@ -363,7 +363,8 @@ def test_pr_merged_while_release_in_flight_ships_in_the_next_release(repo: Path)
     _git(repo, "switch", "-q", "develop")
     _commit(repo, "feat: merged while in flight")
     _publish(repo, "1.0.0", "release/1.0.0")
-    # CD places the boundary tag on the develop tip, past the in-flight PR.
+    # Earlier releases' CD placed a develop-v tag on the develop tip, past the
+    # in-flight PR; one that remains must not split the next release's range.
     _git(repo, "tag", "develop-v1.0.0", "develop")
     _back_merge(repo, "1.0.0")
     _commit(repo, "fix: next release fix")
@@ -447,6 +448,29 @@ def test_regenerating_the_changelog_is_idempotent(repo: Path) -> None:
     generate_changelog(repo, "1.1.0")
     assert (repo / "CHANGELOG.md").read_text() == first
     assert first.count("## [1.1.0]") == 1
+
+
+def test_headings_render_the_bare_version(repo: Path) -> None:
+    """The changelog heading and release-notes title carry ``X.Y.Z``, not the tag (#4770)."""
+    _commit(repo, "feat: initial feature")
+    _git(repo, "branch", "main")
+    _cut_release(repo, "1.0.0")
+    _prepare(repo, "1.0.0")
+    _publish(repo, "1.0.0", "release/1.0.0")
+    _git(repo, "tag", "v1.0", "main")
+    _git(repo, "tag", "develop-v1.0.0", "develop")
+    _back_merge(repo, "1.0.0")
+    _commit(repo, "fix: second")
+    _cut_release(repo, "1.1.0")
+
+    changelog, notes = _prepare(repo, "1.1.0")
+    date = _git(repo, "log", "-1", "--format=%cs")
+    assert notes.startswith(f"# Release 1.1.0 ({date})\n")
+    assert f"\n## [1.1.0] - {date}\n" in changelog
+    assert "v1.1.0" not in changelog
+    assert "fix: second" not in notes
+    assert "- **second**" in notes
+    assert "initial feature" not in notes
 
 
 def test_previous_release_tag_is_the_highest_release_below_version(repo: Path) -> None:
