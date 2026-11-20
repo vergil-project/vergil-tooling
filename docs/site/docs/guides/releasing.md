@@ -54,27 +54,26 @@ See [vergil-tooling inside the VM](../reference/vm-spec.md#vergil-tooling-inside
 
 ## Tag scheme — what's user-facing, what isn't
 
-Two parallel tag families exist in the repo. Consumers only see and
-use the first; the second is an internal marker of where `develop`
-stood when a release was published.
+Releases are tagged on `main`, and consumers pin to those tags.
 
 | Tag pattern | Where | Purpose | User-facing? |
 |---|---|---|---|
 | `v1.3.0` | `main` | Release tag | Yes — pin in install commands |
 | `v1.3` | `main` | Rolling minor tag (force-updated each patch) | Yes — what consumers actually pin to |
-| `develop-v1.3.0` | `develop` | Marks the `develop` tip when the release was published | No — internal |
 
-The `develop-` prefix is invisible to install / consumption; never
-pin to a `develop-v*` tag.
+CD has also placed a `develop-v1.3.0` tag on the `develop` tip after
+each release.
+Those tags are being retired: nothing uses them, `vrg-release` neither
+requires nor reports one, and the changelog and release notes ignore
+any that remain. Never pin to a `develop-v*` tag.
 
-The changelog and release notes do not use the `develop-v*` tags as
-their boundary. CD places one on the `develop` tip after the release
-has merged, so a PR merged to `develop` while the release was in flight
-would sit behind it without having shipped. A release's changes are
-instead the commits since the merge base of the release branch and the
-previous `vX.Y.Z` tag, so such a PR appears in the next release. The
-new section is added to the top of `CHANGELOG.md`; the entries of
-earlier releases are kept as they were published.
+A release's changes are the commits since the merge base of the
+release branch and the previous `vX.Y.Z` tag, so a PR merged to
+`develop` while a release was in flight appears in the next release.
+The changelog heading and the release notes title carry the bare
+version (`## [1.3.1] - <date>`, `# Release 1.3.1 (<date>)`). The new
+section is added to the top of `CHANGELOG.md`; the entries of earlier
+releases are kept as they were published.
 
 ## Patch release — the common path
 
@@ -110,7 +109,6 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
    - CD on `main` creates the release tag (`v1.3.1`).
    - The rolling minor tag (`v1.3`) is **force-updated** to point at
      the new release.
-   - The boundary tag (`develop-v1.3.1`) is created on `develop`.
    - The Documentation workflow publishes the new release notes to
      the docs site under `releases/v1.3.1`.
    - **Repos with `[package]`** (vergil-tooling is one) also publish

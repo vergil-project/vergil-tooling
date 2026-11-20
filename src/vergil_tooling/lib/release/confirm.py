@@ -594,11 +594,3 @@ def _verify_artifacts(ctx: ReleaseContext) -> None:
     ctx.release_url = release_url
     print(f"  GitHub Release: {release_url}")
 
-    develop_tag = f"develop-v{ctx.version}"
-    if not git.ref_exists(develop_tag):
-        raise ReleaseError(
-            phase="confirm-main",
-            command=f"git rev-parse {develop_tag}",
-            message=f"Develop boundary tag {develop_tag} does not exist.",
-        )
-    ctx.develop_tag = develop_tag

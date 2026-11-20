@@ -122,8 +122,6 @@ def _build_summary(ctx: ReleaseContext) -> str:
     ]
     if ctx.tag:
         lines.append(f"- Release tag: `{ctx.tag}`")
-    if ctx.develop_tag:
-        lines.append(f"- Develop boundary tag: `{ctx.develop_tag}`")
     lines.append("")
     lines.append("### Artifacts")
     if ctx.release_url:
