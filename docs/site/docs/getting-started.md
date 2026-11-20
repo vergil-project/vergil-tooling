@@ -37,27 +37,24 @@ Set `VERSION` to the newest release on the
 
 ```bash
 VERSION=X.Y.Z
-(
-  set -euo pipefail
-  unset UV_PYTHON UV_PYTHON_PREFERENCE UV_NO_MANAGED_PYTHON
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
-  git init -q "$tmp/src"
-  git -C "$tmp/src" fetch -q --depth 1 https://github.com/vergil-project/vergil-tooling refs/tags/v${VERSION}
-  git -C "$tmp/src" checkout -q FETCH_HEAD
-  (cd "$tmp/src" && uv export --no-config --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt -o "$tmp/constraints.txt" >/dev/null)
-  uv tool install --force --no-config --python 3.15 --managed-python -c "$tmp/constraints.txt" "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v${VERSION}"
-)
+env -u UV_PYTHON -u UV_PYTHON_PREFERENCE -u UV_NO_MANAGED_PYTHON \
+  uv tool install --force --no-config --python 3.15 --managed-python \
+  "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v${VERSION}"
+vrg-tooling-install "v${VERSION}"
 ```
 
-These lines install exactly the tag `v<VERSION>`, with its dependencies
-pinned by that tag's own `uv.lock`, on uv's managed Python 3.15. No uv
-config file and no `UV_PYTHON*` variable can change the interpreter. They
-are the same lines each vergil-tooling release runs (its
-`[publish].consumer-refresh` in `vergil.toml`), but only on the Mac that
-runs that release. On any other host, rerun them with the new `VERSION`
-to upgrade; see
-[Keeping up to date](guides/consuming-repo-setup.md#keeping-up-to-date).
+The first line installs the tag `v<VERSION>` on uv's managed Python 3.15,
+with no uv config file and no `UV_PYTHON*` variable able to change the
+interpreter, but with its dependencies resolved fresh. The second,
+[`vrg-tooling-install`](reference/cli-tools-overview.md#vrg-tooling-install),
+reinstalls the same tag with its dependencies pinned by that tag's own
+`uv.lock`. Each vergil-tooling release runs `vrg-tooling-install` with the
+just-released version (its `[publish].consumer-refresh` in `vergil.toml`),
+but only on the Mac that runs that release. On any other host, run
+`vrg-tooling-install vX.Y.Z` with the new version to upgrade; see
+[Keeping up to date](guides/consuming-repo-setup.md#keeping-up-to-date). If
+an installed `vrg-tooling-install` ever fails, these two lines are also the
+way to reinstall by hand.
 
 This installs all `vrg-*` console scripts into `~/.local/bin/`.
 `uv`'s official installer already puts that directory on `PATH`; with

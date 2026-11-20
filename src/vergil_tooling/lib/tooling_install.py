@@ -23,9 +23,12 @@ no ``set -e``: each step that can fail names itself and exits non-zero.
 
 :func:`install_release` runs the same released install in Python, here, for
 a host: ``vrg-tooling-install`` (vergil-tooling#4827). The Mac's consumer
-refresh (``vergil.toml``'s ``[publish].consumer-refresh``) is still the
-inline shell of spec §4.5 until vergil-tooling#4830 switches it to the
-installed ``vrg-tooling-install``. The container and VM paths keep the
+refresh (``vergil.toml``'s ``[publish].consumer-refresh``) runs the
+installed ``vrg-tooling-install v<VERSION>`` (vergil-tooling#4830), so the
+installed vergil-tooling installs the just-released one; that reverses spec
+§4.5's "nothing runs vergil-tooling to install vergil-tooling" for the Mac.
+If the installed copy is broken, the documented install by hand is the
+workaround while it is fixed. The container and VM paths keep the
 rendered lines for now; vergil-project/.github#1435 looks at moving them to
 :func:`install_release`.
 """

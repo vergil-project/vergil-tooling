@@ -2254,7 +2254,8 @@ git, reads the commit the tag names, exports that commit's `uv.lock` as
 constraints (refusing an empty export or one naming a non-registry package),
 and runs `uv tool install --force --no-config --python 3.15 --managed-python`
 of that commit under them, with `UV_PYTHON`, `UV_PYTHON_PREFERENCE` and
-`UV_NO_MANAGED_PYTHON` cleared. Run it to move a host to a new release. A
+`UV_NO_MANAGED_PYTHON` cleared. vergil-tooling's release runs it on the Mac
+through its `[publish].consumer-refresh`; any other host runs it to upgrade. A
 fresh host, or one whose installed copy fails, installs by hand (see
 [Getting Started](../getting-started.md)).
 

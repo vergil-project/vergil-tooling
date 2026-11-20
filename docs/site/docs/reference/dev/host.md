@@ -361,7 +361,8 @@ Notes on the entries:
   [#3300](https://github.com/vergil-project/vergil-tooling/issues/3300).
 - **`vergil-tooling` is installed by its own release.** Releasing
   vergil-tooling runs the `[publish].consumer-refresh` in its `vergil.toml`,
-  which reinstalls the host tools at the just-released tag, so `vrg-host` never
+  which reinstalls the host tools at the just-released tag with
+  [`vrg-tooling-install`](../cli-tools-overview.md#vrg-tooling-install), so `vrg-host` never
   installs or upgrades it
   ([#4603](https://github.com/vergil-project/vergil-tooling/issues/4603)). It
   is installed from git, so `uv`'s outdated feed cannot see new releases and
