@@ -159,6 +159,12 @@ HOSHIN_REFUSAL = (
     "{epic} is the hoshin epic, which holds only the logbook tasks /vergil:hoshin "
     "files and works; a one-off goes under an ad-hoc or finite epic"
 )
+# The refusal of every route for an item under the hoshin epic: /vergil:hoshin
+# alone places and works its tasks, so none is ever routed.
+HOSHIN_ITEM_REFUSAL = (
+    "{item} is under the hoshin epic {epic}, which holds only the logbook tasks "
+    "/vergil:hoshin files and works; its tasks are never routed"
+)
 
 # A transfer carries the old parent over eventually, not atomically: a link
 # made right after it can be overwritten seconds later (#3556). Each settle
@@ -363,6 +369,8 @@ def _check_eligible(ref: IssueRef, action: RouteAction, parent: IssueRef | None)
     kind = epics.container_kind(parent)
     if kind is None and isinstance(action, ToPlanning) and _is_movable_brainstorm(ref, parent):
         return _DEVELOPMENT
+    if kind == epics.HOSHIN.key:
+        raise RouteRefusedError(HOSHIN_ITEM_REFUSAL.format(item=ref.slug, epic=parent.slug))
     if kind is None or kind not in ROUTES:
         raise RouteRefusedError(
             f"{ref.slug} is under {parent.slug}, not a container epic (intake, planning, "

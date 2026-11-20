@@ -755,8 +755,9 @@ epic is created and at each docs PR handoff.
 `backfill (--org ORG | --repo OWNER/REPO)` writes the section on every epic
 of an epic home, open and closed: `--org` works on the org's `.github`, and
 `--repo` on a private repo that keeps its own epics. It skips the standing
-epics (ad hoc, intake, planning, deferred, the retired `standing` label, and
-titles starting `Epic (standing):`) and `[archived]` epics. For each epic it
+epics (ad hoc, intake, planning, deferred, hoshin, the retired `standing`
+label, and titles starting `Epic (standing):`), proxy epics and `[archived]`
+epics. For each epic it
 looks for the documents, in order:
 
 1. the directory `epics/<N>-*/` in the home repo's default branch;
@@ -1521,11 +1522,11 @@ stderr and no JSON, so the retrospective gate stops on it.
 
 `--close` applies the fixes, in order:
 
-1. Close the drifted tasks and rolled-up epics, and reopen each epic closed
-   while a child was still open, with an explanatory comment on each. Then
-   close each open proxy epic in the home whose primary has closed and which
-   has no open task, with a comment. A proxy that still has an open task is
-   reported and left open, never closed silently.
+1. Close the drifted tasks and rolled-up epics. Then close each open proxy
+   epic in the home whose primary has closed and which has no open task; a
+   proxy that still has an open task is reported and left open, never closed
+   silently. Then reopen each epic closed while a child was still open. Each
+   close and reopen carries an explanatory comment.
 2. Drain the closed children of the ad-hoc, intake, planning, deferred and
    hoshin epics into per-quarter archives, and close past archives (see
    [Ad-hoc epic archiving](../standards/github-issues.md#ad-hoc-epic-archiving)).

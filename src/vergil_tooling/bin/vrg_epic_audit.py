@@ -163,7 +163,8 @@ def _audit(args: argparse.Namespace, org: str) -> int:
         # ad-hoc epic into per-quarter archives and close past archives, under the
         # org's token that main() scopes the whole audit to (spec §7), matching
         # vrg-adhoc-epic and vrg-epic-move. The intake, planning and deferred
-        # queue epics drain the same way (epic vergil-project/.github#176).
+        # queue epics (epic vergil-project/.github#176) and the hoshin epic
+        # (epic vergil-project/.github#1417) drain the same way.
         now = datetime.now(UTC)
         drained = epics.drain_adhoc_org(org, apply=True, now=now)
         queue_drained = epics.drain_standing_org(org, apply=True, now=now)
