@@ -884,6 +884,9 @@ three parts in its body:
   version other than the issue title's, is refused, never replaced by
   defaults. Do not edit it by hand.
 
+`prepare` locks the tracking issue as soon as it creates it, so only
+the repository's collaborators can comment on it.
+
 If `preflight` cannot read the contents completely, the release is
 refused before the tracking issue is created; the next run adopts the
 unpushed release branch it left. Each tracked stage adds
@@ -911,3 +914,31 @@ adopting the branches, PRs and tag the earlier run already created.
 Use the issue as well to capture the rationale for the release and any
 consumer coordination it needs, especially for minor and major bumps.
 Follow-ups move to their own issues.
+
+### The lock and the identity rule
+
+The state block is trusted only while the tracking issue is the human's.
+Every time `vrg-release` reads the state block, and again in the read
+before each write of it, it first locks the issue if it is not locked
+(an issue inherited from an older run included), then reads, in one
+paginated GraphQL query, every identity on the issue, and checks them
+against the `human` logins of
+[`vrg-trusted-authors`](../reference/cli-tools-overview.md#vrg-trusted-authors):
+
+- **The identities that can change the state:** the issue's author,
+  the body's last editor and every editor in its edit history, and
+  every actor that closed or reopened the issue. Each must be a `human`
+  login. Any other identity, an agent or a deleted account (`ghost`)
+  included, stops the run before it writes anything, with an error
+  starting `suspected security breach on tracking issue #<N>:` that
+  names the identity and what it did. The failure is not commented on
+  the issue. Inspect the issue's edit history and events, clean it up,
+  then run `vrg-release --resume`.
+- **Other traces** cannot change the state: a comment, a
+  cross-reference, a mention, a subscription, or a label added or
+  removed by another identity. Each is printed as a warning, once per
+  run, and the run carries on.
+
+A failed read of the trusted authors or of the issue's identities, or
+a response that cannot be read in full, stops the run with the call
+that failed; it is never taken as "no other identity".

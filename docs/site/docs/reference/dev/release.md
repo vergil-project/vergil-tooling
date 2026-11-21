@@ -17,6 +17,11 @@ section (the pending-release table and the issues the release
 contains), the stage checklist, and the release's state block, which
 only `vrg-release` writes; see
 [Release tracking artifacts](../../guides/releasing.md#release-tracking-artifacts).
+`prepare` locks the issue, and `vrg-release` trusts the state block only
+while every identity that authored, edited, closed or reopened the issue
+is a `human` login of `vrg-trusted-authors`: any other identity stops
+the run before it writes anything, as a suspected security breach; see
+[The lock and the identity rule](../../guides/releasing.md#the-lock-and-the-identity-rule).
 
 Releasing is a human maintainer action. `vrg-release` refuses to run
 under an agent identity.
