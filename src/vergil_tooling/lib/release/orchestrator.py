@@ -149,7 +149,9 @@ def _held(ctx: ReleaseContext, name: str) -> bool:
     Such a stage runs again on a resume: ``promote`` that left ``vX.Y``
     behind (``--no-promote``, or a deferred ``package-index``),
     ``close-finalize`` that left the tracking issue open, and
-    ``consumer-refresh`` that ran no command.
+    ``consumer-refresh`` that was held back (a deferred publish, an
+    earlier failed stage, or ``--no-install``). A ``consumer-refresh``
+    with no commands configured has nothing to do, so it is recorded done.
     """
     if name == "promote":
         return not ctx.promote or promote_pending(ctx)

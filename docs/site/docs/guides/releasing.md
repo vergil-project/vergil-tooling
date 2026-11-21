@@ -242,9 +242,8 @@ on the commit it names, never simply the newest `vX.Y.Z`, so a line
 demoted with `vrg-promote` is followed by the dev-container cache,
 `vrg-vm` and `vrg-tooling-install` alike.
 When `package-index` defers, `promote` skips and `vX.Y` stays on the
-previous release, so the two still agree. The deferral comment, the
-`close-finalize` outcome line and the `publish-status` error name the
-pending promote. Neither `package-index` nor the skipped `promote` is
+previous release, so the two still agree. The deferral comment and the
+`close-finalize` outcome line name the pending promote. Neither `package-index` nor the skipped `promote` is
 recorded done, and nor is `close-finalize`, which left the issue open.
 Once the release's packages appear in the index, run
 `vrg-release --resume`: it waits for the index again, moves the tag and
@@ -302,7 +301,8 @@ and `publish-status` run on every run and are never recorded done.
 - **A stage that did not do its work** is not recorded done, so a resume
   runs it again: a `promote` that left `vX.Y` behind (`--no-promote`, or
   a deferred `package-index`), a `close-finalize` that left the issue
-  open, and a `consumer-refresh` that ran no command.
+  open, and a `consumer-refresh` that was held back (a deferred publish,
+  an earlier failed stage, or `--no-install`).
 
 `--resume` refuses a tracking issue with no state block, or one whose
 block is malformed, names another version, or records a stage the
