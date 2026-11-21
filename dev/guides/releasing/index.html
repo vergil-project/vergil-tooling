@@ -19113,12 +19113,12 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>preflight</code></td>
 <td>fail-fast</td>
-<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code>, then <a href="#the-develop-sync">brings it up to <code>origin/develop</code></a>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, runs the <a href="#the-dependency-update-gate">dependency-update gate</a>, and last runs the <a href="#the-develop-cd-gate">develop-CD gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it</td>
+<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code>, then <a href="#the-develop-sync">brings it up to <code>origin/develop</code></a>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, runs the <a href="#the-dependency-update-gate">dependency-update gate</a>, and last runs the <a href="#the-develop-cd-gate">develop-CD gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it. On a fresh start it then reads the release's <a href="#release-tracking-artifacts">contents</a>, pinned to the commit the branch is cut from</td>
 </tr>
 <tr>
 <td><code>prepare</code></td>
 <td>fail-fast</td>
-<td>Creates the <code>release: &lt;version&gt;</code> tracking issue, generates the changelog and release notes, and opens the release PR to <code>main</code></td>
+<td>Creates the <code>release: &lt;version&gt;</code> tracking issue, with its Contents section, stage checklist and state block, generates the changelog and release notes, and opens the release PR to <code>main</code></td>
 </tr>
 <tr>
 <td><code>merge-release</code></td>
@@ -19788,10 +19788,28 @@ wait (issue #3316).</p>
 <h2 id="release-tracking-artifacts">Release tracking artifacts<a class="headerlink" href="#release-tracking-artifacts" title="Permanent link">&para;</a></h2>
 <p>Each release has a tracking issue, <code>release: &lt;version&gt;</code>, which
 <code>vrg-release</code> creates in its <code>prepare</code> stage. The issue is created with
-the stage checklist in its body (see
-<a href="#an-interrupted-release">An interrupted release</a>), and each tracked
-stage adds a comment when it
-completes or fails:</p>
+three parts in its body:</p>
+<ul>
+<li>a <strong>Contents</strong> section: the table of what <code>main..&lt;cut&gt;</code> holds (each
+  PR, or a commit that reached <code>develop</code> with no PR, as
+  <code>vrg-repo-status</code> shows it), read in <code>preflight</code> pinned to the
+  <code>develop</code> commit the release branch is cut from, and under it the
+  issues the release contains with their closing PRs;</li>
+<li>the stage checklist (see
+  <a href="#an-interrupted-release">An interrupted release</a>);</li>
+<li>the <strong>state block</strong>, a fenced <code>json</code> document between
+  <code>&lt;!-- vrg-release:state:begin --&gt;</code> and
+  <code>&lt;!-- vrg-release:state:end --&gt;</code>, each alone on its line. It holds
+  the version and the cut, and is where the release records its own
+  progress. Only <code>vrg-release</code> writes it, by a read-modify-write of the
+  body. A block that is missing, duplicated or malformed, or names a
+  version other than the issue title's, is refused, never replaced by
+  defaults. Do not edit it by hand.</li>
+</ul>
+<p>If <code>preflight</code> cannot read the contents completely, the release is
+refused before the tracking issue is created; the next run adopts the
+unpushed release branch it left. Each tracked stage adds
+a comment when it completes or fails:</p>
 <ul>
 <li>The <code>prepare</code> comment names the release branch, the release PR and
   the tracking issue. It also lists any dependency-update PRs the gate

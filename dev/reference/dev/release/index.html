@@ -18337,6 +18337,11 @@ back-merge and version bump, rolling-tag promotion, cleanup, the
 post-release dependency update, and last the consumer refresh. The stages and what
 they leave behind are described in the
 <a href="../../../guides/releasing/#the-vrg-release-pipeline">Releasing guide</a>.</p>
+<p>The <code>release: &lt;version&gt;</code> tracking issue's body carries a Contents
+section (the pending-release table and the issues the release
+contains), the stage checklist, and the release's state block, which
+only <code>vrg-release</code> writes; see
+<a href="../../../guides/releasing/#release-tracking-artifacts">Release tracking artifacts</a>.</p>
 <p>Releasing is a human maintainer action. <code>vrg-release</code> refuses to run
 under an agent identity.</p>
 <p><code>vrg-release</code> only releases a repo that declares itself released with
