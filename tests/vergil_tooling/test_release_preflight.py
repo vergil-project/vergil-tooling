@@ -464,6 +464,27 @@ def test_fresh_start_refusal_names_every_open_release() -> None:
     assert "`vrg-release --resume 2.0.33`" in lines[1]
 
 
+@pytest.mark.parametrize(
+    ("older", "newer"),
+    [("2.0.9", "2.0.10"), ("2.9.0", "2.10.0")],
+)
+def test_fresh_start_refusal_orders_by_semantic_version(older: str, newer: str) -> None:
+    # As strings, "2.0.10" < "2.0.9" and "2.10.0" < "2.9.0" (#4877).
+    open_issues = [
+        _release_issue(newer, 99, _state_body(newer)),
+        _release_issue(older, 90, _state_body(older)),
+    ]
+    with (
+        patch(_RESUME_READ, return_value=open_issues),
+        pytest.raises(ReleaseError) as info,
+    ):
+        _check_no_open_release("owner/repo")
+    lines = [line for line in str(info.value).splitlines() if line.startswith("- ")]
+    assert len(lines) == 2
+    assert lines[0].startswith(f"- release {older} ")
+    assert lines[1].startswith(f"- release {newer} ")
+
+
 def test_fresh_start_passes_with_none_open() -> None:
     not_a_release = {"number": 5, "title": "chore(release): bump to 2.0.34", "body": ""}
     with patch(_RESUME_READ, return_value=[not_a_release]):
