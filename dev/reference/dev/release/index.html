@@ -18341,7 +18341,12 @@ they leave behind are described in the
 section (the pending-release table and the issues the release
 contains), the stage checklist, and the release's state block, which
 only <code>vrg-release</code> writes; see
-<a href="../../../guides/releasing/#release-tracking-artifacts">Release tracking artifacts</a>.</p>
+<a href="../../../guides/releasing/#release-tracking-artifacts">Release tracking artifacts</a>.
+<code>prepare</code> locks the issue, and <code>vrg-release</code> trusts the state block only
+while every identity that authored, edited, closed or reopened the issue
+is a <code>human</code> login of <code>vrg-trusted-authors</code>: any other identity stops
+the run before it writes anything, as a suspected security breach; see
+<a href="../../../guides/releasing/#the-lock-and-the-identity-rule">The lock and the identity rule</a>.</p>
 <p>Releasing is a human maintainer action. <code>vrg-release</code> refuses to run
 under an agent identity.</p>
 <p><code>vrg-release</code> only releases a repo that declares itself released with

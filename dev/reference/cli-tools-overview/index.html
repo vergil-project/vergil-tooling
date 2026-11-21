@@ -20693,7 +20693,9 @@ the consumer refresh, which runs the <code>[publish].consumer-refresh</code>
 commands (held while any publish is deferred). On a fresh start, preflight refuses while an open PR
 carries the <code>dependency-update</code> label, after first closing any whose fix
 task completed. The tracking issue's body carries the release's
-contents and its state block. Human-only. See the <a href="../dev/release/">vrg-release reference</a>
+contents and its state block. The issue is locked, and its state is
+trusted only while every identity that authored, edited, closed or
+reopened it is a <code>human</code> login of <code>vrg-trusted-authors</code>. Human-only. See the <a href="../dev/release/">vrg-release reference</a>
 and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 <table>
 <thead>

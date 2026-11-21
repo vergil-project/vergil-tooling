@@ -18465,6 +18465,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Release tracking artifacts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-lock-and-the-identity-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The lock and the identity rule
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -18872,6 +18889,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Release tracking artifacts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-lock-and-the-identity-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The lock and the identity rule
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -19806,6 +19840,8 @@ three parts in its body:</p>
   version other than the issue title's, is refused, never replaced by
   defaults. Do not edit it by hand.</li>
 </ul>
+<p><code>prepare</code> locks the tracking issue as soon as it creates it, so only
+the repository's collaborators can comment on it.</p>
 <p>If <code>preflight</code> cannot read the contents completely, the release is
 refused before the tracking issue is created; the next run adopts the
 unpushed release branch it left. Each tracked stage adds
@@ -19832,6 +19868,32 @@ adopting the branches, PRs and tag the earlier run already created.</p>
 <p>Use the issue as well to capture the rationale for the release and any
 consumer coordination it needs, especially for minor and major bumps.
 Follow-ups move to their own issues.</p>
+<h3 id="the-lock-and-the-identity-rule">The lock and the identity rule<a class="headerlink" href="#the-lock-and-the-identity-rule" title="Permanent link">&para;</a></h3>
+<p>The state block is trusted only while the tracking issue is the human's.
+Every time <code>vrg-release</code> reads the state block, and again in the read
+before each write of it, it first locks the issue if it is not locked
+(an issue inherited from an older run included), then reads, in one
+paginated GraphQL query, every identity on the issue, and checks them
+against the <code>human</code> logins of
+<a href="../../reference/cli-tools-overview/#vrg-trusted-authors"><code>vrg-trusted-authors</code></a>:</p>
+<ul>
+<li><strong>The identities that can change the state:</strong> the issue's author,
+  the body's last editor and every editor in its edit history, and
+  every actor that closed or reopened the issue. Each must be a <code>human</code>
+  login. Any other identity, an agent or a deleted account (<code>ghost</code>)
+  included, stops the run before it writes anything, with an error
+  starting <code>suspected security breach on tracking issue #&lt;N&gt;:</code> that
+  names the identity and what it did. The failure is not commented on
+  the issue. Inspect the issue's edit history and events, clean it up,
+  then run <code>vrg-release --resume</code>.</li>
+<li><strong>Other traces</strong> cannot change the state: a comment, a
+  cross-reference, a mention, a subscription, or a label added or
+  removed by another identity. Each is printed as a warning, once per
+  run, and the run carries on.</li>
+</ul>
+<p>A failed read of the trusted authors or of the issue's identities, or
+a response that cannot be read in full, stops the run with the call
+that failed; it is never taken as "no other identity".</p>
 
 
 
