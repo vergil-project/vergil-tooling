@@ -18,12 +18,12 @@ from vergil_tooling.lib.pending_release import (
     PendingReleaseError,
     ReleaseTags,
     classify,
-    trusted_closing_refs,
     first_parent_chain,
     gather_pending_release,
     gather_release_contents,
     parse_release_tags,
     redact_userinfo,
+    trusted_closing_refs,
 )
 from vergil_tooling.lib.release.state import IssueEntry
 from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
