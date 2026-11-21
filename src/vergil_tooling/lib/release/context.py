@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from vergil_tooling.lib.pending_release import PendingRelease
+    from vergil_tooling.lib.release.state import IssueEntry, StateBlock
+
 
 @dataclass
 class ReleaseContext:
@@ -26,6 +29,16 @@ class ReleaseContext:
     # anywhere in prepare leaves a release that --resume can pick up (#4367).
     progress_block: str | None = None
     release_branch: str | None = None
+    # The develop commit a fresh start cuts the release branch from, and what
+    # main..cut holds: the tracking issue's Contents section and state block
+    # are built from them (spec §4.1-§4.2 of epic vergil-project/.github#1440).
+    # Unset on a resume, whose cut is in the state block.
+    cut: str | None = None
+    pending_release: PendingRelease | None = None
+    # The issues the release contains, from its PRs' closing references.
+    issues: tuple[IssueEntry, ...] = ()
+    # The tracking issue's state block as last read or written by this run.
+    state: StateBlock | None = None
     release_pr_url: str | None = None
 
     # Managed worktree all release branch work happens in, so the root

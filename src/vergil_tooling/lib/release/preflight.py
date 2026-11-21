@@ -22,6 +22,11 @@ from vergil_tooling.lib.managed_worktree import (
 )
 from vergil_tooling.lib.package import PackageError
 from vergil_tooling.lib.package.index import published
+from vergil_tooling.lib.pending_release import (
+    PendingRelease,
+    PendingReleaseError,
+    gather_pending_release,
+)
 from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import find_existing_tracking_issue
@@ -147,6 +152,10 @@ def preflight(
     branch = f"release/{release_version}"
     worktree = _acquire_release_worktree(repo_root, branch, resume=resume)
     os.chdir(worktree)
+    cut: str | None = None
+    pending: PendingRelease | None = None
+    if not resume:
+        cut, pending = _release_contents(worktree)
 
     print(f"Preflight passed: {repo} v{release_version} — worktree {worktree}")
     ctx = ReleaseContext(
@@ -155,6 +164,8 @@ def preflight(
         repo_root=repo_root,
         version_override=version_override,
         release_branch=branch,
+        cut=cut,
+        pending_release=pending,
         worktree_path=worktree,
         bypassed_deps_prs=deps_gate.bypassed,
         cleared_deps_prs=deps_gate.cleared,
@@ -420,6 +431,26 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
             "tracking issue)."
         ),
     )
+
+
+def _release_contents(worktree: Path) -> tuple[str, PendingRelease]:
+    """The commit a fresh release branch is cut from, and what ``main..<cut>`` holds.
+
+    The new branch's worktree is at the ``develop`` commit preflight synced
+    to, so its ``HEAD`` is the cut. The pending release is read pinned to it,
+    never to whatever ``origin/develop`` holds by then. An incomplete lookup
+    refuses the release (spec §4.1 of epic vergil-project/.github#1440).
+    """
+    cut = git.read_output("-C", str(worktree), "rev-parse", "HEAD")
+    try:
+        pending = gather_pending_release(integration="develop", head=cut)
+    except PendingReleaseError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"gather pending release main..{cut[:7]}",
+            message=f"Could not read what the release contains: {exc}",
+        ) from exc
+    return cut, pending
 
 
 def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> Path:

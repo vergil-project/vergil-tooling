@@ -7,15 +7,17 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import config, github, retry
+from vergil_tooling.lib import config, github, retry, text_table
 from vergil_tooling.lib.package import orgs
-from vergil_tooling.lib.release import checklist, package_index
+from vergil_tooling.lib.release import checklist, package_index, state
 from vergil_tooling.lib.release.context import ReleaseError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from vergil_tooling.lib.pending_release import PendingChange, PendingRelease
     from vergil_tooling.lib.release.context import ReleaseContext
+    from vergil_tooling.lib.release.state import IssueEntry, StateBlock
 
 # GitHub's addComment API rejects any comment body longer than this many
 # characters. Posting a larger body fails with
@@ -27,6 +29,13 @@ _COMMENT_BUDGET = 65_000
 # Upper bound on the open issues the tracking-issue search lists. Reaching it is
 # a refusal: the exact-title match could lie beyond it (#4038).
 _SEARCH_LIST_LIMIT = 100
+# The Contents section's pending-release table, and the short-SHA width of a
+# commit with no PR in it.
+_CONTENTS_COLUMNS = ("PR", "BRANCH", "TYPE", "TITLE")
+_SHORT_SHA = 7
+# What the Contents table writes in place of the characters of an HTML comment
+# marker and of a code fence, in text others control (PR titles and branches).
+_NEUTRAL = str.maketrans({"<": "\u2039", ">": "\u203a", "`": "'"})
 
 
 def _truncate_for_comment(body: str, *, budget: int = _COMMENT_BUDGET) -> str:
@@ -96,11 +105,12 @@ def find_existing_tracking_issue(repo: str, version: str) -> str | None:
 
 
 def create_tracking_issue(ctx: ReleaseContext) -> None:
-    """Create a release tracking issue, its stage checklist included, and populate ctx.
+    """Create a release tracking issue, with its checklist, Contents and state, and populate ctx.
 
-    The checklist (``ctx.progress_block``) is part of the creation body, never
-    a later edit, so no interrupt can leave an open tracking issue that
-    ``vrg-release --resume`` refuses for want of one (#4367).
+    The creation body carries the stage checklist (``ctx.progress_block``),
+    the Contents section and the state block, never a later edit, so no
+    interrupt can leave an open tracking issue that ``vrg-release --resume``
+    refuses for want of one (#4367; spec §4.2 of epic vergil-project/.github#1440).
     """
     if not ctx.progress_block:
         raise ReleaseError(
@@ -111,7 +121,23 @@ def create_tracking_issue(ctx: ReleaseContext) -> None:
                 "refusing to create a tracking issue that --resume could not adopt."
             ),
         )
-    body = f"## Release {ctx.version}\n\nRepo: {ctx.repo}\n\n{ctx.progress_block}\n"
+    if ctx.cut is None or ctx.pending_release is None:
+        raise ReleaseError(
+            phase="prepare",
+            command="create_tracking_issue",
+            message=(
+                "No release cut or contents on the release context — preflight did not "
+                "read them; refusing to create a tracking issue without its state block."
+            ),
+        )
+    initial = state.initial_state(
+        version=ctx.version, cut=ctx.cut, issues=ctx.issues, without_deps=ctx.without_deps
+    )
+    contents = render_contents(ctx.pending_release, ctx.issues)
+    body = (
+        f"## Release {ctx.version}\n\nRepo: {ctx.repo}\n\n{contents}\n\n"
+        f"{ctx.progress_block}\n\n{state.render_state(initial)}\n"
+    )
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(body)
         tmp_path = f.name
@@ -134,6 +160,48 @@ def create_tracking_issue(ctx: ReleaseContext) -> None:
         raise ValueError(msg)
     ctx.issue_number = int(match.group(1))
     ctx.issue_url = url
+    ctx.state = initial
+
+
+def _neutral(text: str) -> str:
+    """*text* with every character that could form a marker or close a fence replaced.
+
+    PR titles and branch names are written by others and can change after a
+    merge, so none may carry an HTML comment (a checklist or state marker) or
+    a backtick run (closing the table's fence) into the tracking-issue body.
+    """
+    return text.translate(_NEUTRAL)
+
+
+def _change_row(change: PendingChange) -> tuple[str, str, str, str]:
+    """One Contents-table row; a commit with no PR shows its short SHA as its branch."""
+    if change.pr_number is None:
+        pr, branch = "PROBLEM", change.shas[0][:_SHORT_SHA]
+    else:
+        pr, branch = f"#{change.pr_number}", _neutral(change.branch or "-")
+    return (pr, branch, change.type_label, text_table.truncate(_neutral(change.title)))
+
+
+def render_contents(pending: PendingRelease, issues: Sequence[IssueEntry]) -> str:
+    """The tracking issue's ``## Contents`` section: the pending-release table and the issues.
+
+    The table lists every change in ``main..<cut>``, as ``vrg-repo-status``
+    does (a commit that reached the branch with no PR as ``PROBLEM``, with
+    its short SHA); under it, each issue the release contains with its closing
+    PRs (spec §4.1-§4.2 of epic vergil-project/.github#1440).
+    """
+    lines = ["## Contents", ""]
+    if pending.changes:
+        rows = [_change_row(change) for change in pending.changes]
+        lines += ["```text", text_table.render(_CONTENTS_COLUMNS, rows), "```"]
+    else:
+        lines.append("No changes pending release.")
+    lines += ["", "### Issues", ""]
+    if issues:
+        lines += [f"- {issue.ref} ({', '.join(f'#{pr}' for pr in issue.prs)})" for issue in issues]
+    else:
+        lines.append("None: the release's PRs close no issues.")
+    return "\n".join(lines)
 
 
 def comment_phase_complete(ctx: ReleaseContext, phase: str, details: str) -> None:
@@ -311,6 +379,75 @@ def _write_issue_body(ctx: ReleaseContext, body: str) -> None:
         )
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+def _read_title_and_body(ctx: ReleaseContext) -> tuple[str, str]:
+    """The tracking issue's title and body, retried as :func:`read_issue_body` is."""
+    issue = retry.retry_known_resource(
+        lambda: github.read_json(
+            "issue",
+            "view",
+            str(ctx.issue_number),
+            "--repo",
+            ctx.repo,
+            "--json",
+            "title,body",
+        ),
+        resource=f"tracking issue #{ctx.issue_number}",
+    )
+    if not isinstance(issue, dict):
+        msg = f"gh issue view #{ctx.issue_number} returned {type(issue).__name__}, not an object"
+        raise TypeError(msg)
+    title, body = issue["title"], issue["body"]
+    if not isinstance(title, str) or not isinstance(body, str):
+        msg = f"gh issue view #{ctx.issue_number} returned a non-string title or body"
+        raise TypeError(msg)
+    return title, body
+
+
+def _state_error(ctx: ReleaseContext, command: str, message: str) -> ReleaseError:
+    return ReleaseError(
+        phase="state",
+        command=command,
+        message=f"Tracking issue #{ctx.issue_number}'s release state block: {message}",
+    )
+
+
+def read_state(ctx: ReleaseContext) -> StateBlock:
+    """The state block in the tracking-issue body, and set it on *ctx*.
+
+    The state is read from the body only, never from comments. A missing or
+    malformed block, or one naming a version other than the issue title's, is
+    a :class:`ReleaseError` naming the block, never a fallback to defaults
+    (spec §4.2 of epic vergil-project/.github#1440).
+    """
+    command = f"gh issue view {ctx.issue_number} --json title,body"
+    title, body = _read_title_and_body(ctx)
+    try:
+        current = state.parse_state(body)
+    except state.StateBlockError as exc:
+        raise _state_error(ctx, command, str(exc)) from exc
+    if title != f"release: {current.version}":
+        raise _state_error(
+            ctx,
+            command,
+            f"it names version {current.version!r}, but the issue is {title!r}",
+        )
+    ctx.state = current
+    return current
+
+
+def write_state(ctx: ReleaseContext, new: StateBlock) -> None:
+    """Write *new* into the tracking-issue body by a read-modify-write, and set it on *ctx*.
+
+    Everything else in the body, the checklist and Contents included, is kept.
+    """
+    try:
+        body = state.upsert_state(read_issue_body(ctx), new)
+    except state.StateBlockError as exc:
+        raise _state_error(ctx, f"gh issue edit {ctx.issue_number}", str(exc)) from exc
+    _write_issue_body(ctx, body)
+    ctx.state = new
 
 
 def ensure_checklist(

@@ -12,6 +12,12 @@ post-release dependency update, and last the consumer refresh. The stages and wh
 they leave behind are described in the
 [Releasing guide](../../guides/releasing.md#the-vrg-release-pipeline).
 
+The `release: <version>` tracking issue's body carries a Contents
+section (the pending-release table and the issues the release
+contains), the stage checklist, and the release's state block, which
+only `vrg-release` writes; see
+[Release tracking artifacts](../../guides/releasing.md#release-tracking-artifacts).
+
 Releasing is a human maintainer action. `vrg-release` refuses to run
 under an agent identity.
 

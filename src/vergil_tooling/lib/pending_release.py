@@ -459,7 +459,7 @@ def _changes(
     return tuple(changes)
 
 
-def _gather(integration: str, remote: str) -> PendingRelease:
+def _gather(integration: str, remote: str, head: str | None) -> PendingRelease:
     repo = github.github_remote_repo(git.remote_url(remote))
     if repo is None:
         raise _error(f"{remote} is not a github.com remote")
@@ -471,6 +471,10 @@ def _gather(integration: str, remote: str) -> PendingRelease:
         f"{_TAG_PREFIX}v*",
     )
     main_sha, dev_sha = _remote_tips(ls_remote, integration, remote)
+    if head is not None:
+        if not _SHA_RE.match(head):
+            raise _error(f"the pinned {integration} commit is not a full SHA: {head!r}")
+        dev_sha = head
     tags = parse_release_tags(ls_remote)
     commits, main_moved_ts = _compare(repo, main_sha, dev_sha, integration)
     chain = first_parent_chain(commits, dev_sha)
@@ -521,15 +525,22 @@ def lookup_failure_reason(exc: Exception) -> str:
     return redact_userinfo(text)
 
 
-def gather_pending_release(*, integration: str, remote: str = "origin") -> PendingRelease:
+def gather_pending_release(
+    *, integration: str, remote: str = "origin", head: str | None = None
+) -> PendingRelease:
     """What *integration* on *remote* holds that ``main`` does not.
+
+    With *head*, a full commit SHA on *integration*, the range is
+    ``main..<head>`` instead of ``main`` to the integration branch's tip, so a
+    release reads what it was cut from even when the branch has moved since
+    (spec §4.1 of epic vergil-project/.github#1440).
 
     Read-only: it never fetches and never writes a ref. Raises
     :class:`PendingReleaseError` when any lookup fails or is incomplete, with
     the underlying error as its ``__cause__``.
     """
     try:
-        return _gather(integration, remote)
+        return _gather(integration, remote, head)
     except PendingReleaseError:
         raise
     except LOOKUP_ERRORS as exc:
