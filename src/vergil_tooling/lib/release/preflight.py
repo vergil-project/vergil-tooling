@@ -30,14 +30,21 @@ from vergil_tooling.lib.pending_release import (
 from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.release import state
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
-from vergil_tooling.lib.release.resume import _SEARCH_COMMAND, _open_release_issues
-from vergil_tooling.lib.release.tracking import render_contents
+from vergil_tooling.lib.release.resume import (
+    _SEARCH_COMMAND,
+    BRANCH_STAGES,
+    _open_release_issues,
+    first_undone,
+    restore_context,
+    verify_facts,
+)
+from vergil_tooling.lib.release.tracking import read_state, render_contents
 from vergil_tooling.lib.self_repo import is_self_repo
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
 from vergil_tooling.lib.update_deps.pr import FIX_TASK_PREFIX
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from vergil_tooling.lib.release.state import IssueEntry
@@ -87,25 +94,23 @@ def preflight(
     resume_version: str | None = None,
     resume_issue_number: int | None = None,
     allow_pending_deps: bool = False,
+    stages: Sequence[str] = (),
 ) -> ReleaseContext:
     """Run all preflight checks and return an initialized ReleaseContext.
 
-    Every run first brings the root checkout's clean ``develop`` up to
-    ``origin/develop`` under the checkout lock (:func:`_check_branch_and_tree`),
-    so a release is cut from the newest head rather than refused when a merge
-    landed since the last pull (spec §6.6 of epic vergil-project/.github#1218).
+    Every run first checks the host, the GitHub authentication and the
+    config. A fresh start then brings the root checkout's clean ``develop`` up
+    to ``origin/develop`` under the checkout lock
+    (:func:`_check_branch_and_tree`), so a release is cut from the newest head
+    rather than refused when a merge landed since the last pull (spec §6.6 of
+    epic vergil-project/.github#1218).
 
-    On *resume* (#1612), the version comes from the adopted tracking issue
-    (*resume_version*) rather than the develop VERSION file (which may already
-    be bumped); the checks that assume a fresh start are skipped — the version
-    is expected to be tagged and the tracking issue is expected to exist — an
-    existing release branch is adopted rather than refused, and the adopted
-    issue (*resume_issue_number*) is pre-set on the context.
+    On *resume* only those first three checks run (:func:`_resume_context`):
+    the release it adopts passed every fresh-start check when it began (spec
+    §4.3 of epic vergil-project/.github#1440).
 
     A fresh start refuses when ``origin/main`` has commits ``origin/develop``
-    lacks (#3527), before any other fresh-start check. A resume skips it: the
-    release it adopts may sit between merge-release and back-merge-bump, where
-    main is ahead of develop by design.
+    lacks (#3527), before any other fresh-start check.
 
     A fresh start also refuses while any open PR carries the
     ``dependency-update`` label (spec §5.3, epic vergil-project/.github#381);
@@ -113,54 +118,52 @@ def preflight(
     recorded on the context so the prepare-stage comment names them. Before
     the gate, a PR whose fix task closed as completed is closed (its update
     landed through the fix PR) and recorded as cleared (#3286); the bypass
-    applies only to what still blocks after that. A resume skips the gate —
-    the release it adopts already passed it.
+    applies only to what still blocks after that.
 
     A fresh start last requires a green develop CD run for the develop head it
     releases (:func:`check_develop_cd`, spec §6.6 of epic
     vergil-project/.github#1218). It runs after every other check, since it
-    may wait on a CD run in progress. A resume skips it too: the release it
-    adopts already passed it.
+    may wait on a CD run in progress.
     """
     _check_host_prerequisites()
     repo = check_gh_auth()
     _read_and_validate_config(repo_root)
+    if resume:
+        return _resume_context(
+            repo,
+            repo_root,
+            version_override=version_override,
+            resume_version=resume_version,
+            resume_issue_number=resume_issue_number,
+            stages=stages,
+        )
     _check_branch_and_tree(repo_root)
 
-    if resume and resume_version is not None:
-        release_version = resume_version
+    try:
+        current_version = version.show(repo_root)
+    except (FileNotFoundError, version.VersionSyncError, version.CargoVersionError) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command="version.show",
+            message=str(exc),
+        ) from exc
+
+    if version_override in _VERSION_OVERRIDE_FIELDS:
+        release_version = _compute_release_version(current_version, version_override)
     else:
-        try:
-            current_version = version.show(repo_root)
-        except (FileNotFoundError, version.VersionSyncError, version.CargoVersionError) as exc:
-            raise ReleaseError(
-                phase="preflight",
-                command="version.show",
-                message=str(exc),
-            ) from exc
+        release_version = current_version
 
-        if version_override in _VERSION_OVERRIDE_FIELDS:
-            release_version = _compute_release_version(current_version, version_override)
-        else:
-            release_version = current_version
-
-    deps_gate = _DepsGateOutcome(cleared=[], bypassed=[], undeleted=[])
-    if not resume:
-        _check_main_not_ahead_of_develop()
-        _check_version_not_tagged(release_version)
-        _check_no_open_release(repo)
-        _check_packages_unpublished(repo, repo_root, release_version)
-        deps_gate = _check_pending_deps(repo, allow=allow_pending_deps)
-        _develop_cd_gate(repo)
+    _check_main_not_ahead_of_develop()
+    _check_version_not_tagged(release_version)
+    _check_no_open_release(repo)
+    _check_packages_unpublished(repo, repo_root, release_version)
+    deps_gate = _check_pending_deps(repo, allow=allow_pending_deps)
+    _develop_cd_gate(repo)
 
     branch = f"release/{release_version}"
-    worktree = _acquire_release_worktree(repo_root, branch, resume=resume)
+    worktree = _acquire_release_worktree(repo_root, branch, resume=False)
     os.chdir(worktree)
-    cut: str | None = None
-    pending: PendingRelease | None = None
-    issues: tuple[IssueEntry, ...] = ()
-    if not resume:
-        cut, pending, issues = _release_contents(worktree)
+    cut, pending, issues = _release_contents(worktree)
 
     print(f"Preflight passed: {repo} v{release_version} — worktree {worktree}")
     ctx = ReleaseContext(
@@ -177,9 +180,60 @@ def preflight(
         cleared_deps_prs=deps_gate.cleared,
         undeleted_deps_branches=deps_gate.undeleted,
     )
-    if resume_issue_number is not None:
-        ctx.issue_number = resume_issue_number
-        ctx.issue_url = f"https://github.com/{repo}/issues/{resume_issue_number}"
+    return ctx
+
+
+def _resume_context(
+    repo: str,
+    repo_root: Path,
+    *,
+    version_override: str | None,
+    resume_version: str | None,
+    resume_issue_number: int | None,
+    stages: Sequence[str],
+) -> ReleaseContext:
+    """The context a resume runs with, rebuilt from the tracking issue's state block.
+
+    The state is read under the identity rule (:func:`tracking.read_state`),
+    its facts are checked against GitHub and git (:func:`resume.verify_facts`)
+    and restored on the context. The release worktree is adopted only when
+    the first undone stage is at or before ``teardown-worktree``, the last
+    branch-work stage; otherwise the run stays in the root checkout, since
+    every later stage runs from it and ``finalize`` may already have pruned
+    the release branch (spec §4.3 of epic vergil-project/.github#1440).
+    """
+    if resume_version is None or resume_issue_number is None or not stages:
+        raise ReleaseError(
+            phase="preflight",
+            command="preflight",
+            message=(
+                "A resume needs the tracking issue's version and number and the "
+                "pipeline's stages; the resume lookup did not provide them."
+            ),
+        )
+    branch = f"release/{resume_version}"
+    ctx = ReleaseContext(
+        repo=repo,
+        version=resume_version,
+        repo_root=repo_root,
+        version_override=version_override,
+        release_branch=branch,
+        issue_number=resume_issue_number,
+        issue_url=f"https://github.com/{repo}/issues/{resume_issue_number}",
+    )
+    current = read_state(ctx)
+    verify_facts(ctx, current)
+    restore_context(ctx, current)
+    first = first_undone(current, stages)
+    if first is not None and stages.index(first) <= stages.index(BRANCH_STAGES[-1]):
+        ctx.worktree_path = _acquire_release_worktree(repo_root, branch, resume=True)
+        os.chdir(ctx.worktree_path)
+        where = f"worktree {ctx.worktree_path}"
+    else:
+        os.chdir(repo_root)
+        where = f"root checkout {repo_root}"
+    resume_at = first or "nothing left undone"
+    print(f"Preflight passed: {repo} v{resume_version} — resuming at {resume_at} in {where}")
     return ctx
 
 

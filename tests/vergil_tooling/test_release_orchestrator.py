@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -10,6 +11,7 @@ import pytest
 
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.progress import Stage
+from vergil_tooling.lib.release import state as release_state
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.guard import TrackingIssueBreach
 from vergil_tooling.lib.release.merge import ReleaseConflictError
@@ -23,13 +25,31 @@ from vergil_tooling.lib.release.orchestrator import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 _MOD = "vergil_tooling.lib.release.orchestrator"
 # merge_release reads PR state via release.merge.known_pr_state (#3137).
 _PR_STATE = "vergil_tooling.lib.release.merge.github.pr_state"
 _TRACKING = "vergil_tooling.lib.release.tracking"
 _FINALIZE = "vergil_tooling.lib.release.finalize"
+
+
+def _initial(version: str, done: tuple[str, ...] = ()) -> release_state.StateBlock:
+    initial = release_state.initial_state(
+        version=version, cut="c" * 40, issues=(), without_deps=False
+    )
+    return replace(initial, done=done)
+
+
+@pytest.fixture(autouse=True)
+def write_state() -> Iterator[MagicMock]:
+    """Stand in for the tracking-issue write every successful stage makes: keep it on *ctx*."""
+
+    def fake(ctx: ReleaseContext, new: release_state.StateBlock) -> None:
+        ctx.state = new
+
+    with patch(_MOD + ".write_state", side_effect=fake) as m_write:
+        yield m_write
 
 
 def _ctx(*, promote: bool = True) -> ReleaseContext:
@@ -41,6 +61,7 @@ def _ctx(*, promote: bool = True) -> ReleaseContext:
         promote=promote,
     )
     ctx.issue_number = 42
+    ctx.state = _initial("2.1.0")
     return ctx
 
 
@@ -71,40 +92,67 @@ def test_build_stages_order_and_modes() -> None:
         "merge-release",
         "confirm-main",
         "back-merge-bump",
+        "teardown-worktree",
     }
 
 
-def test_teardown_stage_runs_after_back_merge_and_defers() -> None:
-    """teardown-worktree must sit between back-merge-bump and confirm-develop,
-    so the worktree is gone before close-finalize runs vrg-finalize-pr from the
-    main worktree (#1578). It is fail_defer: a teardown hiccup must not abort a
-    release whose branch work already succeeded."""
+def test_teardown_stage_runs_after_back_merge_and_fails_fast() -> None:
+    """teardown-worktree sits between back-merge-bump and confirm-develop, so the
+    worktree is gone before close-finalize runs vrg-finalize-pr from the main
+    worktree (#1578). It is fail_fast, as every branch-work stage is: finalize
+    prunes the release branches only once all of them have succeeded (spec §4.3
+    of epic vergil-project/.github#1440)."""
     stages = build_stages()
     names = [s.name for s in stages]
     teardown = stages[names.index("teardown-worktree")]
     assert names.index("back-merge-bump") < names.index("teardown-worktree")
     assert names.index("teardown-worktree") < names.index("confirm-develop")
     assert names.index("teardown-worktree") < names.index("close-finalize")
-    assert teardown.mode == "fail_defer"
+    assert teardown.mode == "fail_fast"
 
 
-def test_teardown_stage_calls_teardown_worktree() -> None:
-    from vergil_tooling.lib.release.orchestrator import _teardown_stage
-
+def test_teardown_stage_is_tracked_and_calls_teardown_worktree() -> None:
     state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
     state.ctx = _ctx()
-    with patch(_MOD + ".teardown_worktree") as m_teardown:
-        _teardown_stage(state)
+    with (
+        patch(_MOD + ".teardown_worktree") as m_teardown,
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage") as m_tick,
+    ):
+        stage = next(s for s in build_stages() if s.name == "teardown-worktree")
+        stage.fn(state)
     m_teardown.assert_called_once_with(state.ctx)
+    m_tick.assert_called_once_with(state.ctx, "teardown-worktree")
+    assert state.ctx.state is not None
+    assert state.ctx.state.done == ("teardown-worktree",)
 
 
-def test_teardown_stage_noop_without_ctx() -> None:
-    from vergil_tooling.lib.release.orchestrator import _teardown_stage
-
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
-    with patch(_MOD + ".teardown_worktree") as m_teardown:
-        _teardown_stage(state)
-    m_teardown.assert_not_called()
+def test_failed_teardown_stops_the_run(tmp_path: Path) -> None:
+    """A failed teardown stops the run: confirm-develop and close-finalize never run."""
+    state = ReleaseState(version_override=None, repo_root=tmp_path, promote=True)
+    state.ctx = _ctx()
+    args = argparse.Namespace(output_format="plain", output_window=None)
+    names = ("teardown-worktree", "confirm-develop", "close-finalize")
+    with (
+        patch(_MOD + ".teardown_worktree", side_effect=OSError("busy")),
+        patch(_MOD + ".confirm_develop") as m_develop,
+        patch(_MOD + ".close_and_finalize") as m_finalize,
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".comment_phase_failed") as m_failed,
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+    ):
+        stages = [s for s in build_stages() if s.name in names]
+        rc = progress.run_pipeline(
+            state, stages, command="vrg-release", label="vrg-release", args=args, repo_root=tmp_path
+        )
+    assert rc != 0
+    m_failed.assert_called_once()
+    m_develop.assert_not_called()
+    m_finalize.assert_not_called()
+    assert state.ctx.state is not None
+    assert "teardown-worktree" not in state.ctx.state.done
 
 
 def test_preflight_stage_populates_ctx() -> None:
@@ -119,6 +167,7 @@ def test_preflight_stage_populates_ctx() -> None:
         resume_version=None,
         resume_issue_number=None,
         allow_pending_deps=False,
+        stages=[stage.name for stage in build_stages()],
     )
     assert state.ctx is ctx
     assert ctx.promote is False
@@ -426,7 +475,7 @@ def test_phase_details_promote_held_back_by_index_deferral() -> None:
     assert "Promoted" not in details
     assert "**Promote skipped**: package-index deferred" in details
     assert "`v2.1` stays on the previous release" in details
-    assert "`vrg-promote v2.1.0`" in details
+    assert "`vrg-release --resume` moves it" in details
 
 
 def test_phase_details_promote_cd_deferral_still_promotes() -> None:
@@ -468,7 +517,7 @@ def test_promote_stage_skips_on_index_deferral(capsys: pytest.CaptureFixture[str
     _run_promote_stage(ctx).assert_not_called()
     out = capsys.readouterr().out
     assert "Skipping promote" in out
-    assert "vrg-promote v2.1.0" in out
+    assert "vrg-release --resume moves it" in out
     assert ctx.deferred_failures == []  # a skip, not a halted stage
 
 
@@ -509,8 +558,7 @@ def test_phase_details_close_finalize_package_index_deferral_leaves_issue_open()
     assert "Repository finalized." in details
     # promote was held back, so the outcome names the pending promote (#4293).
     assert "Promote pending: `v2.1` was not moved" in details
-    assert "`vrg-promote v2.1.0`" in details
-    assert "then close this issue" in details
+    assert "`vrg-release --resume` moves it" in details
 
 
 def test_phase_details_close_finalize_index_deferral_with_no_promote() -> None:
@@ -1040,6 +1088,7 @@ def _state() -> ReleaseState:
         repo_root=Path("/tmp/r"),  # noqa: S108
         version_override=None,
     )
+    state.ctx.state = _initial("2.1.2")
     return state
 
 
@@ -1063,9 +1112,10 @@ def test_publish_status_gives_per_kind_advice_for_an_index_deferral() -> None:
     msg = str(info.value)
     assert "artifact publish was deferred (package-index)" in msg
     assert "publish-index workflow in o/packages" in msg
-    assert "then run vrg-promote v2.1.2 to move the rolling tag" in msg
+    assert "then finish the release with vrg-release --resume" in msg
     assert "CD publish" not in msg
-    assert "do NOT use vrg-release --resume" in msg
+    assert "vrg-promote" not in msg
+    assert "NOT" not in msg
 
 
 def test_publish_status_noop_when_clean() -> None:
@@ -1306,7 +1356,7 @@ def test_index_timeout_skips_promote_and_names_it(
 ) -> None:
     """A deferred index leaves vX.Y on the previous release (#4293): promote never
     moves the tag, the run stays a completed-with-deferral one, and the run's
-    closing deferral message tells the human to run vrg-promote."""
+    closing deferral message tells the human to finish it with --resume."""
     m_promote = MagicMock()
     rc, ctx, m_comment, m_close, _ = _run_tail(
         tmp_path, cd_deferred=[], index_times_out=True, promote_mock=m_promote
@@ -1316,7 +1366,9 @@ def test_index_timeout_skips_promote_and_names_it(
     m_comment.assert_called_once_with(ctx, ["package-index"])
     m_close.assert_not_called()
     assert ctx.deferred_failures == []
-    assert "then run vrg-promote v2.1.2" in _publish_status(capsys.readouterr().out)
+    assert "then finish the release with vrg-release --resume" in _publish_status(
+        capsys.readouterr().out
+    )
 
 
 def test_index_found_promotes_after_it(tmp_path: Path) -> None:
@@ -1367,3 +1419,166 @@ def test_cd_and_index_deferral_together_give_both_remedies(
     message = _publish_status(capsys.readouterr().out)
     assert "re-run the CD publish" in message
     assert "publish-index workflow in o/packages" in message
+
+
+# --- resume from the first undone stage (spec §4.3, epic vergil-project/.github#1440) ---
+
+_DONE_THROUGH_FINALIZE = (
+    "prepare",
+    "merge-release",
+    "confirm-main",
+    "back-merge-bump",
+    "teardown-worktree",
+    "confirm-develop",
+    "package-index",
+    "promote",
+    "close-finalize",
+)
+_PREFLIGHT = "vergil_tooling.lib.release.preflight"
+
+
+def _tracked_run(name: str, ctx: ReleaseContext, fn: MagicMock) -> MagicMock:
+    """Run *fn* as tracked stage *name* on *ctx*; return the tick-stage mock."""
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state.ctx = ctx
+    with (
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage") as m_tick,
+    ):
+        _tracked(name, fn)(state)
+    return m_tick
+
+
+def test_tracked_stage_records_done_with_its_facts(write_state: MagicMock) -> None:
+    ctx = _ctx()
+
+    def confirm(c: ReleaseContext) -> None:
+        c.tag = "v2.1.0"
+        c.tag_commit = "t" * 40
+        c.cd_run_id = "555"
+
+    ctx.release_pr_url = "https://github.com/o/r/pull/100"
+    _tracked_run("confirm-main", ctx, MagicMock(side_effect=confirm))
+    write_state.assert_called_once()
+    assert ctx.state is not None
+    assert ctx.state.done == ("confirm-main",)
+    assert ctx.state.release_pr == "https://github.com/o/r/pull/100"
+    assert ctx.state.tag == "v2.1.0"
+    assert ctx.state.tag_commit == "t" * 40
+    assert ctx.state.main_cd_run == "555"
+    assert ctx.state.bump_pr is None
+
+
+def test_tracked_stage_skips_a_done_stage(
+    write_state: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx()
+    ctx.state = _initial("2.1.0", done=("prepare",))
+    fn = MagicMock()
+    m_tick = _tracked_run("prepare", ctx, fn)
+    fn.assert_not_called()
+    write_state.assert_not_called()
+    m_tick.assert_not_called()
+    assert "prepare: already done" in capsys.readouterr().out
+
+
+def test_tracked_stage_without_a_state_block_refuses(write_state: MagicMock) -> None:
+    ctx = _ctx()
+    ctx.state = None
+    with (
+        patch(_MOD + ".comment_phase_failed") as m_failed,
+        pytest.raises(ReleaseError, match="no release state block"),
+    ):
+        _tracked_run("merge-release", ctx, MagicMock())
+    write_state.assert_not_called()
+    m_failed.assert_called_once()
+
+
+def test_tracked_stage_failure_is_not_recorded_done(write_state: MagicMock) -> None:
+    ctx = _ctx()
+    fn = MagicMock(side_effect=ReleaseError(phase="prepare", command="x", message="boom"))
+    with patch(_MOD + ".comment_phase_failed"), pytest.raises(ReleaseError):
+        _tracked_run("prepare", ctx, fn)
+    write_state.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("name", "setup"),
+    [
+        ("promote", lambda c: setattr(c, "promote", False)),
+        ("promote", lambda c: c.deferred_publish_failures.append("package-index")),
+        ("close-finalize", lambda c: c.deferred_failures.append("confirm-develop")),
+        ("close-finalize", lambda c: c.deferred_publish_failures.append("docs")),
+        ("consumer-refresh", lambda c: c.deferred_publish_failures.append("docs")),
+        ("consumer-refresh", lambda c: setattr(c, "install", False)),
+        ("consumer-refresh", lambda c: c.deferred_failures.append("promote")),
+    ],
+)
+def test_held_stage_is_not_recorded_done(
+    write_state: MagicMock, name: str, setup: Callable[[ReleaseContext], None]
+) -> None:
+    """A stage that returned without doing its work runs again on a resume."""
+    ctx = _ctx()
+    setup(ctx)
+    ctx.consumer_refresh_commands = "vrg-tooling-install v2.1.0"
+    _tracked_run(name, ctx, MagicMock())
+    write_state.assert_not_called()
+
+
+def test_consumer_refresh_with_none_configured_is_done(write_state: MagicMock) -> None:
+    ctx = _ctx()
+    ctx.consumer_refresh_commands = None
+    _tracked_run("consumer-refresh", ctx, MagicMock())
+    assert ctx.state is not None
+    assert ctx.state.done == ("consumer-refresh",)
+
+
+def test_resume_after_finalize_skips_branch_stages(write_state: MagicMock) -> None:
+    """A resume after finalize creates no worktree and never re-enters prepare."""
+    current = _initial("2.1.0", done=_DONE_THROUGH_FINALIZE)
+    state = ReleaseState(
+        version_override=None,
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        promote=True,
+        resume=True,
+        resume_version="2.1.0",
+        resume_issue_number=42,
+    )
+
+    def read(ctx: ReleaseContext) -> release_state.StateBlock:
+        ctx.state = current
+        return current
+
+    with (
+        patch(_PREFLIGHT + "._check_host_prerequisites"),
+        patch(_PREFLIGHT + ".check_gh_auth", return_value="owner/repo"),
+        patch(_PREFLIGHT + "._read_and_validate_config"),
+        patch(_PREFLIGHT + ".read_state", side_effect=read),
+        patch(_PREFLIGHT + ".verify_facts"),
+        patch(_PREFLIGHT + "._acquire_release_worktree") as m_worktree,
+        patch(_PREFLIGHT + ".os.chdir") as m_chdir,
+    ):
+        _preflight_stage(state)
+    m_worktree.assert_not_called()
+    m_chdir.assert_called_once_with(Path("/tmp/repo"))  # noqa: S108
+    assert state.ctx is not None
+    assert state.ctx.worktree_path is None
+    branch_work = ("prepare", "merge-release", "back-merge-bump", "teardown-worktree")
+    with (
+        patch(_MOD + ".prepare") as m_prepare,
+        patch(_MOD + ".merge_release") as m_merge,
+        patch(_MOD + ".back_merge_and_bump") as m_bump,
+        patch(_MOD + ".teardown_worktree") as m_teardown,
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+    ):
+        for stage in build_stages():
+            if stage.name in branch_work:
+                stage.fn(state)
+    m_prepare.assert_not_called()
+    m_merge.assert_not_called()
+    m_bump.assert_not_called()
+    m_teardown.assert_not_called()
+    write_state.assert_not_called()

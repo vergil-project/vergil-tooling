@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -92,24 +93,6 @@ def test_preflight_fresh_start_records_the_cut_and_contents(
     assert ctx.issues == _ISSUES
 
 
-def test_preflight_resume_reads_no_contents(release_contents: MagicMock) -> None:
-    root = Path("/tmp/repo")  # noqa: S108
-    wt = Path("/tmp/repo/.worktrees/release-2.3.0")  # noqa: S108
-    with (
-        patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
-        patch(_MOD + "._read_and_validate_config"),
-        patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + "._acquire_release_worktree", return_value=wt),
-        patch(_MOD + ".os.chdir"),
-    ):
-        ctx = preflight(version_override=None, repo_root=root, resume=True, resume_version="2.3.0")
-    release_contents.assert_not_called()
-    assert ctx.cut is None
-    assert ctx.pending_release is None
-    assert ctx.issues == ()
-
-
 def test_release_contents_pins_the_pending_release_to_the_cut() -> None:
     wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
     with (
@@ -176,55 +159,6 @@ def test_preflight_success() -> None:
     assert ctx.worktree_path == wt
     m_wt.assert_called_once_with(root, "release/2.1.0", resume=False)
     m_chdir.assert_called_once_with(wt)
-
-
-def test_preflight_resume_skips_fresh_checks_and_adopts() -> None:
-    root = Path("/tmp/repo")  # noqa: S108
-    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
-    with (
-        patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
-        patch(_MOD + "._read_and_validate_config"),
-        patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + ".audit_repo_config"),
-        patch(_MOD + ".version.show", return_value="2.1.0"),
-        patch(_MOD + "._check_version_not_tagged") as m_tagged,
-        patch(_MOD + "._check_main_not_ahead_of_develop") as m_diverged,
-        patch(_MOD + "._check_no_open_release") as m_issue,
-        patch(_MOD + "._check_packages_unpublished"),
-        patch(_MOD + "._acquire_release_worktree", return_value=wt) as m_wt,
-        patch(_MOD + ".os.chdir"),
-    ):
-        preflight(version_override=None, repo_root=root, resume=True)
-    m_tagged.assert_not_called()
-    m_issue.assert_not_called()
-    m_diverged.assert_not_called()
-    m_wt.assert_called_once_with(root, "release/2.1.0", resume=True)
-
-
-def test_preflight_resume_uses_resume_version_and_sets_issue() -> None:
-    root = Path("/tmp/repo")  # noqa: S108
-    wt = Path("/tmp/repo/.worktrees/release-2.3.0")  # noqa: S108
-    with (
-        patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
-        patch(_MOD + "._read_and_validate_config"),
-        patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + ".version.show") as m_show,
-        patch(_MOD + "._acquire_release_worktree", return_value=wt),
-        patch(_MOD + ".os.chdir"),
-    ):
-        ctx = preflight(
-            version_override=None,
-            repo_root=root,
-            resume=True,
-            resume_version="2.3.0",
-            resume_issue_number=42,
-        )
-    assert ctx.version == "2.3.0"
-    m_show.assert_not_called()  # resume_version bypasses the develop VERSION file
-    assert ctx.issue_number == 42
-    assert ctx.issue_url == "https://github.com/owner/repo/issues/42"
 
 
 def test_preflight_with_minor_override() -> None:
@@ -1153,29 +1087,6 @@ def test_preflight_no_pending_deps_passes() -> None:
     assert ctx.bypassed_deps_prs == []
 
 
-def test_preflight_resume_skips_pending_deps_gate() -> None:
-    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
-    with (
-        patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + ".check_gh_auth", return_value="o/r"),
-        patch(_MOD + "._read_and_validate_config"),
-        patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + "._acquire_release_worktree", return_value=wt),
-        patch(_MOD + ".os.chdir"),
-        patch(_MOD + ".pending_deps_prs") as m_pending,
-    ):
-        ctx = preflight(
-            version_override=None,
-            repo_root=Path("/tmp/repo"),  # noqa: S108
-            resume=True,
-            resume_version="2.1.0",
-            resume_issue_number=7,
-        )
-    m_pending.assert_not_called()
-    assert ctx.bypassed_deps_prs == []
-    assert ctx.cleared_deps_prs == []
-
-
 # --- auto-clear a dependency-update PR whose fix task completed (#3286) ---
 
 _PR9 = "https://github.com/o/r/pull/9"
@@ -2064,13 +1975,6 @@ def test_develop_cd_gate_runs_on_a_fresh_start(develop_cd_gate: MagicMock) -> No
     develop_cd_gate.assert_called_once_with(_REPO)
 
 
-def test_develop_cd_gate_skipped_on_resume(develop_cd_gate: MagicMock) -> None:
-    with contextlib.ExitStack() as stack:
-        _preflight_patches(stack)
-        preflight(version_override=None, repo_root=Path("/tmp/repo"), resume=True)  # noqa: S108
-    develop_cd_gate.assert_not_called()
-
-
 def test_develop_cd_gate_checks_the_local_head() -> None:
     with (
         patch(_MOD + ".git.read_output", return_value=_CD_HEAD) as read,
@@ -2287,3 +2191,136 @@ def test_cd_gate_checks_new_head(tmp_path: Path, develop_cd_gate: MagicMock) -> 
         checked = stack.enter_context(patch(_MOD + ".check_develop_cd"))
         preflight(version_override=None, repo_root=tmp_path)
     checked.assert_called_once_with(_REPO, _NEW)
+
+
+# --- resume from the first undone stage (spec §4.3, epic vergil-project/.github#1440) ---
+
+_STAGES = (
+    "audit",
+    "preflight",
+    "prepare",
+    "merge-release",
+    "confirm-main",
+    "back-merge-bump",
+    "teardown-worktree",
+    "confirm-develop",
+    "close-finalize",
+    "publish-status",
+)
+_ROOT = Path("/tmp/repo")  # noqa: S108
+_RESUME_WT = Path("/tmp/repo/.worktrees/release-2.3.0")  # noqa: S108
+
+
+def _resume(done: tuple[str, ...]) -> tuple[ReleaseContext, dict[str, MagicMock]]:
+    """Run a resume preflight whose tracking issue records *done*; return the ctx and mocks."""
+    current = replace(
+        state.initial_state(version="2.3.0", cut=_CUT, issues=(), without_deps=False),
+        done=done,
+        release_pr="https://github.com/owner/repo/pull/100",
+    )
+    names = (
+        "_check_branch_and_tree",
+        "_check_main_not_ahead_of_develop",
+        "_check_version_not_tagged",
+        "_check_no_open_release",
+        "_check_packages_unpublished",
+        "pending_deps_prs",
+        "verify_facts",
+        "os.chdir",
+        "version.show",
+    )
+    with contextlib.ExitStack() as stack:
+        mocks = {name: stack.enter_context(patch(f"{_MOD}.{name}")) for name in names}
+        mocks["host"] = stack.enter_context(patch(_MOD + "._check_host_prerequisites"))
+        mocks["auth"] = stack.enter_context(
+            patch(_MOD + ".check_gh_auth", return_value="owner/repo")
+        )
+        mocks["config"] = stack.enter_context(patch(_MOD + "._read_and_validate_config"))
+        mocks["read_state"] = stack.enter_context(patch(_MOD + ".read_state", return_value=current))
+        mocks["worktree"] = stack.enter_context(
+            patch(_MOD + "._acquire_release_worktree", return_value=_RESUME_WT)
+        )
+        ctx = preflight(
+            version_override=None,
+            repo_root=_ROOT,
+            resume=True,
+            resume_version="2.3.0",
+            resume_issue_number=42,
+            stages=_STAGES,
+        )
+    return ctx, mocks
+
+
+def test_resume_runs_only_host_auth_config_checks(
+    release_contents: MagicMock, develop_cd_gate: MagicMock
+) -> None:
+    ctx, mocks = _resume(("prepare",))
+    for check in ("host", "auth", "config"):
+        mocks[check].assert_called_once()
+    for skipped in (
+        "_check_branch_and_tree",
+        "_check_main_not_ahead_of_develop",
+        "_check_version_not_tagged",
+        "_check_no_open_release",
+        "_check_packages_unpublished",
+        "pending_deps_prs",
+        "version.show",
+    ):
+        mocks[skipped].assert_not_called()
+    develop_cd_gate.assert_not_called()
+    release_contents.assert_not_called()
+    assert ctx.version == "2.3.0"
+    assert ctx.issue_number == 42
+    assert ctx.issue_url == "https://github.com/owner/repo/issues/42"
+    assert ctx.cut is None
+    assert ctx.pending_release is None
+    assert ctx.issues == ()
+    assert ctx.bypassed_deps_prs == []
+
+
+def test_resume_reads_and_verifies_the_state_and_restores_its_facts() -> None:
+    ctx, mocks = _resume(("prepare",))
+    mocks["read_state"].assert_called_once_with(ctx)
+    current = mocks["read_state"].return_value
+    mocks["verify_facts"].assert_called_once_with(ctx, current)
+    assert ctx.release_pr_url == "https://github.com/owner/repo/pull/100"
+
+
+def test_resume_at_merge_release_adopts_worktree() -> None:
+    ctx, mocks = _resume(("prepare",))
+    mocks["worktree"].assert_called_once_with(_ROOT, "release/2.3.0", resume=True)
+    mocks["os.chdir"].assert_called_once_with(_RESUME_WT)
+    assert ctx.worktree_path == _RESUME_WT
+
+
+def test_resume_at_teardown_adopts_worktree() -> None:
+    ctx, mocks = _resume(("prepare", "merge-release", "confirm-main", "back-merge-bump"))
+    mocks["worktree"].assert_called_once()
+    assert ctx.worktree_path == _RESUME_WT
+
+
+def test_resume_after_teardown_does_not_adopt_worktree() -> None:
+    done = ("prepare", "merge-release", "confirm-main", "back-merge-bump", "teardown-worktree")
+    ctx, mocks = _resume(done)
+    mocks["worktree"].assert_not_called()
+    mocks["os.chdir"].assert_called_once_with(_ROOT)
+    assert ctx.worktree_path is None
+
+
+def test_resume_with_nothing_undone_does_not_adopt_worktree() -> None:
+    names = tuple(n for n in _STAGES if n not in ("audit", "preflight", "publish-status"))
+    ctx, mocks = _resume(names)
+    mocks["worktree"].assert_not_called()
+    assert ctx.worktree_path is None
+
+
+def test_resume_without_its_issue_refuses() -> None:
+    with (
+        patch(_MOD + "._check_host_prerequisites"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + "._read_and_validate_config"),
+        patch(_MOD + ".read_state") as m_read,
+        pytest.raises(ReleaseError, match="resume lookup did not provide them"),
+    ):
+        preflight(version_override=None, repo_root=_ROOT, resume=True, stages=_STAGES)
+    m_read.assert_not_called()

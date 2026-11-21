@@ -1,9 +1,12 @@
 """Discover the open tracking issue to resume (vrg-release --resume, #1612).
 
-A fresh release creates the ``release: X.Y.Z`` tracking issue and a stage
-checklist in its body. Resume finds that open issue, validates the checklist
-against the running tooling's stage list, and reports the version and number so
-the pipeline can re-enter with the existing artifacts.
+A fresh release creates the ``release: X.Y.Z`` tracking issue with a stage
+checklist and a state block in its body. Resume finds that open issue, validates
+its state block against the running tooling's stage list, and reports the
+version and number; preflight then reads the state under the identity rule,
+verifies its facts and rebuilds the context from it, and the pipeline runs only
+the stages the state does not record as done (spec §4.3 of epic
+vergil-project/.github#1440).
 """
 
 from __future__ import annotations
@@ -13,17 +16,28 @@ import re
 from typing import TYPE_CHECKING, cast
 
 from vergil_tooling.lib import git, github, host_versions
-from vergil_tooling.lib.release import checklist
+from vergil_tooling.lib.release import state
 from vergil_tooling.lib.release.context import ReleaseError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from vergil_tooling.lib.release.context import ReleaseContext
+    from vergil_tooling.lib.release.state import StateBlock
 
 _TITLE_RE = re.compile(r"^release: (\d+\.\d+\.\d+)$")
 # Upper bound on the open issues the release search lists. Reaching it is a
 # refusal: an in-flight release issue could lie beyond it (#4038).
 _SEARCH_LIST_LIMIT = 100
 _SEARCH_COMMAND = "gh issue list --search 'release: in:title' --state open"
+_SHORT = 12
+
+# The stages that work on the release branches, in its worktree. A resume
+# adopts the worktree only when its first undone stage is at or before the
+# last of them (spec §4.3 of epic vergil-project/.github#1440).
+BRANCH_STAGES = ("prepare", "merge-release", "back-merge-bump", "teardown-worktree")
+# The stages that run on every run and are never recorded done.
+ALWAYS_RUN = ("audit", "preflight", "publish-status")
 
 
 def _open_release_issues(repo: str, *, phase: str = "resume") -> list[tuple[str, int, str]]:
@@ -79,33 +93,46 @@ def _open_release_issues(repo: str, *, phase: str = "resume") -> list[tuple[str,
     return issues
 
 
-def _check_blockless_issue_resumable(version: str, number: int) -> None:
-    """Refuse to resume an issue with no progress block unless its release branch exists.
+def _found_state(version: str, number: int, body: str, stages: Sequence[str]) -> StateBlock:
+    """The state block in open tracking issue #*number*'s *body*, checked against *stages*.
 
-    A tracking issue is created with its checklist (#4367), so an issue without
-    one was opened by an older vrg-release that was interrupted in prepare, or
-    by hand. Preflight creates the release branch only once a fresh start's
-    checks have passed, so the branch's existence shows they did: resume then
-    re-runs the pipeline, prepare adopting what was done, and prepare writes the
-    checklist. With no branch, nothing shows the checks passed, and a resume,
-    which skips them, must not start the release.
+    A block that is missing or malformed, names a version other than the
+    issue's, or records a stage the running tooling does not have is a
+    refusal naming the block, never a fallback to the checklist (spec §4.2-§4.3
+    of epic vergil-project/.github#1440). This read only finds the target:
+    preflight reads the block again under the identity rule before any stage
+    relies on it.
     """
-    branch = f"release/{version}"
-    if git.ref_exists(branch) or git.ref_exists(f"origin/{branch}"):
-        print(
-            f"Tracking issue #{number} has no vrg-release progress block (it was "
-            f"interrupted before one was written); resuming on '{branch}'."
+    command = f"gh issue view {number} --json body"
+    try:
+        found = state.parse_state(body)
+    except state.StateBlockError as exc:
+        raise ReleaseError(
+            phase="resume",
+            command=command,
+            message=f"Tracking issue #{number}'s release state block: {exc}",
+        ) from exc
+    if found.version != version:
+        raise ReleaseError(
+            phase="resume",
+            command=command,
+            message=(
+                f"Tracking issue #{number}'s release state block names version "
+                f"{found.version!r}, but the issue is 'release: {version}'."
+            ),
         )
-        return
-    raise ReleaseError(
-        phase="resume",
-        command="checklist",
-        message=(
-            f"Tracking issue #{number} has no vrg-release progress block, and no "
-            f"release branch '{branch}' exists, so nothing shows that a fresh "
-            "start's checks passed. Close the issue and re-run vrg-release."
-        ),
-    )
+    unknown = [name for name in found.done if name not in stages]
+    if unknown:
+        raise ReleaseError(
+            phase="resume",
+            command=command,
+            message=(
+                f"Tracking issue #{number}'s release state block records stage(s) "
+                f"{', '.join(unknown)} as done, which this vrg-release does not have; "
+                "it was written by another tooling version. Resume with that version."
+            ),
+        )
+    return found
 
 
 def find_resume_target(
@@ -113,10 +140,10 @@ def find_resume_target(
 ) -> tuple[str, int]:
     """Return ``(version, issue_number)`` of the in-flight release to resume.
 
-    Also validates the checklist version-skew. Raises ``ReleaseError`` when
-    there is no in-flight release, when the choice is ambiguous (and *version*
-    did not disambiguate), or when the checklist was written by a different
-    tooling version.
+    Also validates the issue's state block (:func:`_found_state`). Raises
+    ``ReleaseError`` when there is no in-flight release, when the choice is
+    ambiguous (and *version* did not disambiguate), or when the state block is
+    missing, malformed or written by a different tooling version.
     """
     issues = _open_release_issues(repo)
     if version is not None:
@@ -140,11 +167,147 @@ def find_resume_target(
             ),
         )
     found_version, number, body = issues[0]
-    if not checklist.has_block(body):
-        _check_blockless_issue_resumable(found_version, number)
-        return found_version, number
-    try:
-        checklist.first_unchecked(body, stages)
-    except checklist.ChecklistError as exc:
-        raise ReleaseError(phase="resume", command="checklist", message=str(exc)) from exc
+    _found_state(found_version, number, body, stages)
     return found_version, number
+
+
+def first_undone(current: StateBlock, stages: Sequence[str]) -> str | None:
+    """The first of *stages* that *current* does not record as done, or None when all are.
+
+    The :data:`ALWAYS_RUN` stages run on every run and are never recorded
+    done, so they are ignored.
+    """
+    return next(
+        (name for name in stages if name not in ALWAYS_RUN and name not in current.done),
+        None,
+    )
+
+
+def restore_context(ctx: ReleaseContext, current: StateBlock) -> None:
+    """Rebuild *ctx*'s recorded facts from *current*, for the stages a resume skips.
+
+    Only what the state block holds is restored; :func:`verify_facts` adds
+    the merge commits it confirms against GitHub.
+    """
+    ctx.release_pr_url = current.release_pr
+    ctx.bump_pr_url = current.bump_pr
+    ctx.tag = current.tag
+    ctx.tag_commit = current.tag_commit
+    if current.tag is not None:
+        ctx.release_url = f"https://github.com/{ctx.repo}/releases/tag/{current.tag}"
+    if current.main_cd_run is not None:
+        ctx.cd_run_id = current.main_cd_run
+        ctx.cd_run_url = _run_url(ctx.repo, current.main_cd_run)
+    if current.develop_cd_run is not None:
+        ctx.develop_cd_run_id = current.develop_cd_run
+        ctx.develop_cd_run_url = _run_url(ctx.repo, current.develop_cd_run)
+
+
+def _run_url(repo: str, run_id: str) -> str:
+    return f"https://github.com/{repo}/actions/runs/{run_id}"
+
+
+def _fact_error(fact: str, command: str, message: str) -> ReleaseError:
+    return ReleaseError(
+        phase="resume",
+        command=command,
+        message=(
+            f"The release state's {fact} does not hold: {message} Inspect the tracking "
+            "issue and the release before resuming."
+        ),
+    )
+
+
+def _merged_commit(fact: str, pr: str | None) -> str:
+    """The merge commit of recorded PR *pr*, refusing unless it is recorded and merged."""
+    command = f"gh pr view {pr} --json state,mergeCommit"
+    if pr is None:
+        raise _fact_error(fact, command, "the stage that merges it is done, but no PR is recorded.")
+    pr_state = github.pr_state(pr)
+    if pr_state != "MERGED":
+        raise _fact_error(fact, command, f"{pr} is {pr_state}, not MERGED.")
+    sha = github.merge_commit_sha(pr)
+    if not sha:
+        raise _fact_error(fact, command, f"GitHub reports no merge commit for {pr}.")
+    return sha
+
+
+def _check_run_head(fact: str, repo: str, run_id: str, expected: str | None, what: str) -> None:
+    """Refuse unless CD run *run_id*'s head SHA is *expected*, the merge commit of *what*."""
+    command = f"gh run view {run_id} --repo {repo} --json headSha"
+    if expected is None:
+        raise _fact_error(fact, command, f"run {run_id} is recorded, but {what} is not merged.")
+    head = github.read_output(
+        "run", "view", run_id, "--repo", repo, "--json", "headSha", "--jq", ".headSha"
+    )
+    if head != expected:
+        raise _fact_error(
+            fact,
+            command,
+            f"run {run_id} is for {head[:_SHORT]}, not {what}'s merge commit {expected[:_SHORT]}.",
+        )
+
+
+def _check_tag(tag: str, tag_commit: str | None, release_merge: str | None) -> None:
+    """Refuse unless *tag* peels to *tag_commit*, the release merge or a freeze commit on it.
+
+    By ``promote``'s merged-work rule, the tag is on the release PR's merge
+    commit or on a single-parent freeze commit whose parent it is.
+    """
+    command = f"git rev-parse {tag}^{{commit}}"
+    if tag_commit is None:
+        raise _fact_error("tag", command, f"{tag} is recorded with no tag_commit.")
+    if release_merge is None:
+        raise _fact_error("tag", command, f"{tag} is recorded, but the release PR is not merged.")
+    git.run("fetch", "--tags", "--force", "origin")
+    if not git.ref_exists(f"refs/tags/{tag}"):
+        raise _fact_error("tag", command, f"{tag} does not exist on origin.")
+    peeled = git.read_output("rev-parse", f"{tag}^{{commit}}")
+    if peeled != tag_commit:
+        raise _fact_error(
+            "tag",
+            command,
+            f"{tag} peels to {peeled[:_SHORT]}, not the recorded {tag_commit[:_SHORT]}.",
+        )
+    if tag_commit == release_merge:
+        return
+    parents = git.read_output("rev-list", "--parents", "-n", "1", tag_commit).split()[1:]
+    if parents != [release_merge]:
+        raise _fact_error(
+            "tag",
+            command,
+            f"{tag} ({tag_commit[:_SHORT]}) is neither the release PR's merge commit "
+            f"{release_merge[:_SHORT]} nor a single-parent commit on top of it.",
+        )
+
+
+def verify_facts(ctx: ReleaseContext, current: StateBlock) -> None:
+    """Confirm *current*'s recorded facts against GitHub and git before a resume relies on them.
+
+    The release PR is merged once ``merge-release`` is done, and the
+    back-merge PR once ``back-merge-bump`` is; ``main_cd_run``'s head SHA is
+    the release PR's merge commit; the tag peels to ``tag_commit``, which is
+    that merge commit or a single-parent freeze commit on top of it; and
+    ``develop_cd_run``'s head SHA is the back-merge PR's merge commit. A
+    mismatch raises :class:`ReleaseError` naming the fact (spec §4.3 of epic
+    vergil-project/.github#1440). The confirmed merge commits are set on *ctx*,
+    for the stages after them (``confirm-develop`` waits on the back-merge's).
+    """
+    release_merge: str | None = None
+    if "merge-release" in current.done:
+        release_merge = _merged_commit("release_pr", current.release_pr)
+        ctx.release_merge_sha = release_merge
+    bump_merge: str | None = None
+    if "back-merge-bump" in current.done:
+        bump_merge = _merged_commit("bump_pr", current.bump_pr)
+        ctx.bump_merge_sha = bump_merge
+    if current.main_cd_run is not None:
+        _check_run_head(
+            "main_cd_run", ctx.repo, current.main_cd_run, release_merge, "the release PR"
+        )
+    if current.tag is not None:
+        _check_tag(current.tag, current.tag_commit, release_merge)
+    if current.develop_cd_run is not None:
+        _check_run_head(
+            "develop_cd_run", ctx.repo, current.develop_cd_run, bump_merge, "the back-merge PR"
+        )

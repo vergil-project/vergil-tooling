@@ -28,6 +28,11 @@ while every identity that authored, edited, closed or reopened the issue
 is a `human` login of `vrg-trusted-authors`: any other identity stops
 the run before it writes anything, as a suspected security breach; see
 [The lock and the identity rule](../../guides/releasing.md#the-lock-and-the-identity-rule).
+Each stage that succeeds records itself done in the state block, with
+the PRs, the tag and the CD runs it produced. `--resume` checks those
+facts against GitHub and git, then runs only the stages not recorded
+done; see
+[Resuming a release](../../guides/releasing.md#resuming-a-release).
 
 Releasing is a human maintainer action. `vrg-release` refuses to run
 under an agent identity.

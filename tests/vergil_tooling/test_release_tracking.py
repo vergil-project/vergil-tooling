@@ -26,7 +26,6 @@ from vergil_tooling.lib.release.tracking import (
     comment_phase_complete,
     comment_phase_failed,
     create_tracking_issue,
-    cursor,
     ensure_checklist,
     read_issue_body,
     read_state,
@@ -144,13 +143,6 @@ def test_tick_stage_checks_box() -> None:
     assert ("audit", True) in checklist.parse(write.call_args.args[1])
 
 
-def test_cursor_returns_first_unchecked() -> None:
-    ctx = _ctx_with_issue()
-    body = checklist.render(["audit", "prepare"], checked={"audit"})
-    with patch(_MOD + ".read_issue_body", return_value=body):
-        assert cursor(ctx, ["audit", "prepare"]) == "prepare"
-
-
 _CUT = "c" * 40
 
 
@@ -246,7 +238,7 @@ def test_create_tracking_issue_neutralises_markers_in_titles_and_branches(marker
     assert contents.count("```") == 2
     assert body.count(checklist.BEGIN) == 1
     assert body.count(checklist.END) == 1
-    assert checklist.first_unchecked(checklist.tick(body, "prepare"), stages) is None
+    assert checklist.parse(checklist.tick(body, "prepare")) == [(name, True) for name in stages]
     assert state.parse_state(body).cut == _CUT
 
 
@@ -517,7 +509,7 @@ def test_create_tracking_issue_creates_the_issue_with_its_checklist() -> None:
     ):
         create_tracking_issue(ctx)
     assert len(bodies) == 1
-    assert checklist.first_unchecked(bodies[0], ["audit", "prepare"]) == "prepare"
+    assert checklist.parse(bodies[0]) == [("audit", True), ("prepare", False)]
     assert bodies[0].startswith("## Release 2.1.0\n\nRepo: owner/repo\n")
 
 
@@ -745,8 +737,9 @@ def test_comment_publish_deferred_package_index_gives_packages_advice() -> None:
 
 
 def test_comment_publish_deferred_names_the_pending_promote() -> None:
-    """With package-index deferred, promote held vX.Y back: the comment says to
-    run vrg-promote once the index has the release, then close the issue (#4293)."""
+    """With package-index deferred, promote held vX.Y back: the comment says
+    vrg-release --resume moves it once the index has the release (#4293), and
+    that --resume finishes the release (spec §4.3 of epic vergil-project/.github#1440)."""
     from vergil_tooling.lib.release.tracking import comment_publish_deferred
 
     ctx = _ctx()
@@ -758,9 +751,11 @@ def test_comment_publish_deferred_names_the_pending_promote() -> None:
     ):
         comment_publish_deferred(ctx, ["package-index"])
     body = comment.call_args[0][1]
-    assert "**Then promote**: the rolling tag `v2.1` was not moved" in body
-    assert "run `vrg-promote v2.1.0`, then close this issue" in body
-    assert "**Do not** run `vrg-release --resume`" in body
+    assert "**Promote pending**: the rolling tag `v2.1` was not moved" in body
+    assert "`vrg-release --resume` moves it once the packages appear" in body
+    assert "**Then finish the release** with `vrg-release --resume`" in body
+    assert "Do not" not in body
+    assert "vrg-promote" not in body
 
 
 def test_comment_publish_deferred_no_pending_promote_with_no_promote() -> None:
@@ -787,7 +782,7 @@ def test_comment_publish_deferred_cd_only_names_no_promote() -> None:
     assert "vrg-promote" not in comment.call_args[0][1]
 
 
-def test_publish_deferred_remedy_adds_the_pending_promote() -> None:
+def test_publish_deferred_remedy_ends_with_the_resume() -> None:
     from vergil_tooling.lib.release.tracking import promote_pending, publish_deferred_remedy
 
     ctx = _ctx()
@@ -798,8 +793,7 @@ def test_publish_deferred_remedy_adds_the_pending_promote() -> None:
     assert remedy == (
         "re-run the CD publish to deliver the artifacts; re-run (or wait for) the "
         "publish-index workflow in vergil-project/packages and confirm the "
-        "release's packages appear in the index, then run vrg-promote v2.1.0 to "
-        "move the rolling tag"
+        "release's packages appear in the index, then finish the release with vrg-release --resume"
     )
 
 
@@ -845,20 +839,23 @@ def test_comment_publish_deferred_package_index_without_package_block_raises() -
     comment.assert_not_called()
 
 
+_RESUME = ", then finish the release with vrg-release --resume"
+
+
 @pytest.mark.parametrize(
     ("jobs", "expected"),
     [
-        (["docs"], "re-run the CD publish to deliver the artifacts"),
+        (["docs"], "re-run the CD publish to deliver the artifacts" + _RESUME),
         (
             ["package-index"],
             "re-run (or wait for) the publish-index workflow in vergil-project/packages "
-            "and confirm the release's packages appear in the index",
+            "and confirm the release's packages appear in the index" + _RESUME,
         ),
         (
             ["docs", "package-index"],
             "re-run the CD publish to deliver the artifacts; re-run (or wait for) the "
             "publish-index workflow in vergil-project/packages and confirm the "
-            "release's packages appear in the index",
+            "release's packages appear in the index" + _RESUME,
         ),
     ],
 )
