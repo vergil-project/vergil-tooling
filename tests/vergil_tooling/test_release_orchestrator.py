@@ -11,6 +11,7 @@ import pytest
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+from vergil_tooling.lib.release.guard import TrackingIssueBreach
 from vergil_tooling.lib.release.merge import ReleaseConflictError
 from vergil_tooling.lib.release.orchestrator import (
     ReleaseState,
@@ -207,6 +208,24 @@ def test_tracked_stage_comments_release_error_on_failure() -> None:
         _tracked("prepare", fn)(state)
     m_failed.assert_called_once_with(state.ctx, "prepare", exc)
     assert state.ctx.deferred_failures == ["prepare"]
+
+
+def test_tracked_stage_never_comments_a_breach() -> None:
+    """A suspected breach stops the run before any write: no failure comment (spec §4.2)."""
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state.ctx = _ctx()
+    fn = MagicMock(side_effect=TrackingIssueBreach("agent", "edited the body", number=42))
+    with (
+        patch(_MOD + ".comment_phase_failed") as m_failed,
+        patch(_MOD + ".comment_phase_complete") as m_complete,
+        patch(_MOD + ".tick_stage") as m_tick,
+        pytest.raises(TrackingIssueBreach, match="suspected security breach on tracking issue #42"),
+    ):
+        _tracked("prepare", fn)(state)
+    m_failed.assert_not_called()
+    m_complete.assert_not_called()
+    m_tick.assert_not_called()
+    assert state.ctx.deferred_failures == []
 
 
 def test_tracked_stage_wraps_and_comments_on_failure() -> None:

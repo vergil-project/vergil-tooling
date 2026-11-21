@@ -15,6 +15,7 @@ from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
 from vergil_tooling.lib.release.conflict import merge_main_into_release
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.finalize import close_and_finalize, teardown_worktree
+from vergil_tooling.lib.release.guard import TrackingIssueBreach
 from vergil_tooling.lib.release.handoff import blocking_failures, consumer_refresh
 from vergil_tooling.lib.release.merge import (
     ReleaseConflictError,
@@ -111,6 +112,10 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
             )
         try:
             fn(ctx)
+        except TrackingIssueBreach:
+            # A suspected breach stops the run before any write, so the
+            # failure is never commented on the issue (spec §4.2).
+            raise
         except ReleaseError as exc:
             comment_phase_failed(ctx, name, exc)
             _record_failure(ctx, name)

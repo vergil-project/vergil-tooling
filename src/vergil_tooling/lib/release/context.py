@@ -39,6 +39,10 @@ class ReleaseContext:
     issues: tuple[IssueEntry, ...] = ()
     # The tracking issue's state block as last read or written by this run.
     state: StateBlock | None = None
+    # The identity-rule warnings (foreign traces on the tracking issue) this
+    # run has printed, so each prints once per run however often the state
+    # is read (spec §4.2 of epic vergil-project/.github#1440).
+    tracking_warnings: set[str] = field(default_factory=set)
     release_pr_url: str | None = None
 
     # Managed worktree all release branch work happens in, so the root

@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -16,7 +16,7 @@ from vergil_tooling.lib.pending_release import (
     PendingRelease,
     ReleaseTags,
 )
-from vergil_tooling.lib.release import checklist, state
+from vergil_tooling.lib.release import checklist, guard, state
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import (
     _MAX_COMMENT_CHARS,
@@ -35,6 +35,7 @@ from vergil_tooling.lib.release.tracking import (
     tick_stage,
     write_state,
 )
+from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 
 _MOD = "vergil_tooling.lib.release.tracking"
 
@@ -52,6 +53,23 @@ def _ctx_with_issue() -> ReleaseContext:
     ctx = _ctx()
     ctx.issue_number = 42
     return ctx
+
+
+_HUMAN_ONLY = guard.IssueIdentities(author="human", editors=("human",), state_actors=(), traces=())
+
+
+@pytest.fixture(autouse=True)
+def guard_calls() -> Any:
+    """The tracking issue's guard, passing by default: locked, and human-only identities."""
+    with (
+        patch(
+            _MOD + ".trusted_authors.load_trusted_authors",
+            return_value=TrustedAuthors(human=("human",), agents=("agent",)),
+        ),
+        patch(_MOD + ".guard.ensure_locked") as locked,
+        patch(_MOD + ".guard.read_identities", return_value=_HUMAN_ONLY) as identities,
+    ):
+        yield {"ensure_locked": locked, "read_identities": identities}
 
 
 def test_read_issue_body_queries_gh() -> None:
@@ -173,7 +191,10 @@ def _created_body(ctx: ReleaseContext) -> str:
         bodies.append(Path(args[args.index("--body-file") + 1]).read_text())
         return "https://github.com/owner/repo/issues/42"
 
-    with patch(_MOD + ".github.read_output", side_effect=fake_read_output):
+    with (
+        patch(_MOD + ".github.read_output", side_effect=fake_read_output),
+        patch(_MOD + ".github.run"),
+    ):
         create_tracking_issue(ctx)
     assert len(bodies) == 1
     return bodies[0]
@@ -340,11 +361,142 @@ def test_write_state_refuses_a_duplicated_block() -> None:
     write.assert_not_called()
 
 
+def _gh_calls(body: str) -> tuple[MagicMock, MagicMock]:
+    """Patches of the gh read and write calls, the read returning the issue with *body*."""
+    read = MagicMock(
+        side_effect=lambda *args: (
+            _issue_json("release: 2.1.0", body) if "title,body" in args else body
+        )
+    )
+    return read, MagicMock()
+
+
+def test_read_state_locks_then_checks_the_identities(guard_calls: dict[str, MagicMock]) -> None:
+    ctx = _ctx_with_issue()
+    body, block = _state_body()
+    with patch(_MOD + ".github.read_output", return_value=_issue_json("release: 2.1.0", body)):
+        assert read_state(ctx) == block
+    guard_calls["ensure_locked"].assert_called_once_with("owner/repo", 42)
+    guard_calls["read_identities"].assert_called_once_with("owner/repo", 42)
+
+
+def test_read_state_stops_before_any_write(guard_calls: dict[str, MagicMock]) -> None:
+    ctx = _ctx_with_issue()
+    body, _ = _state_body()
+    guard_calls["read_identities"].return_value = dataclasses.replace(
+        _HUMAN_ONLY, editors=("human", "agent")
+    )
+    read, run = _gh_calls(body)
+    with (
+        patch(_MOD + ".github.read_output", read),
+        patch(_MOD + ".github.run", run),
+        pytest.raises(guard.TrackingIssueBreach) as info,
+    ):
+        read_state(ctx)
+    assert str(info.value).startswith(
+        "suspected security breach on tracking issue #42: agent edited the body"
+    )
+    assert "resume" in str(info.value)
+    run.assert_not_called()
+    assert all("edit" not in c.args and "comment" not in c.args for c in read.call_args_list)
+    assert ctx.state is None
+
+
+def test_write_state_stops_on_edit_between_read_and_write(
+    guard_calls: dict[str, MagicMock],
+) -> None:
+    ctx = _ctx_with_issue()
+    body, block = _state_body()
+    read, run = _gh_calls(body)
+    with patch(_MOD + ".github.read_output", read), patch(_MOD + ".github.run", run):
+        assert read_state(ctx) == block
+        # An agent edits the body after the guarded read.
+        guard_calls["read_identities"].return_value = dataclasses.replace(
+            _HUMAN_ONLY, editors=("human", "agent")
+        )
+        new = dataclasses.replace(block, done=("prepare",))
+        with pytest.raises(guard.TrackingIssueBreach, match="agent edited the body"):
+            write_state(ctx, new)
+    run.assert_not_called()
+    assert ctx.state == block
+
+
+def test_write_state_runs_the_guard(guard_calls: dict[str, MagicMock]) -> None:
+    ctx = _ctx_with_issue()
+    body, block = _state_body()
+    with (
+        patch(_MOD + ".read_issue_body", return_value=body),
+        patch(_MOD + "._write_issue_body") as write,
+    ):
+        write_state(ctx, block)
+    guard_calls["ensure_locked"].assert_called_once_with("owner/repo", 42)
+    guard_calls["read_identities"].assert_called_once_with("owner/repo", 42)
+    write.assert_called_once()
+
+
+def test_read_state_warns_once_per_run(
+    guard_calls: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx_with_issue()
+    body, _ = _state_body()
+    guard_calls["read_identities"].return_value = dataclasses.replace(
+        _HUMAN_ONLY, traces=(("agent", "commented"), ("human", "commented"))
+    )
+    with patch(_MOD + ".github.read_output", return_value=_issue_json("release: 2.1.0", body)):
+        read_state(ctx)
+        read_state(ctx)
+    assert capsys.readouterr().err == "warning: tracking issue #42: agent commented\n"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [TrustedAuthorsNotConfiguredError("not configured"), ValueError("'human' is empty")],
+)
+def test_read_state_trusted_authors_failure_raises(
+    error: Exception, guard_calls: dict[str, MagicMock]
+) -> None:
+    ctx = _ctx_with_issue()
+    body, _ = _state_body()
+    with (
+        patch(_MOD + ".trusted_authors.load_trusted_authors", side_effect=error),
+        patch(_MOD + ".github.read_output", return_value=_issue_json("release: 2.1.0", body)),
+        pytest.raises(ReleaseError, match="Cannot check the identities") as info,
+    ):
+        read_state(ctx)
+    assert info.value.command == "vrg-trusted-authors"
+    guard_calls["read_identities"].assert_not_called()
+    assert ctx.state is None
+
+
+def test_read_state_identity_read_failure_raises(guard_calls: dict[str, MagicMock]) -> None:
+    ctx = _ctx_with_issue()
+    body, _ = _state_body()
+    guard_calls["read_identities"].side_effect = subprocess.CalledProcessError(
+        1, ["gh"], stderr="HTTP 502"
+    )
+    with (
+        patch(_MOD + ".github.read_output", return_value=_issue_json("release: 2.1.0", body)),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        read_state(ctx)
+    assert ctx.state is None
+
+
+def test_create_tracking_issue_locks_the_issue() -> None:
+    ctx = _creatable_ctx()
+    with (
+        patch(_MOD + ".github.read_output", return_value="https://github.com/owner/repo/issues/42"),
+        patch(_MOD + ".github.run") as run,
+    ):
+        create_tracking_issue(ctx)
+    run.assert_called_once_with("issue", "lock", "42", "--repo", "owner/repo")
+
+
 def test_create_tracking_issue() -> None:
     ctx = _creatable_ctx()
-    with patch(
-        _MOD + ".github.read_output",
-        return_value="https://github.com/owner/repo/issues/42",
+    with (
+        patch(_MOD + ".github.read_output", return_value="https://github.com/owner/repo/issues/42"),
+        patch(_MOD + ".github.run"),
     ):
         create_tracking_issue(ctx)
     assert ctx.issue_number == 42
@@ -361,7 +513,10 @@ def test_create_tracking_issue_creates_the_issue_with_its_checklist() -> None:
         bodies.append(Path(args[args.index("--body-file") + 1]).read_text())
         return "https://github.com/owner/repo/issues/42"
 
-    with patch(_MOD + ".github.read_output", side_effect=fake_read_output):
+    with (
+        patch(_MOD + ".github.read_output", side_effect=fake_read_output),
+        patch(_MOD + ".github.run"),
+    ):
         create_tracking_issue(ctx)
     assert len(bodies) == 1
     assert checklist.first_unchecked(bodies[0], ["audit", "prepare"]) == "prepare"
@@ -380,9 +535,11 @@ def test_create_tracking_issue_refuses_without_a_checklist() -> None:
 
 def test_create_tracking_issue_extracts_number_from_url() -> None:
     ctx = _creatable_ctx()
-    with patch(
-        _MOD + ".github.read_output",
-        return_value="https://github.com/owner/repo/issues/999",
+    with (
+        patch(
+            _MOD + ".github.read_output", return_value="https://github.com/owner/repo/issues/999"
+        ),
+        patch(_MOD + ".github.run"),
     ):
         create_tracking_issue(ctx)
     assert ctx.issue_number == 999

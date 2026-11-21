@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import re
+import sys
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import config, github, retry, text_table
+from vergil_tooling.lib import config, github, retry, text_table, trusted_authors
 from vergil_tooling.lib.package import orgs
-from vergil_tooling.lib.release import checklist, package_index, state
+from vergil_tooling.lib.release import checklist, guard, package_index, state
 from vergil_tooling.lib.release.context import ReleaseError
 
 if TYPE_CHECKING:
@@ -161,6 +162,14 @@ def create_tracking_issue(ctx: ReleaseContext) -> None:
     ctx.issue_number = int(match.group(1))
     ctx.issue_url = url
     ctx.state = initial
+    # Locked at birth, so only repository collaborators can comment (spec
+    # §4.2). A lock that fails leaves an unlocked issue, which every later
+    # read of the state locks before it trusts it (guard.ensure_locked).
+    number = ctx.issue_number
+    retry.retry_known_resource(
+        lambda: github.run("issue", "lock", str(number), "--repo", ctx.repo),
+        resource=f"tracking issue #{number}",
+    )
 
 
 def _neutral(text: str) -> str:
@@ -413,16 +422,57 @@ def _state_error(ctx: ReleaseContext, command: str, message: str) -> ReleaseErro
     )
 
 
+def _human_logins() -> tuple[str, ...]:
+    """The ``human`` logins of ``vrg-trusted-authors``; a failed load is an error, never ``()``."""
+    try:
+        return trusted_authors.load_trusted_authors().human
+    except (trusted_authors.TrustedAuthorsNotConfiguredError, ValueError) as exc:
+        raise ReleaseError(
+            phase="state",
+            command="vrg-trusted-authors",
+            message=f"Cannot check the identities on the tracking issue: {exc}",
+        ) from exc
+
+
+def _guard(ctx: ReleaseContext) -> None:
+    """Lock the tracking issue if it is not, then apply the identity rule to it.
+
+    Run after the body is read, so an edit made before the identities are
+    read is in the edit history they are checked against. A breach raises
+    :class:`guard.TrackingIssueBreach` naming the issue, before any write;
+    each foreign trace is printed as a warning once per run (spec §4.2 of
+    epic vergil-project/.github#1440).
+    """
+    number = cast("int", ctx.issue_number)
+    humans = _human_logins()
+    resource = f"tracking issue #{number}"
+    retry.retry_known_resource(lambda: guard.ensure_locked(ctx.repo, number), resource=resource)
+    identities = retry.retry_known_resource(
+        lambda: guard.read_identities(ctx.repo, number), resource=resource
+    )
+    try:
+        warnings = guard.check_tracking_issue(identities, humans)
+    except guard.TrackingIssueBreach as exc:
+        raise guard.TrackingIssueBreach(exc.login, exc.action, number=number) from exc
+    for warning in warnings:
+        if warning not in ctx.tracking_warnings:
+            ctx.tracking_warnings.add(warning)
+            print(f"warning: tracking issue #{number}: {warning}", file=sys.stderr)
+
+
 def read_state(ctx: ReleaseContext) -> StateBlock:
     """The state block in the tracking-issue body, and set it on *ctx*.
 
-    The state is read from the body only, never from comments. A missing or
-    malformed block, or one naming a version other than the issue title's, is
-    a :class:`ReleaseError` naming the block, never a fallback to defaults
-    (spec §4.2 of epic vergil-project/.github#1440).
+    The state is read from the body only, never from comments, and trusted
+    only once the issue is locked and passes the identity rule
+    (:func:`_guard`). A missing or malformed block, or one naming a version
+    other than the issue title's, is a :class:`ReleaseError` naming the
+    block, never a fallback to defaults (spec §4.2 of epic
+    vergil-project/.github#1440).
     """
     command = f"gh issue view {ctx.issue_number} --json title,body"
     title, body = _read_title_and_body(ctx)
+    _guard(ctx)
     try:
         current = state.parse_state(body)
     except state.StateBlockError as exc:
@@ -440,10 +490,14 @@ def read_state(ctx: ReleaseContext) -> StateBlock:
 def write_state(ctx: ReleaseContext, new: StateBlock) -> None:
     """Write *new* into the tracking-issue body by a read-modify-write, and set it on *ctx*.
 
-    Everything else in the body, the checklist and Contents included, is kept.
+    The read is guarded as :func:`read_state`'s is, so a foreign edit since
+    the last read stops the write. Everything else in the body, the
+    checklist and Contents included, is kept.
     """
+    current = read_issue_body(ctx)
+    _guard(ctx)
     try:
-        body = state.upsert_state(read_issue_body(ctx), new)
+        body = state.upsert_state(current, new)
     except state.StateBlockError as exc:
         raise _state_error(ctx, f"gh issue edit {ctx.issue_number}", str(exc)) from exc
     _write_issue_body(ctx, body)
