@@ -18,7 +18,7 @@ from vergil_tooling.lib.pending_release import (
     PendingReleaseError,
     ReleaseTags,
     classify,
-    counted_closing_refs,
+    trusted_closing_refs,
     first_parent_chain,
     gather_pending_release,
     gather_release_contents,
@@ -985,10 +985,10 @@ def test_release_contents_trusted_authors_failure_raises() -> None:
     graphql.assert_not_called()
 
 
-def test_counted_closing_refs_ignores_pr_on_a_connected_side() -> None:
+def test_trusted_closing_refs_ignores_pr_on_a_connected_side() -> None:
     node = _feature_pr(1, 10, body="", connected=(("human", 10),))
     events = cast("dict[str, Any]", node["timelineItems"])["nodes"]
     events[0]["source"] = {}
     events.append({"actor": _actor("mallory"), "subject": {}, "source": None})
     cast("dict[str, Any]", node["timelineItems"])["totalCount"] = 2
-    assert counted_closing_refs(node, {"human"}) == ((10,), [])
+    assert trusted_closing_refs(node, {"human"}) == ((10,), [])

@@ -27,7 +27,7 @@ Epic vergil-project/.github#1049 (spec §5.2-§5.4).
 
 :func:`gather_release_contents` reads the same range for a release, pinned to
 its cut, and also the issues the release contains: the trusted closing
-references (:func:`counted_closing_refs`) of its ``feature/`` PRs, read in the
+references (:func:`trusted_closing_refs`) of its ``feature/`` PRs, read in the
 same GraphQL queries (spec §4.1 of epic vergil-project/.github#1440).
 """
 
@@ -567,7 +567,7 @@ def _linked_issue(side: object, what: str) -> tuple[str, int] | None:
     return repo, _int(node["number"], f"{what} number")
 
 
-def counted_closing_refs(
+def trusted_closing_refs(
     pr: Mapping[str, object], trusted: Collection[str]
 ) -> tuple[tuple[int, ...], list[str]]:
     """The issue numbers PR node *pr* closes by a trusted reference, and a warning for each other.
@@ -585,6 +585,13 @@ def counted_closing_refs(
     Raises :class:`PendingReleaseError` when a connection is truncated, and
     :class:`TypeError` or :class:`KeyError` on a malformed node.
     """
+    return _closing_refs(pr, trusted)
+
+
+def _closing_refs(
+    pr: Mapping[str, object], trusted: Collection[str]
+) -> tuple[tuple[int, ...], list[str]]:
+    """The body of :func:`trusted_closing_refs`, which :func:`_issue_list` calls."""
     number = _int(pr["number"], "PR number")
     repo = _str(_obj(pr["repository"], f"repository of #{number}")["nameWithOwner"], "PR repo")
     refs = _complete_nodes(
@@ -659,7 +666,7 @@ def _issue_list(
     closed_by: dict[int, set[int]] = {}
     warnings: list[str] = []
     for number in sorted(features):
-        issues, found = counted_closing_refs(features[number].node, trusted)
+        issues, found = _closing_refs(features[number].node, trusted)
         warnings.extend(found)
         for issue in issues:
             closed_by.setdefault(issue, set()).add(number)
@@ -750,7 +757,7 @@ def gather_release_contents(
 
     The pending release is :func:`gather_pending_release`'s, pinned to the
     ``develop`` commit *cut*. The issue list is the union of the trusted
-    closing references (:func:`counted_closing_refs`) of every PR in the range
+    closing references (:func:`trusted_closing_refs`) of every PR in the range
     whose head branch starts ``feature/``, in the released repo only, sorted
     by number, each issue with every PR that closes it. Every reference that
     does not count is printed as a ``WARNING:`` on stderr (spec §4.1 of epic
