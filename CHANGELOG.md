@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.332] - 2026-11-21
+
+### Bug fixes
+
+- resolve vX.Y through its rolling tag (#4863)
+
+### Documentation
+
+- say the develop-vX.Y.Z tags are retired and deleted (#4838)
+- bring the docs in line with hoshin and proxy epics (#4839)
+
+### Features
+
+- run vrg-tooling-install in the Mac consumer refresh (#4836)
+- name the primary's ref in a proxy epic's title (#4842)
+- create one registered label by name from the registry (#4865)
+- apply a derived category label when an epic is created (#4864)
+
 ## [2.1.331] - 2026-11-20
 
 ### Bug fixes
