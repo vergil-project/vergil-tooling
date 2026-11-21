@@ -574,6 +574,8 @@ def _verify_artifacts(ctx: ReleaseContext) -> None:
             message=f"Tag {tag} does not exist after publish.",
         )
     ctx.tag = tag
+    # Recorded in the state block, so a resume can check the tag has not moved.
+    ctx.tag_commit = git.read_output("rev-parse", f"{tag}^{{commit}}")
 
     # The release job that publishes this release just concluded success
     # (_verify_release_job) and its tag is on origin, so it exists.

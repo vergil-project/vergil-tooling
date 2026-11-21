@@ -46,19 +46,6 @@ def test_parse_raises_when_no_block() -> None:
         checklist.parse("## Release 2.1.0\n")
 
 
-@pytest.mark.parametrize(
-    ("body", "expected"),
-    [
-        ("## Release 2.1.0\n", False),
-        (checklist.render(["audit"]), True),
-        (checklist.BEGIN + "\n- [ ] audit\n", True),
-        ("- [ ] audit\n" + checklist.END, True),
-    ],
-)
-def test_has_block_sees_either_marker(body: str, *, expected: bool) -> None:
-    assert checklist.has_block(body) is expected
-
-
 def test_upsert_appends_when_absent() -> None:
     body = checklist.upsert("## Release 2.1.0\n", ["audit"])
     assert "## Release 2.1.0" in body
@@ -71,23 +58,6 @@ def test_upsert_replaces_existing_block_preserving_surroundings() -> None:
     assert updated.startswith("head")
     assert updated.rstrip().endswith("tail")
     assert checklist.parse(updated) == [("audit", True)]
-
-
-def test_first_unchecked_returns_cursor() -> None:
-    body = checklist.render(["audit", "prepare", "merge"], checked={"audit"})
-    assert checklist.first_unchecked(body, ["audit", "prepare", "merge"]) == "prepare"
-
-
-def test_first_unchecked_all_done_returns_none() -> None:
-    stages = ["audit", "prepare"]
-    body = checklist.render(stages, checked=set(stages))
-    assert checklist.first_unchecked(body, stages) is None
-
-
-def test_first_unchecked_skew_guard_refuses_mismatch() -> None:
-    body = checklist.render(["audit", "OLD_STAGE"], checked={"audit"})
-    with pytest.raises(checklist.ChecklistError, match="different .* version"):
-        checklist.first_unchecked(body, ["audit", "prepare"])
 
 
 def test_tick_checks_one_box_and_keeps_others() -> None:

@@ -723,11 +723,14 @@ def test_verify_artifacts_retries_404_on_just_published_release() -> None:
         ) as read,
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".git.read_output", return_value=_SHA) as git_read,
         patch(_RETRY_SLEEP),
     ):
         _verify_artifacts(ctx)
     assert ctx.release_url == url
     assert read.call_count == 2
+    git_read.assert_called_once_with("rev-parse", "v2.1.0^{commit}")
+    assert ctx.tag_commit == _SHA
 
 
 # --- #3329: confirm-develop verifies the back-merge commit, not develop's tip ---
