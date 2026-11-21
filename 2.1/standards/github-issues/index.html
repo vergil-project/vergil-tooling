@@ -1464,6 +1464,8 @@
       
         
       
+        
+      
     
     
     
@@ -1516,6 +1518,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.333/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.333
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15904,6 +15934,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#epic-categories" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic categories
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#ad-hoc-epic-archiving" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18756,6 +18797,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#epic-categories" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic categories
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#ad-hoc-epic-archiving" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19307,6 +19359,9 @@ gate rollup:</p>
 </tr>
 </tbody>
 </table>
+<p>An intake, planning, deferred or hoshin epic also gets the display-only
+<code>epic-management</code> <a href="#epic-categories">category label</a> when it is created; the
+tools find and test standing epics by the labels in the table alone.</p>
 <p>Intake, planning and deferred are the three <strong>queue epics</strong>. Their <strong>queue
 home</strong> follows the <a href="#epic-home-the-orggithub-rule">epic-home rule</a>: every
 public repo shares the org's set in <code>&lt;org&gt;/.github</code> (<code>&lt;name&gt;</code> is the org),
@@ -19363,6 +19418,64 @@ filing-time guard enforces this; <code>vrg-epic-audit</code> reports an open ad-
 that looks misplaced (a <code>Logbook:</code> title, or a body naming an epic in another
 org) for a human to rule on. A task ruled standalone gets a trusted comment
 with the line <code>Standalone-confirmed</code>, and the audit stops reporting it.</p>
+<h3 id="epic-categories">Epic categories<a class="headerlink" href="#epic-categories" title="Permanent link">&para;</a></h3>
+<p>Every epic falls in one of four <strong>categories</strong>, and carries that category's
+label, so one label filter in the GitHub UI shows each category:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Epics</th>
+<th>Category label</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Management</td>
+<td>the intake, planning, deferred and hoshin epics</td>
+<td><code>epic-management</code></td>
+</tr>
+<tr>
+<td>Ad hoc</td>
+<td>each repo's ad-hoc epic</td>
+<td><code>ad-hoc</code></td>
+</tr>
+<tr>
+<td>Proxy</td>
+<td>each <a href="#proxy-epics">proxy epic</a></td>
+<td><code>proxy</code></td>
+</tr>
+<tr>
+<td>Development</td>
+<td>every other epic: planned with <code>epic-create</code>, closed by rollup</td>
+<td><code>epic-development</code></td>
+</tr>
+</tbody>
+</table>
+<p>The category is derived from the labels and title the epic already has,
+exactly as the tools tell the kinds apart; an archive is not an epic and has
+no category. <code>ad-hoc</code> and <code>proxy</code> are both the marker the tools read and the
+category label. <code>epic-development</code> and <code>epic-management</code> are <strong>for display
+only</strong>: no tool reads them to decide behaviour or to find an epic, so a
+missing or stray one changes nothing.</p>
+<p>The tools apply the category label when they create an epic.
+<a href="../../reference/cli-tools-overview/#vrg-epic-create"><code>vrg-epic-create</code></a>
+derives it from the epic's other labels, adding <code>epic-development</code> to a plain
+epic and <code>epic-management</code> to an intake, planning, deferred or hoshin one. It
+refuses, creating nothing, a caller-given <code>--label epic-development</code> or
+<code>--label epic-management</code> and labels that mark two categories at once (for
+example <code>ad-hoc</code> and <code>proxy</code>). Every tool that creates a standing epic on
+demand (for example through the <code>--epic</code> sentinels of <code>vrg-issue-create</code>)
+adds <code>epic-management</code> when the new epic is an intake, planning, deferred or
+hoshin one, and nothing more to a new ad-hoc epic. An
+existing standing epic is still found by its kind's own labels, so one without
+<code>epic-management</code> is reused, never duplicated. A proxy keeps <code>epic</code> + <code>proxy</code>.</p>
+<p>Epics created before the category labels existed are labelled once, by a
+one-off deployment that also creates the two labels in every epic home with
+<code>vrg-ensure-label --repo &lt;home&gt; --label &lt;name&gt;</code>, the form that creates one
+registered label from the registry. Nothing checks the labels after that: an epic created
+outside the tools, or whose label is removed by hand, stays unlabelled until
+someone fixes it, which changes no behaviour.</p>
 <h3 id="ad-hoc-epic-archiving">Ad-hoc epic archiving<a class="headerlink" href="#ad-hoc-epic-archiving" title="Permanent link">&para;</a></h3>
 <p>A live ad-hoc epic accumulates closed children forever, so its "what's in
 flight" signal drowns in finished work. To keep the umbrella honest, closed
@@ -20236,6 +20349,14 @@ up to date (see
 <tr>
 <td><code>proxy</code></td>
 <td>Marks a <a href="#proxy-epics">proxy epic</a> (with <code>epic</code>): a same-org umbrella for another org's epic tasks; open until its primary closes</td>
+</tr>
+<tr>
+<td><code>epic-development</code></td>
+<td>Development epic: planned with epic-create, closes when its tasks close (a display-only <a href="#epic-categories">category label</a>)</td>
+</tr>
+<tr>
+<td><code>epic-management</code></td>
+<td>Management epic: the intake, planning, deferred or hoshin epic; never auto-closes (a display-only <a href="#epic-categories">category label</a>)</td>
 </tr>
 <tr>
 <td><code>in-progress</code></td>
