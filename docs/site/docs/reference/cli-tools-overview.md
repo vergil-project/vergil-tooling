@@ -1811,13 +1811,20 @@ registry is `src/vergil_tooling/data/labels.json`; the labels it
 defines are listed in
 [GitHub Issue Standards](../standards/github-issues.md#labels).
 
+In single-label mode, `vrg-ensure-label --repo <owner>/<repo> --label
+<name>` with neither `--color` nor `--description` creates or updates
+that one label from its registry definition, and touches no other
+label. A name not in the registry fails, naming it, and creates
+nothing. Passing `--color` or `--description` creates the label from
+the flags given instead, without reading the registry.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_ensure_label` |
 | Args | `--repo`, `--label`, `--color`, `--description`, `--sync`, `--owner`, `--project` |
 | Preconditions | `gh` CLI on PATH |
-| Failure mode | argparse validation for incompatible flag combinations; subprocess error from `gh` |
-| Exit codes | 0 success |
+| Failure mode | argparse validation for incompatible flag combinations; an unregistered `--label` with neither `--color` nor `--description` is refused on stderr; subprocess error from `gh` |
+| Exit codes | 0 success, 1 unregistered label or no App installation for the owner, 2 invalid flag combination |
 | Status | Active |
 
 ### vrg-github-repo-config

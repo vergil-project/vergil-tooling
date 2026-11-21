@@ -8,6 +8,7 @@ import pytest
 
 from vergil_tooling.bin.vrg_ensure_label import main, parse_args
 from vergil_tooling.lib import github
+from vergil_tooling.lib.labels import load_labels
 
 _MOD = "vergil_tooling.bin.vrg_ensure_label"
 
@@ -74,6 +75,8 @@ def test_parse_args_no_args_fails() -> None:
 
 
 def test_main_single_label() -> None:
+    # With neither --color nor --description, the label comes from the registry.
+    spec = next(e for e in load_labels()["labels"] if e["name"] == "bug")
     with patch("vergil_tooling.bin.vrg_ensure_label.github.run") as mock_run:
         result = main(["--repo", "o/r", "--label", "bug"])
     assert result == 0
@@ -84,6 +87,72 @@ def test_main_single_label() -> None:
         "--repo",
         "o/r",
         "--force",
+        "--color",
+        spec["color"],
+        "--description",
+        spec["description"],
+    )
+
+
+def test_main_registry_label_from_registry(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.ensure_labels") as mock_ensure,
+        patch(f"{_MOD}.github.run") as mock_run,
+    ):
+        result = main(["--repo", "o/r", "--label", "epic-development"])
+    assert result == 0
+    mock_ensure.assert_called_once_with("o/r", ["epic-development"])
+    mock_run.assert_not_called()
+    assert capsys.readouterr().out == "  epic-development\n"
+
+
+def test_main_registry_label_unknown_fails(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.github.run") as mock_run:
+        result = main(["--repo", "o/r", "--label", "no-such-label"])
+    assert result == 1
+    mock_run.assert_not_called()
+    captured = capsys.readouterr()
+    assert captured.err.startswith("vrg-ensure-label: unknown label 'no-such-label'")
+    assert captured.out == ""
+
+
+def test_main_single_label_color_only_keeps_explicit_form() -> None:
+    with (
+        patch("vergil_tooling.lib.labels.load_labels") as mock_registry,
+        patch(f"{_MOD}.github.run") as mock_run,
+    ):
+        result = main(["--repo", "o/r", "--label", "custom", "--color", "123456"])
+    assert result == 0
+    mock_registry.assert_not_called()
+    mock_run.assert_called_once_with(
+        "label",
+        "create",
+        "custom",
+        "--repo",
+        "o/r",
+        "--force",
+        "--color",
+        "123456",
+    )
+
+
+def test_main_single_label_description_only_keeps_explicit_form() -> None:
+    with (
+        patch("vergil_tooling.lib.labels.load_labels") as mock_registry,
+        patch(f"{_MOD}.github.run") as mock_run,
+    ):
+        result = main(["--repo", "o/r", "--label", "custom", "--description", "Custom"])
+    assert result == 0
+    mock_registry.assert_not_called()
+    mock_run.assert_called_once_with(
+        "label",
+        "create",
+        "custom",
+        "--repo",
+        "o/r",
+        "--force",
+        "--description",
+        "Custom",
     )
 
 
