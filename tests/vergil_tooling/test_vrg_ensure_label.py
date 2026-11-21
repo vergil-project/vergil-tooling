@@ -69,6 +69,26 @@ def test_parse_args_no_args_fails() -> None:
         parse_args([])
 
 
+def _help_text(capsys: pytest.CaptureFixture[str]) -> str:
+    """Return the ``--help`` output with its line wrapping collapsed."""
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["--help"])
+    assert exc.value.code == 0
+    return " ".join(capsys.readouterr().out.split())
+
+
+def test_help_describes_registry_backed_label(capsys: pytest.CaptureFixture[str]) -> None:
+    assert (
+        "Alone, the label is created or updated with its colour and description "
+        "from the canonical label registry, and a name not in the registry is refused"
+    ) in _help_text(capsys)
+
+
+def test_help_describes_explicit_form(capsys: pytest.CaptureFixture[str]) -> None:
+    text = _help_text(capsys)
+    assert "Giving --color or --description uses the given values instead of the registry's" in text
+
+
 # ---------------------------------------------------------------------------
 # Single-label mode
 # ---------------------------------------------------------------------------
