@@ -19,6 +19,8 @@
     {"name": "deferred", "color": "c5def5", "description": "Perpetual deferred queue of items parked until revival conditions are met; never auto-closes"},
     {"name": "hoshin", "color": "b39ddb", "description": "Perpetual epic of the hoshin review's logbook tasks; never auto-closes"},
     {"name": "proxy", "color": "bfd4f2", "description": "Same-org umbrella for another org's epic tasks; open until its primary closes"},
+    {"name": "epic-development", "color": "2ea44f", "description": "Development epic: planned with epic-create, closes when its tasks close"},
+    {"name": "epic-management", "color": "e99695", "description": "Management epic: the intake, planning, deferred or hoshin epic; never auto-closes"},
     {"name": "in-progress", "color": "0e8a16", "description": "Planning-queue item whose epic-create session is underway"},
     {"name": "archive","color": "6a737d", "description": "Terminal per-quarter archive of closed standing-epic work; historical record"},
     {"name": "hotfix", "color": "b60205", "description": "Emergency fix that skipped formal planning; flagged for retroactive review"},

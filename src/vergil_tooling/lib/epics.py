@@ -20,7 +20,8 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Literal
 
 from vergil_tooling.lib import github, release, remote_config, retry
 from vergil_tooling.lib.config import CONFIG_FILE
@@ -28,7 +29,7 @@ from vergil_tooling.lib.labels import ensure_labels
 from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Sequence
+    from collections.abc import Callable, Collection, Mapping, Sequence
 
 log = logging.getLogger(__name__)
 
@@ -956,8 +957,9 @@ def ensure_standing_epic(
     """Return the *kind* standing epic ``<title_prefix><name>`` in *home*, creating it if absent.
 
     Idempotent: an open issue in *home* carrying ``kind.labels`` with exactly
-    that title is reused; none means ensure the labels exist and create it; two
-    sharing the title is ambiguous and raises rather than guessing.
+    that title is reused; none means ensure the labels exist and create it,
+    adding its derived category label (:func:`category_labels`); two sharing
+    the title is ambiguous and raises rather than guessing.
 
     After a create it does not return until the title lookup lists exactly the
     new epic (see :func:`_await_listed`), so a back-to-back caller finds it
@@ -974,12 +976,16 @@ def ensure_standing_epic(
     found = _find_epic_by_title(home, title, labels=kind.labels)
     if found is not None:
         return found
-    ensure_labels(home, kind.labels)
+    # The derived category label (epic-management for every kind but ad-hoc) is
+    # added at creation only. The lookups keep filtering on kind.labels, so an
+    # existing standing epic without it is still found and reused (#1450).
+    labels = category_labels(kind.labels, title)
+    ensure_labels(home, labels)
     url = github.create_issue(
         repo=home,
         title=title,
         body=kind.body.format(owner=home_owner, name=name),
-        labels=list(kind.labels),
+        labels=labels,
     )
     number = int(url.rstrip("/").rsplit("/", 1)[-1])
     created = IssueRef(owner=home_owner, repo=home_repo, number=number)
@@ -1091,6 +1097,72 @@ PROXY_LABEL = "proxy"
 def is_proxy(labels: Collection[str]) -> bool:
     """True iff *labels* mark a proxy epic (``epic`` + ``proxy``)."""
     return "epic" in labels and PROXY_LABEL in labels
+
+
+# An epic's category (vergil-project/.github#1450): management (a queue or the
+# hoshin epic), ad-hoc, proxy, or development (every other epic). Each has one
+# category label, for display in the GitHub UI only: no code reads
+# epic-development or epic-management to decide behaviour or to find an epic.
+EpicCategory = Literal["management", "ad-hoc", "proxy", "development"]
+CATEGORY_LABELS: Mapping[EpicCategory, str] = MappingProxyType(
+    {
+        "management": "epic-management",
+        "ad-hoc": ADHOC.key,
+        "proxy": PROXY_LABEL,
+        "development": "epic-development",
+    }
+)
+# The category labels only the tools apply, never a caller (ad-hoc and proxy
+# are also the markers the category is derived from).
+DERIVED_CATEGORY_LABELS = frozenset({"epic-development", "epic-management"})
+_MANAGEMENT_KEYS = frozenset(kind.key for kind in STANDING_KINDS if kind is not ADHOC)
+
+
+class AmbiguousEpicCategoryError(ValueError):
+    """An epic carries the markers of more than one category; none is guessed."""
+
+
+def epic_category(labels: Collection[str], title: str) -> EpicCategory | None:
+    """The category of an issue with *labels* and *title*, or None if it is not an epic.
+
+    Derived from the markers the tools already read (``epic``, :func:`is_archive`,
+    the standing kinds' keys and ``proxy``), never from the category labels
+    themselves. An archive, by label or stamped title, is not an epic. Several
+    management kinds together are one category; markers of two categories
+    raise :class:`AmbiguousEpicCategoryError`, naming them.
+    """
+    if "epic" not in labels or is_archive(labels, title):
+        return None
+    markers: dict[EpicCategory, list[str]] = {}
+    for label in sorted(labels):
+        if label in _MANAGEMENT_KEYS:
+            markers.setdefault("management", []).append(label)
+        elif label == ADHOC.key:
+            markers.setdefault("ad-hoc", []).append(label)
+        elif label == PROXY_LABEL:
+            markers.setdefault("proxy", []).append(label)
+    if len(markers) > 1:
+        found = ", ".join(label for names in markers.values() for label in names)
+        raise AmbiguousEpicCategoryError(
+            f"labels mark more than one epic category ({found}); an epic has exactly one"
+        )
+    return next(iter(markers), "development")
+
+
+def category_labels(labels: Sequence[str], title: str) -> list[str]:
+    """*labels* plus the derived category label an epic created with them needs.
+
+    The category label is appended only when it is one of
+    :data:`DERIVED_CATEGORY_LABELS` and not already present; ad-hoc and proxy
+    already carry theirs. Raises :class:`AmbiguousEpicCategoryError` on an
+    ambiguous set.
+    """
+    result = list(dict.fromkeys(labels))
+    category = epic_category(result, title)
+    label = CATEGORY_LABELS[category] if category is not None else None
+    if label in DERIVED_CATEGORY_LABELS and label not in result:
+        result.append(label)
+    return result
 
 
 def _queue_key(labels: set[str]) -> str | None:
