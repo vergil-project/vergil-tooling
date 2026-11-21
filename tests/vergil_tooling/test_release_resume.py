@@ -139,9 +139,8 @@ def test_find_resume_target_refuses_a_half_written_block() -> None:
     m_ref.assert_not_called()
 
 
-def test_open_release_issues_skips_non_dicts_and_non_release_titles() -> None:
+def test_open_release_issues_skips_non_release_titles() -> None:
     results = [
-        "not a dict",
         {"number": 1, "title": "not a release", "body": ""},
         _issue("2.1.0", 42),
     ]
@@ -149,6 +148,19 @@ def test_open_release_issues_skips_non_dicts_and_non_release_titles() -> None:
         assert [(v, n) for v, n, _ in _open_release_issues("o/r")] == [("2.1.0", 42)]
 
 
-def test_open_release_issues_non_list_returns_empty() -> None:
-    with patch(_MOD + ".github.read_json", return_value={"error": "x"}):
-        assert _open_release_issues("o/r") == []
+def test_open_release_issues_non_dict_item_raises() -> None:
+    with (
+        patch(_MOD + ".github.read_json", return_value=["not a dict", _issue("2.1.0", 42)]),
+        pytest.raises(ReleaseError, match="non-object item") as info,
+    ):
+        _open_release_issues("o/r")
+    assert info.value.phase == "resume"
+
+
+def test_open_release_issues_non_list_raises() -> None:
+    with (
+        patch(_MOD + ".github.read_json", return_value={"error": "x"}),
+        pytest.raises(ReleaseError, match="not a list") as info,
+    ):
+        _open_release_issues("o/r", phase="preflight")
+    assert info.value.phase == "preflight"

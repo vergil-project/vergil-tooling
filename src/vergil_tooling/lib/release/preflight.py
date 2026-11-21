@@ -28,8 +28,9 @@ from vergil_tooling.lib.pending_release import (
     gather_pending_release,
 )
 from vergil_tooling.lib.process_errors import command_text, error_text
+from vergil_tooling.lib.release import state
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
-from vergil_tooling.lib.release.tracking import find_existing_tracking_issue
+from vergil_tooling.lib.release.resume import _SEARCH_COMMAND, _open_release_issues
 from vergil_tooling.lib.self_repo import is_self_repo
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
 from vergil_tooling.lib.update_deps.pr import FIX_TASK_PREFIX
@@ -144,7 +145,7 @@ def preflight(
     if not resume:
         _check_main_not_ahead_of_develop()
         _check_version_not_tagged(release_version)
-        _check_no_existing_tracking_issue(repo, release_version)
+        _check_no_open_release(repo)
         _check_packages_unpublished(repo, repo_root, release_version)
         deps_gate = _check_pending_deps(repo, allow=allow_pending_deps)
         _develop_cd_gate(repo)
@@ -504,7 +505,7 @@ def _adopt_unrecorded_branch(repo_root: Path, branch: str) -> Path:
     the tracking issue, so a run stopped in between (an interrupt, a crash)
     leaves a local branch that nothing records and that a fresh run would
     otherwise refuse as an existing release. A fresh run reaches this only
-    after it has confirmed that no open tracking issue exists for the version.
+    after it has confirmed that no release tracking issue is open.
 
     The branch is adopted only when nothing on it can be lost: it is local, it
     was never pushed (``ls-remote`` asks origin itself, not the possibly stale
@@ -871,17 +872,49 @@ def _check_packages_unpublished(repo: str, repo_root: Path, ver: str) -> None:
         print(f"Package check passed: {len(identities)} package(s) not yet published by {repo}")
 
 
-def _check_no_existing_tracking_issue(repo: str, ver: str) -> None:
-    existing = find_existing_tracking_issue(repo, ver)
-    if existing is not None:
-        raise ReleaseError(
-            phase="preflight",
-            command=f"gh issue list --search 'release: {ver}'",
-            message=(
-                f"A tracking issue already exists for version {ver}: {existing}\n"
-                f"Close the stale issue or investigate before re-running."
-            ),
+def _open_release_recovery(repo: str, ver: str, number: int, body: str) -> str:
+    """The line naming open release *ver* (issue *number*) and how to finish it."""
+    url = f"https://github.com/{repo}/issues/{number}"
+    try:
+        state.parse_state(body)
+    except state.StateBlockError as exc:
+        if state.BEGIN not in body and state.END not in body:
+            return (
+                f"release {ver} ({url}) has no release state block: older vrg-release "
+                "tooling opened it, and `vrg-release --resume` cannot finish it. Finish "
+                "that release by hand, then close the issue."
+            )
+        return (
+            f"release {ver} ({url}) has a state block that cannot be read ({exc}). "
+            f"Fix the block, then finish it with `vrg-release --resume {ver}`."
         )
+    return f"release {ver} ({url}) is open. Finish it with `vrg-release --resume {ver}`."
+
+
+def _check_no_open_release(repo: str) -> None:
+    """Refuse a fresh start while any ``release: X.Y.Z`` tracking issue is open.
+
+    One release runs at a time (spec §4.7 of epic vergil-project/.github#1440),
+    whatever its version. Each open release is named with its recovery: the
+    ``vrg-release --resume`` that finishes it, or, for an issue with no state
+    block (left by older tooling), finishing it by hand and closing the issue.
+    """
+    issues = _open_release_issues(repo, phase="preflight")
+    if not issues:
+        print("Open-release check passed: no release is in flight")
+        return
+    lines = [
+        f"- {_open_release_recovery(repo, ver, number, body)}"
+        for ver, number, body in sorted(issues)
+    ]
+    raise ReleaseError(
+        phase="preflight",
+        command=_SEARCH_COMMAND,
+        message=(
+            "One release runs at a time, and a fresh vrg-release refuses while "
+            "another is open:\n" + "\n".join(lines)
+        ),
+    )
 
 
 # -- the develop-CD gate (epic vergil-project/.github#1218, spec §6.6) ---------

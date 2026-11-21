@@ -413,7 +413,8 @@ changelog, release PR and merge, CD confirmation, back-merge and version
 bump, rolling-tag promotion, cleanup, the `update-deps` stage, which
 runs the dependency update on the new `develop` version, and finally
 the consumer refresh, which runs the `[publish].consumer-refresh`
-commands (held while any publish is deferred). On a fresh start, preflight refuses while an open PR
+commands (held while any publish is deferred). On a fresh start, preflight refuses while any
+`release: X.Y.Z` tracking issue is open, naming its recovery, and while an open PR
 carries the `dependency-update` label, after first closing any whose fix
 task completed. The tracking issue's body carries the release's
 contents and its state block. Human-only. See the [vrg-release reference](dev/release.md)

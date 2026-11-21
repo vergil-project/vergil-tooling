@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, github, retry, text_table
 from vergil_tooling.lib.package import orgs
@@ -26,9 +26,6 @@ _MAX_COMMENT_CHARS = 65_536
 # Stay comfortably under the hard limit so the truncation marker and any
 # character-vs-byte counting differences cannot push us back over.
 _COMMENT_BUDGET = 65_000
-# Upper bound on the open issues the tracking-issue search lists. Reaching it is
-# a refusal: the exact-title match could lie beyond it (#4038).
-_SEARCH_LIST_LIMIT = 100
 # The Contents section's pending-release table, and the short-SHA width of a
 # commit with no PR in it.
 _CONTENTS_COLUMNS = ("PR", "BRANCH", "TYPE", "TITLE")
@@ -60,48 +57,6 @@ def _truncate_for_comment(body: str, *, budget: int = _COMMENT_BUDGET) -> str:
     dropped = len(body) - head_chars - tail_chars
     marker = marker_template.format(dropped=dropped)
     return body[:head_chars] + marker + body[-tail_chars:]
-
-
-def find_existing_tracking_issue(repo: str, version: str) -> str | None:
-    """Return the URL of an open 'release: <version>' issue, or None.
-
-    GitHub search tokenizes on punctuation, so the query is a broad net;
-    we filter client-side for an exact title match. A net that fills the
-    listing limit raises :class:`ReleaseError`, since the match may lie past it.
-    """
-    query = f"release: {version} in:title"
-    results = github.read_json(
-        "issue",
-        "list",
-        "--repo",
-        repo,
-        "--search",
-        query,
-        "--state",
-        "open",
-        "--limit",
-        str(_SEARCH_LIST_LIMIT),
-        "--json",
-        "url,title",
-    )
-    if isinstance(results, list) and len(results) >= _SEARCH_LIST_LIMIT:
-        raise ReleaseError(
-            phase="preflight",
-            command=f"gh issue list --repo {repo} --search '{query}'",
-            message=(
-                f"The search matched {_SEARCH_LIST_LIMIT}+ open issues, so the list may be "
-                f"truncated; cannot tell whether a 'release: {version}' issue exists."
-            ),
-        )
-    expected_title = f"release: {version}"
-    if isinstance(results, list):
-        for item in results:
-            if not isinstance(item, dict):
-                continue
-            issue = cast("dict[str, object]", item)
-            if str(issue.get("title", "")) == expected_title:
-                return str(issue["url"])
-    return None
 
 
 def create_tracking_issue(ctx: ReleaseContext) -> None:

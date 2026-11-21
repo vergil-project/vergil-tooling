@@ -189,7 +189,7 @@ issue and ticks its box in the issue's stage checklist.
 | Stage | Mode | What it does |
 |---|---|---|
 | `audit` | fail-fast | Runs `vrg-github-repo-config audit` on the repo. Releasing vergil-tooling itself adds `--in-tree-templates`, so its managed files are checked against the templates being released, not the installed release's (see the [config audit reference](../reference/config-audit.md#auditing-vergil-tooling-against-its-own-templates)). `--skip-audit` skips it |
-| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop`, then [brings it up to `origin/develop`](#the-develop-sync). On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it. On a fresh start it then reads the release's [contents](#release-tracking-artifacts), pinned to the commit the branch is cut from |
+| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop`, then [brings it up to `origin/develop`](#the-develop-sync). On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, checks that [no other release is open](#one-release-at-a-time), runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it. On a fresh start it then reads the release's [contents](#release-tracking-artifacts), pinned to the commit the branch is cut from |
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, with its Contents section, stage checklist and state block, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
@@ -274,8 +274,9 @@ What a re-run does depends on how far the stopped run got:
   never deletes a branch or a worktree.
 - **Stopped after the tracking issue was opened.** The issue is created
   with its stage checklist in its body, so it is always resumable:
-  run `vrg-release --resume`. A fresh `vrg-release` refuses, since a
-  tracking issue already exists for the version. The resume adopts the
+  run `vrg-release --resume`. A fresh `vrg-release` refuses while any
+  release is open ([one release at a time](#one-release-at-a-time)),
+  whatever version it would cut. The resume adopts the
   local release branch and worktree, unpushed or not, and the `prepare`
   stage skips what the stopped run already did.
 
@@ -779,6 +780,26 @@ any other fresh-start check, when `origin/main` has commits not on
 
 If preflight cannot fetch `main` or compare the branches, it refuses
 rather than skipping.
+
+### One release at a time
+
+A repo has at most one release in flight. A fresh start (not
+`--resume`) refuses while **any** `release: X.Y.Z` tracking issue is
+open in the repo, whatever its version, and names each open issue with
+its recovery:
+
+- An issue with a state block is finished with
+  `vrg-release --resume X.Y.Z`.
+- An issue whose state block cannot be read is finished the same way,
+  once the block is fixed; the refusal gives the parse error.
+- An issue with no state block was opened by older `vrg-release`
+  tooling, which `--resume` cannot finish. Finish that release by hand,
+  then close the issue.
+
+`--resume X.Y.Z` still takes a version, for a repo that older tooling
+left with several releases open. If preflight cannot list the open
+issues, or the listing may be truncated, it refuses rather than
+reading that as no release in flight.
 
 ### The develop sync
 

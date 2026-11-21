@@ -22,13 +22,17 @@ _TITLE_RE = re.compile(r"^release: (\d+\.\d+\.\d+)$")
 # Upper bound on the open issues the release search lists. Reaching it is a
 # refusal: an in-flight release issue could lie beyond it (#4038).
 _SEARCH_LIST_LIMIT = 100
+_SEARCH_COMMAND = "gh issue list --search 'release: in:title' --state open"
 
 
-def _open_release_issues(repo: str) -> list[tuple[str, int, str]]:
+def _open_release_issues(repo: str, *, phase: str = "resume") -> list[tuple[str, int, str]]:
     """Return ``(version, number, body)`` for each open ``release: X.Y.Z`` issue.
 
-    Raises :class:`ReleaseError` when the search fills the listing limit, since
-    the list may then be truncated.
+    Shared by ``--resume``'s lookup and a fresh start's one-release-at-a-time
+    check (spec §4.7 of epic vergil-project/.github#1440); *phase* names the
+    caller in a refusal. Raises :class:`ReleaseError` when the search fills the
+    listing limit, since the list may then be truncated, and when the response
+    is not a list of issue objects, which is never read as "no open release".
     """
     results = github.read_json(
         "issue",
@@ -44,24 +48,33 @@ def _open_release_issues(repo: str) -> list[tuple[str, int, str]]:
         "--json",
         "number,title,body",
     )
-    if isinstance(results, list) and len(results) >= _SEARCH_LIST_LIMIT:
+    if not isinstance(results, list):
         raise ReleaseError(
-            phase="resume",
-            command="gh issue list",
+            phase=phase,
+            command=_SEARCH_COMMAND,
+            message=f"The release-issue search returned {type(results).__name__}, not a list.",
+        )
+    if len(results) >= _SEARCH_LIST_LIMIT:
+        raise ReleaseError(
+            phase=phase,
+            command=_SEARCH_COMMAND,
             message=(
                 f"The release-issue search matched {_SEARCH_LIST_LIMIT}+ open issues; "
-                "refusing to pick a release to resume from a possibly truncated list."
+                "refusing to judge the open releases from a possibly truncated list."
             ),
         )
     issues: list[tuple[str, int, str]] = []
-    if isinstance(results, list):
-        for raw in results:
-            if not isinstance(raw, dict):
-                continue
-            item = cast("dict[str, object]", raw)
-            match = _TITLE_RE.match(str(item.get("title", "")))
-            if match:
-                issues.append((match.group(1), int(str(item["number"])), str(item.get("body", ""))))
+    for raw in results:
+        if not isinstance(raw, dict):
+            raise ReleaseError(
+                phase=phase,
+                command=_SEARCH_COMMAND,
+                message=f"The release-issue search returned a non-object item: {raw!r}.",
+            )
+        item = cast("dict[str, object]", raw)
+        match = _TITLE_RE.match(str(item.get("title", "")))
+        if match:
+            issues.append((match.group(1), int(str(item["number"])), str(item.get("body", ""))))
     return issues
 
 
