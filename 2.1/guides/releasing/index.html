@@ -1458,6 +1458,8 @@
       
         
       
+        
+      
     
     
     
@@ -1510,6 +1512,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.332/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.332
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18851,7 +18881,7 @@ old <code>standard-tooling</code>/<code>st-*</code> naming):</p>
 <tbody>
 <tr>
 <td><strong>Developer host</strong> (macOS)</td>
-<td><code>uv tool install</code> from the git URL of the exact release tag, constrained by that tag's <code>uv.lock</code>; the release's consumer refresh runs it</td>
+<td><code>vrg-tooling-install vX.Y.Z</code> (or <code>vX.Y</code>, the release its rolling tag names): <code>uv tool install</code> from git of the exact release tag's commit, constrained by that commit's <code>uv.lock</code>; the release's consumer refresh runs it</td>
 <td>Host-side commands: <code>vrg-container-run</code>, <code>vrg-commit</code>, <code>vrg-submit-pr</code>, <code>vrg-release</code>, <code>vrg-finalize-pr</code>, <code>vrg-host</code></td>
 </tr>
 <tr>
@@ -18866,27 +18896,28 @@ old <code>standard-tooling</code>/<code>st-*</code> naming):</p>
 </tr>
 </tbody>
 </table>
-<p>The canonical host install (see <a href="../../getting-started/">Getting Started</a>),
-with <code>VERSION</code> set to the release, for example <code>2.1.10</code>:</p>
+<p>The host install is
+<a href="../../reference/cli-tools-overview/#vrg-tooling-install"><code>vrg-tooling-install</code></a>.
+<code>vergil.toml</code>'s <code>[publish].consumer-refresh</code> runs the installed one on the
+Mac with the just-released version (<code>vrg-tooling-install v&lt;VERSION&gt;</code>,
+followed by <code>vrg-vm update --all</code>), so the release installs itself on the
+host. It fetches the exact tag (which cannot move, under tag protection, so
+it needs no <code>git ls-remote</code>), installs the commit that tag names with that
+commit's <code>uv.lock</code> as constraints, and runs on uv's managed 3.15. Given a
+line, <code>vrg-tooling-install vX.Y</code> first reads the rolling tag <code>vX.Y</code> with one
+<code>git ls-remote</code>, takes the one <code>vX.Y.Z</code> tag on the commit it names, and then
+installs and reports that exact release.</p>
+<p>A fresh host has no <code>vrg-tooling-install</code> yet, and an installed one that
+fails cannot fix itself. Both install by hand (see
+<a href="../../getting-started/">Getting Started</a>), with <code>VERSION</code> set to the
+release, for example <code>2.1.10</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">VERSION</span><span class="o">=</span>X.Y.Z
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="o">(</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nb">set</span><span class="w"> </span>-euo<span class="w"> </span>pipefail
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nb">unset</span><span class="w"> </span>UV_PYTHON<span class="w"> </span>UV_PYTHON_PREFERENCE<span class="w"> </span>UV_NO_MANAGED_PYTHON
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nv">tmp</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>mktemp<span class="w"> </span>-d<span class="k">)</span><span class="s2">"</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nb">trap</span><span class="w"> </span><span class="s1">'rm -rf "$tmp"'</span><span class="w"> </span>EXIT
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span>git<span class="w"> </span>init<span class="w"> </span>-q<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/src"</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span>git<span class="w"> </span>-C<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/src"</span><span class="w"> </span>fetch<span class="w"> </span>-q<span class="w"> </span>--depth<span class="w"> </span><span class="m">1</span><span class="w"> </span>https://github.com/vergil-project/vergil-tooling<span class="w"> </span>refs/tags/v<span class="si">${</span><span class="nv">VERSION</span><span class="si">}</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span>git<span class="w"> </span>-C<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/src"</span><span class="w"> </span>checkout<span class="w"> </span>-q<span class="w"> </span>FETCH_HEAD
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="o">(</span><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/src"</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>uv<span class="w"> </span><span class="nb">export</span><span class="w"> </span>--no-config<span class="w"> </span>--frozen<span class="w"> </span>--no-dev<span class="w"> </span>--no-emit-project<span class="w"> </span>--no-hashes<span class="w"> </span>--format<span class="w"> </span>requirements-txt<span class="w"> </span>-o<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/constraints.txt"</span><span class="w"> </span>&gt;/dev/null<span class="o">)</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--force<span class="w"> </span>--no-config<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.15<span class="w"> </span>--managed-python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"</span><span class="nv">$tmp</span><span class="s2">/constraints.txt"</span><span class="w"> </span><span class="s2">"vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v</span><span class="si">${</span><span class="nv">VERSION</span><span class="si">}</span><span class="s2">"</span>
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="o">)</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>env<span class="w"> </span>-u<span class="w"> </span>UV_PYTHON<span class="w"> </span>-u<span class="w"> </span>UV_PYTHON_PREFERENCE<span class="w"> </span>-u<span class="w"> </span>UV_NO_MANAGED_PYTHON<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--force<span class="w"> </span>--no-config<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.15<span class="w"> </span>--managed-python<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="s2">"vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v</span><span class="si">${</span><span class="nv">VERSION</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>vrg-tooling-install<span class="w"> </span><span class="s2">"v</span><span class="si">${</span><span class="nv">VERSION</span><span class="si">}</span><span class="s2">"</span>
 </code></pre></div>
-<p>The exact tag cannot move (tag protection), so the Mac needs no
-<code>git ls-remote</code> and no SHA; the lines still install with that tag's own
-<code>uv.lock</code> as constraints and on uv's managed 3.15. These are the same
-lines as <code>vergil.toml</code>'s <code>[publish].consumer-refresh</code>, which each release
-runs on the Mac with the just-released version (followed by
-<code>vrg-vm update --all</code>), so the release installs itself on the host.</p>
+<p>The first line installs the tag unlocked; the second reinstalls it locked.</p>
 <p>On an agent VM, a release installs with uv too: <code>vrg-vm</code> resolves the
 version to one commit, installs it with that commit's <code>uv.lock</code>, and
 removes any vergil package an older VM still carries. A dev ref
@@ -18921,11 +18952,11 @@ See <a href="../../reference/vm-spec/#vergil-tooling-inside-the-vm">vergil-tooli
 </tr>
 </tbody>
 </table>
-<p>CD has also placed a <code>develop-v1.3.0</code> tag on the <code>develop</code> tip after
-each release.
-Those tags are being retired: nothing uses them, <code>vrg-release</code> neither
-requires nor reports one, and the changelog and release notes ignore
-any that remain. Never pin to a <code>develop-v*</code> tag.</p>
+<p>Earlier releases also placed a <code>develop-vX.Y.Z</code> tag on the <code>develop</code>
+tip. Those tags are retired: CD no longer creates them, the existing
+ones have been deleted, and <code>vrg-release</code> neither requires nor reports
+one. The changelog and release notes ignore any <code>develop-v*</code> tag that
+still turns up, and nothing should ever pin to one.</p>
 <p>A release's changes are the commits since the merge base of the
 release branch and the previous <code>vX.Y.Z</code> tag, so a PR merged to
 <code>develop</code> while a release was in flight appears in the next release.
@@ -19141,9 +19172,11 @@ a docs publish failure that <code>confirm-develop</code> has already deferred.</
 <p><code>promote</code> runs after <code>package-index</code>, so consumers that follow the
 rolling <code>vX.Y</code> tag and packaged installs (which take the newest <code>X.Y.*</code>
 in the index) get the same release from the moment the tag moves.
-vergil-tooling's own installs follow neither: a <code>vX.Y</code> pin resolves to
-the newest <code>vX.Y.Z</code> tag with <code>git ls-remote</code>, so they get a release as
-soon as its tag exists.
+vergil-tooling's own installs follow the rolling tag too: a <code>vX.Y</code> pin
+reads the tag <code>vX.Y</code> with <code>git ls-remote</code> and installs the <code>vX.Y.Z</code> release
+on the commit it names, never simply the newest <code>vX.Y.Z</code>, so a line
+demoted with <code>vrg-promote</code> is followed by the dev-container cache,
+<code>vrg-vm</code> and <code>vrg-tooling-install</code> alike.
 When <code>package-index</code> defers, <code>promote</code> skips and <code>vX.Y</code> stays on the
 previous release, so the two still agree. The deferral comment, the
 <code>close-finalize</code> outcome line and the <code>publish-status</code> error name the
@@ -19274,7 +19307,7 @@ get the fix on the next normal action:</p>
 <tbody>
 <tr>
 <td>Developer host</td>
-<td>The release's consumer refresh installs the exact patch tag on the Mac that ran it; any other host reruns the <a href="#deployment-targets">canonical host install</a> with the new <code>VERSION</code> (<code>vrg-host</code> reports the installed version but never upgrades it)</td>
+<td>The release's consumer refresh installs the exact patch tag on the Mac that ran it; any other host runs <a href="#deployment-targets"><code>vrg-tooling-install vX.Y.Z</code></a> with the new version (<code>vrg-host</code> reports the installed version but never upgrades it)</td>
 </tr>
 <tr>
 <td>Python repo <code>.venv</code></td>
@@ -19282,11 +19315,11 @@ get the fix on the next normal action:</p>
 </tr>
 <tr>
 <td>Dev container image</td>
-<td>The base images carry no vergil-tooling. The next <code>vrg-container-run</code> rebuilds the branch's cached image with the patch as soon as its tag exists: a <code>vX.Y</code> line pin in <code>vergil.toml</code> resolves to the newest release on the line (see <a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>). An exact <code>vX.Y.Z</code> pin stays put</td>
+<td>The base images carry no vergil-tooling. The next <code>vrg-container-run</code> rebuilds the branch's cached image with the patch once <code>promote</code> moves the rolling <code>vX.Y</code> tag to it: a <code>vX.Y</code> line pin in <code>vergil.toml</code> resolves to the release that tag names (see <a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>). An exact <code>vX.Y.Z</code> pin stays put</td>
 </tr>
 <tr>
 <td>Agent VM (Lima/cloud)</td>
-<td><code>vrg-vm update</code>, which the release's consumer refresh runs on every VM (<code>vrg-vm update --all</code>): a <code>vX.Y</code> line pin resolves to the patch tag as soon as it exists; an exact <code>vX.Y.Z</code> pin stays put</td>
+<td><code>vrg-vm update</code>, which the release's consumer refresh runs on every VM (<code>vrg-vm update --all</code>): a <code>vX.Y</code> line pin resolves to the patch once <code>promote</code> moves the rolling <code>vX.Y</code> tag to it; an exact <code>vX.Y.Z</code> pin stays put</td>
 </tr>
 </tbody>
 </table>
@@ -19307,7 +19340,7 @@ only handles patches within a minor.</p>
    updated to <code>v1.4</code>. This is a per-repo decision — consumers who
    prefer to stay on <code>v1.3</code> can keep doing so until they're ready.</li>
 <li>Update anywhere the documentation pins a minor to the new tag.
-   The canonical host install in <code>getting-started.md</code> names an exact
+   The host install by hand in <code>getting-started.md</code> names an exact
    <code>VERSION</code> placeholder, not a line, and needs no change.</li>
 </ol>
 <h3 id="consumer-steps_1">Consumer steps<a class="headerlink" href="#consumer-steps_1" title="Permanent link">&para;</a></h3>
@@ -19322,7 +19355,7 @@ only handles patches within a minor.</p>
 <tbody>
 <tr>
 <td>Developer host</td>
-<td>Nothing to change: the host installs an exact tag, never a line. The release's consumer refresh installs <code>v1.4.0</code> on the Mac that ran it; any other host reruns the <a href="#deployment-targets">canonical host install</a> with <code>VERSION=1.4.0</code></td>
+<td>Nothing to change: the host installs an exact tag, never a line. The release's consumer refresh installs <code>v1.4.0</code> on the Mac that ran it; any other host runs <a href="#deployment-targets"><code>vrg-tooling-install v1.4.0</code></a></td>
 </tr>
 <tr>
 <td>Python repo <code>.venv</code></td>
@@ -19330,7 +19363,7 @@ only handles patches within a minor.</p>
 </tr>
 <tr>
 <td>Dev container image</td>
-<td>Set <code>[dependencies].vergil</code> in <code>vergil.toml</code> to <code>v1.4</code>; <code>vergil.toml</code> is part of the cache key, so the next <code>vrg-container-run</code> rebuilds the branch's cached image with the newest <code>v1.4</code> release</td>
+<td>Set <code>[dependencies].vergil</code> in <code>vergil.toml</code> to <code>v1.4</code>; <code>vergil.toml</code> is part of the cache key, so the next <code>vrg-container-run</code> rebuilds the branch's cached image with the release the rolling <code>v1.4</code> tag names</td>
 </tr>
 <tr>
 <td>Agent VM (Lima/cloud)</td>
