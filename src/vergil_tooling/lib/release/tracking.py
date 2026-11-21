@@ -6,7 +6,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from vergil_tooling.lib import config, github, retry, text_table, trusted_authors
 from vergil_tooling.lib.package import orgs
