@@ -65,9 +65,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     # Single-label mode
     parser.add_argument("--repo", help="Repository (OWNER/REPO)")
-    parser.add_argument("--label", help="Label name (single-label mode)")
-    parser.add_argument("--color", help="Label color hex (no #)")
-    parser.add_argument("--description", help="Label description")
+    parser.add_argument(
+        "--label",
+        help=(
+            "Label name (single-label mode). Alone, the label is created or "
+            "updated with its colour and description from the canonical label "
+            "registry, and a name not in the registry is refused"
+        ),
+    )
+    parser.add_argument(
+        "--color",
+        help=(
+            "Label color hex (no #). Giving --color or --description uses the "
+            "given values instead of the registry's"
+        ),
+    )
+    parser.add_argument(
+        "--description",
+        help=(
+            "Label description. Giving --color or --description uses the given "
+            "values instead of the registry's"
+        ),
+    )
 
     # Sync mode
     parser.add_argument(
