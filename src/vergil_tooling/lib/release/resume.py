@@ -8,10 +8,11 @@ the pipeline can re-enter with the existing artifacts.
 
 from __future__ import annotations
 
+import functools
 import re
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import git, github
+from vergil_tooling.lib import git, github, host_versions
 from vergil_tooling.lib.release import checklist
 from vergil_tooling.lib.release.context import ReleaseError
 
@@ -128,7 +129,9 @@ def find_resume_target(
         )
         raise ReleaseError(phase="resume", command="gh issue list", message=msg)
     if len(issues) > 1:
-        names = ", ".join(sorted(issue[0] for issue in issues))
+        # Semantic-version order, never string order (#4877).
+        versions = (issue[0] for issue in issues)
+        names = ", ".join(sorted(versions, key=functools.cmp_to_key(host_versions.compare)))
         raise ReleaseError(
             phase="resume",
             command="gh issue list",

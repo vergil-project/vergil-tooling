@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from unittest.mock import patch
 
 import pytest
@@ -68,6 +69,20 @@ def test_find_resume_target_multiple_raises() -> None:
     with (
         patch(_MOD + ".github.read_json", return_value=issues),
         pytest.raises(ReleaseError, match="Multiple in-flight"),
+    ):
+        find_resume_target("o/r", _STAGES)
+
+
+@pytest.mark.parametrize(
+    ("older", "newer"),
+    [("2.0.9", "2.0.10"), ("2.9.0", "2.10.0")],
+)
+def test_find_resume_target_multiple_orders_by_semantic_version(older: str, newer: str) -> None:
+    # As strings, "2.0.10" < "2.0.9" and "2.10.0" < "2.9.0" (#4877).
+    issues = [_issue(newer, 43), _issue(older, 42)]
+    with (
+        patch(_MOD + ".github.read_json", return_value=issues),
+        pytest.raises(ReleaseError, match=re.escape(f"({older}, {newer})")),
     ):
         find_resume_target("o/r", _STAGES)
 

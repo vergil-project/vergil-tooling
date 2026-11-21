@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import cd_runs, config, git, github, progress, version
+from vergil_tooling.lib import cd_runs, config, git, github, host_versions, progress, version
 from vergil_tooling.lib.checkout_lock import checkout_lock
 from vergil_tooling.lib.managed_worktree import (
     ManagedWorktreeError,
@@ -903,9 +903,12 @@ def _check_no_open_release(repo: str) -> None:
     if not issues:
         print("Open-release check passed: no release is in flight")
         return
+    # Versions order as semantic versions (2.0.9 before 2.0.10), never as
+    # strings (#4877); the issue number breaks a tie.
+    by_version = functools.cmp_to_key(host_versions.compare)
     lines = [
         f"- {_open_release_recovery(repo, ver, number, body)}"
-        for ver, number, body in sorted(issues)
+        for ver, number, body in sorted(issues, key=lambda i: (by_version(i[0]), i[1]))
     ]
     raise ReleaseError(
         phase="preflight",
