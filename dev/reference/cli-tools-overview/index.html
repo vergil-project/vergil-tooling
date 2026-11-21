@@ -21122,6 +21122,15 @@ fails after creation, the created issue's URL is reported for recovery with
 <p>Create a top-level epic (labelled <code>epic</code>, no parent) in its home repo:
 <code>&lt;org&gt;/.github</code> for a public target, the target repo itself when private.
 The sanctioned path for creating epics, used by the <code>epic-create</code> skill.</p>
+<p>The epic also gets its <strong>category label</strong>, derived from its other labels:
+<code>epic-management</code> for an intake, planning, deferred or hoshin epic (<code>--label
+intake</code> and so on), <code>epic-development</code> for a plain epic, and nothing more for
+an ad-hoc epic, whose <code>ad-hoc</code> label is its category label. Every label is
+created in the home from the label registry before the epic is. It refuses,
+creating nothing, a <code>--label epic-development</code> or <code>--label epic-management</code>
+(the category label is never given by the caller) and labels that mark two
+categories at once (for example <code>--label ad-hoc --label proxy</code>). The category
+labels are for display only: no tool reads them to decide behaviour.</p>
 <p><code>--proxy-for OWNER/REPO#N --repo OWNER/NAME</code> instead ensures the <strong>proxy
 epic</strong> for a development epic in another org (its primary): an epic in the
 target's <code>&lt;owner&gt;/.github</code>, titled <code>Epic (proxy): OWNER/REPO#N — &lt;primary
@@ -21162,7 +21171,7 @@ under that org's App token. The title and body are derived, so it takes no
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Error on stderr; a <code>--proxy-for</code> refusal or link error writes nothing</td>
+<td>Error on stderr; a refused label set writes nothing, a failed label create creates no epic, and a <code>--proxy-for</code> refusal or link error writes nothing</td>
 </tr>
 <tr>
 <td>Exit codes</td>
