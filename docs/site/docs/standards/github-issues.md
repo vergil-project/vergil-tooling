@@ -192,6 +192,10 @@ gate rollup:
 | Deferred | `Epic (deferred): <name>` | `epic` + `deferred` | one per queue home | evaluated items parked until their revival conditions are met |
 | Hoshin | `Epic (hoshin): <org>` | `epic` + `hoshin` | one per org, always in `<org>/.github` | the `Logbook:` tasks `/vergil:hoshin` files and works |
 
+An intake, planning, deferred or hoshin epic also gets the display-only
+`epic-management` [category label](#epic-categories) when it is created; the
+tools find and test standing epics by the labels in the table alone.
+
 Intake, planning and deferred are the three **queue epics**. Their **queue
 home** follows the [epic-home rule](#epic-home-the-orggithub-rule): every
 public repo shares the org's set in `<org>/.github` (`<name>` is the org),
@@ -254,6 +258,45 @@ filing-time guard enforces this; `vrg-epic-audit` reports an open ad-hoc task
 that looks misplaced (a `Logbook:` title, or a body naming an epic in another
 org) for a human to rule on. A task ruled standalone gets a trusted comment
 with the line `Standalone-confirmed`, and the audit stops reporting it.
+
+### Epic categories
+
+Every epic falls in one of four **categories**, and carries that category's
+label, so one label filter in the GitHub UI shows each category:
+
+| Category | Epics | Category label |
+|---|---|---|
+| Management | the intake, planning, deferred and hoshin epics | `epic-management` |
+| Ad hoc | each repo's ad-hoc epic | `ad-hoc` |
+| Proxy | each [proxy epic](#proxy-epics) | `proxy` |
+| Development | every other epic: planned with `epic-create`, closed by rollup | `epic-development` |
+
+The category is derived from the labels and title the epic already has,
+exactly as the tools tell the kinds apart; an archive is not an epic and has
+no category. `ad-hoc` and `proxy` are both the marker the tools read and the
+category label. `epic-development` and `epic-management` are **for display
+only**: no tool reads them to decide behaviour or to find an epic, so a
+missing or stray one changes nothing.
+
+The tools apply the category label when they create an epic.
+[`vrg-epic-create`](../reference/cli-tools-overview.md#vrg-epic-create)
+derives it from the epic's other labels, adding `epic-development` to a plain
+epic and `epic-management` to an intake, planning, deferred or hoshin one. It
+refuses, creating nothing, a caller-given `--label epic-development` or
+`--label epic-management` and labels that mark two categories at once (for
+example `ad-hoc` and `proxy`). Every tool that creates a standing epic on
+demand (for example through the `--epic` sentinels of `vrg-issue-create`)
+adds `epic-management` when the new epic is an intake, planning, deferred or
+hoshin one, and nothing more to a new ad-hoc epic. An
+existing standing epic is still found by its kind's own labels, so one without
+`epic-management` is reused, never duplicated. A proxy keeps `epic` + `proxy`.
+
+Epics created before the category labels existed are labelled once, by a
+one-off deployment that also creates the two labels in every epic home with
+`vrg-ensure-label --repo <home> --label <name>`, the form that creates one
+registered label from the registry. Nothing checks the labels after that: an epic created
+outside the tools, or whose label is removed by hand, stays unlabelled until
+someone fixes it, which changes no behaviour.
 
 ### Ad-hoc epic archiving
 
@@ -988,6 +1031,8 @@ up to date (see
 | `deferred` | Marks the standing deferred epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `hoshin` | Marks the standing hoshin epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `proxy` | Marks a [proxy epic](#proxy-epics) (with `epic`): a same-org umbrella for another org's epic tasks; open until its primary closes |
+| `epic-development` | Development epic: planned with epic-create, closes when its tasks close (a display-only [category label](#epic-categories)) |
+| `epic-management` | Management epic: the intake, planning, deferred or hoshin epic; never auto-closes (a display-only [category label](#epic-categories)) |
 | `in-progress` | Planning item whose `epic-create` session is underway |
 | `epic-size:S`, `epic-size:M`, `epic-size:L`, `epic-size:XL` | Planning or deferred item's estimated epic size: 1–9, 10–19, 20–39 or 40+ tasks (see [Epic size](#epic-size)) |
 | `archive` | Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred, hoshin); historical record |

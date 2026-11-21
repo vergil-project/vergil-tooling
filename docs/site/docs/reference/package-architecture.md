@@ -26,7 +26,8 @@ The main modules under `src/vergil_tooling/lib/`:
   resolves the platform.
 - **`epics.py`**: the epic/task model: the `StandingKind` table (the
   ad-hoc, intake, planning, deferred and hoshin standing epics and their
-  per-quarter archives), epic and queue homes, sub-issue linking, rollup,
+  per-quarter archives), the epic categories and their derived category
+  labels, epic and queue homes, sub-issue linking, rollup,
   and the parent-based queue-item check that `vrg-pr-workflow report-ready`
   and `vrg-submit-pr` use to refuse intake, planning and deferred items.
 - **`proxies.py`**: the proxy epic's link to its primary, read from the
