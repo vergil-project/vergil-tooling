@@ -113,6 +113,11 @@ def render_state(state: StateBlock) -> str:
     return f"{BEGIN}\n```json\n{document}\n```\n{END}"
 
 
+def _lf(body: str) -> str:
+    """*body* with CRLF line endings, as GitHub stores a body saved in its web editor, made LF."""
+    return body.replace("\r\n", "\n")
+
+
 def _span(body: str) -> tuple[int, int]:
     """The start of the begin marker and the end of the end marker in *body*.
 
@@ -223,6 +228,7 @@ def parse_state(body: str) -> StateBlock:
     duplicated, not fenced JSON, or has an unknown key, a missing key or a
     value of the wrong type.
     """
+    body = _lf(body)
     start, end = _span(body)
     inner = body[start + len(BEGIN) : end - len(END)]
     fenced = _FENCE_RE.match(inner)
@@ -275,6 +281,7 @@ def upsert_state(body: str, state: StateBlock) -> str:
     is. A body whose markers are duplicated or do not pair up raises
     :class:`StateBlockError` rather than gaining a second block.
     """
+    body = _lf(body)
     block = render_state(state)
     if not _BEGIN_RE.search(body) and not _END_RE.search(body):
         return body.rstrip() + "\n\n" + block + "\n"

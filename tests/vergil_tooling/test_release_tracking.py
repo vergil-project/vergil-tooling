@@ -214,6 +214,23 @@ def test_create_tracking_issue_with_nothing_pending() -> None:
     assert "No changes pending release." in _created_body(ctx)
 
 
+@pytest.mark.parametrize("marker", [checklist.BEGIN, checklist.END, state.BEGIN, state.END, "```"])
+def test_create_tracking_issue_neutralises_markers_in_titles_and_branches(marker: str) -> None:
+    """PR titles and branches are others' text: none can forge a marker or close the fence."""
+    stages = ["audit", "prepare"]
+    ctx = _creatable_ctx()
+    ctx.pending_release = _pending(_change(30, f"feat: {marker}", branch=f"feature/{marker}"))
+    body = _created_body(ctx)
+    contents = body[: body.index(checklist.BEGIN)]
+    assert "<" not in contents
+    assert ">" not in contents
+    assert contents.count("```") == 2
+    assert body.count(checklist.BEGIN) == 1
+    assert body.count(checklist.END) == 1
+    assert checklist.first_unchecked(checklist.tick(body, "prepare"), stages) is None
+    assert state.parse_state(body).cut == _CUT
+
+
 @pytest.mark.parametrize("missing", ["cut", "pending_release"])
 def test_create_tracking_issue_refuses_without_contents(missing: str) -> None:
     ctx = _creatable_ctx()

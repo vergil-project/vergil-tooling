@@ -187,3 +187,18 @@ def test_upsert_state_refuses_duplicated_block() -> None:
     block = render_state(_full_state())
     with pytest.raises(StateBlockError, match="exactly once"):
         upsert_state(f"{block}\n{block}\n", _full_state())
+
+
+def test_parse_state_reads_a_crlf_body() -> None:
+    """A body saved in GitHub's web editor comes back with CRLF line endings."""
+    state = _full_state()
+    body = f"## Release 2.1.340\n\n{render_state(state)}\n".replace("\n", "\r\n")
+    assert parse_state(body) == state
+
+
+def test_upsert_state_replaces_the_block_in_a_crlf_body() -> None:
+    old = initial_state(version="2.1.340", cut=_CUT, issues=(), without_deps=False)
+    body = f"## Release 2.1.340\n\n{render_state(old)}\n".replace("\n", "\r\n")
+    updated = upsert_state(body, _full_state())
+    assert updated.count(BEGIN) == 1
+    assert parse_state(updated) == _full_state()

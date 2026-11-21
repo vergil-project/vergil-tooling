@@ -33,6 +33,9 @@ _SEARCH_LIST_LIMIT = 100
 # commit with no PR in it.
 _CONTENTS_COLUMNS = ("PR", "BRANCH", "TYPE", "TITLE")
 _SHORT_SHA = 7
+# What the Contents table writes in place of the characters of an HTML comment
+# marker and of a code fence, in text others control (PR titles and branches).
+_NEUTRAL = str.maketrans({"<": "\u2039", ">": "\u203a", "`": "'"})
 
 
 def _truncate_for_comment(body: str, *, budget: int = _COMMENT_BUDGET) -> str:
@@ -160,13 +163,23 @@ def create_tracking_issue(ctx: ReleaseContext) -> None:
     ctx.state = initial
 
 
+def _neutral(text: str) -> str:
+    """*text* with every character that could form a marker or close a fence replaced.
+
+    PR titles and branch names are written by others and can change after a
+    merge, so none may carry an HTML comment (a checklist or state marker) or
+    a backtick run (closing the table's fence) into the tracking-issue body.
+    """
+    return text.translate(_NEUTRAL)
+
+
 def _change_row(change: PendingChange) -> tuple[str, str, str, str]:
     """One Contents-table row; a commit with no PR shows its short SHA as its branch."""
     if change.pr_number is None:
         pr, branch = "PROBLEM", change.shas[0][:_SHORT_SHA]
     else:
-        pr, branch = f"#{change.pr_number}", change.branch or "-"
-    return (pr, branch, change.type_label, text_table.truncate(change.title))
+        pr, branch = f"#{change.pr_number}", _neutral(change.branch or "-")
+    return (pr, branch, change.type_label, text_table.truncate(_neutral(change.title)))
 
 
 def render_contents(pending: PendingRelease, issues: Sequence[IssueEntry]) -> str:
