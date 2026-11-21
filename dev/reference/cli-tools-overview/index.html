@@ -22733,6 +22733,12 @@ and delete the registry's <code>delete</code> list and the retired <code>triage<
 registry is <code>src/vergil_tooling/data/labels.json</code>; the labels it
 defines are listed in
 <a href="../../standards/github-issues/#labels">GitHub Issue Standards</a>.</p>
+<p>In single-label mode, <code>vrg-ensure-label --repo &lt;owner&gt;/&lt;repo&gt; --label
+&lt;name&gt;</code> with neither <code>--color</code> nor <code>--description</code> creates or updates
+that one label from its registry definition, and touches no other
+label. A name not in the registry fails, naming it, and creates
+nothing. Passing <code>--color</code> or <code>--description</code> creates the label from
+the flags given instead, without reading the registry.</p>
 <table>
 <thead>
 <tr>
@@ -22755,11 +22761,11 @@ defines are listed in
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>argparse validation for incompatible flag combinations; subprocess error from <code>gh</code></td>
+<td>argparse validation for incompatible flag combinations; an unregistered <code>--label</code> with neither <code>--color</code> nor <code>--description</code> is refused on stderr; subprocess error from <code>gh</code></td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success</td>
+<td>0 success, 1 unregistered label or no App installation for the owner, 2 invalid flag combination</td>
 </tr>
 <tr>
 <td>Status</td>
