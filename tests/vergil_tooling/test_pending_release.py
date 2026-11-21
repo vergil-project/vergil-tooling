@@ -6,7 +6,7 @@ import datetime
 import re
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,9 +20,13 @@ from vergil_tooling.lib.pending_release import (
     classify,
     first_parent_chain,
     gather_pending_release,
+    gather_release_contents,
     parse_release_tags,
     redact_userinfo,
+    trusted_closing_refs,
 )
+from vergil_tooling.lib.release.state import IssueEntry
+from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 
 _URL = "https://github.com/o/r.git"
 _MAIN = "a" * 40
@@ -120,8 +124,10 @@ class _GraphQL:
         self.nodes = nodes
         self.alias_counts: list[int] = []
         self.variables: list[dict[str, object]] = []
+        self.queries: list[str] = []
 
     def __call__(self, query: str, **variables: object) -> dict[str, object]:
+        self.queries.append(query)
         aliases = _ALIAS_RE.findall(query)
         self.alias_counts.append(len(aliases))
         self.variables.append(variables)
@@ -714,3 +720,275 @@ def test_head_that_is_not_a_full_sha_raises() -> None:
     ):
         gather_pending_release(integration="develop", head="HEAD")
     read_json.assert_not_called()
+
+
+# --- gather_release_contents: the issue list ------------------------------------
+
+_TRUSTED = TrustedAuthors(human=("human",), agents=("agent",))
+
+
+def _actor(login: str | None) -> dict[str, str] | None:
+    return None if login is None else {"login": login}
+
+
+def _issue_node(number: int, repo: str = "o/r") -> dict[str, Any]:
+    return {"number": number, "repository": {"nameWithOwner": repo}}
+
+
+def _feature_pr(
+    number: int,
+    *closes: int | tuple[str, int],
+    branch: str | None = None,
+    body: str | None = None,
+    author: str | None = "human",
+    editor: str | None = None,
+    edits: tuple[str | None, ...] = (),
+    connected: tuple[tuple[str | None, int], ...] = (),
+    closing_total: int | None = None,
+) -> dict[str, Any]:
+    """A PR node with the issue-list fields; each of *closes* is in the body by default."""
+    refs = [_issue_node(c) if isinstance(c, int) else _issue_node(c[1], c[0]) for c in closes]
+    if body is None:
+        lines = [f"Closes #{c}" if isinstance(c, int) else f"Closes {c[0]}#{c[1]}" for c in closes]
+        body = "Summary.\n\n" + "\n".join(lines)
+    node = _pr(number, branch=branch or f"feature/{number}-x")
+    node.update(
+        {
+            "repository": {"nameWithOwner": "o/r"},
+            "body": body,
+            "author": _actor(author),
+            "editor": _actor(editor),
+            "userContentEdits": {
+                "totalCount": len(edits),
+                "nodes": [{"editor": _actor(e)} for e in edits],
+            },
+            "closingIssuesReferences": {
+                "totalCount": len(refs) if closing_total is None else closing_total,
+                "nodes": refs,
+            },
+            "timelineItems": {
+                "totalCount": len(connected),
+                "nodes": [
+                    {"actor": _actor(actor), "subject": _issue_node(issue), "source": {}}
+                    for actor, issue in connected
+                ],
+            },
+        }
+    )
+    return node
+
+
+def _contents(
+    commits: list[dict[str, Any]],
+    nodes: dict[str, Any],
+    *,
+    graphql: Any = None,
+) -> tuple[PendingRelease, tuple[IssueEntry, ...], _GraphQL]:
+    cut = commits[-1]["sha"]
+    fake = _GraphQL(nodes)
+    with (
+        patch("vergil_tooling.lib.pending_release.load_trusted_authors", return_value=_TRUSTED),
+        patch("vergil_tooling.lib.git.remote_url", return_value=_URL),
+        patch("vergil_tooling.lib.git.read_output", return_value=_ls_remote(dev=_DEV_TIP)),
+        patch("vergil_tooling.lib.github.read_json", return_value=_page(commits, len(commits))),
+        patch("vergil_tooling.lib.github.graphql", side_effect=graphql or fake),
+    ):
+        pending, issues = gather_release_contents(cut=cut)
+    return pending, issues, fake
+
+
+def test_issue_list_from_feature_prs() -> None:
+    s1, s2 = _sha(1), _sha(2)
+    nodes = {
+        s1: _assoc(_feature_pr(1, 11)),
+        s2: _assoc(_feature_pr(2, 10, author="agent", editor="agent", edits=("agent",))),
+    }
+    pending, issues, graphql = _contents(_linear([s1, s2]), nodes)
+    assert [c.pr_number for c in pending.changes] == [1, 2]
+    assert issues == (IssueEntry("o/r#10", (2,)), IssueEntry("o/r#11", (1,)))
+    assert graphql.alias_counts == [2]
+
+
+def test_issue_list_query_reads_closing_refs_and_history() -> None:
+    s1 = _sha(1)
+    _, _, graphql = _contents(_linear([s1]), {s1: _assoc(_feature_pr(1, 10))})
+    query = graphql.queries[0]
+    assert "closingIssuesReferences(first: 20, userLinkedOnly: false)" in query
+    assert "userContentEdits(first: 100)" in query
+    assert "timelineItems(itemTypes: [CONNECTED_EVENT], first: 100)" in query
+    assert "author { login }" in query
+
+
+def test_pending_release_query_reads_no_closing_refs() -> None:
+    _, _, graphql = _gather(_linear([_sha(1)]), {_sha(1): _assoc(_pr(1))})
+    assert "closingIssuesReferences" not in graphql.queries[0]
+
+
+def test_issue_list_skips_deps_release_automation() -> None:
+    s = [_sha(n) for n in range(1, 5)]
+    nodes = {
+        s[0]: _assoc(_feature_pr(1, 10, branch="deps/update-2026-11-12")),
+        s[1]: _assoc(_feature_pr(2, 11, branch="release/post-2.1.1")),
+        s[2]: _assoc(_feature_pr(3, 12, branch="automation/refresh/99")),
+        s[3]: _assoc(),
+    }
+    pending, issues, _ = _contents(_linear(s), nodes)
+    assert len(pending.changes) == 4
+    assert issues == ()
+
+
+def test_issue_list_ignores_other_repo_refs(capsys: pytest.CaptureFixture[str]) -> None:
+    s1 = _sha(1)
+    nodes = {s1: _assoc(_feature_pr(1, ("other/x", 5), 10))}
+    _, issues, _ = _contents(_linear([s1]), nodes)
+    assert issues == (IssueEntry("o/r#10", (1,)),)
+    assert "#1: closing reference other/x#5 is in another repo" in capsys.readouterr().err
+
+
+def test_issue_list_dedupes_issue_closed_twice() -> None:
+    """An issue closed by two feature/ PRs is listed once, with both (Review Focus 2)."""
+    s = [_sha(n) for n in range(1, 5)]
+    batch = _feature_pr(3, 10, 12, branch="feature/3-batch-x")
+    nodes = {
+        s[0]: _assoc(_feature_pr(1, 10)),
+        s[1]: _assoc(_feature_pr(2, 10)),
+        s[2]: _assoc(batch),
+        s[3]: _assoc(batch),
+    }
+    _, issues, _ = _contents(_linear(s), nodes)
+    assert issues == (IssueEntry("o/r#10", (1, 2, 3)), IssueEntry("o/r#12", (3,)))
+
+
+def test_issue_list_excludes_pr_edited_by_untrusted_identity(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    s1, s2 = _sha(1), _sha(2)
+    nodes = {
+        s1: _assoc(_feature_pr(1, 10, editor="mallory", edits=("human", "mallory"))),
+        s2: _assoc(_feature_pr(2, 11)),
+    }
+    _, issues, _ = _contents(_linear([s1, s2]), nodes)
+    assert issues == (IssueEntry("o/r#11", (2,)),)
+    err = capsys.readouterr().err
+    assert "WARNING: #1: closing reference #10 not counted" in err
+    assert "untrusted mallory" in err
+
+
+def test_issue_list_excludes_earlier_untrusted_edit(capsys: pytest.CaptureFixture[str]) -> None:
+    """An untrusted edit stays in the history after a trusted one replaced it."""
+    s1 = _sha(1)
+    nodes = {s1: _assoc(_feature_pr(1, 10, editor="human", edits=("mallory", "human")))}
+    _, issues, _ = _contents(_linear([s1]), nodes)
+    assert issues == ()
+    assert "untrusted mallory" in capsys.readouterr().err
+
+
+def test_issue_list_excludes_untrusted_or_deleted_author(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    s1, s2 = _sha(1), _sha(2)
+    nodes = {
+        s1: _assoc(_feature_pr(1, 10, author="mallory")),
+        s2: _assoc(_feature_pr(2, 11, author=None)),
+    }
+    _, issues, _ = _contents(_linear([s1, s2]), nodes)
+    assert issues == ()
+    err = capsys.readouterr().err
+    assert "untrusted mallory" in err
+    assert "untrusted (no login)" in err
+
+
+def test_issue_list_excludes_untrusted_manual_link(capsys: pytest.CaptureFixture[str]) -> None:
+    s1, s2, s3 = _sha(1), _sha(2), _sha(3)
+    nodes = {
+        s1: _assoc(_feature_pr(1, 10, body="No closing line.", connected=(("mallory", 10),))),
+        s2: _assoc(_feature_pr(2, 11, body="No closing line.", connected=(("human", 11),))),
+        s3: _assoc(
+            _feature_pr(3, 12, body="Linked twice.", connected=(("agent", 12), ("mallory", 12)))
+        ),
+    }
+    _, issues, _ = _contents(_linear([s1, s2, s3]), nodes)
+    assert issues == (IssueEntry("o/r#11", (2,)),)
+    err = capsys.readouterr().err
+    assert (
+        "#1: closing reference #10 not counted: it was linked by hand by untrusted mallory" in err
+    )
+    assert "#3: closing reference #12 not counted" in err
+
+
+def test_issue_list_trusted_link_counts_despite_untrusted_body() -> None:
+    s1 = _sha(1)
+    nodes = {s1: _assoc(_feature_pr(1, 10, editor="mallory", connected=(("human", 10),)))}
+    _, issues, _ = _contents(_linear([s1]), nodes)
+    assert issues == (IssueEntry("o/r#10", (1,)),)
+
+
+def test_issue_list_counts_closed_keyword(capsys: pytest.CaptureFixture[str]) -> None:
+    s1 = _sha(1)
+    body = "Closed #10\n- close o/r#11\nFixes #12\nRef #13\nsee Closes #14 inline"
+    nodes = {s1: _assoc(_feature_pr(1, 10, 11, 12, 13, 14, body=body))}
+    _, issues, _ = _contents(_linear([s1]), nodes)
+    assert issues == (IssueEntry("o/r#10", (1,)), IssueEntry("o/r#11", (1,)))
+    err = capsys.readouterr().err
+    for issue in (12, 13, 14):
+        assert f"#1: closing reference #{issue} not counted: no closing line" in err
+
+
+def test_issue_list_empty_is_valid(capsys: pytest.CaptureFixture[str]) -> None:
+    s1 = _sha(1)
+    _, issues, _ = _contents(_linear([s1]), {s1: _assoc(_feature_pr(1))})
+    assert issues == ()
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    ("connection", "message"),
+    [
+        ("closingIssuesReferences", "closingIssuesReferences of #1 truncated"),
+        ("userContentEdits", "userContentEdits of #1 truncated"),
+        ("timelineItems", "connected events of #1 truncated"),
+    ],
+)
+def test_closing_refs_truncated_raises(connection: str, message: str) -> None:
+    s1 = _sha(1)
+    node = _feature_pr(1, 10)
+    node[connection]["totalCount"] = 500
+    with pytest.raises(PendingReleaseError, match=message):
+        _contents(_linear([s1]), {s1: _assoc(node)})
+
+
+def test_closing_refs_failure_raises() -> None:
+    """A failed GraphQL read raises, never passes as no issues (Review Focus 5)."""
+    failure = subprocess.CalledProcessError(1, ["gh", "api", "graphql"], stderr="HTTP 502")
+    with pytest.raises(PendingReleaseError, match="HTTP 502"):
+        _contents(_linear([_sha(1)]), {}, graphql=MagicMock(side_effect=failure))
+
+
+def test_closing_refs_malformed_node_raises() -> None:
+    s1 = _sha(1)
+    node = _feature_pr(1, 10)
+    node["body"] = None
+    with pytest.raises(PendingReleaseError, match="body of #1 is not a string"):
+        _contents(_linear([s1]), {s1: _assoc(node)})
+
+
+def test_release_contents_trusted_authors_failure_raises() -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.pending_release.load_trusted_authors",
+            side_effect=TrustedAuthorsNotConfiguredError("trusted authors are not configured"),
+        ),
+        patch("vergil_tooling.lib.github.graphql") as graphql,
+        pytest.raises(PendingReleaseError, match="could not load the trusted authors"),
+    ):
+        gather_release_contents(cut=_sha(1))
+    graphql.assert_not_called()
+
+
+def test_trusted_closing_refs_ignores_pr_on_a_connected_side() -> None:
+    node = _feature_pr(1, 10, body="", connected=(("human", 10),))
+    events = cast("dict[str, Any]", node["timelineItems"])["nodes"]
+    events[0]["source"] = {}
+    events.append({"actor": _actor("mallory"), "subject": {}, "source": None})
+    cast("dict[str, Any]", node["timelineItems"])["totalCount"] = 2
+    assert trusted_closing_refs(node, {"human"}) == ((10,), [])

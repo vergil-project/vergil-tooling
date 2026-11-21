@@ -27,6 +27,7 @@ from vergil_tooling.lib.release.preflight import (
     pending_deps_prs,
     preflight,
 )
+from vergil_tooling.lib.release.state import IssueEntry
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -52,6 +53,7 @@ _PENDING = PendingRelease(
     main_moved_ts=0.0,
     changes=(),
 )
+_ISSUES = (IssueEntry("owner/repo#10", (1, 2)),)
 
 
 @pytest.fixture(autouse=True)
@@ -60,7 +62,7 @@ def release_contents() -> Iterator[MagicMock]:
 
     Its own tests call :func:`_release_contents` directly.
     """
-    with patch(_MOD + "._release_contents", return_value=(_CUT, _PENDING)) as contents:
+    with patch(_MOD + "._release_contents", return_value=(_CUT, _PENDING, _ISSUES)) as contents:
         yield contents
 
 
@@ -87,6 +89,7 @@ def test_preflight_fresh_start_records_the_cut_and_contents(
     release_contents.assert_called_once_with(wt)
     assert ctx.cut == _CUT
     assert ctx.pending_release is _PENDING
+    assert ctx.issues == _ISSUES
 
 
 def test_preflight_resume_reads_no_contents(release_contents: MagicMock) -> None:
@@ -104,17 +107,32 @@ def test_preflight_resume_reads_no_contents(release_contents: MagicMock) -> None
     release_contents.assert_not_called()
     assert ctx.cut is None
     assert ctx.pending_release is None
+    assert ctx.issues == ()
 
 
 def test_release_contents_pins_the_pending_release_to_the_cut() -> None:
     wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
     with (
         patch(_MOD + ".git.read_output", return_value=_CUT) as m_git,
-        patch(_MOD + ".gather_pending_release", return_value=_PENDING) as m_gather,
+        patch(_MOD + ".gather_release_contents", return_value=(_PENDING, _ISSUES)) as m_gather,
     ):
-        assert _release_contents(wt) == (_CUT, _PENDING)
+        assert _release_contents(wt) == (_CUT, _PENDING, _ISSUES)
     m_git.assert_called_once_with("-C", str(wt), "rev-parse", "HEAD")
-    m_gather.assert_called_once_with(integration="develop", head=_CUT)
+    m_gather.assert_called_once_with(cut=_CUT)
+
+
+def test_preflight_prints_issue_list(capsys: pytest.CaptureFixture[str]) -> None:
+    """The table and the issue list are shown before the tracking issue exists (spec §4.1)."""
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+    with (
+        patch(_MOD + ".git.read_output", return_value=_CUT),
+        patch(_MOD + ".gather_release_contents", return_value=(_PENDING, _ISSUES)),
+    ):
+        _release_contents(wt)
+    out = capsys.readouterr().out
+    assert "## Contents" in out
+    assert "No changes pending release." in out
+    assert "- owner/repo#10 (#1, #2)" in out
 
 
 def test_release_contents_incomplete_lookup_refuses() -> None:
@@ -122,7 +140,7 @@ def test_release_contents_incomplete_lookup_refuses() -> None:
     with (
         patch(_MOD + ".git.read_output", return_value=_CUT),
         patch(
-            _MOD + ".gather_pending_release",
+            _MOD + ".gather_release_contents",
             side_effect=PendingReleaseError("compare truncated"),
         ),
         pytest.raises(ReleaseError, match="Could not read what the release contains") as info,

@@ -189,7 +189,7 @@ issue and ticks its box in the issue's stage checklist.
 | Stage | Mode | What it does |
 |---|---|---|
 | `audit` | fail-fast | Runs `vrg-github-repo-config audit` on the repo. Releasing vergil-tooling itself adds `--in-tree-templates`, so its managed files are checked against the templates being released, not the installed release's (see the [config audit reference](../reference/config-audit.md#auditing-vergil-tooling-against-its-own-templates)). `--skip-audit` skips it |
-| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop`, then [brings it up to `origin/develop`](#the-develop-sync). On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, checks that [no other release is open](#one-release-at-a-time), runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it. On a fresh start it then reads the release's [contents](#release-tracking-artifacts), pinned to the commit the branch is cut from |
+| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop`, then [brings it up to `origin/develop`](#the-develop-sync). On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, checks that [no other release is open](#one-release-at-a-time), runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it. On a fresh start it then reads the release's [contents](#release-tracking-artifacts), pinned to the commit the branch is cut from, and prints them: the pending-release table and, under it, the [issue list](#the-issue-list) |
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, with its Contents section, stage checklist and state block, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
@@ -893,7 +893,8 @@ three parts in its body:
   PR, or a commit that reached `develop` with no PR, as
   `vrg-repo-status` shows it), read in `preflight` pinned to the
   `develop` commit the release branch is cut from, and under it the
-  issues the release contains with their closing PRs;
+  issues the release contains with their closing PRs (see
+  [The issue list](#the-issue-list));
 - the stage checklist (see
   [An interrupted release](#an-interrupted-release));
 - the **state block**, a fenced `json` document between
@@ -935,6 +936,32 @@ adopting the branches, PRs and tag the earlier run already created.
 Use the issue as well to capture the rationale for the release and any
 consumer coordination it needs, especially for minor and major bumps.
 Follow-ups move to their own issues.
+
+### The issue list
+
+The issue list is the union of the closing references of every PR in
+`main..<cut>` whose head branch starts `feature/`, a batch PR included.
+Release back-merges, dependency updates, automation PRs and commits
+with no PR contribute none, and a closing reference to an issue in
+another repo is ignored. Each issue is listed once, by number, with
+every PR that closes it.
+
+Only a trusted closing reference counts:
+
+- one a closing line in the PR body names (`Closes`, `Close` or
+  `Closed`, the keywords the fleet's linkage rules sanction), while
+  every identity in the body's history (its author, its last editor
+  and every earlier editor) is a trusted author (`human` or `agents`
+  of `vrg-trusted-authors`); or
+- one linked to the PR by hand, when every identity that linked it is
+  a trusted author.
+
+Any other closing reference contributes no issue, and `preflight`
+names it, with its PR and the reason, in a `WARNING:` line. A release
+whose PRs close no issues has an empty list, which is valid. The
+trusted authors failing to load, or any of the reads failing or coming
+back truncated, refuses the release like any other incomplete
+contents lookup.
 
 ### The lock and the identity rule
 
