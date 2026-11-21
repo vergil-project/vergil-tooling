@@ -98,9 +98,7 @@ def test_preflight_resume_reads_no_contents(release_contents: MagicMock) -> None
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
     ):
-        ctx = preflight(
-            version_override=None, repo_root=root, resume=True, resume_version="2.3.0"
-        )
+        ctx = preflight(version_override=None, repo_root=root, resume=True, resume_version="2.3.0")
     release_contents.assert_not_called()
     assert ctx.cut is None
     assert ctx.pending_release is None

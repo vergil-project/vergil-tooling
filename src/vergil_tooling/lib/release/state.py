@@ -30,7 +30,8 @@ _BEGIN_RE = re.compile(rf"^{re.escape(BEGIN)}$", re.MULTILINE)
 _END_RE = re.compile(rf"^{re.escape(END)}$", re.MULTILINE)
 _FENCE_RE = re.compile(r"\A\s*```json\n(?P<json>.*)\n```\s*\Z", re.DOTALL)
 
-_BRANCHES = ("main", "develop")
+# The branches a CD run publishes from, by name, typed for :class:`FailedJob`.
+_BRANCHES: dict[str, Literal["main", "develop"]] = {"main": "main", "develop": "develop"}
 
 
 class StateBlockError(Exception):
@@ -201,11 +202,12 @@ def _issue(key: str, value: object) -> IssueEntry:
 
 def _failed_job(key: str, value: object) -> FailedJob:
     obj = _object(key, value, ("branch", "run_id", "job"))
-    branch = _string(f"{key}.branch", obj["branch"])
-    if branch not in _BRANCHES:
-        raise _fail(f"{key}.branch", '"main" or "develop"', branch)
+    name = _string(f"{key}.branch", obj["branch"])
+    branch = _BRANCHES.get(name)
+    if branch is None:
+        raise _fail(f"{key}.branch", '"main" or "develop"', name)
     return FailedJob(
-        branch=cast("Literal['main', 'develop']", branch),
+        branch=branch,
         run_id=_string(f"{key}.run_id", obj["run_id"]),
         job=_string(f"{key}.job", obj["job"]),
     )

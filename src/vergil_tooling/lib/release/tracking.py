@@ -185,9 +185,7 @@ def render_contents(pending: PendingRelease, issues: Sequence[IssueEntry]) -> st
         lines.append("No changes pending release.")
     lines += ["", "### Issues", ""]
     if issues:
-        lines += [
-            f"- {issue.ref} ({', '.join(f'#{pr}' for pr in issue.prs)})" for issue in issues
-        ]
+        lines += [f"- {issue.ref} ({', '.join(f'#{pr}' for pr in issue.prs)})" for issue in issues]
     else:
         lines.append("None: the release's PRs close no issues.")
     return "\n".join(lines)
@@ -387,8 +385,7 @@ def _read_title_and_body(ctx: ReleaseContext) -> tuple[str, str]:
     if not isinstance(issue, dict):
         msg = f"gh issue view #{ctx.issue_number} returned {type(issue).__name__}, not an object"
         raise TypeError(msg)
-    data = cast("dict[str, object]", issue)
-    title, body = data["title"], data["body"]
+    title, body = issue["title"], issue["body"]
     if not isinstance(title, str) or not isinstance(body, str):
         msg = f"gh issue view #{ctx.issue_number} returned a non-string title or body"
         raise TypeError(msg)

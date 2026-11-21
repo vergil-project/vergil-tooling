@@ -182,9 +182,7 @@ def _created_body(ctx: ReleaseContext) -> str:
 def test_create_tracking_issue_body_has_contents_and_state() -> None:
     ctx = _creatable_ctx()
     ctx.without_deps = True
-    ctx.pending_release = _pending(
-        _change(30, "feat: a thing"), _change(None, "direct push")
-    )
+    ctx.pending_release = _pending(_change(30, "feat: a thing"), _change(None, "direct push"))
     body = _created_body(ctx)
     assert "## Contents" in body
     assert "#30      feature/1-x  feat  feat: a thing" in body
@@ -194,9 +192,7 @@ def test_create_tracking_issue_body_has_contents_and_state() -> None:
     # Contents comes before the checklist, the state block last.
     assert body.index("## Contents") < body.index(checklist.BEGIN) < body.index(state.BEGIN)
     parsed = state.parse_state(body)
-    assert parsed == state.initial_state(
-        version="2.1.0", cut=_CUT, issues=(), without_deps=True
-    )
+    assert parsed == state.initial_state(version="2.1.0", cut=_CUT, issues=(), without_deps=True)
     assert ctx.state == parsed
 
 
@@ -243,7 +239,9 @@ def _state_body(version: str = "2.1.0") -> tuple[str, state.StateBlock]:
 def test_read_state_returns_the_block() -> None:
     ctx = _ctx_with_issue()
     body, block = _state_body()
-    with patch(_MOD + ".github.read_output", return_value=_issue_json("release: 2.1.0", body)) as ro:
+    with patch(
+        _MOD + ".github.read_output", return_value=_issue_json("release: 2.1.0", body)
+    ) as ro:
         assert read_state(ctx) == block
     assert ctx.state == block
     assert ro.call_args.args[:3] == ("issue", "view", "42")
@@ -285,6 +283,15 @@ def test_read_state_malformed_response_raises() -> None:
     with (
         patch(_MOD + ".github.read_output", return_value=json.dumps({"title": 1, "body": ""})),
         pytest.raises(TypeError, match="non-string title or body"),
+    ):
+        read_state(ctx)
+
+
+def test_read_state_non_object_response_raises() -> None:
+    ctx = _ctx_with_issue()
+    with (
+        patch(_MOD + ".github.read_output", return_value="[]"),
+        pytest.raises(TypeError, match="not an object"),
     ):
         read_state(ctx)
 
