@@ -416,7 +416,9 @@ the consumer refresh, which runs the `[publish].consumer-refresh`
 commands (held while any publish is deferred). On a fresh start, preflight refuses while any
 `release: X.Y.Z` tracking issue is open, naming its recovery, and while an open PR
 carries the `dependency-update` label, after first closing any whose fix
-task completed. The tracking issue's body carries the release's
+task completed. Preflight then prints the release's contents: the
+pending-release table and the issues its `feature/` PRs close by a
+trusted closing reference. The tracking issue's body carries those
 contents and its state block. The issue is locked, and its state is
 trusted only while every identity that authored, edited, closed or
 reopened it is a `human` login of `vrg-trusted-authors`. Human-only. See the [vrg-release reference](dev/release.md)

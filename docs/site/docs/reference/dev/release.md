@@ -12,6 +12,12 @@ post-release dependency update, and last the consumer refresh. The stages and wh
 they leave behind are described in the
 [Releasing guide](../../guides/releasing.md#the-vrg-release-pipeline).
 
+On a fresh start, `preflight` prints the release's contents: the
+pending-release table of `main..<cut>` and the issues the release
+contains, each with its closing PRs, from the trusted closing
+references of its `feature/` PRs (see
+[The issue list](../../guides/releasing.md#the-issue-list)).
+
 The `release: <version>` tracking issue's body carries a Contents
 section (the pending-release table and the issues the release
 contains), the stage checklist, and the release's state block, which

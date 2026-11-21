@@ -25,12 +25,13 @@ from vergil_tooling.lib.package.index import published
 from vergil_tooling.lib.pending_release import (
     PendingRelease,
     PendingReleaseError,
-    gather_pending_release,
+    gather_release_contents,
 )
 from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.release import state
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.resume import _SEARCH_COMMAND, _open_release_issues
+from vergil_tooling.lib.release.tracking import render_contents
 from vergil_tooling.lib.self_repo import is_self_repo
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
 from vergil_tooling.lib.update_deps.pr import FIX_TASK_PREFIX
@@ -38,6 +39,8 @@ from vergil_tooling.lib.update_deps.pr import FIX_TASK_PREFIX
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+    from vergil_tooling.lib.release.state import IssueEntry
 
 _VERSION_OVERRIDE_FIELDS = ("minor", "major")
 
@@ -155,8 +158,9 @@ def preflight(
     os.chdir(worktree)
     cut: str | None = None
     pending: PendingRelease | None = None
+    issues: tuple[IssueEntry, ...] = ()
     if not resume:
-        cut, pending = _release_contents(worktree)
+        cut, pending, issues = _release_contents(worktree)
 
     print(f"Preflight passed: {repo} v{release_version} — worktree {worktree}")
     ctx = ReleaseContext(
@@ -167,6 +171,7 @@ def preflight(
         release_branch=branch,
         cut=cut,
         pending_release=pending,
+        issues=issues,
         worktree_path=worktree,
         bypassed_deps_prs=deps_gate.bypassed,
         cleared_deps_prs=deps_gate.cleared,
@@ -434,24 +439,27 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
     )
 
 
-def _release_contents(worktree: Path) -> tuple[str, PendingRelease]:
-    """The commit a fresh release branch is cut from, and what ``main..<cut>`` holds.
+def _release_contents(worktree: Path) -> tuple[str, PendingRelease, tuple[IssueEntry, ...]]:
+    """The commit a fresh release branch is cut from, what ``main..<cut>`` holds, and its issues.
 
     The new branch's worktree is at the ``develop`` commit preflight synced
-    to, so its ``HEAD`` is the cut. The pending release is read pinned to it,
-    never to whatever ``origin/develop`` holds by then. An incomplete lookup
-    refuses the release (spec §4.1 of epic vergil-project/.github#1440).
+    to, so its ``HEAD`` is the cut. The pending release and the issue list
+    are read pinned to it, never to whatever ``origin/develop`` holds by
+    then, and printed as the tracking issue's Contents section will show
+    them, before the tracking issue is created. An incomplete lookup refuses
+    the release (spec §4.1 of epic vergil-project/.github#1440).
     """
     cut = git.read_output("-C", str(worktree), "rev-parse", "HEAD")
     try:
-        pending = gather_pending_release(integration="develop", head=cut)
+        pending, issues = gather_release_contents(cut=cut)
     except PendingReleaseError as exc:
         raise ReleaseError(
             phase="preflight",
             command=f"gather pending release main..{cut[:7]}",
             message=f"Could not read what the release contains: {exc}",
         ) from exc
-    return cut, pending
+    print(render_contents(pending, issues))
+    return cut, pending, issues
 
 
 def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> Path:
