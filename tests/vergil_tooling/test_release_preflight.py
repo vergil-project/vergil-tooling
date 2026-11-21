@@ -12,12 +12,14 @@ import pytest
 from vergil_tooling.lib.cd_runs import CDRunLookupError
 from vergil_tooling.lib.checkout_lock import CheckoutLockError, checkout_lock
 from vergil_tooling.lib.managed_worktree import ManagedWorktreeError
+from vergil_tooling.lib.pending_release import PendingRelease, PendingReleaseError, ReleaseTags
 from vergil_tooling.lib.release import preflight as preflight_module
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.preflight import (
     PendingDepsPr,
     _check_branch_and_tree,
     _compute_release_version,
+    _release_contents,
     check_develop_cd,
     fix_task_status,
     pending_deps_prs,
@@ -40,6 +42,94 @@ def develop_cd_gate() -> Iterator[MagicMock]:
     """
     with patch(_MOD + "._develop_cd_gate") as gate:
         yield gate
+
+
+_CUT = "c" * 40
+_PENDING = PendingRelease(
+    tags=ReleaseTags(latest=None, rolling=None, rolling_target=None),
+    main_moved_ts=0.0,
+    changes=(),
+)
+
+
+@pytest.fixture(autouse=True)
+def release_contents() -> Iterator[MagicMock]:
+    """Stub the release-contents read, which reads git and GitHub, out of every preflight run.
+
+    Its own tests call :func:`_release_contents` directly.
+    """
+    with patch(_MOD + "._release_contents", return_value=(_CUT, _PENDING)) as contents:
+        yield contents
+
+
+def test_preflight_fresh_start_records_the_cut_and_contents(
+    release_contents: MagicMock,
+) -> None:
+    root = Path("/tmp/repo")  # noqa: S108
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+    with (
+        patch(_MOD + "._check_host_prerequisites"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + "._read_and_validate_config"),
+        patch(_MOD + "._check_branch_and_tree"),
+        patch(_MOD + ".version.show", return_value="2.1.0"),
+        patch(_MOD + "._check_version_not_tagged"),
+        patch(_MOD + "._check_main_not_ahead_of_develop"),
+        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_packages_unpublished"),
+        patch(_MOD + ".pending_deps_prs", return_value=[]),
+        patch(_MOD + "._acquire_release_worktree", return_value=wt),
+        patch(_MOD + ".os.chdir"),
+    ):
+        ctx = preflight(version_override=None, repo_root=root)
+    release_contents.assert_called_once_with(wt)
+    assert ctx.cut == _CUT
+    assert ctx.pending_release is _PENDING
+
+
+def test_preflight_resume_reads_no_contents(release_contents: MagicMock) -> None:
+    root = Path("/tmp/repo")  # noqa: S108
+    wt = Path("/tmp/repo/.worktrees/release-2.3.0")  # noqa: S108
+    with (
+        patch(_MOD + "._check_host_prerequisites"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + "._read_and_validate_config"),
+        patch(_MOD + "._check_branch_and_tree"),
+        patch(_MOD + "._acquire_release_worktree", return_value=wt),
+        patch(_MOD + ".os.chdir"),
+    ):
+        ctx = preflight(
+            version_override=None, repo_root=root, resume=True, resume_version="2.3.0"
+        )
+    release_contents.assert_not_called()
+    assert ctx.cut is None
+    assert ctx.pending_release is None
+
+
+def test_release_contents_pins_the_pending_release_to_the_cut() -> None:
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+    with (
+        patch(_MOD + ".git.read_output", return_value=_CUT) as m_git,
+        patch(_MOD + ".gather_pending_release", return_value=_PENDING) as m_gather,
+    ):
+        assert _release_contents(wt) == (_CUT, _PENDING)
+    m_git.assert_called_once_with("-C", str(wt), "rev-parse", "HEAD")
+    m_gather.assert_called_once_with(integration="develop", head=_CUT)
+
+
+def test_release_contents_incomplete_lookup_refuses() -> None:
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+    with (
+        patch(_MOD + ".git.read_output", return_value=_CUT),
+        patch(
+            _MOD + ".gather_pending_release",
+            side_effect=PendingReleaseError("compare truncated"),
+        ),
+        pytest.raises(ReleaseError, match="Could not read what the release contains") as info,
+    ):
+        _release_contents(wt)
+    assert "compare truncated" in str(info.value)
+    assert info.value.phase == "preflight"
 
 
 def test_preflight_success() -> None:

@@ -682,3 +682,35 @@ def test_non_github_remote_raises() -> None:
     assert "gitlab" not in message
     assert "secret" not in message
     read_output.assert_not_called()
+
+
+# --- gather_pending_release: pinned head --------------------------------------
+
+
+def test_head_pins_the_range_to_the_cut() -> None:
+    """A release reads main..<cut>, not the integration tip (epic .github#1440 §4.1)."""
+    cut, later = _sha(1), _sha(2)
+    with (
+        patch("vergil_tooling.lib.git.remote_url", return_value=_URL),
+        patch("vergil_tooling.lib.git.read_output", return_value=_ls_remote(dev=later)),
+        patch(
+            "vergil_tooling.lib.github.read_json", return_value=_page(_linear([cut]), 1)
+        ) as read_json,
+        patch("vergil_tooling.lib.github.graphql", side_effect=_GraphQL({cut: _assoc(_pr(1))})),
+    ):
+        result = gather_pending_release(integration="develop", head=cut)
+    assert [c.shas for c in result.changes] == [(cut,)]
+    read_json.assert_called_once_with(
+        "api", f"repos/o/r/compare/{_MAIN}...{cut}?per_page=100&page=1"
+    )
+
+
+def test_head_that_is_not_a_full_sha_raises() -> None:
+    with (
+        patch("vergil_tooling.lib.git.remote_url", return_value=_URL),
+        patch("vergil_tooling.lib.git.read_output", return_value=_ls_remote(dev=_DEV_TIP)),
+        patch("vergil_tooling.lib.github.read_json") as read_json,
+        pytest.raises(PendingReleaseError, match="not a full SHA"),
+    ):
+        gather_pending_release(integration="develop", head="HEAD")
+    read_json.assert_not_called()

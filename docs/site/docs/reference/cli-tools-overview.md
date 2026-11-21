@@ -415,7 +415,8 @@ runs the dependency update on the new `develop` version, and finally
 the consumer refresh, which runs the `[publish].consumer-refresh`
 commands (held while any publish is deferred). On a fresh start, preflight refuses while an open PR
 carries the `dependency-update` label, after first closing any whose fix
-task completed. Human-only. See the [vrg-release reference](dev/release.md)
+task completed. The tracking issue's body carries the release's
+contents and its state block. Human-only. See the [vrg-release reference](dev/release.md)
 and the [Releasing guide](../guides/releasing.md).
 
 | Attribute | Value |

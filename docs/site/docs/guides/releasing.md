@@ -189,8 +189,8 @@ issue and ticks its box in the issue's stage checklist.
 | Stage | Mode | What it does |
 |---|---|---|
 | `audit` | fail-fast | Runs `vrg-github-repo-config audit` on the repo. Releasing vergil-tooling itself adds `--in-tree-templates`, so its managed files are checked against the templates being released, not the installed release's (see the [config audit reference](../reference/config-audit.md#auditing-vergil-tooling-against-its-own-templates)). `--skip-audit` skips it |
-| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop`, then [brings it up to `origin/develop`](#the-develop-sync). On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it |
-| `prepare` | fail-fast | Creates the `release: <version>` tracking issue, generates the changelog and release notes, and opens the release PR to `main` |
+| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop`, then [brings it up to `origin/develop`](#the-develop-sync). On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, that no tracking issue exists for it, runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it. On a fresh start it then reads the release's [contents](#release-tracking-artifacts), pinned to the commit the branch is cut from |
+| `prepare` | fail-fast | Creates the `release: <version>` tracking issue, with its Contents section, stage checklist and state block, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
 | `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, refreshes the lockfile (`uv lock` for Python and `cargo update --workspace` for Rust, in the dev container; for TypeScript, a direct edit of `package-lock.json`'s root version fields that runs no npm), and merges it to `develop`. Records the back-merge's merge commit |
@@ -866,10 +866,28 @@ gh run list --repo vergil-project/vergil-tooling \
 
 Each release has a tracking issue, `release: <version>`, which
 `vrg-release` creates in its `prepare` stage. The issue is created with
-the stage checklist in its body (see
-[An interrupted release](#an-interrupted-release)), and each tracked
-stage adds a comment when it
-completes or fails:
+three parts in its body:
+
+- a **Contents** section: the table of what `main..<cut>` holds (each
+  PR, or a commit that reached `develop` with no PR, as
+  `vrg-repo-status` shows it), read in `preflight` pinned to the
+  `develop` commit the release branch is cut from, and under it the
+  issues the release contains with their closing PRs;
+- the stage checklist (see
+  [An interrupted release](#an-interrupted-release));
+- the **state block**, a fenced `json` document between
+  `<!-- vrg-release:state:begin -->` and
+  `<!-- vrg-release:state:end -->`, each alone on its line. It holds
+  the version and the cut, and is where the release records its own
+  progress. Only `vrg-release` writes it, by a read-modify-write of the
+  body. A block that is missing, duplicated or malformed, or names a
+  version other than the issue title's, is refused, never replaced by
+  defaults. Do not edit it by hand.
+
+If `preflight` cannot read the contents completely, the release is
+refused before the tracking issue is created; the next run adopts the
+unpushed release branch it left. Each tracked stage adds
+a comment when it completes or fails:
 
 - The `prepare` comment names the release branch, the release PR and
   the tracking issue. It also lists any dependency-update PRs the gate

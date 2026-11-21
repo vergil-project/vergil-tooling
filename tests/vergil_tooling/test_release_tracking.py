@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import dataclasses
+import json
 import subprocess
 import tempfile
 from pathlib import Path
@@ -8,7 +10,13 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib.release import checklist
+from vergil_tooling.lib.pending_release import (
+    ChangeKind,
+    PendingChange,
+    PendingRelease,
+    ReleaseTags,
+)
+from vergil_tooling.lib.release import checklist, state
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import (
     _MAX_COMMENT_CHARS,
@@ -23,7 +31,9 @@ from vergil_tooling.lib.release.tracking import (
     ensure_checklist,
     find_existing_tracking_issue,
     read_issue_body,
+    read_state,
     tick_stage,
+    write_state,
 )
 
 _MOD = "vergil_tooling.lib.release.tracking"
@@ -125,10 +135,185 @@ def test_cursor_returns_first_unchecked() -> None:
         assert cursor(ctx, ["audit", "prepare"]) == "prepare"
 
 
+_CUT = "c" * 40
+
+
+def _pending(*changes: PendingChange) -> PendingRelease:
+    return PendingRelease(
+        tags=ReleaseTags(latest="v2.0.9", rolling="v2.0", rolling_target="v2.0.9"),
+        main_moved_ts=0.0,
+        changes=changes,
+    )
+
+
+def _change(number: int | None, title: str, branch: str | None = "feature/1-x") -> PendingChange:
+    return PendingChange(
+        pr_number=number,
+        branch=branch if number is not None else None,
+        title=title,
+        kind=ChangeKind.OTHER if number is not None else ChangeKind.NO_PR,
+        type_label="feat" if number is not None else "-",
+        merged_ts=0.0,
+        shas=("f" * 40,),
+    )
+
+
 def _creatable_ctx() -> ReleaseContext:
     ctx = _ctx()
     ctx.progress_block = checklist.render(["audit", "prepare"], checked={"audit"})
+    ctx.cut = _CUT
+    ctx.pending_release = _pending(_change(30, "feat: a thing"))
     return ctx
+
+
+def _created_body(ctx: ReleaseContext) -> str:
+    bodies: list[str] = []
+
+    def fake_read_output(*args: str) -> str:
+        bodies.append(Path(args[args.index("--body-file") + 1]).read_text())
+        return "https://github.com/owner/repo/issues/42"
+
+    with patch(_MOD + ".github.read_output", side_effect=fake_read_output):
+        create_tracking_issue(ctx)
+    assert len(bodies) == 1
+    return bodies[0]
+
+
+def test_create_tracking_issue_body_has_contents_and_state() -> None:
+    ctx = _creatable_ctx()
+    ctx.without_deps = True
+    ctx.pending_release = _pending(
+        _change(30, "feat: a thing"), _change(None, "direct push")
+    )
+    body = _created_body(ctx)
+    assert "## Contents" in body
+    assert "#30      feature/1-x  feat  feat: a thing" in body
+    assert "PROBLEM  fffffff      -     direct push" in body
+    assert "### Issues" in body
+    assert "None: the release's PRs close no issues." in body
+    # Contents comes before the checklist, the state block last.
+    assert body.index("## Contents") < body.index(checklist.BEGIN) < body.index(state.BEGIN)
+    parsed = state.parse_state(body)
+    assert parsed == state.initial_state(
+        version="2.1.0", cut=_CUT, issues=(), without_deps=True
+    )
+    assert ctx.state == parsed
+
+
+def test_create_tracking_issue_lists_the_issues() -> None:
+    ctx = _creatable_ctx()
+    ctx.issues = (
+        state.IssueEntry(ref="owner/repo#12", prs=(30,)),
+        state.IssueEntry(ref="owner/repo#13", prs=(31, 32)),
+    )
+    body = _created_body(ctx)
+    assert "- owner/repo#12 (#30)" in body
+    assert "- owner/repo#13 (#31, #32)" in body
+    assert state.parse_state(body).issues == ctx.issues
+
+
+def test_create_tracking_issue_with_nothing_pending() -> None:
+    ctx = _creatable_ctx()
+    ctx.pending_release = _pending()
+    assert "No changes pending release." in _created_body(ctx)
+
+
+@pytest.mark.parametrize("missing", ["cut", "pending_release"])
+def test_create_tracking_issue_refuses_without_contents(missing: str) -> None:
+    ctx = _creatable_ctx()
+    setattr(ctx, missing, None)
+    with (
+        patch(_MOD + ".github.read_output") as m_read,
+        pytest.raises(ReleaseError, match="No release cut or contents"),
+    ):
+        create_tracking_issue(ctx)
+    m_read.assert_not_called()
+
+
+def _issue_json(title: str, body: str) -> str:
+    return json.dumps({"title": title, "body": body})
+
+
+def _state_body(version: str = "2.1.0") -> tuple[str, state.StateBlock]:
+    block = state.initial_state(version=version, cut=_CUT, issues=(), without_deps=False)
+    body = f"## Release\n\n{checklist.render(['audit'])}\n\n{state.render_state(block)}\n"
+    return body, block
+
+
+def test_read_state_returns_the_block() -> None:
+    ctx = _ctx_with_issue()
+    body, block = _state_body()
+    with patch(_MOD + ".github.read_output", return_value=_issue_json("release: 2.1.0", body)) as ro:
+        assert read_state(ctx) == block
+    assert ctx.state == block
+    assert ro.call_args.args[:3] == ("issue", "view", "42")
+
+
+def test_read_state_version_mismatch_raises() -> None:
+    ctx = _ctx_with_issue()
+    body, _ = _state_body(version="2.0.9")
+    with (
+        patch(_MOD + ".github.read_output", return_value=_issue_json("release: 2.1.0", body)),
+        pytest.raises(ReleaseError, match="names version '2.0.9'") as info,
+    ):
+        read_state(ctx)
+    assert "state block" in str(info.value)
+    assert ctx.state is None
+
+
+def test_read_state_missing_block_raises() -> None:
+    ctx = _ctx_with_issue()
+    with (
+        patch(_MOD + ".github.read_output", return_value=_issue_json("release: 2.1.0", "body")),
+        pytest.raises(ReleaseError, match="no release state block"),
+    ):
+        read_state(ctx)
+
+
+def test_read_state_read_failure_raises() -> None:
+    ctx = _ctx_with_issue()
+    err = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502")
+    with (
+        patch(_MOD + ".github.read_output", side_effect=err),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        read_state(ctx)
+
+
+def test_read_state_malformed_response_raises() -> None:
+    ctx = _ctx_with_issue()
+    with (
+        patch(_MOD + ".github.read_output", return_value=json.dumps({"title": 1, "body": ""})),
+        pytest.raises(TypeError, match="non-string title or body"),
+    ):
+        read_state(ctx)
+
+
+def test_write_state_replaces_the_block_and_keeps_the_rest() -> None:
+    ctx = _ctx_with_issue()
+    body, block = _state_body()
+    new = dataclasses.replace(block, done=("prepare",), release_pr="https://x/pull/1")
+    with (
+        patch(_MOD + ".read_issue_body", return_value=body),
+        patch(_MOD + "._write_issue_body") as write,
+    ):
+        write_state(ctx, new)
+    written = write.call_args.args[1]
+    assert state.parse_state(written) == new
+    assert checklist.parse(written) == checklist.parse(body)
+    assert ctx.state == new
+
+
+def test_write_state_refuses_a_duplicated_block() -> None:
+    ctx = _ctx_with_issue()
+    body, block = _state_body()
+    with (
+        patch(_MOD + ".read_issue_body", return_value=body + state.render_state(block)),
+        patch(_MOD + "._write_issue_body") as write,
+        pytest.raises(ReleaseError, match="exactly once"),
+    ):
+        write_state(ctx, block)
+    write.assert_not_called()
 
 
 def test_create_tracking_issue() -> None:
