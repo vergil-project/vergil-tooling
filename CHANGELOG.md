@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.333] - 2026-11-21
+
+### Bug fixes
+
+- describe the registry-backed --label form in --help (#4872)
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- describe the epic category labels in the issue standards (#4871)
+
 ## [2.1.332] - 2026-11-21
 
 ### Bug fixes
