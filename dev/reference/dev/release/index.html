@@ -15135,6 +15135,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#one-release-at-a-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One release at a time
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-dependency-update-gate" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18267,6 +18278,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#one-release-at-a-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One release at a time
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-dependency-update-gate" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18422,6 +18444,14 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
   <code>gh</code>. <code>git-cliff</code> runs in the dev container through <code>vrg-container-run</code>,
   so it is not needed on the host.</li>
 </ul>
+<h2 id="one-release-at-a-time">One release at a time<a class="headerlink" href="#one-release-at-a-time" title="Permanent link">&para;</a></h2>
+<p>On a fresh start (not on <code>--resume</code>), preflight refuses while any
+<code>release: X.Y.Z</code> tracking issue is open in the repo, whatever its
+version. The refusal names each open issue and the
+<code>vrg-release --resume X.Y.Z</code> that finishes it, or, for an issue with no
+state block (left by older tooling), says to finish that release by
+hand and then close the issue. Lookup failures refuse the release. See
+<a href="../../../guides/releasing/#one-release-at-a-time">One release at a time</a>.</p>
 <h2 id="the-dependency-update-gate">The dependency-update gate<a class="headerlink" href="#the-dependency-update-gate" title="Permanent link">&para;</a></h2>
 <p>On a fresh start (not on <code>--resume</code>), preflight refuses while an open
 PR carries the <code>dependency-update</code> label. First it closes, with a

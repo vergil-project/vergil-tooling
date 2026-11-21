@@ -18419,6 +18419,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#one-release-at-a-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One release at a time
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-develop-sync" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18844,6 +18855,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#one-release-at-a-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One release at a time
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-develop-sync" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19147,7 +19169,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>preflight</code></td>
 <td>fail-fast</td>
-<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code>, then <a href="#the-develop-sync">brings it up to <code>origin/develop</code></a>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, that no tracking issue exists for it, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, runs the <a href="#the-dependency-update-gate">dependency-update gate</a>, and last runs the <a href="#the-develop-cd-gate">develop-CD gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it. On a fresh start it then reads the release's <a href="#release-tracking-artifacts">contents</a>, pinned to the commit the branch is cut from</td>
+<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code>, then <a href="#the-develop-sync">brings it up to <code>origin/develop</code></a>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, checks that <a href="#one-release-at-a-time">no other release is open</a>, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, runs the <a href="#the-dependency-update-gate">dependency-update gate</a>, and last runs the <a href="#the-develop-cd-gate">develop-CD gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it. On a fresh start it then reads the release's <a href="#release-tracking-artifacts">contents</a>, pinned to the commit the branch is cut from</td>
 </tr>
 <tr>
 <td><code>prepare</code></td>
@@ -19275,8 +19297,9 @@ What a re-run does depends on how far the stopped run got:</p>
   never deletes a branch or a worktree.</li>
 <li><strong>Stopped after the tracking issue was opened.</strong> The issue is created
   with its stage checklist in its body, so it is always resumable:
-  run <code>vrg-release --resume</code>. A fresh <code>vrg-release</code> refuses, since a
-  tracking issue already exists for the version. The resume adopts the
+  run <code>vrg-release --resume</code>. A fresh <code>vrg-release</code> refuses while any
+  release is open (<a href="#one-release-at-a-time">one release at a time</a>),
+  whatever version it would cut. The resume adopts the
   local release branch and worktree, unpushed or not, and the <code>prepare</code>
   stage skips what the stopped run already did.</li>
 </ul>
@@ -19747,6 +19770,24 @@ any other fresh-start check, when <code>origin/main</code> has commits not on
   <code>develop</code>, and the check keeps refusing. Then re-run <code>vrg-release</code>.</p>
 <p>If preflight cannot fetch <code>main</code> or compare the branches, it refuses
 rather than skipping.</p>
+<h3 id="one-release-at-a-time">One release at a time<a class="headerlink" href="#one-release-at-a-time" title="Permanent link">&para;</a></h3>
+<p>A repo has at most one release in flight. A fresh start (not
+<code>--resume</code>) refuses while <strong>any</strong> <code>release: X.Y.Z</code> tracking issue is
+open in the repo, whatever its version, and names each open issue with
+its recovery:</p>
+<ul>
+<li>An issue with a state block is finished with
+  <code>vrg-release --resume X.Y.Z</code>.</li>
+<li>An issue whose state block cannot be read is finished the same way,
+  once the block is fixed; the refusal gives the parse error.</li>
+<li>An issue with no state block was opened by older <code>vrg-release</code>
+  tooling, which <code>--resume</code> cannot finish. Finish that release by hand,
+  then close the issue.</li>
+</ul>
+<p><code>--resume X.Y.Z</code> still takes a version, for a repo that older tooling
+left with several releases open. If preflight cannot list the open
+issues, or the listing may be truncated, it refuses rather than
+reading that as no release in flight.</p>
 <h3 id="the-develop-sync">The develop sync<a class="headerlink" href="#the-develop-sync" title="Permanent link">&para;</a></h3>
 <p>Preflight does not refuse a root checkout that is merely behind
 <code>origin/develop</code>: another PR may well have merged since you last pulled,
