@@ -18186,6 +18186,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#resuming-a-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resuming a release
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#a-failed-release-job" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18626,6 +18637,17 @@
     <span class="md-ellipsis">
       
         An interrupted release
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resuming-a-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resuming a release
       
     </span>
   </a>
@@ -19173,7 +19195,10 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
 run when it fails. A <em>deferred</em> stage records its failure and lets the
 later stages run; the run then exits 1 with a summary. Every tracked
 stage posts a completion or failure comment on the release tracking
-issue and ticks its box in the issue's stage checklist.</p>
+issue and ticks its box in the issue's stage checklist. A stage that
+succeeds also records itself done in the issue's state block, with the
+facts later stages need; a <a href="#resuming-a-release">resume</a> runs only the
+stages not recorded done.</p>
 <table>
 <thead>
 <tr>
@@ -19191,7 +19216,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>preflight</code></td>
 <td>fail-fast</td>
-<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code>, then <a href="#the-develop-sync">brings it up to <code>origin/develop</code></a>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, checks that <a href="#one-release-at-a-time">no other release is open</a>, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, runs the <a href="#the-dependency-update-gate">dependency-update gate</a>, and last runs the <a href="#the-develop-cd-gate">develop-CD gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it. On a fresh start it then reads the release's <a href="#release-tracking-artifacts">contents</a>, pinned to the commit the branch is cut from, and prints them: the pending-release table and, under it, the <a href="#the-issue-list">issue list</a></td>
+<td>Checks the host prerequisites, <code>gh</code> auth and <code>vergil.toml</code>. A <a href="#resuming-a-release">resume</a> runs only these checks. A fresh start then checks that the root checkout is a clean <code>develop</code>, <a href="#the-develop-sync">brings it up to <code>origin/develop</code></a>, runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, checks that <a href="#one-release-at-a-time">no other release is open</a>, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, runs the <a href="#the-dependency-update-gate">dependency-update gate</a>, and last runs the <a href="#the-develop-cd-gate">develop-CD gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it. On a fresh start it then reads the release's <a href="#release-tracking-artifacts">contents</a>, pinned to the commit the branch is cut from, and prints them: the pending-release table and, under it, the <a href="#the-issue-list">issue list</a></td>
 </tr>
 <tr>
 <td><code>prepare</code></td>
@@ -19215,8 +19240,8 @@ issue and ticks its box in the issue's stage checklist.</p>
 </tr>
 <tr>
 <td><code>teardown-worktree</code></td>
-<td>deferred</td>
-<td>Removes the release worktree and returns to the root checkout</td>
+<td>fail-fast</td>
+<td>Removes the release worktree and returns to the root checkout. Fail-fast, as every branch-work stage is, so <code>close-finalize</code>, which prunes the release branches, runs only once all of them have succeeded</td>
 </tr>
 <tr>
 <td><code>confirm-develop</code></td>
@@ -19258,17 +19283,18 @@ issue and ticks its box in the issue's stage checklist.</p>
 <p><code>close-finalize</code> leaves the tracking issue open, and skips the cleanup,
 when an earlier stage has failed, so the release can be resumed with
 <code>vrg-release --resume</code>. A deferred publish failure also leaves the
-issue open, with a comment that says how to finish each deferred item,
-but the release itself is complete: re-run the CD publish (or the
-<code>publish-index</code> workflow, for a <code>package-index</code> miss) rather than
-resuming.</p>
+issue open, with a comment that says how to finish each deferred item:
+re-run the CD publish (or the <code>publish-index</code> workflow, for a
+<code>package-index</code> miss), then run <code>vrg-release --resume</code>, which finishes
+the stages not yet done and closes the issue.</p>
 <p><code>confirm-develop</code> checks the CD run for the back-merge's merge commit,
 not for the current tip of <code>develop</code>. On <code>vrg-release --resume</code>, other
 PRs (a dependency update or a feature) may have merged to <code>develop</code>
 since the back-merge. The tip's CD run then says nothing about the
-release. A resume re-runs <code>back-merge-bump</code>, which adopts the existing
-back-merge PR and records its merge commit again. If the merge commit
-can't be found, <code>confirm-develop</code> fails. It never falls back to the tip.</p>
+release. A resume reads the back-merge PR from the state block and
+confirms its merge commit with GitHub before any stage runs. If the
+merge commit can't be found, <code>confirm-develop</code> fails. It never falls
+back to the tip.</p>
 <p><code>close-finalize</code> does not pass <code>--wait-cd</code> to <code>vrg-finalize-pr</code>, so
 finalize only reports the CD run of <code>develop</code>'s tip and never fails on
 it. That tip has the same problem: it may be a later commit's.
@@ -19286,22 +19312,13 @@ on the commit it names, never simply the newest <code>vX.Y.Z</code>, so a line
 demoted with <code>vrg-promote</code> is followed by the dev-container cache,
 <code>vrg-vm</code> and <code>vrg-tooling-install</code> alike.
 When <code>package-index</code> defers, <code>promote</code> skips and <code>vX.Y</code> stays on the
-previous release, so the two still agree. The deferral comment, the
-<code>close-finalize</code> outcome line and the <code>publish-status</code> error name the
-pending promote. Once the release's packages appear in the index, finish
-it by hand:</p>
-<ol>
-<li>Move the tag with the <a href="#move-the-tag-back"><code>vrg-promote</code> steps</a>,
-   passing the version: <code>vrg-promote &lt;X.Y.Z&gt;</code>.</li>
-<li>Close the release tracking issue, which stays open until then.</li>
-</ol>
-<p>Do not use <code>vrg-release --resume</code> for it: the release is complete, with
-a deferral, not halted. A release cut with <code>--no-promote</code> has no pending
+previous release, so the two still agree. The deferral comment and the
+<code>close-finalize</code> outcome line name the pending promote. Neither <code>package-index</code> nor the skipped <code>promote</code> is
+recorded done, and nor is <code>close-finalize</code>, which left the issue open.
+Once the release's packages appear in the index, run
+<code>vrg-release --resume</code>: it waits for the index again, moves the tag and
+closes the issue. A release cut with <code>--no-promote</code> has no pending
 promote, deferral or not.</p>
-<p>A release started on tooling that ran <code>promote</code> before <code>package-index</code>
-cannot be resumed by tooling with the new order: <code>--resume</code> refuses a
-tracking issue whose stage checklist differs from the running tooling's.
-Finish such a release with the tooling version that started it.</p>
 <h3 id="an-interrupted-release">An interrupted release<a class="headerlink" href="#an-interrupted-release" title="Permanent link">&para;</a></h3>
 <p>An interrupt (Ctrl-C) or a crash can stop <code>vrg-release</code> at any point.
 What a re-run does depends on how far the stopped run got:</p>
@@ -19318,19 +19335,48 @@ What a re-run does depends on how far the stopped run got:</p>
   the reason, and leaves everything in place for you to inspect. It
   never deletes a branch or a worktree.</li>
 <li><strong>Stopped after the tracking issue was opened.</strong> The issue is created
-  with its stage checklist in its body, so it is always resumable:
-  run <code>vrg-release --resume</code>. A fresh <code>vrg-release</code> refuses while any
-  release is open (<a href="#one-release-at-a-time">one release at a time</a>),
-  whatever version it would cut. The resume adopts the
-  local release branch and worktree, unpushed or not, and the <code>prepare</code>
-  stage skips what the stopped run already did.</li>
+  with its stage checklist and state block in its body, so it is always
+  resumable: run <code>vrg-release --resume</code>. A fresh <code>vrg-release</code> refuses
+  while any release is open
+  (<a href="#one-release-at-a-time">one release at a time</a>), whatever version it
+  would cut. The resume runs the stage the stopped run was in again,
+  from its start; <code>prepare</code>, for one, skips what the stopped run already
+  did.</li>
 </ul>
-<p>A tracking issue opened by an older <code>vrg-release</code> can lack the stage
-checklist, if that run was interrupted in <code>prepare</code>. <code>--resume</code> takes
-it over when the <code>release/&lt;version&gt;</code> branch exists, locally or on
-<code>origin</code>: the branch shows the fresh start's checks passed, and
-<code>prepare</code> writes the checklist. With no branch it refuses; close the
-issue and run <code>vrg-release</code> again.</p>
+<h3 id="resuming-a-release">Resuming a release<a class="headerlink" href="#resuming-a-release" title="Permanent link">&para;</a></h3>
+<p><code>vrg-release --resume</code> reads the tracking issue's state block, under
+<a href="#the-lock-and-the-identity-rule">the lock and the identity rule</a>, and
+runs only the stages it does not record as done, from the first undone
+stage on. Each one it skips prints <code>already done</code>. <code>audit</code>, <code>preflight</code>
+and <code>publish-status</code> run on every run and are never recorded done.</p>
+<ul>
+<li><strong>Checks.</strong> <code>preflight</code> runs only its host, <code>gh</code> auth and config
+  checks. The fresh-start checks, the develop sync among them, do not
+  run: the release passed them when it started.</li>
+<li><strong>Facts are checked, not trusted.</strong> Before any stage runs, the resume
+  confirms what the state block records against GitHub and git: the
+  release PR is merged once <code>merge-release</code> is done, and the back-merge
+  PR once <code>back-merge-bump</code> is; the recorded CD run on <code>main</code> is for the
+  release PR's merge commit, and the one on <code>develop</code> for the back-merge
+  PR's; and the tag still peels to the recorded commit, which is the
+  release PR's merge commit or a single-parent freeze commit on top of it.
+  A mismatch stops the run, naming the fact.</li>
+<li><strong>The worktree.</strong> The resume adopts the release worktree only when the
+  first undone stage is at or before <code>teardown-worktree</code>. Otherwise it
+  runs from the root checkout, and never needs the release branch, which
+  <code>close-finalize</code> may already have pruned.</li>
+<li><strong>A stage that did not do its work</strong> is not recorded done, so a resume
+  runs it again: a <code>promote</code> that left <code>vX.Y</code> behind (<code>--no-promote</code>, or
+  a deferred <code>package-index</code>), a <code>close-finalize</code> that left the issue
+  open, and a <code>consumer-refresh</code> that was held back (a deferred publish,
+  an earlier failed stage, or <code>--no-install</code>).</li>
+</ul>
+<p><code>--resume</code> refuses a tracking issue with no state block, or one whose
+block is malformed, names another version, or records a stage the
+running tooling does not have. A release started by an older
+<code>vrg-release</code>, whose issue has no state block, cannot be resumed: finish
+it by hand, or with the tooling version that started it, then close the
+issue.</p>
 <h3 id="a-failed-release-job">A failed release job<a class="headerlink" href="#a-failed-release-job" title="Permanent link">&para;</a></h3>
 <p>When the CD release job on <code>main</code> does not succeed, <code>confirm-main</code>
 fails, and the release PR is already merged. <code>vrg-release --resume</code>
@@ -19622,11 +19668,10 @@ nothing:</p>
 <ul>
 <li><strong>A release already in flight.</strong> A vergil-claude-plugin release that is
   still running moves <code>v2.1</code> forward when it reaches <code>promote</code>. So does any
-  open <code>release: &lt;version&gt;</code> tracking issue, the release you are rolling back
-  included, even with its <code>promote</code> stage ticked: <code>vrg-release --resume</code>
-  runs every stage again, <code>promote</code> with it. Before you roll back, let a
-  running release finish, and close every open tracking issue or resume it
-  only with <code>--no-promote</code>.</li>
+  open <code>release: &lt;version&gt;</code> tracking issue whose <code>promote</code> is not recorded
+  done, the release you are rolling back included: <code>vrg-release --resume</code>
+  runs <code>promote</code> then. Before you roll back, let a running release finish,
+  and close every open tracking issue or resume it only with <code>--no-promote</code>.</li>
 <li><strong>A resume without <code>--no-promote</code>.</strong> <code>vrg-release</code> does not remember
   <code>--no-promote</code>: each run, <code>--resume</code> included, promotes unless that run
   passes the flag. Pass <code>--no-promote</code> to every <code>vrg-release --resume</code> of a
@@ -19927,8 +19972,9 @@ a comment when it completes or fails:</p>
 happens before the last few stages run, so their comments land on the
 closed issue. It stays open when an earlier stage failed (so the
 release can be resumed) or a publish job was deferred. <code>vrg-release
---resume</code> finds the open tracking issue and runs the pipeline again,
-adopting the branches, PRs and tag the earlier run already created.</p>
+--resume</code> finds the open tracking issue and runs only the stages its
+state block does not record as done (see
+<a href="#resuming-a-release">Resuming a release</a>).</p>
 <p>Use the issue as well to capture the rationale for the release and any
 consumer coordination it needs, especially for minor and major bumps.
 Follow-ups move to their own issues.</p>
