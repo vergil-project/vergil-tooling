@@ -18359,6 +18359,11 @@ back-merge and version bump, rolling-tag promotion, cleanup, the
 post-release dependency update, and last the consumer refresh. The stages and what
 they leave behind are described in the
 <a href="../../../guides/releasing/#the-vrg-release-pipeline">Releasing guide</a>.</p>
+<p>On a fresh start, <code>preflight</code> prints the release's contents: the
+pending-release table of <code>main..&lt;cut&gt;</code> and the issues the release
+contains, each with its closing PRs, from the trusted closing
+references of its <code>feature/</code> PRs (see
+<a href="../../../guides/releasing/#the-issue-list">The issue list</a>).</p>
 <p>The <code>release: &lt;version&gt;</code> tracking issue's body carries a Contents
 section (the pending-release table and the issues the release
 contains), the stage checklist, and the release's state block, which

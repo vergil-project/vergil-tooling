@@ -18480,6 +18480,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#the-issue-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The issue list
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-lock-and-the-identity-rule" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18916,6 +18927,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#the-issue-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The issue list
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-lock-and-the-identity-rule" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19169,7 +19191,7 @@ issue and ticks its box in the issue's stage checklist.</p>
 <tr>
 <td><code>preflight</code></td>
 <td>fail-fast</td>
-<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code>, then <a href="#the-develop-sync">brings it up to <code>origin/develop</code></a>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, checks that <a href="#one-release-at-a-time">no other release is open</a>, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, runs the <a href="#the-dependency-update-gate">dependency-update gate</a>, and last runs the <a href="#the-develop-cd-gate">develop-CD gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it. On a fresh start it then reads the release's <a href="#release-tracking-artifacts">contents</a>, pinned to the commit the branch is cut from</td>
+<td>Checks the host prerequisites, <code>gh</code> auth, <code>vergil.toml</code>, and that the root checkout is a clean <code>develop</code>, then <a href="#the-develop-sync">brings it up to <code>origin/develop</code></a>. On a fresh start it also runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, checks that <a href="#one-release-at-a-time">no other release is open</a>, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, runs the <a href="#the-dependency-update-gate">dependency-update gate</a>, and last runs the <a href="#the-develop-cd-gate">develop-CD gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it. On a fresh start it then reads the release's <a href="#release-tracking-artifacts">contents</a>, pinned to the commit the branch is cut from, and prints them: the pending-release table and, under it, the <a href="#the-issue-list">issue list</a></td>
 </tr>
 <tr>
 <td><code>prepare</code></td>
@@ -19869,7 +19891,8 @@ three parts in its body:</p>
   PR, or a commit that reached <code>develop</code> with no PR, as
   <code>vrg-repo-status</code> shows it), read in <code>preflight</code> pinned to the
   <code>develop</code> commit the release branch is cut from, and under it the
-  issues the release contains with their closing PRs;</li>
+  issues the release contains with their closing PRs (see
+  <a href="#the-issue-list">The issue list</a>);</li>
 <li>the stage checklist (see
   <a href="#an-interrupted-release">An interrupted release</a>);</li>
 <li>the <strong>state block</strong>, a fenced <code>json</code> document between
@@ -19909,6 +19932,29 @@ adopting the branches, PRs and tag the earlier run already created.</p>
 <p>Use the issue as well to capture the rationale for the release and any
 consumer coordination it needs, especially for minor and major bumps.
 Follow-ups move to their own issues.</p>
+<h3 id="the-issue-list">The issue list<a class="headerlink" href="#the-issue-list" title="Permanent link">&para;</a></h3>
+<p>The issue list is the union of the closing references of every PR in
+<code>main..&lt;cut&gt;</code> whose head branch starts <code>feature/</code>, a batch PR included.
+Release back-merges, dependency updates, automation PRs and commits
+with no PR contribute none, and a closing reference to an issue in
+another repo is ignored. Each issue is listed once, by number, with
+every PR that closes it.</p>
+<p>Only a trusted closing reference counts:</p>
+<ul>
+<li>one a closing line in the PR body names (<code>Closes</code>, <code>Close</code> or
+  <code>Closed</code>, the keywords the fleet's linkage rules sanction), while
+  every identity in the body's history (its author, its last editor
+  and every earlier editor) is a trusted author (<code>human</code> or <code>agents</code>
+  of <code>vrg-trusted-authors</code>); or</li>
+<li>one linked to the PR by hand, when every identity that linked it is
+  a trusted author.</li>
+</ul>
+<p>Any other closing reference contributes no issue, and <code>preflight</code>
+names it, with its PR and the reason, in a <code>WARNING:</code> line. A release
+whose PRs close no issues has an empty list, which is valid. The
+trusted authors failing to load, or any of the reads failing or coming
+back truncated, refuses the release like any other incomplete
+contents lookup.</p>
 <h3 id="the-lock-and-the-identity-rule">The lock and the identity rule<a class="headerlink" href="#the-lock-and-the-identity-rule" title="Permanent link">&para;</a></h3>
 <p>The state block is trusted only while the tracking issue is the human's.
 Every time <code>vrg-release</code> reads the state block, and again in the read
