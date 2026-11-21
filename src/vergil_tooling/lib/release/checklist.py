@@ -37,11 +37,6 @@ def render(stages: Sequence[str], checked: Iterable[str] = ()) -> str:
 _ITEM_RE = re.compile(r"^\s*-\s*\[([ xX])\]\s*(\S+)\s*$")
 
 
-def has_block(body: str) -> bool:
-    """True when *body* carries a delimited checklist block (possibly malformed)."""
-    return BEGIN in body or END in body
-
-
 def _block_inner(body: str) -> str:
     if BEGIN not in body or END not in body:
         msg = "no vrg-release progress block found in issue body"
@@ -80,28 +75,6 @@ def _names_and_checked(body: str) -> tuple[list[str], set[str]]:
     names = [name for name, _ in pairs]
     checked = {name for name, was_checked in pairs if was_checked}
     return names, checked
-
-
-def first_unchecked(body: str, expected_stages: Sequence[str]) -> str | None:
-    """Return the first unchecked stage, or None if all are checked.
-
-    Raises ``ChecklistError`` if the block's stages do not match
-    *expected_stages* — a mismatch means the checklist was written by a
-    different tooling version, and resume must refuse rather than guess.
-    """
-    names, checked = _names_and_checked(body)
-    if names != list(expected_stages):
-        msg = (
-            "release checklist was written by a different vrg-release version "
-            f"(found {names}, expected {list(expected_stages)}); complete the "
-            "release with the original version or finish the remaining stages "
-            "manually"
-        )
-        raise ChecklistError(msg)
-    for name in names:
-        if name not in checked:
-            return name
-    return None
 
 
 def tick(body: str, stage: str) -> str:

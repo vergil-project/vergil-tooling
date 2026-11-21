@@ -224,7 +224,8 @@ def test_close_and_finalize_publish_deferred_prints_per_kind_remedy(
         finalize.close_and_finalize(ctx)
     remedy.assert_called_once_with(ctx, ["package-index"])
     out = capsys.readouterr().out
-    assert "The release is complete; re-run publish-index (NOT --resume)." in out
+    assert "The release is complete; re-run publish-index." in out
+    assert "NOT --resume" not in out
     assert "CD publish" not in out
 
 

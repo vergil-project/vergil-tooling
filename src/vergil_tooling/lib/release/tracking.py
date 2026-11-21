@@ -220,8 +220,10 @@ def publish_deferred_remedy(ctx: ReleaseContext, jobs: list[str]) -> str:
     """One-line remediation for deferred publishes, per kind of deferred item.
 
     CD publish jobs are re-run through CD; a deferred ``package-index`` is
-    finished in the org's packages repo instead (#3543), then promoted with
-    ``vrg-promote`` when the promote stage held vX.Y back (#4293).
+    finished in the org's packages repo instead (#3543). Either way
+    ``vrg-release --resume`` then finishes the release, running only the
+    stages not yet done: the promote a deferred index held back (#4293), the
+    close and the consumer refresh (spec §4.3 of epic vergil-project/.github#1440).
     """
     remedies = []
     if any(job != package_index.PHASE for job in jobs):
@@ -231,10 +233,8 @@ def publish_deferred_remedy(ctx: ReleaseContext, jobs: list[str]) -> str:
             f"re-run (or wait for) the publish-index workflow in {_packages_repo(ctx)} "
             "and confirm the release's packages appear in the index"
         )
-        if promote_pending(ctx):
-            remedy += f", then run vrg-promote v{ctx.version} to move the rolling tag"
         remedies.append(remedy)
-    return "; ".join(remedies)
+    return "; ".join(remedies) + ", then finish the release with vrg-release --resume"
 
 
 def comment_publish_deferred(ctx: ReleaseContext, jobs: list[str]) -> None:
@@ -243,8 +243,9 @@ def comment_publish_deferred(ctx: ReleaseContext, jobs: list[str]) -> None:
     The release is complete (tag + GitHub Release published). Each kind of
     deferred item gets its own advice: CD publish jobs must be re-run, and a
     deferred ``package-index`` is finished by the org's ``publish-index``
-    workflow (#3543). ``vrg-release --resume`` does NOT apply — the version is
-    already tagged — so the comment says so explicitly (#1853).
+    workflow (#3543). Once it is delivered, ``vrg-release --resume`` finishes
+    the release, running only the stages not yet done (spec §4.3 of epic
+    vergil-project/.github#1440).
     """
     cd_jobs = [job for job in jobs if job != package_index.PHASE]
     lines = [
@@ -278,15 +279,15 @@ def comment_publish_deferred(ctx: ReleaseContext, jobs: list[str]) -> None:
         if promote_pending(ctx):
             major_minor = ".".join(ctx.version.split(".")[:2])
             lines += [
-                f"**Then promote**: the rolling tag `v{major_minor}` was not moved and "
+                f"**Promote pending**: the rolling tag `v{major_minor}` was not moved and "
                 "stays on the previous release, so git and packaged installs of "
-                f"`v{major_minor}` keep agreeing. Once the packages appear, run "
-                f"`vrg-promote v{ctx.version}`, then close this issue.",
+                f"`v{major_minor}` keep agreeing. `vrg-release --resume` moves it once "
+                "the packages appear.",
                 "",
             ]
     lines.append(
-        "**Do not** run `vrg-release --resume`: the version is already tagged; "
-        "`--resume` is for a *halted* release, not a *completed-with-deferral* one."
+        "**Then finish the release** with `vrg-release --resume`: it runs only the "
+        "stages not yet done, and closes this issue."
     )
     _comment(ctx, "\n".join(lines))
 
@@ -476,11 +477,6 @@ def ensure_checklist(
 def tick_stage(ctx: ReleaseContext, stage: str) -> None:
     """Check *stage*'s box in the tracking-issue checklist."""
     _write_issue_body(ctx, checklist.tick(read_issue_body(ctx), stage))
-
-
-def cursor(ctx: ReleaseContext, stages: Sequence[str]) -> str | None:
-    """Return the first incomplete stage in the checklist, or None if all done."""
-    return checklist.first_unchecked(read_issue_body(ctx), stages)
 
 
 def _comment(ctx: ReleaseContext, body: str) -> None:

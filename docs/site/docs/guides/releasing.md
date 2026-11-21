@@ -184,17 +184,20 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
 run when it fails. A *deferred* stage records its failure and lets the
 later stages run; the run then exits 1 with a summary. Every tracked
 stage posts a completion or failure comment on the release tracking
-issue and ticks its box in the issue's stage checklist.
+issue and ticks its box in the issue's stage checklist. A stage that
+succeeds also records itself done in the issue's state block, with the
+facts later stages need; a [resume](#resuming-a-release) runs only the
+stages not recorded done.
 
 | Stage | Mode | What it does |
 |---|---|---|
 | `audit` | fail-fast | Runs `vrg-github-repo-config audit` on the repo. Releasing vergil-tooling itself adds `--in-tree-templates`, so its managed files are checked against the templates being released, not the installed release's (see the [config audit reference](../reference/config-audit.md#auditing-vergil-tooling-against-its-own-templates)). `--skip-audit` skips it |
-| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth, `vergil.toml`, and that the root checkout is a clean `develop`, then [brings it up to `origin/develop`](#the-develop-sync). On a fresh start it also runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, checks that [no other release is open](#one-release-at-a-time), runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it. On a fresh start it then reads the release's [contents](#release-tracking-artifacts), pinned to the commit the branch is cut from, and prints them: the pending-release table and, under it, the [issue list](#the-issue-list) |
+| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth and `vergil.toml`. A [resume](#resuming-a-release) runs only these checks. A fresh start then checks that the root checkout is a clean `develop`, [brings it up to `origin/develop`](#the-develop-sync), runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, checks that [no other release is open](#one-release-at-a-time), runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it. On a fresh start it then reads the release's [contents](#release-tracking-artifacts), pinned to the commit the branch is cut from, and prints them: the pending-release table and, under it, the [issue list](#the-issue-list) |
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, with its Contents section, stage checklist and state block, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
 | `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, refreshes the lockfile (`uv lock` for Python and `cargo update --workspace` for Rust, in the dev container; for TypeScript, a direct edit of `package-lock.json`'s root version fields that runs no npm), and merges it to `develop`. Records the back-merge's merge commit |
-| `teardown-worktree` | deferred | Removes the release worktree and returns to the root checkout |
+| `teardown-worktree` | fail-fast | Removes the release worktree and returns to the root checkout. Fail-fast, as every branch-work stage is, so `close-finalize`, which prunes the release branches, runs only once all of them have succeeded |
 | `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed docs publish is deferred |
 | `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index. A miss is a deferred publish failure, not a halted stage |
 | `promote` | deferred | Moves the rolling `vX.Y` tag to the new release (skipped with `--no-promote`). It runs after `package-index`, so `vX.Y` moves only once the index has the release, and skips when `package-index` deferred (see [A promote held back by the index](#a-promote-held-back-by-the-index)) |
@@ -206,18 +209,19 @@ issue and ticks its box in the issue's stage checklist.
 `close-finalize` leaves the tracking issue open, and skips the cleanup,
 when an earlier stage has failed, so the release can be resumed with
 `vrg-release --resume`. A deferred publish failure also leaves the
-issue open, with a comment that says how to finish each deferred item,
-but the release itself is complete: re-run the CD publish (or the
-`publish-index` workflow, for a `package-index` miss) rather than
-resuming.
+issue open, with a comment that says how to finish each deferred item:
+re-run the CD publish (or the `publish-index` workflow, for a
+`package-index` miss), then run `vrg-release --resume`, which finishes
+the stages not yet done and closes the issue.
 
 `confirm-develop` checks the CD run for the back-merge's merge commit,
 not for the current tip of `develop`. On `vrg-release --resume`, other
 PRs (a dependency update or a feature) may have merged to `develop`
 since the back-merge. The tip's CD run then says nothing about the
-release. A resume re-runs `back-merge-bump`, which adopts the existing
-back-merge PR and records its merge commit again. If the merge commit
-can't be found, `confirm-develop` fails. It never falls back to the tip.
+release. A resume reads the back-merge PR from the state block and
+confirms its merge commit with GitHub before any stage runs. If the
+merge commit can't be found, `confirm-develop` fails. It never falls
+back to the tip.
 
 `close-finalize` does not pass `--wait-cd` to `vrg-finalize-pr`, so
 finalize only reports the CD run of `develop`'s tip and never fails on
@@ -240,21 +244,12 @@ demoted with `vrg-promote` is followed by the dev-container cache,
 When `package-index` defers, `promote` skips and `vX.Y` stays on the
 previous release, so the two still agree. The deferral comment, the
 `close-finalize` outcome line and the `publish-status` error name the
-pending promote. Once the release's packages appear in the index, finish
-it by hand:
-
-1. Move the tag with the [`vrg-promote` steps](#move-the-tag-back),
-   passing the version: `vrg-promote <X.Y.Z>`.
-2. Close the release tracking issue, which stays open until then.
-
-Do not use `vrg-release --resume` for it: the release is complete, with
-a deferral, not halted. A release cut with `--no-promote` has no pending
+pending promote. Neither `package-index` nor the skipped `promote` is
+recorded done, and nor is `close-finalize`, which left the issue open.
+Once the release's packages appear in the index, run
+`vrg-release --resume`: it waits for the index again, moves the tag and
+closes the issue. A release cut with `--no-promote` has no pending
 promote, deferral or not.
-
-A release started on tooling that ran `promote` before `package-index`
-cannot be resumed by tooling with the new order: `--resume` refuses a
-tracking issue whose stage checklist differs from the running tooling's.
-Finish such a release with the tooling version that started it.
 
 ### An interrupted release
 
@@ -273,19 +268,48 @@ What a re-run does depends on how far the stopped run got:
   the reason, and leaves everything in place for you to inspect. It
   never deletes a branch or a worktree.
 - **Stopped after the tracking issue was opened.** The issue is created
-  with its stage checklist in its body, so it is always resumable:
-  run `vrg-release --resume`. A fresh `vrg-release` refuses while any
-  release is open ([one release at a time](#one-release-at-a-time)),
-  whatever version it would cut. The resume adopts the
-  local release branch and worktree, unpushed or not, and the `prepare`
-  stage skips what the stopped run already did.
+  with its stage checklist and state block in its body, so it is always
+  resumable: run `vrg-release --resume`. A fresh `vrg-release` refuses
+  while any release is open
+  ([one release at a time](#one-release-at-a-time)), whatever version it
+  would cut. The resume runs the stage the stopped run was in again,
+  from its start; `prepare`, for one, skips what the stopped run already
+  did.
 
-A tracking issue opened by an older `vrg-release` can lack the stage
-checklist, if that run was interrupted in `prepare`. `--resume` takes
-it over when the `release/<version>` branch exists, locally or on
-`origin`: the branch shows the fresh start's checks passed, and
-`prepare` writes the checklist. With no branch it refuses; close the
-issue and run `vrg-release` again.
+### Resuming a release
+
+`vrg-release --resume` reads the tracking issue's state block, under
+[the lock and the identity rule](#the-lock-and-the-identity-rule), and
+runs only the stages it does not record as done, from the first undone
+stage on. Each one it skips prints `already done`. `audit`, `preflight`
+and `publish-status` run on every run and are never recorded done.
+
+- **Checks.** `preflight` runs only its host, `gh` auth and config
+  checks. The fresh-start checks, the develop sync among them, do not
+  run: the release passed them when it started.
+- **Facts are checked, not trusted.** Before any stage runs, the resume
+  confirms what the state block records against GitHub and git: the
+  release PR is merged once `merge-release` is done, and the back-merge
+  PR once `back-merge-bump` is; the recorded CD run on `main` is for the
+  release PR's merge commit, and the one on `develop` for the back-merge
+  PR's; and the tag still peels to the recorded commit, which is the
+  release PR's merge commit or a single-parent freeze commit on top of it.
+  A mismatch stops the run, naming the fact.
+- **The worktree.** The resume adopts the release worktree only when the
+  first undone stage is at or before `teardown-worktree`. Otherwise it
+  runs from the root checkout, and never needs the release branch, which
+  `close-finalize` may already have pruned.
+- **A stage that did not do its work** is not recorded done, so a resume
+  runs it again: a `promote` that left `vX.Y` behind (`--no-promote`, or
+  a deferred `package-index`), a `close-finalize` that left the issue
+  open, and a `consumer-refresh` that ran no command.
+
+`--resume` refuses a tracking issue with no state block, or one whose
+block is malformed, names another version, or records a stage the
+running tooling does not have. A release started by an older
+`vrg-release`, whose issue has no state block, cannot be resumed: finish
+it by hand, or with the tooling version that started it, then close the
+issue.
 
 ### A failed release job
 
@@ -585,11 +609,10 @@ nothing:
 
 - **A release already in flight.** A vergil-claude-plugin release that is
   still running moves `v2.1` forward when it reaches `promote`. So does any
-  open `release: <version>` tracking issue, the release you are rolling back
-  included, even with its `promote` stage ticked: `vrg-release --resume`
-  runs every stage again, `promote` with it. Before you roll back, let a
-  running release finish, and close every open tracking issue or resume it
-  only with `--no-promote`.
+  open `release: <version>` tracking issue whose `promote` is not recorded
+  done, the release you are rolling back included: `vrg-release --resume`
+  runs `promote` then. Before you roll back, let a running release finish,
+  and close every open tracking issue or resume it only with `--no-promote`.
 - **A resume without `--no-promote`.** `vrg-release` does not remember
   `--no-promote`: each run, `--resume` included, promotes unless that run
   passes the flag. Pass `--no-promote` to every `vrg-release --resume` of a
@@ -930,8 +953,9 @@ The `close-finalize` stage closes the issue with a summary, which
 happens before the last few stages run, so their comments land on the
 closed issue. It stays open when an earlier stage failed (so the
 release can be resumed) or a publish job was deferred. `vrg-release
---resume` finds the open tracking issue and runs the pipeline again,
-adopting the branches, PRs and tag the earlier run already created.
+--resume` finds the open tracking issue and runs only the stages its
+state block does not record as done (see
+[Resuming a release](#resuming-a-release)).
 
 Use the issue as well to capture the rationale for the release and any
 consumer coordination it needs, especially for minor and major bumps.

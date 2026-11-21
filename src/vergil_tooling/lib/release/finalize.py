@@ -66,8 +66,7 @@ def close_and_finalize(ctx: ReleaseContext) -> None:
         print(
             "Leaving the tracking issue open — artifact publish deferred "
             f"({', '.join(ctx.deferred_publish_failures)}). The release is "
-            f"complete; {publish_deferred_remedy(ctx, ctx.deferred_publish_failures)} "
-            "(NOT --resume)."
+            f"complete; {publish_deferred_remedy(ctx, ctx.deferred_publish_failures)}."
         )
     else:
         summary = _build_summary(ctx)

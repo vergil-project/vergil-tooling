@@ -63,6 +63,8 @@ class ReleaseContext:
     cd_run_id: str | None = None
     cd_run_url: str | None = None
     tag: str | None = None
+    # The commit the tag peels to, recorded in the state block by confirm-main.
+    tag_commit: str | None = None
     release_url: str | None = None
 
     develop_cd_run_id: str | None = None
