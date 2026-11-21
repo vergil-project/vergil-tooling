@@ -1,0 +1,1 @@
+R1: file: file it as a follow-up task under epic vergil-project/.github#1440 in vergil-project/vergil-tooling, blocked by #4848. A resume that adopts the worktree must refuse, naming the missing release/<version> branch, when that branch is missing both locally and on origin, rather than cut a new one from develop. No change to this PR for R1.
