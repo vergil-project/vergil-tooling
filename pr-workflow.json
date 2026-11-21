@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "issue": "4848",
+  "branch": "feature/4848-resume-undone-stages",
+  "base": "origin/develop",
+  "status": "ready",
+  "created_at": "2026-11-21T13:17:17Z",
+  "updated_at": "2026-11-21T13:17:17Z",
+  "git": {
+    "base_sha": "46d9e96e4ac35b7b5e794f70c5550f20f80bd6fb",
+    "head_sha": "7d212590ed46e25dc36f22182c2d6bdb08acfb4d"
+  },
+  "pr_metadata": {
+    "title": "feat(release): resume from the first undone stage",
+    "summary": "Each tracked vrg-release stage now records itself done, with the PRs, tag and CD runs later stages need, in the tracking issue's state block, and --resume reads that block under the identity rule, verifies its facts against GitHub and git, and runs only the stages not yet done (Task 4 of epic vergil-project/.github#1440).",
+    "notes": "Merge review: done: eligible; accepted-risk 0\n\n- Resume preflight runs only the host, auth and config checks; it adopts the release worktree only when the first undone stage is at or before teardown-worktree, which is now fail-fast. find_resume_target now requires a state block and refuses an issue without one (old tooling), with no fallback to the checklist.\n- verify_facts checks the merged PRs, the main and develop CD runs' head SHAs, and that the tag peels to tag_commit, which is the release merge commit or a single-parent commit on top of it. confirm-main now records tag_commit.\n- Review point: a stage that returns without doing its work is not recorded done, so a resume runs it again: promote skipped by --no-promote or a deferred package-index, a close-finalize that left the issue open, and a consumer-refresh that ran no command (held, not run after a failed stage, or --no-install).\n- Review point: a failure after close-finalize has closed the tracking issue (update-deps or consumer-refresh) cannot be resumed, since --resume finds only open issues. This comes from the current stage order; Tasks 8 and 10 reorder the stages so close-tracking comes last.\n- The deferral comment, publish-status and finalize no longer say not to resume: they now say to re-run the publish, then finish with vrg-release --resume, which also does the promote a deferred index held back.\n- Removed the now-unused checklist cursor (tracking.cursor, checklist.has_block, checklist.first_unchecked).\n- Docs: new Resuming a release section in the releasing guide; release reference updated.",
+    "linkage": "Ref"
+  },
+  "submitted": null
+}
