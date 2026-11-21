@@ -60,6 +60,16 @@ vrg-release [minor|major] [options]
   `gh`. `git-cliff` runs in the dev container through `vrg-container-run`,
   so it is not needed on the host.
 
+## One release at a time
+
+On a fresh start (not on `--resume`), preflight refuses while any
+`release: X.Y.Z` tracking issue is open in the repo, whatever its
+version. The refusal names each open issue and the
+`vrg-release --resume X.Y.Z` that finishes it, or, for an issue with no
+state block (left by older tooling), says to finish that release by
+hand and then close the issue. Lookup failures refuse the release. See
+[One release at a time](../../guides/releasing.md#one-release-at-a-time).
+
 ## The dependency-update gate
 
 On a fresh start (not on `--resume`), preflight refuses while an open

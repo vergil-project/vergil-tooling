@@ -13,11 +13,13 @@ from vergil_tooling.lib.cd_runs import CDRunLookupError
 from vergil_tooling.lib.checkout_lock import CheckoutLockError, checkout_lock
 from vergil_tooling.lib.managed_worktree import ManagedWorktreeError
 from vergil_tooling.lib.pending_release import PendingRelease, PendingReleaseError, ReleaseTags
+from vergil_tooling.lib.release import checklist, state
 from vergil_tooling.lib.release import preflight as preflight_module
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.preflight import (
     PendingDepsPr,
     _check_branch_and_tree,
+    _check_no_open_release,
     _compute_release_version,
     _release_contents,
     check_develop_cd,
@@ -75,7 +77,7 @@ def test_preflight_fresh_start_records_the_cut_and_contents(
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_main_not_ahead_of_develop"),
-        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_no_open_release"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
@@ -142,7 +144,7 @@ def test_preflight_success() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_main_not_ahead_of_develop"),
-        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_no_open_release"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt) as m_wt,
@@ -170,7 +172,7 @@ def test_preflight_resume_skips_fresh_checks_and_adopts() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged") as m_tagged,
         patch(_MOD + "._check_main_not_ahead_of_develop") as m_diverged,
-        patch(_MOD + "._check_no_existing_tracking_issue") as m_issue,
+        patch(_MOD + "._check_no_open_release") as m_issue,
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + "._acquire_release_worktree", return_value=wt) as m_wt,
         patch(_MOD + ".os.chdir"),
@@ -219,7 +221,7 @@ def test_preflight_with_minor_override() -> None:
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_main_not_ahead_of_develop"),
-        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_no_open_release"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
@@ -243,7 +245,7 @@ def test_preflight_with_major_override() -> None:
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_main_not_ahead_of_develop"),
-        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_no_open_release"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
@@ -373,24 +375,90 @@ def test_check_version_not_tagged_no_tags() -> None:
         _check_version_not_tagged("2.0.34")
 
 
-def test_check_no_existing_tracking_issue_passes() -> None:
-    from vergil_tooling.lib.release.preflight import _check_no_existing_tracking_issue
-
-    with patch(_MOD + ".find_existing_tracking_issue", return_value=None):
-        _check_no_existing_tracking_issue("owner/repo", "2.0.34")
+_RESUME_READ = "vergil_tooling.lib.release.resume.github.read_json"
 
 
-def test_check_no_existing_tracking_issue_fails() -> None:
-    from vergil_tooling.lib.release.preflight import _check_no_existing_tracking_issue
+def _release_issue(ver: str, number: int, body: str) -> dict[str, object]:
+    return {"number": number, "title": f"release: {ver}", "body": body}
 
+
+def _state_body(ver: str) -> str:
+    block = state.render_state(
+        state.initial_state(version=ver, cut="abc1234", issues=(), without_deps=False)
+    )
+    return f"## Contents\n\n{block}\n"
+
+
+def test_fresh_start_refuses_other_version_open() -> None:
+    open_issues = [_release_issue("2.0.33", 99, _state_body("2.0.33"))]
     with (
-        patch(
-            _MOD + ".find_existing_tracking_issue",
-            return_value="https://github.com/owner/repo/issues/99",
-        ),
-        pytest.raises(ReleaseError, match="already exists"),
+        patch(_RESUME_READ, return_value=open_issues),
+        pytest.raises(ReleaseError) as info,
     ):
-        _check_no_existing_tracking_issue("owner/repo", "2.0.34")
+        _check_no_open_release("owner/repo")
+    message = str(info.value)
+    assert info.value.phase == "preflight"
+    assert "https://github.com/owner/repo/issues/99" in message
+    assert "release 2.0.33" in message
+    assert "`vrg-release --resume 2.0.33`" in message
+    assert "by hand" not in message
+
+
+def test_fresh_start_refusal_names_old_tooling_recovery() -> None:
+    old_body = "## Release\n\n" + checklist.render(["audit", "prepare"], ())
+    open_issues = [_release_issue("2.0.33", 98, old_body)]
+    with (
+        patch(_RESUME_READ, return_value=open_issues),
+        pytest.raises(ReleaseError) as info,
+    ):
+        _check_no_open_release("owner/repo")
+    message = str(info.value)
+    assert "https://github.com/owner/repo/issues/98" in message
+    assert "no release state block" in message
+    assert "Finish that release by hand, then close the issue." in message
+    assert "--resume 2.0.33" not in message
+
+
+def test_fresh_start_refusal_names_unreadable_state_block() -> None:
+    body = f"{state.BEGIN}\n```json\n{{}}\n```\n{state.END}\n"
+    with (
+        patch(_RESUME_READ, return_value=[_release_issue("2.0.33", 97, body)]),
+        pytest.raises(ReleaseError, match="cannot be read") as info,
+    ):
+        _check_no_open_release("owner/repo")
+    assert "`vrg-release --resume 2.0.33`" in str(info.value)
+
+
+def test_fresh_start_refusal_names_every_open_release() -> None:
+    open_issues = [
+        _release_issue("2.0.33", 99, _state_body("2.0.33")),
+        _release_issue("2.0.32", 90, "no block"),
+    ]
+    with (
+        patch(_RESUME_READ, return_value=open_issues),
+        pytest.raises(ReleaseError) as info,
+    ):
+        _check_no_open_release("owner/repo")
+    lines = [line for line in str(info.value).splitlines() if line.startswith("- ")]
+    assert len(lines) == 2
+    assert "release 2.0.32" in lines[0]
+    assert "by hand" in lines[0]
+    assert "`vrg-release --resume 2.0.33`" in lines[1]
+
+
+def test_fresh_start_passes_with_none_open() -> None:
+    not_a_release = {"number": 5, "title": "chore(release): bump to 2.0.34", "body": ""}
+    with patch(_RESUME_READ, return_value=[not_a_release]):
+        _check_no_open_release("owner/repo")
+
+
+def test_fresh_start_open_release_read_failure_raises() -> None:
+    with (
+        patch(_RESUME_READ, return_value={"message": "Bad credentials"}),
+        pytest.raises(ReleaseError, match="not a list") as info,
+    ):
+        _check_no_open_release("owner/repo")
+    assert info.value.phase == "preflight"
 
 
 @pytest.mark.parametrize(
@@ -509,7 +577,7 @@ def test_preflight_never_audits() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_main_not_ahead_of_develop"),
-        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_no_open_release"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
@@ -982,7 +1050,7 @@ def _fresh_patches(pending: list[PendingDepsPr]) -> list[contextlib.AbstractCont
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_main_not_ahead_of_develop"),
-        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_no_open_release"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
@@ -1939,7 +2007,7 @@ def _preflight_patches(stack: contextlib.ExitStack, *, real_sync: bool = False) 
         *(() if real_sync else ("_check_branch_and_tree",)),
         "_check_version_not_tagged",
         "_check_main_not_ahead_of_develop",
-        "_check_no_existing_tracking_issue",
+        "_check_no_open_release",
         "_check_packages_unpublished",
         "os.chdir",
     ):
