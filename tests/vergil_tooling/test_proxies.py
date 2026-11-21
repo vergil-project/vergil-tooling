@@ -230,7 +230,8 @@ HOME = "logical-minds-foundry/.github"
 PRIMARY_REPO = "vergil-project/.github"
 PRIMARY_TITLE = "Epic: keep ad-hoc queues standalone"
 AGENT = "app/wphillipmoore-vergil-user"
-WRITES = ("create", "reopen", "comment", "ensure_labels")
+WRITES = ("create", "reopen", "retitle", "comment", "ensure_labels")
+DERIVED_TITLE = "Epic (proxy): vergil-project/.github#1417 — keep ad-hoc queues standalone"
 
 
 class FakeGitHub:
@@ -283,7 +284,12 @@ class FakeGitHub:
             if self.listing is not None:
                 return self.listing
             return [
-                {"number": number, "state": proxy["state"], "body": proxy["body"]}
+                {
+                    "number": number,
+                    "state": proxy["state"],
+                    "title": proxy["title"],
+                    "body": proxy["body"],
+                }
                 for number, proxy in sorted(self.home.items())
                 if number not in self.unlisted
             ]
@@ -305,7 +311,12 @@ class FakeGitHub:
     def create_issue(self, **kwargs: Any) -> str:
         self.calls.append(("create", self._org(), kwargs))
         number = self.next_number
-        self.home[number] = {"state": "OPEN", "body": kwargs["body"], "labels": kwargs["labels"]}
+        self.home[number] = {
+            "state": "OPEN",
+            "title": kwargs["title"],
+            "body": kwargs["body"],
+            "labels": kwargs["labels"],
+        }
         return f"https://github.com/{kwargs['repo']}/issues/{number}"
 
     def run(self, *args: str) -> None:
@@ -314,6 +325,12 @@ class FakeGitHub:
             assert args[4] == HOME
             self.calls.append(("reopen", org, args))
             self.home[int(args[2])]["state"] = "OPEN"
+            return
+        if args[:2] == ("issue", "edit"):
+            assert args[4] == HOME
+            assert args[5] == "--title"
+            self.calls.append(("retitle", org, args))
+            self.home[int(args[2])]["title"] = args[6]
             return
         assert args[:2] == ("issue", "comment")
         assert (args[4], int(args[2])) == (PRIMARY_REPO, PRIMARY.number)
@@ -335,9 +352,12 @@ class FakeGitHub:
             return proxies.create_proxy(PRIMARY, target)
 
 
-def _home_proxy(state: str = "OPEN", primary: IssueRef = PRIMARY) -> dict[str, Any]:
+def _home_proxy(
+    state: str = "OPEN", primary: IssueRef = PRIMARY, title: str = DERIVED_TITLE
+) -> dict[str, Any]:
     return {
         "state": state,
+        "title": title,
         "body": proxies.proxy_body(primary, "logical-minds-foundry"),
         "labels": ["epic", "proxy"],
     }
@@ -351,11 +371,13 @@ def test_proxy_for_creates_and_comments() -> None:
     fake = FakeGitHub()
     result = fake.create()
     created = IssueRef("logical-minds-foundry", ".github", 400)
-    assert result == proxies.ProxyResult(created, created=True, reopened=False, commented=True)
+    assert result == proxies.ProxyResult(
+        created, created=True, reopened=False, retitled=False, commented=True
+    )
     (_, create_org, kwargs), (_, comment_org, comment) = fake.writes()[1:]
     assert create_org == "logical-minds-foundry"
     assert kwargs["repo"] == HOME
-    assert kwargs["title"] == "Epic (proxy): keep ad-hoc queues standalone"
+    assert kwargs["title"] == DERIVED_TITLE
     assert kwargs["labels"] == ["epic", "proxy"]
     assert "Primary: vergil-project/.github#1417" in kwargs["body"].splitlines()
     assert comment_org == "vergil-project"
@@ -371,13 +393,32 @@ def test_proxy_for_created_link_reads_back_through_proxies_of() -> None:
         IssueRef("logical-minds-foundry", ".github", 400),
         created=False,
         reopened=False,
+        retitled=False,
         commented=False,
     )
 
 
-def test_proxy_title_without_epic_prefix() -> None:
-    assert proxies.proxy_title("Epic: X") == "Epic (proxy): X"
-    assert proxies.proxy_title("Something") == "Epic (proxy): Something"
+def test_proxy_title_names_the_primary_ref() -> None:
+    assert (
+        proxies.proxy_title(PRIMARY, "Epic: X") == "Epic (proxy): vergil-project/.github#1417 — X"
+    )
+    assert (
+        proxies.proxy_title(PRIMARY, "Something")
+        == "Epic (proxy): vergil-project/.github#1417 — Something"
+    )
+
+
+def test_proxy_title_matches_the_hand_retitled_proxy() -> None:
+    # vergil-project/.github#1443 was retitled by hand to this; a re-run must not change it.
+    primary = IssueRef("logical-minds-foundry", ".github", 319)
+    title = (
+        "Epic: M3 — the lab consumes published component packages"
+        " (extract mq-resiliency-observability)"
+    )
+    assert proxies.proxy_title(primary, title) == (
+        "Epic (proxy): logical-minds-foundry/.github#319 — M3 — the lab consumes published"
+        " component packages (extract mq-resiliency-observability)"
+    )
 
 
 @pytest.mark.parametrize("target", ["vergil-project/vergil-tooling", "Vergil-Project/docs"])
@@ -448,7 +489,9 @@ def test_proxy_for_existing_open_proxy_reused() -> None:
 def test_proxy_for_closed_proxy_reopened() -> None:
     fake = FakeGitHub(comments=[_recorded()], proxies_in_home={320: _home_proxy("CLOSED")})
     result = fake.create()
-    assert result == proxies.ProxyResult(PROXY, created=False, reopened=True, commented=False)
+    assert result == proxies.ProxyResult(
+        PROXY, created=False, reopened=True, retitled=False, commented=False
+    )
     assert [(kind, org) for kind, org, _ in fake.writes()] == [("reopen", "logical-minds-foundry")]
     assert fake.home[320]["state"] == "OPEN"
 
@@ -464,7 +507,9 @@ def test_proxy_for_closed_proxy_reopened_lowest_when_several() -> None:
 def test_proxy_for_rerun_posts_missing_comment() -> None:
     fake = FakeGitHub(proxies_in_home={320: _home_proxy()})
     result = fake.create()
-    assert result == proxies.ProxyResult(PROXY, created=False, reopened=False, commented=True)
+    assert result == proxies.ProxyResult(
+        PROXY, created=False, reopened=False, retitled=False, commented=True
+    )
     ((kind, org, body),) = fake.writes()
     assert (kind, org) == ("comment", "vergil-project")
     assert "Proxy: logical-minds-foundry/.github#320" in body.splitlines()
@@ -473,8 +518,50 @@ def test_proxy_for_rerun_posts_missing_comment() -> None:
 def test_proxy_for_rerun_is_noop() -> None:
     fake = FakeGitHub(comments=[_recorded()], proxies_in_home={320: _home_proxy()})
     result = fake.create()
-    assert result == proxies.ProxyResult(PROXY, created=False, reopened=False, commented=False)
+    assert result == proxies.ProxyResult(
+        PROXY, created=False, reopened=False, retitled=False, commented=False
+    )
     assert fake.writes() == []
+
+
+def test_proxy_for_stale_title_retitled() -> None:
+    fake = FakeGitHub(
+        comments=[_recorded()],
+        proxies_in_home={320: _home_proxy(title="Epic (proxy): keep ad-hoc queues standalone")},
+    )
+    result = fake.create()
+    assert result == proxies.ProxyResult(
+        PROXY, created=False, reopened=False, retitled=True, commented=False
+    )
+    ((kind, org, args),) = fake.writes()
+    assert (kind, org) == ("retitle", "logical-minds-foundry")
+    assert args == ("issue", "edit", "320", "--repo", HOME, "--title", DERIVED_TITLE)
+    assert fake.home[320]["title"] == DERIVED_TITLE
+    # A second run finds the title current and writes nothing.
+    assert not fake.create().retitled
+    assert len(fake.writes()) == 1
+
+
+def test_proxy_for_closed_stale_proxy_reopened_then_retitled() -> None:
+    fake = FakeGitHub(
+        comments=[_recorded()], proxies_in_home={320: _home_proxy("CLOSED", title="old")}
+    )
+    result = fake.create()
+    assert result == proxies.ProxyResult(
+        PROXY, created=False, reopened=True, retitled=True, commented=False
+    )
+    assert [kind for kind, _, _ in fake.writes()] == ["reopen", "retitle"]
+    assert fake.home[320] == {**_home_proxy(), "state": "OPEN"}
+
+
+def test_proxy_for_unlisted_stale_proxy_retitled() -> None:
+    fake = FakeGitHub(
+        comments=[_recorded()],
+        proxies_in_home={320: _home_proxy(title="old")},
+        unlisted=frozenset({320}),
+    )
+    assert fake.create().retitled
+    assert fake.home[320]["title"] == DERIVED_TITLE
 
 
 def test_proxy_for_untrusted_comment_does_not_count() -> None:
@@ -496,7 +583,7 @@ def test_proxy_for_unlisted_proxy_found_through_comment() -> None:
         comments=[_recorded()], proxies_in_home={320: _home_proxy()}, unlisted=frozenset({320})
     )
     assert fake.create() == proxies.ProxyResult(
-        PROXY, created=False, reopened=False, commented=False
+        PROXY, created=False, reopened=False, retitled=False, commented=False
     )
 
 
@@ -520,7 +607,12 @@ def test_proxy_for_two_open_proxies_raises() -> None:
 
 
 def test_proxy_for_malformed_primary_line_in_home_raises() -> None:
-    bad = {"state": "OPEN", "body": "Primary: garbage\n", "labels": ["epic", "proxy"]}
+    bad = {
+        "state": "OPEN",
+        "title": DERIVED_TITLE,
+        "body": "Primary: garbage\n",
+        "labels": ["epic", "proxy"],
+    }
     fake = FakeGitHub(proxies_in_home={320: bad})
     with pytest.raises(ProxyLinkError, match="malformed"):
         fake.create()

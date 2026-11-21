@@ -1,14 +1,16 @@
 """Resolve the vergil-tooling release a ``[dependencies].vergil`` pin installs (#4550).
 
-A line pin (``v2.1``) installs whatever release is newest on the line when the
-cached dev image is built. The cache key folds in the release the pin resolves
-to *now*, so a new release on the line rebuilds every branch cache instead of
-leaving it on the old tooling.
+A line pin (``v2.1``) installs the release its rolling tag ``v2.1`` names when
+the cached dev image is built. The cache key folds in the release the pin
+resolves to *now*, so promoting a new release to the line (or demoting the line
+to an older one) rebuilds every branch cache instead of leaving it on the old
+tooling.
 
 The resolution is :func:`vergil_tooling.lib.tooling_install.resolve`: one
-``git ls-remote`` of the vergil-tooling repository, giving the newest tag on
-the line and its commit SHA, the same commit the cache build installs (epic
-vergil-project/.github#1350, spec §4.2). It is read on every run, never cached
+``git ls-remote`` of the vergil-tooling repository, giving the ``vX.Y.Z`` tag
+on the commit the line's tag peels to, and that commit's SHA, the same commit
+the cache build installs (epic vergil-project/.github#1350, spec §4.2; epic
+vergil-project/.github#1440, spec §4.6). It is read on every run, never cached
 and never replaced by a guess. A failed listing, or a line with no release
 tag, raises :class:`ToolingResolveError`.
 

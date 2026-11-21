@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -10,8 +11,18 @@ from vergil_tooling.bin.vrg_epic_create import main, parse_args
 from vergil_tooling.lib import github, proxies
 from vergil_tooling.lib.epics import IssueRef
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 _MOD = "vergil_tooling.bin.vrg_epic_create"
 _URL = "https://github.com/org/.github/issues/50"
+
+
+@pytest.fixture(autouse=True)
+def _ensure_labels_ok() -> Iterator[MagicMock]:
+    """Patch label ensuring as vrg_epic_create imports it: no test reaches gh for it."""
+    with patch(f"{_MOD}.ensure_labels_or_report", return_value=True) as mock_ensure:
+        yield mock_ensure
 
 
 def test_title_required_without_proxy_for(capsys: pytest.CaptureFixture[str]) -> None:
@@ -35,7 +46,7 @@ def test_default_target_is_current_repo_public_goes_to_dotgithub() -> None:
     home.assert_called_once_with("org", "tooling")
     assert mock_create.call_args.kwargs["repo"] == "org/.github"
     assert mock_create.call_args.kwargs["title"] == "Epic: X"
-    assert mock_create.call_args.kwargs["labels"] == ["epic"]
+    assert mock_create.call_args.kwargs["labels"] == ["epic", "epic-development"]
 
 
 def test_main_scopes_token_to_target_owner() -> None:
@@ -97,7 +108,85 @@ def test_dedups_epic_label() -> None:
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
     ):
         main(["--title", "T", "--label", "epic"])
-    assert mock_create.call_args.kwargs["labels"] == ["epic"]
+    assert mock_create.call_args.kwargs["labels"] == ["epic", "epic-development"]
+
+
+# --- the derived category label (vergil-project/.github#1450) -------------------
+
+
+def _create(argv: list[str]) -> tuple[int, MagicMock]:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
+        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+    ):
+        rc = main(argv)
+    return rc, mock_create
+
+
+def test_plain_epic_gets_development_label() -> None:
+    rc, mock_create = _create(["--title", "T"])
+    assert rc == 0
+    assert mock_create.call_args.kwargs["labels"] == ["epic", "epic-development"]
+
+
+def test_management_label_derived() -> None:
+    rc, mock_create = _create(["--title", "T", "--label", "intake"])
+    assert rc == 0
+    assert mock_create.call_args.kwargs["labels"] == ["epic", "intake", "epic-management"]
+
+
+def test_adhoc_gets_no_new_label() -> None:
+    rc, mock_create = _create(["--title", "T", "--label", "ad-hoc"])
+    assert rc == 0
+    assert mock_create.call_args.kwargs["labels"] == ["epic", "ad-hoc"]
+
+
+@pytest.mark.parametrize("label", ["epic-development", "epic-management"])
+def test_refuses_caller_category_label(label: str, capsys: pytest.CaptureFixture[str]) -> None:
+    rc, mock_create = _create(["--title", "T", "--label", label])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.startswith("vrg-epic-create: ")
+    assert label in err
+    mock_create.assert_not_called()
+
+
+def test_refuses_ambiguous_labels(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, mock_create = _create(["--title", "T", "--label", "ad-hoc", "--label", "proxy"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.startswith("vrg-epic-create: ")
+    assert "ad-hoc" in err
+    assert "proxy" in err
+    mock_create.assert_not_called()
+
+
+def test_ensures_labels_before_create(_ensure_labels_ok: MagicMock) -> None:
+    calls: list[str] = []
+    _ensure_labels_ok.side_effect = lambda *_args: calls.append("ensure") or True
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
+        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
+        patch(
+            f"{_MOD}.github.create_issue",
+            side_effect=lambda **_kwargs: calls.append("create") or _URL,
+        ),
+    ):
+        rc = main(["--title", "T", "--label", "intake"])
+    assert rc == 0
+    _ensure_labels_ok.assert_called_once_with(
+        "vrg-epic-create", "org/.github", ["epic", "intake", "epic-management"]
+    )
+    assert calls == ["ensure", "create"]
+    # A failed ensure (already reported on stderr) creates nothing.
+    _ensure_labels_ok.side_effect = None
+    _ensure_labels_ok.return_value = False
+    rc, mock_create = _create(["--title", "T"])
+    assert rc == 1
+    mock_create.assert_not_called()
 
 
 def test_malformed_repo_errors(capsys: pytest.CaptureFixture[str]) -> None:
@@ -127,8 +216,16 @@ _PROXY = IssueRef("logical-minds-foundry", ".github", 320)
 _PROXY_ARGS = ["--proxy-for", "vergil-project/.github#1417", "--repo", "logical-minds-foundry/x"]
 
 
-def _result(*, created: bool = False, reopened: bool = False, commented: bool = False) -> object:
-    return proxies.ProxyResult(_PROXY, created=created, reopened=reopened, commented=commented)
+def _result(
+    *,
+    created: bool = False,
+    reopened: bool = False,
+    retitled: bool = False,
+    commented: bool = False,
+) -> object:
+    return proxies.ProxyResult(
+        _PROXY, created=created, reopened=reopened, retitled=retitled, commented=commented
+    )
 
 
 def test_proxy_for_creates_and_comments(capsys: pytest.CaptureFixture[str]) -> None:
@@ -157,6 +254,20 @@ def test_proxy_for_closed_proxy_reopened(capsys: pytest.CaptureFixture[str]) -> 
         rc = main(_PROXY_ARGS)
     assert rc == 0
     assert "Reopened proxy logical-minds-foundry/.github#320" in capsys.readouterr().out
+
+
+def test_proxy_for_retitled_proxy_prints_it(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.proxies.create_proxy", return_value=_result(retitled=True)):
+        rc = main(_PROXY_ARGS)
+    assert rc == 0
+    assert "Retitled proxy logical-minds-foundry/.github#320" in capsys.readouterr().out
+
+
+def test_proxy_for_current_title_prints_no_retitle(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.proxies.create_proxy", return_value=_result()):
+        rc = main(_PROXY_ARGS)
+    assert rc == 0
+    assert "Retitled" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

@@ -28,6 +28,8 @@ from vergil_tooling.lib.intake_route import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from vergil_tooling.lib.intake_route import RouteAction
+
 _MOD = "vergil_tooling.lib.intake_route"
 # Captured before any patching, to run the real planning ensure under Env.
 _REAL_ENSURE_PLANNING_EPIC = epics.ensure_planning_epic
@@ -1815,6 +1817,26 @@ def test_one_off_refuses_hoshin_sentinel(env: Env) -> None:
     assert _transfer_calls(env) == []
     env.add_child.assert_not_called()
     env.reparent_child.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "action",
+    [Defer(reason="r", revisit_when="w"), ToPlanning(), Drop(reason="r")],
+    ids=["defer", "planning", "drop"],
+)
+def test_route_refuses_item_under_hoshin_epic(env: Env, action: RouteAction) -> None:
+    hoshin = IssueRef("org", ".github", 77)
+    env.kinds[hoshin] = "hoshin"
+    env.parent = hoshin
+    env.native_parent[ITEM] = hoshin
+    with pytest.raises(RouteRefusedError) as excinfo:
+        route(ITEM, action, today=TODAY)
+    message = str(excinfo.value)
+    assert message.startswith("org/.github#352 is under the hoshin epic org/.github#77")
+    assert "/vergil:hoshin" in message
+    # Not the development-epic refusal, which would misdescribe the hoshin epic.
+    assert "not a container epic" not in message
+    _assert_untouched(env)
 
 
 def test_one_off_refuses_hoshin_epic_ref(env: Env) -> None:

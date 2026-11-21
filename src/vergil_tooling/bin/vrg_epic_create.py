@@ -1,6 +1,9 @@
 """Create a top-level epic issue in its resolved home repo.
 
-Epics are top-level (no parent), labelled ``epic``. The *home* — the repo where
+Epics are top-level (no parent), labelled ``epic`` plus the derived category
+label (:func:`vergil_tooling.lib.epics.category_labels`): ``epic-development``
+for a plain epic, ``epic-management`` for a queue or hoshin epic, none beyond
+``ad-hoc`` for an ad-hoc one. The *home* — the repo where
 the epic issue physically lives — is derived from the target repo's visibility
 by :func:`vergil_tooling.lib.epics.resolve_epic_home`: a public target homes
 centrally in ``<org>/.github``; a private target (with a public ``.github``)
@@ -22,6 +25,7 @@ import sys
 
 from vergil_tooling.lib import epics, github, proxies
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.labels import ensure_labels_or_report
 
 
 @cli_main
@@ -39,14 +43,28 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+    given = [label for label in args.label if label in epics.DERIVED_CATEGORY_LABELS]
+    if given:
+        print(
+            f"vrg-epic-create: --label {', '.join(given)} is a derived category label;"
+            " it is applied from the epic's other labels, never given",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        labels = epics.category_labels(["epic", *args.label], args.title)
+    except epics.AmbiguousEpicCategoryError as exc:
+        print(f"vrg-epic-create: {exc}", file=sys.stderr)
+        return 1
     owner, bare = target.split("/", 1)
     home = epics.resolve_epic_home(owner, bare)
-    labels = list(dict.fromkeys(["epic", *args.label]))
     # Scope every App-token call to the target's org, not the cwd org (mirrors
     # issue-create, #2070). Without this a cross-org epic mints the token for the
     # wrong org and either fails to write or misreports the epic's location (#2722).
     with github.target_org(owner):
         print(f"-> epic home: {home} [{github.repo_visibility(home)}]")
+        if not ensure_labels_or_report("vrg-epic-create", home, labels):
+            return 1
         url = github.create_issue(
             repo=home,
             title=args.title,
@@ -108,6 +126,8 @@ def _proxy_for(args: argparse.Namespace) -> int:
         print(f"Reopened proxy {proxy} for {primary.slug} (it was closed).")
     else:
         print(f"Proxy {proxy} for {primary.slug} already exists.")
+    if result.retitled:
+        print(f"Retitled proxy {proxy} to the derived title.")
     if result.commented:
         print(f"Posted '{proxies.proxy_line(result.proxy)}' on {primary.slug}.")
     else:
@@ -126,10 +146,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         epilog=(
             "Extra --label values are added alongside 'epic' (e.g. --label "
-            "ad-hoc for an ad-hoc epic). With --proxy-for OWNER/REPO#N --repo "
-            "OWNER/REPO it instead ensures the proxy epic for that primary epic "
-            "in the target's org .github, and the 'Proxy:' comment on the primary; "
-            "both repos must be public and in different orgs."
+            "ad-hoc for an ad-hoc epic). The epic's category label is derived and "
+            "applied too: 'epic-management' for an intake, planning, deferred or "
+            "hoshin epic, 'epic-development' for a plain epic; neither may be given "
+            "with --label, and labels marking two categories are refused. With "
+            "--proxy-for OWNER/REPO#N --repo OWNER/REPO it instead ensures the "
+            "proxy epic for that primary epic in the target's org .github, and "
+            "the 'Proxy:' comment on the primary; both repos must be public and "
+            "in different orgs."
         ),
     )
     parser.add_argument("--title", help="Epic title (required unless --proxy-for)")

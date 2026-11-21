@@ -44,7 +44,7 @@ from vergil_tooling.lib.versions import window
 from vergil_tooling.lib.versions.resolve import Resolution
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 # Modules that test identity resolution directly and set the signals themselves.
 _RESOLVER_TEST_MODULES = frozenset({"test_identity_mode", "test_vrg_whoami"})
@@ -117,24 +117,39 @@ def fixture_tooling_sha(tag: str) -> str:
     return hashlib.sha1(f"commit {tag}".encode()).hexdigest()  # noqa: S324 - a fixture id
 
 
+def _newest_on_each_line(releases: tuple[str, ...]) -> dict[str, str]:
+    """Each ``vX.Y`` line of *releases* mapped to its newest ``vX.Y.Z`` (as promoted)."""
+    newest: dict[str, str] = {}
+    for tag in releases:
+        line, patch = tag.rsplit(".", 1)
+        if line not in newest or int(patch) > int(newest[line].rsplit(".", 1)[1]):
+            newest[line] = tag
+    return newest
+
+
 def fixture_ls_remote(
     releases: tuple[str, ...] = FIXTURE_TOOLING_RELEASES,
+    lines: Mapping[str, str] | None = None,
 ) -> Callable[[str, str], str]:
     """A ``git ls-remote --tags`` stand-in listing *releases* as annotated tags.
 
     Each tag lists twice, as ``git ls-remote`` lists an annotated tag: its tag
     object, then the peeled ``^{}`` line with the commit
-    (:func:`fixture_tooling_sha`). Only the tags matching the pattern are listed.
+    (:func:`fixture_tooling_sha`). Each rolling line tag in *lines* (``vX.Y``
+    to the release it names; by default each line's newest release, as
+    ``vrg-promote`` leaves it) lists as that release's tag object and commit,
+    as a promote pushes it. Only the tags matching the pattern are listed.
     """
+    rolling = _newest_on_each_line(releases) if lines is None else dict(lines)
 
     def ls_remote(_url: str, pattern: str) -> str:
-        lines = []
-        for tag in releases:
-            ref = f"refs/tags/{tag}"
+        listed = []
+        for name, release in [*((t, t) for t in releases), *rolling.items()]:
+            ref = f"refs/tags/{name}"
             if fnmatch.fnmatchcase(ref, pattern):
-                tag_object = hashlib.sha1(f"tag {tag}".encode()).hexdigest()  # noqa: S324
-                lines += [f"{tag_object}\t{ref}", f"{fixture_tooling_sha(tag)}\t{ref}^{{}}"]
-        return "".join(f"{line}\n" for line in lines)
+                tag_object = hashlib.sha1(f"tag {release}".encode()).hexdigest()  # noqa: S324
+                listed += [f"{tag_object}\t{ref}", f"{fixture_tooling_sha(release)}\t{ref}^{{}}"]
+        return "".join(f"{line}\n" for line in listed)
 
     return ls_remote
 

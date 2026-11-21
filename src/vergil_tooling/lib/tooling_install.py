@@ -3,9 +3,12 @@
 Every vergil-tooling install installs one commit (epic
 vergil-project/.github#1350, spec §4.1 and §4.2):
 
-- a **line** pin ``vX.Y`` resolves to the newest ``vX.Y.Z`` tag and its commit
-  SHA, and an **exact** pin ``vX.Y.Z`` to its SHA, with one ``git ls-remote``.
-  Everything after the resolution uses the SHA: the code
+- a **line** pin ``vX.Y`` follows its rolling tag: it resolves to the commit
+  the tag ``vX.Y`` peels to and the one ``vX.Y.Z`` tag on that commit, never
+  simply the newest ``vX.Y.Z``, so a line demoted with ``vrg-promote`` is
+  followed by every caller (epic vergil-project/.github#1440, spec §4.6). An
+  **exact** pin ``vX.Y.Z`` resolves to its SHA. Each takes one
+  ``git ls-remote``. Everything after the resolution uses the SHA: the code
   (``git+…@<sha>``), the ``uv.lock`` the constraints come from, and the log;
 - a released install is constrained by that commit's own ``uv.lock``, read
   over git (a shallow fetch of the commit and ``uv export``), never through a
@@ -22,10 +25,14 @@ container cache build and ``vrg-vm``. The lines run under ``bash`` and need
 no ``set -e``: each step that can fail names itself and exits non-zero.
 
 :func:`install_release` runs the same released install in Python, here, for
-a host: ``vrg-tooling-install`` (vergil-tooling#4827). The Mac's consumer
-refresh (``vergil.toml``'s ``[publish].consumer-refresh``) is still the
-inline shell of spec §4.5 until vergil-tooling#4830 switches it to the
-installed ``vrg-tooling-install``. The container and VM paths keep the
+a host: ``vrg-tooling-install`` (vergil-tooling#4827), which takes a line
+``vX.Y`` through the same resolver as well as an exact ``vX.Y.Z``. The Mac's consumer
+refresh (``vergil.toml``'s ``[publish].consumer-refresh``) runs the
+installed ``vrg-tooling-install v<VERSION>`` (vergil-tooling#4830), so the
+installed vergil-tooling installs the just-released one; that reverses spec
+§4.5's "nothing runs vergil-tooling to install vergil-tooling" for the Mac.
+If the installed copy is broken, the documented install by hand is the
+workaround while it is fixed. The container and VM paths keep the
 rendered lines for now; vergil-project/.github#1435 looks at moving them to
 :func:`install_release`.
 """
@@ -144,36 +151,62 @@ def _tag_shas(listing: str) -> dict[str, str]:
 def resolve(ref: str, *, ls_remote: Callable[[str, str], str]) -> ResolvedRef:
     """Resolve *ref* to one tag and commit SHA with a single *ls_remote* call.
 
-    A line ``vX.Y`` resolves to its newest ``vX.Y.Z`` tag, an exact ``vX.Y.Z``
-    to itself; both carry the tag's commit SHA. A dev ref returns with no tag
-    and no SHA, and makes no call. *ls_remote* is :func:`git_ls_remote`'s
-    shape, ``(url, pattern) -> listing``. A failed call, or no matching tag,
-    raises :class:`ToolingInstallError` naming the URL and the ref, never an
-    older or already-installed release.
+    A line ``vX.Y`` follows its rolling tag: the one listing of
+    ``refs/tags/vX.Y*`` holds the tag ``vX.Y`` itself, peeled to its commit,
+    and the line's ``vX.Y.Z`` tags, and the release the line names is the one
+    ``vX.Y.Z`` tag on that commit. It is never simply the newest ``vX.Y.Z``,
+    so a line demoted with ``vrg-promote`` is followed. An exact ``vX.Y.Z``
+    resolves to itself. Both carry the tag's commit SHA. A dev ref returns
+    with no tag and no SHA, and makes no call. *ls_remote* is
+    :func:`git_ls_remote`'s shape, ``(url, pattern) -> listing``.
+
+    A failed call, a missing tag, or a line tag whose commit carries no
+    ``vX.Y.Z`` tag (or more than one) raises :class:`ToolingInstallError`
+    naming the URL and the ref, never falling back to another or an
+    already-installed release.
     """
     kind = classify_ref(ref)
     if kind == "dev":
         return ResolvedRef(ref=ref, kind="dev", tag=None, sha=None)
+    tag, sha = _resolve_release(ref, kind, ls_remote=ls_remote)
+    return ResolvedRef(ref=ref, kind=kind, tag=tag, sha=sha)
+
+
+def _resolve_release(
+    ref: str, kind: Literal["line", "exact"], *, ls_remote: Callable[[str, str], str]
+) -> tuple[str, str]:
+    """:func:`resolve` of a release *ref*: its exact ``vX.Y.Z`` tag and commit SHA."""
     try:
         listing = ls_remote(GIT_URL, f"refs/tags/{ref}*")
     except (ToolingInstallError, OSError, subprocess.SubprocessError) as exc:
         msg = f"could not list the tags of {GIT_URL} to resolve {ref}: {exc}"
         raise ToolingInstallError(msg) from exc
     tags = _tag_shas(listing)
-    if kind == "exact":
-        tag = ref if ref in tags else None
-    else:
-        on_line = re.compile(re.escape(ref) + r"\.(\d+)")
-        patches = {int(m.group(1)): name for name in tags if (m := on_line.fullmatch(name))}
-        tag = patches[max(patches)] if patches else None
-    if tag is None:
-        msg = f"no release tag for {ref} at {GIT_URL}"
+    if ref not in tags:
+        detail = f": the line tag {ref} does not exist" if kind == "line" else ""
+        msg = f"no release tag for {ref} at {GIT_URL}{detail}"
         raise ToolingInstallError(msg)
+    tag = ref if kind == "exact" else _release_on_line(ref, tags)
     sha = tags[tag]
     if not _SHA.fullmatch(sha):
         msg = f"tag {tag} at {GIT_URL} lists {sha!r}, not a commit SHA"
         raise ToolingInstallError(msg)
-    return ResolvedRef(ref=ref, kind=kind, tag=tag, sha=sha)
+    return tag, sha
+
+
+def _release_on_line(line: str, tags: Mapping[str, str]) -> str:
+    """The one ``vX.Y.Z`` tag in *tags* on the commit the *line* tag peels to."""
+    commit = tags[line]
+    on_line = re.compile(re.escape(line) + r"\.\d+")
+    releases = sorted(n for n, sha in tags.items() if sha == commit and on_line.fullmatch(n))
+    if len(releases) != 1:
+        found = f"several ({', '.join(releases)})" if releases else "none"
+        msg = (
+            f"the line tag {line} at {GIT_URL} names commit {commit}, which carries "
+            f"{found} of the {line}.Z release tags, not exactly one"
+        )
+        raise ToolingInstallError(msg)
+    return releases[0]
 
 
 def unresolved(ref: str) -> ResolvedRef:
@@ -355,10 +388,21 @@ class Installed:
     sha: str
 
 
-def install_release(tag: str, *, environ: Mapping[str, str] | None = None) -> Installed:
-    """Install the exact release *tag* with uv here, locked to that tag's ``uv.lock``.
+def install_release(
+    tag: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+    ls_remote: Callable[[str, str], str] | None = None,
+) -> Installed:
+    """Install the release *tag* names with uv here, locked to that release's ``uv.lock``.
 
-    In a temporary directory it shallow-fetches *tag* over git, reads the
+    *tag* is a line ``vX.Y`` or an exact ``vX.Y.Z``. A line is first resolved
+    with :func:`resolve` (one *ls_remote* call, default :func:`git_ls_remote`)
+    to the exact ``vX.Y.Z`` its rolling tag names, and that exact tag is what
+    is fetched, installed and reported: :attr:`Installed.tag` is always
+    ``vX.Y.Z``. The fetched commit must be the one the line resolved to.
+
+    In a temporary directory it shallow-fetches the exact tag over git, reads the
     commit the tag names, exports that commit's ``uv.lock`` as constraints and
     runs ``uv tool install --force --no-config --python 3.15 --managed-python``
     of that commit under them. The code and the lock therefore come from one
@@ -369,17 +413,22 @@ def install_release(tag: str, *, environ: Mapping[str, str] | None = None) -> In
     install ends.
 
     Every failure raises :class:`ToolingInstallError` naming the step that
-    failed and its error output: a *tag* that is not ``vX.Y.Z``, a failed git
-    or uv command, a tag that names no commit, an empty constraints export,
-    or one that names a non-registry package. ``uv tool install``'s own output
-    goes straight to this process's standard output and error.
+    failed and its error output: a *tag* that is neither ``vX.Y`` nor
+    ``vX.Y.Z``, a line that does not resolve, a failed git or uv command, a
+    tag that names no commit (or not the resolved one), an empty constraints
+    export, or one that names a non-registry package. ``uv tool install``'s
+    own output goes straight to this process's standard output and error.
 
     The running ``vrg-tooling-install`` is itself an installed vergil-tooling,
     which the install replaces: nothing is imported after it.
     """
-    if classify_ref(tag) != "exact":
-        msg = f"{tag!r} is not an exact release tag (vX.Y.Z)"
+    kind = classify_ref(tag)
+    if kind == "dev":
+        msg = f"{tag!r} is not a release (vX.Y or vX.Y.Z)"
         raise ToolingInstallError(msg)
+    expected_sha: str | None = None
+    if kind == "line":
+        tag, expected_sha = _resolve_release(tag, kind, ls_remote=ls_remote or git_ls_remote)
     source = os.environ if environ is None else environ
     env = {name: value for name, value in source.items() if name not in _UV_VARS}
     with tempfile.TemporaryDirectory(prefix="vrg-tooling-install-") as tmp:
@@ -403,6 +452,12 @@ def install_release(tag: str, *, environ: Mapping[str, str] | None = None) -> In
         ).strip()
         if not _SHA.fullmatch(sha):
             msg = f"tag {tag} from {GIT_URL} checked out as {sha!r}, not a commit SHA"
+            raise ToolingInstallError(msg)
+        if expected_sha is not None and sha != expected_sha:
+            msg = (
+                f"tag {tag} from {GIT_URL} checked out as commit {sha}, not the commit "
+                f"{expected_sha} the line's tag names"
+            )
             raise ToolingInstallError(msg)
         _run_step(
             (*shlex.split(_EXPORT), "-o", str(constraints)),

@@ -55,12 +55,12 @@ _CHECK = _script(check_lines("$HOME/.local/bin"))
 
 @pytest.fixture
 def ls_remote(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
-    """The host's ``git ls-remote``, listing v2.1.9 and v2.1.10; records its calls."""
+    """The host's ``git ls-remote``: v2.1.9, v2.1.10 and v2.1 on v2.1.10; records its calls."""
     calls: list[tuple[str, str]] = []
 
     def fake(url: str, pattern: str) -> str:
         calls.append((url, pattern))
-        return f"{'9' * 40}\trefs/tags/v2.1.9\n{SHA}\trefs/tags/v2.1.10\n"
+        return f"{'9' * 40}\trefs/tags/v2.1.9\n{SHA}\trefs/tags/v2.1.10\n{SHA}\trefs/tags/v2.1\n"
 
     monkeypatch.setattr(tooling_install, "git_ls_remote", fake)
     return calls
@@ -160,6 +160,16 @@ class TestReleasedInstall:
         assert "uv tool install --force --no-config --python 3.15 --managed-python" in install
         assert f"vt_sha={SHA}\n" in install
         assert f'git+{GIT_URL}@$vt_sha"' in install
+
+    def test_vm_resolve_follows_demoted_line(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # v2.1 was demoted to v2.1.9 with vrg-promote; v2.1.10 is newer.
+        listing = f"{'9' * 40}\trefs/tags/v2.1.9\n{SHA}\trefs/tags/v2.1.10\n"
+        listing += f"{'9' * 40}\trefs/tags/v2.1\n"
+        monkeypatch.setattr(tooling_install, "git_ls_remote", lambda _u, _p: listing)
+        t = FakeVm().t
+        vm_packages.released_install(t, "v2.1")
+        resolved = ResolvedRef(ref="v2.1", kind="line", tag="v2.1.9", sha="9" * 40)
+        assert t.run.call_args_list[0][0] == ("bash", "-c", _install_script(resolved))
 
     def test_line_resolves_once_on_the_host(self, ls_remote: list[tuple[str, str]]) -> None:
         vm_packages.released_install(FakeVm().t, "v2.1")

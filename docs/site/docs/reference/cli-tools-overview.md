@@ -708,15 +708,28 @@ Create a top-level epic (labelled `epic`, no parent) in its home repo:
 `<org>/.github` for a public target, the target repo itself when private.
 The sanctioned path for creating epics, used by the `epic-create` skill.
 
+The epic also gets its **category label**, derived from its other labels:
+`epic-management` for an intake, planning, deferred or hoshin epic (`--label
+intake` and so on), `epic-development` for a plain epic, and nothing more for
+an ad-hoc epic, whose `ad-hoc` label is its category label. Every label is
+created in the home from the label registry before the epic is. It refuses,
+creating nothing, a `--label epic-development` or `--label epic-management`
+(the category label is never given by the caller) and labels that mark two
+categories at once (for example `--label ad-hoc --label proxy`). The category
+labels are for display only: no tool reads them to decide behaviour.
+
 `--proxy-for OWNER/REPO#N --repo OWNER/NAME` instead ensures the **proxy
 epic** for a development epic in another org (its primary): an epic in the
-target's `<owner>/.github`, titled `Epic (proxy): <primary title without
-"Epic: ">` and labelled `epic` + `proxy`, whose body carries the line
-`Primary: OWNER/REPO#N`. It then posts a comment on the primary carrying
+target's `<owner>/.github`, titled `Epic (proxy): OWNER/REPO#N — <primary
+title without "Epic: ">` and labelled `epic` + `proxy`, whose body carries the
+line `Primary: OWNER/REPO#N`. It then posts a comment on the primary carrying
 `Proxy: <owner>/.github#<N>`, alone on its line. An open proxy for the primary
-is reused and a closed one is reopened (it prints which), and the comment is
-posted only when no trusted comment on the primary already names the proxy,
-so a re-run writes nothing. It refuses, before any write, a primary in the
+is reused and a closed one is reopened (it prints which). A reused or reopened
+proxy whose title differs from the derived one is retitled, so a re-run brings
+an older proxy up to date; a proxy is found by its `Primary:` line and labels,
+never its title. The comment is posted only when no trusted comment on the
+primary already names the proxy, so a re-run on an up-to-date proxy writes
+nothing. It refuses, before any write, a primary in the
 target's own org, a primary that is not an open development epic (a standing
 epic, a proxy, an archive or a closed epic), and a private primary repo,
 target or `.github`: a proxy exists only between public repos, and the task
@@ -729,7 +742,7 @@ under that org's App token. The title and body are derived, so it takes no
 | Source | `vergil_tooling.bin.vrg_epic_create` |
 | Args | `--title` (required unless `--proxy-for`), `--body` / `--body-file`, `--repo OWNER/NAME`, `--label` (repeatable), `--assignee` (repeatable), `--proxy-for OWNER/REPO#N` (needs `--repo`) |
 | Preconditions | GitHub App credentials for the target org (with `--proxy-for`, for both orgs) |
-| Failure mode | Error on stderr; a `--proxy-for` refusal or link error writes nothing |
+| Failure mode | Error on stderr; a refused label set writes nothing, a failed label create creates no epic, and a `--proxy-for` refusal or link error writes nothing |
 | Exit codes | 0 created (or, with `--proxy-for`, ensured), 1 error or refusal |
 | Status | Active |
 
@@ -755,8 +768,9 @@ epic is created and at each docs PR handoff.
 `backfill (--org ORG | --repo OWNER/REPO)` writes the section on every epic
 of an epic home, open and closed: `--org` works on the org's `.github`, and
 `--repo` on a private repo that keeps its own epics. It skips the standing
-epics (ad hoc, intake, planning, deferred, the retired `standing` label, and
-titles starting `Epic (standing):`) and `[archived]` epics. For each epic it
+epics (ad hoc, intake, planning, deferred, hoshin, the retired `standing`
+label, and titles starting `Epic (standing):`), proxy epics and `[archived]`
+epics. For each epic it
 looks for the documents, in order:
 
 1. the directory `epics/<N>-*/` in the home repo's default branch;
@@ -1521,11 +1535,11 @@ stderr and no JSON, so the retrospective gate stops on it.
 
 `--close` applies the fixes, in order:
 
-1. Close the drifted tasks and rolled-up epics, and reopen each epic closed
-   while a child was still open, with an explanatory comment on each. Then
-   close each open proxy epic in the home whose primary has closed and which
-   has no open task, with a comment. A proxy that still has an open task is
-   reported and left open, never closed silently.
+1. Close the drifted tasks and rolled-up epics. Then close each open proxy
+   epic in the home whose primary has closed and which has no open task; a
+   proxy that still has an open task is reported and left open, never closed
+   silently. Then reopen each epic closed while a child was still open. Each
+   close and reopen carries an explanatory comment.
 2. Drain the closed children of the ad-hoc, intake, planning, deferred and
    hoshin epics into per-quarter archives, and close past archives (see
    [Ad-hoc epic archiving](../standards/github-issues.md#ad-hoc-epic-archiving)).
@@ -1807,13 +1821,20 @@ registry is `src/vergil_tooling/data/labels.json`; the labels it
 defines are listed in
 [GitHub Issue Standards](../standards/github-issues.md#labels).
 
+In single-label mode, `vrg-ensure-label --repo <owner>/<repo> --label
+<name>` with neither `--color` nor `--description` creates or updates
+that one label from its registry definition, and touches no other
+label. A name not in the registry fails, naming it, and creates
+nothing. Passing `--color` or `--description` creates the label from
+the flags given instead, without reading the registry.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_ensure_label` |
 | Args | `--repo`, `--label`, `--color`, `--description`, `--sync`, `--owner`, `--project` |
 | Preconditions | `gh` CLI on PATH |
-| Failure mode | argparse validation for incompatible flag combinations; subprocess error from `gh` |
-| Exit codes | 0 success |
+| Failure mode | argparse validation for incompatible flag combinations; an unregistered `--label` with neither `--color` nor `--description` is refused on stderr; subprocess error from `gh` |
+| Exit codes | 0 success, 1 unregistered label or no App installation for the owner, 2 invalid flag combination |
 | Status | Active |
 
 ### vrg-github-repo-config
@@ -2071,15 +2092,19 @@ it cleans a branch's images (issue #4162).
 
 The base images carry no vergil-tooling: the cache build installs the
 release that `vergil.toml`'s `[dependencies].vergil` pin names (or
-`VRG_DOCKER_INSTALL_TAG`, when set). A line pin such as `v2.1` floats, so
-every `build`, `status` and `vrg-container-run` resolves it to the newest
-release on the line before it looks at the cache. It resolves the line
-once, with one `git ls-remote` of the vergil-tooling repository, to the
-newest `vX.Y.Z` tag and that tag's commit SHA; it reads no package index.
+`VRG_DOCKER_INSTALL_TAG`, when set). A line pin such as `v2.1` floats with
+its rolling tag, so every `build`, `status` and `vrg-container-run` resolves
+it to the release that tag names before it looks at the cache. It resolves
+the line once, with one `git ls-remote` of the vergil-tooling repository,
+reading the tag `v2.1` itself, peeled to its commit, and taking the one
+`vX.Y.Z` tag on that commit and its SHA; it never simply takes the newest
+`vX.Y.Z`, and it reads no package index. A line whose rolling tag is
+missing, or whose commit carries no `vX.Y.Z` tag, is an error.
 That release, such as `v2.1.320`, and its SHA are both part of the cache
 key, the build installs exactly that commit, constrained by the commit's own
-`uv.lock`, and the image records the release. So when a release lands on
-the line, the next run rebuilds each branch's cache with it, and `status`
+`uv.lock`, and the image records the release. So when `promote` moves the
+line to a release, or `vrg-promote` demotes it to an older one, the next
+run rebuilds each branch's cache with it, and `status`
 reports the old cache `stale`, naming the release it holds and the one the
 pin installs now (issue #4550).
 
@@ -2248,23 +2273,28 @@ Runs unprivileged and refuses `sudo`/`doas`/`su`/`pkexec`. See the
 
 ### vrg-tooling-install
 
-Install an exact vergil-tooling release on this host with uv, locked to that
-release's `uv.lock`. In a temporary directory it shallow-fetches the tag over
+Install a vergil-tooling release on this host with uv, locked to that
+release's `uv.lock`. It takes an exact release `vX.Y.Z` or a line `vX.Y`. A
+line is first resolved, with one `git ls-remote`, through its rolling tag
+`vX.Y` to the one `vX.Y.Z` tag on the commit that tag names (the resolver
+the dev-container cache and `vrg-vm` use), and that exact release is what it
+installs and reports. In a temporary directory it shallow-fetches the tag over
 git, reads the commit the tag names, exports that commit's `uv.lock` as
 constraints (refusing an empty export or one naming a non-registry package),
 and runs `uv tool install --force --no-config --python 3.15 --managed-python`
 of that commit under them, with `UV_PYTHON`, `UV_PYTHON_PREFERENCE` and
-`UV_NO_MANAGED_PYTHON` cleared. Run it to move a host to a new release. A
+`UV_NO_MANAGED_PYTHON` cleared. vergil-tooling's release runs it on the Mac
+through its `[publish].consumer-refresh`; any other host runs it to upgrade. A
 fresh host, or one whose installed copy fails, installs by hand (see
 [Getting Started](../getting-started.md)).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_tooling_install` |
-| Args | `vX.Y.Z` (an exact release tag) |
+| Args | `vX.Y` (a release line) or `vX.Y.Z` (an exact release tag) |
 | Preconditions | `git` and `uv` on PATH; network access to github.com |
-| Failure mode | Names the failed step (fetch, checkout, lock export, constraints check or install) and its error output on stderr; the temporary directory is removed either way |
-| Exit codes | 0 installed; 1 a step failed or the tag is not `vX.Y.Z`; 2 usage error |
+| Failure mode | Names the failed step (line resolution, fetch, checkout, lock export, constraints check or install) and its error output on stderr; the temporary directory is removed either way |
+| Exit codes | 0 installed; 1 a step failed, the line did not resolve, or the argument is neither `vX.Y` nor `vX.Y.Z`; 2 usage error |
 | Status | Active |
 
 ### vrg-generate-commands
