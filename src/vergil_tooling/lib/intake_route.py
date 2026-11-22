@@ -116,7 +116,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from vergil_tooling.lib import epics, github, security_records
+from vergil_tooling.lib import epics, github, security_records, trusted_comments
 from vergil_tooling.lib.epic_size import (
     LABEL_PREFIX,
     Sizing,
@@ -136,7 +136,6 @@ from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.queue_view import (
     PLANNING_MARKER,
     parse_epic_markers,
-    trusted_comment_bodies,
 )
 from vergil_tooling.lib.shell_ref import quoted_slug
 
@@ -515,7 +514,7 @@ def _planning_epic_states(ref: IssueRef) -> dict[IssueRef, str]:
     assumed closed.
     """
     states: dict[IssueRef, str] = {}
-    for epic in parse_epic_markers(trusted_comment_bodies(ref)):
+    for epic in parse_epic_markers(trusted_comments.bodies(ref)):
         states[epic] = github.read_output(
             "api", f"repos/{_repo_of(epic)}/issues/{epic.number}", "--jq", ".state"
         ).upper()

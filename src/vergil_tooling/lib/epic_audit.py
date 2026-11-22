@@ -35,9 +35,10 @@ from vergil_tooling.lib import (
     proxies,
     release,
     roadmap,
+    trusted_comments,
 )
 from vergil_tooling.lib.labels import RETIRED_LABELS
-from vergil_tooling.lib.trusted_authors import trusted_comment_lines
+from vergil_tooling.lib.trusted_authors import load_trusted_authors, trusted_comment_lines
 
 # A closed-epic-with-open-child violation (issue #2259): the closed epic paired
 # with the tuple of its still-open children.
@@ -303,11 +304,16 @@ def closed_operational_without_success(org: str) -> list[str]:
     """Closed operational tasks with no recorded success comment (invariant).
 
     An operational task must close only after it runs and *succeeds*, recorded as
-    a comment. A closed operational-labelled issue whose comments carry no success
-    ``Outcome:`` line is drift — most likely closed by hand — and is flagged.
-    Searches every operational label. Report-only: like the other invariants, this
-    is never auto-acted.
+    a comment. A closed operational-labelled issue whose **trusted** comments carry
+    no success ``Outcome:`` line is drift — most likely closed by hand — and is
+    flagged. The comments are read through the trust layer
+    (:func:`trusted_comments.bodies`, the trusted authors loaded once), so an
+    outsider's ``Outcome: SUCCESS`` never hides a hand-closed task; each skipped
+    comment is reported on stderr, metadata only, and a read the layer cannot
+    complete raises. Searches every operational label. Report-only: like the
+    other invariants, this is never auto-acted.
     """
+    authors = load_trusted_authors()
     violations: list[str] = []
     for label in sorted(epics.operational_labels()):
         raw: Any = github.read_json(
@@ -332,11 +338,9 @@ def closed_operational_without_success(org: str) -> list[str]:
             if "/" not in name_with_owner:
                 continue
             number = int(item["number"])
-            detail: Any = github.read_json(
-                "issue", "view", str(number), "--repo", name_with_owner, "--json", "comments"
-            )
-            comments = (detail.get("comments") or []) if isinstance(detail, dict) else []
-            bodies = "\n".join(str((c or {}).get("body", "")) for c in comments)
+            owner, repo = name_with_owner.split("/", 1)
+            ref = epics.IssueRef(owner, repo, number)
+            bodies = "\n".join(trusted_comments.bodies(ref, authors))
             if not _OPERATIONAL_SUCCESS_RE.search(bodies):
                 violations.append(f"{name_with_owner}#{number}")
     return violations
