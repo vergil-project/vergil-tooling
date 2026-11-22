@@ -207,6 +207,17 @@ def test_create_tracking_issue_body_has_contents_and_state() -> None:
     assert ctx.state == parsed
 
 
+@pytest.mark.parametrize("bump", ["patch", "minor", "major", None])
+def test_create_tracking_issue_records_the_version_bump(bump: str | None) -> None:
+    # #4899: the target version and the bump that produces it are recorded at
+    # creation, before any branch work, so a resume can hold the branch to them.
+    ctx = _creatable_ctx()
+    ctx.version_override = bump
+    parsed = state.parse_state(_created_body(ctx))
+    assert parsed.version == "2.1.0"
+    assert parsed.version_bump == bump
+
+
 def test_create_tracking_issue_lists_the_issues() -> None:
     ctx = _creatable_ctx()
     ctx.issues = (

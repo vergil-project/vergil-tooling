@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -10,10 +11,12 @@ import pytest
 
 from vergil_tooling.lib.release import checklist, state
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+from vergil_tooling.lib.release.prepare import _apply_bump
 from vergil_tooling.lib.release.resume import (
     _SEARCH_LIST_LIMIT,
     ALWAYS_RUN,
     _open_release_issues,
+    check_release_version,
     find_resume_target,
     first_undone,
     restore_context,
@@ -380,3 +383,129 @@ def test_verify_facts_tag_before_the_release_merge_raises() -> None:
 def test_verify_facts_missing_tag_raises() -> None:
     with pytest.raises(ReleaseError, match="v2.1.0 does not exist on origin"):
         _verify(_recorded(), tag_exists=False)
+
+
+# --- the release branch's VERSION against the recorded target (#4899) ---
+
+
+def _run_git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ("git", *args), cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def release_branch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """A release worktree on ``release/2.1.0`` with VERSION 2.0.3 committed: no bump yet.
+
+    The run is in it, as preflight leaves a resume before ``merge-release``.
+    """
+    for var in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{var}_NAME", "Test")
+        monkeypatch.setenv(f"GIT_{var}_EMAIL", "test@example.com")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / "vergil.toml").write_text(
+        '[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
+        'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
+        '\n[dependencies]\nvergil = "v2.0"\n\n[ci]\nversions = ["3.14"]\n'
+    )
+    (worktree / "VERSION").write_text("2.0.3\n")
+    _run_git(worktree, "init", "-q", "-b", "release/2.1.0")
+    _run_git(worktree, "add", "-A")
+    _run_git(worktree, "commit", "-q", "-m", "base")
+    monkeypatch.chdir(worktree)
+    return worktree
+
+
+def _branch_ctx(worktree: Path) -> ReleaseContext:
+    ctx = _ctx()
+    ctx.release_branch = "release/2.1.0"
+    ctx.worktree_path = worktree
+    return ctx
+
+
+def _minor(done: tuple[str, ...] = ()) -> state.StateBlock:
+    return _state("2.1.0", done, version_bump="minor")
+
+
+def _commit_version(worktree: Path, value: str) -> None:
+    (worktree / "VERSION").write_text(f"{value}\n")
+    _run_git(worktree, "commit", "-q", "-am", f"VERSION {value}")
+
+
+def test_resume_completes_a_minor_bump_prepare_stopped_before(release_branch: Path) -> None:
+    # prepare stopped after the tracking issue, before the bump: the resume
+    # completes it, and the branch then holds the recorded target.
+    ctx = _branch_ctx(release_branch)
+    check_release_version(ctx, _minor())
+    assert ctx.version_override == "minor"
+    _apply_bump(ctx, "minor")
+    assert _run_git(release_branch, "show", "HEAD:VERSION") == "2.1.0"
+    assert _run_git(release_branch, "log", "-1", "--format=%s") == (
+        "chore(release): bump version to 2.1.0"
+    )
+    assert _run_git(release_branch, "status", "--porcelain") == ""
+    rerun = _branch_ctx(release_branch)
+    check_release_version(rerun, _minor())
+    assert rerun.version_override is None
+
+
+def test_resume_with_the_bump_committed_changes_nothing(release_branch: Path) -> None:
+    _commit_version(release_branch, "2.1.0")
+    ctx = _branch_ctx(release_branch)
+    check_release_version(ctx, _minor())
+    assert ctx.version_override is None
+
+
+def test_resume_with_no_bump_recorded_releases_version_as_it_is(release_branch: Path) -> None:
+    _commit_version(release_branch, "2.1.0")
+    ctx = _branch_ctx(release_branch)
+    check_release_version(ctx, _state("2.1.0"))
+    assert ctx.version_override is None
+
+
+@pytest.mark.parametrize(
+    ("committed", "current", "recorded"),
+    [
+        ("1.9.0", _minor(), "a minor bump"),
+        ("2.2.0", _minor(), "a minor bump"),
+        ("2.0.3", _state("2.1.0"), "no bump"),
+        ("2.0.3", _minor(("prepare",)), "a minor bump"),
+    ],
+    ids=["unrelated", "past-the-target", "no-bump-recorded", "prepare-done"],
+)
+def test_resume_refuses_a_version_mismatch_naming_both(
+    release_branch: Path, committed: str, current: state.StateBlock, recorded: str
+) -> None:
+    if committed != "2.0.3":
+        _commit_version(release_branch, committed)
+    ctx = _branch_ctx(release_branch)
+    expected = (
+        rf"'release/2\.1\.0' has VERSION {re.escape(committed)}, but the release state "
+        rf"records the target version 2\.1\.0 \({recorded}\)"
+    )
+    with pytest.raises(ReleaseError, match=expected):
+        check_release_version(ctx, current)
+    assert ctx.version_override is None
+
+
+def test_resume_refuses_an_uncommitted_version_change(release_branch: Path) -> None:
+    # A stopped run that wrote the bump but never committed it: completing
+    # it again would overshoot, and adopting it would push a branch without it.
+    (release_branch / "VERSION").write_text("2.1.0\n")
+    ctx = _branch_ctx(release_branch)
+    with pytest.raises(
+        ReleaseError, match=r"VERSION 2\.1\.0 uncommitted over the committed 2\.0\.3"
+    ):
+        check_release_version(ctx, _minor())
+    assert ctx.version_override is None
+
+
+def test_resume_refuses_an_unreadable_version(release_branch: Path) -> None:
+    (release_branch / "VERSION").unlink()
+    _run_git(release_branch, "commit", "-q", "-am", "drop VERSION")
+    with pytest.raises(ReleaseError, match="Cannot read the VERSION of 'release/2.1.0'"):
+        check_release_version(_branch_ctx(release_branch), _minor())

@@ -774,6 +774,7 @@ def test_prepare_closes_the_superseded_issue_only_after_the_bump_and_the_pr() ->
     with (
         patch(_PREPARE + ".github.pr_for_branch", return_value=None),
         patch(_PREPARE + ".github.closed_pr_for_branch", return_value=None),
+        patch(_PREPARE + ".version.show", return_value="2.1.5"),
         patch(_PREPARE + ".version.bump", side_effect=lambda *a: calls.append("bump")),
         patch(_PREPARE + ".git.run", side_effect=lambda *a: calls.append(" ".join(a[:2]))),
         patch(_PREPARE + "._generate_changelog"),

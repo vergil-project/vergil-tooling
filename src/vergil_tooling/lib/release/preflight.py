@@ -36,6 +36,7 @@ from vergil_tooling.lib.release.resume import (
     _SEARCH_COMMAND,
     BRANCH_STAGES,
     _open_release_issues,
+    check_release_version,
     first_undone,
     restore_context,
     verify_facts,
@@ -244,7 +245,10 @@ def _resume_context(
     and restored on the context. The release worktree is adopted only when
     the first undone stage is at or before ``merge-release``, the last stage
     that works on ``release/<version>``, and a missing branch is then a
-    refusal (#4886). Past it, up to ``teardown-worktree``, the branch is not
+    refusal (#4886). The branch's VERSION is then held to the target version
+    the state records (:func:`resume.check_release_version`, #4899): a bump
+    the stopped run did not commit is completed by ``prepare``, and any other
+    VERSION is refused. Past it, up to ``teardown-worktree``, the branch is not
     needed, and GitHub deletes it once the release PR merges, so
     :func:`_post_merge_worktree` sets up the worktree without it (#4889).
     After ``teardown-worktree`` the run stays in the root checkout, since
@@ -274,7 +278,8 @@ def _resume_context(
     verify_facts(ctx, current)
     restore_context(ctx, current)
     first = first_undone(current, stages)
-    if first is not None and stages.index(first) <= stages.index("merge-release"):
+    on_branch = first is not None and stages.index(first) <= stages.index("merge-release")
+    if on_branch:
         ctx.worktree_path = _acquire_release_worktree(repo_root, branch, resume=True)
     elif first is not None and stages.index(first) <= stages.index(BRANCH_STAGES[-1]):
         ctx.worktree_path = _post_merge_worktree(
@@ -286,6 +291,8 @@ def _resume_context(
     else:
         os.chdir(repo_root)
         where = f"root checkout {repo_root}"
+    if on_branch:
+        check_release_version(ctx, current)
     resume_at = first or "nothing left undone"
     print(f"Preflight passed: {repo} v{resume_version} — resuming at {resume_at} in {where}")
     return ctx

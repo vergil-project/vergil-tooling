@@ -29,6 +29,7 @@ def _full_state() -> StateBlock:
     """A state with every field set away from its initial value."""
     return StateBlock(
         version="2.1.340",
+        version_bump="minor",
         cut=_CUT,
         issues=(
             IssueEntry(ref="owner/repo#12", prs=(30,)),
@@ -71,6 +72,7 @@ def test_initial_state_round_trips() -> None:
     assert parse_state(render_state(state)) == state
     assert state.done == ()
     assert state.tag is None
+    assert state.version_bump is None
 
 
 def test_render_state_keys_are_field_names_and_tuples_are_lists() -> None:
@@ -144,6 +146,8 @@ def test_parse_state_non_object_raises() -> None:
     ("key", "value", "expected"),
     [
         ("version", None, "a string"),
+        ("version_bump", 1, "a string or null"),
+        ("version_bump", "micro", '"patch", "minor", "major" or null'),
         ("tag", 5, "a string or null"),
         ("index_listed", "yes", "true or false"),
         ("done", "prepare", "a list"),
