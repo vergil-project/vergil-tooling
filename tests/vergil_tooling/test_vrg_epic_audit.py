@@ -442,9 +442,7 @@ def test_close_allowed_for_scheduled_sweep(capsys: pytest.CaptureFixture[str]) -
     ):
         rc = main(["--close"])
     assert rc == 0
-    close_drift.assert_called_once_with(
-        ["T"], ["E"], org="vergil-project", home="vergil-project/.github"
-    )
+    close_drift.assert_called_once_with(["T"], ["E"], org="vergil-project")
     assert "o/r#1" in capsys.readouterr().out
 
 
@@ -464,9 +462,7 @@ def test_close_as_human_closes_and_summarizes(capsys: pytest.CaptureFixture[str]
     ):
         rc = main(["--close"])
     assert rc == 0
-    close_drift.assert_called_once_with(
-        ["T"], ["E"], org="vergil-project", home="vergil-project/.github"
-    )
+    close_drift.assert_called_once_with(["T"], ["E"], org="vergil-project")
     out = capsys.readouterr().out
     assert "closed" in out.lower()
     assert "o/r#1" in out
@@ -658,12 +654,11 @@ def test_report_path_previews_standing_drain(
     assert "Intake/planning drain (preview): 1 child(ren) would be archived." in out
 
 
-# -- orphan pass, label retirement, queue visibility (epic .github#176, Task 5) --
+# -- orphan pass and label retirement (epic .github#176, Task 5) ---------------
 
 _ORPHAN = Orphan(IssueRef("org", "tool", 5), home="org/.github", name="org")
 _RETIRED = RetiredLabels(IssueRef("org", "tool", 6), ("idea",))
 _BODY_ONLY = (IssueRef("org", "tool", 7), IssueRef("org", ".github", 40))
-_PUBLIC_QUEUE = IssueRef("org", "lab", 2)
 _MISPLACED = MisplacedArchive(IssueRef("org", ".github", 180), "missing the `archive` label")
 
 
@@ -672,8 +667,6 @@ def _derivations() -> dict[str, MagicMock]:
         "orphan_drift": MagicMock(return_value=[_ORPHAN]),
         "retired_label_drift": MagicMock(return_value=[_RETIRED]),
         "body_only_parents": MagicMock(return_value=[_BODY_ONLY]),
-        "public_self_homed_queues": MagicMock(return_value=[_PUBLIC_QUEUE]),
-        "private_under_public_epic": MagicMock(return_value=["org/secret#3"]),
         "misplaced_archives": MagicMock(return_value=[_MISPLACED]),
     }
 
@@ -710,7 +703,6 @@ def test_vrg_epic_audit_preview_lists_orphans_without_mutating(
             "attach_orphans",
             "strip_retired_labels",
             "nativize_parents",
-            "move_public_queues",
         )
     }
     patches = [patch(f"{_MOD}.epic_audit.{n}", m) for n, m in {**derived, **writers}.items()]
@@ -738,8 +730,6 @@ def test_vrg_epic_audit_preview_lists_orphans_without_mutating(
     assert "org/tool#5 → Epic (intake): org in org/.github" in out
     assert "org/tool#6 — idea" in out
     assert "org/tool#7 → org/.github#40" in out
-    assert "org/lab#2" in out
-    assert "org/secret#3" in out
     assert "org/.github#180 — missing the `archive` label" in out
 
 
@@ -755,8 +745,7 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
     writers = {
         "nativize_parents": _writer("nativize", 1),
         "strip_retired_labels": _writer("strip", 2),
-        "move_public_queues": _writer("move", 3),
-        "attach_orphans": _writer("attach", 4),
+        "attach_orphans": _writer("attach", 3),
     }
     with (
         patch(f"{_MOD}.identity_mode.is_human", return_value=True),
@@ -768,18 +757,16 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
         rc = main(["--close"])
     assert rc == 0
     # One block scopes the whole audit to the org (#3513); inside it the orphan
-    # pass applies in the order nativize -> strip -> move -> attach.
-    assert order == ["enter", "nativize", "strip", "move", "attach", "exit"]
+    # pass applies in the order nativize -> strip -> attach.
+    assert order == ["enter", "nativize", "strip", "attach", "exit"]
     writers["nativize_parents"].assert_called_once_with([_BODY_ONLY])
     writers["strip_retired_labels"].assert_called_once_with([_RETIRED])
-    writers["move_public_queues"].assert_called_once_with([_PUBLIC_QUEUE], org="org")
     writers["attach_orphans"].assert_called_once_with([_ORPHAN])
     out = capsys.readouterr().out
     assert "Body-only Parent: links nativized: 1." in out
     assert "Retired kind labels stripped: 2 issue(s)." in out
-    assert "Public-repo queue items moved to org/.github: 3." in out
-    assert "Orphans attached to intake: 4." in out
-    assert "org/secret#3" in out  # the report-only check still surfaces
+    assert "Orphans attached to intake: 3." in out
+    # The report-only check still surfaces.
     assert "org/.github#180 — missing the `archive` label" in out
 
 
@@ -799,7 +786,6 @@ def test_vrg_epic_audit_close_reports_full_queue_and_exits_1(
             _close_patches(
                 nativize_parents=MagicMock(return_value=0),
                 strip_retired_labels=MagicMock(return_value=0),
-                move_public_queues=MagicMock(return_value=0),
                 attach_orphans=MagicMock(side_effect=full),
             )
         ),
@@ -812,36 +798,6 @@ def test_vrg_epic_audit_close_reports_full_queue_and_exits_1(
         "org/tool#5, org/tool#6, org/tool#7. Run epic-review intake." in captured.err
     )
     assert "Orphans attached" not in captured.out
-
-
-def test_vrg_epic_audit_close_stops_when_queue_move_overflows(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    full = StandingEpicFull(
-        IssueRef("org", ".github", 101),
-        95,
-        [IssueRef("org", "lab", 10)],
-        kind="planning",
-        noun="queue item(s) not moved",
-    )
-    attach = MagicMock()
-    with (
-        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
-        patch(f"{_MOD}.github.detect_org", return_value="org"),
-        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
-        _patched(
-            _close_patches(
-                nativize_parents=MagicMock(return_value=0),
-                strip_retired_labels=MagicMock(return_value=0),
-                move_public_queues=MagicMock(side_effect=full),
-                attach_orphans=attach,
-            )
-        ),
-    ):
-        rc = main(["--close"])
-    assert rc == 1
-    attach.assert_not_called()  # a full queue stops the pass; nothing is skipped past
-    assert "planning epic org/.github#101 is full" in capsys.readouterr().err
 
 
 # -- security-records pass: preview only; --close runs none (vergil-tooling#4313) --
@@ -891,7 +847,6 @@ def _run_close(
             _close_patches(
                 nativize_parents=MagicMock(return_value=0),
                 strip_retired_labels=MagicMock(return_value=0),
-                move_public_queues=MagicMock(return_value=0),
                 attach_orphans=attach or MagicMock(return_value=0),
             )
         ),
@@ -1072,7 +1027,7 @@ def test_report_only_mode_refuses_private_home(capsys: pytest.CaptureFixture[str
 
 def _no_op_writers() -> dict[str, MagicMock]:
     """The orphan pass's writers, each a no-op, for a --close run that is not about them."""
-    names = ("nativize_parents", "strip_retired_labels", "move_public_queues", "attach_orphans")
+    names = ("nativize_parents", "strip_retired_labels", "attach_orphans")
     return {name: MagicMock(return_value=0) for name in names}
 
 

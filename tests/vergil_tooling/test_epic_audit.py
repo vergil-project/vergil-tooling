@@ -327,45 +327,35 @@ def test_epic_drift_flags_all_done_open_epics() -> None:
     assert [e.number for e in result] == [40]
 
 
-def test_epic_outside_dotgithub_flags_public_non_dotgithub_epics() -> None:
+def test_epic_outside_dotgithub_flags_non_dotgithub_epics() -> None:
     issues = [
         {"number": 99, "repository": {"nameWithOwner": "vergil-project/vergil-tooling"}},
         {"number": 40, "repository": {"nameWithOwner": "vergil-project/.github"}},  # ok
         {"number": 5, "repository": {}},  # no repo -> skipped
     ]
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value=issues) as mock_search,
-        patch("vergil_tooling.lib.github.is_public", return_value=True),
-    ):
+    with patch("vergil_tooling.lib.github.read_json", return_value=issues) as mock_search:
         result = epic_audit.epic_outside_dotgithub("vergil-project")
     assert result == ["vergil-project/vergil-tooling#99"]
     args = mock_search.call_args.args
     assert "search" in args and "issues" in args and "epic" in args
 
 
-def test_epic_outside_dotgithub_ignores_private_repo_epic() -> None:
-    # A private repo legitimately self-homes its epics -> not a violation.
-    issues = [{"number": 4, "repository": {"nameWithOwner": "vergil-project/lab"}}]
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value=issues),
-        patch("vergil_tooling.lib.github.is_public", return_value=False),
-    ):
-        assert epic_audit.epic_outside_dotgithub("vergil-project") == []
-
-
-def test_epic_outside_dotgithub_fails_loud_on_probe_error() -> None:
-    # A visibility probe that errors must raise, never silently skip (a genuine
-    # leaked-out public epic would otherwise be masked).
+def test_invariant1_reports_every_non_dotgithub_epic() -> None:
+    # Every epic outside .github is a violation, whatever its repo's visibility,
+    # and no visibility field is read (epic vergil-project/.github#1476).
     issues = [{"number": 4, "repository": {"nameWithOwner": "vergil-project/lab"}}]
     with (
         patch("vergil_tooling.lib.github.read_json", return_value=issues),
         patch(
             "vergil_tooling.lib.github.is_public",
-            side_effect=github.GitHubAPIError(1, "cmd", "boom"),
+            side_effect=AssertionError("invariant 1 must not probe visibility"),
         ),
-        pytest.raises(github.GitHubAPIError),
+        patch(
+            "vergil_tooling.lib.github.repo_visibility",
+            side_effect=AssertionError("invariant 1 must not read visibility"),
+        ),
     ):
-        epic_audit.epic_outside_dotgithub("vergil-project")
+        assert epic_audit.epic_outside_dotgithub("vergil-project") == ["vergil-project/lab#4"]
 
 
 def test_stray_dotgithub_issue_flags_unlinked_non_epic() -> None:
@@ -401,7 +391,7 @@ def test_stray_skips_open_archive() -> None:
         {"number": 88, "labels": [{"name": "archive"}, {"name": "ad-hoc"}]},
     ]
     with patch("vergil_tooling.lib.github.read_json", return_value=rows):
-        strays = epic_audit.stray_dotgithub_issue("org", home="org/.github")
+        strays = epic_audit.stray_dotgithub_issue("org")
     assert strays == []  # an archive is not a stray
 
 
@@ -845,18 +835,6 @@ def test_render_flags_closed_operational_without_success() -> None:
     assert "org/repo#55" in out
 
 
-# -- self-contained --repo audit (epic #130, home-scoped checks) --------------
-def test_stray_dotgithub_issue_scopes_to_home() -> None:
-    issues = [{"number": 7, "labels": []}]  # unlinked, non-epic, non-intake -> stray
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value=issues) as mock_list,
-        patch("vergil_tooling.lib.epics.parent_of", return_value=None),
-    ):
-        result = epic_audit.stray_dotgithub_issue("org", home="org/lab")
-    assert result == ["org/lab#7"]
-    assert "org/lab" in mock_list.call_args.args  # read the home, not <org>/.github
-
-
 def test_operational_pending_reads_dotgithub_epics() -> None:
     captured: list[epics.IssueRef] = []
 
@@ -872,24 +850,10 @@ def test_operational_pending_reads_dotgithub_epics() -> None:
     assert captured == [epics.IssueRef("org", ".github", 5)]
 
 
-def test_close_drift_closes_epics_in_home() -> None:
-    epic_summaries = [roadmap.EpicSummary(5, "Lab", "2026-07-09", None, (), 1, 1, "u5")]
-    run = MagicMock()
-    with patch("vergil_tooling.lib.github.run", run):
-        closed = epic_audit.close_drift([], epic_summaries, org="org", home="org/lab")
-    assert closed == ["org/lab#5"]
-    assert run.call_args.args[:5] == ("issue", "close", "5", "--repo", "org/lab")
-
-
 def test_epic_drift_reads_the_org_roadmap() -> None:
     with patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=[]) as gather:
         epic_audit.epic_drift("org")
     gather.assert_called_once_with("org")
-
-
-def test_render_banner_names_home_when_repo_scoped() -> None:
-    out = epic_audit.render([], [], org="org", window_days=30, home="org/lab")
-    assert "**org/lab**" in out  # banner names the scoped home, not the org
 
 
 # -- render_epic_children (machine-readable enumeration, issue #2538) ---------
@@ -934,7 +898,7 @@ def test_render_epic_children_empty_when_no_children() -> None:
     assert out == {"epic": "vergil-project/.github#201", "children": []}
 
 
-# -- orphan pass, label retirement, queue visibility (epic .github#176, Task 5) --
+# -- orphan pass and label retirement (epic .github#176, Task 5) ---------------
 
 
 def _issue(
@@ -945,7 +909,6 @@ def _issue(
     title: str = "feat: a task",
     body: str = "",
     native_parent: epics.IssueRef | None = None,
-    public: bool = True,
 ) -> epic_audit.OpenIssue:
     owner, name = repo.split("/", 1)
     return epic_audit.OpenIssue(
@@ -954,7 +917,6 @@ def _issue(
         body=body,
         labels=frozenset(labels),
         native_parent=native_parent,
-        public=public,
     )
 
 
@@ -997,7 +959,7 @@ def test_open_issues_enumerates_managed_repos_with_paging() -> None:
     pages: dict[tuple[str, str | None], dict[str, object]] = {
         ("tool", None): _gql_page([_gql_node(5, labels=("idea",))], has_next=True, cursor="c1"),
         ("tool", "c1"): _gql_page([_gql_node(6, parent=("org", ".github", 9), body=None)]),
-        ("secret", None): _gql_page([_gql_node(3)]),
+        ("app", None): _gql_page([_gql_node(3)]),
     }
     calls: list[tuple[str, str | None]] = []
 
@@ -1008,23 +970,20 @@ def test_open_issues_enumerates_managed_repos_with_paging() -> None:
         return pages[key]
 
     with (
-        patch("vergil_tooling.lib.github.list_org_repos", return_value=["tool", "fork", "secret"]),
+        patch("vergil_tooling.lib.github.list_org_repos", return_value=["tool", "fork", "app"]),
         patch(
             "vergil_tooling.lib.epics.is_managed_repo",
             side_effect=lambda repo: repo != "org/fork",
         ),
-        patch("vergil_tooling.lib.github.is_public", side_effect=lambda repo: repo == "org/tool"),
         patch("vergil_tooling.lib.github.graphql", side_effect=fake_graphql),
     ):
         issues = epic_audit.open_issues("org")
-    assert calls == [("tool", None), ("tool", "c1"), ("secret", None)]  # fork never read
-    assert [i.ref.slug for i in issues] == ["org/tool#5", "org/tool#6", "org/secret#3"]
+    assert calls == [("tool", None), ("tool", "c1"), ("app", None)]  # fork never read
+    assert [i.ref.slug for i in issues] == ["org/tool#5", "org/tool#6", "org/app#3"]
     assert issues[0].labels == frozenset({"idea"})
     assert issues[0].native_parent is None
-    assert issues[0].public
     assert issues[1].native_parent == epics.IssueRef("org", ".github", 9)
     assert issues[1].body == ""
-    assert not issues[2].public
 
 
 def test_open_issues_fails_loud_on_label_overflow() -> None:
@@ -1033,7 +992,6 @@ def test_open_issues_fails_loud_on_label_overflow() -> None:
     with (
         patch("vergil_tooling.lib.github.list_org_repos", return_value=["tool"]),
         patch("vergil_tooling.lib.epics.is_managed_repo", return_value=True),
-        patch("vergil_tooling.lib.github.is_public", return_value=True),
         patch("vergil_tooling.lib.github.graphql", return_value=_gql_page([node])),
         pytest.raises(RuntimeError, match="org/tool#5"),
     ):
@@ -1047,7 +1005,6 @@ def test_open_issues_fails_loud_on_unreadable_repository(payload: dict[str, obje
     with (
         patch("vergil_tooling.lib.github.list_org_repos", return_value=["tool"]),
         patch("vergil_tooling.lib.epics.is_managed_repo", return_value=True),
-        patch("vergil_tooling.lib.github.is_public", return_value=True),
         patch("vergil_tooling.lib.github.graphql", return_value=payload),
         pytest.raises(RuntimeError, match="org/tool is listed but its issues cannot be read"),
     ):
@@ -1058,7 +1015,6 @@ def test_open_issues_reads_a_repository_with_no_issues() -> None:
     with (
         patch("vergil_tooling.lib.github.list_org_repos", return_value=["tool"]),
         patch("vergil_tooling.lib.epics.is_managed_repo", return_value=True),
-        patch("vergil_tooling.lib.github.is_public", return_value=True),
         patch("vergil_tooling.lib.github.graphql", return_value={"repository": {"issues": {}}}),
     ):
         assert epic_audit.open_issues("org") == []
@@ -1215,8 +1171,6 @@ def test_render_opens_a_partial_report_with_the_coverage_gap() -> None:
         epic_audit.orphan_drift,
         epic_audit.retired_label_drift,
         epic_audit.body_only_parents,
-        epic_audit.public_self_homed_queues,
-        epic_audit.private_under_public_epic,
     ],
 )
 def test_orphan_pass_checks_enumerate_when_not_handed_issues(check: Any) -> None:
@@ -1226,18 +1180,18 @@ def test_orphan_pass_checks_enumerate_when_not_handed_issues(check: Any) -> None
 
 
 def _homes(repo: str) -> tuple[str, str]:
-    # Public repos share the org's .github queues; "secret" self-homes.
-    owner, bare = repo.split("/", 1)
-    return (repo, bare) if bare == "secret" else (f"{owner}/.github", owner)
+    # Every repo's queues are its org's .github queues.
+    owner = repo.split("/", 1)[0]
+    return (f"{owner}/.github", owner)
 
 
 def test_orphan_drift_targets_intake_epic_of_home() -> None:
-    issues = [_issue("org/tool", 5), _issue("org/secret", 3, public=False)]
+    issues = [_issue("org/tool", 5), _issue("org/app", 3)]
     with patch("vergil_tooling.lib.epics.queue_home", side_effect=_homes):
         orphans = epic_audit.orphan_drift("org", issues=issues)
     assert orphans == [
         epic_audit.Orphan(epics.IssueRef("org", "tool", 5), home="org/.github", name="org"),
-        epic_audit.Orphan(epics.IssueRef("org", "secret", 3), home="org/secret", name="secret"),
+        epic_audit.Orphan(epics.IssueRef("org", "app", 3), home="org/.github", name="org"),
     ]
 
 
@@ -1298,14 +1252,14 @@ def test_orphan_drift_attaches_body_parent_that_is_not_an_epic() -> None:
 
 def _intake_epic(home: str) -> epics.IssueRef:
     owner, repo = home.split("/", 1)
-    return epics.IssueRef(owner, repo, 100 if repo == ".github" else 7)
+    return epics.IssueRef(owner, repo, 100 if owner == "org" else 7)
 
 
 def test_attach_orphans_attaches_each_under_its_intake_epic() -> None:
     orphans = [
         epic_audit.Orphan(epics.IssueRef("org", "tool", 5), home="org/.github", name="org"),
         epic_audit.Orphan(epics.IssueRef("org", "tool", 6), home="org/.github", name="org"),
-        epic_audit.Orphan(epics.IssueRef("org", "secret", 3), home="org/secret", name="secret"),
+        epic_audit.Orphan(epics.IssueRef("other", "tool", 3), home="other/.github", name="other"),
     ]
     with (
         patch(
@@ -1322,7 +1276,7 @@ def test_attach_orphans_attaches_each_under_its_intake_epic() -> None:
     assert [c.args for c in add.call_args_list] == [
         (epics.IssueRef("org", ".github", 100), epics.IssueRef("org", "tool", 5)),
         (epics.IssueRef("org", ".github", 100), epics.IssueRef("org", "tool", 6)),
-        (epics.IssueRef("org", "secret", 7), epics.IssueRef("org", "secret", 3)),
+        (epics.IssueRef("other", ".github", 7), epics.IssueRef("other", "tool", 3)),
     ]
 
 
@@ -1454,150 +1408,6 @@ def test_nativize_parents_adds_native_link() -> None:
     add.assert_called_once_with(epic, task)
 
 
-def test_public_self_homed_queues_lists_public_repo_queue_epics() -> None:
-    issues = [
-        _issue("org/lab", 2, labels=("epic", "intake")),  # public repo queue -> move
-        _issue("org/lab", 3, labels=("epic", "planning")),  # public repo queue -> move
-        _issue("org/lab", 4, labels=("epic", "ad-hoc")),  # ad-hoc, not a queue
-        _issue("org/secret", 2, labels=("epic", "intake"), public=False),  # still private
-        _issue("org/.github", 9, labels=("epic", "intake")),  # the org queue itself
-        _issue("org/lab", 5, labels=("archive", "intake")),  # an archive, not live
-    ]
-    assert epic_audit.public_self_homed_queues("org", issues=issues) == [
-        epics.IssueRef("org", "lab", 2),
-        epics.IssueRef("org", "lab", 3),
-    ]
-
-
-def test_move_public_queues_reparents_then_closes() -> None:
-    old = epics.IssueRef("org", "lab", 2)
-    new = epics.IssueRef("org", ".github", 100)
-    kids = [
-        epics.ChildState(epics.IssueRef("org", "lab", 10), "OPEN", "a"),
-        epics.ChildState(epics.IssueRef("org", "lab", 11), "CLOSED", "b"),
-        epics.ChildState(epics.IssueRef("org", "lab", 12), "OPEN", "c"),
-    ]
-    order: list[str] = []
-
-    def fake_children(epic: epics.IssueRef) -> list[epics.ChildState]:
-        return kids if epic == old else []
-
-    with (
-        patch("vergil_tooling.lib.epics.queue_kind", return_value="intake"),
-        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=new) as ensure,
-        patch("vergil_tooling.lib.epics.child_states", side_effect=fake_children),
-        patch(
-            "vergil_tooling.lib.epics.reparent_child",
-            side_effect=lambda _p, t: order.append(f"move {t.number}"),
-        ) as reparent,
-        patch(
-            "vergil_tooling.lib.github.run", side_effect=lambda *a: order.append(f"close {a[2]}")
-        ) as run,
-    ):
-        assert epic_audit.move_public_queues([old], org="org") == 2
-    ensure.assert_called_once_with(epics.INTAKE, "org/.github", "org")
-    assert [c.args for c in reparent.call_args_list] == [
-        (new, epics.IssueRef("org", "lab", 10)),
-        (new, epics.IssueRef("org", "lab", 12)),
-    ]
-    run.assert_called_once_with(
-        "issue",
-        "close",
-        "2",
-        "--repo",
-        "org/lab",
-        "--comment",
-        "Repo is now public; queue items moved to org/.github#100.",
-    )
-    assert order == ["move 10", "move 12", "close 2"]
-
-
-def test_move_public_queues_targets_planning_for_planning_epic() -> None:
-    old = epics.IssueRef("org", "lab", 3)
-    with (
-        patch("vergil_tooling.lib.epics.queue_kind", return_value="planning"),
-        patch(
-            "vergil_tooling.lib.epics.ensure_standing_epic",
-            return_value=epics.IssueRef("org", ".github", 101),
-        ) as ensure,
-        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
-        patch("vergil_tooling.lib.github.run"),
-    ):
-        assert epic_audit.move_public_queues([old], org="org") == 0
-    assert ensure.call_args.args[0] is epics.PLANNING
-
-
-def test_move_public_queues_rejects_non_queue_epic() -> None:
-    with (
-        patch("vergil_tooling.lib.epics.queue_kind", return_value=None),
-        pytest.raises(ValueError, match="org/lab#4 is not a queue epic"),
-    ):
-        epic_audit.move_public_queues([epics.IssueRef("org", "lab", 4)], org="org")
-
-
-def test_move_public_queues_stops_at_cap_without_closing() -> None:
-    old = epics.IssueRef("org", "lab", 3)
-    new = epics.IssueRef("org", ".github", 101)
-    full = [
-        epics.ChildState(epics.IssueRef("org", "x", i), "OPEN", "c")
-        for i in range(epics._ADHOC_ARCHIVE_SEGMENT_CAP)
-    ]
-    mine = [epics.ChildState(epics.IssueRef("org", "lab", 10), "OPEN", "a")]
-    with (
-        patch("vergil_tooling.lib.epics.queue_kind", return_value="planning"),
-        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=new),
-        patch(
-            "vergil_tooling.lib.epics.child_states",
-            side_effect=lambda epic: mine if epic == old else full,
-        ),
-        patch("vergil_tooling.lib.epics.reparent_child") as reparent,
-        patch("vergil_tooling.lib.github.run") as run,
-        pytest.raises(epic_audit.StandingEpicFull) as excinfo,
-    ):
-        epic_audit.move_public_queues([old], org="org")
-    reparent.assert_not_called()
-    run.assert_not_called()  # the old epic stays open: nothing half-moved
-    assert str(excinfo.value) == (
-        "planning epic org/.github#101 is full (95 open); 1 queue item(s) not moved: "
-        "org/lab#10. Run epic-review planning."
-    )
-
-
-def test_private_under_public_epic_reports_only() -> None:
-    issues = [
-        _issue(
-            "org/secret",
-            3,
-            public=False,
-            native_parent=epics.IssueRef("org", ".github", 40),
-        ),  # private work under a public .github epic -> report
-        _issue("org/secret", 4, public=False, body="Parent: org/.github#41\n"),  # body link
-        _issue(
-            "org/secret", 5, public=False, native_parent=epics.IssueRef("org", "secret", 2)
-        ),  # self-homed -> fine
-        _issue("org/secret", 6, public=False),  # unparented -> not this check
-        _issue("org/tool", 7, native_parent=epics.IssueRef("org", ".github", 40)),  # public
-    ]
-    with (
-        patch("vergil_tooling.lib.github.is_public", return_value=True),
-        patch("vergil_tooling.lib.github.run") as run,
-        patch("vergil_tooling.lib.epics.reparent_child") as reparent,
-    ):
-        slugs = epic_audit.private_under_public_epic("org", issues=issues)
-    assert slugs == ["org/secret#3", "org/secret#4"]
-    run.assert_not_called()
-    reparent.assert_not_called()
-
-
-def test_private_under_public_epic_silent_when_dotgithub_private() -> None:
-    # A private .github means the whole org is private: everything homes there.
-    issues = [
-        _issue("org/secret", 3, public=False, native_parent=epics.IssueRef("org", ".github", 40))
-    ]
-    with patch("vergil_tooling.lib.github.is_public", return_value=False):
-        assert epic_audit.private_under_public_epic("org", issues=issues) == []
-
-
 def _one_pr_reffing_8() -> list[dict[str, object]]:
     return [
         {"number": 31, "repository": {"nameWithOwner": "org/repo"}, "url": "u", "body": "Ref #8"}
@@ -1671,37 +1481,18 @@ def test_render_lists_orphan_pass_preview() -> None:
         ],
         retired_labels=[epic_audit.RetiredLabels(epics.IssueRef("org", "tool", 6), ("idea",))],
         body_only=[(epics.IssueRef("org", "tool", 7), epics.IssueRef("org", ".github", 40))],
-        public_queues=[epics.IssueRef("org", "lab", 2)],
-        private_under_public=["org/secret#3"],
     )
     assert "No drift" not in out
     assert "- org/tool#5 → Epic (intake): org in org/.github" in out
     assert "- org/tool#6 — idea" in out
     assert "- org/tool#7 → org/.github#40" in out
-    assert "- org/lab#2" in out
-    assert (
-        "**Private repo work under public .github epics** — an unsupported public → "
-        "private flip? Resolve by hand (spec: Private repos and visibility):"
-    ) in out
-    assert "- org/secret#3" in out
 
 
 def test_render_orphan_pass_sections_only_when_present() -> None:
-    out = epic_audit.render(
-        [], [], org="org", window_days=30, private_under_public=["org/secret#3"]
-    )
+    out = epic_audit.render([], [], org="org", window_days=30, stray=["org/.github#3"])
     assert "Invariant violations" in out
     assert "Orphans" not in out
     assert "Retired" not in out
-
-
-def test_render_closed_lists_private_under_public() -> None:
-    out = epic_audit.render_closed(
-        [], org="org", window_days=30, private_under_public=["org/secret#3"]
-    )
-    assert "No drift" not in out
-    assert "Private repo work under public .github epics" in out
-    assert "- org/secret#3" in out
 
 
 # -- Misplaced archives (vergil-tooling#3817) ----------------------------------
@@ -1810,37 +1601,6 @@ def test_render_closed_lists_misplaced_archives() -> None:
 
 
 # -- Deferred queue kind (epic .github#508) ------------------------------------
-
-
-def test_public_self_homed_queues_includes_deferred() -> None:
-    issues = [
-        _issue("org/lab", 6, labels=("epic", "deferred")),  # public repo queue -> move
-        _issue("org/secret", 6, labels=("epic", "deferred"), public=False),  # still private
-        _issue("org/.github", 10, labels=("epic", "deferred")),  # the org queue itself
-        _issue("org/lab", 7, labels=("archive", "deferred")),  # an archive, not live
-    ]
-    assert epic_audit.public_self_homed_queues("org", issues=issues) == [
-        epics.IssueRef("org", "lab", 6),
-    ]
-
-
-def test_move_public_queues_moves_deferred_to_dotgithub_deferred() -> None:
-    old = epics.IssueRef("org", "lab", 6)
-    new = epics.IssueRef("org", ".github", 10)
-    kid = epics.IssueRef("org", "lab", 20)
-    with (
-        patch("vergil_tooling.lib.epics.queue_kind", return_value="deferred"),
-        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=new) as ensure,
-        patch(
-            "vergil_tooling.lib.epics.child_states",
-            side_effect=lambda e: [epics.ChildState(kid, "OPEN", "a")] if e == old else [],
-        ),
-        patch("vergil_tooling.lib.epics.reparent_child") as reparent,
-        patch("vergil_tooling.lib.github.run"),
-    ):
-        assert epic_audit.move_public_queues([old], org="org") == 1
-    ensure.assert_called_once_with(epics.DEFERRED, "org/.github", "org")
-    reparent.assert_called_once_with(new, kid)
 
 
 def test_queue_full_hint_deferred() -> None:
@@ -2105,14 +1865,6 @@ def test_render_epic_documents_section() -> None:
     ]
 
 
-def test_render_epic_documents_names_the_home() -> None:
-    findings = [epic_audit.EpicDocsFinding(4, "OPEN", "no Documents section")]
-    out = epic_audit.render(
-        [], [], org="org", window_days=30, home="org/lab", epic_docs_findings=findings
-    )
-    assert "- org/lab#4 (open) — no Documents section" in out
-
-
 def test_render_without_epic_documents_findings_has_no_section() -> None:
     out = epic_audit.render([], [], org="org", window_days=30, epic_docs_findings=[])
     assert "Epic documents" not in out
@@ -2211,15 +1963,12 @@ def test_closed_operational_without_success_refuses_a_search_that_may_be_truncat
         epic_audit.closed_operational_without_success("org")
 
 
-def _public_epics(count: int) -> list[dict[str, Any]]:
+def _open_epics(count: int) -> list[dict[str, Any]]:
     return [{"number": i, "repository": {"nameWithOwner": "org/repo"}} for i in range(1, count + 1)]
 
 
 def test_epic_outside_dotgithub_sees_an_epic_past_row_30() -> None:
-    with (
-        patch("vergil_tooling.lib.github.read_json", side_effect=_limited(_public_epics(31))),
-        patch("vergil_tooling.lib.github.is_public", return_value=True),
-    ):
+    with patch("vergil_tooling.lib.github.read_json", side_effect=_limited(_open_epics(31))):
         assert len(epic_audit.epic_outside_dotgithub("org")) == 31
 
 
@@ -2227,7 +1976,7 @@ def test_epic_outside_dotgithub_refuses_a_search_that_may_be_truncated() -> None
     with (
         patch(
             "vergil_tooling.lib.github.read_json",
-            side_effect=_limited(_public_epics(epics.LISTING_LIMIT)),
+            side_effect=_limited(_open_epics(epics.LISTING_LIMIT)),
         ),
         pytest.raises(epics.EpicListTruncatedError, match="open epics"),
     ):
@@ -2243,7 +1992,7 @@ def test_stray_dotgithub_issue_sees_a_stray_past_row_500() -> None:
         patch("vergil_tooling.lib.github.read_json", side_effect=_limited(_unlabelled(501))),
         patch("vergil_tooling.lib.epics.parent_of", return_value=None),
     ):
-        assert len(epic_audit.stray_dotgithub_issue("org", home="org/.github")) == 501
+        assert len(epic_audit.stray_dotgithub_issue("org")) == 501
 
 
 def test_stray_dotgithub_issue_refuses_a_list_that_may_be_truncated() -> None:
@@ -2254,7 +2003,7 @@ def test_stray_dotgithub_issue_refuses_a_list_that_may_be_truncated() -> None:
         ),
         pytest.raises(epics.EpicListTruncatedError, match="open issues of org/.github"),
     ):
-        epic_audit.stray_dotgithub_issue("org", home="org/.github")
+        epic_audit.stray_dotgithub_issue("org")
 
 
 def test_epic_drift_skips_proxy() -> None:
@@ -2668,7 +2417,6 @@ def _adhoc_child(
         body=body,
         labels=labels,
         native_parent=parent,
-        public=True,
     )
 
 
@@ -2678,7 +2426,6 @@ _LIVE_ADHOC = epic_audit.OpenIssue(
     body="",
     labels=frozenset({"epic", "ad-hoc"}),
     native_parent=None,
-    public=True,
 )
 
 

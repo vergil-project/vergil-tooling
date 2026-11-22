@@ -140,7 +140,7 @@ def _audit(args: argparse.Namespace, org: str) -> int:
     for error in proxy_errors:
         print(f"vrg-epic-audit: proxy link error: {error}", file=sys.stderr)
     if args.close:
-        closed = epic_audit.close_drift(tasks, epics_drift, org=org, home=home)
+        closed = epic_audit.close_drift(tasks, epics_drift, org=org)
         proxy_drift = epic_audit.close_proxies(proxy_plan)
         proxies_closed = [c.proxy.slug for c in proxy_plan if not c.open_tasks]
         # Remediate the closed-epic-with-open-child invariant (issue #2259): reopen
@@ -173,9 +173,7 @@ def _audit(args: argparse.Namespace, org: str) -> int:
                 closed,
                 org=org,
                 window_days=args.window_days,
-                home=home,
                 reopened=reopened,
-                private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
                 misplaced=epic_audit.misplaced_archives(org, issues=issues),
                 proxies_closed=proxies_closed,
                 proxy_drift=proxy_drift,
@@ -188,7 +186,7 @@ def _audit(args: argparse.Namespace, org: str) -> int:
         orphan_rc = _apply_orphan_pass(org, issues)
         return 1 if proxy_errors else orphan_rc
     epics_outside = epic_audit.epic_outside_dotgithub(org)
-    stray = epic_audit.stray_dotgithub_issue(org, home=home)
+    stray = epic_audit.stray_dotgithub_issue(org)
     pending_operational = epic_audit.operational_pending(org)
     closed_operational_no_success = epic_audit.closed_operational_without_success(org)
     # Read-only preview of the ad-hoc drain the --close sweep would perform (epic
@@ -218,7 +216,6 @@ def _audit(args: argparse.Namespace, org: str) -> int:
             epics_drift,
             org=org,
             window_days=args.window_days,
-            home=home,
             epics_outside=epics_outside,
             stray=stray,
             pending_operational=pending_operational,
@@ -227,8 +224,6 @@ def _audit(args: argparse.Namespace, org: str) -> int:
             orphans=epic_audit.orphan_drift(org, issues=issues),
             retired_labels=epic_audit.retired_label_drift(org, issues=issues),
             body_only=epic_audit.body_only_parents(org, issues=issues),
-            public_queues=epic_audit.public_self_homed_queues(org, issues=issues),
-            private_under_public=epic_audit.private_under_public_epic(org, issues=issues),
             misplaced=epic_audit.misplaced_archives(org, issues=issues),
             epic_docs_findings=epic_audit.epic_documents(org, home=home, listing=home_epics),
             # It reads trusted comments, so it runs only here, never under --close.
@@ -248,20 +243,15 @@ def _apply_orphan_pass(org: str, issues: list[epic_audit.OpenIssue]) -> int:
     """Apply the orphan pass (epic .github#176) after the existing ``--close`` passes.
 
     Order: nativize body-only ``Parent:`` links -> strip retired kind labels ->
-    move now-public repos' queue items -> attach orphans to intake. Every write
-    runs under the org's token that main() scopes the whole audit to. A full
-    queue epic stops the pass with the unlinked items on stderr and exit 1 —
-    never a silent skip.
+    attach orphans to intake. Every write runs under the org's token that
+    main() scopes the whole audit to. A full queue epic stops the pass with the
+    unlinked items on stderr and exit 1 — never a silent skip.
     """
     nativized = epic_audit.nativize_parents(epic_audit.body_only_parents(org, issues=issues))
     print(f"Body-only Parent: links nativized: {nativized}.")
     stripped = epic_audit.strip_retired_labels(epic_audit.retired_label_drift(org, issues=issues))
     print(f"Retired kind labels stripped: {stripped} issue(s).")
     try:
-        moved = epic_audit.move_public_queues(
-            epic_audit.public_self_homed_queues(org, issues=issues), org=org
-        )
-        print(f"Public-repo queue items moved to {org}/.github: {moved}.")
         attached = epic_audit.attach_orphans(epic_audit.orphan_drift(org, issues=issues))
     except epic_audit.StandingEpicFull as exc:
         print(f"vrg-epic-audit: {exc}", file=sys.stderr)
@@ -278,10 +268,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "repo's GitHub org: merged PRs whose Ref'd task is still open, open "
             "non-perpetual epics whose children are all closed, and issues in "
             "the wrong place (epics outside .github; stray .github issues; "
-            "orphans with no epic parent; private-repo work under public .github "
-            "epics), and each epic's Documents section (present and well formed; "
-            "on a closed epic, nothing pending and every link naming a file; "
-            "checked only without --close). "
+            "orphans with no epic parent), and each epic's Documents section "
+            "(present and well formed; on a closed epic, nothing pending and "
+            "every link naming a file; checked only without --close). "
             "Read-only by default; pass --close (as a human) to close the drift "
             "it finds (invariant violations are report-only)."
         ),
@@ -330,9 +319,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "each proxy epic whose primary has closed and which has no open task "
             "(one with an open task is reported and left open). Then "
             "run the org-wide orphan pass: link body-only Parent: lines natively, "
-            "remove the retired triage/idea/research labels, move now-public "
-            "repos' queue items under .github, and attach every orphan to its "
-            "intake epic (exit 1, listing what was not attached, if an intake "
+            "remove the retired triage/idea/research labels, and attach every "
+            "orphan to its intake epic (exit 1, listing what was not attached, if an intake "
             "epic is full). --close makes no security-advisory call: it does "
             "not sync advisory states or check advisory/issue pairs; run "
             "'vrg-security-record sync' for that. A "
