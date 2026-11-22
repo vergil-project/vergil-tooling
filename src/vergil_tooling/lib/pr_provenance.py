@@ -6,11 +6,17 @@ the watch starts and again each time a PR's head changes. Neither command
 merges a PR itself: GitHub merges it through auto-merge.
 
 Fetches a PR's action history (reviews and timeline events) from
-GitHub and verifies that no agent identity performed an action its
-role forbids on the PR. Agent identities are recognized
-by the account naming convention (``*-vergil-user`` and
-``*-vergil-audit``); everything else is treated as human and is never
-forbidden — the human holds every right. An action is either allowed or a
+GitHub and verifies that no identity performed an action its role forbids
+on the PR. Every identity's role comes from the trusted-authors
+configuration through the trust layer (``trust.role_of``), never from its
+name alone: the human holds every right; an agent is the user identity, or
+the audit identity when its login ends in ``-vergil-audit``; the org's
+automation identity is never forbidden; and a login with no role (a
+stranger, a deleted account, a role's login of the wrong account type) is
+**untrusted**, never human. An untrusted identity may not author, edit,
+close, reopen or merge the PR or turn auto-merge on; its approval counts for
+nothing and is reported on stderr, metadata only, so no outsider's review
+can stop a submit (GHSA-q6hx-8c85-9f56). An action is either allowed or a
 violation, and a violation always fails: there is no override
 (vergil-tooling#4695). It is either a real problem to investigate or a bug
 in this classifier to fix.
@@ -36,25 +42,49 @@ from __future__ import annotations
 
 import enum
 import re
+import sys
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, trust
+from vergil_tooling.lib.trusted_authors import load_trusted_authors
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 
 class Role(enum.Enum):
     HUMAN = "human"
     USER = "user"
     AUDIT = "audit"
+    AUTOMATION = "automation"
+    UNTRUSTED = "untrusted"
 
 
-def classify_login(login: str) -> Role:
-    """Map a GitHub login to an identity role by naming convention."""
-    if login.endswith("-vergil-audit"):
-        return Role.AUDIT
-    if login.endswith("-vergil-user"):
-        return Role.USER
-    return Role.HUMAN
+# An agent identity whose login ends so is the audit identity; any other
+# agent is the user identity, whose forbidden actions are the wider set.
+_AUDIT_SUFFIX = "-vergil-audit"
+# How an identity with no login (a deleted account) is named in a violation.
+_DELETED = "(deleted account)"
+
+
+def classify(identity: trust.Identity, *, org: str, authors: TrustedAuthors) -> Role:
+    """The provenance role of *identity* on a PR in a repo of *org*.
+
+    The trust layer's role decides it (:func:`trust.role_of`): a login with
+    none is :attr:`Role.UNTRUSTED`, never :attr:`Role.HUMAN`.
+    """
+    judgement = trust.role_of(identity, org=org, authors=authors)
+    if judgement.role is trust.Role.HUMAN:
+        return Role.HUMAN
+    if judgement.role is trust.Role.AUTOMATION:
+        return Role.AUTOMATION
+    if judgement.role is trust.Role.AGENTS:
+        login = trust.normalise_login(cast("str", identity.login))
+        return Role.AUDIT if login.endswith(_AUDIT_SUFFIX) else Role.USER
+    return Role.UNTRUSTED
 
 
 # The action for any auto-merge enable event, whatever its method (see
@@ -73,16 +103,40 @@ _FORBIDDEN: dict[Role, frozenset[str]] = {
     Role.AUDIT: frozenset(
         {"created", "edited", "closed", "reopened", "merged", _AUTO_MERGE_ENABLED}
     ),
+    # Anyone may leave a review on a public repo, so an untrusted approval is
+    # reported, not a violation: no outsider can stop a submit by reviewing.
+    Role.UNTRUSTED: frozenset(
+        {"created", "edited", "closed", "reopened", "merged", _AUTO_MERGE_ENABLED}
+    ),
 }
 
 
 @dataclass(frozen=True)
 class Action:
-    """A single agent-attributed action on the PR."""
+    """A single attributed action on the PR."""
 
     login: str
     role: Role
     action: str
+
+
+def _identity(user: object, *, typename_key: str = "type") -> trust.Identity:
+    """The :class:`trust.Identity` of a REST user object; None is a deleted account.
+
+    A REST user names its account type in type (``User`` or ``Bot``), as
+    GraphQL's ``__typename`` does.
+    """
+    data = cast("Mapping[str, object]", user) if isinstance(user, dict) else {}
+    login = data.get("login")
+    typename = data.get(typename_key)
+    return trust.Identity(
+        login if isinstance(login, str) and login else None,
+        typename if isinstance(typename, str) else None,
+    )
+
+
+def _shown(identity: trust.Identity) -> str:
+    return _DELETED if identity.login is None else trust.normalise_login(identity.login)
 
 
 @dataclass
@@ -127,7 +181,7 @@ def _map_event(name: str) -> str | None:
 
 
 def _collect_actions(pr: str) -> list[Action]:
-    """Collect agent-attributed actions on *pr* from GitHub.
+    """Collect the attributed actions on *pr* from GitHub, each with its role.
 
     The repo and number come from the PR itself, not the current directory's
     remote: ``vrg-finalize-pr <PR URL>`` run from a checkout of another repo
@@ -135,13 +189,27 @@ def _collect_actions(pr: str) -> list[Action]:
     repo or number cannot be read raises ``github.GitHubAPIError``.
     """
     repo, number = github.pr_repo_and_number(pr, "the provenance check")
+    org = repo.split("/", 1)[0]
+    authors = load_trusted_authors()
     actions: list[Action] = []
 
-    author = github.read_output(
-        "pr", "view", pr, "--json", "author", "--jq", ".author.login"
-    ).strip()
-    if author:
-        actions.append(Action(author, classify_login(author), "created"))
+    def add(identity: trust.Identity, action: str) -> None:
+        actions.append(
+            Action(_shown(identity), classify(identity, org=org, authors=authors), action)
+        )
+
+    # ``gh pr view`` names the author's account type by ``is_bot``; an App
+    # author's login is ``app/<slug>``, which the trust layer normalises.
+    viewed = github.read_json("pr", "view", pr, "--json", "author")
+    raw_author = viewed.get("author") if isinstance(viewed, dict) else None
+    author = cast("Mapping[str, object]", raw_author) if isinstance(raw_author, dict) else {}
+    add(
+        trust.Identity(
+            cast("str", author["login"]) if isinstance(author.get("login"), str) else None,
+            "Bot" if author.get("is_bot") is True else "User",
+        ),
+        "created",
+    )
 
     # Both lists are paginated (issue #3162): a single ``gh api`` call returns
     # only the first 30 items, so a forbidden action past page 1 was never
@@ -150,11 +218,28 @@ def _collect_actions(pr: str) -> list[Action]:
         "list[dict[str, Any]]",
         github.read_json_paginated(f"repos/{repo}/pulls/{number}/reviews"),
     )
+    skipped: list[trust.Skipped] = []
     for review in reviews:
-        if review.get("state") == "APPROVED":
-            login = (review.get("user") or {}).get("login", "")
-            if login:
-                actions.append(Action(login, classify_login(login), "approved"))
+        if review.get("state") != "APPROVED":
+            continue
+        reviewer = _identity(review.get("user"))
+        role = classify(reviewer, org=org, authors=authors)
+        if role is Role.UNTRUSTED:
+            judgement = trust.role_of(reviewer, org=org, authors=authors)
+            skipped.append(
+                trust.Skipped(
+                    repo,
+                    number,
+                    "review",
+                    None if reviewer.login is None else trust.normalise_login(reviewer.login),
+                    str(review.get("submitted_at") or "an unknown time"),
+                    f"review {review.get('id')}",
+                    str(judgement.cause),
+                )
+            )
+            continue
+        actions.append(Action(_shown(reviewer), role, "approved"))
+    trust.report_skipped(skipped, stream=sys.stderr)
 
     timeline = cast(
         "list[dict[str, Any]]",
@@ -164,18 +249,16 @@ def _collect_actions(pr: str) -> list[Action]:
         mapped = _map_event(event.get("event", ""))
         if mapped is None:
             continue
-        login = (event.get("actor") or {}).get("login", "")
-        if login:
-            actions.append(Action(login, classify_login(login), mapped))
+        add(_identity(event.get("actor")), mapped)
 
     return actions
 
 
 def evaluate(actions: list[Action]) -> ProvenanceResult:
-    """The violations among *actions*: each agent action its role forbids. Pure."""
+    """The violations among *actions*: each action its role forbids. Pure."""
     result = ProvenanceResult()
     for act in actions:
-        if act.role is not Role.HUMAN and act.action in _FORBIDDEN.get(act.role, frozenset()):
+        if act.action in _FORBIDDEN.get(act.role, frozenset()):
             result.violations.append(act)
     return result
 

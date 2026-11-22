@@ -351,7 +351,11 @@ List a pull request's inline (line-level) review comments. It reads
 bodies and conversation comments, and `vrg-gh` refuses `gh api` for the user
 identity, so this is the user agent's way to read them. It is strictly
 read-only and widens no `vrg-gh` allowlist. The plugin's
-`epic-retrospective` sweep consumes it.
+`epic-retrospective` sweep consumes it. Only trusted comments are
+printed: the trust layer also reads the PR's review comments, and a
+comment is kept only when its author and every editor hold a role, with
+the body the layer read. Every other comment is left out and reported on
+stderr, metadata only.
 
 Without `--json` it prints one block per comment (`<path>:<line> by
 <author> at <created_at> (comment <id>, review <id>, reply to <id>)`, the
@@ -369,8 +373,8 @@ has), `author` is `null` for a deleted account,
 |---|---|
 | Source | `vergil_tooling.bin.vrg_pr_review_comments` |
 | Args | `--repo <owner>/<repo>`, `--pr N`, `--json` |
-| Preconditions | GitHub App credentials for the `--repo` owner |
-| Failure mode | A GitHub API failure, or a response that is not a list of well-formed comments, prints `ERROR:` on stderr and exits 1; it never prints a partial or empty list in its place |
+| Preconditions | GitHub App credentials for the `--repo` owner; the trusted-authors configuration |
+| Failure mode | A GitHub API failure, a response that is not a list of well-formed comments, or a trust-layer read that cannot complete prints `ERROR:` on stderr and exits 1; it never prints a partial or empty list in its place |
 | Exit codes | 0 success, 1 GitHub API failure or malformed response, 2 bad arguments |
 | Status | Active |
 

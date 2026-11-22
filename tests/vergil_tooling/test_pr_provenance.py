@@ -10,8 +10,39 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import github, pr_provenance
+from vergil_tooling.lib import github, pr_provenance, trust
 from vergil_tooling.lib.pr_provenance import Action, Role
+from vergil_tooling.lib.trusted_authors import OrgConfig, TrustedAuthors
+
+AUTHORS = TrustedAuthors(
+    human=("alice", "wphillipmoore"),
+    agents=("a-vergil-user", "a-vergil-audit", "the-agent"),
+    orgs={"o": OrgConfig("o-automation")},
+)
+_AT = "2026-11-22T00:00:00Z"
+_SPAM = "SPAM-MARKER-TEXT see https://example.invalid/x"
+# The ``gh pr view --json author`` answer for a PR the human opened.
+_ALICE_VIEW = json.dumps({"author": {"login": "alice", "is_bot": False}})
+
+
+@pytest.fixture(autouse=True)
+def _trusted_authors() -> Any:
+    with patch("vergil_tooling.lib.pr_provenance.load_trusted_authors", return_value=AUTHORS):
+        yield
+
+
+def _bot(login: str) -> dict[str, str]:
+    """A REST user object for the App *login*."""
+    return {"login": f"{login}[bot]", "type": "Bot"}
+
+
+def _user(login: str) -> dict[str, str]:
+    """A REST user object for the account *login*."""
+    return {"login": login, "type": "User"}
+
+
+def _classify(login: str | None, typename: str | None) -> Role:
+    return pr_provenance.classify(trust.Identity(login, typename), org="o", authors=AUTHORS)
 
 
 def _pr_view(number: int, repo: str = "o/r") -> str:
@@ -19,16 +50,89 @@ def _pr_view(number: int, repo: str = "o/r") -> str:
     return json.dumps({"number": number, "url": f"https://github.com/{repo}/pull/{number}"})
 
 
-def test_classify_login_user() -> None:
-    assert pr_provenance.classify_login("alice-vergil-user") is Role.USER
+def test_provenance_roles_from_config_not_suffix() -> None:
+    # A configured agent is the user identity, or the audit one by its login's
+    # ending; the naming convention alone never makes a login an agent.
+    assert _classify("a-vergil-user[bot]", "Bot") is Role.USER
+    assert _classify("a-vergil-audit", "Bot") is Role.AUDIT
+    assert _classify("the-agent", "Bot") is Role.USER
+    assert _classify("app/o-automation", "Bot") is Role.AUTOMATION
+    assert _classify("alice", "User") is Role.HUMAN
+    assert _classify("stranger-vergil-user", "Bot") is Role.UNTRUSTED
 
 
-def test_classify_login_audit() -> None:
-    assert pr_provenance.classify_login("alice-vergil-audit") is Role.AUDIT
+def test_provenance_stranger_is_untrusted() -> None:
+    # A login with no role is untrusted, never human: nor is a role's login
+    # of the wrong account type, nor a deleted account.
+    assert _classify("stranger", "User") is Role.UNTRUSTED
+    assert _classify("a-vergil-user", "User") is Role.UNTRUSTED
+    assert _classify("alice", "Bot") is Role.UNTRUSTED
+    assert _classify(None, None) is Role.UNTRUSTED
 
 
-def test_classify_login_human() -> None:
-    assert pr_provenance.classify_login("alice") is Role.HUMAN
+@pytest.mark.parametrize(
+    "action", ["created", "edited", "closed", "reopened", "merged", "auto_merge_enabled"]
+)
+def test_evaluate_untrusted_forbidden_actions(action: str) -> None:
+    result = pr_provenance.evaluate([Action("stranger", Role.UNTRUSTED, action)])
+    assert [v.action for v in result.violations] == [action]
+
+
+def test_evaluate_automation_is_never_forbidden() -> None:
+    actions = [Action("o-automation", Role.AUTOMATION, a) for a in ("created", "merged")]
+    assert pr_provenance.evaluate(actions).ok
+
+
+def test_check_pr_stranger_author_is_a_violation() -> None:
+    view = json.dumps({"author": {"login": "stranger", "is_bot": False}})
+    with patch(
+        "vergil_tooling.lib.pr_provenance.github.read_output",
+        side_effect=_paged_fake([[]], [[]], [], author_view=view),
+    ):
+        result = pr_provenance.check_pr("9")
+    assert [(v.login, v.role, v.action) for v in result.violations] == [
+        ("stranger", Role.UNTRUSTED, "created")
+    ]
+
+
+def test_check_pr_deleted_author_is_a_violation() -> None:
+    view = json.dumps({"author": None})
+    with patch(
+        "vergil_tooling.lib.pr_provenance.github.read_output",
+        side_effect=_paged_fake([[]], [[]], [], author_view=view),
+    ):
+        result = pr_provenance.check_pr("9")
+    assert [(v.login, v.action) for v in result.violations] == [("(deleted account)", "created")]
+
+
+def test_review_by_outsider_is_reported_not_a_violation(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Anyone may review a public PR: an outsider's approval is reported, metadata only."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
+    reviews: list[dict[str, object]] = [
+        {
+            "id": 501,
+            "state": "APPROVED",
+            "user": _user("stranger"),
+            "submitted_at": _AT,
+            "body": _SPAM,
+        },
+        {"id": 502, "state": "APPROVED", "user": None, "body": _SPAM},
+    ]
+    with patch(
+        "vergil_tooling.lib.pr_provenance.github.read_output",
+        side_effect=_paged_fake([reviews], [[]], []),
+    ):
+        result = pr_provenance.check_pr("9")
+    assert result.ok
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: o/r#9 review stranger at {_AT} on review 501 (untrusted)\n"
+        "skipped untrusted content: o/r#9 review a deleted account at an unknown time"
+        " on review 502 (deleted)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
 
 
 def test_evaluate_human_actions_ignored() -> None:
@@ -80,15 +184,15 @@ def test_evaluate_agent_neutral_action_ignored() -> None:
 def test_check_pr_collects_reviews_and_skips_unmapped() -> None:
     reviews = json.dumps(
         [
-            {"state": "APPROVED", "user": {"login": "a-vergil-user"}},
+            {"state": "APPROVED", "user": _bot("a-vergil-user")},
             {"state": "COMMENTED", "user": {"login": "x"}},  # not an approval
-            {"state": "APPROVED", "user": {}},  # approval with no login
+            {"state": "APPROVED", "user": _user("alice")},  # the human's approval
         ]
     )
     timeline = json.dumps(
         [
-            {"event": "labeled", "actor": {"login": "alice"}},  # unmapped event
-            {"event": "closed", "actor": {}},  # mapped but no actor login
+            {"event": "labeled", "actor": _bot("a-vergil-audit")},  # unmapped event
+            {"event": "closed", "actor": _user("alice")},  # the human's close
         ]
     )
 
@@ -100,7 +204,7 @@ def test_check_pr_collects_reviews_and_skips_unmapped() -> None:
         if args[:2] == ("pr", "view") and "number,url" in args:
             return _pr_view(7)
         if args[:2] == ("pr", "view") and "author" in args:
-            return ""  # no author login
+            return _ALICE_VIEW
         raise AssertionError(f"unexpected call: {args}")
 
     with (
@@ -120,7 +224,7 @@ def test_check_pr_collects_reviews_and_skips_unmapped() -> None:
 
 def test_check_pr_flags_audit_close() -> None:
     reviews = json.dumps([])
-    timeline = json.dumps([{"event": "closed", "actor": {"login": "a-vergil-audit"}}])
+    timeline = json.dumps([{"event": "closed", "actor": _bot("a-vergil-audit")}])
 
     def fake_read_output(*args: str, **_: object) -> str:
         if args[:2] == ("api", "--paginate") and "/reviews?" in args[2]:
@@ -130,7 +234,7 @@ def test_check_pr_flags_audit_close() -> None:
         if args[:2] == ("pr", "view") and "number,url" in args:
             return _pr_view(42)
         if args[:2] == ("pr", "view") and "author" in args:
-            return "alice"  # human author
+            return _ALICE_VIEW  # human author
         raise AssertionError(f"unexpected call: {args}")
 
     with (
@@ -152,6 +256,8 @@ def _paged_fake(
     reviews_pages: list[list[dict[str, object]]],
     timeline_pages: list[list[dict[str, object]]],
     calls: list[tuple[str, ...]],
+    *,
+    author_view: str = _ALICE_VIEW,
 ) -> object:
     """A ``read_output`` fake that answers the paginated calls the way
     ``gh api --paginate`` does: one JSON document per page, concatenated."""
@@ -165,7 +271,7 @@ def _paged_fake(
         if args[:2] == ("pr", "view") and "number,url" in args:
             return _pr_view(9)
         if args[:2] == ("pr", "view") and "author" in args:
-            return "alice"
+            return author_view
         raise AssertionError(f"unexpected call: {args}")
 
     return fake_read_output
@@ -179,9 +285,9 @@ def test_check_pr_evaluates_timeline_event_on_second_page() -> None:
     the check passed when it should have failed.
     """
     page1: list[dict[str, object]] = [
-        {"event": "labeled", "actor": {"login": "alice"}} for _ in range(30)
+        {"event": "labeled", "actor": _user("alice")} for _ in range(30)
     ]
-    page2: list[dict[str, object]] = [{"event": "merged", "actor": {"login": "a-vergil-audit"}}]
+    page2: list[dict[str, object]] = [{"event": "merged", "actor": _bot("a-vergil-audit")}]
     calls: list[tuple[str, ...]] = []
     with (
         patch(
@@ -201,9 +307,9 @@ def test_check_pr_evaluates_timeline_event_on_second_page() -> None:
 
 def test_check_pr_evaluates_review_on_second_page() -> None:
     page1: list[dict[str, object]] = [
-        {"state": "COMMENTED", "user": {"login": "alice"}} for _ in range(30)
+        {"state": "COMMENTED", "user": _user("alice")} for _ in range(30)
     ]
-    page2: list[dict[str, object]] = [{"state": "APPROVED", "user": {"login": "a-vergil-user"}}]
+    page2: list[dict[str, object]] = [{"state": "APPROVED", "user": _bot("a-vergil-user")}]
     calls: list[tuple[str, ...]] = []
     with (
         patch(
@@ -232,7 +338,7 @@ def test_check_pr_malformed_page_fails_closed() -> None:
         if args[:2] == ("pr", "view") and "number,url" in args:
             return _pr_view(9)
         if args[:2] == ("pr", "view"):
-            return "alice"
+            return _ALICE_VIEW
         raise AssertionError(f"unexpected call: {args}")
 
     with (
@@ -259,7 +365,7 @@ def _cross_repo_fake(pr_view: str, calls: list[tuple[str, ...]]) -> object:
         if args[:2] == ("pr", "view") and "number,url" in args:
             return pr_view
         if args[:2] == ("pr", "view"):
-            return "alice"
+            return _ALICE_VIEW
         if args[:2] == ("repo", "view"):
             return "cwd-org/cwd-repo"
         raise AssertionError(f"unexpected call: {args}")
@@ -328,7 +434,7 @@ def _as_agent(
     matched = [event for event in events if event.get("event") == event_name]
     assert matched, f"the recording has no {event_name} event"
     for event in matched:
-        event["actor"] = {**event["actor"], "login": login}
+        event["actor"] = {**event["actor"], **_bot(login)}
     return events
 
 
@@ -368,7 +474,7 @@ def test_disable_is_not_a_violation() -> None:
 
 def test_unknown_auto_enable_fails_closed() -> None:
     # A renamed or new enable event by an agent is a violation, not ignored.
-    timeline = [{"event": "auto_frobnicate_enabled", "actor": {"login": _AGENT}}]
+    timeline = [{"event": "auto_frobnicate_enabled", "actor": _bot(_AGENT)}]
     result = _check_timeline(timeline)
     assert [(v.login, v.action) for v in result.violations] == [(_AGENT, "auto_merge_enabled")]
 

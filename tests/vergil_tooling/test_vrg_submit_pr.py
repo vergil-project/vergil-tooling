@@ -58,6 +58,7 @@ from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.worktrees import Worktree
 
 if TYPE_CHECKING:
@@ -1853,6 +1854,30 @@ def test_provenance_check_that_cannot_run_fails_pr() -> None:
     assert summary.opened == []
     assert summary.failed[0][0] == "https://x/pull/1"
     enable.assert_not_called()
+
+
+def test_provenance_without_trusted_authors_fails_pr_others_continue() -> None:
+    """A provenance check with no trusted-authors configuration fails that PR,
+    auto-merge left off and the reason named; the next PR is still attempted."""
+    a = _submission("feature/1-a", record_in=None)
+    b = _submission("feature/2-b", record_in=None)
+    with (
+        patch(_MOD + "._push_branch"),
+        patch(_MOD + "._create_pr", side_effect=["https://x/pull/1", "https://x/pull/2"]),
+        patch(
+            _MOD + ".pr_provenance.check_pr",
+            side_effect=[
+                TrustedAuthorsNotConfiguredError("no trusted authors are configured"),
+                pr_provenance.ProvenanceResult(),
+            ],
+        ),
+        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+    ):
+        enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
+        summary = _submit_all([a, b], _ARGS)
+    assert summary.opened == ["https://x/pull/2"]
+    assert summary.failed == [("https://x/pull/1", "no trusted authors are configured")]
+    enable.assert_called_once_with("https://x/pull/2", head="h0", method="SQUASH")
 
 
 def test_auto_merge_refusal_fails_pr_others_continue() -> None:

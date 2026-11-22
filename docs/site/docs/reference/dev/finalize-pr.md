@@ -153,8 +153,14 @@ The watch runs the provenance check on every PR when it starts, and
 again each time a PR's head changes. `vrg-submit-pr` ran the same check
 before it turned auto-merge on. A violation always fails, and there is
 no override (issue #4695): it is either a real problem to investigate or
-a bug in the classifier to fix. What it does depends on whether the PR
-has merged:
+a bug in the classifier to fix. Each identity's role comes from the
+trusted-authors configuration, never from its name alone: the human may
+do anything, an agent may not author, edit, close, reopen or merge the
+PR or turn auto-merge on (the user identity may not approve it either),
+and an identity with no role is **untrusted**, with the same limits as
+the audit identity. An untrusted approval counts for nothing: it is
+reported on stderr, metadata only, and is no violation. What it does
+depends on whether the PR has merged:
 
 - **Open PR.** Finalize turns the PR's auto-merge off and reports it
   *failed: provenance*.
