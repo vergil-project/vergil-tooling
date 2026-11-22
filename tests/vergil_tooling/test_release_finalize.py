@@ -157,6 +157,22 @@ def test_teardown_worktree_noop_without_path(monkeypatch) -> None:
     assert removed == []
 
 
+def test_teardown_worktree_with_none_succeeds_doing_nothing(
+    monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A resume past merge-release that found no worktree (#4889): the stage
+    returns without error, so its tracked wrapper records it done."""
+    ctx = _ctx()
+    ctx.worktree_path = None
+    calls: list[object] = []
+    monkeypatch.setattr(_MOD + ".os.chdir", calls.append)
+    monkeypatch.setattr(_MOD + ".remove_worktree", calls.append)
+    teardown_worktree(ctx)
+    assert calls == []
+    assert ctx.worktree_path is None
+    assert "No release worktree to remove." in capsys.readouterr().out
+
+
 def test_teardown_worktree_skips_removal_when_already_gone(monkeypatch) -> None:
     """If the worktree dir is already gone (e.g. a prior partial run), still
     return to root but skip the removal call."""

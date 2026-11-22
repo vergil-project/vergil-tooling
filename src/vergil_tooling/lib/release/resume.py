@@ -33,8 +33,10 @@ _SEARCH_COMMAND = "gh issue list --search 'release: in:title' --state open"
 _SHORT = 12
 
 # The stages that work on the release branches, in its worktree. A resume
-# adopts the worktree only when its first undone stage is at or before the
-# last of them (spec §4.3 of epic vergil-project/.github#1440).
+# runs in the worktree only when its first undone stage is at or before the
+# last of them (spec §4.3 of epic vergil-project/.github#1440); past
+# merge-release it does so without release/<version>, which GitHub deletes
+# once the release PR merges (#4889).
 BRANCH_STAGES = ("prepare", "merge-release", "back-merge-bump", "teardown-worktree")
 # The stages that run on every run and are never recorded done.
 ALWAYS_RUN = ("audit", "preflight", "publish-status")

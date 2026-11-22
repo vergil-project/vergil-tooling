@@ -35,13 +35,20 @@ def teardown_worktree(ctx: ReleaseContext) -> None:
     (``release/<v>``, ``release/post-<v>``) are left as refs for
     ``vrg-finalize-pr`` to prune as merged — exactly as in the pre-worktree
     flow, where they were also left behind in the root checkout.
+
+    With no worktree to remove (a resume past ``merge-release`` that found
+    none, since no stage after it needs one: #4889), the stage does nothing
+    and succeeds, so it is recorded done.
     """
     if ctx.worktree_path is None:
+        print("No release worktree to remove.")
         return
     os.chdir(ctx.repo_root)
     if ctx.worktree_path.exists():
         print(f"Removing release worktree: {ctx.worktree_path}")
         remove_worktree(ctx.worktree_path)
+    else:
+        print(f"Release worktree already removed: {ctx.worktree_path}")
     ctx.worktree_path = None
 
 
