@@ -288,7 +288,7 @@ def worst_severity(reports: Sequence[Report]) -> int:
 def release_owned(dep: HostDependency) -> str:
     """Say who installs an ``upgrade = "release"`` dependency (issue #4603).
 
-    Its own release's consumer refresh installs it, so ``vrg-host`` only
+    Its own release's install stage installs it, so ``vrg-host`` only
     reports it. With no latest feed nothing says whether it is current, and
     this wording never claims it is.
     """

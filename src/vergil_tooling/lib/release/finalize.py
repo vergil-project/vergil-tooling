@@ -1,4 +1,4 @@
-"""Phase 5: Close tracking issue and run vrg-finalize-pr."""
+"""The teardown-worktree, finalize and close-tracking stages of vrg-release."""
 
 from __future__ import annotations
 
@@ -9,11 +9,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.managed_worktree import remove_worktree
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.tracking import (
-    close_tracking_issue,
-    comment_publish_deferred,
-    publish_deferred_remedy,
-)
+from vergil_tooling.lib.release.tracking import close_tracking_issue
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
@@ -29,7 +25,7 @@ _FINALIZE_CMD = (
 def teardown_worktree(ctx: ReleaseContext) -> None:
     """Return to the root checkout and remove the release worktree (#1578).
 
-    Must run before ``close-finalize``: ``vrg-finalize-pr`` refuses to run
+    Must run before ``finalize``: ``vrg-finalize-pr`` refuses to run
     outside the main worktree, and its cleanup stage syncs ``develop`` and
     prunes branches in the root checkout. The release branches
     (``release/<v>``, ``release/post-<v>``) are left as refs for
@@ -52,34 +48,15 @@ def teardown_worktree(ctx: ReleaseContext) -> None:
     ctx.worktree_path = None
 
 
-def close_and_finalize(ctx: ReleaseContext) -> None:
-    """Close the tracking issue with a summary, then finalize the repo.
+def finalize(ctx: ReleaseContext) -> None:  # noqa: ARG001 - every stage takes the context
+    """Finalize the repo with ``vrg-finalize-pr --cleanup-only``, pruning the release branches.
 
-    Closes (and cleans up) only when no earlier fail-defer stage errored. A
-    pending deferred failure means the release did not fully succeed, so the
-    issue is left open and the branches intact — keeping it resumable with
-    ``vrg-release --resume`` (#1612).
+    The tracking issue stays open: ``close-tracking`` closes it as the
+    release's last tracked stage (spec §4.4 of epic
+    vergil-project/.github#1440). The hold rule runs this stage only once
+    every stage through ``confirm-develop`` has succeeded, so every
+    branch-work stage is done before its branch is pruned.
     """
-    if ctx.deferred_failures:
-        print(
-            "Leaving the tracking issue open and skipping cleanup — earlier "
-            f"stages failed ({', '.join(ctx.deferred_failures)}). Fix the cause "
-            "and resume with vrg-release --resume."
-        )
-        return
-
-    if ctx.deferred_publish_failures:
-        comment_publish_deferred(ctx, ctx.deferred_publish_failures)
-        print(
-            "Leaving the tracking issue open — artifact publish deferred "
-            f"({', '.join(ctx.deferred_publish_failures)}). The release is "
-            f"complete; {publish_deferred_remedy(ctx, ctx.deferred_publish_failures)}."
-        )
-    else:
-        summary = _build_summary(ctx)
-        close_tracking_issue(ctx, summary)
-        print("Tracking issue closed.")
-
     print("Running vrg-finalize-pr...")
     # --cleanup-only is the non-interactive release path: no PR
     # inference, no prompts (issue #1448). Output streams through the
@@ -101,19 +78,31 @@ def close_and_finalize(ctx: ReleaseContext) -> None:
     # dependency-update or feature PR merged since), whose CD says nothing
     # about the release. Without --wait-cd it only reports that run and never
     # fails on it, so it cannot re-fail on a docs publish failure
-    # confirm-develop deliberately deferred. This point is reached only when
-    # confirm-develop succeeded in this run (any failed stage returns early
-    # above), so not waiting a second time loses no coverage.
+    # confirm-develop deliberately deferred. The hold rule runs this stage only
+    # once confirm-develop has succeeded, so not waiting a second time loses
+    # no coverage.
     try:
         progress.run(_FINALIZE_CMD, stdin=subprocess.DEVNULL)
     except subprocess.CalledProcessError as exc:
         raise ReleaseError(
-            phase="close-finalize",
+            phase="finalize",
             command=" ".join(_FINALIZE_CMD),
             message="vrg-finalize-pr failed.",
             detail=exc.stderr,
         ) from exc
     print("Finalization complete.")
+
+
+def close_tracking(ctx: ReleaseContext) -> None:
+    """Post the release summary on the tracking issue and close it.
+
+    The release's last tracked stage. The hold rule runs it only once no
+    stage before it has failed, so a failed or deferred stage leaves the
+    issue open for ``vrg-release --resume`` (spec §4.4 of epic
+    vergil-project/.github#1440).
+    """
+    close_tracking_issue(ctx, _build_summary(ctx))
+    print("Tracking issue closed.")
 
 
 def _build_summary(ctx: ReleaseContext) -> str:

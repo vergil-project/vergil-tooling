@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
-from vergil_tooling.lib.release.handoff import blocking_failures
+from vergil_tooling.lib.release.handoff import holds
 from vergil_tooling.lib.release.orchestrator import ReleaseState, _preflight_stage, build_stages
 from vergil_tooling.lib.release.resume import first_undone
 from vergil_tooling.lib.release.state import StateBlock, initial_state
@@ -288,7 +288,7 @@ _BEFORE_DEPS = (
     "cd-publish",
     "package-index",
     "promote",
-    "close-finalize",
+    "finalize",
 )
 
 
@@ -355,9 +355,11 @@ def test_update_deps_failure_recorded_in_state(
     assert ctx.state.done == _BEFORE_DEPS
     assert "update-deps" not in ctx.state.done
     assert first_undone(ctx.state, [s.name for s in build_stages()]) == "update-deps"
-    # Deferred: the release is not halted, so the consumer refresh is not held.
+    # Deferred: it holds back neither install nor anything before it, only
+    # close-tracking, so the tracking issue stays open for a resume.
     assert ctx.deferred_failures == ["update-deps"]
-    assert blocking_failures(ctx) == []
+    assert holds("install", ctx.deferred_failures) == []
+    assert holds("close-tracking", ctx.deferred_failures) == ["update-deps"]
     assert ctx.deferred_publish_failures == []
 
 

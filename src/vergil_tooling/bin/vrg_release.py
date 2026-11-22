@@ -104,14 +104,13 @@ def main(argv: list[str] | None = None) -> int:
         repo_root=repo_root,
     )
     # The progress renderer collapses each finished stage to a one-line
-    # summary. The consumer-refresh stage runs the commands itself and, after
-    # a run that succeeded, leaves nothing to read; what it does leave (the
-    # hold warning for a deferred publish, the commands under --no-install,
-    # the notice that none is configured, or a failed run's full output) is
+    # summary. The install stage runs the commands itself and, after a run
+    # that succeeded, leaves nothing to read; what it does leave (the
+    # commands under --no-install, or a failed run's full output) is
     # re-printed below the summary.
-    if state.ctx is not None and state.ctx.consumer_refresh_message:
+    if state.ctx is not None and state.ctx.install_message:
         print()
-        print(state.ctx.consumer_refresh_message)
+        print(state.ctx.install_message)
     return rc
 
 
@@ -158,9 +157,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         default=False,
         help=(
-            "Skip the install step. By default the consumer-refresh stage runs "
-            "the [publish].consumer-refresh commands as the release's last "
-            "stage; with this flag it only prints them."
+            "Skip the install step. By default the install stage runs the "
+            "[publish].install commands once promote has moved vX.Y; with this "
+            "flag it only prints them."
         ),
     )
     # Removed (#1184): still parsed, and hidden from --help, only so that

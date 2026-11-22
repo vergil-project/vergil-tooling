@@ -6,11 +6,11 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.vergil_tooling.release_stubs import defer_publish
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.finalize import (
     _build_summary,
-    close_and_finalize,
+    close_tracking,
+    finalize,
     teardown_worktree,
 )
 
@@ -34,34 +34,20 @@ def _ctx() -> ReleaseContext:
     return ctx
 
 
-def test_close_and_finalize_succeeds() -> None:
+def test_finalize_runs_cleanup_and_leaves_the_issue_open() -> None:
+    """finalize is close-finalize without the close: close-tracking closes the
+    issue (spec §4.4 of epic vergil-project/.github#1440)."""
     ctx = _ctx()
     with (
         patch(_MOD + ".close_tracking_issue") as mock_close,
-        patch(_MOD + ".progress.run", return_value=0),
+        patch(_MOD + ".progress.run", return_value=0) as run,
     ):
-        close_and_finalize(ctx)
-    mock_close.assert_called_once()
-
-
-def test_close_and_finalize_skips_when_deferred_failures(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    ctx = _ctx()
-    ctx.deferred_failures = ["promote"]
-    with (
-        patch(_MOD + ".close_tracking_issue") as mock_close,
-        patch(_MOD + ".progress.run") as mock_run,
-    ):
-        close_and_finalize(ctx)
+        finalize(ctx)
+    run.assert_called_once()
     mock_close.assert_not_called()
-    mock_run.assert_not_called()
-    out = capsys.readouterr().out
-    assert "open" in out
-    assert "promote" in out
 
 
-def test_close_and_finalize_streams_through_progress() -> None:
+def test_finalize_streams_through_progress() -> None:
     """Issue #1470: the cleanup child must not inherit the TTY — raw writes
     under the live display strand stale frames on screen. Its output streams
     through the progress session (live display + run log) instead; stdin is
@@ -70,11 +56,8 @@ def test_close_and_finalize_streams_through_progress() -> None:
     child is itself progress-aware (issue #1479) and two live displays
     cannot nest."""
     ctx = _ctx()
-    with (
-        patch(_MOD + ".close_tracking_issue"),
-        patch(_MOD + ".progress.run", return_value=0) as run,
-    ):
-        close_and_finalize(ctx)
+    with patch(_MOD + ".progress.run", return_value=0) as run:
+        finalize(ctx)
     (cmd,) = run.call_args.args
     assert cmd == (
         "vrg-finalize-pr",
@@ -91,14 +74,39 @@ def test_release_cleanup_call_has_no_no_wait_cd() -> None:
     cleanup call must not pass it, and must not opt into --wait-cd either:
     confirm-develop has already judged the release's develop CD run."""
     ctx = _ctx()
-    with (
-        patch(_MOD + ".close_tracking_issue"),
-        patch(_MOD + ".progress.run", return_value=0) as run,
-    ):
-        close_and_finalize(ctx)
+    with patch(_MOD + ".progress.run", return_value=0) as run:
+        finalize(ctx)
     (cmd,) = run.call_args.args
     assert "--no-wait-cd" not in cmd
     assert "--wait-cd" not in cmd
+
+
+def test_finalize_fails_on_finalize_error() -> None:
+    ctx = _ctx()
+    err = subprocess.CalledProcessError(
+        1,
+        ("vrg-finalize-pr", "--cleanup-only"),
+        output="",
+        stderr="validation failed",
+    )
+    with (
+        patch(_MOD + ".progress.run", side_effect=err),
+        pytest.raises(ReleaseError, match="vrg-finalize-pr") as excinfo,
+    ):
+        finalize(ctx)
+    assert excinfo.value.phase == "finalize"
+    assert excinfo.value.detail == "validation failed"
+
+
+def test_close_tracking_posts_the_summary_and_closes() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".close_tracking_issue") as mock_close,
+        patch(_MOD + ".progress.run") as run,
+    ):
+        close_tracking(ctx)
+    mock_close.assert_called_once_with(ctx, _build_summary(ctx))
+    run.assert_not_called()
 
 
 def test_build_summary_omits_none_fields() -> None:
@@ -187,92 +195,3 @@ def test_teardown_worktree_skips_removal_when_already_gone(monkeypatch) -> None:
     teardown_worktree(ctx)
     assert chdirs == [ctx.repo_root]
     assert removed == []
-
-
-def test_close_and_finalize_fails_on_finalize_error() -> None:
-    ctx = _ctx()
-    err = subprocess.CalledProcessError(
-        1,
-        ("vrg-finalize-pr", "--cleanup-only"),
-        output="",
-        stderr="validation failed",
-    )
-    with (
-        patch(_MOD + ".close_tracking_issue"),
-        patch(_MOD + ".progress.run", side_effect=err),
-        pytest.raises(ReleaseError, match="vrg-finalize-pr") as excinfo,
-    ):
-        close_and_finalize(ctx)
-    assert excinfo.value.detail == "validation failed"
-
-
-def test_close_and_finalize_publish_deferred_leaves_open() -> None:
-    from unittest.mock import patch
-
-    from vergil_tooling.lib.release import finalize
-
-    ctx = _ctx()
-    defer_publish(ctx, "docker-publish")
-    with (
-        patch.object(finalize, "comment_publish_deferred") as comment,
-        patch.object(finalize, "close_tracking_issue") as close,
-        patch.object(finalize, "progress"),
-    ):
-        finalize.close_and_finalize(ctx)
-    comment.assert_called_once()
-    close.assert_not_called()  # issue stays open
-
-
-def test_close_and_finalize_publish_deferred_prints_per_kind_remedy(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from vergil_tooling.lib.release import finalize
-
-    ctx = _ctx()
-    defer_publish(ctx, "package-index")
-    with (
-        patch.object(finalize, "comment_publish_deferred"),
-        patch.object(finalize, "close_tracking_issue"),
-        patch.object(finalize, "progress"),
-        patch.object(
-            finalize, "publish_deferred_remedy", return_value="re-run publish-index"
-        ) as remedy,
-    ):
-        finalize.close_and_finalize(ctx)
-    remedy.assert_called_once_with(ctx, ["package-index"])
-    out = capsys.readouterr().out
-    assert "The release is complete; re-run publish-index." in out
-    assert "NOT --resume" not in out
-    assert "CD publish" not in out
-
-
-def test_close_and_finalize_clean_closes_issue() -> None:
-    from unittest.mock import patch
-
-    from vergil_tooling.lib.release import finalize
-
-    ctx = _ctx()
-    with (
-        patch.object(finalize, "comment_publish_deferred") as comment,
-        patch.object(finalize, "close_tracking_issue") as close,
-        patch.object(finalize, "progress"),
-    ):
-        finalize.close_and_finalize(ctx)
-    close.assert_called_once()
-    comment.assert_not_called()
-
-
-def test_close_and_finalize_stage_failure_short_circuits() -> None:
-    from unittest.mock import patch
-
-    from vergil_tooling.lib.release import finalize
-
-    ctx = _ctx()
-    ctx.deferred_failures = ["confirm-main"]
-    with (
-        patch.object(finalize, "close_tracking_issue") as close,
-        patch.object(finalize, "progress") as prog,
-    ):
-        finalize.close_and_finalize(ctx)
-    close.assert_not_called()
-    prog.run.assert_not_called()  # cleanup skipped — resumable

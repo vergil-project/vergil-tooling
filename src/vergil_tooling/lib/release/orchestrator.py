@@ -9,15 +9,16 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.progress import Stage, mark_warn, note
 from vergil_tooling.lib.promote import promote
-from vergil_tooling.lib.release import checklist, package_index
+from vergil_tooling.lib.release import checklist
 from vergil_tooling.lib.release.bump import back_merge_and_bump
 from vergil_tooling.lib.release.cd_publish import deliver_failed_jobs
 from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
 from vergil_tooling.lib.release.conflict import merge_main_into_release
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.finalize import close_and_finalize, teardown_worktree
+from vergil_tooling.lib.release.finalize import close_tracking, finalize, teardown_worktree
 from vergil_tooling.lib.release.guard import TrackingIssueBreach
-from vergil_tooling.lib.release.handoff import blocking_failures, consumer_refresh
+from vergil_tooling.lib.release.handoff import holds
+from vergil_tooling.lib.release.install import install, minor
 from vergil_tooling.lib.release.merge import (
     ReleaseConflictError,
     known_pr_state,
@@ -27,12 +28,11 @@ from vergil_tooling.lib.release.merge import (
 from vergil_tooling.lib.release.package_index import wait_for_index
 from vergil_tooling.lib.release.preflight import preflight, run_audit
 from vergil_tooling.lib.release.prepare import prepare
+from vergil_tooling.lib.release.resume import ALWAYS_RUN
 from vergil_tooling.lib.release.tracking import (
     comment_phase_complete,
     comment_phase_failed,
     ensure_checklist,
-    promote_pending,
-    publish_deferred_remedy,
     tick_stage,
     write_state,
 )
@@ -123,10 +123,13 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
     """Wrap a phase fn with the state block and tracking-issue comments (command-local, per spec).
 
     A stage the state block records as done prints ``already done`` and
-    returns, so a resume runs only what is not done. A stage that succeeds,
-    and was not held back (:func:`_held`), records itself done in the state
-    block with the facts later stages need (:func:`_record_done`). The
-    checklist is still ticked for the human (spec §4.3 of epic
+    returns, so a resume runs only what is not done. A stage the hold rule
+    holds back (:func:`~vergil_tooling.lib.release.handoff.holds`: a stage it
+    needs failed in this run) does not run, is marked with a warning and is
+    not recorded done. A stage that succeeds, and was not skipped by an
+    opt-out flag (:func:`_opted_out`), records itself done in the state block
+    with the facts later stages need (:func:`_record_done`). The checklist is
+    still ticked for the human (spec §4.3 and §4.4 of epic
     vergil-project/.github#1440).
     """
 
@@ -142,9 +145,15 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
             print(f"{name}: already done")
             note("already done")
             return
+        held = holds(name, ctx.deferred_failures)
+        if held:
+            reason = f"held: {', '.join(held)} failed"
+            print(f"{name}: {reason}; vrg-release --resume runs it once they succeed.")
+            mark_warn(reason)
+            return
         try:
             fn(ctx)
-            if not _held(ctx, name):
+            if not _opted_out(ctx, name):
                 _record_done(ctx, name)
         except TrackingIssueBreach:
             # A suspected breach stops the run before any write, so the
@@ -172,26 +181,18 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
     return stage
 
 
-def _held(ctx: ReleaseContext, name: str) -> bool:
-    """Whether stage *name* returned without doing its work, so it is not recorded done.
+def _opted_out(ctx: ReleaseContext, name: str) -> bool:
+    """Whether stage *name* returned without doing its work for an opt-out flag.
 
-    Such a stage runs again on a resume: ``promote`` that left ``vX.Y``
-    behind (``--no-promote``, or a deferred ``package-index``),
-    ``close-finalize`` that left the tracking issue open, and
-    ``consumer-refresh`` that was held back (a deferred publish, an
-    earlier failed stage, or ``--no-install``). A ``consumer-refresh``
-    with no commands configured has nothing to do, so it is recorded done.
+    Such a stage is not recorded done, so it runs again on a resume:
+    ``promote`` under ``--no-promote``, and ``install`` under
+    ``--no-install`` with commands configured. An ``install`` with none
+    configured has nothing to do, so it is recorded done.
     """
     if name == "promote":
-        return not ctx.promote or promote_pending(ctx)
-    if name == "close-finalize":
-        return bool(ctx.deferred_failures or ctx.deferred_publish_failures)
-    if name == "consumer-refresh":
-        if ctx.deferred_publish_failures:
-            return True
-        if ctx.consumer_refresh_commands is None:
-            return False
-        return bool(blocking_failures(ctx)) or not ctx.install
+        return not ctx.promote
+    if name == "install":
+        return ctx.install_commands is not None and not ctx.install
     return False
 
 
@@ -232,18 +233,15 @@ def _record_done(ctx: ReleaseContext, name: str) -> None:
 
 
 def _record_failure(ctx: ReleaseContext, name: str) -> None:
-    """Record a failed stage as halted, unless it failed as a deferred publish.
+    """List failed stage *name* on *ctx*, for the hold rule and publish-status.
 
-    A stage whose failure is a deferred publish (package-index, which missed
-    the index, or cd-publish while the state still records failed CD jobs)
-    left the release complete, not halted: close-finalize must still post the
-    deferral comment and leave the issue open, not treat it as a stage to fix
-    and ``--resume`` (#3557).
+    A deferred publish (``cd-publish``, ``package-index``) is listed like any
+    other failure: it holds back none of ``promote``, ``finalize`` and
+    ``install``, but ``close-tracking`` needs it, so the tracking issue stays
+    open for ``vrg-release --resume`` (spec §4.4 and §4.5 of epic
+    vergil-project/.github#1440).
     """
-    if name == "cd-publish" and ctx.state is not None and ctx.state.failed_jobs:
-        return
-    if name not in ctx.deferred_publish_failures:
-        ctx.deferred_failures.append(name)
+    ctx.deferred_failures.append(name)
 
 
 def _stage_names() -> list[str]:
@@ -278,36 +276,32 @@ def build_stages() -> list[Stage]:
             _tracked("confirm-develop", confirm_develop),
             mode="fail_defer",
         ),
+        # Moves vX.Y once the tag and the GitHub Release exist, whatever the
+        # CD publish jobs or the package index show (spec §4.6 of epic
+        # vergil-project/.github#1440).
+        Stage("promote", _tracked("promote", _promote_phase), mode="fail_defer"),
         # Delivers the CD publish jobs confirm-main and confirm-develop
         # recorded as failed: a fresh run fails it deferred, a resume re-runs
         # them (spec §4.5 of epic vergil-project/.github#1440).
         Stage("cd-publish", _tracked("cd-publish", deliver_failed_jobs), mode="fail_defer"),
-        # Waits for the published package index before close-finalize, so a
-        # miss (a deferred publish) leaves the tracking issue open with the
-        # deferral comment (#3557); the consumer refresh then holds on it.
+        # A miss is a deferred publish: it holds back only close-tracking.
         Stage("package-index", _tracked("package-index", wait_for_index), mode="fail_defer"),
-        # After package-index, so vX.Y moves only once the index has the
-        # release and git and packaged installs of vX.Y agree; a deferred
-        # index skips it, leaving vX.Y on the previous release (#4293).
-        Stage("promote", _tracked("promote", _promote_phase), mode="fail_defer"),
-        Stage(
-            "close-finalize",
-            _tracked("close-finalize", close_and_finalize),
-            mode="fail_defer",
-        ),
+        # Prunes the release branches; the tracking issue stays open until
+        # close-tracking.
+        Stage("finalize", _tracked("finalize", finalize), mode="fail_defer"),
         # The first change on the new develop version, once the release is
-        # fully out (epic vergil-project/.github#381, spec §5.1).
+        # out (epic vergil-project/.github#381, spec §5.1).
         Stage("update-deps", _tracked("update-deps", update_deps), mode="fail_defer"),
+        # Needs promote: an install that follows the rolling vX.Y tag
+        # (vergil-claude-plugin's marketplace, vrg-tooling-install v<MINOR>)
+        # installs the release only once promote has moved it (issue #4739).
+        Stage("install", _tracked("install", install), mode="fail_defer"),
+        # Closes the tracking issue only once no stage before it failed, so a
+        # failed or deferred stage leaves it open for --resume.
+        Stage("close-tracking", _tracked("close-tracking", close_tracking), mode="fail_defer"),
+        # The terminal exit summary: what is left, and the command that
+        # finishes it.
         Stage("publish-status", _publish_status_stage, mode="fail_defer"),
-        # The last thing a release does, as the post-pipeline install was: a
-        # consumer that follows the rolling vX.Y tag (vergil-claude-plugin's
-        # marketplace) sees the release only once promote has moved it, and a
-        # deferred publish holds it (issue #4739).
-        Stage(
-            "consumer-refresh",
-            _tracked("consumer-refresh", consumer_refresh),
-            mode="fail_defer",
-        ),
     ]
 
 
@@ -396,101 +390,58 @@ def _sync_release_branch(ctx: ReleaseContext, pr_url: str) -> None:
 
 
 def _promote_phase(ctx: ReleaseContext) -> None:
-    """Update the vX.Y rolling tag, unless --no-promote or the package index deferred.
+    """Move the vX.Y rolling tag to this release, unless ``--no-promote``.
 
-    A deferred ``package-index`` means the index does not have the release
-    yet, so moving vX.Y would point git-based installs at a release that
-    packaged installs cannot get. The tag stays on the previous release, and
-    stage is not recorded done, so ``vrg-release --resume`` moves it once the
-    index has it (#4293).
+    It runs once the tag and the GitHub Release exist, whatever the package
+    index or the CD publish jobs show: while the index is deferred, vX.Y may
+    name a version whose packages are not listed yet, which is accepted
+    (spec §4.6 of epic vergil-project/.github#1440).
     """
     if not ctx.promote:
         print("Skipping promote (--no-promote).")
         return
-    if promote_pending(ctx):
-        print(
-            f"Skipping promote: the package index does not have {ctx.version} yet "
-            f"({package_index.PHASE} deferred), so v{_major_minor(ctx)} stays on the "
-            "previous release. vrg-release --resume moves it once the index has it."
-        )
-        return
     promote(ctx.version)
 
 
-def _major_minor(ctx: ReleaseContext) -> str:
-    return ".".join(ctx.version.split(".")[:2])
+def _left(ctx: ReleaseContext) -> list[str]:
+    """The tracked stages the state block does not record done, in pipeline order."""
+    done = ctx.state.done if ctx.state is not None else ()
+    return [name for name in _stage_names() if name not in ALWAYS_RUN and name not in done]
 
 
 def _publish_status_stage(state: ReleaseState) -> None:
-    """Terminal fail_defer: surface deferred publish and dependency-update failures as exit 1.
+    """Terminal summary: name what is left of the release and the command that finishes it.
 
-    Runs after every bookkeeping stage, just before consumer-refresh. Raising
-    here marks the run failed (fail_defer → exit 1 with the deferred summary)
-    without aborting anything —
-    the release is already complete. No-op when nothing deferred. A failed
-    dependency update (spec §5.2) is repeated here so it is never lost in the
-    stage list; it never affects the release itself.
-
-    The update-deps stage has already failed (and counted) for a recorded deps
-    failure, so on its own it is repeated as a warning on this row, not raised
-    as a second failure (#3283): the summary counts one failure, and the
-    warnings list still carries it. Alongside a deferred publish it rides in
-    the raised message.
+    A no-op when no stage failed. Otherwise the run already ends non-zero (a
+    failed fail_defer stage), so this stage only warns, never raises a
+    second failure (#3283): the warning names each failed stage, each stage
+    still not done, a deferred publish, and a failed dependency update, and
+    the one command that finishes the release, ``vrg-release --resume``, or,
+    for a release that cannot finish, ``vrg-release --supersede X.Y.Z``
+    (spec §4.4 of epic vergil-project/.github#1440).
     """
     ctx = state.ctx
-    if ctx is None:
+    if ctx is None or not ctx.deferred_failures:
         return
-    if not ctx.deferred_publish_failures:
-        if ctx.deps_failure:
-            mark_warn(f"repeats the update-deps failure: {ctx.deps_failure}")
-        return
-    jobs = ", ".join(ctx.deferred_publish_failures)
-    remedy = publish_deferred_remedy(ctx, ctx.deferred_publish_failures)
     problems = [
-        f"Release v{ctx.version} is published (tag + GitHub Release), but "
-        f"artifact publish was deferred ({jobs}). To finish delivery, {remedy}."
+        f"Release v{ctx.version} is not finished: {', '.join(ctx.deferred_failures)} failed"
+        f"; not done: {', '.join(_left(ctx))}."
     ]
+    if ctx.deferred_publish_failures:
+        problems.append(
+            f"Deferred publish: {', '.join(ctx.deferred_publish_failures)} (the tag and "
+            "the GitHub Release are published)."
+        )
     if ctx.deps_failure:
         problems.append(ctx.deps_failure)
-    raise ReleaseError(
-        phase="publish-status",
-        command="publish-status",
-        message=" ".join(problems),
+    problems.append(
+        f"Once the cause is fixed, finish it with `vrg-release --resume {ctx.version}`; "
+        f"a release that cannot finish is superseded with "
+        f"`vrg-release --supersede {ctx.version}`."
     )
-
-
-def _close_finalize_outcome(ctx: ReleaseContext) -> str:
-    """What close-finalize actually did, mirroring ``close_and_finalize``'s branches.
-
-    The issue is closed only when nothing deferred. A deferred publish leaves it
-    open (the repo is still finalized) and names each deferred kind; a halted
-    earlier stage leaves it open and skips cleanup entirely (#3593).
-    """
-    if ctx.deferred_failures:
-        return (
-            "Tracking issue left open and cleanup skipped — earlier stages failed "
-            f"({', '.join(ctx.deferred_failures)}). Fix the cause and resume with "
-            "`vrg-release --resume`."
-        )
-    jobs = ctx.deferred_publish_failures
-    if not jobs:
-        return "Tracking issue closed. Repository finalized."
-    kinds = []
-    cd_jobs = [job for job in jobs if job != package_index.PHASE]
-    if cd_jobs:
-        kinds.append(f"CD publish ({', '.join(cd_jobs)})")
-    if package_index.PHASE in jobs:
-        kinds.append(f"package index ({package_index.PHASE})")
-    outcome = (
-        "Tracking issue left open until the deferred publish completes: "
-        f"{'; '.join(kinds)}. Repository finalized."
-    )
-    if promote_pending(ctx):
-        outcome += (
-            f" Promote pending: `v{_major_minor(ctx)}` was not moved; "
-            "`vrg-release --resume` moves it once the index has the release."
-        )
-    return outcome
+    message = " ".join(problems)
+    print(message)
+    mark_warn(message)
 
 
 def _phase_details(ctx: ReleaseContext, phase: str) -> str:
@@ -543,16 +494,12 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
     elif phase == "promote":
         if not ctx.promote:
             lines.append("Promote skipped (--no-promote).")
-        elif promote_pending(ctx):
-            lines.append(
-                f"**Promote skipped**: {package_index.PHASE} deferred, so "
-                f"`v{_major_minor(ctx)}` stays on the previous release. "
-                "`vrg-release --resume` moves it once the index has the release."
-            )
         else:
-            lines.append(f"Promoted v{_major_minor(ctx)} -> v{ctx.version}")
-    elif phase == "close-finalize":
-        lines.append(_close_finalize_outcome(ctx))
+            lines.append(f"Promoted v{minor(ctx.version)} -> v{ctx.version}")
+    elif phase == "finalize":
+        lines.append("Repository finalized.")
+    elif phase == "close-tracking":
+        lines.append("Tracking issue closed.")
     elif phase == "package-index":
         if ctx.package_index_urls:
             # Packages sharing one index file (same suite and arch) list it once.
@@ -561,23 +508,13 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
             )
         else:
             lines.append("No [package] block; no package index to wait for.")
-    elif phase == "consumer-refresh":
-        if ctx.deferred_publish_failures:
-            lines.append(
-                "Consumer refresh held: artifact publish was deferred "
-                f"({', '.join(ctx.deferred_publish_failures)}); nothing was run."
-            )
-        elif ctx.consumer_refresh_commands is None:
-            lines.append("No [publish].consumer-refresh is configured; nothing to run.")
-        elif blocking := blocking_failures(ctx):
-            lines.append(
-                "Consumer refresh commands shown, not run: earlier stages failed "
-                f"({', '.join(blocking)})."
-            )
+    elif phase == "install":
+        if ctx.install_commands is None:
+            lines.append("None configured: vergil.toml has no [publish].install.")
         elif not ctx.install:
-            lines.append("Consumer refresh commands shown, not run (--no-install).")
+            lines.append("Install commands shown, not run (--no-install).")
         else:
-            lines.append(f"Consumer refresh commands for v{ctx.version} ran.")
+            lines.append(f"Install commands for v{ctx.version} ran.")
     elif phase == "update-deps":
         if ctx.without_deps:
             lines.append("Dependency update skipped (--without-deps).")

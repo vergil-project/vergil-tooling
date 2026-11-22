@@ -7,10 +7,19 @@
 
 Runs the whole release workflow from `develop` to `main`: preflight,
 tracking issue, changelog, release PR, merge, CD confirmation,
-back-merge and version bump, rolling-tag promotion, cleanup, the
-post-release dependency update, and last the consumer refresh. The stages and what
+back-merge and version bump, rolling-tag promotion, publish delivery,
+cleanup, the post-release dependency update, the install, and last the
+close of the tracking issue. The stages and what
 they leave behind are described in the
 [Releasing guide](../../guides/releasing.md#the-vrg-release-pipeline).
+
+A failed stage holds back only the stages that need it
+([the hold rule](../../guides/releasing.md#the-hold-rule)): a failed CD
+publish job, a package-index miss or a failed dependency update still
+lets `promote`, `finalize` and `install` run, and leaves the tracking
+issue open. The run then ends naming what is left and the one command
+that finishes it, `vrg-release --resume`, or, for a release that cannot
+finish, `vrg-release --supersede X.Y.Z`.
 
 On a fresh start, `preflight` prints the release's contents: the
 pending-release table of `main..<cut>` and the issues the release
@@ -64,9 +73,9 @@ vrg-release [minor|major] [options]
 | -------- | -------- | ----------- |
 | `minor` / `major` | No | Bump to the next minor or major version before releasing. Default: release the current `develop` version |
 | `--no-promote` | No | Skip moving the rolling `vX.Y` tag |
-| `--without-deps` | No | Skip the `update-deps` stage. Recorded in the tracking issue's state block, so every later `--resume` skips it too. Allowed with `--resume`, where it skips an update that failed, if the tracking issue is still open (`close-finalize` closes it before `update-deps` runs unless something was deferred) |
+| `--without-deps` | No | Skip the `update-deps` stage. Recorded in the tracking issue's state block, so every later `--resume` skips it too. Allowed with `--resume`, where it skips an update that failed, so the release finishes without it |
 | `--allow-pending-deps` | No | Release even though an open `dependency-update` PR blocks it. For urgent fixes only; the bypassed PRs are listed on the tracking issue |
-| `--no-install` | No | Skip the install step. By default the `consumer-refresh` stage runs the `[publish].consumer-refresh` commands as the release's last stage, unless a deferred publish holds it; with this flag it prints them below the summary instead. With none configured the stage says there is nothing to run, which is not an error. `--install` was removed: passing it exits 1 and names this default |
+| `--no-install` | No | Skip the install step. By default the `install` stage runs the `[publish].install` commands (`<VERSION>` and `<MINOR>` expanded) once `promote` is done and `vX.Y` names the release; with this flag it prints them below the summary instead. With none configured the stage line says `none configured`, which is not an error. `--install` was removed: passing it exits 1 and names this default |
 | `--resume [X.Y.Z]` | No | Resume an interrupted release from its open tracking issue. Name the version when more than one release is in flight. Cannot be combined with `minor`/`major` |
 | `--skip-audit` | No | Skip the `audit` stage |
 | `--output-window N` | No | Rolling output window for the terminal renderer (`0` streams everything) |
@@ -235,5 +244,5 @@ failed checks as its likely cause (issue #4294).
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Every stage succeeded |
-| 1 | A stage failed, including a deferred failure such as a missed publish job, a failed consumer refresh or a failed dependency update; or the command was refused |
+| 1 | A stage failed, including a deferred failure such as a missed publish job, a failed install or a failed dependency update; or the command was refused |
 | 130 | Interrupted (Ctrl-C) |

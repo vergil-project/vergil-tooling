@@ -161,7 +161,7 @@ prints one line per dependency saying what it actually did:
 skipped  uv: current (0.13.1)
 upgraded git: 2.54.0 -> 2.56.0_1
 unchanged bash: still 5.3.9, latest 5.3.20 (the upgrade command succeeded but did not change the installed version)
-skipped  vergil-tooling: 2.1.244 installed by the vergil-tooling release (its consumer-refresh installs it); vrg-host does not upgrade it
+skipped  vergil-tooling: 2.1.244 installed by the vergil-tooling release (its install stage installs it); vrg-host does not upgrade it
 held     gh: pinned to 2.40.x (2.41.0 breaks vrg-gh auth) at 2.40.1, holding back from 2.42.0; run 'vrg-host unpin gh' or pass --force to upgrade past the pin
 ERROR    lima: missing (not installed by brew-formula); vrg-host upgrades, it does not install
 skipped (upgrade = manual, upgrade by hand): docker-desktop, macos
@@ -360,7 +360,7 @@ Notes on the entries:
   as a personal tool; that was reversed in
   [#3300](https://github.com/vergil-project/vergil-tooling/issues/3300).
 - **`vergil-tooling` is installed by its own release.** Releasing
-  vergil-tooling runs the `[publish].consumer-refresh` in its `vergil.toml`,
+  vergil-tooling runs the `[publish].install` in its `vergil.toml`,
   which reinstalls the host tools at the just-released tag with
   [`vrg-tooling-install`](../cli-tools-overview.md#vrg-tooling-install), so `vrg-host` never
   installs or upgrades it

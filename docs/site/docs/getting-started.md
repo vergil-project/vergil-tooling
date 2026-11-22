@@ -49,7 +49,7 @@ interpreter, but with its dependencies resolved fresh. The second,
 [`vrg-tooling-install`](reference/cli-tools-overview.md#vrg-tooling-install),
 reinstalls the same tag with its dependencies pinned by that tag's own
 `uv.lock`. Each vergil-tooling release runs `vrg-tooling-install` with the
-just-released version (its `[publish].consumer-refresh` in `vergil.toml`),
+just-released version (its `[publish].install` in `vergil.toml`),
 but only on the Mac that runs that release. On any other host, run
 `vrg-tooling-install vX.Y.Z` with the new version to upgrade; see
 [Keeping up to date](guides/consuming-repo-setup.md#keeping-up-to-date). If

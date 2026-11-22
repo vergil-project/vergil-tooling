@@ -141,12 +141,15 @@ _KNOWN_SECTIONS = frozenset(
     },
 )
 
+# [publish].install's deprecated name, read for one minor version.
+_DEPRECATED_INSTALL_KEY = "consumer-refresh"
+
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "project": frozenset(_PROJECT_FIELDS),
     "dependencies": frozenset({"vergil"}),
     "markdownlint": frozenset({"ignore"}),
     "ci": frozenset({"versions", "integration-tests", "primary-version", "images"}),
-    "publish": frozenset({"release", "docs", "consumer-refresh"}),
+    "publish": frozenset({"release", "docs", "install", _DEPRECATED_INSTALL_KEY}),
     "container": frozenset(
         {"env-prefixes", "system-packages", "build-command", "build-cache-files"}
     ),
@@ -256,7 +259,9 @@ class CiConfig:
 class PublishConfig:
     release: bool
     docs: bool
-    consumer_refresh: str | None
+    # The install stage's command block, with <VERSION> and <MINOR>
+    # placeholders; None when none is configured.
+    install: str | None
 
 
 @dataclass
@@ -1247,6 +1252,37 @@ def _warn_unrecognized_keys(raw: dict[str, Any], source: str = CONFIG_FILE) -> N
                     )
 
 
+def _publish_install(publish_raw: dict[str, Any], source: str) -> str | None:
+    """``[publish].install``, or the deprecated ``consumer-refresh`` with a warning.
+
+    The key was renamed with its stage (vergil-project/vergil-tooling#4590;
+    spec §4.6 of epic vergil-project/.github#1440). The old name is read for
+    one minor version when ``install`` is absent, warning on stderr that it is
+    deprecated; both present is an error, never a silent choice between them.
+    """
+    if _DEPRECATED_INSTALL_KEY in publish_raw:
+        if "install" in publish_raw:
+            msg = (
+                f"{source}: [publish] sets both install and the deprecated "
+                f"{_DEPRECATED_INSTALL_KEY}; keep only install"
+            )
+            raise ConfigError(msg)
+        print(
+            f"warning: {source}: [publish].{_DEPRECATED_INSTALL_KEY} is deprecated; "
+            "rename it to [publish].install",
+            file=sys.stderr,
+        )
+        value = publish_raw[_DEPRECATED_INSTALL_KEY]
+        key = _DEPRECATED_INSTALL_KEY
+    else:
+        value = publish_raw.get("install")
+        key = "install"
+    if value is not None and not isinstance(value, str):
+        msg = f"{source}: [publish].{key} must be a string (got {type(value).__name__})"
+        raise ConfigError(msg)
+    return value
+
+
 def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilConfig:
     """Parse and validate a raw TOML dict into VergilConfig.
 
@@ -1335,7 +1371,7 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
     publish = PublishConfig(
         release=bool(publish_raw.get("release", False)),
         docs=bool(publish_raw.get("docs", True)),
-        consumer_refresh=publish_raw.get("consumer-refresh"),
+        install=_publish_install(publish_raw, source),
     )
 
     container_raw = raw.get("container")

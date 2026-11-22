@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 _MOD = "vergil_tooling.lib.release.orchestrator"
 # merge_release reads PR state via release.merge.known_pr_state (#3137).
 _PR_STATE = "vergil_tooling.lib.release.merge.github.pr_state"
-_TRACKING = "vergil_tooling.lib.release.tracking"
 _FINALIZE = "vergil_tooling.lib.release.finalize"
+_INSTALL = "vergil_tooling.lib.release.install"
 
 
 def _initial(version: str, done: tuple[str, ...] = ()) -> release_state.StateBlock:
@@ -66,7 +66,9 @@ def _ctx(*, promote: bool = True) -> ReleaseContext:
     return ctx
 
 
-def test_build_stages_order_and_modes() -> None:
+def test_stage_order_matches_spec() -> None:
+    """The stage order of spec §4.4 of epic vergil-project/.github#1440, but
+    release-records, which Task 10 adds before close-tracking."""
     stages = build_stages()
     assert [s.name for s in stages] == [
         "audit",
@@ -77,13 +79,14 @@ def test_build_stages_order_and_modes() -> None:
         "back-merge-bump",
         "teardown-worktree",
         "confirm-develop",
+        "promote",
         "cd-publish",
         "package-index",
-        "promote",
-        "close-finalize",
+        "finalize",
         "update-deps",
+        "install",
+        "close-tracking",
         "publish-status",
-        "consumer-refresh",
     ]
     assert stages[0].skip_flag == "skip_audit"
     fail_fast = {s.name for s in stages if s.mode == "fail_fast"}
@@ -100,7 +103,7 @@ def test_build_stages_order_and_modes() -> None:
 
 def test_teardown_stage_runs_after_back_merge_and_fails_fast() -> None:
     """teardown-worktree sits between back-merge-bump and confirm-develop, so the
-    worktree is gone before close-finalize runs vrg-finalize-pr from the main
+    worktree is gone before finalize runs vrg-finalize-pr from the main
     worktree (#1578). It is fail_fast, as every branch-work stage is: finalize
     prunes the release branches only once all of them have succeeded (spec §4.3
     of epic vergil-project/.github#1440)."""
@@ -109,7 +112,7 @@ def test_teardown_stage_runs_after_back_merge_and_fails_fast() -> None:
     teardown = stages[names.index("teardown-worktree")]
     assert names.index("back-merge-bump") < names.index("teardown-worktree")
     assert names.index("teardown-worktree") < names.index("confirm-develop")
-    assert names.index("teardown-worktree") < names.index("close-finalize")
+    assert names.index("teardown-worktree") < names.index("finalize")
     assert teardown.mode == "fail_fast"
 
 
@@ -131,15 +134,15 @@ def test_teardown_stage_is_tracked_and_calls_teardown_worktree() -> None:
 
 
 def test_failed_teardown_stops_the_run(tmp_path: Path) -> None:
-    """A failed teardown stops the run: confirm-develop and close-finalize never run."""
+    """A failed teardown stops the run: confirm-develop and finalize never run."""
     state = ReleaseState(version_override=None, repo_root=tmp_path, promote=True)
     state.ctx = _ctx()
     args = argparse.Namespace(output_format="plain", output_window=None)
-    names = ("teardown-worktree", "confirm-develop", "close-finalize")
+    names = ("teardown-worktree", "confirm-develop", "finalize")
     with (
         patch(_MOD + ".teardown_worktree", side_effect=OSError("busy")),
         patch(_MOD + ".confirm_develop") as m_develop,
-        patch(_MOD + ".close_and_finalize") as m_finalize,
+        patch(_MOD + ".finalize") as m_finalize,
         patch(_MOD + ".comment_phase_complete"),
         patch(_MOD + ".comment_phase_failed") as m_failed,
         patch(_MOD + ".ensure_checklist"),
@@ -312,72 +315,88 @@ def test_tracked_stage_requires_ctx() -> None:
         _tracked("prepare", MagicMock())(state)
 
 
-def test_tracked_stage_publish_deferral_is_not_a_halted_stage() -> None:
-    """A stage that records its own failure as a publish deferral (package-index)
-    stays out of deferred_failures, so close-finalize still runs (#3557)."""
+@pytest.mark.parametrize("name", ["package-index", "cd-publish"])
+def test_tracked_stage_lists_a_deferred_publish_as_failed(name: str) -> None:
+    """A deferred publish is a failed stage like any other: the hold rule lets
+    promote, finalize and install run past it, but close-tracking holds on it,
+    so the tracking issue stays open (spec §4.4, §4.5)."""
     state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
     ctx = state.ctx = _ctx()
 
     def _defer(_ctx: ReleaseContext) -> None:
-        defer_publish(ctx, "package-index")
-        raise ReleaseError(phase="package-index", command="poll", message="timed out")
+        defer_publish(ctx, "package-index" if name == "package-index" else "pypi / publish")
+        raise ReleaseError(phase=name, command=name, message="still failing")
 
     with (
         patch(_MOD + ".comment_phase_failed") as m_failed,
-        pytest.raises(ReleaseError, match="timed out"),
-    ):
-        _tracked("package-index", _defer)(state)
-    m_failed.assert_called_once()
-    assert ctx.deferred_failures == []
-
-
-def test_tracked_stage_wrapped_publish_deferral_is_not_a_halted_stage() -> None:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
-    ctx = state.ctx = _ctx()
-
-    def _defer(_ctx: ReleaseContext) -> None:
-        defer_publish(ctx, "package-index")
-        raise RuntimeError("boom")
-
-    with (
-        patch(_MOD + ".comment_phase_failed"),
-        pytest.raises(ReleaseError, match="boom"),
-    ):
-        _tracked("package-index", _defer)(state)
-    assert ctx.deferred_failures == []
-
-
-def test_cd_publish_failure_with_recorded_jobs_is_not_a_halted_stage() -> None:
-    """cd-publish failing while the state still records failed CD jobs is a
-    deferred publish, so close-finalize still finalizes (spec §4.5)."""
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
-    ctx = state.ctx = _ctx()
-    defer_publish(ctx, "pypi / publish")
-
-    def _fail(_ctx: ReleaseContext) -> None:
-        raise ReleaseError(phase="cd-publish", command="cd-publish", message="still failing")
-
-    with (
-        patch(_MOD + ".comment_phase_failed"),
         pytest.raises(ReleaseError, match="still failing"),
     ):
-        _tracked("cd-publish", _fail)(state)
-    assert ctx.deferred_failures == []
+        _tracked(name, _defer)(state)
+    m_failed.assert_called_once()
+    assert ctx.deferred_failures == [name]
 
 
-def test_cd_publish_failure_with_nothing_recorded_is_a_halted_stage() -> None:
+def _held_run(name: str, ctx: ReleaseContext) -> tuple[MagicMock, MagicMock, MagicMock]:
+    """Run tracked stage *name* on *ctx*; return its fn, warn and comment mocks."""
     state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
-    ctx = state.ctx = _ctx()
-
-    def _fail(_ctx: ReleaseContext) -> None:
-        raise ReleaseError(phase="cd-publish", command="cd-publish", message="broken")
-
+    state.ctx = ctx
+    fn = MagicMock()
     with (
-        patch(_MOD + ".comment_phase_failed"),
-        pytest.raises(ReleaseError, match="broken"),
+        patch(_MOD + ".mark_warn") as m_warn,
+        patch(_MOD + ".comment_phase_complete") as m_complete,
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
     ):
-        _tracked("cd-publish", _fail)(state)
-    assert ctx.deferred_failures == ["cd-publish"]
+        _tracked(name, fn)(state)
+    return fn, m_warn, m_complete
+
+
+def test_held_stage_does_not_run_and_is_not_recorded_done(write_state: MagicMock) -> None:
+    ctx = _ctx()
+    ctx.deferred_failures = ["confirm-develop"]
+    fn, m_warn, m_complete = _held_run("promote", ctx)
+    fn.assert_not_called()
+    m_warn.assert_called_once_with("held: confirm-develop failed")
+    m_complete.assert_not_called()
+    write_state.assert_not_called()
+
+
+def test_promote_held_by_failed_confirm_develop(write_state: MagicMock) -> None:
+    ctx = _ctx()
+    ctx.deferred_failures = ["confirm-develop"]
+    with patch(_MOD + ".promote") as m_promote:
+        stage = next(s for s in build_stages() if s.name == "promote")
+        state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+        state.ctx = ctx
+        with patch(_MOD + ".mark_warn"):
+            stage.fn(state)
+    m_promote.assert_not_called()
+    write_state.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("name", "failed", "runs"),
+    [
+        ("promote", ["cd-publish", "package-index"], True),
+        ("finalize", ["cd-publish", "package-index"], True),
+        ("finalize", ["confirm-develop"], False),
+        ("install", ["cd-publish", "package-index", "finalize", "update-deps"], True),
+        ("install", ["promote"], False),
+        ("close-tracking", ["update-deps"], False),
+        ("close-tracking", ["package-index"], False),
+        ("close-tracking", [], True),
+    ],
+)
+def test_tracked_stage_applies_the_hold_rule(
+    name: str,
+    failed: list[str],
+    runs: bool,  # noqa: FBT001
+) -> None:
+    ctx = _ctx()
+    ctx.deferred_failures = list(failed)
+    ctx.install_commands = None
+    fn, _, _ = _held_run(name, ctx)
+    assert fn.called is runs
 
 
 def test_promote_phase_calls_promote_when_enabled() -> None:
@@ -506,28 +525,11 @@ def test_phase_details_cd_publish_says_nothing_is_left() -> None:
     assert _phase_details(_ctx(), "cd-publish") == "No failed CD publish job is left to deliver."
 
 
-def test_phase_details_promote_held_back_by_index_deferral() -> None:
-    """A deferred package-index skips promote; the comment names the pending step (#4293)."""
+@pytest.mark.parametrize("deferred", ["package-index", "publish-pypi"])
+def test_phase_details_promote_with_a_deferred_publish_still_promotes(deferred: str) -> None:
     ctx = _ctx()
-    defer_publish(ctx, "package-index")
-    details = _phase_details(ctx, "promote")
-    assert "Promoted" not in details
-    assert "**Promote skipped**: package-index deferred" in details
-    assert "`v2.1` stays on the previous release" in details
-    assert "`vrg-release --resume` moves it" in details
-
-
-def test_phase_details_promote_cd_deferral_still_promotes() -> None:
-    """Only a package-index deferral holds promote back; a CD publish miss does not."""
-    ctx = _ctx()
-    defer_publish(ctx, "publish-pypi")
+    defer_publish(ctx, deferred)
     assert _phase_details(ctx, "promote") == "Promoted v2.1 -> v2.1.0"
-
-
-def test_phase_details_promote_no_promote_wins_over_index_deferral() -> None:
-    ctx = _ctx(promote=False)
-    defer_publish(ctx, "package-index")
-    assert _phase_details(ctx, "promote") == "Promote skipped (--no-promote)."
 
 
 def _run_promote_stage(ctx: ReleaseContext) -> MagicMock:
@@ -547,209 +549,60 @@ def _run_promote_stage(ctx: ReleaseContext) -> MagicMock:
 def test_promote_stage_moves_the_tag() -> None:
     ctx = _ctx()
     _run_promote_stage(ctx).assert_called_once_with("2.1.0")
+    assert ctx.state is not None
+    assert "promote" in ctx.state.done
 
 
-def test_promote_stage_skips_on_index_deferral(capsys: pytest.CaptureFixture[str]) -> None:
-    """vX.Y stays on the previous release while the index lacks the release (#4293)."""
+def test_promote_runs_with_index_deferred(capsys: pytest.CaptureFixture[str]) -> None:
+    """promote moves vX.Y once the tag and the Release exist, whatever the index
+    shows (spec §4.6): a deferred index no longer holds it back."""
     ctx = _ctx()
     defer_publish(ctx, "package-index")
-    _run_promote_stage(ctx).assert_not_called()
-    out = capsys.readouterr().out
-    assert "Skipping promote" in out
-    assert "vrg-release --resume moves it" in out
-    assert ctx.deferred_failures == []  # a skip, not a halted stage
+    ctx.deferred_failures = ["package-index"]
+    _run_promote_stage(ctx).assert_called_once_with("2.1.0")
+    assert "Skipping promote" not in capsys.readouterr().out
+    assert ctx.state is not None
+    assert "promote" in ctx.state.done
 
 
 def test_promote_stage_skips_with_no_promote() -> None:
     ctx = _ctx(promote=False)
     _run_promote_stage(ctx).assert_not_called()
+    assert ctx.state is not None
+    assert "promote" not in ctx.state.done
 
 
-def test_phase_details_close_finalize() -> None:
-    from vergil_tooling.lib.release.orchestrator import _phase_details
+def test_phase_details_finalize() -> None:
+    assert _phase_details(_ctx(), "finalize") == "Repository finalized."
 
+
+def test_phase_details_close_tracking() -> None:
+    assert _phase_details(_ctx(), "close-tracking") == "Tracking issue closed."
+
+
+def test_phase_details_install_ran() -> None:
     ctx = _ctx()
-    details = _phase_details(ctx, "close-finalize")
-    assert details == "Tracking issue closed. Repository finalized."
+    ctx.install_commands = "uv tool install pkg@v2.1.0"
+    assert _phase_details(ctx, "install") == "Install commands for v2.1.0 ran."
 
 
-def test_phase_details_close_finalize_cd_deferral_leaves_issue_open() -> None:
-    """A CD publish deferral leaves the issue open; the comment says so (#3593)."""
+def test_phase_details_install_no_install() -> None:
     ctx = _ctx()
-    defer_publish(ctx, "publish-pypi", "publish-docs")
-    details = _phase_details(ctx, "close-finalize")
-    assert "closed" not in details.lower()
-    assert "left open" in details
-    assert "CD publish (publish-pypi, publish-docs)" in details
-    assert "package index" not in details
-    assert "Repository finalized." in details
-
-
-def test_phase_details_close_finalize_package_index_deferral_leaves_issue_open() -> None:
-    """A package-index deferral leaves the issue open; the comment names it (#3593)."""
-    ctx = _ctx()
-    defer_publish(ctx, "package-index")
-    details = _phase_details(ctx, "close-finalize")
-    assert "closed" not in details.lower()
-    assert "left open" in details
-    assert "package index (package-index)" in details
-    assert "CD publish" not in details
-    assert "Repository finalized." in details
-    # promote was held back, so the outcome names the pending promote (#4293).
-    assert "Promote pending: `v2.1` was not moved" in details
-    assert "`vrg-release --resume` moves it" in details
-
-
-def test_phase_details_close_finalize_index_deferral_with_no_promote() -> None:
-    """With --no-promote nothing was held back, so no promote is pending."""
-    ctx = _ctx(promote=False)
-    defer_publish(ctx, "package-index")
-    details = _phase_details(ctx, "close-finalize")
-    assert "left open" in details
-    assert "Promote pending" not in details
-    assert "vrg-promote" not in details
-
-
-def test_phase_details_close_finalize_cd_deferral_names_no_pending_promote() -> None:
-    ctx = _ctx()
-    defer_publish(ctx, "publish-pypi")
-    assert "Promote pending" not in _phase_details(ctx, "close-finalize")
-
-
-def test_phase_details_close_finalize_both_deferral_kinds() -> None:
-    ctx = _ctx()
-    defer_publish(ctx, "publish-pypi", "package-index")
-    details = _phase_details(ctx, "close-finalize")
-    assert "CD publish (publish-pypi)" in details
-    assert "package index (package-index)" in details
-
-
-def test_phase_details_close_finalize_halted_stages_skip_close_and_cleanup() -> None:
-    """Earlier failed stages leave the issue open and skip cleanup entirely."""
-    ctx = _ctx()
-    ctx.deferred_failures = ["promote"]
-    defer_publish(ctx, "package-index")
-    details = _phase_details(ctx, "close-finalize")
-    assert "closed" not in details.lower()
-    assert "finalized" not in details.lower()
-    assert "left open" in details
-    assert "promote" in details
-    assert "--resume" in details
-
-
-def test_phase_details_consumer_refresh_ran() -> None:
-    ctx = _ctx()
-    ctx.consumer_refresh_commands = "uv tool install pkg@v2.1.0"
-    assert _phase_details(ctx, "consumer-refresh") == "Consumer refresh commands for v2.1.0 ran."
-
-
-def test_phase_details_consumer_refresh_no_install() -> None:
-    ctx = _ctx()
-    ctx.consumer_refresh_commands = "uv tool install pkg@v2.1.0"
+    ctx.install_commands = "uv tool install pkg@v2.1.0"
     ctx.install = False
-    assert "not run (--no-install)" in _phase_details(ctx, "consumer-refresh")
+    assert "not run (--no-install)" in _phase_details(ctx, "install")
 
 
-def test_phase_details_consumer_refresh_none_configured() -> None:
-    ctx = _ctx()
-    assert "nothing to run" in _phase_details(ctx, "consumer-refresh")
+def test_phase_details_install_none_configured() -> None:
+    assert "None configured" in _phase_details(_ctx(), "install")
 
 
-def test_phase_details_consumer_refresh_held_by_a_deferred_publish() -> None:
-    ctx = _ctx()
-    defer_publish(ctx, "package-index")
-    details = _phase_details(ctx, "consumer-refresh")
-    assert "held" in details
-    assert "package-index" in details
-
-
-def test_phase_details_consumer_refresh_after_a_failed_stage() -> None:
-    ctx = _ctx()
-    ctx.consumer_refresh_commands = "uv tool install pkg@v2.1.0"
-    ctx.deferred_failures = ["promote"]
-    details = _phase_details(ctx, "consumer-refresh")
-    assert "not run" in details
-    assert "promote" in details
-
-
-def test_phase_details_consumer_refresh_ran_after_only_update_deps_failed() -> None:
-    """update-deps alone never holds the refresh back (issue #4828)."""
-    ctx = _ctx()
-    ctx.consumer_refresh_commands = "uv tool install pkg@v2.1.0"
-    ctx.deferred_failures = ["update-deps"]
-    assert _phase_details(ctx, "consumer-refresh") == "Consumer refresh commands for v2.1.0 ran."
-
-
-def test_phase_details_consumer_refresh_names_only_blocking_stages() -> None:
-    ctx = _ctx()
-    ctx.consumer_refresh_commands = "uv tool install pkg@v2.1.0"
-    ctx.deferred_failures = ["promote", "update-deps"]
-    details = _phase_details(ctx, "consumer-refresh")
-    assert details == "Consumer refresh commands shown, not run: earlier stages failed (promote)."
-
-
-def test_consumer_refresh_runs_last() -> None:
-    """The refresh is the release's last stage, after promote, close-finalize
-    and update-deps: a consumer that follows the rolling vX.Y tag sees the
-    release only once promote has moved it (#4739)."""
-    stages = build_stages()
-    names = [s.name for s in stages]
-    assert names[-1] == "consumer-refresh"
-    for earlier in ("promote", "close-finalize", "update-deps", "publish-status"):
-        assert names.index(earlier) < names.index("consumer-refresh")
-    assert stages[-1].mode == "fail_defer"
-
-
-def _run_promote_then_refresh(
-    tmp_path: Path, *, promote_error: Exception | None
-) -> tuple[int, ReleaseContext, MagicMock]:
-    """Run the real promote and consumer-refresh stages through the pipeline."""
-    state = _state()
-    ctx = state.ctx
-    assert ctx is not None
-    ctx.issue_number = 42
-    ctx.tag = "v2.1.2"
-    names = ("promote", "consumer-refresh")
-    args = argparse.Namespace(output_format="plain", output_window=None)
-    with (
-        patch("vergil_tooling.lib.release.handoff.config.read_config") as m_config,
-        patch(
-            "vergil_tooling.lib.release.handoff.run_consumer_refresh", return_value=(0, "")
-        ) as m_run,
-        patch(_MOD + ".comment_phase_complete"),
-        patch(_MOD + ".comment_phase_failed"),
-        patch(_MOD + ".ensure_checklist"),
-        patch(_MOD + ".tick_stage"),
-        patch(_MOD + ".promote", side_effect=promote_error),
-    ):
-        m_config.return_value.publish.consumer_refresh = "uv tool install pkg@v<VERSION>"
-        stages = [s for s in build_stages() if s.name in names]
-        assert [s.name for s in stages] == list(names)
-        rc = progress.run_pipeline(
-            state, stages, command="vrg-release", label="vrg-release", args=args, repo_root=tmp_path
-        )
-    return rc, ctx, m_run
-
-
-def test_consumer_refresh_runs_after_promote(tmp_path: Path) -> None:
-    rc, ctx, m_run = _run_promote_then_refresh(tmp_path, promote_error=None)
-    assert rc == 0
-    m_run.assert_called_once_with("uv tool install pkg@v2.1.2", cwd=ctx.repo_root)
-    assert ctx.consumer_refresh_message is None
-
-
-def test_consumer_refresh_not_run_after_a_failed_promote(tmp_path: Path) -> None:
-    """A failed promote leaves vX.Y on the previous release, so a refresh that
-    follows the rolling tag would install it: the commands are only shown, as
-    the post-pipeline install never ran after a failed pipeline."""
-    error = ReleaseError(phase="promote", command="git push", message="refused")
-    rc, ctx, m_run = _run_promote_then_refresh(tmp_path, promote_error=error)
-    assert rc == 1
-    m_run.assert_not_called()
-    assert ctx.deferred_failures == ["promote"]
-    message = ctx.consumer_refresh_message or ""
-    assert "not run: earlier stages failed: promote" in message
-    assert "uv tool install pkg@v2.1.2" in message
+def test_stage_order_puts_install_after_finalize_and_update_deps() -> None:
+    names = [s.name for s in build_stages()]
+    for earlier in ("promote", "finalize", "update-deps"):
+        assert names.index(earlier) < names.index("install")
+    assert names.index("install") < names.index("close-tracking") < names.index("publish-status")
+    assert names[-1] == "publish-status"
 
 
 _DEPS_FAILURE = (
@@ -763,89 +616,231 @@ def _fail_update_deps(ctx: ReleaseContext) -> None:
     raise ReleaseError(phase="update-deps", command="vrg-update-deps", message=_DEPS_FAILURE)
 
 
-def _run_deps_then_refresh(
-    tmp_path: Path, *, names: tuple[str, ...], promote_error: Exception | None
-) -> tuple[int, ReleaseContext, MagicMock]:
-    """Run the real stages in *names* through the pipeline, update-deps failing."""
+_LINE_ON_RELEASE = "o\trefs/tags/v2.1\n" + "t" * 40 + "\trefs/tags/v2.1^{}"
+
+
+def _run_tail(  # noqa: PLR0913
+    tmp_path: Path,
+    *,
+    names: tuple[str, ...],
+    cd_deferred: tuple[str, ...] = (),
+    index_times_out: bool = False,
+    promote_error: Exception | None = None,
+    deps_fail: bool = False,
+    line: str = _LINE_ON_RELEASE,
+) -> tuple[int, ReleaseContext, dict[str, MagicMock]]:
+    """Run the real stages in *names* through the pipeline, with GitHub stubbed.
+
+    A CD publish job in *cd_deferred* is recorded as failed and cd-publish
+    fails on it, as on a fresh run; *index_times_out* fails package-index;
+    *promote_error* fails the tag move; *deps_fail* fails update-deps. The
+    returned mocks are the ones each stage acts through, by name.
+    """
     state = _state()
     ctx = state.ctx
     assert ctx is not None
     ctx.issue_number = 42
     ctx.tag = "v2.1.2"
+    ctx.tag_commit = "t" * 40
+    defer_publish(ctx, *cd_deferred)
+    timeout = ReleaseError(phase="package-index", command="poll package index", message="slow")
     args = argparse.Namespace(output_format="plain", output_window=None)
     with (
-        patch("vergil_tooling.lib.release.handoff.config.read_config") as m_config,
         patch(
-            "vergil_tooling.lib.release.handoff.run_consumer_refresh", return_value=(0, "")
-        ) as m_run,
-        patch(_MOD + ".comment_phase_complete"),
-        patch(_MOD + ".comment_phase_failed"),
+            "vergil_tooling.lib.release.package_index._wait",
+            side_effect=timeout if index_times_out else None,
+        ),
+        patch("vergil_tooling.lib.release.cd_publish.github") as m_gh,
+        patch(_MOD + ".comment_phase_complete") as m_complete,
+        patch(_MOD + ".comment_phase_failed") as m_failed,
         patch(_MOD + ".ensure_checklist"),
         patch(_MOD + ".tick_stage"),
-        patch(_MOD + ".promote", side_effect=promote_error),
-        patch(_MOD + ".update_deps", side_effect=_fail_update_deps),
+        patch(_FINALIZE + ".close_tracking_issue") as m_close,
+        patch(_FINALIZE + ".progress") as m_progress,
+        patch(_MOD + ".promote", side_effect=promote_error) as m_promote,
+        patch(_MOD + ".update_deps", side_effect=_fail_update_deps if deps_fail else None),
+        patch(_INSTALL + ".config.read_config") as m_config,
+        patch(_INSTALL + ".git.read_output", return_value=line),
+        patch(_INSTALL + ".run_install", return_value=(0, "")) as m_install,
     ):
-        m_config.return_value.publish.consumer_refresh = "uv tool install pkg@v<VERSION>"
+        m_config.return_value.publish.install = "uv tool install pkg@v<VERSION>"
         stages = [s for s in build_stages() if s.name in names]
         assert [s.name for s in stages] == list(names)
         rc = progress.run_pipeline(
             state, stages, command="vrg-release", label="vrg-release", args=args, repo_root=tmp_path
         )
-    return rc, ctx, m_run
+    mocks = {
+        "gh": m_gh,
+        "complete": m_complete,
+        "failed": m_failed,
+        "close": m_close,
+        "finalize": m_progress.run,
+        "promote": m_promote,
+        "install": m_install,
+    }
+    return rc, ctx, mocks
 
 
-def test_consumer_refresh_runs_when_only_update_deps_failed(
+_FULL_TAIL = (
+    "promote",
+    "cd-publish",
+    "package-index",
+    "finalize",
+    "update-deps",
+    "install",
+    "close-tracking",
+    "publish-status",
+)
+
+
+def test_install_runs_after_promote(tmp_path: Path) -> None:
+    rc, ctx, mocks = _run_tail(tmp_path, names=("promote", "install"))
+    assert rc == 0
+    mocks["install"].assert_called_once_with("uv tool install pkg@v2.1.2", cwd=ctx.repo_root)
+    assert ctx.install_message is None
+    assert ctx.state is not None
+    assert "install" in ctx.state.done
+
+
+def test_install_refuses_after_a_failed_promote(tmp_path: Path) -> None:
+    """A failed promote leaves vX.Y on the previous release: install holds,
+    never installing another release, and close-tracking holds too."""
+    error = ReleaseError(phase="promote", command="git push", message="refused")
+    rc, ctx, mocks = _run_tail(
+        tmp_path, names=("promote", "install", "close-tracking"), promote_error=error
+    )
+    assert rc == 1
+    mocks["install"].assert_not_called()
+    mocks["close"].assert_not_called()
+    assert ctx.deferred_failures == ["promote"]
+    assert ctx.state is not None
+    assert "install" not in ctx.state.done
+
+
+def test_install_refuses_when_vx_y_names_another_release(tmp_path: Path) -> None:
+    rc, ctx, mocks = _run_tail(
+        tmp_path,
+        names=("promote", "install", "close-tracking"),
+        line="o\trefs/tags/v2.1\n" + "e" * 40 + "\trefs/tags/v2.1^{}",
+    )
+    assert rc == 1
+    mocks["install"].assert_not_called()
+    mocks["close"].assert_not_called()
+    assert ctx.deferred_failures == ["install"]
+
+
+def test_install_skipped_when_done(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A resume whose state block records the install done skips it (spec §4.6)."""
+    state = _state()
+    ctx = state.ctx
+    assert ctx is not None
+    ctx.state = _initial("2.1.2", done=("promote", "install"))
+    with (
+        patch(_INSTALL + ".run_install") as m_run,
+        patch(_INSTALL + ".config.read_config") as m_config,
+        patch(_MOD + ".tick_stage") as m_tick,
+    ):
+        stage = next(s for s in build_stages() if s.name == "install")
+        stage.fn(state)
+    m_run.assert_not_called()
+    m_config.assert_not_called()
+    m_tick.assert_not_called()
+    assert "install: already done" in capsys.readouterr().out
+
+
+def test_update_deps_failure_does_not_hold_install(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """update-deps prepares the next version, so its failure alone leaves the
-    published release valid: the refresh runs, and the run still fails on the
-    update-deps failure, which publish-status repeats (issue #4828)."""
-    rc, ctx, m_run = _run_deps_then_refresh(
+    """A failed update-deps holds back only close-tracking: the install runs, the
+    tracking issue stays open, and publish-status repeats the failure."""
+    rc, ctx, mocks = _run_tail(
         tmp_path,
-        names=("update-deps", "publish-status", "consumer-refresh"),
-        promote_error=None,
+        names=("promote", "update-deps", "install", "close-tracking", "publish-status"),
+        deps_fail=True,
     )
     assert rc == 1
     assert ctx.deferred_failures == ["update-deps"]
+    mocks["install"].assert_called_once_with("uv tool install pkg@v2.1.2", cwd=ctx.repo_root)
+    mocks["close"].assert_not_called()
     out = capsys.readouterr().out
-    m_run.assert_called_once_with("uv tool install pkg@v2.1.2", cwd=ctx.repo_root)
-    assert ctx.consumer_refresh_message is None
     assert "✗ update-deps" in out
-    assert "✓ consumer-refresh" in out
-    assert f"repeats the update-deps failure: {_DEPS_FAILURE}" in out
+    assert "✓ install" in out
+    assert _DEPS_FAILURE in _publish_status(out)
 
 
-def test_consumer_refresh_not_run_after_promote_and_update_deps_failed(tmp_path: Path) -> None:
-    """A failed stage the release depends on still holds the refresh back, even
-    alongside an update-deps failure, and only it is named."""
-    error = ReleaseError(phase="promote", command="git push", message="refused")
-    rc, ctx, m_run = _run_deps_then_refresh(
-        tmp_path,
-        names=("promote", "update-deps", "publish-status", "consumer-refresh"),
-        promote_error=error,
-    )
+def test_finalize_and_install_run_after_failed_cd_publish(tmp_path: Path) -> None:
+    """A failed CD publish job is deferred: promote, finalize and install run,
+    and the run stops before close-tracking with the issue open (spec §4.5)."""
+    rc, ctx, mocks = _run_tail(tmp_path, names=_FULL_TAIL, cd_deferred=("docker-publish",))
     assert rc == 1
-    assert ctx.deferred_failures == ["promote", "update-deps"]
-    m_run.assert_not_called()
-    message = ctx.consumer_refresh_message or ""
-    assert "not run: earlier stages failed: promote)." in message
+    assert ctx.deferred_failures == ["cd-publish"]
+    mocks["promote"].assert_called_once_with("2.1.2")
+    mocks["finalize"].assert_called_once()
+    mocks["install"].assert_called_once()
+    mocks["close"].assert_not_called()
+    assert ctx.state is not None
+    for name in ("promote", "package-index", "finalize", "update-deps", "install"):
+        assert name in ctx.state.done
+    assert "close-tracking" not in ctx.state.done
 
 
-def test_package_index_then_promote_then_close_finalize() -> None:
-    """package-index is a fail_defer stage before close-finalize, so an index
-    miss leaves the tracking issue open with the deferral comment (#3557), and
-    the later consumer refresh holds on it (epic .github#356, §8.3). promote
-    sits between them, so vX.Y moves only once the index has the release
-    (#4293)."""
+def test_install_runs_with_index_deferred_through_the_pipeline(tmp_path: Path) -> None:
+    rc, ctx, mocks = _run_tail(tmp_path, names=_FULL_TAIL, index_times_out=True)
+    assert rc == 1
+    assert ctx.deferred_failures == ["package-index"]
+    mocks["promote"].assert_called_once_with("2.1.2")
+    mocks["install"].assert_called_once()
+    mocks["close"].assert_not_called()
+
+
+def test_clean_tail_closes_the_tracking_issue_last(tmp_path: Path) -> None:
+    rc, ctx, mocks = _run_tail(tmp_path, names=_FULL_TAIL)
+    assert rc == 0
+    mocks["close"].assert_called_once()
+    assert ctx.state is not None
+    assert "close-tracking" in ctx.state.done
+
+
+_HAND_RUN = ("gh run rerun", "gh workflow run", "vrg-promote")
+
+
+def test_no_output_names_hand_run_commands(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A run with every kind of deferral names only vrg-release --resume or
+    --supersede, never a command to run by hand: not on the terminal, and not
+    in any comment on the tracking issue."""
+    _, _, mocks = _run_tail(
+        tmp_path,
+        names=_FULL_TAIL,
+        cd_deferred=("docker-publish",),
+        index_times_out=True,
+        deps_fail=True,
+    )
+    captured = capsys.readouterr()
+    posted = [
+        str(call) for call in mocks["complete"].call_args_list + mocks["failed"].call_args_list
+    ]
+    for text in (captured.out, captured.err, *posted):
+        for command in _HAND_RUN:
+            assert command not in text
+    status = _publish_status(captured.out)
+    assert "vrg-release --resume 2.1.2" in status
+    assert "vrg-release --supersede 2.1.2" in status
+
+
+def test_package_index_and_cd_publish_follow_promote() -> None:
+    """promote no longer waits on the publishes (spec §4.4): cd-publish and
+    package-index follow it, and finalize follows them."""
     from vergil_tooling.lib.release.orchestrator import _stage_names
 
     names = _stage_names()
-    assert names[names.index("package-index") + 1] == "promote"
-    assert names[names.index("promote") + 1] == "close-finalize"
-    assert names.index("package-index") < names.index("consumer-refresh")
+    assert names[names.index("confirm-develop") + 1] == "promote"
+    assert names.index("promote") < names.index("cd-publish") < names.index("package-index")
+    assert names.index("package-index") < names.index("finalize")
     stages = build_stages()
-    assert stages[names.index("package-index")].mode == "fail_defer"
-    assert stages[names.index("promote")].mode == "fail_defer"
+    for name in ("promote", "cd-publish", "package-index", "finalize"):
+        assert stages[names.index(name)].mode == "fail_defer"
 
 
 def test_package_index_stage_runs_wait_for_index_tracked() -> None:
@@ -1131,50 +1126,53 @@ def _state() -> ReleaseState:
     return state
 
 
-def test_publish_status_raises_when_deferred() -> None:
-    state = _state()
-    assert state.ctx is not None
-    defer_publish(state.ctx, "docker-publish")
-    with pytest.raises(ReleaseError, match="docker-publish"):
-        _publish_status_stage(state)
+def _status_reason(state: ReleaseState) -> str:
+    """Run publish-status on *state*; return the warning it marks the row with."""
+    with patch(_MOD + ".mark_warn") as m_warn:
+        _publish_status_stage(state)  # never raises: the failed stage already counted
+    m_warn.assert_called_once()
+    return str(m_warn.call_args.args[0])
 
 
-def test_publish_status_gives_per_kind_advice_for_an_index_deferral() -> None:
+def test_publish_status_names_only_resume_or_supersede() -> None:
+    """The terminal summary names what is left and the one command that
+    finishes it, never a hand-run remedy (spec §4.4)."""
     state = _state()
     assert state.ctx is not None
-    defer_publish(state.ctx, "package-index")
-    with (
-        patch(_TRACKING + "._packages_repo", return_value="o/packages"),
-        pytest.raises(ReleaseError) as info,
-    ):
-        _publish_status_stage(state)
-    msg = str(info.value)
-    assert "artifact publish was deferred (package-index)" in msg
-    assert "publish-index workflow in o/packages" in msg
-    assert "then finish the release with vrg-release --resume" in msg
-    assert "CD publish" not in msg
-    assert "vrg-promote" not in msg
-    assert "NOT" not in msg
+    state.ctx.state = _initial("2.1.2", done=("prepare", "promote", "finalize"))
+    defer_publish(state.ctx, "docker-publish", "package-index")
+    state.ctx.deferred_failures = ["cd-publish", "package-index"]
+    reason = _status_reason(state)
+    assert reason.startswith("Release v2.1.2 is not finished: cd-publish, package-index failed")
+    assert "not done: merge-release, confirm-main," in reason
+    assert "close-tracking." in reason
+    assert "Deferred publish: docker-publish, package-index" in reason
+    assert "`vrg-release --resume 2.1.2`" in reason
+    assert "`vrg-release --supersede 2.1.2`" in reason
+    for hand_run in ("gh run rerun", "gh workflow run", "vrg-promote", "publish-index"):
+        assert hand_run not in reason
 
 
 def test_publish_status_noop_when_clean() -> None:
     state = _state()
-    _publish_status_stage(state)  # no raise
+    with patch(_MOD + ".mark_warn") as m_warn:
+        _publish_status_stage(state)
+    m_warn.assert_not_called()
 
 
-def test_publish_status_is_fail_defer_just_before_consumer_refresh() -> None:
+def test_publish_status_is_the_last_stage_and_fail_defer() -> None:
     stages = build_stages()
-    assert stages[-2].name == "publish-status"
-    assert stages[-2].mode == "fail_defer"
+    assert stages[-1].name == "publish-status"
+    assert stages[-1].mode == "fail_defer"
 
 
 # --- update-deps stage (epic vergil-project/.github#381) ---------------------
 
 
-def test_update_deps_stage_between_close_finalize_and_publish_status() -> None:
+def test_update_deps_stage_between_finalize_and_install() -> None:
     stages = build_stages()
     names = [s.name for s in stages]
-    assert names[-4:] == ["close-finalize", "update-deps", "publish-status", "consumer-refresh"]
+    assert names[-5:] == ["finalize", "update-deps", "install", "close-tracking", "publish-status"]
     assert stages[names.index("update-deps")].mode == "fail_defer"
 
 
@@ -1233,18 +1231,17 @@ def test_phase_details_update_deps_skipped() -> None:
     assert text == "Dependency update skipped (--without-deps)."
 
 
-def test_publish_status_reports_deps_only_failure_as_a_warning() -> None:
+def test_publish_status_repeats_a_deps_failure() -> None:
     # update-deps already failed (and counted); publish-status repeats it as a
     # warning on its own row rather than a second failure (#3283).
     state = _state()
     assert state.ctx is not None
     state.ctx.deps_failure = "Dependency update for 2.1.243 failed (validation)"
-    with patch(_MOD + ".mark_warn") as m_warn:
-        _publish_status_stage(state)  # no raise
-    reason = m_warn.call_args.args[0]
+    state.ctx.deferred_failures = ["update-deps"]
+    reason = _status_reason(state)
     assert "Dependency update for 2.1.243 failed (validation)" in reason
-    assert "update-deps" in reason
-    assert "CD publish" not in reason
+    assert "update-deps failed" in reason
+    assert "Deferred publish" not in reason
 
 
 def test_release_summary_counts_a_deps_only_failure_once(
@@ -1256,6 +1253,7 @@ def test_release_summary_counts_a_deps_only_failure_once(
     def _failed_update_deps(st: ReleaseState) -> None:
         assert st.ctx is not None
         st.ctx.deps_failure = deps
+        st.ctx.deferred_failures.append("update-deps")
         raise ReleaseError(phase="update-deps", command="vrg-update-deps", message=deps)
 
     stages = [
@@ -1281,12 +1279,11 @@ def test_publish_status_reports_both_failures() -> None:
     assert state.ctx is not None
     defer_publish(state.ctx, "docs")
     state.ctx.deps_failure = "Dependency update for 2.1.243 failed (merge)"
-    with pytest.raises(ReleaseError) as info:
-        _publish_status_stage(state)
-    msg = str(info.value)
-    assert "artifact publish was deferred (docs)" in msg
-    assert "fix the cause of the failed CD publish jobs (the resume re-runs them)" in msg
-    assert "2.1.243 failed" in msg
+    state.ctx.deferred_failures = ["cd-publish", "update-deps"]
+    reason = _status_reason(state)
+    assert "cd-publish, update-deps failed" in reason
+    assert "Deferred publish: docs" in reason
+    assert "2.1.243 failed" in reason
 
 
 def test_publish_status_noop_without_ctx() -> None:
@@ -1354,157 +1351,9 @@ def test_preflight_stage_copies_without_deps() -> None:
     assert ctx.without_deps is True
 
 
-# --- deferred publishes through the real stage tail (#3557) -----------------
-
-_TAIL = ("package-index", "promote", "close-finalize", "publish-status", "consumer-refresh")
-
-
-def _run_tail(
-    tmp_path: Path,
-    *,
-    cd_deferred: list[str],
-    index_times_out: bool,
-    promote_mock: MagicMock | None = None,
-    refresh_run: MagicMock | None = None,
-) -> tuple[int, ReleaseContext, MagicMock, MagicMock, MagicMock]:
-    """Run the real tail stages, from package-index on, through the pipeline.
-
-    Returns the exit code, the context, and the deferral-comment, issue-close
-    and vrg-finalize-pr mocks. ``promote_mock`` stands in for the tag move and
-    ``refresh_run`` for running the consumer-refresh commands.
-    """
-    state = _state()
-    ctx = state.ctx
-    assert ctx is not None
-    ctx.issue_number = 42
-    ctx.tag = "v2.1.2"
-    defer_publish(ctx, *cd_deferred)
-    timeout = ReleaseError(phase="package-index", command="poll package index", message="slow")
-    args = argparse.Namespace(output_format="plain", output_window=None)
-    with (
-        patch(
-            "vergil_tooling.lib.release.package_index._wait",
-            side_effect=timeout if index_times_out else None,
-        ),
-        patch(_MOD + ".comment_phase_complete"),
-        patch(_MOD + ".comment_phase_failed"),
-        patch(_MOD + ".ensure_checklist"),
-        patch(_MOD + ".tick_stage"),
-        patch(_TRACKING + "._packages_repo", return_value="o/packages"),
-        patch(_FINALIZE + ".comment_publish_deferred") as m_comment,
-        patch(_FINALIZE + ".close_tracking_issue") as m_close,
-        patch(_FINALIZE + ".progress") as m_progress,
-        patch(_MOD + ".promote", promote_mock or MagicMock()),
-        patch("vergil_tooling.lib.release.handoff.config.read_config") as m_config,
-        patch(
-            "vergil_tooling.lib.release.handoff.run_consumer_refresh",
-            refresh_run or MagicMock(return_value=(0, "")),
-        ),
-    ):
-        m_config.return_value.publish.consumer_refresh = "uv tool install pkg@v<VERSION>"
-        stages = [s for s in build_stages() if s.name in _TAIL]
-        assert [s.name for s in stages] == list(_TAIL)
-        rc = progress.run_pipeline(
-            state, stages, command="vrg-release", label="vrg-release", args=args, repo_root=tmp_path
-        )
-    return rc, ctx, m_comment, m_close, m_progress.run
-
-
 def _publish_status(out: str) -> str:
-    """The publish-status stage's status line: the deferral remedy the run ends on."""
-    return next(line for line in out.splitlines() if line.startswith("✗ publish-status"))
-
-
-def test_index_only_timeout_leaves_issue_open_with_deferral_comment(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    m_refresh = MagicMock(return_value=(0, ""))
-    rc, ctx, m_comment, m_close, m_finalize = _run_tail(
-        tmp_path, cd_deferred=[], index_times_out=True, refresh_run=m_refresh
-    )
-    assert rc == 1
-    m_comment.assert_called_once_with(ctx, ["package-index"])
-    m_close.assert_not_called()  # the tracking issue stays open
-    m_finalize.assert_called_once()  # cleanup still runs: the release is complete
-    assert ctx.deferred_failures == []  # not a halted, resumable stage
-    message = _publish_status(capsys.readouterr().out)
-    assert "publish-index workflow in o/packages" in message
-    assert "CD publish" not in message
-    # The consumer refresh holds on the deferral, as it did before #4739.
-    m_refresh.assert_not_called()
-    held = ctx.consumer_refresh_message or ""
-    assert "held" in held
-    assert "publish-index workflow in o/packages" in held
-
-
-def test_index_timeout_skips_promote_and_names_it(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A deferred index leaves vX.Y on the previous release (#4293): promote never
-    moves the tag, the run stays a completed-with-deferral one, and the run's
-    closing deferral message tells the human to finish it with --resume."""
-    m_promote = MagicMock()
-    rc, ctx, m_comment, m_close, _ = _run_tail(
-        tmp_path, cd_deferred=[], index_times_out=True, promote_mock=m_promote
-    )
-    assert rc == 1
-    m_promote.assert_not_called()
-    m_comment.assert_called_once_with(ctx, ["package-index"])
-    m_close.assert_not_called()
-    assert ctx.deferred_failures == []
-    assert "then finish the release with vrg-release --resume" in _publish_status(
-        capsys.readouterr().out
-    )
-
-
-def test_index_found_promotes_after_it(tmp_path: Path) -> None:
-    """With the index found, promote moves the tag before close-finalize closes the issue."""
-    m_promote = MagicMock()
-    m_refresh = MagicMock(return_value=(0, ""))
-    rc, ctx, m_comment, m_close, _ = _run_tail(
-        tmp_path,
-        cd_deferred=[],
-        index_times_out=False,
-        promote_mock=m_promote,
-        refresh_run=m_refresh,
-    )
-    assert rc == 0
-    assert ctx.deferred_publish_failures == []
-    m_promote.assert_called_once_with("2.1.2")
-    m_comment.assert_not_called()
-    m_close.assert_called_once()
-    m_refresh.assert_called_once_with("uv tool install pkg@v2.1.2", cwd=ctx.repo_root)
-    assert ctx.consumer_refresh_message is None
-
-
-def test_cd_only_deferral_leaves_issue_open_with_cd_advice(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    rc, ctx, m_comment, m_close, m_finalize = _run_tail(
-        tmp_path, cd_deferred=["docker-publish"], index_times_out=False
-    )
-    assert rc == 1
-    m_comment.assert_called_once_with(ctx, ["docker-publish"])
-    m_close.assert_not_called()
-    m_finalize.assert_called_once()
-    message = _publish_status(capsys.readouterr().out)
-    assert "the resume re-runs them" in message
-    assert "publish-index" not in message
-    assert "held" in (ctx.consumer_refresh_message or "")
-
-
-def test_cd_and_index_deferral_together_give_both_remedies(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    rc, ctx, m_comment, m_close, _ = _run_tail(
-        tmp_path, cd_deferred=["docker-publish"], index_times_out=True
-    )
-    assert rc == 1
-    m_comment.assert_called_once_with(ctx, ["docker-publish", "package-index"])
-    m_close.assert_not_called()
-    message = _publish_status(capsys.readouterr().out)
-    assert "the resume re-runs them" in message
-    assert "publish-index workflow in o/packages" in message
+    """The publish-status stage's status line: what is left, and the command that finishes it."""
+    return next(line for line in out.splitlines() if line.startswith("⚠ publish-status"))
 
 
 # --- resume from the first undone stage (spec §4.3, epic vergil-project/.github#1440) ---
@@ -1519,7 +1368,7 @@ _DONE_THROUGH_FINALIZE = (
     "cd-publish",
     "package-index",
     "promote",
-    "close-finalize",
+    "finalize",
 )
 _PREFLIGHT = "vergil_tooling.lib.release.preflight"
 
@@ -1595,31 +1444,26 @@ def test_tracked_stage_failure_is_not_recorded_done(write_state: MagicMock) -> N
     ("name", "setup"),
     [
         ("promote", lambda c: setattr(c, "promote", False)),
-        ("promote", lambda c: defer_publish(c, "package-index")),
-        ("close-finalize", lambda c: c.deferred_failures.append("confirm-develop")),
-        ("close-finalize", lambda c: defer_publish(c, "docs")),
-        ("consumer-refresh", lambda c: defer_publish(c, "docs")),
-        ("consumer-refresh", lambda c: setattr(c, "install", False)),
-        ("consumer-refresh", lambda c: c.deferred_failures.append("promote")),
+        ("install", lambda c: setattr(c, "install", False)),
     ],
 )
-def test_held_stage_is_not_recorded_done(
+def test_opted_out_stage_is_not_recorded_done(
     write_state: MagicMock, name: str, setup: Callable[[ReleaseContext], None]
 ) -> None:
-    """A stage that returned without doing its work runs again on a resume."""
+    """A stage an opt-out flag skipped runs again on a resume."""
     ctx = _ctx()
     setup(ctx)
-    ctx.consumer_refresh_commands = "vrg-tooling-install v2.1.0"
+    ctx.install_commands = "vrg-tooling-install v2.1"
     _tracked_run(name, ctx, MagicMock())
     write_state.assert_not_called()
 
 
-def test_consumer_refresh_with_none_configured_is_done(write_state: MagicMock) -> None:
+def test_install_with_none_configured_is_done(write_state: MagicMock) -> None:
     ctx = _ctx()
-    ctx.consumer_refresh_commands = None
-    _tracked_run("consumer-refresh", ctx, MagicMock())
+    ctx.install_commands = None
+    _tracked_run("install", ctx, MagicMock())
     assert ctx.state is not None
-    assert ctx.state.done == ("consumer-refresh",)
+    assert ctx.state.done == ("install",)
 
 
 def test_resume_after_finalize_skips_branch_stages(write_state: MagicMock) -> None:

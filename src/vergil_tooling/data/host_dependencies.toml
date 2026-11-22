@@ -185,7 +185,7 @@ upgrade = "auto"
 latest = "probe"
 
 # vergil-tooling (the vrg-* tools): installed host-side with `uv tool install`
-# by vergil-tooling's own release: the `[publish].consumer-refresh` in its
+# by vergil-tooling's own release: the `[publish].install` in its
 # vergil.toml reinstalls it at the just-released tag. `upgrade = "release"`
 # leaves its install to that release (#4603): vrg-host reports the installed
 # version and never runs `uv tool upgrade vergil-tooling`. Its latest is

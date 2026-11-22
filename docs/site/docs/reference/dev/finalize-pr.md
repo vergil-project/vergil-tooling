@@ -51,7 +51,7 @@ which is unsafe when the calling shell's CWD is inside one.
   pre-answers the yes/no prompts, but not the menu.
 - `vrg-finalize-pr --cleanup-only`: no PRs and no watch. It runs the
   settle phase and the CD report only, never prompts and never reads
-  stdin. `vrg-release` runs it in its `close-finalize` stage, and a human
+  stdin. `vrg-release` runs it in its `finalize` stage, and a human
   runs it after an automated job merges a PR on GitHub. Its exit codes are
   a watched run's.
 

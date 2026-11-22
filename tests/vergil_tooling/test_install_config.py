@@ -1,4 +1,9 @@
-"""vergil.toml's ``[publish].consumer-refresh``: the Mac's locked install (vergil-tooling#4827)."""
+"""vergil.toml's ``[publish].install``: the Mac's locked install (vergil-tooling#4827).
+
+vergil-tooling's own ``vergil.toml`` keeps the deprecated ``consumer-refresh``
+name until the tooling that reads ``install`` is installed (Task 14a of epic
+vergil-project/.github#1440), so the template is read under either key.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from tests.vergil_tooling.tooling_install_stubs import Run, run_lines, stub_bin, write_stub
+from vergil_tooling.lib.release.install import expand
 from vergil_tooling.lib.tooling_install import GIT_URL
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -30,8 +36,8 @@ _FIRST_INSTALL = (
 
 
 def _template() -> str:
-    data = tomllib.loads((_ROOT / "vergil.toml").read_text())
-    refresh = data["publish"]["consumer-refresh"]
+    publish = tomllib.loads((_ROOT / "vergil.toml").read_text())["publish"]
+    refresh = publish.get("install", publish.get("consumer-refresh"))
     assert isinstance(refresh, str)
     return refresh
 
@@ -46,25 +52,25 @@ def _run(tmp_path: Path, **env: str) -> Run:
             f'printf \'{name}\\t%s\\n\' "$*" >> "$STUB_LOG"\n'
             f'exit "${{STUB_{name.upper().replace("-", "_")}_RC:-0}}"\n',
         )
-    # vrg-release runs the block under `set -eo pipefail` (handoff.run_consumer_refresh).
-    script = "set -eo pipefail\n" + _template().replace("<VERSION>", _VERSION)
+    # vrg-release runs the block under `set -eo pipefail` (install.run_install).
+    script = "set -eo pipefail\n" + expand(_template(), _VERSION)
     return run_lines(script, tmp_path, env=env, path=[bin_dir])
 
 
-def test_consumer_refresh_installs_the_exact_tag(tmp_path: Path) -> None:
+def test_install_installs_the_exact_tag(tmp_path: Path) -> None:
     run = _run(tmp_path)
     assert run.returncode == 0, run.stderr
     assert run.of("vrg-tooling-install") == [[f"v{_VERSION}"]]
     assert run.of("vrg-vm") == [["update --all"]]
 
 
-def test_a_failed_install_stops_the_refresh(tmp_path: Path) -> None:
+def test_a_failed_install_stops_the_block(tmp_path: Path) -> None:
     run = _run(tmp_path, STUB_VRG_TOOLING_INSTALL_RC="1")
     assert run.returncode != 0
     assert run.of("vrg-vm") == []
 
 
-def test_consumer_refresh_has_no_inline_install_shell() -> None:
+def test_install_has_no_inline_install_shell() -> None:
     template = _template()
     for fragment in ("trap", "mktemp", "uv tool install", "uv export", "git "):
         assert fragment not in template
