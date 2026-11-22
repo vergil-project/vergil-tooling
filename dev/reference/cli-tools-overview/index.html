@@ -22072,13 +22072,15 @@ multi-page form for a docs site (<code>index.md</code>, <code>days/&lt;date&gt;.
 </tbody>
 </table>
 <h3 id="vrg-trusted-authors">vrg-trusted-authors<a class="headerlink" href="#vrg-trusted-authors" title="Permanent link">&para;</a></h3>
-<p>The one accessor for the trusted-authors configuration: the GitHub logins
-whose issues and comments automation may trust. It reads
-<code>~/.config/vergil/trusted-authors.toml</code> (delivered into agent VMs by <code>vrg-vm</code>)
-if it exists, else the <code>[trusted_authors]</code> stanza of
-<code>~/.config/vergil/identities.toml</code>, and prints <code>human: &lt;login&gt;</code> and
-<code>agent: &lt;login&gt;</code>, one per line. Skills and doctrine name this command, never
-the logins. See
+<p>The one accessor for the trusted-authors configuration: the GitHub identities
+whose issues and comments automation may trust, and the Vergil orgs with their
+automation Apps. It reads <code>~/.config/vergil/trusted-authors.toml</code> (delivered
+into agent VMs by <code>vrg-vm</code>) if it exists, else the <code>[trusted_authors]</code> and
+<code>[orgs.&lt;org&gt;]</code> stanzas of <code>~/.config/vergil/identities.toml</code>, else, in a
+GitHub Actions job with neither file, <code>$VRG_TRUSTED_AUTHORS</code>. It prints
+<code>human: &lt;login&gt;</code> and <code>agent: &lt;login&gt;</code>, one per line, then
+<code>org: &lt;org&gt; automation: &lt;slug&gt;</code> for each Vergil org. Skills and doctrine name
+this command, never the logins. See
 <a href="../../guides/account-setup/#trusted-authors">Trusted authors</a>.</p>
 <table>
 <thead>
@@ -22094,11 +22096,11 @@ the logins. See
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--json</code> (prints <code>{"human": [...], "agents": [...]}</code>)</td>
+<td><code>--json</code> (prints <code>{"human": [...], "agents": [...], "orgs": {"&lt;org&gt;": {"automation_app": "&lt;slug&gt;"}}}</code>)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>The VM file or the host stanza exists</td>
+<td>The VM file or the host stanzas exist, or, under GitHub Actions only, <code>$VRG_TRUSTED_AUTHORS</code> is set</td>
 </tr>
 <tr>
 <td>Failure mode</td>

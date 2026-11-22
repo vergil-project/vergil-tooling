@@ -19519,10 +19519,13 @@ order:</p>
   agent with Contents write could push to such a branch and have its
   content merged with no human in the loop. Deletion is not restricted:
   the branches are temporary. The App's numeric ID differs per org. The
-  tooling reads the App's slug from <code>$VRG_AUTOMATION_APP</code> or, for a human
-  run, from the org-level Actions variable <code>VRG_AUTOMATION_APP</code>, and looks
-  the ID up with <code>GET /apps/{slug}</code>. A missing variable or a failed lookup
-  fails the run (exit 2).</li>
+  tooling reads the App's slug from <code>$VRG_AUTOMATION_APP</code> in a job of the
+  same org, and otherwise (a human run, or a job of another org) from the
+  org's <code>[orgs.&lt;org&gt;]</code> stanza of the
+  <a href="../../guides/account-setup/#trusted-authors">trusted-authors configuration</a>,
+  never from the API, and looks the ID up with <code>GET /apps/{slug}</code>. An org
+  with no stanza, a missing configuration or a failed lookup fails the run
+  (exit 2).</li>
 <li><strong>Bypass actors are not compared under an App token that is not the
   automation identity</strong>, such as an agent App's token or a CI
   <code>GITHUB_TOKEN</code>. Such a token cannot read a ruleset's bypass list, so in
