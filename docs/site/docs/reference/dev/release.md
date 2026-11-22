@@ -278,4 +278,5 @@ failed checks as its likely cause (issue #4294).
 | ---- | ------- |
 | 0 | Every stage succeeded |
 | 1 | A stage failed, including a deferred failure such as a missed publish job, a failed install or a failed dependency update; or the command was refused |
+| 2 | Usage error, such as `--supersede` with `--resume` or a `--supersede` version that is not `X.Y.Z` |
 | 130 | Interrupted (Ctrl-C) |
