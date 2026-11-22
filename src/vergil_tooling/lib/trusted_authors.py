@@ -286,18 +286,27 @@ def _load_actions_value() -> TrustedAuthors:
             " unset or not passed into the job)"
         )
         raise TrustedAuthorsNotConfiguredError(msg)
+    return parse_actions_value(value, where=f"${ACTIONS_ENV}")
+
+
+def parse_actions_value(value: str, *, where: str) -> TrustedAuthors:
+    """Parse the compact JSON of :func:`render_actions_value` back into the roles.
+
+    *where* names the value's source in the :class:`ValueError` raised when it
+    is not valid JSON, not an object, or not a valid configuration.
+    """
     try:
         raw = json.loads(value)
     except json.JSONDecodeError as exc:
-        msg = f"${ACTIONS_ENV}: invalid JSON: {exc}"
+        msg = f"{where}: invalid JSON: {exc}"
         raise ValueError(msg) from exc
     if not isinstance(raw, dict):
-        msg = f"${ACTIONS_ENV}: must be a JSON object, got {type(raw).__name__}"
+        msg = f"{where}: must be a JSON object, got {type(raw).__name__}"
         raise ValueError(msg)
     try:
         return _parse_document(raw, raw)
     except ValueError as exc:
-        msg = f"${ACTIONS_ENV}: {exc}"
+        msg = f"{where}: {exc}"
         raise ValueError(msg) from exc
 
 
