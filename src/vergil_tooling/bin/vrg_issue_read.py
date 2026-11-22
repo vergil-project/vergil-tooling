@@ -25,7 +25,7 @@ body's author and editors, and everyone who renamed the item). Without
 ``--search`` a ``--repo`` read lists the repository's issues (or, with
 ``--pr``, its PRs) newest first; with ``--search``, or with ``--owner``, it runs
 GitHub's search, scoped to the repo or org by the flag. ``--state`` defaults to
-``open``.
+``open``; ``closed`` takes in merged PRs too, in both modes.
 
 - Text: one line per result, ``<repo>#<n> [<state>] <title> (<labels>)
   <url>``, and a closing count of trusted and skipped results on stderr.

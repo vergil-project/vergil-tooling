@@ -767,7 +767,8 @@ dropped. A `--repo` read without `--search` lists the repository's issues
 (or, with `--pr`, its pull requests) newest first, read from the repository
 itself; with `--search` or `--owner` it runs GitHub's search, scoped by the
 flag, and a query may not add its own `repo:`, `org:`, `user:` or `owner:`
-qualifier. `--state` is `open` (the default), `closed`, `merged` (pull
+qualifier. `--state` is `open` (the default), `closed` (for pull requests,
+merged ones included, in both modes), `merged` (pull
 requests only) or `all`. Text output is one line per result,
 `<repo>#<n> [<state>] <title> (<labels>) <url>`, with a count of trusted and
 skipped results on stderr. `--json` prints an array of `{"repo", "number",

@@ -1091,7 +1091,8 @@ _LIST_STATES: dict[tuple[str, str], str] = {
     ("issue", "closed"): "states: [CLOSED], ",
     ("issue", "all"): "",
     ("pr", "open"): "states: [OPEN], ",
-    ("pr", "closed"): "states: [CLOSED], ",
+    # A merged PR is closed too, as in GitHub search (is:closed) and gh pr list.
+    ("pr", "closed"): "states: [CLOSED, MERGED], ",
     ("pr", "merged"): "states: [MERGED], ",
     ("pr", "all"): "",
 }

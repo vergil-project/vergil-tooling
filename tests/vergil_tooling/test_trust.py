@@ -1554,7 +1554,7 @@ def test_list_items_reads_the_repository(answer: Any) -> None:
         ("issue", "closed", "issues(states: [CLOSED]"),
         ("issue", "all", "issues(orderBy"),
         ("pr", "open", "pullRequests(states: [OPEN]"),
-        ("pr", "closed", "pullRequests(states: [CLOSED]"),
+        ("pr", "closed", "pullRequests(states: [CLOSED, MERGED]"),
         ("pr", "merged", "pullRequests(states: [MERGED]"),
         ("pr", "all", "pullRequests(orderBy"),
     ],
