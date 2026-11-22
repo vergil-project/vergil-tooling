@@ -2897,29 +2897,48 @@ def merge(pr: str, *, strategy: str, match_head: str | None = None) -> None:
     run("pr", "merge", f"--{strategy}", "--match-head-commit", match_head, pr)
 
 
+#: Upper bound on a ``gh issue list`` / ``gh repo list`` / ``gh search`` lookup
+#: (#4038). ``gh search`` returns at most 1000 results however many pages it
+#: follows, so a search can never usefully ask for more.
+LISTING_LIMIT = 1000
+
+
+class EpicListTruncatedError(ValueError):
+    """A listing reached its limit, so a row the caller needs may lie beyond it."""
+
+
+def refuse_truncated(rows: object, limit: int, what: str) -> None:
+    """Raise :class:`EpicListTruncatedError` if *rows* is a list *limit* long or more.
+
+    gh stops at ``--limit`` without saying so, so a result that long may be cut
+    off and nothing read from it, absence above all, can be trusted.
+    """
+    if isinstance(rows, list) and len(rows) >= limit:
+        raise EpicListTruncatedError(
+            f"{what} reached its {limit}-row limit; refusing to act on a possibly truncated list"
+        )
+
+
 def list_org_repos(org: str) -> list[str]:
     """Return the bare names of all (non-archived) repositories in *org*.
 
-    Asks for up to :data:`~vergil_tooling.lib.epics.LISTING_LIMIT` repos and
-    raises :class:`~vergil_tooling.lib.epics.EpicListTruncatedError` when it
+    Asks for up to :data:`~vergil_tooling.lib.LISTING_LIMIT` repos and
+    raises :class:`EpicListTruncatedError` when it
     gets that many, since the list may then be cut off (#4051). A response
     that is not a list, or a row with no string ``name``, raises
     :class:`TypeError` rather than read as an empty or shorter fleet (#4058).
     """
-    # Deferred: lib.epics imports this module at load time.
-    from vergil_tooling.lib import epics
-
     raw: Any = read_json(
         "repo",
         "list",
         org,
         "--no-archived",
         "--limit",
-        str(epics.LISTING_LIMIT),
+        str(LISTING_LIMIT),
         "--json",
         "name",
     )
-    epics.refuse_truncated(raw, epics.LISTING_LIMIT, f"the repo list of {org}")
+    refuse_truncated(raw, LISTING_LIMIT, f"the repo list of {org}")
     if not isinstance(raw, list):
         msg = f"gh repo list {org} returned {type(raw).__name__}, expected a list"
         raise TypeError(msg)
@@ -2936,15 +2955,12 @@ def list_org_repos(org: str) -> list[str]:
 def list_project_repos(owner: str, project: str) -> list[str]:
     """Return sorted, unique repos of *owner* linked to GitHub Project *project*.
 
-    Lists up to :data:`~vergil_tooling.lib.epics.LISTING_LIMIT` of *owner*'s
+    Lists up to :data:`~vergil_tooling.lib.LISTING_LIMIT` of *owner*'s
     repos and filters them here rather than through ``--jq``, so the
     truncation check sees every row gh returned: a listing that reaches the
-    limit raises :class:`~vergil_tooling.lib.epics.EpicListTruncatedError`
+    limit raises :class:`EpicListTruncatedError`
     instead of silently dropping the project repos past it (#4051).
     """
-    # Deferred: lib.epics imports this module at load time.
-    from vergil_tooling.lib import epics
-
     if not project.isdigit():
         msg = f"project must be a GitHub Project number, got {project!r}"
         raise ValueError(msg)
@@ -2954,11 +2970,11 @@ def list_project_repos(owner: str, project: str) -> list[str]:
         "list",
         owner,
         "--limit",
-        str(epics.LISTING_LIMIT),
+        str(LISTING_LIMIT),
         "--json",
         "nameWithOwner,projectsV2",
     )
-    epics.refuse_truncated(raw, epics.LISTING_LIMIT, f"the repo list of {owner}")
+    refuse_truncated(raw, LISTING_LIMIT, f"the repo list of {owner}")
     if not isinstance(raw, list):
         msg = f"gh repo list {owner} returned {type(raw).__name__}, expected a list"
         raise TypeError(msg)

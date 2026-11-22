@@ -23,13 +23,14 @@ the dev-tree override venv.
 | [vrg-resolve-tracking-issue](cli-tools-overview.md#vrg-resolve-tracking-issue) | Print a merge commit's tracking issue |
 | [vrg-vm](cli-tools-overview.md#vrg-vm) | Manage the identity agent VMs |
 | [vrg-vm-resolve-session](cli-tools-overview.md#vrg-vm-resolve-session) | Pick and start a Claude Code session inside an identity VM (run by `vrg-vm session`) |
-| [vrg-submit-pr](dev/submit-pr.md) | Open standards-compliant PRs with auto-merge on, then finalize them by default |
+| [vrg-submit-pr](dev/submit-pr.md) | Open standards-compliant PRs with auto-merge on, then finalize them |
 | [vrg-pr-workflow](cli-tools-overview.md#vrg-pr-workflow) | Record and manage the PR handoff state that `vrg-submit-pr` reads |
 | [vrg-pr-await](cli-tools-overview.md#vrg-pr-await) | Block until a PR merges (exit 0) or cannot merge (exit 1, naming why) |
 | [vrg-pr-review-comments](cli-tools-overview.md#vrg-pr-review-comments) | List a PR's inline review comments, read-only |
 | [vrg-await](cli-tools-overview.md#vrg-await) | Block until a `.vergil/` channel file appears or changes |
 | [vrg-audit-approve](cli-tools-overview.md#vrg-audit-approve) | Post the `vergil-audit/approved` check-run on a PR's head commit |
 | [vrg-release](dev/release.md) | Run the full release workflow, ending with the dependency update |
+| [vrg-release-record](dev/release-record.md) | Check a task's `Released:` record against git and print a verdict |
 | [vrg-promote](cli-tools-overview.md#vrg-promote) | Move the rolling `vX.Y` tag to a release (human-only) |
 | [vrg-version](cli-tools-overview.md#vrg-version) | Print or bump the repo's version |
 | [vrg-update-deps](dev/update-deps.md) | Update dependencies within their declared bounds and merge the result |

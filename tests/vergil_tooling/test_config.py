@@ -566,17 +566,45 @@ def test_publish_docs_defaults_true(tmp_path: Path) -> None:
     assert cfg.publish.docs is True
 
 
-def test_publish_consumer_refresh(tmp_path: Path) -> None:
+def test_publish_install(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    toml = _VALID_TOML + '\n[publish]\ninstall = "vrg-tooling-install v<MINOR>"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.publish.install == "vrg-tooling-install v<MINOR>"
+    assert capsys.readouterr().err == ""
+
+
+def test_publish_install_default_none(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.publish.install is None
+
+
+def test_config_reads_deprecated_consumer_refresh_with_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The old key is read for one minor version, with a deprecation warning (spec §4.6)."""
     toml = _VALID_TOML + '\n[publish]\nconsumer-refresh = "uv tool install pkg@v<VERSION>"\n'
     (tmp_path / "vergil.toml").write_text(toml)
     cfg = read_config(tmp_path)
-    assert cfg.publish.consumer_refresh == "uv tool install pkg@v<VERSION>"
+    assert cfg.publish.install == "uv tool install pkg@v<VERSION>"
+    err = capsys.readouterr().err
+    assert "[publish].consumer-refresh is deprecated; rename it to [publish].install" in err
+    assert "unrecognized key" not in err
 
 
-def test_publish_consumer_refresh_default_none(tmp_path: Path) -> None:
-    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
-    cfg = read_config(tmp_path)
-    assert cfg.publish.consumer_refresh is None
+def test_config_both_keys_is_error(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '\n[publish]\ninstall = "a"\nconsumer-refresh = "b"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match="sets both install and the deprecated consumer-refresh"):
+        read_config(tmp_path)
+
+
+def test_publish_install_must_be_a_string(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "\n[publish]\ninstall = 1\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[publish\]\.install must be a string"):
+        read_config(tmp_path)
 
 
 # -- unrecognized-key warnings ------------------------------------------------

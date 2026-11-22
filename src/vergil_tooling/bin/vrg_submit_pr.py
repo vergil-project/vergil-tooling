@@ -81,7 +81,7 @@ already on origin.
 Agent identities are blocked — PR submission is a Chief Steward
 (human) operation.
 
-**Finalize by default** (spec §6.2). Once every PR in the selection has been
+**Finalize always** (spec §6.2). Once every PR in the selection has been
 tried, submit runs **one** ``vrg-finalize-pr <pr>,<pr>,…`` over the PRs whose
 submit succeeded: it watches them merge, then settles develop once. A PR
 whose submit failed is left out of that list and named in a summary printed
@@ -92,25 +92,24 @@ before any PR opens, so a malformed value refuses the run with nothing done.
 
 - ``--release`` is passed to finalize, which chains into ``vrg-release`` only
   on full success. It is dropped when any PR failed to submit, and the
-  summary says the release was skipped. ``vrg-release`` installs by default;
-  ``--no-install`` (which requires ``--release``) passes through to skip it.
-- ``--no-finalize`` opens the PRs with auto-merge on and returns without
-  watching; it prints the ``vrg-finalize-pr`` command that would have
-  watched them. The PRs still merge on their own. It cannot be combined
-  with ``--release``.
+  summary says the release was skipped. Install is part of every release.
+
+Submit always finishes: it returns only once each PR has merged or cannot
+merge (spec §4.8 of epic vergil-project/.github#1440).
 
 **Exit status.** Submit returns finalize's exit status (0 full success, 3
 not every PR merged, 4 develop did not validate, 5 the release failed), with
 two adjustments: when any PR failed to submit it returns at least 3, and a
 tool error from finalize (1, or any code finalize does not define) always
-wins. With ``--no-finalize``, or when no PR opened, a failed submit exits 3.
-A usage error, or a refusal before anything opened, exits 1.
+wins. When no PR opened, a failed submit exits 3. A usage error, or a
+refusal before anything opened, exits 1.
 
 **Removed flags** are refused by name before any side effect: ``--finalize``
-(finalizing is the default), ``--install`` (``--release`` installs by
-default), ``--allow-provenance-violation`` (a provenance violation always
-fails; fix its cause or the classifier) and ``--yes``/``-y`` (there is no
-confirmation left to answer).
+(finalizing is the default), ``--no-finalize`` (submit returns once each PR
+has merged or cannot merge), ``--install`` and ``--no-install`` (install is
+part of every release), ``--allow-provenance-violation`` (a provenance
+violation always fails; fix its cause or the classifier) and ``--yes``/``-y``
+(there is no confirmation left to answer).
 """
 
 from __future__ import annotations
@@ -176,12 +175,11 @@ def main(argv: list[str] | None = None) -> int:
 
     # The finalize run's batch deadline is checked before any PR opens, so a
     # malformed $VRG_FINALIZE_DEADLINE refuses the run with nothing done.
-    if not args.no_finalize:
-        try:
-            finalize_watch.deadline_secs()
-        except ValueError as exc:
-            print(f"vrg-submit-pr: {exc}; no PR was opened.", file=sys.stderr)
-            return 1
+    try:
+        finalize_watch.deadline_secs()
+    except ValueError as exc:
+        print(f"vrg-submit-pr: {exc}; no PR was opened.", file=sys.stderr)
+        return 1
 
     # A release cascade on a repo that is not released is refused before any
     # push, PR or merge, so nothing changes (issue #4175). The check reads the
@@ -274,28 +272,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "any other branch is refused, since releases go through vrg-release.",
     )
     parser.add_argument(
-        "--no-finalize",
-        action="store_true",
-        help="Open the PRs with auto-merge on and return without watching them; "
-        "prints the vrg-finalize-pr command that would have. By default one "
-        "vrg-finalize-pr run watches every opened PR, then settles develop once.",
-    )
-    parser.add_argument(
         "--release",
         action="store_true",
         help="Pass --release to vrg-finalize-pr, which chains into vrg-release "
-        "(installing by default) only on full success. Dropped when any PR "
-        "failed to submit; not allowed with --no-finalize.",
-    )
-    parser.add_argument(
-        "--no-install",
-        action="store_true",
-        help="With --release, run vrg-release --no-install.",
+        "(install is part of every release) only on full success. Dropped when "
+        "any PR failed to submit.",
     )
     # Removed flags. Kept hidden so main can refuse each by name, naming the
-    # new default, rather than argparse rejecting it as unknown (spec §6.10).
+    # reason, rather than argparse rejecting it as unknown (spec §6.10).
     parser.add_argument("--finalize", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--no-finalize", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--no-install", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--allow-provenance-violation", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--all",
@@ -314,14 +302,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-FINALIZE_REMOVED = (
-    "vrg-submit-pr: --finalize was removed; finalizing is now the default "
-    "(use --no-finalize to open the PRs without watching them)"
+FINALIZE_REMOVED = "vrg-submit-pr: --finalize was removed; finalizing is now the default"
+NO_FINALIZE_REMOVED = (
+    "vrg-submit-pr: --no-finalize was removed; "
+    "vrg-submit-pr returns once each PR has merged or cannot merge"
 )
-INSTALL_REMOVED = (
-    "vrg-submit-pr: --install was removed; --release now installs by default "
-    "(add --no-install to skip the install)"
-)
+INSTALL_REMOVED = "vrg-submit-pr: --install was removed; install is part of every release"
+NO_INSTALL_REMOVED = "vrg-submit-pr: --no-install was removed; install is part of every release"
 ALLOW_PROVENANCE_VIOLATION_REMOVED = (
     "vrg-submit-pr: --allow-provenance-violation was removed; a provenance "
     "violation always fails. Fix its cause, or fix the classifier if the "
@@ -333,7 +320,7 @@ YES_REMOVED = (
 
 
 def _flag_refusal(args: argparse.Namespace) -> str | None:
-    """The refusal for a removed flag or a contradictory set of flags, or ``None``.
+    """The refusal for a removed flag, or ``None``.
 
     Checked before any side effect, so a caller still passing a removed flag
     is told what replaced it rather than having it silently accepted (spec
@@ -341,19 +328,16 @@ def _flag_refusal(args: argparse.Namespace) -> str | None:
     """
     if args.finalize:
         return FINALIZE_REMOVED
+    if args.no_finalize:
+        return NO_FINALIZE_REMOVED
     if args.install:
         return INSTALL_REMOVED
+    if args.no_install:
+        return NO_INSTALL_REMOVED
     if args.allow_provenance_violation:
         return ALLOW_PROVENANCE_VIOLATION_REMOVED
     if args.yes:
         return YES_REMOVED
-    if args.release and args.no_finalize:
-        return (
-            "vrg-submit-pr: --release cannot be combined with --no-finalize; "
-            "the release runs only after finalize's full success"
-        )
-    if args.no_install and not args.release:
-        return "vrg-submit-pr: --no-install requires --release"
     return None
 
 
@@ -460,8 +444,8 @@ _INTERRUPTED = 130
 def _finalize_cmd(opened: list[str], args: argparse.Namespace, *, release: bool) -> list[str]:
     """The one ``vrg-finalize-pr`` command over every opened PR.
 
-    *release* is whether ``--release`` (and, with it, ``--no-install``) is
-    passed: the caller drops it when any PR failed to submit. The progress
+    *release* is whether ``--release`` is passed: the caller drops it when
+    any PR failed to submit. The progress
     flags ``--output-format`` and ``--output-window`` are passed on when
     given, so both halves of the run render alike (issue #4711); left out,
     finalize auto-detects its renderer as the submit rollup does.
@@ -469,8 +453,6 @@ def _finalize_cmd(opened: list[str], args: argparse.Namespace, *, release: bool)
     cmd = ["vrg-finalize-pr", ",".join(opened)]
     if release:
         cmd.append("--release")
-        if args.no_install:
-            cmd.append("--no-install")
     if args.output_format is not None:
         cmd += ["--output-format", args.output_format]
     if args.output_window is not None:
@@ -508,22 +490,8 @@ def _submit_exit(finalize_rc: int, *, any_failed: bool) -> int:
 
 def _dry_run_plan(args: argparse.Namespace) -> str:
     """The ``[dry-run]`` line naming what would follow the submit."""
-    if args.no_finalize:
-        return "[dry-run] --no-finalize: the PRs would be opened with auto-merge on, not watched"
     cmd = " ".join(_finalize_cmd(["<pr>,…"], args, release=args.release))
     return f"[dry-run] would finalize every opened PR in one run: {cmd}"
-
-
-def _print_pr_watch(pr_url: str) -> None:
-    """Emit the paste-ready post-PR monitoring one-liner.
-
-    Opening the PR auto-triggers the mechanized CI gates; this line starts the
-    USER agent's monitoring loop. (The dual-agent framing was removed in #1872.)
-    """
-    print()
-    print("Next — monitor the PR through CI:")
-    print()
-    print(f"    /vergil:pr-watch {pr_url}")
 
 
 @dataclass(frozen=True)
@@ -783,21 +751,10 @@ def _print_selection(selection: list[_Submission]) -> None:
 def _finish(summary: SubmitSummary, args: argparse.Namespace) -> int:
     """Finalize the opened PRs in one run, report the failed submits; return the exit code.
 
-    With ``--no-finalize``, each opened PR gets its pr-watch line and the
-    ``vrg-finalize-pr`` command that would have watched them is printed.
-    Otherwise one ``vrg-finalize-pr`` runs over every opened PR, with
-    ``--release`` dropped when any PR failed to submit; when none opened, it
-    is not run at all. The failed submits are named after finalize's report.
+    One ``vrg-finalize-pr`` runs over every opened PR, with ``--release``
+    dropped when any PR failed to submit; when none opened, it is not run at
+    all. The failed submits are named after finalize's report.
     """
-    if args.no_finalize:
-        for pr_url in summary.opened:
-            print(f"Done. PR URL: {pr_url}")
-            _print_pr_watch(pr_url)
-        if summary.opened:
-            watch_cmd = shlex.join(_finalize_cmd(summary.opened, args, release=False))
-            print(f"\nNot watching. To finalize these PRs: {watch_cmd}")
-        _print_failed(summary)
-        return EXIT_NOT_ALL_MERGED if summary.failed else EXIT_OK
     if not summary.opened:
         _print_failed(summary)
         print("\nNo PR opened, so nothing was finalized.", file=sys.stderr)
@@ -1534,14 +1491,12 @@ def _origin_has_branch(branch: str) -> bool:
     return bool(listing)
 
 
-def _relay_prepare(root: Path, branch: str, args: argparse.Namespace) -> _Submission | None:
+def _relay_prepare(root: Path, branch: str, args: argparse.Namespace) -> _Submission:
     """Resolve and verify the PR for one named *branch*.
 
-    Returns the branch's submission, or ``None`` for a branch that already
-    carries a submitted PR, reported and skipped with ``--no-finalize``.
-    Otherwise such a branch is refused, before anything opens, since this
-    run would not finalize it: the refusal names the ``vrg-finalize-pr``
-    command to run.
+    Returns the branch's submission. A branch that already carries a
+    submitted PR is refused, before anything opens, since this run would not
+    finalize it: the refusal names the ``vrg-finalize-pr`` command to run.
     Resolves the ready-state (local file preferred, else the relay ref).
 
     The local-vs-relay choice is made from **actual state**, not from the mere
@@ -1575,17 +1530,11 @@ def _relay_prepare(root: Path, branch: str, args: argparse.Namespace) -> _Submis
     state = _resolve_ready_state(root, branch)
     if state.submitted is not None:
         submitted_url = state.submitted.get("pr_url", "")
-        if not args.no_finalize:
-            raise SystemExit(
-                f"vrg-submit-pr: branch '{branch}' already has a submitted PR "
-                f"({submitted_url}); finalize it directly with: vrg-finalize-pr "
-                f"{submitted_url}, or pass --no-finalize to skip it. No PR was opened."
-            )
-        print(
+        raise SystemExit(
             f"vrg-submit-pr: branch '{branch}' already has a submitted PR "
-            f"({submitted_url}); skipping."
+            f"({submitted_url}); finalize it directly with: vrg-finalize-pr "
+            f"{submitted_url}. No PR was opened."
         )
-        return None
     # The PR may only open at the head the latest report-ready recorded, and
     # every way the resolved state could be stale is refused here rather than
     # silently submitted (issue #3815): a branch reopened by unfreeze and not
@@ -1615,22 +1564,14 @@ def _run_relay(branches: list[str], args: argparse.Namespace) -> int:
 
     :func:`_relay_prepare` resolves and verifies every branch first (a
     refusal stops the run with nothing opened); then one table lists them
-    all, and :func:`_submit_all` opens each PR with auto-merge on.
-    With ``--no-finalize``, branches already carrying a submitted PR are
-    reported and skipped. Then :func:`_finish` finalizes the opened PRs in
-    one run.
+    all, and :func:`_submit_all` opens each PR with auto-merge on. Then
+    :func:`_finish` finalizes the opened PRs in one run.
     """
     root = Path(git.repo_root())
-    selection: list[_Submission] = []
-    for branch in branches:
-        sub = _relay_prepare(root, branch, args)
-        if sub is not None:
-            selection.append(sub)
+    selection = [_relay_prepare(root, branch, args) for branch in branches]
     _print_selection(selection)
     if args.dry_run:
         print(_dry_run_plan(args))
-        return 0
-    if not selection:
         return 0
     summary = _submit_all(selection, args)
     return _finish(summary, args)

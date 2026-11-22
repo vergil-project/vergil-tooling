@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -12,17 +13,22 @@ import pytest
 from vergil_tooling.lib.cd_runs import CDRunLookupError
 from vergil_tooling.lib.checkout_lock import CheckoutLockError, checkout_lock
 from vergil_tooling.lib.managed_worktree import ManagedWorktreeError
+from vergil_tooling.lib.pending_release import PendingRelease, PendingReleaseError, ReleaseTags
+from vergil_tooling.lib.release import checklist, state
 from vergil_tooling.lib.release import preflight as preflight_module
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.preflight import (
     PendingDepsPr,
     _check_branch_and_tree,
+    _check_no_open_release,
     _compute_release_version,
+    _release_contents,
     check_develop_cd,
     fix_task_status,
     pending_deps_prs,
     preflight,
 )
+from vergil_tooling.lib.release.state import IssueEntry
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -42,6 +48,91 @@ def develop_cd_gate() -> Iterator[MagicMock]:
         yield gate
 
 
+_CUT = "c" * 40
+_PENDING = PendingRelease(
+    tags=ReleaseTags(latest=None, rolling=None, rolling_target=None),
+    main_moved_ts=0.0,
+    changes=(),
+)
+_ISSUES = (IssueEntry("owner/repo#10", (1, 2)),)
+
+
+@pytest.fixture(autouse=True)
+def release_contents() -> Iterator[MagicMock]:
+    """Stub the release-contents read, which reads git and GitHub, out of every preflight run.
+
+    Its own tests call :func:`_release_contents` directly.
+    """
+    with patch(_MOD + "._release_contents", return_value=(_CUT, _PENDING, _ISSUES)) as contents:
+        yield contents
+
+
+def test_preflight_fresh_start_records_the_cut_and_contents(
+    release_contents: MagicMock,
+) -> None:
+    root = Path("/tmp/repo")  # noqa: S108
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+    with (
+        patch(_MOD + "._check_host_prerequisites"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + "._read_and_validate_config"),
+        patch(_MOD + "._check_branch_and_tree"),
+        patch(_MOD + ".version.show", return_value="2.1.0"),
+        patch(_MOD + "._check_version_not_tagged"),
+        patch(_MOD + "._check_main_not_ahead_of_develop"),
+        patch(_MOD + "._check_no_open_release"),
+        patch(_MOD + "._check_packages_unpublished"),
+        patch(_MOD + ".pending_deps_prs", return_value=[]),
+        patch(_MOD + "._acquire_release_worktree", return_value=wt),
+        patch(_MOD + ".os.chdir"),
+    ):
+        ctx = preflight(version_override=None, repo_root=root)
+    release_contents.assert_called_once_with(wt, None)
+    assert ctx.cut == _CUT
+    assert ctx.pending_release is _PENDING
+    assert ctx.issues == _ISSUES
+
+
+def test_release_contents_pins_the_pending_release_to_the_cut() -> None:
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+    with (
+        patch(_MOD + ".git.read_output", return_value=_CUT) as m_git,
+        patch(_MOD + ".gather_release_contents", return_value=(_PENDING, _ISSUES)) as m_gather,
+    ):
+        assert _release_contents(wt) == (_CUT, _PENDING, _ISSUES)
+    m_git.assert_called_once_with("-C", str(wt), "rev-parse", "HEAD")
+    m_gather.assert_called_once_with(cut=_CUT)
+
+
+def test_preflight_prints_issue_list(capsys: pytest.CaptureFixture[str]) -> None:
+    """The table and the issue list are shown before the tracking issue exists (spec §4.1)."""
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+    with (
+        patch(_MOD + ".git.read_output", return_value=_CUT),
+        patch(_MOD + ".gather_release_contents", return_value=(_PENDING, _ISSUES)),
+    ):
+        _release_contents(wt)
+    out = capsys.readouterr().out
+    assert "## Contents" in out
+    assert "No changes pending release." in out
+    assert "- owner/repo#10 (#1, #2)" in out
+
+
+def test_release_contents_incomplete_lookup_refuses() -> None:
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+    with (
+        patch(_MOD + ".git.read_output", return_value=_CUT),
+        patch(
+            _MOD + ".gather_release_contents",
+            side_effect=PendingReleaseError("compare truncated"),
+        ),
+        pytest.raises(ReleaseError, match="Could not read what the release contains") as info,
+    ):
+        _release_contents(wt)
+    assert "compare truncated" in str(info.value)
+    assert info.value.phase == "preflight"
+
+
 def test_preflight_success() -> None:
     root = Path("/tmp/repo")  # noqa: S108
     wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
@@ -54,7 +145,7 @@ def test_preflight_success() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_main_not_ahead_of_develop"),
-        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_no_open_release"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt) as m_wt,
@@ -70,55 +161,6 @@ def test_preflight_success() -> None:
     m_chdir.assert_called_once_with(wt)
 
 
-def test_preflight_resume_skips_fresh_checks_and_adopts() -> None:
-    root = Path("/tmp/repo")  # noqa: S108
-    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
-    with (
-        patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
-        patch(_MOD + "._read_and_validate_config"),
-        patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + ".audit_repo_config"),
-        patch(_MOD + ".version.show", return_value="2.1.0"),
-        patch(_MOD + "._check_version_not_tagged") as m_tagged,
-        patch(_MOD + "._check_main_not_ahead_of_develop") as m_diverged,
-        patch(_MOD + "._check_no_existing_tracking_issue") as m_issue,
-        patch(_MOD + "._check_packages_unpublished"),
-        patch(_MOD + "._acquire_release_worktree", return_value=wt) as m_wt,
-        patch(_MOD + ".os.chdir"),
-    ):
-        preflight(version_override=None, repo_root=root, resume=True)
-    m_tagged.assert_not_called()
-    m_issue.assert_not_called()
-    m_diverged.assert_not_called()
-    m_wt.assert_called_once_with(root, "release/2.1.0", resume=True)
-
-
-def test_preflight_resume_uses_resume_version_and_sets_issue() -> None:
-    root = Path("/tmp/repo")  # noqa: S108
-    wt = Path("/tmp/repo/.worktrees/release-2.3.0")  # noqa: S108
-    with (
-        patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
-        patch(_MOD + "._read_and_validate_config"),
-        patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + ".version.show") as m_show,
-        patch(_MOD + "._acquire_release_worktree", return_value=wt),
-        patch(_MOD + ".os.chdir"),
-    ):
-        ctx = preflight(
-            version_override=None,
-            repo_root=root,
-            resume=True,
-            resume_version="2.3.0",
-            resume_issue_number=42,
-        )
-    assert ctx.version == "2.3.0"
-    m_show.assert_not_called()  # resume_version bypasses the develop VERSION file
-    assert ctx.issue_number == 42
-    assert ctx.issue_url == "https://github.com/owner/repo/issues/42"
-
-
 def test_preflight_with_minor_override() -> None:
     root = Path("/tmp/repo")  # noqa: S108
     wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
@@ -131,7 +173,7 @@ def test_preflight_with_minor_override() -> None:
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_main_not_ahead_of_develop"),
-        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_no_open_release"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
@@ -155,7 +197,7 @@ def test_preflight_with_major_override() -> None:
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_main_not_ahead_of_develop"),
-        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_no_open_release"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
@@ -285,24 +327,111 @@ def test_check_version_not_tagged_no_tags() -> None:
         _check_version_not_tagged("2.0.34")
 
 
-def test_check_no_existing_tracking_issue_passes() -> None:
-    from vergil_tooling.lib.release.preflight import _check_no_existing_tracking_issue
-
-    with patch(_MOD + ".find_existing_tracking_issue", return_value=None):
-        _check_no_existing_tracking_issue("owner/repo", "2.0.34")
+_RESUME_READ = "vergil_tooling.lib.release.resume.github.read_json"
 
 
-def test_check_no_existing_tracking_issue_fails() -> None:
-    from vergil_tooling.lib.release.preflight import _check_no_existing_tracking_issue
+def _release_issue(ver: str, number: int, body: str) -> dict[str, object]:
+    return {"number": number, "title": f"release: {ver}", "body": body}
 
+
+def _state_body(ver: str) -> str:
+    block = state.render_state(
+        state.initial_state(version=ver, cut="abc1234", issues=(), without_deps=False)
+    )
+    return f"## Contents\n\n{block}\n"
+
+
+def test_fresh_start_refuses_other_version_open() -> None:
+    open_issues = [_release_issue("2.0.33", 99, _state_body("2.0.33"))]
     with (
-        patch(
-            _MOD + ".find_existing_tracking_issue",
-            return_value="https://github.com/owner/repo/issues/99",
-        ),
-        pytest.raises(ReleaseError, match="already exists"),
+        patch(_RESUME_READ, return_value=open_issues),
+        pytest.raises(ReleaseError) as info,
     ):
-        _check_no_existing_tracking_issue("owner/repo", "2.0.34")
+        _check_no_open_release("owner/repo")
+    message = str(info.value)
+    assert info.value.phase == "preflight"
+    assert "https://github.com/owner/repo/issues/99" in message
+    assert "release 2.0.33" in message
+    assert "`vrg-release --resume 2.0.33`" in message
+    assert "by hand" not in message
+
+
+def test_fresh_start_refusal_names_old_tooling_recovery() -> None:
+    old_body = "## Release\n\n" + checklist.render(["audit", "prepare"], ())
+    open_issues = [_release_issue("2.0.33", 98, old_body)]
+    with (
+        patch(_RESUME_READ, return_value=open_issues),
+        pytest.raises(ReleaseError) as info,
+    ):
+        _check_no_open_release("owner/repo")
+    message = str(info.value)
+    assert "https://github.com/owner/repo/issues/98" in message
+    assert "no release state block" in message
+    assert "Finish that release by hand, then close the issue." in message
+    assert "--resume 2.0.33" not in message
+
+
+def test_fresh_start_refusal_names_unreadable_state_block() -> None:
+    body = f"{state.BEGIN}\n```json\n{{}}\n```\n{state.END}\n"
+    with (
+        patch(_RESUME_READ, return_value=[_release_issue("2.0.33", 97, body)]),
+        pytest.raises(ReleaseError, match="cannot be read") as info,
+    ):
+        _check_no_open_release("owner/repo")
+    assert "`vrg-release --resume 2.0.33`" in str(info.value)
+
+
+def test_fresh_start_refusal_names_every_open_release() -> None:
+    open_issues = [
+        _release_issue("2.0.33", 99, _state_body("2.0.33")),
+        _release_issue("2.0.32", 90, "no block"),
+    ]
+    with (
+        patch(_RESUME_READ, return_value=open_issues),
+        pytest.raises(ReleaseError) as info,
+    ):
+        _check_no_open_release("owner/repo")
+    lines = [line for line in str(info.value).splitlines() if line.startswith("- ")]
+    assert len(lines) == 2
+    assert "release 2.0.32" in lines[0]
+    assert "by hand" in lines[0]
+    assert "`vrg-release --resume 2.0.33`" in lines[1]
+
+
+@pytest.mark.parametrize(
+    ("older", "newer"),
+    [("2.0.9", "2.0.10"), ("2.9.0", "2.10.0")],
+)
+def test_fresh_start_refusal_orders_by_semantic_version(older: str, newer: str) -> None:
+    # As strings, "2.0.10" < "2.0.9" and "2.10.0" < "2.9.0" (#4877).
+    open_issues = [
+        _release_issue(newer, 99, _state_body(newer)),
+        _release_issue(older, 90, _state_body(older)),
+    ]
+    with (
+        patch(_RESUME_READ, return_value=open_issues),
+        pytest.raises(ReleaseError) as info,
+    ):
+        _check_no_open_release("owner/repo")
+    lines = [line for line in str(info.value).splitlines() if line.startswith("- ")]
+    assert len(lines) == 2
+    assert lines[0].startswith(f"- release {older} ")
+    assert lines[1].startswith(f"- release {newer} ")
+
+
+def test_fresh_start_passes_with_none_open() -> None:
+    not_a_release = {"number": 5, "title": "chore(release): bump to 2.0.34", "body": ""}
+    with patch(_RESUME_READ, return_value=[not_a_release]):
+        _check_no_open_release("owner/repo")
+
+
+def test_fresh_start_open_release_read_failure_raises() -> None:
+    with (
+        patch(_RESUME_READ, return_value={"message": "Bad credentials"}),
+        pytest.raises(ReleaseError, match="not a list") as info,
+    ):
+        _check_no_open_release("owner/repo")
+    assert info.value.phase == "preflight"
 
 
 @pytest.mark.parametrize(
@@ -421,7 +550,7 @@ def test_preflight_never_audits() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_main_not_ahead_of_develop"),
-        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_no_open_release"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + ".pending_deps_prs", return_value=[]),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
@@ -489,6 +618,24 @@ def test_acquire_release_worktree_refuses_a_branch_only_on_origin() -> None:
     ):
         _acquire_release_worktree(Path("/tmp/repo"), "release/2.1.0", resume=False)  # noqa: S108
     m_adopt.assert_not_called()
+
+
+def test_acquire_release_worktree_refuses_a_resume_whose_branch_is_missing() -> None:
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
+
+    with (
+        patch(_MOD + ".git.ref_exists", return_value=False) as m_exists,
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + ".adopt_worktree") as m_adopt,
+        patch(_MOD + ".create_worktree") as m_create,
+        pytest.raises(ReleaseError, match="'release/2.1.0' is missing both locally and on origin"),
+    ):
+        _acquire_release_worktree(Path("/tmp/repo"), "release/2.1.0", resume=True)  # noqa: S108
+    checked = [c.args[0] for c in m_exists.call_args_list]
+    assert checked == ["release/2.1.0", "origin/release/2.1.0"]
+    m_create.assert_not_called()
+    m_adopt.assert_not_called()
+    m_run.assert_not_called()
 
 
 class _Leftover:
@@ -894,7 +1041,7 @@ def _fresh_patches(pending: list[PendingDepsPr]) -> list[contextlib.AbstractCont
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_main_not_ahead_of_develop"),
-        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._check_no_open_release"),
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
@@ -956,29 +1103,6 @@ def test_preflight_no_pending_deps_passes() -> None:
             allow_pending_deps=True,
         )
     assert ctx.bypassed_deps_prs == []
-
-
-def test_preflight_resume_skips_pending_deps_gate() -> None:
-    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
-    with (
-        patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + ".check_gh_auth", return_value="o/r"),
-        patch(_MOD + "._read_and_validate_config"),
-        patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + "._acquire_release_worktree", return_value=wt),
-        patch(_MOD + ".os.chdir"),
-        patch(_MOD + ".pending_deps_prs") as m_pending,
-    ):
-        ctx = preflight(
-            version_override=None,
-            repo_root=Path("/tmp/repo"),  # noqa: S108
-            resume=True,
-            resume_version="2.1.0",
-            resume_issue_number=7,
-        )
-    m_pending.assert_not_called()
-    assert ctx.bypassed_deps_prs == []
-    assert ctx.cleared_deps_prs == []
 
 
 # --- auto-clear a dependency-update PR whose fix task completed (#3286) ---
@@ -1851,7 +1975,7 @@ def _preflight_patches(stack: contextlib.ExitStack, *, real_sync: bool = False) 
         *(() if real_sync else ("_check_branch_and_tree",)),
         "_check_version_not_tagged",
         "_check_main_not_ahead_of_develop",
-        "_check_no_existing_tracking_issue",
+        "_check_no_open_release",
         "_check_packages_unpublished",
         "os.chdir",
     ):
@@ -1867,13 +1991,6 @@ def test_develop_cd_gate_runs_on_a_fresh_start(develop_cd_gate: MagicMock) -> No
         _preflight_patches(stack)
         preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     develop_cd_gate.assert_called_once_with(_REPO)
-
-
-def test_develop_cd_gate_skipped_on_resume(develop_cd_gate: MagicMock) -> None:
-    with contextlib.ExitStack() as stack:
-        _preflight_patches(stack)
-        preflight(version_override=None, repo_root=Path("/tmp/repo"), resume=True)  # noqa: S108
-    develop_cd_gate.assert_not_called()
 
 
 def test_develop_cd_gate_checks_the_local_head() -> None:
@@ -2092,3 +2209,360 @@ def test_cd_gate_checks_new_head(tmp_path: Path, develop_cd_gate: MagicMock) -> 
         checked = stack.enter_context(patch(_MOD + ".check_develop_cd"))
         preflight(version_override=None, repo_root=tmp_path)
     checked.assert_called_once_with(_REPO, _NEW)
+
+
+# --- resume from the first undone stage (spec §4.3, epic vergil-project/.github#1440) ---
+
+_STAGES = (
+    "audit",
+    "preflight",
+    "prepare",
+    "merge-release",
+    "confirm-main",
+    "back-merge-bump",
+    "teardown-worktree",
+    "confirm-develop",
+    "finalize",
+    "publish-status",
+)
+_ROOT = Path("/tmp/repo")  # noqa: S108
+_RESUME_WT = Path("/tmp/repo/.worktrees/release-2.3.0")  # noqa: S108
+
+
+def _resume(
+    done: tuple[str, ...],
+    *,
+    post_merge: Path | None = _RESUME_WT,
+    acquire_error: ReleaseError | None = None,
+    version_error: ReleaseError | None = None,
+) -> tuple[ReleaseContext, dict[str, MagicMock]]:
+    """Run a resume preflight whose tracking issue records *done*; return the ctx and mocks.
+
+    *post_merge* is what the post-merge worktree set-up returns (#4889),
+    *acquire_error*, when given, is what adopting the release worktree raises,
+    and *version_error* what the release branch's VERSION check raises (#4899).
+    """
+    current = replace(
+        state.initial_state(version="2.3.0", cut=_CUT, issues=(), without_deps=False),
+        done=done,
+        release_pr="https://github.com/owner/repo/pull/100",
+    )
+    names = (
+        "_check_branch_and_tree",
+        "_check_main_not_ahead_of_develop",
+        "_check_version_not_tagged",
+        "_check_no_open_release",
+        "_check_packages_unpublished",
+        "pending_deps_prs",
+        "verify_facts",
+        "check_release_version",
+        "os.chdir",
+        "version.show",
+    )
+    with contextlib.ExitStack() as stack:
+        mocks = {name: stack.enter_context(patch(f"{_MOD}.{name}")) for name in names}
+        mocks["check_release_version"].side_effect = version_error
+        mocks["host"] = stack.enter_context(patch(_MOD + "._check_host_prerequisites"))
+        mocks["auth"] = stack.enter_context(
+            patch(_MOD + ".check_gh_auth", return_value="owner/repo")
+        )
+        mocks["config"] = stack.enter_context(patch(_MOD + "._read_and_validate_config"))
+        mocks["read_state"] = stack.enter_context(patch(_MOD + ".read_state", return_value=current))
+        mocks["worktree"] = stack.enter_context(
+            patch(
+                _MOD + "._acquire_release_worktree",
+                return_value=_RESUME_WT,
+                side_effect=acquire_error,
+            )
+        )
+        mocks["post_merge"] = stack.enter_context(
+            patch(_MOD + "._post_merge_worktree", return_value=post_merge)
+        )
+        ctx = preflight(
+            version_override=None,
+            repo_root=_ROOT,
+            resume=True,
+            resume_version="2.3.0",
+            resume_issue_number=42,
+            stages=_STAGES,
+        )
+    return ctx, mocks
+
+
+def test_resume_runs_only_host_auth_config_checks(
+    release_contents: MagicMock, develop_cd_gate: MagicMock
+) -> None:
+    ctx, mocks = _resume(("prepare",))
+    for check in ("host", "auth", "config"):
+        mocks[check].assert_called_once()
+    for skipped in (
+        "_check_branch_and_tree",
+        "_check_main_not_ahead_of_develop",
+        "_check_version_not_tagged",
+        "_check_no_open_release",
+        "_check_packages_unpublished",
+        "pending_deps_prs",
+        "version.show",
+    ):
+        mocks[skipped].assert_not_called()
+    develop_cd_gate.assert_not_called()
+    release_contents.assert_not_called()
+    assert ctx.version == "2.3.0"
+    assert ctx.issue_number == 42
+    assert ctx.issue_url == "https://github.com/owner/repo/issues/42"
+    assert ctx.cut is None
+    assert ctx.pending_release is None
+    assert ctx.issues == ()
+    assert ctx.bypassed_deps_prs == []
+
+
+def test_resume_reads_and_verifies_the_state_and_restores_its_facts() -> None:
+    ctx, mocks = _resume(("prepare",))
+    mocks["read_state"].assert_called_once_with(ctx)
+    current = mocks["read_state"].return_value
+    mocks["verify_facts"].assert_called_once_with(ctx, current)
+    assert ctx.release_pr_url == "https://github.com/owner/repo/pull/100"
+
+
+def test_resume_at_merge_release_adopts_worktree() -> None:
+    ctx, mocks = _resume(("prepare",))
+    mocks["worktree"].assert_called_once_with(_ROOT, "release/2.3.0", resume=True)
+    mocks["post_merge"].assert_not_called()
+    mocks["os.chdir"].assert_called_once_with(_RESUME_WT)
+    assert ctx.worktree_path == _RESUME_WT
+
+
+def test_resume_at_prepare_adopts_worktree() -> None:
+    ctx, mocks = _resume(())
+    mocks["worktree"].assert_called_once_with(_ROOT, "release/2.3.0", resume=True)
+    mocks["post_merge"].assert_not_called()
+    assert ctx.worktree_path == _RESUME_WT
+
+
+@pytest.mark.parametrize("done", [(), ("prepare",)], ids=["at-prepare", "at-merge-release"])
+def test_resume_before_the_merge_checks_the_branch_version(done: tuple[str, ...]) -> None:
+    # #4899: on the release branch, its VERSION is held to the recorded target,
+    # once the run is in the worktree.
+    ctx, mocks = _resume(done)
+    mocks["check_release_version"].assert_called_once_with(ctx, mocks["read_state"].return_value)
+
+
+@pytest.mark.parametrize(
+    "done",
+    [
+        ("prepare", "merge-release"),
+        ("prepare", "merge-release", "confirm-main", "back-merge-bump", "teardown-worktree"),
+    ],
+    ids=["past-the-merge", "after-teardown"],
+)
+def test_resume_past_the_merge_never_checks_the_branch_version(done: tuple[str, ...]) -> None:
+    _, mocks = _resume(done)
+    mocks["check_release_version"].assert_not_called()
+
+
+def test_resume_version_refusal_stops_preflight() -> None:
+    refusal = ReleaseError(phase="resume", command="version.show", message="has VERSION 2.2.0")
+    with pytest.raises(ReleaseError, match="has VERSION 2.2.0"):
+        _resume((), version_error=refusal)
+
+
+def test_resume_before_the_merge_still_refuses_a_missing_branch() -> None:
+    # The #4886 refusal stands for every stage before merge-release is done.
+    refusal = ReleaseError(phase="preflight", command="c", message="missing both")
+    with pytest.raises(ReleaseError, match="missing both"):
+        _resume(("prepare",), acquire_error=refusal)
+
+
+@pytest.mark.parametrize(
+    "done",
+    [
+        ("prepare", "merge-release"),
+        ("prepare", "merge-release", "confirm-main"),
+    ],
+    ids=["at-confirm-main", "at-back-merge-bump"],
+)
+def test_resume_past_the_merge_never_adopts_the_release_branch(done: tuple[str, ...]) -> None:
+    ctx, mocks = _resume(done)
+    mocks["worktree"].assert_not_called()
+    mocks["post_merge"].assert_called_once_with(_ROOT, "release/2.3.0", needed=True)
+    mocks["os.chdir"].assert_called_once_with(_RESUME_WT)
+    assert ctx.worktree_path == _RESUME_WT
+
+
+def test_resume_at_teardown_reuses_a_worktree_still_there() -> None:
+    ctx, mocks = _resume(("prepare", "merge-release", "confirm-main", "back-merge-bump"))
+    mocks["worktree"].assert_not_called()
+    mocks["post_merge"].assert_called_once_with(_ROOT, "release/2.3.0", needed=False)
+    mocks["os.chdir"].assert_called_once_with(_RESUME_WT)
+    assert ctx.worktree_path == _RESUME_WT
+
+
+def test_resume_at_teardown_with_no_worktree_runs_from_the_root() -> None:
+    done = ("prepare", "merge-release", "confirm-main", "back-merge-bump")
+    ctx, mocks = _resume(done, post_merge=None)
+    mocks["worktree"].assert_not_called()
+    mocks["os.chdir"].assert_called_once_with(_ROOT)
+    assert ctx.worktree_path is None
+
+
+def test_resume_after_teardown_does_not_adopt_worktree() -> None:
+    done = ("prepare", "merge-release", "confirm-main", "back-merge-bump", "teardown-worktree")
+    ctx, mocks = _resume(done)
+    mocks["worktree"].assert_not_called()
+    mocks["post_merge"].assert_not_called()
+    mocks["os.chdir"].assert_called_once_with(_ROOT)
+    assert ctx.worktree_path is None
+
+
+def test_resume_with_nothing_undone_does_not_adopt_worktree() -> None:
+    names = tuple(n for n in _STAGES if n not in ("audit", "preflight", "publish-status"))
+    ctx, mocks = _resume(names)
+    mocks["worktree"].assert_not_called()
+    assert ctx.worktree_path is None
+
+
+def test_resume_without_its_issue_refuses() -> None:
+    with (
+        patch(_MOD + "._check_host_prerequisites"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + "._read_and_validate_config"),
+        patch(_MOD + ".read_state") as m_read,
+        pytest.raises(ReleaseError, match="resume lookup did not provide them"),
+    ):
+        preflight(version_override=None, repo_root=_ROOT, resume=True, stages=_STAGES)
+    m_read.assert_not_called()
+
+
+# --- the worktree of a resume past merge-release (#4889) ---
+
+
+def test_post_merge_worktree_creates_one_detached_without_the_branch() -> None:
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    with (
+        patch(_MOD + ".git.ref_exists") as m_exists,
+        patch(_MOD + ".create_detached_worktree", return_value=_RESUME_WT) as m_create,
+        patch(_MOD + ".adopt_worktree") as m_adopt,
+        patch(_MOD + ".create_worktree") as m_branch,
+    ):
+        result = _post_merge_worktree(_ROOT, "release/2.3.0", needed=True)
+    assert result == _RESUME_WT
+    m_create.assert_called_once_with(_ROOT, branch="release/2.3.0", base="develop")
+    m_exists.assert_not_called()
+    m_adopt.assert_not_called()
+    m_branch.assert_not_called()
+
+
+def test_post_merge_worktree_needs_none_once_back_merge_bump_is_done() -> None:
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    with (
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + ".git.read_output") as m_read,
+        patch(_MOD + ".create_detached_worktree") as m_create,
+    ):
+        assert _post_merge_worktree(_ROOT, "release/2.3.0", needed=False) is None
+    m_create.assert_not_called()
+    m_run.assert_not_called()
+    m_read.assert_not_called()
+
+
+@pytest.mark.parametrize("needed", [True, False])
+def test_post_merge_worktree_reuses_a_worktree_still_there(tmp_path: Path, *, needed: bool) -> None:
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    path = tmp_path / ".worktrees" / "release-2.3.0"
+    path.mkdir(parents=True)
+    with (
+        patch(_MOD + ".git.read_output", return_value=str(path)) as m_read,
+        patch(_MOD + ".create_detached_worktree") as m_create,
+    ):
+        assert _post_merge_worktree(tmp_path, "release/2.3.0", needed=needed) == path
+    m_read.assert_called_once_with("-C", str(path), "rev-parse", "--show-toplevel")
+    m_create.assert_not_called()
+
+
+def test_post_merge_worktree_refuses_a_path_that_is_not_a_worktree(tmp_path: Path) -> None:
+    # A stray directory resolves to the root checkout; git run there would
+    # move the root's HEAD, so it is refused rather than used.
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    path = tmp_path / ".worktrees" / "release-2.3.0"
+    path.mkdir(parents=True)
+    with (
+        patch(_MOD + ".git.read_output", return_value=str(tmp_path)),
+        pytest.raises(ReleaseError, match="is not a git worktree") as info,
+    ):
+        _post_merge_worktree(tmp_path, "release/2.3.0", needed=True)
+    assert str(path) in str(info.value)
+
+
+def test_post_merge_worktree_refuses_a_path_git_cannot_read(tmp_path: Path) -> None:
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    (tmp_path / ".worktrees" / "release-2.3.0").mkdir(parents=True)
+    failure = subprocess.CalledProcessError(128, ("git", "rev-parse"), stderr="fatal: nope")
+    with (
+        patch(_MOD + ".git.read_output", side_effect=failure),
+        pytest.raises(ReleaseError, match="cannot read it as a worktree") as info,
+    ):
+        _post_merge_worktree(tmp_path, "release/2.3.0", needed=True)
+    assert info.value.detail is not None
+    assert "fatal: nope" in info.value.detail
+
+
+def test_post_merge_worktree_names_a_failed_create() -> None:
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    failure = subprocess.CalledProcessError(128, ("git", "worktree", "add"), stderr="fatal: x")
+    with (
+        patch(_MOD + ".create_detached_worktree", side_effect=failure),
+        pytest.raises(ReleaseError, match="detached at develop, for back-merge-bump") as info,
+    ):
+        _post_merge_worktree(_ROOT, "release/2.3.0", needed=True)
+    assert info.value.detail is not None
+    assert "fatal: x" in info.value.detail
+
+
+def test_post_merge_worktree_wraps_a_managed_worktree_error() -> None:
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    with (
+        patch(
+            _MOD + ".create_detached_worktree",
+            side_effect=ManagedWorktreeError("path in the way", detail="d"),
+        ),
+        pytest.raises(ReleaseError, match="path in the way") as info,
+    ):
+        _post_merge_worktree(_ROOT, "release/2.3.0", needed=True)
+    assert info.value.detail == "d"
+
+
+def test_post_merge_resume_real_git_runs_without_the_deleted_branch(
+    released: tuple[Path, Path],
+) -> None:
+    # The release PR merged and GitHub deleted release/1.0.0 on origin
+    # (delete_branch_on_merge); the root checkout never had it locally. The
+    # pre-merge path still refuses (#4886), and the post-merge path sets up a
+    # worktree in which back-merge-bump can cut its post branch from main,
+    # leaving the root checkout on develop (#4889).
+    from vergil_tooling.lib.release.preflight import (
+        _acquire_release_worktree,
+        _post_merge_worktree,
+    )
+
+    root, other = released
+    branch = "release/1.0.0"
+    _git(other, "push", "-q", "origin", "--delete", branch)
+    _git(root, "fetch", "-q", "--prune", "origin")
+    with patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None):
+        with pytest.raises(ReleaseError, match="missing both locally and on origin"):
+            _acquire_release_worktree(root, branch, resume=True)
+        path = _post_merge_worktree(root, branch, needed=True)
+    assert path == root / ".worktrees" / "release-1.0.0"
+    assert _git(path, "rev-parse", "--abbrev-ref", "HEAD") == "HEAD"
+    assert _git(root, "branch", "--list", branch) == ""
+    _git(path, "checkout", "-q", "-b", "release/post-1.0.0", "origin/main")
+    assert _git(root, "rev-parse", "--abbrev-ref", "HEAD") == "develop"
+    with patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None):
+        assert _post_merge_worktree(root, branch, needed=True) == path

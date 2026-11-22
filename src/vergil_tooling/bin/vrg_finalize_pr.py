@@ -33,7 +33,7 @@ turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
    did not validate is said loudly, with its head SHA, the commits the sync
    brought in, the validate's log path and its last lines.
 5. **Releases**, with ``--release``, only on full success: ``vrg-release``,
-   or ``vrg-release --no-install`` with ``--no-install``. It starts after the
+   which installs as part of every release. It starts after the
    lock is let go, so the release's own preflight can take it, and it
    fast-forwards develop itself (spec §6.6).
 
@@ -69,9 +69,10 @@ job merges on GitHub. Its exit codes are a watched run's.
 **Removed flags** are refused by name before any side effect:
 ``--strategy`` (submit chooses the merge method), ``--no-wait-cd`` (not
 waiting is the default), ``--skip-post-checks`` (one run watches the whole
-batch, then settles develop once), ``--install`` (``--release`` installs
-by default; ``--no-install`` opts out) and ``--allow-provenance-violation``
-(a provenance violation always fails; fix its cause or the classifier).
+batch, then settles develop once), ``--install`` and ``--no-install``
+(install is part of every release, spec §4.8 of epic
+vergil-project/.github#1440) and ``--allow-provenance-violation`` (a
+provenance violation always fails; fix its cause or the classifier).
 
 Output of the watch and the settle phase renders through the stage-aware
 progress framework (issue #1479): standalone TTY runs get the live display
@@ -174,15 +175,19 @@ SKIP_POST_CHECKS_REMOVED = (
     "vrg-finalize-pr: --skip-post-checks was removed; one run now watches every "
     "listed PR, then settles develop once (pass the PRs as a comma list)"
 )
-INSTALL_REMOVED = (
-    "vrg-finalize-pr: --install was removed; --release now installs by default "
-    "(add --no-install to skip the install)"
-)
+INSTALL_REMOVED = "vrg-finalize-pr: --install was removed; install is part of every release"
+NO_INSTALL_REMOVED = "vrg-finalize-pr: --no-install was removed; install is part of every release"
 ALLOW_PROVENANCE_VIOLATION_REMOVED = (
     "vrg-finalize-pr: --allow-provenance-violation was removed; a provenance "
     "violation always fails. Fix its cause, or fix the classifier if the "
     "violation is a false one"
 )
+
+# The ``vrg-release`` command the cascade runs, the one source for it: install
+# is part of every release, so ``--release`` always runs it plain. Every hint
+# that names the command prints this same tuple, so a hint cannot drift from
+# what runs.
+RELEASE_CMD: tuple[str, ...] = ("vrg-release",)
 
 # How many trailing lines of a failed validate's output the report repeats.
 VALIDATE_TAIL_LINES = 40
@@ -275,10 +280,10 @@ def _flag_refusal(args: argparse.Namespace) -> str | None:
         return SKIP_POST_CHECKS_REMOVED
     if args.install:
         return INSTALL_REMOVED
+    if args.no_install:
+        return NO_INSTALL_REMOVED
     if args.allow_provenance_violation:
         return ALLOW_PROVENANCE_VIOLATION_REMOVED
-    if args.no_install and not args.release:
-        return "vrg-finalize-pr: --no-install requires --release"
     return None
 
 
@@ -322,12 +327,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--release",
         action="store_true",
-        help="On full success, chain into vrg-release, which installs by default",
-    )
-    parser.add_argument(
-        "--no-install",
-        action="store_true",
-        help="With --release, run vrg-release --no-install",
+        help="On full success, chain into vrg-release (install is part of every release)",
     )
     parser.add_argument(
         "--wait-cd",
@@ -342,6 +342,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--strategy", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--skip-post-checks", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--no-install", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--allow-provenance-violation", action="store_true", help=argparse.SUPPRESS)
     add_yes_argument(parser)
     progress.add_progress_args(parser, ())
@@ -648,9 +649,9 @@ def _maybe_release(args: argparse.Namespace, root: Path, rc: int) -> int:
             print(f"\nRelease skipped: the run is not a full success (exit {rc}).")
         return rc
     if args.dry_run:
-        print(f"\n[dry-run] would chain into: {shlex.join(_release_cmd(args))}")
+        print(f"\n[dry-run] would chain into: {shlex.join(RELEASE_CMD)}")
         return EXIT_OK
-    if _chain_release(root, _release_cmd(args)) != 0:
+    if _chain_release(root, RELEASE_CMD) != 0:
         return EXIT_RELEASE_FAILED
     return EXIT_OK
 
@@ -1938,17 +1939,6 @@ def build_stages(*, close_refs: bool) -> tuple[Stage, ...]:
     stages.append(Stage("validation", _stage_validation, "fail_defer"))
     stages.append(Stage("cd-check", _stage_cd_check, "fail_fast"))
     return tuple(stages)
-
-
-def _release_cmd(args: argparse.Namespace) -> tuple[str, ...]:
-    """The ``vrg-release`` command the cascade runs, the one source for it.
-
-    ``vrg-release`` installs by default (#1184), so ``--release`` runs it
-    plain, and ``--no-install`` passes through.
-    Every hint that names the command prints this same tuple, so a hint
-    cannot drift from what runs.
-    """
-    return ("vrg-release", "--no-install") if args.no_install else ("vrg-release",)
 
 
 def _chain_release(root: Path, cmd: tuple[str, ...]) -> int:

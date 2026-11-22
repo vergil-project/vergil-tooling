@@ -10,30 +10,52 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import cd_runs, config, git, github, progress, version
+from vergil_tooling.lib import cd_runs, config, git, github, host_versions, progress, version
 from vergil_tooling.lib.checkout_lock import checkout_lock
 from vergil_tooling.lib.managed_worktree import (
     ManagedWorktreeError,
     adopt_worktree,
+    create_detached_worktree,
     create_worktree,
     worktree_path,
 )
 from vergil_tooling.lib.package import PackageError
 from vergil_tooling.lib.package.index import published
+from vergil_tooling.lib.pending_release import (
+    PendingRelease,
+    PendingReleaseError,
+    gather_release_contents,
+)
 from vergil_tooling.lib.process_errors import command_text, error_text
+from vergil_tooling.lib.release import state
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
-from vergil_tooling.lib.release.tracking import find_existing_tracking_issue
+from vergil_tooling.lib.release.resume import (
+    _SEARCH_COMMAND,
+    BRANCH_STAGES,
+    _open_release_issues,
+    check_release_version,
+    first_undone,
+    restore_context,
+    verify_facts,
+)
+from vergil_tooling.lib.release.supersede import absorb, load_superseded
+from vergil_tooling.lib.release.tracking import read_state, render_contents
 from vergil_tooling.lib.self_repo import is_self_repo
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
 from vergil_tooling.lib.update_deps.pr import FIX_TASK_PREFIX
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from pathlib import Path
+    from collections.abc import Callable, Sequence
+
+    from vergil_tooling.lib.release.state import IssueEntry
+    from vergil_tooling.lib.release.supersede import Superseded
 
 _VERSION_OVERRIDE_FIELDS = ("minor", "major")
+# The bump a release superseding an untagged one takes by default (spec §4.7).
+_PATCH = "patch"
 
 # The "Fix task: <url>" line vrg-update-deps writes into a failed PR's body.
 _FIX_TASK_RE = re.compile(rf"^{re.escape(FIX_TASK_PREFIX)}(\S+)\s*$", re.MULTILINE)
@@ -78,25 +100,24 @@ def preflight(
     resume_version: str | None = None,
     resume_issue_number: int | None = None,
     allow_pending_deps: bool = False,
+    stages: Sequence[str] = (),
+    supersede: str | None = None,
 ) -> ReleaseContext:
     """Run all preflight checks and return an initialized ReleaseContext.
 
-    Every run first brings the root checkout's clean ``develop`` up to
-    ``origin/develop`` under the checkout lock (:func:`_check_branch_and_tree`),
-    so a release is cut from the newest head rather than refused when a merge
-    landed since the last pull (spec §6.6 of epic vergil-project/.github#1218).
+    Every run first checks the host, the GitHub authentication and the
+    config. A fresh start then brings the root checkout's clean ``develop`` up
+    to ``origin/develop`` under the checkout lock
+    (:func:`_check_branch_and_tree`), so a release is cut from the newest head
+    rather than refused when a merge landed since the last pull (spec §6.6 of
+    epic vergil-project/.github#1218).
 
-    On *resume* (#1612), the version comes from the adopted tracking issue
-    (*resume_version*) rather than the develop VERSION file (which may already
-    be bumped); the checks that assume a fresh start are skipped — the version
-    is expected to be tagged and the tracking issue is expected to exist — an
-    existing release branch is adopted rather than refused, and the adopted
-    issue (*resume_issue_number*) is pre-set on the context.
+    On *resume* only those first three checks run (:func:`_resume_context`):
+    the release it adopts passed every fresh-start check when it began (spec
+    §4.3 of epic vergil-project/.github#1440).
 
     A fresh start refuses when ``origin/main`` has commits ``origin/develop``
-    lacks (#3527), before any other fresh-start check. A resume skips it: the
-    release it adopts may sit between merge-release and back-merge-bump, where
-    main is ahead of develop by design.
+    lacks (#3527), before any other fresh-start check.
 
     A fresh start also refuses while any open PR carries the
     ``dependency-update`` label (spec §5.3, epic vergil-project/.github#381);
@@ -104,65 +125,176 @@ def preflight(
     recorded on the context so the prepare-stage comment names them. Before
     the gate, a PR whose fix task closed as completed is closed (its update
     landed through the fix PR) and recorded as cleared (#3286); the bypass
-    applies only to what still blocks after that. A resume skips the gate —
-    the release it adopts already passed it.
+    applies only to what still blocks after that.
 
     A fresh start last requires a green develop CD run for the develop head it
     releases (:func:`check_develop_cd`, spec §6.6 of epic
     vergil-project/.github#1218). It runs after every other check, since it
-    may wait on a CD run in progress. A resume skips it too: the release it
-    adopts already passed it.
+    may wait on a CD run in progress.
+
+    With *supersede* (``X.Y.Z``), the fresh start takes the place of that
+    open release (spec §4.7 of epic vergil-project/.github#1440): its state is
+    read under the identity rule and checked (:func:`supersede.load_superseded`),
+    the open-release check exempts it, and its issues are absorbed into this
+    release's list. When it is untagged, the main-ahead check accepts the
+    release commit it left on ``main``, and the release takes its next patch,
+    ``X.Y.(Z+1)``, unless *version_override* bumps ``minor`` or ``major``.
     """
     _check_host_prerequisites()
     repo = check_gh_auth()
     _read_and_validate_config(repo_root)
+    if resume:
+        return _resume_context(
+            repo,
+            repo_root,
+            version_override=version_override,
+            resume_version=resume_version,
+            resume_issue_number=resume_issue_number,
+            stages=stages,
+        )
     _check_branch_and_tree(repo_root)
 
-    if resume and resume_version is not None:
-        release_version = resume_version
+    try:
+        current_version = version.show(repo_root)
+    except (FileNotFoundError, version.VersionSyncError, version.CargoVersionError) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command="version.show",
+            message=str(exc),
+        ) from exc
+
+    superseded = None if supersede is None else load_superseded(repo, repo_root, supersede, stages)
+    bump = _release_bump(current_version, version_override, superseded)
+    if bump is not None:
+        release_version = _compute_release_version(current_version, bump)
     else:
-        try:
-            current_version = version.show(repo_root)
-        except (FileNotFoundError, version.VersionSyncError, version.CargoVersionError) as exc:
-            raise ReleaseError(
-                phase="preflight",
-                command="version.show",
-                message=str(exc),
-            ) from exc
+        release_version = current_version
 
-        if version_override in _VERSION_OVERRIDE_FIELDS:
-            release_version = _compute_release_version(current_version, version_override)
-        else:
-            release_version = current_version
-
-    deps_gate = _DepsGateOutcome(cleared=[], bypassed=[], undeleted=[])
-    if not resume:
-        _check_main_not_ahead_of_develop()
-        _check_version_not_tagged(release_version)
-        _check_no_existing_tracking_issue(repo, release_version)
-        _check_packages_unpublished(repo, repo_root, release_version)
-        deps_gate = _check_pending_deps(repo, allow=allow_pending_deps)
-        _develop_cd_gate(repo)
+    _check_main_not_ahead_of_develop(accept=None if superseded is None else superseded.main_commit)
+    _check_version_not_tagged(release_version)
+    _check_no_open_release(repo, exempt=None if superseded is None else superseded.number)
+    _check_packages_unpublished(repo, repo_root, release_version)
+    deps_gate = _check_pending_deps(repo, allow=allow_pending_deps)
+    _develop_cd_gate(repo)
 
     branch = f"release/{release_version}"
-    worktree = _acquire_release_worktree(repo_root, branch, resume=resume)
+    worktree = _acquire_release_worktree(repo_root, branch, resume=False)
     os.chdir(worktree)
+    cut, pending, issues = _release_contents(worktree, superseded)
 
     print(f"Preflight passed: {repo} v{release_version} — worktree {worktree}")
     ctx = ReleaseContext(
         repo=repo,
         version=release_version,
         repo_root=repo_root,
-        version_override=version_override,
+        version_override=bump,
         release_branch=branch,
+        cut=cut,
+        pending_release=pending,
+        issues=issues,
         worktree_path=worktree,
         bypassed_deps_prs=deps_gate.bypassed,
         cleared_deps_prs=deps_gate.cleared,
         undeleted_deps_branches=deps_gate.undeleted,
+        superseded=superseded,
     )
-    if resume_issue_number is not None:
-        ctx.issue_number = resume_issue_number
-        ctx.issue_url = f"https://github.com/{repo}/issues/{resume_issue_number}"
+    return ctx
+
+
+def _release_bump(
+    current: str, version_override: str | None, superseded: Superseded | None
+) -> str | None:
+    """The version bump a fresh start applies on its release branch, or None for none.
+
+    *version_override* (``minor`` or ``major``) when given. A release that
+    supersedes an untagged one otherwise takes its next patch: that release
+    never reached ``back-merge-bump``, so ``develop``'s VERSION is still
+    its version, which must be so (spec §4.7 of epic vergil-project/.github#1440).
+    ``develop``'s VERSION is otherwise released as it is.
+    """
+    if superseded is not None and superseded.untagged and current != superseded.version:
+        raise ReleaseError(
+            phase="preflight",
+            command="version.show",
+            message=(
+                f"develop's VERSION is {current}, but superseded release "
+                f"{superseded.version} halted before its back-merge, so it should still be "
+                f"{superseded.version}. Find out what changed it before superseding."
+            ),
+        )
+    if version_override in _VERSION_OVERRIDE_FIELDS:
+        return version_override
+    if superseded is not None and superseded.untagged:
+        return _PATCH
+    return None
+
+
+def _resume_context(
+    repo: str,
+    repo_root: Path,
+    *,
+    version_override: str | None,
+    resume_version: str | None,
+    resume_issue_number: int | None,
+    stages: Sequence[str],
+) -> ReleaseContext:
+    """The context a resume runs with, rebuilt from the tracking issue's state block.
+
+    The state is read under the identity rule (:func:`tracking.read_state`),
+    its facts are checked against GitHub and git (:func:`resume.verify_facts`)
+    and restored on the context. The release worktree is adopted only when
+    the first undone stage is at or before ``merge-release``, the last stage
+    that works on ``release/<version>``, and a missing branch is then a
+    refusal (#4886). The branch's VERSION is then held to the target version
+    the state records (:func:`resume.check_release_version`, #4899): a bump
+    the stopped run did not commit is completed by ``prepare``, and any other
+    VERSION is refused. Past it, up to ``teardown-worktree``, the branch is not
+    needed, and GitHub deletes it once the release PR merges, so
+    :func:`_post_merge_worktree` sets up the worktree without it (#4889).
+    After ``teardown-worktree`` the run stays in the root checkout, since
+    every later stage runs from it and ``finalize`` may already have pruned
+    the release branches (spec §4.3 of epic vergil-project/.github#1440).
+    """
+    if resume_version is None or resume_issue_number is None or not stages:
+        raise ReleaseError(
+            phase="preflight",
+            command="preflight",
+            message=(
+                "A resume needs the tracking issue's version and number and the "
+                "pipeline's stages; the resume lookup did not provide them."
+            ),
+        )
+    branch = f"release/{resume_version}"
+    ctx = ReleaseContext(
+        repo=repo,
+        version=resume_version,
+        repo_root=repo_root,
+        version_override=version_override,
+        release_branch=branch,
+        issue_number=resume_issue_number,
+        issue_url=f"https://github.com/{repo}/issues/{resume_issue_number}",
+    )
+    current = read_state(ctx)
+    verify_facts(ctx, current)
+    restore_context(ctx, current)
+    first = first_undone(current, stages)
+    on_branch = first is not None and stages.index(first) <= stages.index("merge-release")
+    if on_branch:
+        ctx.worktree_path = _acquire_release_worktree(repo_root, branch, resume=True)
+    elif first is not None and stages.index(first) <= stages.index(BRANCH_STAGES[-1]):
+        ctx.worktree_path = _post_merge_worktree(
+            repo_root, branch, needed="back-merge-bump" not in current.done
+        )
+    if ctx.worktree_path is not None:
+        os.chdir(ctx.worktree_path)
+        where = f"worktree {ctx.worktree_path}"
+    else:
+        os.chdir(repo_root)
+        where = f"root checkout {repo_root}"
+    if on_branch:
+        check_release_version(ctx, current)
+    resume_at = first or "nothing left undone"
+    print(f"Preflight passed: {repo} v{resume_version} — resuming at {resume_at} in {where}")
     return ctx
 
 
@@ -422,6 +554,37 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
     )
 
 
+def _release_contents(
+    worktree: Path, superseded: Superseded | None = None
+) -> tuple[str, PendingRelease, tuple[IssueEntry, ...]]:
+    """The commit a fresh release branch is cut from, what ``main..<cut>`` holds, and its issues.
+
+    The new branch's worktree is at the ``develop`` commit preflight synced
+    to, so its ``HEAD`` is the cut. The pending release and the issue list
+    are read pinned to it, never to whatever ``origin/develop`` holds by
+    then, and printed as the tracking issue's Contents section will show
+    them, before the tracking issue is created. An incomplete lookup refuses
+    the release (spec §4.1 of epic vergil-project/.github#1440). A release
+    that supersedes another absorbs its issues (spec §4.7).
+    """
+    cut = git.read_output("-C", str(worktree), "rev-parse", "HEAD")
+    try:
+        pending, issues = gather_release_contents(cut=cut)
+    except PendingReleaseError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"gather pending release main..{cut[:7]}",
+            message=f"Could not read what the release contains: {exc}",
+        ) from exc
+    if superseded is None:
+        print(render_contents(pending, issues))
+        return cut, pending, issues
+    absorbed = tuple(issue.ref for issue in superseded.issues)
+    issues = absorb(superseded.issues, issues)
+    print(render_contents(pending, issues, supersedes=superseded.version, absorbed=absorbed))
+    return cut, pending, issues
+
+
 def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> Path:
     """Create the managed worktree on *branch* off develop, or adopt it on resume.
 
@@ -430,13 +593,29 @@ def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> 
     release branch (the lock), unless it is the leftover of an interrupted run
     that recorded nothing, which it adopts (#4367, :func:`_adopt_unrecorded_branch`);
     a resume adopts it — creating the local branch from origin if needed, then
-    attaching a worktree (#1612).
+    attaching a worktree (#1612). A resume whose branch exists neither locally
+    nor on origin refuses, naming it, rather than cutting a new one from
+    develop (#4886). A resume calls this only before ``merge-release`` is
+    done, while the branch must still exist; past it, GitHub deletes the
+    merged branch, and :func:`_post_merge_worktree` is used instead (#4889).
 
     Every git failure on the way, on the fresh path as on the resume path,
     surfaces as a :class:`ReleaseError` naming the branch, the worktree and
     the recovery step, never as a raw ``CalledProcessError`` (#4442).
     """
     exists = git.ref_exists(branch) or git.ref_exists(f"origin/{branch}")
+    if resume and not exists:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"git rev-parse --verify {branch} origin/{branch}",
+            message=(
+                f"Release branch '{branch}' is missing both locally and on origin, "
+                "so `vrg-release --resume` cannot adopt it, and a resume never cuts "
+                "a new one from develop. Find out what removed the branch and "
+                "restore it (for example, push it back to origin from a clone that "
+                "still has it), then re-run `vrg-release --resume`."
+            ),
+        )
     try:
         if exists and not resume:
             return _adopt_unrecorded_branch(repo_root, branch)
@@ -466,6 +645,83 @@ def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> 
         ) from exc
 
 
+def _post_merge_worktree(repo_root: Path, branch: str, *, needed: bool) -> Path | None:
+    """The worktree a resume past ``merge-release`` runs in, never needing *branch* (#4889).
+
+    Once the release PR has merged, no stage reads ``release/<version>``, and
+    the fleet's ``delete_branch_on_merge`` has GitHub delete it on origin, so
+    a clone that never had it locally has no copy at all. The managed
+    worktree path is reused when it is there, whichever branch it is on (an
+    earlier run's ``back-merge-bump`` may have switched it to the post
+    branch); a path that is not a git worktree of its own is refused, since
+    git run there would act on the root checkout. With no worktree, one is
+    created detached at ``develop`` only when *needed* (``back-merge-bump``
+    is not done: it checks out its post branch in the worktree, never in the
+    root checkout). Otherwise the run needs none: it returns None, and
+    ``teardown-worktree`` has nothing to remove.
+    """
+    path = worktree_path(repo_root, branch)
+    if path.exists():
+        _check_is_worktree(path)
+        print(f"Reusing the release worktree {path}.")
+        return path
+    if not needed:
+        return None
+    try:
+        path = create_detached_worktree(repo_root, branch=branch, base="develop")
+    except ManagedWorktreeError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"git worktree add --detach {path} develop",
+            message=str(exc),
+            detail=exc.detail,
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=command_text(exc.cmd),
+            message=(
+                f"A git command failed while creating the release worktree {path}, "
+                "detached at develop, for back-merge-bump. Fix the cause git reports "
+                "below, then re-run `vrg-release --resume`."
+            ),
+            detail=error_text(exc),
+        ) from exc
+    print(
+        f"Created the release worktree {path}, detached at develop: the release PR "
+        f"has merged, so '{branch}' is no longer needed."
+    )
+    return path
+
+
+def _check_is_worktree(path: Path) -> None:
+    """Refuse *path* unless it is the top level of a git worktree of its own."""
+    command = f"git -C {path} rev-parse --show-toplevel"
+    try:
+        top = git.read_output("-C", str(path), "rev-parse", "--show-toplevel")
+    except subprocess.CalledProcessError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=command,
+            message=(
+                f"The release worktree path {path} exists, but git cannot read it as "
+                "a worktree. Find out what is there, remove it, then re-run "
+                "`vrg-release --resume`."
+            ),
+            detail=error_text(exc),
+        ) from exc
+    if Path(top).resolve() != path.resolve():
+        raise ReleaseError(
+            phase="preflight",
+            command=command,
+            message=(
+                f"The release worktree path {path} exists but is not a git worktree: "
+                f"git resolves it to {top}. Find out what is there, remove it, then "
+                "re-run `vrg-release --resume`."
+            ),
+        )
+
+
 def _adopt_unrecorded_branch(repo_root: Path, branch: str) -> Path:
     """Adopt a release branch an interrupted fresh run left with no record (#4367).
 
@@ -473,7 +729,7 @@ def _adopt_unrecorded_branch(repo_root: Path, branch: str) -> Path:
     the tracking issue, so a run stopped in between (an interrupt, a crash)
     leaves a local branch that nothing records and that a fresh run would
     otherwise refuse as an existing release. A fresh run reaches this only
-    after it has confirmed that no open tracking issue exists for the version.
+    after it has confirmed that no release tracking issue is open.
 
     The branch is adopted only when nothing on it can be lost: it is local, it
     was never pushed (``ls-remote`` asks origin itself, not the possibly stale
@@ -565,6 +821,8 @@ def _check_leftover_worktree(path: Path, branch: str) -> None:
 def _compute_release_version(current: str, override: str) -> str:
     """Compute the target release version without modifying any files."""
     parts = current.split(".")
+    if override == _PATCH:
+        return f"{parts[0]}.{parts[1]}.{int(parts[2]) + 1}"
     if override == "minor":
         return f"{parts[0]}.{int(parts[1]) + 1}.0"
     return f"{int(parts[0]) + 1}.0.0"
@@ -747,7 +1005,7 @@ def audit_repo_config(repo: str, *, in_tree_templates: bool = False) -> None:
     )
 
 
-def _check_main_not_ahead_of_develop() -> None:
+def _check_main_not_ahead_of_develop(*, accept: str | None = None) -> None:
     """Refuse a fresh release while ``origin/main`` has commits develop lacks (#3527).
 
     A completed release leaves main contained in develop: back-merge-bump
@@ -758,11 +1016,26 @@ def _check_main_not_ahead_of_develop() -> None:
     late, at merge-release; here nothing is cut yet. Develop being ahead of
     main is normal and never refuses. A failed fetch or compare refuses too —
     an unknown answer never reads as "not diverged".
+
+    *accept* is the release commit an untagged release that this one
+    supersedes left on main (spec §4.7 of epic vergil-project/.github#1440):
+    main may be ahead by that commit and its ancestors, and by nothing else.
+    The superseding release's back-merge reconciles it.
     """
     command = "git log origin/develop..origin/main"
     try:
         git.run("fetch", "origin", "main")
         ahead = git.read_output("log", "--format=%h %s", "origin/develop..origin/main")
+        if ahead and accept is not None:
+            ahead = git.read_output(
+                "log", "--format=%h %s", "origin/develop..origin/main", f"^{accept}"
+            )
+            if not ahead:
+                print(
+                    f"Main/develop check passed: origin/main is ahead only by the superseded "
+                    f"release commit {accept[:12]}, which this release's back-merge reconciles"
+                )
+                return
     except subprocess.CalledProcessError as exc:
         raise ReleaseError(
             phase="preflight",
@@ -840,17 +1113,58 @@ def _check_packages_unpublished(repo: str, repo_root: Path, ver: str) -> None:
         print(f"Package check passed: {len(identities)} package(s) not yet published by {repo}")
 
 
-def _check_no_existing_tracking_issue(repo: str, ver: str) -> None:
-    existing = find_existing_tracking_issue(repo, ver)
-    if existing is not None:
-        raise ReleaseError(
-            phase="preflight",
-            command=f"gh issue list --search 'release: {ver}'",
-            message=(
-                f"A tracking issue already exists for version {ver}: {existing}\n"
-                f"Close the stale issue or investigate before re-running."
-            ),
+def _open_release_recovery(repo: str, ver: str, number: int, body: str) -> str:
+    """The line naming open release *ver* (issue *number*) and how to finish it."""
+    url = f"https://github.com/{repo}/issues/{number}"
+    try:
+        state.parse_state(body)
+    except state.StateBlockError as exc:
+        if state.BEGIN not in body and state.END not in body:
+            return (
+                f"release {ver} ({url}) has no release state block: older vrg-release "
+                "tooling opened it, and `vrg-release --resume` cannot finish it. Finish "
+                "that release by hand, then close the issue."
+            )
+        return (
+            f"release {ver} ({url}) has a state block that cannot be read ({exc}). "
+            f"Fix the block, then finish it with `vrg-release --resume {ver}`."
         )
+    return f"release {ver} ({url}) is open. Finish it with `vrg-release --resume {ver}`."
+
+
+def _check_no_open_release(repo: str, *, exempt: int | None = None) -> None:
+    """Refuse a fresh start while any ``release: X.Y.Z`` tracking issue is open.
+
+    *exempt* is the tracking issue a ``--supersede`` run takes the place of
+    (spec §4.7 of epic vergil-project/.github#1440); only it may stay open.
+
+    One release runs at a time (spec §4.7 of epic vergil-project/.github#1440),
+    whatever its version. Each open release is named with its recovery: the
+    ``vrg-release --resume`` that finishes it, or, for an issue with no state
+    block (left by older tooling), finishing it by hand and closing the issue.
+    """
+    issues = [i for i in _open_release_issues(repo, phase="preflight") if i[1] != exempt]
+    if not issues:
+        if exempt is None:
+            print("Open-release check passed: no release is in flight")
+        else:
+            print(f"Open-release check passed: only the superseded release #{exempt} is open")
+        return
+    # Versions order as semantic versions (2.0.9 before 2.0.10), never as
+    # strings (#4877); the issue number breaks a tie.
+    by_version = functools.cmp_to_key(host_versions.compare)
+    lines = [
+        f"- {_open_release_recovery(repo, ver, number, body)}"
+        for ver, number, body in sorted(issues, key=lambda i: (by_version(i[0]), i[1]))
+    ]
+    raise ReleaseError(
+        phase="preflight",
+        command=_SEARCH_COMMAND,
+        message=(
+            "One release runs at a time, and a fresh vrg-release refuses while "
+            "another is open:\n" + "\n".join(lines)
+        ),
+    )
 
 
 # -- the develop-CD gate (epic vergil-project/.github#1218, spec §6.6) ---------

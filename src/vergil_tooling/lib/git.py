@@ -418,14 +418,15 @@ def ref_exists(ref: str) -> bool:
     return result.returncode == 0
 
 
-def is_ancestor(ancestor: str, descendant: str) -> bool:
+def is_ancestor(ancestor: str, descendant: str, repo: Path | None = None) -> bool:
     """Return True if *ancestor* is an ancestor of (or equal to) *descendant*.
 
     ``git merge-base --is-ancestor`` exits 0 for yes and 1 for no; any other
     exit (e.g. 128 for an unknown commit) is an error and raises
-    ``CalledProcessError`` rather than reading as a silent "no".
+    ``CalledProcessError`` rather than reading as a silent "no". *repo* runs
+    it in that repository instead of the CWD's.
     """
-    args = ("merge-base", "--is-ancestor", ancestor, descendant)
+    args = (*_in_repo(repo), "merge-base", "--is-ancestor", ancestor, descendant)
     result = subprocess.run(  # noqa: S603
         ("git", *args),  # noqa: S607
         check=False,

@@ -10,7 +10,7 @@ commit under them on uv's managed Python 3.15, with no uv config file and no
 reports that exact release.
 
 vergil-tooling's own release runs it on the Mac, through ``vergil.toml``'s
-``[publish].consumer-refresh``, with the just-released version, and any other
+``[publish].install``, with the just-released version, and any other
 host runs it to move to a new release. It is the installed vergil-tooling
 installing the new one: if the installed copy is broken, install by hand
 (docs/site/docs/getting-started.md) while the bug is fixed.

@@ -680,8 +680,9 @@ still be stopped before auto-merge lands it.
 - **At submit.** `vrg-submit-pr` opens PRs against `develop` only. It
   runs the check on each PR immediately before turning auto-merge on.
   A violation leaves auto-merge off and fails that PR's submit.
-- **In `vrg-finalize-pr`'s watch phase.** `vrg-submit-pr` runs
-  finalize by default (`--no-finalize` opts out). Finalize watches and
+- **In `vrg-finalize-pr`'s watch phase.** `vrg-submit-pr` always runs
+  finalize (`--no-finalize` was removed by epic
+  vergil-project/.github#1440). Finalize watches and
   settles the PRs; it never merges one, and never turns auto-merge on.
   It runs the check on every listed PR when the watch starts, and again
   each time it sees a new head on a PR.
@@ -744,8 +745,7 @@ raised before any side effect, that names this rule.
 
 **The accepted gap.** The check is not a required status check, and
 it does not run continuously. It does not cover a PR between finalize
-runs, after a finalize run stops watching it, or one submitted with
-`--no-finalize` once submit returns. An agent action on such a PR is
+runs, or after a finalize run stops watching it. An agent action on such a PR is
 not caught before auto-merge lands it; the next finalize run that
 lists it reports it. This gap is accepted. It is to be revisited if
 any agent identity is given server-side rights to act on PRs beyond

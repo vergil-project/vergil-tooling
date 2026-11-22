@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import changelog, git, github, pr_create, version
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.merge import known_pr_state
+from vergil_tooling.lib.release.supersede import close_superseded, superseded_issue
 from vergil_tooling.lib.release.tracking import create_tracking_issue
 
 if TYPE_CHECKING:
@@ -26,11 +27,28 @@ def prepare(ctx: ReleaseContext) -> None:
     if not already adopted; if the release PR already exists the rest is
     skipped and ``release_pr_url`` hydrated; the changelog commit is skipped if
     it is already on the branch; the push is naturally idempotent.
+
+    A release that supersedes another closes the superseded tracking issue
+    once its own exists and its release PR is open or adopted
+    (:func:`_close_superseded`), on a resume too while that issue is still
+    open. Closing it last means the release branch's version bump is already
+    committed and pushed when a failure there sends the human to
+    ``--resume``, which adopts the PR.
+
+    The bump is ``ctx.version_override``, recorded in the state block as
+    ``version_bump``. A resume sets it only when the release branch's VERSION
+    is the one the bump starts from (:func:`resume.check_release_version`,
+    #4899), and the bump must then reach ``ctx.version``, the target.
     """
     if ctx.issue_number is None:
         create_tracking_issue(ctx)
         print(f"Tracking issue created: {ctx.issue_url}")
+    _prepare_branch(ctx)
+    _close_superseded(ctx)
 
+
+def _prepare_branch(ctx: ReleaseContext) -> None:
+    """Adopt the release branch's open or merged PR, or bump, changelog, push and open it."""
     branch = ctx.release_branch
     if branch is None:
         raise ReleaseError(
@@ -41,6 +59,7 @@ def prepare(ctx: ReleaseContext) -> None:
 
     existing = github.pr_for_branch(branch)
     if existing is not None:
+        _refuse_pending_bump(ctx, branch, str(existing["url"]))
         ctx.release_pr_url = str(existing["url"])
         print(f"Release PR already exists: {ctx.release_pr_url}")
         return
@@ -56,14 +75,12 @@ def prepare(ctx: ReleaseContext) -> None:
     # adopts the PR or fails loud.
     merged = github.closed_pr_for_branch(branch)
     if merged is not None and known_pr_state(str(merged["url"])) == "MERGED":
+        _refuse_pending_bump(ctx, branch, str(merged["url"]))
         _adopt_merged_pr(ctx, branch, merged)
         return
 
     if ctx.version_override is not None:
-        print(f"Applying version override: {ctx.version_override}")
-        version.bump(ctx.work_root, ctx.version_override)
-        git.run("add", "-A")
-        git.run("commit", "-m", f"chore(release): bump version to {ctx.version}")
+        _apply_bump(ctx, ctx.version_override)
 
     _generate_changelog(ctx)
 
@@ -72,6 +89,76 @@ def prepare(ctx: ReleaseContext) -> None:
 
     ctx.release_pr_url = _create_pr(ctx, branch)
     print(f"Release PR created: {ctx.release_pr_url}")
+
+
+def _apply_bump(ctx: ReleaseContext, bump: str) -> None:
+    """Commit the *bump* of the release branch's VERSION, refusing unless it reaches the target.
+
+    The target is ``ctx.version``, recorded in the state block before any
+    branch work (#4899). A bump that would move VERSION anywhere else is
+    refused before anything is written.
+    """
+    current = version.show(ctx.work_root)
+    reached = version.next_version(current, bump)
+    if reached != ctx.version:
+        raise ReleaseError(
+            phase="prepare",
+            command="version.bump",
+            message=(
+                f"A {bump} bump of the release branch's VERSION {current} gives {reached}, "
+                f"not the release's target version {ctx.version}. Refusing to bump."
+            ),
+        )
+    print(f"Applying the {bump} version bump: {current} -> {ctx.version}")
+    version.bump(ctx.work_root, bump)
+    git.run("add", "-A")
+    git.run("commit", "-m", f"chore(release): bump version to {ctx.version}")
+
+
+def _refuse_pending_bump(ctx: ReleaseContext, branch: str, url: str) -> None:
+    """Refuse to adopt release PR *url* while the release branch still lacks its version bump.
+
+    A resume sets the bump to complete only when the branch's VERSION is the
+    one before it (:func:`resume.check_release_version`); a PR opened from
+    that branch would carry the wrong version, so it is never adopted.
+    """
+    if ctx.version_override is None:
+        return
+    raise ReleaseError(
+        phase="prepare",
+        command=f"gh pr list --head {branch}",
+        message=(
+            f"Release PR {url} exists for '{branch}', but the branch has not had its "
+            f"{ctx.version_override} bump to the target version {ctx.version}, so the "
+            "PR carries another version. Inspect the PR and the branch before resuming."
+        ),
+    )
+
+
+def _close_superseded(ctx: ReleaseContext) -> None:
+    """Close the tracking issue of the release this one supersedes, if it does (spec §4.7).
+
+    The state block names the superseded version, and records its release
+    commit on main when it was untagged, whose release branch and worktree
+    are then removed. A fresh run knows the issue from preflight; a resume
+    finds it among the open release issues, and finds none once it is closed.
+    """
+    current = ctx.state
+    if current is None or current.supersedes is None:
+        return
+    old = current.supersedes
+    number = (
+        ctx.superseded.number if ctx.superseded is not None else superseded_issue(ctx.repo, old)
+    )
+    close_superseded(
+        ctx.repo,
+        number,
+        ctx.version,
+        superseded_version=old,
+        new_issue_url=str(ctx.issue_url),
+        untagged=current.superseded_main_commit is not None,
+        repo_root=ctx.repo_root,
+    )
 
 
 def _adopt_merged_pr(ctx: ReleaseContext, branch: str, merged: dict[str, str]) -> None:

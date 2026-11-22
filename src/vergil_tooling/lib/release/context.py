@@ -8,6 +8,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from vergil_tooling.lib.pending_release import PendingRelease
+    from vergil_tooling.lib.release.state import IssueEntry, StateBlock
+    from vergil_tooling.lib.release.supersede import Superseded
+
+# The package-index stage's name, by which a deferred index miss is listed.
+INDEX_STAGE = "package-index"
+
 
 @dataclass
 class ReleaseContext:
@@ -18,6 +25,12 @@ class ReleaseContext:
     repo_root: Path
     version_override: str | None
 
+    # True on vrg-release --resume: cd-publish then delivers the CD publish
+    # jobs that a fresh run only records, and package-index dispatches the
+    # index workflow itself before it waits (spec §4.5 of epic
+    # vergil-project/.github#1440).
+    resume: bool = False
+
     issue_number: int | None = None
     issue_url: str | None = None
     # The stage checklist block the tracking issue is created with, rendered
@@ -26,6 +39,26 @@ class ReleaseContext:
     # anywhere in prepare leaves a release that --resume can pick up (#4367).
     progress_block: str | None = None
     release_branch: str | None = None
+    # The develop commit a fresh start cuts the release branch from, and what
+    # main..cut holds: the tracking issue's Contents section and state block
+    # are built from them (spec §4.1-§4.2 of epic vergil-project/.github#1440).
+    # Unset on a resume, whose cut is in the state block.
+    cut: str | None = None
+    pending_release: PendingRelease | None = None
+    # The issues the release contains, from its PRs' closing references, and
+    # on vrg-release --supersede those absorbed from the superseded release.
+    issues: tuple[IssueEntry, ...] = ()
+    # The open release a fresh vrg-release --supersede takes the place of,
+    # read and checked by preflight (spec §4.7 of epic
+    # vergil-project/.github#1440). Unset on a resume, whose state block
+    # records the superseded version.
+    superseded: Superseded | None = None
+    # The tracking issue's state block as last read or written by this run.
+    state: StateBlock | None = None
+    # The identity-rule warnings (foreign traces on the tracking issue) this
+    # run has printed, so each prints once per run however often the state
+    # is read (spec §4.2 of epic vergil-project/.github#1440).
+    tracking_warnings: set[str] = field(default_factory=set)
     release_pr_url: str | None = None
 
     # Managed worktree all release branch work happens in, so the root
@@ -46,6 +79,8 @@ class ReleaseContext:
     cd_run_id: str | None = None
     cd_run_url: str | None = None
     tag: str | None = None
+    # The commit the tag peels to, recorded in the state block by confirm-main.
+    tag_commit: str | None = None
     release_url: str | None = None
 
     develop_cd_run_id: str | None = None
@@ -57,38 +92,38 @@ class ReleaseContext:
     # stage has not succeeded.
     package_index_urls: tuple[str, ...] = ()
 
-    # What the consumer-refresh stage leaves for the human to read below the
-    # summary: the commands to run by hand (--no-install), the notice that
-    # none is configured, or a failed run's full output. None after a run
-    # that succeeded.
-    consumer_refresh_message: str | None = None
+    # What the install stage leaves for the human to read below the summary:
+    # a failed run's full output. None after a run that succeeded, or with
+    # none configured.
+    install_message: str | None = None
 
-    # The version-expanded consumer-refresh command block the stage runs
-    # (issue #1643). None when no template is configured.
-    consumer_refresh_commands: str | None = None
+    # The version-expanded [publish].install command block the stage runs
+    # (issue #1643). None when no install is configured.
+    install_commands: str | None = None
 
-    # False with --no-install: the consumer-refresh stage shows the commands
-    # instead of running them.
-    install: bool = True
+    # What this run's release-records stage did: the records it posted, and
+    # the issues it found already holding a counting record (spec §4.9 of
+    # epic vergil-project/.github#1440).
+    records_new: int = 0
+    records_found: int = 0
 
-    # Names of fail-defer stages that errored. close-finalize leaves the
-    # tracking issue open (and skips cleanup) when any are pending, so the
-    # release stays resumable (#1612).
+    # Names of the stages that failed in this run, deferred publishes
+    # included, in pipeline order. The hold rule (release.handoff.holds)
+    # reads it: a later stage that needs a failed one does not run, so the
+    # tracking issue stays open for vrg-release --resume (#1612; spec §4.4 of
+    # epic vergil-project/.github#1440). A stage an earlier run failed is not
+    # recorded done, so a resume runs it again and lists it here if it fails.
     deferred_failures: list[str] = field(default_factory=list)
 
-    # Families of CD publish jobs that did not succeed (e.g. "docker-publish",
-    # "docs"). The release itself is valid (tag + Release published); these are
-    # re-publishable. Surfaced by the publish-status stage (exit 1), the open
-    # tracking issue, and the consumer-refresh hold-warning. Separate from
-    # deferred_failures, which the _tracked wrapper fills with failed STAGE
-    # names (#1853).
-    deferred_publish_failures: list[str] = field(default_factory=list)
-
-    promote: bool = True
+    # True once this run's package-index stage missed the release in the
+    # index. The stage runs again on every resume until the state block
+    # records the index listed, so a miss is always this run's.
+    index_missed: bool = False
 
     # update-deps stage (epic vergil-project/.github#381, spec §5.1). Skipped
-    # with --without-deps. deps_failure is the human summary when the update
-    # did not land; publish-status repeats it.
+    # with --without-deps, given on the run or recorded in the state block by
+    # an earlier one. deps_failure is the human summary when the update did
+    # not land; publish-status repeats it.
     without_deps: bool = False
     deps_report: str | None = None
     deps_pr_url: str | None = None
@@ -113,6 +148,28 @@ class ReleaseContext:
     # (#3332). GitHub's delete-on-merge never covers a closed PR, so a leftover
     # is named in the prepare-stage tracking comment rather than left silent.
     undeleted_deps_branches: list[str] = field(default_factory=list)
+
+    @property
+    def deferred_publish_failures(self) -> list[str]:
+        """The publishes this release has deferred, derived from the state block.
+
+        Each failed CD publish job recorded in ``state.failed_jobs``, by its
+        job name and once however many runs it is recorded for, then
+        ``package-index`` when this run's index wait missed the release
+        (:attr:`index_missed`) and the state does not record it listed. The
+        release itself is valid (tag and GitHub Release published); these are
+        delivered by ``vrg-release --resume``. Separate from
+        ``deferred_failures``, which the ``_tracked`` wrapper fills with
+        failed stage names (#1853). Each read returns a new list: it is a
+        view, never written (spec §4.3 of epic vergil-project/.github#1440).
+        """
+        failures: list[str] = []
+        if self.state is not None:
+            failures.extend(dict.fromkeys(job.job for job in self.state.failed_jobs))
+        listed = self.state is not None and self.state.index_listed
+        if self.index_missed and not listed and INDEX_STAGE not in failures:
+            failures.append(INDEX_STAGE)
+        return failures
 
     @property
     def work_root(self) -> Path:

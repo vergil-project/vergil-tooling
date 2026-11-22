@@ -88,6 +88,7 @@ nav:
           - vrg-commit: reference/dev/commit.md
           - vrg-submit-pr: reference/dev/submit-pr.md
           - vrg-release: reference/dev/release.md
+          - vrg-release-record: reference/dev/release-record.md
           - vrg-update-deps: reference/dev/update-deps.md
           - vrg-finalize-pr: reference/dev/finalize-pr.md
           - vrg-branch-sweep: reference/dev/branch-sweep.md

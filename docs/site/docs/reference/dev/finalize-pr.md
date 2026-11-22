@@ -24,10 +24,10 @@ auto-merge on, and GitHub merges each one once its required checks pass.
 5. **Release.** With `--release`, and only on full success, it chains into
    `vrg-release`.
 
-`vrg-submit-pr` runs finalize itself by default, over every PR it opened,
-so finalize is normally run by hand only to watch PRs opened with
-`vrg-submit-pr --no-finalize`, to watch them again after a fix, or to
-settle `develop` after something merged on GitHub (`--cleanup-only`).
+`vrg-submit-pr` always runs finalize itself, over every PR it opened, so
+finalize is run by hand only to watch PRs again after a fix to a PR that
+did not merge, or to settle `develop` after something merged on GitHub
+(`--cleanup-only`).
 
 Must be run from the **main worktree**: the cleanup removes worktrees,
 which is unsafe when the calling shell's CWD is inside one.
@@ -51,7 +51,7 @@ which is unsafe when the calling shell's CWD is inside one.
   pre-answers the yes/no prompts, but not the menu.
 - `vrg-finalize-pr --cleanup-only`: no PRs and no watch. It runs the
   settle phase and the CD report only, never prompts and never reads
-  stdin. `vrg-release` runs it in its `close-finalize` stage, and a human
+  stdin. `vrg-release` runs it in its `finalize` stage, and a human
   runs it after an automated job merges a PR on GitHub. Its exit codes are
   a watched run's.
 
@@ -62,7 +62,7 @@ A PR list, `--all` and `--cleanup-only` are mutually exclusive.
 ```bash
 vrg-finalize-pr [PR[,PR…] | --all | --cleanup-only]
                 [--target-branch BRANCH] [--wait-cd]
-                [--release [--no-install]]
+                [--release]
                 [--clean-dirty] [--dry-run] [--yes]
 ```
 
@@ -75,8 +75,7 @@ vrg-finalize-pr [PR[,PR…] | --all | --cleanup-only]
 | `--cleanup-only` | Settle `develop` with no PRs: the sync, cleanup, provision and validate, then the CD report. Never prompts or reads stdin. |
 | `--target-branch` | The branch to sync and validate (default: `develop`). |
 | `--wait-cd` | Block on the CD run for the synced head and fail if it does not succeed. By default finalize reports that run's link and state without waiting. |
-| `--release` | On full success, chain into `vrg-release`, which installs by default. Refused on a repo that is not released (`[publish] release = true`), before any watch or cleanup. |
-| `--no-install` | With `--release`, run `vrg-release --no-install`. Refused without `--release`. |
+| `--release` | On full success, chain into `vrg-release` (install is part of every release). Refused on a repo that is not released (`[publish] release = true`), before any watch or cleanup. |
 | `--clean-dirty` | Opt-in: clear a merged/closed worktree whose only dirt is untracked build/validation output, after showing what will be deleted and confirming. Never touches modified tracked files or a reused-branch straggler with unmerged commits (issue #2348). |
 | `--dry-run` | Say what would be watched and done without changing anything. The settle phase's steps print what they would do. |
 | `--yes` | Pre-answer the interactive yes/no prompts. |
@@ -91,7 +90,7 @@ names what replaced it:
 | `--strategy` | Finalize no longer merges. `vrg-submit-pr` chooses the merge method when it turns auto-merge on: squash for a single-issue PR, rebase for a batch PR. |
 | `--no-wait-cd` | Not waiting on CD is the default; `--wait-cd` opts in to waiting. |
 | `--skip-post-checks` | One run watches every listed PR, then settles `develop` once. Pass the PRs as a comma list. |
-| `--install` | `--release` installs by default; `--no-install` opts out. |
+| `--install`, `--no-install` | Install is part of every release. |
 | `--allow-provenance-violation` | A provenance violation always fails: fix its cause, or fix the classifier if the violation is a false one. See [Provenance](#provenance). |
 
 ## Behavior
@@ -436,8 +435,7 @@ It then states the validate's result (`Validate: passed on <branch> at
 
 On **full success** (every PR merged with no provenance violation, the
 validate passed and, with `--wait-cd`, CD did not fail), finalize runs
-`vrg-release`, or `vrg-release --no-install` with `--no-install`. It
-starts after the lock is let go, so the release's preflight takes the
+`vrg-release`, which installs as part of every release. It starts after the lock is let go, so the release's preflight takes the
 lock, fast-forwards `develop` itself and cuts from the new head, even if
 another PR merged in between (see
 [The develop sync](../../guides/releasing.md#the-develop-sync)). Short of

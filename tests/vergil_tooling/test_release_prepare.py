@@ -112,7 +112,8 @@ def test_prepare_with_version_override() -> None:
         patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
         patch(_MOD + ".git.run", side_effect=capture_git_run),
-        patch(_MOD + ".version.bump", return_value="2.1.0"),
+        patch(_MOD + ".version.show", return_value="2.0.3"),
+        patch(_MOD + ".version.bump", return_value="2.1.0") as m_bump,
         patch(_MOD + "._generate_changelog"),
         patch(
             _MOD + ".github.create_pr",
@@ -121,9 +122,62 @@ def test_prepare_with_version_override() -> None:
     ):
         prepare(ctx)
 
+    m_bump.assert_called_once_with(ctx.work_root, "minor")
     commit_calls = [c for c in git_run_calls if c[0] == "commit"]
     assert len(commit_calls) == 1
     assert "bump version to 2.1.0" in commit_calls[0][2]
+
+
+def test_prepare_refuses_a_bump_that_misses_the_target_version() -> None:
+    # #4899: the bump must reach the target the state block records.
+    ctx = _ctx(version_override="minor")
+    with (
+        patch(_MOD + ".create_tracking_issue"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + ".version.show", return_value="2.1.0"),
+        patch(_MOD + ".version.bump") as m_bump,
+        pytest.raises(ReleaseError, match=r"VERSION 2\.1\.0 gives 2\.2\.0, not .* 2\.1\.0"),
+    ):
+        prepare(ctx)
+    m_bump.assert_not_called()
+    m_run.assert_not_called()
+
+
+def test_prepare_refuses_an_open_pr_while_the_bump_is_pending() -> None:
+    # #4899: a branch still lacking its bump has no release PR to adopt.
+    ctx = _ctx(version_override="minor")
+    with (
+        patch(_MOD + ".create_tracking_issue"),
+        patch(
+            _MOD + ".github.pr_for_branch",
+            return_value={"url": "https://github.com/owner/repo/pull/100"},
+        ),
+        patch(_MOD + ".version.bump") as m_bump,
+        pytest.raises(ReleaseError, match=r"pull/100 exists .* minor bump to the target"),
+    ):
+        prepare(ctx)
+    m_bump.assert_not_called()
+    assert ctx.release_pr_url is None
+
+
+def test_prepare_refuses_a_merged_pr_while_the_bump_is_pending() -> None:
+    ctx = _ctx(version_override="minor")
+    with (
+        patch(_MOD + ".create_tracking_issue"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={"url": "https://github.com/owner/repo/pull/880", "headRefOid": _HEAD},
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".version.bump") as m_bump,
+        pytest.raises(ReleaseError, match=r"pull/880 exists"),
+    ):
+        prepare(ctx)
+    m_bump.assert_not_called()
+    assert ctx.release_pr_url is None
 
 
 def test_prepare_without_version_override_skips_bump() -> None:

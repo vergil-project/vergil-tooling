@@ -32,7 +32,7 @@ new issue  →  branch  →  commit  →  PR (auto-merge on)  →  merge on gree
   mechanized PRs on `automation/` branches use too (epics
   vergil-project/.github#1064 and #1168). Agents cannot turn auto-merge
   on for a PR, and never submit one.
-- `vrg-submit-pr` then runs `vrg-finalize-pr` by default, which watches
+- `vrg-submit-pr` then always runs `vrg-finalize-pr`, which watches
   the PRs merge, then syncs `develop`, deletes the merged branches and
   their worktrees, prunes remote refs and validates `develop` once.
 
@@ -188,8 +188,8 @@ vrg-submit-pr \
   only.
 - Runs the provenance check, then turns GitHub auto-merge on, pinned to
   the pushed head: squash for a single-issue PR, rebase for a batch PR.
-- Runs `vrg-finalize-pr` on the PR by default (see step 5);
-  `--no-finalize` opens it and returns.
+- Always runs `vrg-finalize-pr` on the PR (see step 5), so it returns
+  only once the PR has merged or cannot merge.
 
 See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
 
@@ -264,9 +264,9 @@ merge, turn the PR's auto-merge off.
 
 ### 5. Finalize with `vrg-finalize-pr`
 
-`vrg-submit-pr` runs this for you by default. Run it by hand after
-`vrg-submit-pr --no-finalize`, after a fix to a PR that did not merge,
-or to settle `develop` after something merged on GitHub:
+`vrg-submit-pr` always runs this for you. Run it by hand after a fix to
+a PR that did not merge, or to settle `develop` after something merged
+on GitHub:
 
 ```bash
 vrg-finalize-pr <PR>[,<PR>…]   # watch the PRs merge, then settle develop

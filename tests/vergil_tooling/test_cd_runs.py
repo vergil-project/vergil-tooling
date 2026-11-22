@@ -10,6 +10,7 @@ from vergil_tooling.lib.cd_runs import (
     CDRunLookupError,
     classify_jobs,
     failed_job_labels,
+    failed_job_names,
     find_run,
     is_docs_job,
     is_release_job,
@@ -206,6 +207,22 @@ def test_failed_job_labels_excludes_inline_release_job() -> None:
         _job("docs / docs", conclusion="failure"),
     ]
     assert failed_job_labels(jobs) == ["docs"]
+
+
+def test_failed_job_names_keeps_each_full_name_once() -> None:
+    jobs = [
+        _job("release / release", conclusion="failure"),
+        _job("docker-publish / publish: a", conclusion="failure"),
+        _job("docker-publish / publish: b", conclusion="cancelled"),
+        _job("docker-publish / publish: a", conclusion="failure"),
+        _job("codeql / analyze", conclusion="skipped"),
+        _job("docs / docs", conclusion=None, status="in_progress"),
+        _job("pypi / publish"),
+    ]
+    assert failed_job_names(jobs) == [
+        "docker-publish / publish: a",
+        "docker-publish / publish: b",
+    ]
 
 
 def test_failed_job_labels_collapses_families() -> None:

@@ -7,10 +7,65 @@
 
 Runs the whole release workflow from `develop` to `main`: preflight,
 tracking issue, changelog, release PR, merge, CD confirmation,
-back-merge and version bump, rolling-tag promotion, cleanup, the
-post-release dependency update, and last the consumer refresh. The stages and what
+back-merge and version bump, rolling-tag promotion, publish delivery,
+cleanup, the post-release dependency update, the install, a
+`Released:` record on every issue the release contains, and last the
+close of the tracking issue. The stages and what
 they leave behind are described in the
 [Releasing guide](../../guides/releasing.md#the-vrg-release-pipeline).
+
+A failed stage holds back only the stages that need it
+([the hold rule](../../guides/releasing.md#the-hold-rule)): a failed CD
+publish job, a package-index miss or a failed dependency update still
+lets `promote`, `finalize` and `install` run, and leaves the tracking
+issue open. The run then ends naming what is left and the one command
+that finishes it, `vrg-release --resume`, or, for a release that cannot
+finish, `vrg-release --supersede X.Y.Z`.
+
+On a fresh start, `preflight` prints the release's contents: the
+pending-release table of `main..<cut>` and the issues the release
+contains, each with its closing PRs, from the trusted closing
+references of its `feature/` PRs (see
+[The issue list](../../guides/releasing.md#the-issue-list)).
+
+The `release: <version>` tracking issue's body carries a Contents
+section (the pending-release table and the issues the release
+contains), the stage checklist, and the release's state block, which
+only `vrg-release` writes; see
+[Release tracking artifacts](../../guides/releasing.md#release-tracking-artifacts).
+`prepare` locks the issue, and `vrg-release` trusts the state block only
+while every identity that authored, edited, closed or reopened the issue
+is a `human` login of `vrg-trusted-authors`: any other identity stops
+the run before it writes anything, as a suspected security breach; see
+[The lock and the identity rule](../../guides/releasing.md#the-lock-and-the-identity-rule).
+Such a release can never be resumed; it is replaced with
+`vrg-release --supersede X.Y.Z`, which rebuilds it from GitHub and git
+facts.
+Each stage that succeeds records itself done in the state block, with
+the PRs, the tag and the CD runs it produced. `--resume` checks those
+facts against GitHub and git, then runs only the stages not recorded
+done; see
+[Resuming a release](../../guides/releasing.md#resuming-a-release).
+
+Once every earlier stage has succeeded, `release-records` posts a
+`Released:` record, as the human running the release, on each issue in
+the issue list that has no counting record yet. A record counts only
+when its comment's author and last editor are `human` logins of
+`vrg-trusted-authors`; a resume posts only the missing ones, and
+`close-tracking` closes the tracking issue only once every record is
+posted; see
+[`Released:` records](../../guides/releasing.md#released-records).
+[`vrg-release-record check`](release-record.md) reads a task's record as
+release evidence.
+
+A CD publish job that fails is recorded in the state block, by its run
+and full job name, and the `cd-publish` stage delivers it on `--resume`:
+it re-runs `main`'s failed jobs, and re-runs a `develop` job only when
+no later `develop` CD run's same job has succeeded. A failed CD release
+job is recorded too, and the resume's `confirm-main` re-runs the release
+PR's CI run and then that CD run before judging it again; see
+[Failed CD publish jobs](../../guides/releasing.md#failed-cd-publish-jobs)
+and [A failed release job](../../guides/releasing.md#a-failed-release-job).
 
 Releasing is a human maintainer action. `vrg-release` refuses to run
 under an agent identity.
@@ -25,6 +80,7 @@ changes nothing. `vrg-finalize-pr` and `vrg-submit-pr` refuse
 
 ```bash
 vrg-release [minor|major] [options]
+vrg-release [minor|major] --supersede X.Y.Z [options]
 ```
 
 ## Arguments
@@ -32,14 +88,26 @@ vrg-release [minor|major] [options]
 | Argument | Required | Description |
 | -------- | -------- | ----------- |
 | `minor` / `major` | No | Bump to the next minor or major version before releasing. Default: release the current `develop` version |
-| `--no-promote` | No | Skip moving the rolling `vX.Y` tag |
-| `--without-deps` | No | Skip the `update-deps` stage |
+| `--without-deps` | No | Skip the `update-deps` stage. Recorded in the tracking issue's state block, so every later `--resume` skips it too. Allowed with `--resume`, where it skips an update that failed, so the release finishes without it |
 | `--allow-pending-deps` | No | Release even though an open `dependency-update` PR blocks it. For urgent fixes only; the bypassed PRs are listed on the tracking issue |
-| `--no-install` | No | Skip the install step. By default the `consumer-refresh` stage runs the `[publish].consumer-refresh` commands as the release's last stage, unless a deferred publish holds it; with this flag it prints them below the summary instead. With none configured the stage says there is nothing to run, which is not an error. `--install` was removed: passing it exits 1 and names this default |
 | `--resume [X.Y.Z]` | No | Resume an interrupted release from its open tracking issue. Name the version when more than one release is in flight. Cannot be combined with `minor`/`major` |
+| `--supersede X.Y.Z` | No | Start a fresh release that supersedes open release `X.Y.Z`, which `--resume` cannot finish: one tagged with only `cd-publish`, `package-index`, `update-deps` or `install` left, or one halted at `confirm-main` with no tag after its CD release job failed. One whose tracking issue fails the identity rule is rebuilt from GitHub and git facts instead of its state block. It absorbs `X.Y.Z`'s issues and closes its tracking issue. Combines with `minor`/`major`; passing it with `--resume` is a usage error (exit 2). See [Superseding a release](../../guides/releasing.md#superseding-a-release) |
 | `--skip-audit` | No | Skip the `audit` stage |
 | `--output-window N` | No | Rolling output window for the terminal renderer (`0` streams everything) |
 | `--output-format` | No | Force the renderer: `rich`, `gha` or `plain` |
+
+Promote and install are part of every release: every run moves the
+rolling `vX.Y` tag in the `promote` stage, and the `install` stage runs
+the `[publish].install` commands (`<VERSION>` and `<MINOR>` expanded)
+once `promote` is done and `vX.Y` names the release. With none
+configured the stage line says `none configured`, which is not an
+error. The only stages a flag skips are `update-deps` (`--without-deps`)
+and `audit` (`--skip-audit`).
+
+`--no-promote`, `--no-install` and `--install` were removed. Each is
+still parsed, hidden from `--help`, only to exit 1 before any side
+effect with `vrg-release: --<flag> was removed; promote and install are
+part of every release`.
 
 ## Prerequisites
 
@@ -48,6 +116,29 @@ vrg-release [minor|major] [options]
 - A reachable container runtime (docker or nerdctl) and an authenticated
   `gh`. `git-cliff` runs in the dev container through `vrg-container-run`,
   so it is not needed on the host.
+
+## One release at a time
+
+On a fresh start (not on `--resume`), preflight refuses while any
+`release: X.Y.Z` tracking issue is open in the repo, whatever its
+version. The refusal names each open issue and the
+`vrg-release --resume X.Y.Z` that finishes it, or, for an issue with no
+state block (left by older tooling), says to finish that release by
+hand and then close the issue. Lookup failures refuse the release. See
+[One release at a time](../../guides/releasing.md#one-release-at-a-time).
+
+`--supersede X.Y.Z` is the one exception: its check passes over release
+`X.Y.Z`'s own tracking issue, which it reads under the identity rule
+and closes once its own exists. When that issue fails the identity
+rule, its state block is not read: the release is rebuilt from GitHub
+and git facts; see
+[A breached tracking issue](../../guides/releasing.md#a-breached-tracking-issue). A release it supersedes posts no
+records; the new release absorbs its issues, and their records name the
+new version and say `- Supersedes: vX.Y.Z`. When `X.Y.Z` is untagged,
+the main-ahead check accepts its release commit on `main`, the new
+release takes `X.Y.(Z+1)` unless `minor` or `major` is given, and
+`X.Y.Z`'s release worktree and branch are removed. See
+[Superseding a release](../../guides/releasing.md#superseding-a-release).
 
 ## The dependency-update gate
 
@@ -194,5 +285,6 @@ failed checks as its likely cause (issue #4294).
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Every stage succeeded |
-| 1 | A stage failed, including a deferred failure such as a missed publish job, a failed consumer refresh or a failed dependency update; or the command was refused |
+| 1 | A stage failed, including a deferred failure such as a missed publish job, a failed install or a failed dependency update; or the command was refused |
+| 2 | Usage error, such as `--supersede` with `--resume` or a `--supersede` version that is not `X.Y.Z` |
 | 130 | Interrupted (Ctrl-C) |

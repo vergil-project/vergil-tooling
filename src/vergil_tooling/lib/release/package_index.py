@@ -3,10 +3,11 @@
 A repo with a ``[package]`` block publishes OS packages; the org's
 ``publish-index`` workflow then adds them to the apt/dnf index asynchronously.
 This stage polls the published index until the released version of every
-``[[package]]`` entry is visible, so the consumer refresh that follows never
-races it. A miss (timeout, or any error while polling) is recorded as a
-deferred publish failure — the release itself stands, and ``consumer_refresh``
-holds while any publish is deferred.
+``[[package]]`` entry is visible. A miss (timeout, or any error while polling)
+is a deferred publish failure: the release itself stands, ``promote``,
+``finalize`` and ``install`` still run, and only ``close-tracking`` holds, so
+the tracking issue stays open for ``vrg-release --resume`` (spec §4.4 of epic
+vergil-project/.github#1440).
 
 While it waits, the stage streams the ``Publish package index`` run in
 ``<org>/packages`` that covers this release, and prints a heartbeat on every
@@ -20,6 +21,11 @@ The timeout bounds idle polling only. A followed run is waited for however
 long it takes, up to its own, longer bound, and the timeout restarts when it
 completes, so a run slower than the timeout does not fail a release it
 delivered (#4145).
+
+On ``vrg-release --resume`` the stage first dispatches the ``publish-index``
+workflow itself, unless the index already lists the release, then waits as
+above, following the index runs created since the dispatch (spec §4.5 of epic
+vergil-project/.github#1440).
 """
 
 from __future__ import annotations
@@ -33,13 +39,13 @@ import urllib.request
 import xml.etree.ElementTree as ET  # noqa: N817
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import config, github, retry
 from vergil_tooling.lib.package import matrix, naming, orgs
-from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release.context import INDEX_STAGE, ReleaseError
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.config import PackageConfig
@@ -48,7 +54,7 @@ if TYPE_CHECKING:
 
 Fetch = Callable[[str], bytes]
 
-PHASE = "package-index"
+PHASE = INDEX_STAGE
 
 # The org packages repo's index workflow, dispatched by cd-release's release job.
 _INDEX_WORKFLOW = "publish-index.yml"
@@ -56,6 +62,10 @@ _RUN_LIST_LIMIT = "20"
 # Conclusions of a run that did not publish the index. Any other conclusion
 # (``success``, or one GitHub adds later) keeps the stage polling to its timeout.
 _FAILED_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
+# How far before its dispatch a resume looks for the index run it started.
+# GitHub stamps ``createdAt`` with its own clock, which may lag this host's;
+# the runs that existed before the dispatch are excluded by ID instead.
+_DISPATCH_SKEW = timedelta(minutes=10)
 
 
 def _fetch(url: str) -> bytes:
@@ -296,13 +306,8 @@ def _following(ctx: ReleaseContext, packages_repo: str) -> datetime | None:
     return since
 
 
-def _next_index_run(packages_repo: str, since: datetime, seen: set[str]) -> dict[str, Any] | None:
-    """The earliest index run created since ``since`` that is not cancelled or followed.
-
-    A ``repository_dispatch`` run carries no release SHA, so it is matched by
-    time. Every run rebuilds the whole index, so any run after the dispatch
-    covers this release, including one that supersedes a cancelled run.
-    """
+def _index_runs(packages_repo: str) -> list[dict[str, Any]]:
+    """The most recent runs of the index workflow in ``packages_repo``."""
     out = github.read_output(
         "run",
         "list",
@@ -316,9 +321,19 @@ def _next_index_run(packages_repo: str, since: datetime, seen: set[str]) -> dict
         "databaseId,createdAt,conclusion,url",
     )
     runs: list[dict[str, Any]] = json.loads(out) if out.strip() else []
+    return runs
+
+
+def _next_index_run(packages_repo: str, since: datetime, seen: set[str]) -> dict[str, Any] | None:
+    """The earliest index run created since ``since`` that is not cancelled or followed.
+
+    A ``repository_dispatch`` run carries no release SHA, so it is matched by
+    time. Every run rebuilds the whole index, so any run after the dispatch
+    covers this release, including one that supersedes a cancelled run.
+    """
     candidates = [
         run
-        for run in runs
+        for run in _index_runs(packages_repo)
         if str(run["databaseId"]) not in seen
         and run.get("conclusion") != "cancelled"
         and _timestamp(run["createdAt"]) >= since
@@ -386,8 +401,8 @@ def _follow_index_run(
                 command="follow publish-index run",
                 message=f"publish-index run {run['url']} still {status or 'not completed'} "
                 f"after {follow_timeout}s of following it",
-                detail=f"cancel that run, then re-run the publish-index workflow in "
-                f"{packages_repo}; the release itself stands",
+                detail=f"cancel that run in {packages_repo}; then `vrg-release --resume` "
+                "dispatches the publish-index workflow again. The release itself stands",
             )
         sleep(interval)
     conclusion = str(view.get("conclusion") or "")
@@ -396,6 +411,30 @@ def _follow_index_run(
     else:
         print(f"  Publish-index run finished ({conclusion}); checking the index.")
     return conclusion
+
+
+def _dispatch(
+    packages_repo: str, clock: Callable[[], datetime]
+) -> tuple[datetime | None, set[str]]:
+    """Dispatch the index workflow for a resume; return where to follow its runs from.
+
+    The runs that exist before the dispatch are returned as already seen, so
+    only the dispatched run, or a newer one, is followed. Listing them is
+    progress output, as in :func:`_following`: a ``gh`` failure there is
+    reported and the stage polls the index only. A failed dispatch raises.
+    """
+    try:
+        existing = {str(run["databaseId"]) for run in _index_runs(packages_repo)}
+    except subprocess.CalledProcessError as exc:
+        existing = None
+        print(f"  Could not list the publish-index runs ({exc}); polling the index only.")
+    since = clock() - _DISPATCH_SKEW
+    print(f"  Resuming: dispatching {_INDEX_WORKFLOW} in {packages_repo}.")
+    github.run("workflow", "run", _INDEX_WORKFLOW, "--repo", packages_repo)
+    if existing is None:
+        return None, set()
+    print(f"  Following the {packages_repo} publish-index run this dispatch starts.")
+    return since, existing
 
 
 def _timeout_reason(timeout: int, since: datetime | None, last: tuple[str, str] | None) -> str:
@@ -419,6 +458,7 @@ def _wait(
     fetch: Fetch,
     sleep: Callable[[float], None],
     now: Callable[[], float],
+    clock: Callable[[], datetime],
     timeout: int,
     follow_timeout: int,
     interval: int,
@@ -438,16 +478,23 @@ def _wait(
     # completes, so the index gets a full window to propagate after it (#4145).
     deadline = start + timeout
     packages_repo = f"{org.github_org}/packages"
-    since = _following(ctx, packages_repo)
+    # A package once seen stays seen: only the ones still missing are polled.
+    missing = waits
     seen: set[str] = set()
+    since: datetime | None = None
+    if not ctx.resume:
+        since = _following(ctx, packages_repo)
+    elif missing := [w for w in waits if not w.visible()]:
+        # The run a fresh start followed has long finished, so a resume starts
+        # one of its own (spec §4.5 of epic vergil-project/.github#1440).
+        since, seen = _dispatch(packages_repo, clock)
     # The last followed run: (url, conclusion). A newer run followed replaces
     # it, since that run may still publish the release.
     last: tuple[str, str] | None = None
     rerun = (
-        f"re-run the publish-index workflow in {org.github_org}/packages; the release itself stands"
+        "once the cause is fixed, `vrg-release --resume` dispatches the publish-index "
+        f"workflow in {packages_repo} again; the release itself stands"
     )
-    # A package once seen stays seen: only the ones still missing are polled.
-    missing = waits
     while missing := [w for w in missing if not w.visible()]:
         current = now()
         if current >= deadline:
@@ -492,7 +539,7 @@ def _wait(
                     command="follow publish-index run",
                     message=f"publish-index run {url} finished '{conclusion}'; "
                     + "; ".join(f"{w.label} not visible in {w.where}" for w in missing),
-                    detail=f"see that run's failed step, then {rerun}",
+                    detail=f"see that run's failed step; {rerun}",
                 )
         print(
             f"  {', '.join(w.label for w in missing)} not in the index yet "
@@ -510,6 +557,7 @@ def wait_for_index(
     fetch: Fetch = _fetch,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     timeout: int = 3600,
     follow_timeout: int = 10800,
     interval: int = 30,
@@ -526,12 +574,17 @@ def wait_for_index(
     (the window restarts from each followed run's completion). A followed run
     is waited for however long it takes, up to ``follow_timeout`` (#4145).
 
+    On a resume (``ctx.resume``) the stage dispatches the index workflow
+    before it waits, unless the index already lists every package, and
+    follows only the runs that dispatch, or a later one, started (``clock``
+    gives the dispatch time).
+
     No-op without ``[package]``. Any failure (a timeout, a followed
     publish-index run that failed with no newer run to follow (#4121), a
     followed run still not completed after ``follow_timeout``, or an error
-    while polling) records ``package-index`` in
-    ``ctx.deferred_publish_failures`` before propagating, so ``promote``
-    holds ``vX.Y`` back and the consumer refresh holds.
+    while polling) sets ``ctx.index_missed`` before propagating, so
+    ``package-index`` is listed in ``ctx.deferred_publish_failures``. Success
+    is recorded in the state block (``index_listed``) with the stage.
     """
     try:
         _wait(
@@ -539,11 +592,11 @@ def wait_for_index(
             fetch=fetch,
             sleep=sleep,
             now=now,
+            clock=clock,
             timeout=timeout,
             follow_timeout=follow_timeout,
             interval=interval,
         )
     except Exception:
-        if PHASE not in ctx.deferred_publish_failures:
-            ctx.deferred_publish_failures.append(PHASE)
+        ctx.index_missed = True
         raise

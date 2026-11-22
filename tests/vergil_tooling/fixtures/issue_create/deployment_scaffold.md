@@ -14,6 +14,13 @@ deploying requires a **release** (bump / tag / publish), that release is a
 **human-gated precondition** — attest it here; `issue-deploy` never cuts a
 release. Also confirm the target is reachable.
 
+Where this deployment depends on a blocked-by development task having been
+released, confirm that release with
+`vrg-release-record check <owner>/<repo>#<N>`: exit 0 (`pass`) confirms it,
+and exit 3 (`fail`) is an unmet precondition. Exit 4 (`none`) means the task
+carries no release record, so confirm its release as before. Every other
+precondition is checked as before.
+
 - \<precondition — e.g. "release vX.Y.Z is published"; target reachable\>
 
 If any precondition is unmet: comment "blocked: preconditions not met —
