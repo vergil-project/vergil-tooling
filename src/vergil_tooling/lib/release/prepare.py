@@ -29,14 +29,21 @@ def prepare(ctx: ReleaseContext) -> None:
     it is already on the branch; the push is naturally idempotent.
 
     A release that supersedes another closes the superseded tracking issue
-    once its own exists (:func:`_close_superseded`), on a resume too while
-    that issue is still open.
+    once its own exists and its release PR is open or adopted
+    (:func:`_close_superseded`), on a resume too while that issue is still
+    open. Closing it last means the release branch's version bump is already
+    committed and pushed when a failure there sends the human to
+    ``--resume``, which keeps no bump of its own: the resume adopts the PR.
     """
     if ctx.issue_number is None:
         create_tracking_issue(ctx)
         print(f"Tracking issue created: {ctx.issue_url}")
+    _prepare_branch(ctx)
     _close_superseded(ctx)
 
+
+def _prepare_branch(ctx: ReleaseContext) -> None:
+    """Adopt the release branch's open or merged PR, or bump, changelog, push and open it."""
     branch = ctx.release_branch
     if branch is None:
         raise ReleaseError(

@@ -762,3 +762,26 @@ def test_remove_branch_skips_what_is_already_gone(tmp_path: Path) -> None:
         supersede.remove_release_branch(tmp_path, f"release/{_OLD}", phase="prepare")
     m_remove.assert_not_called()
     m_git.assert_called_once_with("ls-remote", "--heads", "origin", f"refs/heads/release/{_OLD}")
+
+
+def test_prepare_closes_the_superseded_issue_only_after_the_bump_and_the_pr() -> None:
+    """A failed close sends the human to --resume, which keeps no bump: it must be pushed first."""
+    ctx = _prepare_ctx(_superseding_state(untagged=True))
+    ctx.superseded = _superseded(untagged=True)
+    ctx.version_override = "patch"
+    calls: list[str] = []
+    failure = ReleaseError(phase="prepare", command="gh issue close", message="closed?")
+    with (
+        patch(_PREPARE + ".github.pr_for_branch", return_value=None),
+        patch(_PREPARE + ".github.closed_pr_for_branch", return_value=None),
+        patch(_PREPARE + ".version.bump", side_effect=lambda *a: calls.append("bump")),
+        patch(_PREPARE + ".git.run", side_effect=lambda *a: calls.append(" ".join(a[:2]))),
+        patch(_PREPARE + "._generate_changelog"),
+        patch(_PREPARE + "._create_pr", side_effect=lambda *a: calls.append("pr") or "pr"),
+        patch(_PREPARE + ".close_superseded", side_effect=failure) as m_close,
+        pytest.raises(ReleaseError, match="closed"),
+    ):
+        prepare(ctx)
+    m_close.assert_called_once()
+    assert calls == ["bump", "add -A", "commit -m", "push -u", "pr"]
+    assert ctx.release_pr_url == "pr"
