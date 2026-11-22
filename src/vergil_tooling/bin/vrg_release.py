@@ -194,7 +194,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Start a fresh release that supersedes open release X.Y.Z, which "
             "--resume cannot finish: one that is tagged with only cd-publish, "
             "package-index, update-deps or install left, or one halted at "
-            "confirm-main with no tag after its CD release job failed. It absorbs "
+            "confirm-main with no tag after its CD release job failed. One whose "
+            "tracking issue fails the identity rule is rebuilt from GitHub and git "
+            "facts instead of its state block. It absorbs "
             "X.Y.Z's issues and closes its tracking issue. Combines with minor/major."
         ),
     )

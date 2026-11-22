@@ -19,6 +19,7 @@ from vergil_tooling.lib.pending_release import (
     ReleaseTags,
     classify,
     first_parent_chain,
+    gather_issue_list,
     gather_pending_release,
     gather_release_contents,
     parse_release_tags,
@@ -992,3 +993,49 @@ def test_trusted_closing_refs_ignores_pr_on_a_connected_side() -> None:
     events.append({"actor": _actor("mallory"), "subject": {}, "source": None})
     cast("dict[str, Any]", node["timelineItems"])["totalCount"] = 2
     assert trusted_closing_refs(node, {"human"}) == ((10,), [])
+
+
+# --- gather_issue_list: a range pinned at both ends (#4878) -------------------
+
+
+def test_issue_list_of_a_pinned_range_skips_commits_with_no_develop_pr() -> None:
+    """The release branch's own commit has no develop PR, so it adds no issue."""
+    s1, s2, release = _sha(1), _sha(2), _sha(3)
+    nodes = {
+        s1: _assoc(_feature_pr(1, 10)),
+        s2: _assoc(_feature_pr(2, 11)),
+        release: _assoc(),
+    }
+    commits = _linear([s1, s2, release])
+    with (
+        patch("vergil_tooling.lib.pending_release.load_trusted_authors", return_value=_TRUSTED),
+        patch("vergil_tooling.lib.git.remote_url", return_value=_URL),
+        patch(
+            "vergil_tooling.lib.github.read_json", return_value=_page(commits, len(commits))
+        ) as read,
+        patch("vergil_tooling.lib.github.graphql", side_effect=_GraphQL(nodes)),
+    ):
+        issues = gather_issue_list(base=_MAIN, head=release)
+    assert issues == (IssueEntry("o/r#10", (1,)), IssueEntry("o/r#11", (2,)))
+    assert read.call_args.args[1].startswith(f"repos/o/r/compare/{_MAIN}...{release}?")
+
+
+@pytest.mark.parametrize(("base", "head"), [("main", _sha(1)), (_MAIN, "HEAD")])
+def test_issue_list_of_a_pinned_range_refuses_a_ref_that_is_not_a_sha(base: str, head: str) -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json") as read,
+        pytest.raises(PendingReleaseError, match="is not a full SHA"),
+    ):
+        gather_issue_list(base=base, head=head)
+    read.assert_not_called()
+
+
+def test_issue_list_of_a_pinned_range_lookup_failure_raises() -> None:
+    failure = subprocess.CalledProcessError(1, ["gh", "api"], stderr="HTTP 502")
+    with (
+        patch("vergil_tooling.lib.pending_release.load_trusted_authors", return_value=_TRUSTED),
+        patch("vergil_tooling.lib.git.remote_url", return_value=_URL),
+        patch("vergil_tooling.lib.github.read_json", side_effect=failure),
+        pytest.raises(PendingReleaseError, match="HTTP 502"),
+    ):
+        gather_issue_list(base=_MAIN, head=_sha(1))

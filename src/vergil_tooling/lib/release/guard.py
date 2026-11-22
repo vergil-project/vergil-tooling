@@ -103,8 +103,12 @@ class TrackingIssueBreach(ReleaseError):  # noqa: N818 - the name the plan gives
     """A non-human identity authored, edited, closed or reopened the tracking issue.
 
     Its message starts ``suspected security breach on tracking issue #<N>:``
-    once the issue's number is known, and tells the human to inspect, clean
-    up and resume. It is a :class:`ReleaseError` so it reports as one, but a
+    once the issue's number is known. It tells the human to inspect the
+    issue, and that it cannot be cleaned up to pass the rule again, since
+    GitHub keeps the editor of a deleted revision and every close and
+    reopen event: the release is superseded instead, which rebuilds it from
+    GitHub and git facts (:mod:`~vergil_tooling.lib.release.rebuild`). It
+    is a :class:`ReleaseError` so it reports as one, but a
     caller that comments on a failed stage must let it pass uncommented: the
     run stops before any write.
     """
@@ -121,7 +125,10 @@ class TrackingIssueBreach(ReleaseError):  # noqa: N818 - the name the plan gives
                 f"suspected security breach on {where}: {login} {action}, and only a "
                 "human login of vrg-trusted-authors may author, edit, close or reopen it. "
                 "vrg-release stopped before writing anything. Inspect the issue's edit "
-                "history and events, clean it up, then resume with vrg-release --resume."
+                "history and events. GitHub keeps them, so the issue can never pass this "
+                "check again and the release cannot be resumed: replace it with "
+                "`vrg-release --supersede <version>`, which does not read the issue's state "
+                "and rebuilds the release from GitHub and git facts."
             ),
         )
 

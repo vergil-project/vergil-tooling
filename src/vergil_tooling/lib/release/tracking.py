@@ -86,7 +86,7 @@ def create_tracking_issue(ctx: ReleaseContext) -> None:
             ),
         )
     superseded = ctx.superseded
-    absorbed = () if superseded is None else tuple(i.ref for i in superseded.state.issues)
+    absorbed = () if superseded is None else tuple(i.ref for i in superseded.issues)
     initial = state.initial_state(
         version=ctx.version,
         cut=ctx.cut,

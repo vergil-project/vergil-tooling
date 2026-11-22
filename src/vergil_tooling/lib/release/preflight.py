@@ -572,8 +572,8 @@ def _release_contents(
     if superseded is None:
         print(render_contents(pending, issues))
         return cut, pending, issues
-    absorbed = tuple(issue.ref for issue in superseded.state.issues)
-    issues = absorb(superseded.state, issues)
+    absorbed = tuple(issue.ref for issue in superseded.issues)
+    issues = absorb(superseded.issues, issues)
     print(render_contents(pending, issues, supersedes=superseded.version, absorbed=absorbed))
     return cut, pending, issues
 
