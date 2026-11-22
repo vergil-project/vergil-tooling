@@ -1426,9 +1426,7 @@ def test_search_items_roles_parameter_applies_to_renames(answer: Any) -> None:
     answer({trust._SEARCH_QUERIES["issue"]: [_search([renamed])]})
     hits, skipped = _search_issues(roles=frozenset({Role.HUMAN}))
     assert hits == []
-    assert [(s.kind, s.field, s.cause) for s in skipped] == [
-        ("event", "title", trust.NOT_ACCEPTED)
-    ]
+    assert [(s.kind, s.field, s.cause) for s in skipped] == [("event", "title", trust.NOT_ACCEPTED)]
 
 
 def test_search_items_user_named_like_app_is_wrong_type(answer: Any) -> None:

@@ -24,7 +24,7 @@ from vergil_tooling.lib.trust import (
 from vergil_tooling.lib.trusted_authors import OrgConfig, TrustedAuthors
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
 REPO = "acme/widgets"
 AUTHORS = TrustedAuthors(
@@ -77,7 +77,7 @@ def layer(monkeypatch: pytest.MonkeyPatch) -> Iterator[Calls]:
     orgs: list[str | None] = []
 
     @contextlib.contextmanager
-    def target_org(org: str | None) -> Iterator[None]:
+    def target_org(org: str | None) -> Generator[None]:
         orgs.append(org)
         yield
 
@@ -168,9 +168,7 @@ def test_json_shape(layer: Calls, capsys: pytest.CaptureFixture[str]) -> None:
     assert data["reviews"]["review_comments"][0]["body"] == "a trusted nit"
 
 
-def test_json_without_pr_has_null_reviews(
-    layer: Calls, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_json_without_pr_has_null_reviews(layer: Calls, capsys: pytest.CaptureFixture[str]) -> None:
     layer.answers["read_issue"] = CONTENT
     assert main([f"{REPO}#7", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["reviews"] is None
@@ -181,8 +179,7 @@ def test_skips_to_stderr_metadata_only(layer: Calls, capsys: pytest.CaptureFixtu
     assert main([f"{REPO}#7"]) == 0
     captured = capsys.readouterr()
     assert captured.err == (
-        f"skipped untrusted content: {REPO}#7 comment drive-by at {AT} on comment 99"
-        " (untrusted)\n"
+        f"skipped untrusted content: {REPO}#7 comment drive-by at {AT} on comment 99 (untrusted)\n"
     )
     assert "SPAM-MARKER-TEXT" not in captured.out + captured.err
 
@@ -223,8 +220,7 @@ def test_read_failure_exits_1(layer: Calls, capsys: pytest.CaptureFixture[str]) 
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == (
-        "ERROR: cannot read who wrote the content (read_issue acme/widgets#7):"
-        " the page is short\n"
+        "ERROR: cannot read who wrote the content (read_issue acme/widgets#7): the page is short\n"
     )
 
 

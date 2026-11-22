@@ -1047,6 +1047,7 @@ def read_reviews(
 ItemKind = Literal["issue", "pr"]
 ListState = Literal["open", "closed", "merged", "all"]
 
+_KINDS: tuple[ItemKind, ...] = ("issue", "pr")
 _TYPENAMES: dict[str, str] = {"issue": "Issue", "pr": "PullRequest"}
 
 # GitHub's search returns at most this many results for one query; a query
@@ -1083,7 +1084,7 @@ query($q: String!, $after: String) {{
 """
 
 
-_SEARCH_QUERIES = {kind: _search_query(kind) for kind in _TYPENAMES}
+_SEARCH_QUERIES = {kind: _search_query(kind) for kind in _KINDS}
 
 _LIST_STATES: dict[tuple[str, str], str] = {
     ("issue", "open"): "states: [OPEN], ",
