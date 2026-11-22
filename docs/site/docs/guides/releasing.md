@@ -18,17 +18,17 @@ old `standard-tooling`/`st-*` naming):
 
 The host install is
 [`vrg-tooling-install`](../reference/cli-tools-overview.md#vrg-tooling-install).
-`vergil.toml`'s `[publish].install` (still under its deprecated name,
-`consumer-refresh`, in vergil-tooling's own `vergil.toml`) runs the
-installed one on the
-Mac with the just-released version (`vrg-tooling-install v<VERSION>`,
-followed by `vrg-vm update --all`), so the release installs itself on the
-host. It fetches the exact tag (which cannot move, under tag protection, so
-it needs no `git ls-remote`), installs the commit that tag names with that
-commit's `uv.lock` as constraints, and runs on uv's managed 3.15. Given a
-line, `vrg-tooling-install vX.Y` first reads the rolling tag `vX.Y` with one
-`git ls-remote`, takes the one `vX.Y.Z` tag on the commit it names, and then
-installs and reports that exact release.
+vergil-tooling's own `vergil.toml` has a `[publish].install` that runs the
+installed one on the Mac through the release's line
+(`vrg-tooling-install v<MINOR>`, followed by `vrg-vm update --all`), so the
+release installs itself on the host once `promote` has moved `vX.Y` to it.
+Given a line, `vrg-tooling-install vX.Y` first reads the rolling tag `vX.Y`
+with one `git ls-remote`, takes the one `vX.Y.Z` tag on the commit it names,
+and then installs and reports that exact release. Given an exact tag
+`vX.Y.Z` (which cannot move, under tag protection, so it needs no
+`git ls-remote`), it fetches that tag. Either way it installs the commit the
+release's tag names with that commit's `uv.lock` as constraints, and runs on
+uv's managed 3.15.
 
 A fresh host has no `vrg-tooling-install` yet, and an installed one that
 fails cannot fix itself. Both install by hand (see
