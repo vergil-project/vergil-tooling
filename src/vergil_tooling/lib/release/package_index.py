@@ -3,10 +3,11 @@
 A repo with a ``[package]`` block publishes OS packages; the org's
 ``publish-index`` workflow then adds them to the apt/dnf index asynchronously.
 This stage polls the published index until the released version of every
-``[[package]]`` entry is visible, so the consumer refresh that follows never
-races it. A miss (timeout, or any error while polling) is recorded as a
-deferred publish failure — the release itself stands, and ``consumer_refresh``
-holds while any publish is deferred.
+``[[package]]`` entry is visible. A miss (timeout, or any error while polling)
+is a deferred publish failure: the release itself stands, ``promote``,
+``finalize`` and ``install`` still run, and only ``close-tracking`` holds, so
+the tracking issue stays open for ``vrg-release --resume`` (spec §4.4 of epic
+vergil-project/.github#1440).
 
 While it waits, the stage streams the ``Publish package index`` run in
 ``<org>/packages`` that covers this release, and prints a heartbeat on every
@@ -400,8 +401,8 @@ def _follow_index_run(
                 command="follow publish-index run",
                 message=f"publish-index run {run['url']} still {status or 'not completed'} "
                 f"after {follow_timeout}s of following it",
-                detail=f"cancel that run, then re-run the publish-index workflow in "
-                f"{packages_repo}; the release itself stands",
+                detail=f"cancel that run in {packages_repo}; then `vrg-release --resume` "
+                "dispatches the publish-index workflow again. The release itself stands",
             )
         sleep(interval)
     conclusion = str(view.get("conclusion") or "")
@@ -491,7 +492,8 @@ def _wait(
     # it, since that run may still publish the release.
     last: tuple[str, str] | None = None
     rerun = (
-        f"re-run the publish-index workflow in {org.github_org}/packages; the release itself stands"
+        "once the cause is fixed, `vrg-release --resume` dispatches the publish-index "
+        f"workflow in {packages_repo} again; the release itself stands"
     )
     while missing := [w for w in missing if not w.visible()]:
         current = now()
@@ -537,7 +539,7 @@ def _wait(
                     command="follow publish-index run",
                     message=f"publish-index run {url} finished '{conclusion}'; "
                     + "; ".join(f"{w.label} not visible in {w.where}" for w in missing),
-                    detail=f"see that run's failed step, then {rerun}",
+                    detail=f"see that run's failed step; {rerun}",
                 )
         print(
             f"  {', '.join(w.label for w in missing)} not in the index yet "
@@ -581,8 +583,7 @@ def wait_for_index(
     publish-index run that failed with no newer run to follow (#4121), a
     followed run still not completed after ``follow_timeout``, or an error
     while polling) sets ``ctx.index_missed`` before propagating, so
-    ``package-index`` is listed in ``ctx.deferred_publish_failures``,
-    ``promote`` holds ``vX.Y`` back and the consumer refresh holds. Success
+    ``package-index`` is listed in ``ctx.deferred_publish_failures``. Success
     is recorded in the state block (``index_listed``) with the stage.
     """
     try:

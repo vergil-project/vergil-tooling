@@ -1588,7 +1588,7 @@ def _uv_tool_list() -> str:
 
 _SKIP_LINE = (
     "vergil-tooling: 2.1.241 installed by the vergil-tooling release "
-    "(its consumer-refresh installs it); vrg-host does not upgrade it"
+    "(its install stage installs it); vrg-host does not upgrade it"
 )
 
 

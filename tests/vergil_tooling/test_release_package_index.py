@@ -683,8 +683,9 @@ def test_failed_run_with_no_newer_run_fails_fast(
         f"finished '{conclusion}'; vergil-tooling 2.1.240-1 not visible in {_NOBLE_AMD64}"
     ) in str(err)
     assert err.detail == (
-        f"see that run's failed step, then re-run the publish-index workflow in "
-        f"{_PACKAGES_REPO}; the release itself stands"
+        "see that run's failed step; once the cause is fixed, `vrg-release --resume` "
+        f"dispatches the publish-index workflow in {_PACKAGES_REPO} again; the release "
+        "itself stands"
     )
     assert release_ctx_with_package.deferred_publish_failures == [package_index.PHASE]
 

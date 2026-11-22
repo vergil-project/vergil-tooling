@@ -265,10 +265,10 @@ def test_main_resume_no_target_returns_1(capsys: pytest.CaptureFixture[str]) -> 
     assert "No in-flight release" in capsys.readouterr().err
 
 
-def test_main_prints_consumer_refresh_message_after_pipeline(
+def test_main_prints_install_message_after_pipeline(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    message = "Consumer refresh commands for v2.1.0:\n\nuv tool install pkg@v2.1.0"
+    message = "Install commands for v2.1.0:\n\nuv tool install pkg@v2.1.0"
 
     def fake_pipeline(state: ReleaseState, *args: object, **kwargs: object) -> int:
         state.ctx = ReleaseContext(
@@ -276,7 +276,7 @@ def test_main_prints_consumer_refresh_message_after_pipeline(
             version="2.1.0",
             repo_root=Path("/tmp/repo"),  # noqa: S108
             version_override=None,
-            consumer_refresh_message=message,
+            install_message=message,
         )
         return 1
 
@@ -286,11 +286,11 @@ def test_main_prints_consumer_refresh_message_after_pipeline(
     ):
         assert main([]) == 1
     captured = capsys.readouterr()
-    assert "Consumer refresh commands for v2.1.0:" in captured.out
+    assert "Install commands for v2.1.0:" in captured.out
     assert "uv tool install pkg@v2.1.0" in captured.out
 
 
-def test_main_prints_nothing_when_no_consumer_refresh_message(
+def test_main_prints_nothing_when_no_install_message(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with (
@@ -356,7 +356,7 @@ def test_help_lists_no_install_and_hides_install(capsys: pytest.CaptureFixture[s
 
 @pytest.mark.parametrize(("argv", "install"), [([], True), (["--no-install"], False)])
 def test_install_flag_reaches_the_stage(argv: list[str], install: bool) -> None:
-    """Installing is the default; --no-install tells the consumer-refresh stage
+    """Installing is the default; --no-install tells the install stage
     to show the commands instead of running them."""
     with (
         patch(_MOD + ".git"),

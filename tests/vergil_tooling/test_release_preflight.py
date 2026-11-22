@@ -2222,7 +2222,7 @@ _STAGES = (
     "back-merge-bump",
     "teardown-worktree",
     "confirm-develop",
-    "close-finalize",
+    "finalize",
     "publish-status",
 )
 _ROOT = Path("/tmp/repo")  # noqa: S108

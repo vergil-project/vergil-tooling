@@ -8,9 +8,8 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import config, github, retry, text_table, trusted_authors
-from vergil_tooling.lib.package import orgs
-from vergil_tooling.lib.release import checklist, guard, package_index, state
+from vergil_tooling.lib import github, retry, text_table, trusted_authors
+from vergil_tooling.lib.release import checklist, guard, state
 from vergil_tooling.lib.release.context import ReleaseError
 
 if TYPE_CHECKING:
@@ -186,110 +185,6 @@ def comment_phase_failed(ctx: ReleaseContext, phase: str, exc: ReleaseError) -> 
     ]
     if exc.detail:
         lines.append(f"**Detail:** {exc.detail}")
-    _comment(ctx, "\n".join(lines))
-
-
-def _packages_repo(ctx: ReleaseContext) -> str:
-    """The ``<org>/packages`` repo whose ``publish-index`` workflow indexes this release.
-
-    Resolved from the vendor every ``[package]`` entry shares, exactly as the
-    ``package-index`` stage resolves the index it polls, so the advice names the
-    repo that stage waited on.
-    """
-    vendor = config.single_vendor(config.read_config(ctx.repo_root))
-    if vendor is None:
-        raise ReleaseError(
-            phase=package_index.PHASE,
-            command="resolve packages repo",
-            message="package-index was deferred but vergil.toml has no [package] block",
-        )
-    return f"{orgs.for_vendor(vendor).github_org}/packages"
-
-
-def promote_pending(ctx: ReleaseContext) -> bool:
-    """Whether the promote stage holds vX.Y back for a deferred ``package-index``.
-
-    With promote on and the index missing the release, vX.Y stays on the
-    previous release, so git and packaged installs of vX.Y keep agreeing; the
-    human promotes with ``vrg-promote`` once the index has it (#4293).
-    """
-    return ctx.promote and package_index.PHASE in ctx.deferred_publish_failures
-
-
-def publish_deferred_remedy(ctx: ReleaseContext, jobs: list[str]) -> str:
-    """One-line remediation for deferred publishes, per kind of deferred item.
-
-    Failed CD publish jobs are re-run by ``vrg-release --resume`` itself
-    (``cd-publish``), once their cause is fixed; a deferred ``package-index``
-    is finished in the org's packages repo instead (#3543). Either way
-    ``vrg-release --resume`` then finishes the release, running only the
-    stages not yet done: the promote a deferred index held back (#4293), the
-    close and the consumer refresh (spec §4.3-§4.5 of epic
-    vergil-project/.github#1440).
-    """
-    remedies = []
-    if any(job != package_index.PHASE for job in jobs):
-        remedies.append("fix the cause of the failed CD publish jobs (the resume re-runs them)")
-    if package_index.PHASE in jobs:
-        remedy = (
-            f"re-run (or wait for) the publish-index workflow in {_packages_repo(ctx)} "
-            "and confirm the release's packages appear in the index"
-        )
-        remedies.append(remedy)
-    return "; ".join(remedies) + ", then finish the release with vrg-release --resume"
-
-
-def comment_publish_deferred(ctx: ReleaseContext, jobs: list[str]) -> None:
-    """Post a remediation comment for a deferred artifact publish.
-
-    The release is complete (tag + GitHub Release published). Each kind of
-    deferred item gets its own advice: CD publish jobs must be re-run, and a
-    deferred ``package-index`` is finished by the org's ``publish-index``
-    workflow (#3543). Once it is delivered, ``vrg-release --resume`` finishes
-    the release, running only the stages not yet done (spec §4.3 of epic
-    vergil-project/.github#1440).
-    """
-    cd_jobs = [job for job in jobs if job != package_index.PHASE]
-    lines = [
-        "<!-- vrg-release:publish:deferred -->",
-        "",
-        f"**Artifact publish deferred** for `{ctx.version}`.",
-        "",
-    ]
-    if cd_jobs:
-        run = ctx.cd_run_url or "the CD run"
-        lines += [
-            f"The release tag `{ctx.tag}` and the GitHub Release are published, but "
-            f"these CD publish jobs did not succeed: **{', '.join(cd_jobs)}** ({run}).",
-            "",
-            "**To finish delivery**: fix the cause of the failed jobs. They are recorded "
-            "in this issue's state block, and `vrg-release --resume` re-runs them.",
-            "",
-        ]
-    if package_index.PHASE in jobs:
-        lines += [
-            f"The release tag `{ctx.tag}` and the GitHub Release are published, but "
-            "the release's packages did not appear in the package index "
-            f"(**{package_index.PHASE}**).",
-            "",
-            "**To finish delivery** of the packages: re-run (or wait for) the "
-            f"`publish-index` workflow in `{_packages_repo(ctx)}`, then confirm the "
-            f"`{ctx.version}` packages appear in the index.",
-            "",
-        ]
-        if promote_pending(ctx):
-            major_minor = ".".join(ctx.version.split(".")[:2])
-            lines += [
-                f"**Promote pending**: the rolling tag `v{major_minor}` was not moved and "
-                "stays on the previous release, so git and packaged installs of "
-                f"`v{major_minor}` keep agreeing. `vrg-release --resume` moves it once "
-                "the packages appear.",
-                "",
-            ]
-    lines.append(
-        "**Then finish the release** with `vrg-release --resume`: it runs only the "
-        "stages not yet done, and closes this issue."
-    )
     _comment(ctx, "\n".join(lines))
 
 

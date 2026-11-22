@@ -231,7 +231,11 @@ Required keys and accepted values:
 | `[dependencies].vergil` | `vX.Y` | Required. The vergil release line; new repos get the line of the vergil-tooling that created them. |
 
 `[publish]` (`release`, default `false`; `docs`, default `true`; `vrg-release`
-refuses a repo whose `release` is not `true`) and
+refuses a repo whose `release` is not `true`; `install`, the shell lines the
+release's `install` stage runs, with `<VERSION>` and `<MINOR>` expanded to
+the release's `X.Y.Z` and `X.Y`, none by default; its deprecated name
+`consumer-refresh` is still read, with a warning, and setting both is an
+error) and
 `[ci].integration-tests` (default `false`) are optional, as is
 `[ci].images` (a boolean, default `false`), which only a repo whose `ci.yml`
 calls a repo-local `ci-images.yml` as job `images` sets; it makes
@@ -700,7 +704,7 @@ Code session loaded, or a managed file edited by hand (re-run
 ## Keeping up to date
 
 Each `vergil-tooling` release installs itself on the Mac that runs it:
-its `[publish].consumer-refresh` runs `vrg-tooling-install` with the
+its `[publish].install` runs `vrg-tooling-install` with the
 just-released version. On any other host, run
 `vrg-tooling-install vX.Y.Z` with the new release. If it fails, reinstall
 with the [Step 2](#step-2-install-vergil-tooling) lines. Do not use

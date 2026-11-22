@@ -12,13 +12,15 @@ old `standard-tooling`/`st-*` naming):
 
 | Target | Install mechanism | Who uses it |
 |---|---|---|
-| **Developer host** (macOS) | `vrg-tooling-install vX.Y.Z` (or `vX.Y`, the release its rolling tag names): `uv tool install` from git of the exact release tag's commit, constrained by that commit's `uv.lock`; the release's consumer refresh runs it | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr`, `vrg-host` |
+| **Developer host** (macOS) | `vrg-tooling-install vX.Y.Z` (or `vX.Y`, the release its rolling tag names): `uv tool install` from git of the exact release tag's commit, constrained by that commit's `uv.lock`; the release's `install` stage runs it | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr`, `vrg-host` |
 | **Container runtime** (all languages) | `vrg-container-run` cache-first install of the version `vergil.toml` names, in a per-branch cached image | `vrg-*` inside the dev container, locally and in CI, for every consumer |
 | **Agent VM** (Lima/cloud) | `vrg-vm` `uv tool install` from git of the identity's release line or version, resolved to one commit and constrained by its `uv.lock` | Agent sessions inside the VM |
 
 The host install is
 [`vrg-tooling-install`](../reference/cli-tools-overview.md#vrg-tooling-install).
-`vergil.toml`'s `[publish].consumer-refresh` runs the installed one on the
+`vergil.toml`'s `[publish].install` (still under its deprecated name,
+`consumer-refresh`, in vergil-tooling's own `vergil.toml`) runs the
+installed one on the
 Mac with the just-released version (`vrg-tooling-install v<VERSION>`,
 followed by `vrg-vm update --all`), so the release installs itself on the
 host. It fetches the exact tag (which cannot move, under tag protection, so
@@ -128,8 +130,7 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      the release; the index's weekly reconcile picks the release up.
    - `vrg-release`'s `package-index` stage then polls the published
      index (up to one hour, every 30 seconds) until the new version is
-     visible, so neither `promote` nor the consumer refresh runs ahead
-     of the index. With several
+     visible. With several
      `[[package]]` entries it waits for every package, each at its own full
      version, and succeeds only once all of them are listed. While it
      waits, it streams the `Publish package index` run in `<org>/packages`
@@ -144,50 +145,55 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      index still lacks the release and no newer index run is listed, the
      stage fails at once rather than waiting out the hour: its error
      names the failed run, so check that run's failed step before
-     re-running it. A miss (timeout, a failed publish-index run, or a
+     resuming. A miss (timeout, a failed publish-index run, or a
      polling error) does not undo the release. It is recorded
-     as a deferred publish failure: the tracking issue stays open with a
-     deferral comment, the consumer-refresh stage holds (it
-     prints a warning not to advertise the version instead of running the
-     refresh commands), the stage error tells you to re-run the `publish-index`
-     workflow in `<org>/packages`, `promote` leaves `vX.Y` where it is
-     (see [A promote held back by the index](#a-promote-held-back-by-the-index)),
-     and `vrg-release` exits 1. On `vrg-release --resume`, the stage
+     as a deferred publish failure: `promote`, `finalize` and `install`
+     still run (see [Promote and the index](#promote-and-the-index)), the
+     tracking issue stays open, and `vrg-release` exits 1, naming
+     `vrg-release --resume` as the command that finishes the release. On
+     `vrg-release --resume`, the stage
      dispatches the `publish-index` workflow in `<org>/packages` itself,
      unless the index already lists the release, then waits as above,
      following only the run that dispatch started or a newer one. Once the
      index lists every package, the state block records it
      (`index_listed`). See the
      [package config reference](../reference/package-config.md#cd).
-4. Last, after `promote`, `close-finalize` and `update-deps`, the
-   `consumer-refresh` stage runs the `[publish].consumer-refresh`
-   commands. It runs after `promote` because a consumer that follows
-   the rolling `vX.Y` tag (vergil-claude-plugin's marketplace) sees the
-   release only once that tag has moved. While any publish is deferred
-   (a failed CD publish job, or a `package-index` miss) it holds: it
-   runs nothing and prints a warning not to advertise the version.
-   After an earlier stage that failed (`promote`, say) it runs nothing
-   either, and prints the commands below the summary to run once the
-   cause is fixed. A failed `update-deps` is the exception: it prepares
-   the next version, so the release just published is still valid and
-   the refresh runs. The run still reports the `update-deps` failure and
-   exits 1 (see step 5). On
-   success the stage is one `✓ consumer-refresh` line; on failure its
-   full output is printed below the summary, the stage fails and
-   `vrg-release` exits 1. Pass `--no-install` to have it print the
-   commands below the summary instead, and act on them yourself.
-   A clean run names the released tag in its completion line
-   (`✓  vrg-release v1.3.1 complete`).
-5. Check the end of the run for the `update-deps` result. A failed
-   dependency update does not fail the release, but it leaves an open
-   PR that blocks the next one; see
+4. After `finalize` and `update-deps`, the `install` stage runs the
+   `[publish].install` commands, with `<VERSION>` expanded to the
+   release (`1.3.1`) and `<MINOR>` to its line (`1.3`). It needs
+   `promote` done, because an install that follows the rolling `vX.Y`
+   tag (vergil-claude-plugin's marketplace, or
+   `vrg-tooling-install v<MINOR>`) gets the release only once that tag
+   has moved, and before it runs anything it checks with one
+   `git ls-remote` that `vX.Y` names this release's tag. It refuses,
+   running nothing, when `promote` failed or `vX.Y` names another
+   commit (a hand demotion in between, say). A deferred publish (a
+   failed CD publish job, or a `package-index` miss) and a failed
+   `update-deps` do not hold it back. A repo with no install configured
+   is the normal case: the stage line says `none configured`. On
+   success the stage is one `✓ install` line; on failure its full
+   output is printed below the summary, the stage fails, `vrg-release`
+   exits 1, and `vrg-release --resume` runs the install again. Pass
+   `--no-install` to have it print the commands below the summary
+   instead. `[publish].consumer-refresh`, the key's old name, is still
+   read, with a deprecation warning, for one minor version; setting both
+   is an error.
+5. Last, `close-tracking` closes the tracking issue with a summary, but
+   only once no stage before it has failed: any failure, a deferred
+   publish or a failed `update-deps` included, leaves the issue open for
+   `vrg-release --resume`. A clean run names the released tag in its
+   completion line (`✓  vrg-release v1.3.1 complete`).
+6. Check the end of the run for the `update-deps` result. A failed
+   dependency update does not undo the release, but it leaves an open
+   PR that blocks the next one, and the tracking issue open; see
    [Dependency updates](#dependency-updates).
 
 ### The `vrg-release` pipeline
 
 `vrg-release` runs these stages in order. A *fail-fast* stage stops the
 run when it fails. A *deferred* stage records its failure and lets the
-later stages run; the run then exits 1 with a summary. Every tracked
+later stages run, except those [the hold rule](#the-hold-rule) holds
+back; the run then exits 1 with a summary. Every tracked
 stage posts a completion or failure comment on the release tracking
 issue and ticks its box in the issue's stage checklist. A stage that
 succeeds also records itself done in the issue's state block, with the
@@ -202,25 +208,38 @@ stages not recorded done.
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed: a failed one is recorded in the state block, and recovered by the resume (see [A failed release job](#a-failed-release-job)). Every other failed publish job is recorded in the state block, by its run and full name, and deferred to `cd-publish` (see [Stale job records](#stale-job-records)) |
 | `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, refreshes the lockfile (`uv lock` for Python and `cargo update --workspace` for Rust, in the dev container; for TypeScript, a direct edit of `package-lock.json`'s root version fields that runs no npm), and merges it to `develop`. Records the back-merge's merge commit |
-| `teardown-worktree` | fail-fast | Removes the release worktree and returns to the root checkout. Fail-fast, as every branch-work stage is, so `close-finalize`, which prunes the release branches, runs only once all of them have succeeded |
+| `teardown-worktree` | fail-fast | Removes the release worktree and returns to the root checkout. Fail-fast, as every branch-work stage is, so `finalize`, which prunes the release branches, runs only once all of them have succeeded |
 | `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed publish job (the docs publish) is recorded in the state block and deferred to `cd-publish` |
+| `promote` | deferred | Moves the rolling `vX.Y` tag to the new release once the tag and the GitHub Release exist, whatever `cd-publish` and `package-index` show (skipped with `--no-promote`; see [Promote and the index](#promote-and-the-index)) |
 | `cd-publish` | deferred | Delivers the CD publish jobs the confirm stages recorded as failed (see [Failed CD publish jobs](#failed-cd-publish-jobs)). Nothing to do when none failed. A fresh run fails it, deferred, naming the jobs; `vrg-release --resume` re-runs them |
-| `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index. A miss is a deferred publish failure, not a halted stage |
-| `promote` | deferred | Moves the rolling `vX.Y` tag to the new release (skipped with `--no-promote`). It runs after `package-index`, so `vX.Y` moves only once the index has the release, and skips when `package-index` deferred (see [A promote held back by the index](#a-promote-held-back-by-the-index)) |
-| `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only` |
+| `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index. A miss is a deferred publish failure; a resume dispatches the index workflow and waits again |
+| `finalize` | deferred | Runs `vrg-finalize-pr --cleanup-only`, which prunes the release branches. The tracking issue stays open until `close-tracking` |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
-| `publish-status` | deferred | Repeats any deferred publish failure, and any dependency-update failure, so neither is lost |
-| `consumer-refresh` | deferred | Runs the `[publish].consumer-refresh` commands, last, once `promote` has moved `vX.Y` (prints them instead with `--no-install`). Holds, running nothing, while any publish is deferred, and only prints the commands after an earlier stage failed, except `update-deps`, whose failure alone does not stop it. Success is one check line; a failure prints the full output below the summary |
+| `install` | deferred | Runs the `[publish].install` commands once `promote` is done and `vX.Y` names the release (prints them instead with `--no-install`). `none configured` when the repo has none. Success is one check line; a failure prints the full output below the summary |
+| `close-tracking` | deferred | Closes the tracking issue with a summary, once no stage before it has failed |
+| `publish-status` | deferred | When a stage failed, names what is left of the release, any deferred publish and any dependency-update failure, and the one command that finishes it: `vrg-release --resume`, or, for a release that cannot finish, `vrg-release --supersede X.Y.Z`. It warns, never failing a second time |
 
-`close-finalize` leaves the tracking issue open, and skips the cleanup,
-when an earlier stage has failed, so the release can be resumed with
-`vrg-release --resume`. A deferred publish failure also leaves the
-issue open, with a comment that says how to finish each deferred item:
-fix the cause of the failed CD publish jobs, which the resume re-runs
-(or re-run the `publish-index` workflow, for a `package-index` miss),
-then run `vrg-release --resume`, which finishes the stages not yet done
-and closes the issue. For a `package-index` miss the re-run is optional:
-the resume dispatches the `publish-index` workflow itself.
+#### The hold rule
+
+A failed stage holds back only the stages that need it; no stage is
+optional:
+
+- `promote`, `cd-publish` and `finalize` need only the stages through
+  `confirm-develop`. `cd-publish` delivers the jobs the confirm stages
+  record, so it waits for `confirm-develop` to succeed and record its own.
+- `install` needs those and `promote`.
+- `close-tracking` needs every stage before it.
+- Nothing holds back `package-index` or `update-deps`, and the failure of
+  `cd-publish`, `package-index` or `update-deps` holds back none of
+  `promote`, `finalize` and `install`.
+
+A held stage does not run (its line shows `held: <stages> failed`) and
+is not recorded done. So a failed CD publish job, a `package-index` miss
+or a failed dependency update leaves the release tagged, promoted,
+finalized and installed, with the tracking issue open, and
+`vrg-release --resume`, once the cause is fixed, runs only the stages not
+yet done and closes the issue. For a `package-index` miss the resume
+dispatches the `publish-index` workflow itself.
 
 #### Failed CD publish jobs
 
@@ -244,8 +263,8 @@ naming them, and the release carries on. Once the cause is fixed,
 A recorded job whose run has succeeded since, re-run by hand say, is
 delivered without a re-run. Each delivered job leaves the state block
 as soon as its run is judged, so a second resume re-runs only what is
-still recorded. While any job is left, `cd-publish` fails, the issue
-stays open, and the consumer refresh holds.
+still recorded. While any job is left, `cd-publish` fails and the issue
+stays open; `promote`, `finalize` and `install` still run.
 
 `confirm-develop` checks the CD run for the back-merge's merge commit,
 not for the current tip of `develop`. On `vrg-release --resume`, other
@@ -256,32 +275,27 @@ confirms its merge commit with GitHub before any stage runs. If the
 merge commit can't be found, `confirm-develop` fails. It never falls
 back to the tip.
 
-`close-finalize` does not pass `--wait-cd` to `vrg-finalize-pr`, so
-finalize only reports the CD run of `develop`'s tip and never fails on
+`finalize` does not pass `--wait-cd` to `vrg-finalize-pr`, so
+it only reports the CD run of `develop`'s tip and never fails on
 it. That tip has the same problem: it may be a later commit's.
-`confirm-develop` has already checked the right run, and
-`close-finalize` runs `vrg-finalize-pr` only when every earlier stage
-passed. A second wait would add nothing. It would also fail the stage on
-a docs publish failure that `confirm-develop` has already deferred.
+`confirm-develop` has already checked the right run, and the hold rule
+runs `finalize` only once `confirm-develop` has passed. A second wait
+would add nothing. It would also fail the stage on a docs publish
+failure that `confirm-develop` has already deferred.
 
-#### A promote held back by the index
+#### Promote and the index
 
-`promote` runs after `package-index`, so consumers that follow the
-rolling `vX.Y` tag and packaged installs (which take the newest `X.Y.*`
-in the index) get the same release from the moment the tag moves.
-vergil-tooling's own installs follow the rolling tag too: a `vX.Y` pin
+`promote` moves `vX.Y` once the tag and the GitHub Release exist,
+whatever the package index or the CD publish jobs show. While the index
+is deferred, `vX.Y` may name a version whose packages are not listed
+yet. That is accepted: nothing in the fleet installs from the packages.
+vergil-tooling's own installs follow the rolling tag: a `vX.Y` pin
 reads the tag `vX.Y` with `git ls-remote` and installs the `vX.Y.Z` release
 on the commit it names, never simply the newest `vX.Y.Z`, so a line
 demoted with `vrg-promote` is followed by the dev-container cache,
-`vrg-vm` and `vrg-tooling-install` alike.
-When `package-index` defers, `promote` skips and `vX.Y` stays on the
-previous release, so the two still agree. The deferral comment and the
-`close-finalize` outcome line name the pending promote. Neither `package-index` nor the skipped `promote` is
-recorded done, and nor is `close-finalize`, which left the issue open.
-Once the release's packages appear in the index, run
-`vrg-release --resume`: it waits for the index again, moves the tag and
-closes the issue. A release cut with `--no-promote` has no pending
-promote, deferral or not.
+`vrg-vm` and `vrg-tooling-install` alike. Once the release's packages
+appear in the index, `vrg-release --resume` records them listed and
+closes the issue.
 
 ### An interrupted release
 
@@ -344,22 +358,15 @@ and `publish-status` run on every run and are never recorded done.
   recorded done.
 - **The root checkout.** For any later first undone stage, the resume
   runs from the root checkout, and never needs the release branches,
-  which `close-finalize` may already have pruned.
+  which `finalize` may already have pruned.
 - **A stage that did not do its work** is not recorded done, so a resume
-  runs it again: a `promote` that left `vX.Y` behind (`--no-promote`, or
-  a deferred `package-index`), a `close-finalize` that left the issue
-  open, and a `consumer-refresh` that was held back (a deferred publish,
-  an earlier failed stage, or `--no-install`). A failed `update-deps` is
-  not recorded done either. A resume can only find an open tracking
-  issue, though, and `update-deps` runs after `close-finalize`, which
-  closes the issue unless something was deferred. So a resume runs a
-  failed `update-deps` again only when the issue was left open, for
-  example by a deferred publish.
+  runs it again: a stage that failed, one [the hold rule](#the-hold-rule)
+  held back, a `promote` skipped with `--no-promote`, and an `install`
+  that only printed its commands under `--no-install`. Any failed stage
+  leaves the tracking issue open, so the resume always finds it.
 - **`--without-deps`** given on a resume is recorded in the state block,
   as one given on the first run is. It skips `update-deps` on that run
-  and on every later resume, and the skip records the stage done. Like
-  the rerun above, it applies only to a release whose tracking issue is
-  still open.
+  and on every later resume, and the skip records the stage done.
 
 `--resume` refuses a tracking issue with no state block, or one whose
 block is malformed, names another version, or records a stage the
@@ -452,10 +459,10 @@ get the fix on the next normal action:
 
 | Consumer | When the patch lands |
 |---|---|
-| Developer host | The release's consumer refresh installs the exact patch tag on the Mac that ran it; any other host runs [`vrg-tooling-install vX.Y.Z`](#deployment-targets) with the new version (`vrg-host` reports the installed version but never upgrades it) |
+| Developer host | The release's `install` stage installs the patch on the Mac that ran it; any other host runs [`vrg-tooling-install vX.Y.Z`](#deployment-targets) with the new version (`vrg-host` reports the installed version but never upgrades it) |
 | Python repo `.venv` | `uv lock --upgrade-package vergil-tooling` (typically batched with other dep bumps) |
 | Dev container image | The base images carry no vergil-tooling. The next `vrg-container-run` rebuilds the branch's cached image with the patch once `promote` moves the rolling `vX.Y` tag to it: a `vX.Y` line pin in `vergil.toml` resolves to the release that tag names (see [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)). An exact `vX.Y.Z` pin stays put |
-| Agent VM (Lima/cloud) | `vrg-vm update`, which the release's consumer refresh runs on every VM (`vrg-vm update --all`): a `vX.Y` line pin resolves to the patch once `promote` moves the rolling `vX.Y` tag to it; an exact `vX.Y.Z` pin stays put |
+| Agent VM (Lima/cloud) | `vrg-vm update`, which the release's `install` stage runs on every VM (`vrg-vm update --all`): a `vX.Y` line pin resolves to the patch once `promote` moves the rolling `vX.Y` tag to it; an exact `vX.Y.Z` pin stays put |
 
 ## Minor release — opt-in for new features
 
@@ -486,7 +493,7 @@ Minor bumps are **deliberate opt-in** at every deployment target:
 
 | Consumer | What changes |
 |---|---|
-| Developer host | Nothing to change: the host installs an exact tag, never a line. The release's consumer refresh installs `v1.4.0` on the Mac that ran it; any other host runs [`vrg-tooling-install v1.4.0`](#deployment-targets) |
+| Developer host | Nothing to change: the host installs an exact tag, never a line. The release's `install` stage installs `v1.4.0` on the Mac that ran it; any other host runs [`vrg-tooling-install v1.4.0`](#deployment-targets) |
 | Python repo `.venv` | Edit `pyproject.toml` `[tool.uv.sources]` to `tag = "v1.4"`, then `uv lock --upgrade-package vergil-tooling` |
 | Dev container image | Set `[dependencies].vergil` in `vergil.toml` to `v1.4`; `vergil.toml` is part of the cache key, so the next `vrg-container-run` rebuilds the branch's cached image with the release the rolling `v1.4` tag names |
 | Agent VM (Lima/cloud) | Set the identity's `vergil` version (in `identities.toml`) to `v1.4`, then `vrg-vm rebuild`, which installs and records the new line. A plain `vrg-vm update` keeps upgrading within the line recorded at install time, and `vrg-vm update --tag v1.4` is a one-off override that is not remembered (see [VM spec](../reference/vm-spec.md#vergil-tooling-inside-the-vm)) |
@@ -677,11 +684,14 @@ nothing:
 Every release ends by updating the repo's dependencies to the newest
 versions their declared bounds allow. This is the `update-deps` stage,
 and it is the first change on the new `develop` version. It runs after
-`close-finalize`, once the release is tagged and published, so it can
-never affect the release itself. Pass `--without-deps` to skip it. The
+`finalize`, once the release is tagged and published, so it can
+never affect the release itself, and its failure holds back none of
+`promote`, `finalize` and `install`. It does hold back `close-tracking`:
+a failed update leaves the tracking issue open, and `vrg-release
+--resume` runs it again. Pass `--without-deps` to skip it. The
 flag is recorded on the tracking issue, so every later `--resume` skips
-the stage too. Given on a resume of a release whose tracking issue is
-still open, it skips an update that failed.
+the stage too. Given on a resume, it skips an update that failed, and
+the release then finishes without it.
 
 The stage brings the root checkout's `develop` up to date with
 `origin/develop` (the root checkout must be on `develop`), then runs the
@@ -743,8 +753,11 @@ as a comment on the open task, which is linked as above.
 
 Either way `vrg-release` exits 1, and the failure counts once in its
 summary: the `update-deps` stage fails, and `publish-status` repeats it
-as a warning. If a publish job also failed, `publish-status` fails with
-both.
+as a warning, alongside any other failure. The install has still run,
+but `close-tracking` holds, so the tracking issue stays open:
+`vrg-release --resume` runs the update again once its cause is fixed,
+and `vrg-release --resume --without-deps` finishes the release without
+it, leaving the update to its fix task.
 
 To fix a failed update, work the fix task like any other task, but cut
 its branch from the failed update so it starts from those commits:
@@ -1006,10 +1019,10 @@ a comment when it completes or fails:
   posts a failure comment with the same table and the failure section
   instead.
 
-The `close-finalize` stage closes the issue with a summary, which
-happens before the last few stages run, so their comments land on the
-closed issue. It stays open when an earlier stage failed (so the
-release can be resumed) or a publish job was deferred. `vrg-release
+The `close-tracking` stage closes the issue with a summary, after every
+other tracked stage. It stays open when any earlier stage failed, a
+deferred publish or a failed dependency update included, so the
+release can be resumed. `vrg-release
 --resume` finds the open tracking issue and runs only the stages its
 state block does not record as done (see
 [Resuming a release](#resuming-a-release)).

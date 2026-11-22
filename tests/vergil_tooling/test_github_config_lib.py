@@ -1296,7 +1296,7 @@ def _vergil_config(
         dependencies={"vergil": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(versions=versions or ["3.14"], integration_tests=integration_tests, images=images),
-        publish=PublishConfig(release=False, docs=docs, consumer_refresh=None),
+        publish=PublishConfig(release=False, docs=docs, install=None),
         container=ContainerConfig(env_prefixes=[], system_packages=[]),
         validation=ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND),
         packages=(package,) if package is not None else (),
@@ -3784,7 +3784,7 @@ def test_compute_desired_state_publish_release_true() -> None:
         dependencies={"vergil": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(),
-        publish=PublishConfig(release=True, docs=True, consumer_refresh=None),
+        publish=PublishConfig(release=True, docs=True, install=None),
         container=ContainerConfig(env_prefixes=[], system_packages=[]),
         validation=ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND),
     )

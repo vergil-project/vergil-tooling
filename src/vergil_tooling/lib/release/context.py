@@ -85,23 +85,25 @@ class ReleaseContext:
     # stage has not succeeded.
     package_index_urls: tuple[str, ...] = ()
 
-    # What the consumer-refresh stage leaves for the human to read below the
-    # summary: the commands to run by hand (--no-install), the notice that
-    # none is configured, or a failed run's full output. None after a run
-    # that succeeded.
-    consumer_refresh_message: str | None = None
+    # What the install stage leaves for the human to read below the summary:
+    # the commands it did not run (--no-install), or a failed run's full
+    # output. None after a run that succeeded, or with none configured.
+    install_message: str | None = None
 
-    # The version-expanded consumer-refresh command block the stage runs
-    # (issue #1643). None when no template is configured.
-    consumer_refresh_commands: str | None = None
+    # The version-expanded [publish].install command block the stage runs
+    # (issue #1643). None when no install is configured.
+    install_commands: str | None = None
 
-    # False with --no-install: the consumer-refresh stage shows the commands
-    # instead of running them.
+    # False with --no-install: the install stage shows the commands instead
+    # of running them.
     install: bool = True
 
-    # Names of fail-defer stages that errored. close-finalize leaves the
-    # tracking issue open (and skips cleanup) when any are pending, so the
-    # release stays resumable (#1612).
+    # Names of the stages that failed in this run, deferred publishes
+    # included, in pipeline order. The hold rule (release.handoff.holds)
+    # reads it: a later stage that needs a failed one does not run, so the
+    # tracking issue stays open for vrg-release --resume (#1612; spec §4.4 of
+    # epic vergil-project/.github#1440). A stage an earlier run failed is not
+    # recorded done, so a resume runs it again and lists it here if it fails.
     deferred_failures: list[str] = field(default_factory=list)
 
     # True once this run's package-index stage missed the release in the

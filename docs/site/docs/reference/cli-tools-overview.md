@@ -410,11 +410,13 @@ posted again.
 
 Run the full release workflow from `develop` to `main`: tracking issue,
 changelog, release PR and merge, CD confirmation, back-merge and version
-bump, the delivery of failed CD publish jobs (`cd-publish`, which a
-`--resume` re-runs), rolling-tag promotion, cleanup, the `update-deps` stage, which
-runs the dependency update on the new `develop` version, and finally
-the consumer refresh, which runs the `[publish].consumer-refresh`
-commands (held while any publish is deferred). On a fresh start, preflight refuses while any
+bump, rolling-tag promotion, the delivery of failed CD publish jobs
+(`cd-publish`, which a `--resume` re-runs), the package-index wait,
+cleanup, the `update-deps` stage, which runs the dependency update on the
+new `develop` version, the install, which runs the `[publish].install`
+commands once `promote` has moved `vX.Y` to the release, and finally the
+close of the tracking issue, which any failed stage holds back, so a
+`--resume` can finish the release. On a fresh start, preflight refuses while any
 `release: X.Y.Z` tracking issue is open, naming its recovery, and while an open PR
 carries the `dependency-update` label, after first closing any whose fix
 task completed. Preflight then prints the release's contents: the
@@ -2291,7 +2293,7 @@ constraints (refusing an empty export or one naming a non-registry package),
 and runs `uv tool install --force --no-config --python 3.15 --managed-python`
 of that commit under them, with `UV_PYTHON`, `UV_PYTHON_PREFERENCE` and
 `UV_NO_MANAGED_PYTHON` cleared. vergil-tooling's release runs it on the Mac
-through its `[publish].consumer-refresh`; any other host runs it to upgrade. A
+through its `[publish].install`; any other host runs it to upgrade. A
 fresh host, or one whose installed copy fails, installs by hand (see
 [Getting Started](../getting-started.md)).
 

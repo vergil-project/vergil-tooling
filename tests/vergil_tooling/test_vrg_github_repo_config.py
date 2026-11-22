@@ -857,7 +857,7 @@ def _make_config() -> VergilConfig:
         dependencies={"vergil": "v2.0"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=CiConfig(versions=["3.14"], integration_tests=False),
-        publish=PublishConfig(release=False, docs=True, consumer_refresh=None),
+        publish=PublishConfig(release=False, docs=True, install=None),
         container=ContainerConfig(env_prefixes=[], system_packages=[]),
         validation=ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND),
     )

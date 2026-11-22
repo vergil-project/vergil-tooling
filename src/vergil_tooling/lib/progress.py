@@ -458,7 +458,7 @@ def log_only(line: str) -> None:
 
     For output a stage keeps off the terminal but must still leave in the
     run log, which :func:`emit` would also render: vrg-release's
-    consumer-refresh stage, whose commands' output is one check line on the
+    install stage, whose commands' output is one check line on the
     terminal on success (issue #4812). The line goes to the same
     :class:`RunLog`, under the same lock, as every emitted line. Outside a
     running pipeline there is no run log, and it is a harmless no-op.

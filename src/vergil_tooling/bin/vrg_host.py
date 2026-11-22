@@ -19,7 +19,7 @@ Subcommands (epic vergil-project/.github#167, spec §6):
   ``upgrade = "auto"`` dependencies via their method handler. A ``manual``
   dependency is refused with an actionable message (``--all`` lists every
   ``manual`` dependency it skipped). A ``release`` dependency (vergil-tooling,
-  issue #4603) is installed by its own release's consumer refresh, so its
+  issue #4603) is installed by its own release's install stage, so its
   upgrade never runs: its installed version is probed and reported as skipped
   (under ``--all``) or refused (when named). An actively pinned dependency — pins
   come from the host-local pins file, so ``vrg-host pin`` holds it — is held:
@@ -496,7 +496,7 @@ def _release_owned(dep: HostDependency, *, named: bool) -> _Outcome:
     verb = "refused  " if named else "skipped  "
     return _Outcome(
         f"{verb}{dep.name}: {installed} installed by the {dep.name} release "
-        "(its consumer-refresh installs it); vrg-host does not upgrade it",
+        "(its install stage installs it); vrg-host does not upgrade it",
         host_status.WARN if named else host_status.OK,
     )
 
