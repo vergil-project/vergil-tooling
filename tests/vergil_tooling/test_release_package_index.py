@@ -583,7 +583,8 @@ def _follow(
     sleep: Callable[[float], None],
     *,
     now: Callable[[], float] | None = None,
-    **kwargs: int,
+    timeout: int = 3600,
+    follow_timeout: int = 10800,
 ) -> list[str]:
     """Run the stage with a recorded CD run; return the run IDs streamed, in order."""
     ctx.cd_run_id = "111"
@@ -595,7 +596,14 @@ def _follow(
         return gh(*args)
 
     with patch.object(package_index.github, "read_output", side_effect=recording):
-        package_index.wait_for_index(ctx, fetch=fetch, sleep=sleep, now=now or _clock(), **kwargs)
+        package_index.wait_for_index(
+            ctx,
+            fetch=fetch,
+            sleep=sleep,
+            now=now or _clock(),
+            timeout=timeout,
+            follow_timeout=follow_timeout,
+        )
     return followed
 
 
