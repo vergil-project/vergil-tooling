@@ -19230,9 +19230,9 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
    is the normal case: the stage line says <code>none configured</code>. On
    success the stage is one <code>✓ install</code> line; on failure its full
    output is printed below the summary, the stage fails, <code>vrg-release</code>
-   exits 1, and <code>vrg-release --resume</code> runs the install again. Pass
-   <code>--no-install</code> to have it print the commands below the summary
-   instead. <code>[publish].consumer-refresh</code>, the key's old name, is still
+   exits 1, and <code>vrg-release --resume</code> runs the install again. No flag
+   skips it: the install is part of every release.
+   <code>[publish].consumer-refresh</code>, the key's old name, is still
    read, with a deprecation warning, for one minor version; setting both
    is an error.
 5. Last, <code>close-tracking</code> closes the tracking issue with a summary, but
@@ -19306,7 +19306,7 @@ stages not recorded done.</p>
 <tr>
 <td><code>promote</code></td>
 <td>deferred</td>
-<td>Moves the rolling <code>vX.Y</code> tag to the new release once the tag and the GitHub Release exist, whatever <code>cd-publish</code> and <code>package-index</code> show (skipped with <code>--no-promote</code>; see <a href="#promote-and-the-index">Promote and the index</a>)</td>
+<td>Moves the rolling <code>vX.Y</code> tag to the new release once the tag and the GitHub Release exist, whatever <code>cd-publish</code> and <code>package-index</code> show (see <a href="#promote-and-the-index">Promote and the index</a>)</td>
 </tr>
 <tr>
 <td><code>cd-publish</code></td>
@@ -19331,7 +19331,7 @@ stages not recorded done.</p>
 <tr>
 <td><code>install</code></td>
 <td>deferred</td>
-<td>Runs the <code>[publish].install</code> commands once <code>promote</code> is done and <code>vX.Y</code> names the release (prints them instead with <code>--no-install</code>). <code>none configured</code> when the repo has none. Success is one check line; a failure prints the full output below the summary</td>
+<td>Runs the <code>[publish].install</code> commands once <code>promote</code> is done and <code>vX.Y</code> names the release. <code>none configured</code> when the repo has none. Success is one check line; a failure prints the full output below the summary</td>
 </tr>
 <tr>
 <td><code>close-tracking</code></td>
@@ -19476,10 +19476,9 @@ and <code>publish-status</code> run on every run and are never recorded done.</p
   runs from the root checkout, and never needs the release branches,
   which <code>finalize</code> may already have pruned.</li>
 <li><strong>A stage that did not do its work</strong> is not recorded done, so a resume
-  runs it again: a stage that failed, one <a href="#the-hold-rule">the hold rule</a>
-  held back, a <code>promote</code> skipped with <code>--no-promote</code>, and an <code>install</code>
-  that only printed its commands under <code>--no-install</code>. Any failed stage
-  leaves the tracking issue open, so the resume always finds it.</li>
+  runs it again: a stage that failed, and one
+  <a href="#the-hold-rule">the hold rule</a> held back. Any failed stage leaves
+  the tracking issue open, so the resume always finds it.</li>
 <li><strong><code>--without-deps</code></strong> given on a resume is recorded in the state block,
   as one given on the first run is. It skips <code>update-deps</code> on that run
   and on every later resume, and the skip records the stage done.</li>
@@ -19765,29 +19764,20 @@ to. Run <code>vrg-host plugins</code> or <code>vrg-vm update</code> again on any
 not.</p>
 <h3 id="how-long-a-rollback-lasts">How long a rollback lasts<a class="headerlink" href="#how-long-a-rollback-lasts" title="Permanent link">&para;</a></h3>
 <p>A rollback lasts until the next release, whose <code>promote</code> stage moves <code>v2.1</code>
-forward again. Keeping it in place until the fix ships is managed by hand:
-the human who rolled back makes sure the next release carries the fix, or
-cuts it with <code>vrg-release --no-promote</code>. A release cut with <code>--no-promote</code>
-leaves <code>v2.1</code> where it is; promote it later with the <code>vrg-promote</code> steps in
-<a href="#move-the-tag-back">Move the tag back</a>, passing its version. Rolling
-forward again is the same steps with the latest <code>v2.1.Z</code>. Nothing holds the
-tag automatically. An issue that blocks promotion until it is closed is a
-separate idea,
+forward again: promote is part of every release, and no flag skips it.
+Keeping the rollback in place until the fix ships is managed by hand: the
+human who rolled back cuts no release of the repo until one carries the
+fix. Rolling forward again is the <a href="#move-the-tag-back">Move the tag back</a>
+steps with the latest <code>v2.1.Z</code>. Nothing holds the tag automatically. An
+issue that blocks promotion until it is closed is a separate idea,
 <a href="https://github.com/vergil-project/.github/issues/763">vergil-project/.github#763</a>.</p>
-<p>Two cases undo a rollback with no prompt, because the <code>promote</code> stage asks
-nothing:</p>
-<ul>
-<li><strong>A release already in flight.</strong> A vergil-claude-plugin release that is
-  still running moves <code>v2.1</code> forward when it reaches <code>promote</code>. So does any
-  open <code>release: &lt;version&gt;</code> tracking issue whose <code>promote</code> is not recorded
-  done, the release you are rolling back included: <code>vrg-release --resume</code>
-  runs <code>promote</code> then. Before you roll back, let a running release finish,
-  and close every open tracking issue or resume it only with <code>--no-promote</code>.</li>
-<li><strong>A resume without <code>--no-promote</code>.</strong> <code>vrg-release</code> does not remember
-  <code>--no-promote</code>: each run, <code>--resume</code> included, promotes unless that run
-  passes the flag. Pass <code>--no-promote</code> to every <code>vrg-release --resume</code> of a
-  release you are holding back.</li>
-</ul>
+<p>A release already in flight undoes a rollback with no prompt, because the
+<code>promote</code> stage asks nothing. A vergil-claude-plugin release that is still
+running moves <code>v2.1</code> forward when it reaches <code>promote</code>. So does
+<code>vrg-release --resume</code> of any open <code>release: &lt;version&gt;</code> tracking issue whose
+<code>promote</code> is not recorded done, the release you are rolling back included.
+Before you roll back, let a running release finish, and resume every open
+tracking issue to its end.</p>
 <h2 id="dependency-updates">Dependency updates<a class="headerlink" href="#dependency-updates" title="Permanent link">&para;</a></h2>
 <p>Every release ends by updating the repo's dependencies to the newest
 versions their declared bounds allow. This is the <code>update-deps</code> stage,

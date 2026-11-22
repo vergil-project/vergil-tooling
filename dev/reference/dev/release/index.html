@@ -18421,11 +18421,6 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 <td>Bump to the next minor or major version before releasing. Default: release the current <code>develop</code> version</td>
 </tr>
 <tr>
-<td><code>--no-promote</code></td>
-<td>No</td>
-<td>Skip moving the rolling <code>vX.Y</code> tag</td>
-</tr>
-<tr>
 <td><code>--without-deps</code></td>
 <td>No</td>
 <td>Skip the <code>update-deps</code> stage. Recorded in the tracking issue's state block, so every later <code>--resume</code> skips it too. Allowed with <code>--resume</code>, where it skips an update that failed, so the release finishes without it</td>
@@ -18434,11 +18429,6 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 <td><code>--allow-pending-deps</code></td>
 <td>No</td>
 <td>Release even though an open <code>dependency-update</code> PR blocks it. For urgent fixes only; the bypassed PRs are listed on the tracking issue</td>
-</tr>
-<tr>
-<td><code>--no-install</code></td>
-<td>No</td>
-<td>Skip the install step. By default the <code>install</code> stage runs the <code>[publish].install</code> commands (<code>&lt;VERSION&gt;</code> and <code>&lt;MINOR&gt;</code> expanded) once <code>promote</code> is done and <code>vX.Y</code> names the release; with this flag it prints them below the summary instead. With none configured the stage line says <code>none configured</code>, which is not an error. <code>--install</code> was removed: passing it exits 1 and names this default</td>
 </tr>
 <tr>
 <td><code>--resume [X.Y.Z]</code></td>
@@ -18462,6 +18452,17 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 </tr>
 </tbody>
 </table>
+<p>Promote and install are part of every release: every run moves the
+rolling <code>vX.Y</code> tag in the <code>promote</code> stage, and the <code>install</code> stage runs
+the <code>[publish].install</code> commands (<code>&lt;VERSION&gt;</code> and <code>&lt;MINOR&gt;</code> expanded)
+once <code>promote</code> is done and <code>vX.Y</code> names the release. With none
+configured the stage line says <code>none configured</code>, which is not an
+error. The only stages a flag skips are <code>update-deps</code> (<code>--without-deps</code>)
+and <code>audit</code> (<code>--skip-audit</code>).</p>
+<p><code>--no-promote</code>, <code>--no-install</code> and <code>--install</code> were removed. Each is
+still parsed, hidden from <code>--help</code>, only to exit 1 before any side
+effect with <code>vrg-release: --&lt;flag&gt; was removed; promote and install are
+part of every release</code>.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Run from the root checkout, on <code>develop</code>, with a clean working tree
