@@ -96,22 +96,28 @@ def _record(version: str, prs: tuple[tuple[int, str], ...] = ((7, "a" * 40),)) -
     )
 
 
-def _closing_pr(number: int, sha: str, *, author: str = _HUMAN, merged: bool = True) -> dict:
-    """A merged PR node that closes #5 from its body, with the trust-check fields."""
+def _closing_pr(
+    number: int, sha: str, *, author: str = _HUMAN, merged: bool = True, repo: str = _REPO
+) -> dict:
+    """A merged PR node in *repo* that closes its own #5 from its body, with the trust-check fields.
+
+    Its timeline's totalCount counts items of every type, as GitHub's does
+    whatever the type filter; its filteredCount (the connected events) is 0.
+    """
     return {
         "number": number,
         "merged": merged,
         "mergeCommit": {"oid": sha} if merged else None,
-        "repository": {"nameWithOwner": _REPO},
+        "repository": {"nameWithOwner": repo},
         "body": "Summary.\n\nCloses #5",
         "author": {"login": author},
         "editor": None,
         "userContentEdits": {"totalCount": 0, "nodes": []},
         "closingIssuesReferences": {
             "totalCount": 1,
-            "nodes": [{"number": 5, "repository": {"nameWithOwner": _REPO}}],
+            "nodes": [{"number": 5, "repository": {"nameWithOwner": repo}}],
         },
-        "timelineItems": {"totalCount": 0, "nodes": []},
+        "timelineItems": {"filteredCount": 0, "totalCount": 5, "nodes": []},
     }
 
 
@@ -340,6 +346,43 @@ def test_check_untrusted_closing_pr_does_not_count(
         "release's trust rule accepts, so the ancestry check skips it",
         f"no closing PR of {_TASK} counts, so nothing confirms that v2.1.2 contains it",
     ]
+
+
+def test_check_counts_hand_linked_pr_by_filtered_count(
+    origin: _Origin, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The connected events are complete at their filteredCount, above which totalCount sits."""
+    merged = origin.commit("feat: the change (#7)")
+    origin.tag("v2.1.2")
+    node = _closing_pr(7, merged)
+    node["body"] = "No closing line."
+    issue = {"number": 5, "repository": {"nameWithOwner": _REPO}}
+    event = {"actor": {"login": _HUMAN}, "subject": issue, "source": {}}
+    node["timelineItems"] = {"filteredCount": 1, "totalCount": 6, "nodes": [event]}
+    fake = _FakeGitHub([_comment(_record("2.1.2"))], [node])
+    rc, out, _ = _run(fake, origin, capsys)
+    assert rc == 0
+    assert out is not None
+    assert (out["ancestry"], out["warnings"]) == ("pass", [])
+
+
+def test_check_connected_events_truncated_by_filtered_count_exits_1(
+    origin: _Origin, capsys: pytest.CaptureFixture[str]
+) -> None:
+    node = _closing_pr(7, "a" * 40)
+    node["timelineItems"] = {"filteredCount": 1, "totalCount": 6, "nodes": []}
+    fake = _FakeGitHub([_comment(_record("2.1.2"))], [node])
+    rc, out, err = _run(fake, origin, capsys)
+    assert rc == 1
+    assert out is None
+    assert "connected events of #7 truncated" in err
+
+
+def test_closing_prs_query_reads_timeline_filtered_count() -> None:
+    query = vrg_release_record._CLOSING_PRS_QUERY
+    timeline = query[query.index("timelineItems(") : query.index("... on ConnectedEvent")]
+    assert "filteredCount" in timeline
+    assert "totalCount" not in timeline
 
 
 def test_check_missing_tag_fails(origin: _Origin, capsys: pytest.CaptureFixture[str]) -> None:

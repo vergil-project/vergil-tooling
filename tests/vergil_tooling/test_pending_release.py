@@ -735,6 +735,11 @@ def _issue_node(number: int, repo: str = "o/r") -> dict[str, Any]:
     return {"number": number, "repository": {"nameWithOwner": repo}}
 
 
+# Timeline items of other types on each PR: the unfiltered totalCount is above
+# the filteredCount by this much.
+_UNFILTERED = 5
+
+
 def _feature_pr(
     number: int,
     *closes: int | tuple[str, int],
@@ -766,8 +771,11 @@ def _feature_pr(
                 "totalCount": len(refs) if closing_total is None else closing_total,
                 "nodes": refs,
             },
+            # GitHub's totalCount here counts every timeline item, whatever
+            # the type filter; filteredCount counts the connected events.
             "timelineItems": {
-                "totalCount": len(connected),
+                "filteredCount": len(connected),
+                "totalCount": len(connected) + _UNFILTERED,
                 "nodes": [
                     {"actor": _actor(actor), "subject": _issue_node(issue), "source": {}}
                     for actor, issue in connected
@@ -816,6 +824,9 @@ def test_issue_list_query_reads_closing_refs_and_history() -> None:
     assert "closingIssuesReferences(first: 20, userLinkedOnly: false)" in query
     assert "userContentEdits(first: 100)" in query
     assert "timelineItems(itemTypes: [CONNECTED_EVENT], first: 100)" in query
+    timeline = query[query.index("timelineItems(") : query.index("... on ConnectedEvent")]
+    assert "filteredCount" in timeline
+    assert "totalCount" not in timeline
     assert "author { login }" in query
 
 
@@ -916,6 +927,18 @@ def test_issue_list_excludes_untrusted_manual_link(capsys: pytest.CaptureFixture
     assert "#3: closing reference #12 not counted" in err
 
 
+def test_issue_list_reads_filtered_count_of_connected_events() -> None:
+    """A PR whose timeline holds other items still counts: filteredCount, not totalCount."""
+    s1, s2 = _sha(1), _sha(2)
+    linked = _feature_pr(1, 10, body="No closing line.", connected=(("human", 10),))
+    plain = _feature_pr(2, 11)
+    for node in (linked, plain):
+        timeline = node["timelineItems"]
+        assert timeline["totalCount"] > timeline["filteredCount"] == len(timeline["nodes"])
+    _, issues, _ = _contents(_linear([s1, s2]), {s1: _assoc(linked), s2: _assoc(plain)})
+    assert issues == (IssueEntry("o/r#10", (1,)), IssueEntry("o/r#11", (2,)))
+
+
 def test_issue_list_trusted_link_counts_despite_untrusted_body() -> None:
     s1 = _sha(1)
     nodes = {s1: _assoc(_feature_pr(1, 10, editor="mallory", connected=(("human", 10),)))}
@@ -942,17 +965,17 @@ def test_issue_list_empty_is_valid(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 @pytest.mark.parametrize(
-    ("connection", "message"),
+    ("connection", "count", "message"),
     [
-        ("closingIssuesReferences", "closingIssuesReferences of #1 truncated"),
-        ("userContentEdits", "userContentEdits of #1 truncated"),
-        ("timelineItems", "connected events of #1 truncated"),
+        ("closingIssuesReferences", "totalCount", "closingIssuesReferences of #1 truncated"),
+        ("userContentEdits", "totalCount", "userContentEdits of #1 truncated"),
+        ("timelineItems", "filteredCount", "connected events of #1 truncated"),
     ],
 )
-def test_closing_refs_truncated_raises(connection: str, message: str) -> None:
+def test_closing_refs_truncated_raises(connection: str, count: str, message: str) -> None:
     s1 = _sha(1)
     node = _feature_pr(1, 10)
-    node[connection]["totalCount"] = 500
+    node[connection][count] = 500
     with pytest.raises(PendingReleaseError, match=message):
         _contents(_linear([s1]), {s1: _assoc(node)})
 
@@ -990,5 +1013,5 @@ def test_trusted_closing_refs_ignores_pr_on_a_connected_side() -> None:
     events = cast("dict[str, Any]", node["timelineItems"])["nodes"]
     events[0]["source"] = {}
     events.append({"actor": _actor("mallory"), "subject": {}, "source": None})
-    cast("dict[str, Any]", node["timelineItems"])["totalCount"] = 2
+    cast("dict[str, Any]", node["timelineItems"])["filteredCount"] = 2
     assert trusted_closing_refs(node, {"human"}) == ((10,), [])

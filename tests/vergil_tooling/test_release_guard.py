@@ -33,6 +33,19 @@ def _conn(nodes: list[Any], *, total: int | None = None, cursor: str | None = No
     }
 
 
+# Timeline items of types the read does not ask for: GitHub's totalCount counts
+# them whatever the type filter, so it is above the filteredCount the read uses.
+_UNFILTERED = 7
+
+
+def _timeline(nodes: list[Any], *, total: int | None = None, cursor: str | None = None) -> Any:
+    """A type-filtered timeline page: *total* is its filteredCount."""
+    conn = _conn(nodes, total=total, cursor=cursor)
+    conn["filteredCount"] = conn.pop("totalCount")
+    conn["totalCount"] = conn["filteredCount"] + _UNFILTERED
+    return conn
+
+
 def _edit(login: str | None) -> dict[str, Any]:
     return {"editor": _who(login)}
 
@@ -55,7 +68,7 @@ def _page(
                 "author": _who(author),
                 "editor": _who(editor),
                 "userContentEdits": _conn([]) if edits is None else edits,
-                "timelineItems": _conn([]) if timeline is None else timeline,
+                "timelineItems": _timeline([]) if timeline is None else timeline,
             }
         }
     }
@@ -84,7 +97,7 @@ def test_guard_passes_human_only() -> None:
         _page(
             editor="human",
             edits=_conn([_edit("human"), _edit("human")]),
-            timeline=_conn(
+            timeline=_timeline(
                 [
                     _event("ClosedEvent", "human"),
                     _event("ReopenedEvent", "human"),
@@ -119,7 +132,7 @@ def test_guard_stops_on_agent_last_editor() -> None:
 
 def test_guard_stops_on_foreign_reopen() -> None:
     identities = _read(
-        _page(timeline=_conn([_event("ClosedEvent", "human"), _event("ReopenedEvent", "agent")]))
+        _page(timeline=_timeline([_event("ClosedEvent", "human"), _event("ReopenedEvent", "agent")]))
     )
     with pytest.raises(TrackingIssueBreach, match="agent reopened the issue"):
         check_tracking_issue(identities, HUMANS)
@@ -157,7 +170,7 @@ def test_guard_breach_names_the_issue_number() -> None:
 def test_guard_warns_on_foreign_comment_and_crossref() -> None:
     identities = _read(
         _page(
-            timeline=_conn(
+            timeline=_timeline(
                 [
                     _event("IssueComment", "agent"),
                     _event("IssueComment", "human"),
@@ -182,7 +195,7 @@ def test_guard_warns_on_foreign_comment_and_crossref() -> None:
     ],
 )
 def test_guard_warns_on_every_trace_kind(typename: str, action: str) -> None:
-    identities = _read(_page(timeline=_conn([_event(typename, "agent")])))
+    identities = _read(_page(timeline=_timeline([_event(typename, "agent")])))
     assert check_tracking_issue(identities, HUMANS) == [f"agent {action}"]
 
 
@@ -192,15 +205,15 @@ def test_guard_warns_on_every_trace_kind(typename: str, action: str) -> None:
 def test_guard_reads_every_page_of_both_connections() -> None:
     first = _page(
         edits=_conn([_edit("human")], total=2, cursor="e1"),
-        timeline=_conn([_event("IssueComment", "human")], total=3, cursor="t1"),
+        timeline=_timeline([_event("IssueComment", "human")], total=3, cursor="t1"),
     )
     second = _page(
         edits=_conn([_edit("agent")], total=2),
-        timeline=_conn([_event("IssueComment", "human")], total=3, cursor="t2"),
+        timeline=_timeline([_event("IssueComment", "human")], total=3, cursor="t2"),
     )
     third = _page(
         edits=_conn([], total=2),
-        timeline=_conn([_event("ReopenedEvent", "agent")], total=3),
+        timeline=_timeline([_event("ReopenedEvent", "agent")], total=3),
     )
     with patch(_MOD + ".github.graphql", side_effect=[first, second, third]) as gql:
         identities = read_identities("owner/repo", 42)
@@ -219,8 +232,8 @@ def test_guard_reads_every_page_of_both_connections() -> None:
 def test_guard_rereads_an_empty_connection_from_the_start() -> None:
     """An empty connection has no cursor, so it is re-read from the start, and stays empty."""
     empty = {"totalCount": 0, "pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": []}
-    first = _page(edits=empty, timeline=_conn([_event("IssueComment", "x")], total=2, cursor="t1"))
-    second = _page(edits=empty, timeline=_conn([_event("IssueComment", "y")], total=2))
+    first = _page(edits=empty, timeline=_timeline([_event("IssueComment", "x")], total=2, cursor="t1"))
+    second = _page(edits=empty, timeline=_timeline([_event("IssueComment", "y")], total=2))
     with patch(_MOD + ".github.graphql", side_effect=[first, second]) as gql:
         identities = read_identities("owner/repo", 42)
     assert identities.editors == ()
@@ -252,8 +265,38 @@ def test_guard_truncated_connection_raises() -> None:
     assert "GitHub lists 2 userContentEdits but returned 1" in str(info.value.stderr)
 
 
+def test_guard_timeline_counts_filtered_items_only() -> None:
+    """The timeline is complete at its filteredCount, though its totalCount is higher."""
+    page = _page(timeline=_timeline([_event("ClosedEvent", "human")]))
+    assert page["repository"]["issue"]["timelineItems"]["totalCount"] > 1
+    assert _read(page).state_actors == (("human", "closed the issue"),)
+
+
+def test_guard_timeline_truncated_by_filtered_count_raises() -> None:
+    page = _page(timeline=_timeline([_event("ClosedEvent", "human")], total=2))
+    with pytest.raises(github.GitHubAPIError) as info:
+        _read(page)
+    assert "GitHub lists 2 timelineItems but returned 1" in str(info.value.stderr)
+
+
+def test_guard_query_reads_timeline_filtered_count() -> None:
+    with patch(_MOD + ".github.graphql", return_value=_page()) as graphql:
+        read_identities("owner/repo", 42)
+    query = graphql.call_args.args[0]
+    timeline = query[query.index("timelineItems(") :]
+    assert "filteredCount" in timeline
+    assert "totalCount" not in timeline
+
+
+def test_guard_timeline_without_filtered_count_raises() -> None:
+    timeline = _conn([])
+    with pytest.raises(github.GitHubAPIError) as info:
+        _read(_page(timeline=timeline))
+    assert "timelineItems has no filteredCount or nodes" in str(info.value.stderr)
+
+
 def test_guard_next_page_without_cursor_raises() -> None:
-    timeline = _conn([], total=1)
+    timeline = _timeline([], total=1)
     timeline["pageInfo"] = {"hasNextPage": True, "endCursor": None}
     with pytest.raises(github.GitHubAPIError) as info:
         _read(_page(timeline=timeline))
@@ -261,8 +304,8 @@ def test_guard_next_page_without_cursor_raises() -> None:
 
 
 def test_guard_connection_growing_mid_read_raises() -> None:
-    first = _page(timeline=_conn([], total=1, cursor="t1"))
-    second = _page(edits=_conn([_edit("agent")]), timeline=_conn([_event("IssueComment", "x")]))
+    first = _page(timeline=_timeline([], total=1, cursor="t1"))
+    second = _page(edits=_conn([_edit("agent")]), timeline=_timeline([_event("IssueComment", "x")]))
     with pytest.raises(github.GitHubAPIError) as info:
         _read(first, second)
     assert "grew while it was read" in str(info.value.stderr)
@@ -276,11 +319,11 @@ def test_guard_connection_growing_mid_read_raises() -> None:
         {"repository": {"issue": None}},
         {"repository": {"issue": {"author": {"login": ""}}}},
         {"repository": {"issue": {"author": None, "editor": None, "userContentEdits": None}}},
-        _page(timeline={"totalCount": 0, "nodes": []}),
-        _page(timeline={"totalCount": "0", "pageInfo": {}, "nodes": []}),
-        _page(timeline={"totalCount": 0, "pageInfo": {"endCursor": None}, "nodes": []}),
-        _page(timeline=_conn([{"__typename": "AssignedEvent", "actor": None}])),
-        _page(timeline=_conn(["not an object"])),
+        _page(timeline={"filteredCount": 0, "nodes": []}),
+        _page(timeline={"filteredCount": "0", "pageInfo": {}, "nodes": []}),
+        _page(timeline={"filteredCount": 0, "pageInfo": {"endCursor": None}, "nodes": []}),
+        _page(timeline=_timeline([{"__typename": "AssignedEvent", "actor": None}])),
+        _page(timeline=_timeline(["not an object"])),
         _page(edits=_conn([{"editor": "agent"}])),
     ],
 )
