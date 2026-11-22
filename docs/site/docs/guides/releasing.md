@@ -152,7 +152,12 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      refresh commands), the stage error tells you to re-run the `publish-index`
      workflow in `<org>/packages`, `promote` leaves `vX.Y` where it is
      (see [A promote held back by the index](#a-promote-held-back-by-the-index)),
-     and `vrg-release` exits 1. See the
+     and `vrg-release` exits 1. On `vrg-release --resume`, the stage
+     dispatches the `publish-index` workflow in `<org>/packages` itself,
+     unless the index already lists the release, then waits as above,
+     following only the run that dispatch started or a newer one. Once the
+     index lists every package, the state block records it
+     (`index_listed`). See the
      [package config reference](../reference/package-config.md#cd).
 4. Last, after `promote`, `close-finalize` and `update-deps`, the
    `consumer-refresh` stage runs the `[publish].consumer-refresh`
@@ -212,7 +217,9 @@ when an earlier stage has failed, so the release can be resumed with
 issue open, with a comment that says how to finish each deferred item:
 re-run the CD publish (or the `publish-index` workflow, for a
 `package-index` miss), then run `vrg-release --resume`, which finishes
-the stages not yet done and closes the issue.
+the stages not yet done and closes the issue. For a `package-index`
+miss the re-run is optional: the resume dispatches the `publish-index`
+workflow itself.
 
 `confirm-develop` checks the CD run for the back-merge's merge commit,
 not for the current tip of `develop`. On `vrg-release --resume`, other
@@ -302,7 +309,17 @@ and `publish-status` run on every run and are never recorded done.
   runs it again: a `promote` that left `vX.Y` behind (`--no-promote`, or
   a deferred `package-index`), a `close-finalize` that left the issue
   open, and a `consumer-refresh` that was held back (a deferred publish,
-  an earlier failed stage, or `--no-install`).
+  an earlier failed stage, or `--no-install`). A failed `update-deps` is
+  not recorded done either. A resume can only find an open tracking
+  issue, though, and `update-deps` runs after `close-finalize`, which
+  closes the issue unless something was deferred. So a resume runs a
+  failed `update-deps` again only when the issue was left open, for
+  example by a deferred publish.
+- **`--without-deps`** given on a resume is recorded in the state block,
+  as one given on the first run is. It skips `update-deps` on that run
+  and on every later resume, and the skip records the stage done. Like
+  the rerun above, it applies only to a release whose tracking issue is
+  still open.
 
 `--resume` refuses a tracking issue with no state block, or one whose
 block is malformed, names another version, or records a stage the
@@ -624,7 +641,10 @@ Every release ends by updating the repo's dependencies to the newest
 versions their declared bounds allow. This is the `update-deps` stage,
 and it is the first change on the new `develop` version. It runs after
 `close-finalize`, once the release is tagged and published, so it can
-never affect the release itself. Pass `--without-deps` to skip it.
+never affect the release itself. Pass `--without-deps` to skip it. The
+flag is recorded on the tracking issue, so every later `--resume` skips
+the stage too. Given on a resume of a release whose tracking issue is
+still open, it skips an update that failed.
 
 The stage brings the root checkout's `develop` up to date with
 `origin/develop` (the root checkout must be on `develop`), then runs the

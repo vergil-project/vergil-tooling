@@ -81,13 +81,41 @@ def _preflight_stage(state: ReleaseState) -> None:
         stages=_stage_names(),
     )
     ctx.promote = state.promote
-    ctx.without_deps = state.without_deps
+    ctx.resume = state.resume
+    ctx.without_deps = _without_deps(ctx, given=state.without_deps)
     ctx.install = state.install
     # The read-only stages before prepare ran before the issue existed, so the
     # checklist the issue is created with has them ticked already (#4367).
     names = _stage_names()
     ctx.progress_block = checklist.render(names, checked=names[: names.index("prepare")])
     state.ctx = ctx
+
+
+def _without_deps(ctx: ReleaseContext, *, given: bool) -> bool:
+    """Whether this run skips ``update-deps``: ``--without-deps`` now, or on an earlier run.
+
+    A fresh start records the flag in the state block it creates. A resume
+    reads it from the state block preflight read, and records a
+    ``--without-deps`` given now there, so every later resume skips the
+    update too (spec §4.3, §4.5 of epic vergil-project/.github#1440).
+    """
+    if not ctx.resume:
+        # prepare creates the state block from ctx.without_deps.
+        return given
+    current = ctx.state
+    if current is None:
+        raise ReleaseError(
+            phase="preflight",
+            command="read_state",
+            message=(
+                "A resume holds no release state block after preflight, so whether "
+                "--without-deps was given on an earlier run is unknown."
+            ),
+        )
+    if given and not current.without_deps:
+        write_state(ctx, replace(current, without_deps=True))
+        return True
+    return current.without_deps
 
 
 def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[ReleaseState], None]:
@@ -169,8 +197,10 @@ def _held(ctx: ReleaseContext, name: str) -> bool:
 def _record_done(ctx: ReleaseContext, name: str) -> None:
     """Record stage *name* done in the tracking issue's state block, with the facts on *ctx*.
 
-    The facts are the PRs, the tag and the commit it peels to, and the CD
-    runs; one *ctx* has not learnt keeps its recorded value. No state block
+    The facts are the PRs, the tag and the commit it peels to, the CD runs,
+    and whether the package index lists the release (``index_listed``, set
+    once ``package-index`` has seen every package); one *ctx* has not learnt
+    keeps its recorded value. No state block
     on *ctx* is an error, never a stage left unrecorded.
     """
     current = ctx.state
@@ -194,6 +224,8 @@ def _record_done(ctx: ReleaseContext, name: str) -> None:
             tag_commit=ctx.tag_commit or current.tag_commit,
             main_cd_run=ctx.cd_run_id or current.main_cd_run,
             develop_cd_run=ctx.develop_cd_run_id or current.develop_cd_run,
+            # package-index found every package in the index (spec §4.5).
+            index_listed=current.index_listed or bool(ctx.package_index_urls),
         ),
     )
 

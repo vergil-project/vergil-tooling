@@ -3,19 +3,25 @@
 from __future__ import annotations
 
 import contextlib
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+from vergil_tooling.lib.release.handoff import blocking_failures
+from vergil_tooling.lib.release.orchestrator import ReleaseState, _preflight_stage, build_stages
+from vergil_tooling.lib.release.resume import first_undone
+from vergil_tooling.lib.release.state import StateBlock, initial_state
 from vergil_tooling.lib.release.update_deps_stage import update_deps
 from vergil_tooling.lib.update_deps.context import DepsFailure, UpdateDepsContext, UpdateDepsError
 from vergil_tooling.lib.update_deps.report import EMPTY_REPORT, HeldBack
 from vergil_tooling.lib.update_deps.updater import UpdateResult
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Iterator
 
 _MOD = "vergil_tooling.lib.release.update_deps_stage"
 
@@ -267,3 +273,178 @@ def test_preflight_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(UpdateDepsError, match="in flight"):
         update_deps(ctx)
     assert ctx.deps_report is None
+
+
+# --- resumable through the state block (spec §4.5 of epic vergil-project/.github#1440) ---
+
+_ORCH = "vergil_tooling.lib.release.orchestrator"
+_BEFORE_DEPS = (
+    "prepare",
+    "merge-release",
+    "confirm-main",
+    "back-merge-bump",
+    "teardown-worktree",
+    "confirm-develop",
+    "package-index",
+    "promote",
+    "close-finalize",
+)
+
+
+def _block(*, done: tuple[str, ...] = (), without_deps: bool = False) -> StateBlock:
+    initial = initial_state(version="2.1.242", cut="c" * 40, issues=(), without_deps=without_deps)
+    return replace(initial, done=done)
+
+
+@pytest.fixture
+def written() -> Iterator[list[StateBlock]]:
+    """Stand in for the tracking-issue state write; record each block written."""
+    blocks: list[StateBlock] = []
+
+    def fake(ctx: ReleaseContext, new: StateBlock) -> None:
+        blocks.append(new)
+        ctx.state = new
+
+    with patch(_ORCH + ".write_state", side_effect=fake):
+        yield blocks
+
+
+def _run_stage(ctx: ReleaseContext) -> None:
+    """Run the tracked update-deps stage as the pipeline does."""
+    state = ReleaseState(version_override=None, repo_root=Path("/r"), promote=True)
+    state.ctx = ctx
+    with (
+        patch(_ORCH + ".comment_phase_complete"),
+        patch(_ORCH + ".comment_phase_failed"),
+        patch(_ORCH + ".ensure_checklist"),
+        patch(_ORCH + ".tick_stage"),
+    ):
+        stage = next(s for s in build_stages() if s.name == "update-deps")
+        stage.fn(state)
+
+
+def _resume(monkeypatch: pytest.MonkeyPatch, block: StateBlock, *, given: bool) -> ReleaseContext:
+    """Run the preflight stage of a resume whose tracking issue holds *block*."""
+    ctx = _rctx()
+    ctx.issue_number = 42
+    ctx.state = block
+    state = ReleaseState(
+        version_override=None, repo_root=Path("/r"), promote=True, resume=True, without_deps=given
+    )
+    monkeypatch.setattr(_ORCH + ".preflight", lambda **_kw: ctx)
+    _preflight_stage(state)
+    return ctx
+
+
+def test_update_deps_failure_recorded_in_state(
+    monkeypatch: pytest.MonkeyPatch, written: list[StateBlock]
+) -> None:
+    """A failed update is not recorded done, so a resume runs it again; it defers, never halts."""
+    d = _deps(fix_issue_url="https://x/issues/11")
+    d.failure = DepsFailure(
+        kind="update", message="python: boom", output_tail="", reproduce="uv lock"
+    )
+    _patch(monkeypatch, d)
+    ctx = _rctx()
+    ctx.issue_number = 42
+    ctx.state = _block(done=_BEFORE_DEPS)
+    with pytest.raises(ReleaseError, match="No PR was opened"):
+        _run_stage(ctx)
+    assert written == []
+    assert ctx.state.done == _BEFORE_DEPS
+    assert "update-deps" not in ctx.state.done
+    assert first_undone(ctx.state, [s.name for s in build_stages()]) == "update-deps"
+    # Deferred: the release is not halted, so the consumer refresh is not held.
+    assert ctx.deferred_failures == ["update-deps"]
+    assert blocking_failures(ctx) == []
+    assert ctx.deferred_publish_failures == []
+
+
+def test_update_deps_success_recorded_done(
+    monkeypatch: pytest.MonkeyPatch, written: list[StateBlock]
+) -> None:
+    _patch(monkeypatch, _deps(pr_url="https://x/pull/9", any_changes=True))
+    ctx = _rctx()
+    ctx.issue_number = 42
+    ctx.state = _block(done=_BEFORE_DEPS)
+    _run_stage(ctx)
+    assert [b.done for b in written] == [(*_BEFORE_DEPS, "update-deps")]
+
+
+def test_resume_reruns_failed_update(
+    monkeypatch: pytest.MonkeyPatch, written: list[StateBlock]
+) -> None:
+    rec = _patch(monkeypatch, _deps(pr_url="https://x/pull/9", any_changes=True))
+    ctx = _resume(monkeypatch, _block(done=_BEFORE_DEPS), given=False)
+    assert ctx.without_deps is False
+    _run_stage(ctx)
+    assert rec.run_update_roots == [Path("/r")]
+    assert ctx.state is not None
+    assert ctx.state.done[-1] == "update-deps"
+
+
+def test_resume_without_deps_skips_failed_update(
+    monkeypatch: pytest.MonkeyPatch, written: list[StateBlock]
+) -> None:
+    """--without-deps on a resume is recorded, then skips the failed update and records it done."""
+    rec = _patch(monkeypatch, AssertionError("must not run"))
+    ctx = _resume(monkeypatch, _block(done=_BEFORE_DEPS), given=True)
+    assert ctx.without_deps is True
+    assert [b.without_deps for b in written] == [True]
+    assert written[0].done == _BEFORE_DEPS
+    _run_stage(ctx)
+    assert rec.events == []
+    assert ctx.deps_report == "Skipped (--without-deps)."
+    assert ctx.state is not None
+    assert ctx.state.without_deps is True
+    assert ctx.state.done == (*_BEFORE_DEPS, "update-deps")
+
+
+def test_without_deps_persists_across_resume(
+    monkeypatch: pytest.MonkeyPatch, written: list[StateBlock]
+) -> None:
+    """A resume without the flag still skips the update the state records as skipped."""
+    rec = _patch(monkeypatch, AssertionError("must not run"))
+    ctx = _resume(monkeypatch, _block(done=_BEFORE_DEPS, without_deps=True), given=False)
+    assert ctx.without_deps is True
+    assert written == []
+    _run_stage(ctx)
+    assert rec.events == []
+    assert ctx.state is not None
+    assert ctx.state.done == (*_BEFORE_DEPS, "update-deps")
+
+
+def test_without_deps_already_recorded_is_not_rewritten(
+    monkeypatch: pytest.MonkeyPatch, written: list[StateBlock]
+) -> None:
+    ctx = _resume(monkeypatch, _block(without_deps=True), given=True)
+    assert ctx.without_deps is True
+    assert written == []
+
+
+def test_fresh_start_takes_without_deps_from_the_flag(
+    monkeypatch: pytest.MonkeyPatch, written: list[StateBlock]
+) -> None:
+    """A fresh start has no state block yet: prepare creates it from the flag."""
+    ctx = _rctx()
+    state = ReleaseState(
+        version_override=None, repo_root=Path("/r"), promote=True, without_deps=True
+    )
+    monkeypatch.setattr(_ORCH + ".preflight", lambda **_kw: ctx)
+    _preflight_stage(state)
+    assert ctx.without_deps is True
+    assert ctx.resume is False
+    assert written == []
+
+
+def test_resume_without_a_state_block_refuses(
+    monkeypatch: pytest.MonkeyPatch, written: list[StateBlock]
+) -> None:
+    ctx = _rctx()
+    state = ReleaseState(
+        version_override=None, repo_root=Path("/r"), promote=True, resume=True, without_deps=True
+    )
+    monkeypatch.setattr(_ORCH + ".preflight", lambda **_kw: ctx)
+    with pytest.raises(ReleaseError, match="no release state block"):
+        _preflight_stage(state)
+    assert written == []

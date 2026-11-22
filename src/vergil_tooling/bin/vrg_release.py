@@ -137,7 +137,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--without-deps",
         action="store_true",
         default=False,
-        help="Skip the post-release dependency update (the update-deps stage).",
+        help=(
+            "Skip the post-release dependency update (the update-deps stage). "
+            "Recorded on the tracking issue, so every later --resume skips it "
+            "too; with --resume of a release whose tracking issue is still "
+            "open, it skips an update that failed."
+        ),
     )
     parser.add_argument(
         "--allow-pending-deps",

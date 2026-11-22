@@ -1255,6 +1255,53 @@ def test_publish_status_noop_without_ctx() -> None:
     _publish_status_stage(state)  # no raise
 
 
+def test_package_index_success_records_index_listed() -> None:
+    """A package-index that saw every package records index_listed (spec §4.5 of epic 1440)."""
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state.ctx = _ctx()
+
+    def listed(ctx: ReleaseContext) -> None:
+        ctx.package_index_urls = ("https://example.test/Packages",)
+
+    with (
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+    ):
+        _tracked("package-index", listed)(state)
+    assert state.ctx.state is not None
+    assert state.ctx.state.index_listed is True
+    assert state.ctx.state.done == ("package-index",)
+
+
+def test_package_index_without_packages_leaves_index_listed_unset() -> None:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state.ctx = _ctx()
+    with (
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+    ):
+        _tracked("package-index", lambda _ctx: None)(state)
+    assert state.ctx.state is not None
+    assert state.ctx.state.index_listed is False
+
+
+def test_preflight_stage_copies_resume() -> None:
+    ctx = _ctx()
+    state = ReleaseState(
+        version_override=None,
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        promote=True,
+        resume=True,
+        resume_version="2.1.0",
+        resume_issue_number=42,
+    )
+    with patch(_MOD + ".preflight", return_value=ctx):
+        _preflight_stage(state)
+    assert ctx.resume is True
+
+
 def test_preflight_stage_copies_without_deps() -> None:
     state = ReleaseState(
         version_override=None,
