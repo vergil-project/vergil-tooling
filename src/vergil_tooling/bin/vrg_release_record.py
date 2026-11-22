@@ -343,17 +343,11 @@ def _remote_url(repo: str) -> str:
 
 def _tag_commit(here: tuple[str, ...], tag: str) -> str | None:
     """The commit origin's *tag* resolves to (peeled), or ``None`` when it has none."""
-    raw = peeled = None
-    listing = git.read_output(
-        *here, "ls-remote", "origin", f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"
-    )
-    for line in listing.splitlines():
-        sha, _, ref = line.partition("\t")
-        if ref == f"refs/tags/{tag}^{{}}":
-            peeled = sha
-        elif ref == f"refs/tags/{tag}":
-            raw = sha
-    commit = peeled or raw
+    raw, peeled = f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"
+    listing = git.read_output(*here, "ls-remote", "origin", raw, peeled)
+    by_ref = {ref: sha for sha, _, ref in (line.partition("\t") for line in listing.splitlines())}
+    # An annotated tag's peeled line names its commit; a lightweight tag has none.
+    commit = by_ref.get(peeled) or by_ref.get(raw)
     if commit is not None and _SHA_RE.match(commit) is None:
         msg = f"git ls-remote returned a malformed SHA for {tag}: {commit!r}"
         raise ValueError(msg)

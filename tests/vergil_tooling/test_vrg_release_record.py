@@ -124,6 +124,7 @@ class _FakeGitHub:
         self.comments = comments
         self.prs = prs or []
         self.fail: str | None = None
+        self.closing: dict[str, object] | None = None
 
     def graphql(self, query: str, **variables: object) -> dict[str, object]:
         assert variables["owner"] == "o"
@@ -140,6 +141,8 @@ class _FakeGitHub:
             conn = {"totalCount": len(self.comments), "pageInfo": info, "nodes": page}
             return {"repository": {"issue": {"comments": conn}}}
         if "closedByPullRequestsReferences" in query:
+            if self.closing is not None:
+                return self.closing
             conn = {"totalCount": len(self.prs), "nodes": self.prs}
             return {"repository": {"issue": {"closedByPullRequestsReferences": conn}}}
         raise AssertionError(query)
@@ -362,25 +365,6 @@ def test_check_read_failure_exits_1(
     assert "HTTP 502" in err
 
 
-def test_check_truncated_closing_prs_exits_1(
-    origin: _Origin, capsys: pytest.CaptureFixture[str]
-) -> None:
-    fake = _FakeGitHub([_comment(_record("2.1.2"))], [_closing_pr(7, "a" * 40)])
-    real = fake.graphql
-
-    def graphql(query: str, **variables: object) -> dict[str, object]:
-        data = real(query, **variables)
-        if "closedByPullRequestsReferences" in query:
-            data["repository"]["issue"]["closedByPullRequestsReferences"]["totalCount"] = 21  # type: ignore[index]
-        return data
-
-    fake.graphql = graphql  # type: ignore[method-assign]
-    rc, out, err = _run(fake, origin, capsys)
-    assert rc == 1
-    assert out is None
-    assert "lists 21 closing PRs but returned 1" in err
-
-
 def test_check_git_failure_exits_1(origin: _Origin, capsys: pytest.CaptureFixture[str]) -> None:
     merged = origin.commit("feat: the change (#7)")
     origin.tag("v2.1.2")
@@ -410,3 +394,72 @@ def test_check_rejects_a_malformed_task(task: str) -> None:
     with pytest.raises(SystemExit) as exc:
         main(["check", task])
     assert exc.value.code == 2
+    with pytest.raises(ValueError, match="is not <owner>/<repo>#<N>"):
+        vrg_release_record.check(task)
+
+
+def _closing(*nodes: object, total: object = None) -> dict[str, object]:
+    conn = {"totalCount": len(nodes) if total is None else total, "nodes": list(nodes)}
+    return {"repository": {"issue": {"closedByPullRequestsReferences": conn}}}
+
+
+def _unmerged_commit() -> dict[str, Any]:
+    node = _closing_pr(7, "a" * 40)
+    node["mergeCommit"] = None
+    return node
+
+
+@pytest.mark.parametrize(
+    ("closing", "expected"),
+    [
+        (_closing(_closing_pr(7, "a" * 40), total=21), "lists 21 closing PRs but returned 1"),
+        ({"repository": {"issue": None}}, "no closedByPullRequestsReferences"),
+        (_closing(total=True), "has no totalCount or nodes"),
+        (_closing("x"), "a PR is 'x'"),
+        (_closing({"merged": True}), "a PR has no number"),
+        (_closing(_unmerged_commit()), "merged PR #7 has no merge commit"),
+    ],
+)
+def test_check_malformed_closing_prs_exits_1(
+    origin: _Origin, capsys: pytest.CaptureFixture[str], closing: dict[str, object], expected: str
+) -> None:
+    fake = _FakeGitHub([_comment(_record("2.1.2"))])
+    fake.closing = closing
+    rc, out, err = _run(fake, origin, capsys)
+    assert rc == 1
+    assert out is None
+    assert expected in err
+
+
+def test_check_lightweight_tag(origin: _Origin, capsys: pytest.CaptureFixture[str]) -> None:
+    merged = origin.commit("feat: the change (#7)")
+    _git(origin.path, "tag", "v2.1.2")
+    fake = _FakeGitHub([_comment(_record("2.1.2"))], [_closing_pr(7, merged)])
+    rc, out, _ = _run(fake, origin, capsys)
+    assert rc == 0
+    assert out is not None
+    assert out["ancestry"] == "pass"
+
+
+def test_tag_commit_refuses_a_malformed_sha() -> None:
+    listing = "not-a-sha\trefs/tags/v2.1.2"
+    with (
+        patch(f"{_MOD}.git.read_output", return_value=listing),
+        pytest.raises(ValueError, match="malformed SHA for v2.1.2"),
+    ):
+        vrg_release_record._tag_commit(("-C", "x"), "v2.1.2")
+
+
+def test_remote_url_is_the_github_repo() -> None:
+    assert vrg_release_record._remote_url("o/r") == "https://github.com/o/r.git"
+
+
+def test_check_temporary_directory_failure_exits_1(
+    origin: _Origin, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = _FakeGitHub([_comment(_record("2.1.2"))], [_closing_pr(7, "a" * 40)])
+    with patch(f"{_MOD}.tempfile.TemporaryDirectory", side_effect=OSError("disk full")):
+        rc, out, err = _run(fake, origin, capsys)
+    assert rc == 1
+    assert out is None
+    assert err == f"ERROR: {_TASK}: disk full\n"
