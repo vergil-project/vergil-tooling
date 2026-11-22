@@ -701,3 +701,64 @@ def test_superseded_issue_lookup() -> None:
         assert supersede.superseded_issue(_REPO, _OLD) == 40
     with patch(_SUPERSEDE + "._open_release_issues", return_value=[("2.1.6", 60, "")]):
         assert supersede.superseded_issue(_REPO, _OLD) is None
+
+
+def test_load_superseded_refuses_duplicate_open_issues(loaded: dict[str, MagicMock]) -> None:
+    loaded["open"].return_value = [(_OLD, 40, ""), (_OLD, 41, "")]
+    with pytest.raises(ReleaseError, match="2 open tracking issues") as info:
+        load_superseded(_REPO, _ROOT, _OLD, list(_TRACKED))
+    assert "#40, #41" in str(info.value)
+
+
+def test_load_superseded_refuses_an_unconfirmed_release_merge(
+    loaded: dict[str, MagicMock],
+) -> None:
+    current = _simulated_state("confirm-main", _failed_release)
+    loaded["open"].return_value = [(_OLD, 40, _body(current))]
+    loaded["read"].return_value = current
+    with pytest.raises(ReleaseError, match="merge commit could not be confirmed"):
+        load_superseded(_REPO, _ROOT, _OLD, list(_TRACKED))
+
+
+def test_load_superseded_refuses_another_release(loaded: dict[str, MagicMock]) -> None:
+    loaded["release"].return_value = {"tagName": "v2.1.4"}
+    with pytest.raises(ReleaseError, match=f"no GitHub Release of v{_OLD}"):
+        _load(loaded, _simulated_state("install"))
+
+
+def test_load_superseded_refuses_a_failed_tag_read(loaded: dict[str, MagicMock]) -> None:
+    loaded["ls_remote"].side_effect = subprocess.CalledProcessError(128, "git", stderr="offline")
+    with pytest.raises(ReleaseError, match="could not be asked") as info:
+        _load(loaded, _simulated_state("confirm-main", _failed_release))
+    assert "offline" in (info.value.detail or "")
+
+
+def test_superseded_issue_refuses_duplicates() -> None:
+    issues = [(_OLD, 40, ""), (_OLD, 41, "")]
+    with (
+        patch(_SUPERSEDE + "._open_release_issues", return_value=issues),
+        pytest.raises(ReleaseError, match="2 open tracking issues"),
+    ):
+        supersede.superseded_issue(_REPO, _OLD)
+
+
+def test_remove_branch_worktree_failure_raises(tmp_path: Path) -> None:
+    (tmp_path / ".worktrees" / f"release-{_OLD}").mkdir(parents=True)
+    failure = subprocess.CalledProcessError(1, ("git", "worktree"), stderr="dirty")
+    with (
+        patch(_SUPERSEDE + ".remove_worktree", side_effect=failure),
+        pytest.raises(ReleaseError, match="could not be removed") as info,
+    ):
+        supersede.remove_release_branch(tmp_path, f"release/{_OLD}", phase="prepare")
+    assert "dirty" in (info.value.detail or "")
+
+
+def test_remove_branch_skips_what_is_already_gone(tmp_path: Path) -> None:
+    with (
+        patch(_SUPERSEDE + ".remove_worktree") as m_remove,
+        patch(_SUPERSEDE + ".git.ref_exists", return_value=False),
+        patch(_SUPERSEDE + ".git.read_output", return_value="") as m_git,
+    ):
+        supersede.remove_release_branch(tmp_path, f"release/{_OLD}", phase="prepare")
+    m_remove.assert_not_called()
+    m_git.assert_called_once_with("ls-remote", "--heads", "origin", f"refs/heads/release/{_OLD}")
