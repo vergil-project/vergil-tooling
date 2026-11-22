@@ -1291,7 +1291,293 @@ def test_worst_case_nodes_counts_nesting() -> None:
         trust._REVIEW_EDITS_QUERY,
         trust._REVIEW_COMMENTS_QUERY,
         trust._REVIEW_COMMENT_EDITS_QUERY,
+        *trust._SEARCH_QUERIES.values(),
+        *trust._LIST_QUERIES.values(),
+        trust._RENAMES_QUERY,
     ],
 )
 def test_every_query_is_under_githubs_node_limit(query: str) -> None:
     assert _worst_case_nodes(query) <= _NODE_LIMIT
+
+
+# --- search_items and list_items -------------------------------------------------
+
+
+def _hit(
+    number: int,
+    author: Any = HUMAN,
+    *,
+    typename: str = "Issue",
+    title: str = "Fixture run: a change",
+    body: str = "the trusted body",
+    editor: Any = None,
+    edited: bool = False,
+    edits: dict[str, Any] | None = None,
+    renames: dict[str, Any] | None = None,
+    labels: dict[str, Any] | None = None,
+    state: str = "OPEN",
+) -> dict[str, Any]:
+    """A search or list result as GraphQL returns it."""
+    path = "issues" if typename == "Issue" else "pull"
+    return {
+        "__typename": typename,
+        "number": number,
+        "title": title,
+        "url": f"https://github.com/{REPO}/{path}/{number}",
+        "state": state,
+        "repository": {"nameWithOwner": REPO},
+        "labels": labels if labels is not None else _page([{"name": "deployment"}]),
+        "author": author,
+        "editor": editor,
+        "body": body,
+        "createdAt": CREATED,
+        "lastEditedAt": EDITED if edited else None,
+        "userContentEdits": edits if edits is not None else _edits(),
+        "timelineItems": renames if renames is not None else _page([]),
+    }
+
+
+def _rename(actor: Any, at: str = EDITED) -> dict[str, Any]:
+    return {"__typename": "RenamedTitleEvent", "actor": actor, "createdAt": at}
+
+
+def _search(
+    nodes: list[Any], cursor: str | None = None, count: int | None = None
+) -> dict[str, Any]:
+    page = _page(nodes, cursor)
+    return {"search": {"issueCount": len(nodes) if count is None else count, **page}}
+
+
+def _listing(nodes: list[Any], cursor: str | None = None, key: str = "issues") -> dict[str, Any]:
+    return {"repository": {key: _page(nodes, cursor)}}
+
+
+def _search_issues(**kwargs: Any) -> tuple[list[trust.TrustedHit], list[Skipped]]:
+    return trust.search_items(f"repo:{REPO} is:open", kind="issue", authors=AUTHORS, **kwargs)
+
+
+def test_search_items_keeps_trusted_results(answer: Any) -> None:
+    fake = answer({trust._SEARCH_QUERIES["issue"]: [_search([_hit(1), _hit(2, AGENT)])]})
+    hits, skipped = _search_issues()
+    assert skipped == []
+    assert [(h.number, h.body_role, h.kind) for h in hits] == [
+        (1, Role.HUMAN, "issue"),
+        (2, Role.AGENTS, "issue"),
+    ]
+    assert hits[0].labels == ("deployment",)
+    assert hits[0].title == "Fixture run: a change"
+    assert hits[0].body == "the trusted body"
+    assert fake.calls[0][1]["q"] == f"repo:{REPO} is:open is:issue"
+
+
+def test_search_items_skips_outsider_result_and_reports(answer: Any) -> None:
+    spam = _hit(3, {"__typename": "User", "login": SPAM_LOGIN}, title="Fixture run", body=SPAM)
+    answer({trust._SEARCH_QUERIES["issue"]: [_search([_hit(1), spam])]})
+    hits, skipped = _search_issues()
+    assert [h.number for h in hits] == [1]
+    assert skipped == [Skipped(REPO, 3, "issue", SPAM_LOGIN, CREATED, "body", trust.UNTRUSTED)]
+    stream = io.StringIO()
+    report_skipped(skipped, stream=stream)
+    assert "SPAM-MARKER-TEXT" not in stream.getvalue()
+    assert f"{REPO}#3 issue {SPAM_LOGIN}" in stream.getvalue()
+
+
+def test_search_items_skips_body_edited_by_outsider(answer: Any) -> None:
+    edited = _hit(4, edits=_edits([HUMAN, OUTSIDER]), edited=True, editor=HUMAN)
+    answer({trust._SEARCH_QUERIES["issue"]: [_search([edited])]})
+    hits, skipped = _search_issues()
+    assert hits == []
+    assert skipped == [Skipped(REPO, 4, "edit", "drive-by", EDITED, "body", trust.UNTRUSTED)]
+
+
+def test_search_items_skips_title_renamed_by_outsider(answer: Any) -> None:
+    renamed = _hit(5, renames=_page([_rename(HUMAN), _rename(OUTSIDER)]))
+    answer({trust._SEARCH_QUERIES["issue"]: [_search([renamed])]})
+    hits, skipped = _search_issues()
+    assert hits == []
+    assert skipped == [Skipped(REPO, 5, "event", "drive-by", EDITED, "title", trust.UNTRUSTED)]
+
+
+def test_search_items_title_renamed_by_deleted_account_is_skipped(answer: Any) -> None:
+    answer({trust._SEARCH_QUERIES["issue"]: [_search([_hit(5, renames=_page([_rename(None)]))])]})
+    _, skipped = _search_issues()
+    assert [(s.kind, s.login, s.field, s.cause) for s in skipped] == [
+        ("event", None, "title", trust.DELETED)
+    ]
+
+
+def test_search_items_last_editor_rule_checks_last_rename(answer: Any) -> None:
+    renamed = _hit(5, renames=_page([_rename(OUTSIDER), _rename(HUMAN)]))
+    answer({trust._SEARCH_QUERIES["issue"]: [_search([renamed])]})
+    hits, skipped = _search_issues(editors="last")
+    assert [h.number for h in hits] == [5]
+    assert skipped == []
+
+
+def test_search_items_roles_parameter_narrows(answer: Any) -> None:
+    answer({trust._SEARCH_QUERIES["issue"]: [_search([_hit(1), _hit(2, AGENT)])]})
+    hits, skipped = _search_issues(roles=frozenset({Role.HUMAN}))
+    assert [h.number for h in hits] == [1]
+    assert [(s.number, s.cause) for s in skipped] == [(2, trust.NOT_ACCEPTED)]
+
+
+def test_search_items_roles_parameter_applies_to_renames(answer: Any) -> None:
+    renamed = _hit(5, renames=_page([_rename(AGENT)]))
+    answer({trust._SEARCH_QUERIES["issue"]: [_search([renamed])]})
+    hits, skipped = _search_issues(roles=frozenset({Role.HUMAN}))
+    assert hits == []
+    assert [(s.kind, s.field, s.cause) for s in skipped] == [
+        ("event", "title", trust.NOT_ACCEPTED)
+    ]
+
+
+def test_search_items_user_named_like_app_is_wrong_type(answer: Any) -> None:
+    fake_agent = {"__typename": "User", "login": "the-agent"}
+    answer({trust._SEARCH_QUERIES["issue"]: [_search([_hit(1, fake_agent)])]})
+    _, skipped = _search_issues()
+    assert [s.cause for s in skipped] == [trust.WRONG_TYPE]
+
+
+def test_search_items_pages_results_edits_and_renames(answer: Any) -> None:
+    first = _hit(1, edits=_edits([HUMAN], cursor="E1"), renames=_page([_rename(HUMAN)], "R1"))
+    fake = answer(
+        {
+            trust._SEARCH_QUERIES["issue"]: [_search([first], "S1", count=2), _search([_hit(2)])],
+            trust._BODY_EDITS_QUERY: [
+                {"repository": {"issueOrPullRequest": {"userContentEdits": _edits([OUTSIDER])}}}
+            ],
+            trust._RENAMES_QUERY: [
+                {"repository": {"issueOrPullRequest": {"timelineItems": _page([_rename(HUMAN)])}}}
+            ],
+        }
+    )
+    hits, skipped = _search_issues()
+    assert [h.number for h in hits] == [2]
+    assert [(s.number, s.kind, s.login) for s in skipped] == [(1, "edit", "drive-by")]
+    assert fake.calls[1][1]["after"] == "S1"
+    variables = [v for _, v in fake.calls]
+    assert {"owner": ORG, "name": "widgets", "number": 1, "after": "E1"} in variables
+    assert {"owner": ORG, "name": "widgets", "number": 1, "after": "R1"} in variables
+
+
+def test_search_items_over_the_result_cap_raises(answer: Any) -> None:
+    answer({trust._SEARCH_QUERIES["issue"]: [_search([_hit(1)], "S1", count=1001)]})
+    with pytest.raises(TrustReadError, match="1001 items, more than the 1000"):
+        _search_issues()
+
+
+def test_search_items_reads_prs(answer: Any) -> None:
+    pr = _hit(9, AGENT, typename="PullRequest", state="MERGED")
+    fake = answer({trust._SEARCH_QUERIES["pr"]: [_search([pr])]})
+    hits, _ = trust.search_items(f"repo:{REPO} 12", kind="pr", authors=AUTHORS)
+    assert [(h.number, h.kind, h.state) for h in hits] == [(9, "pr", "MERGED")]
+    assert fake.calls[0][1]["q"] == f"repo:{REPO} 12 is:pr"
+    assert "... on PullRequest {" in trust._SEARCH_QUERIES["pr"]
+    assert "... on Issue" not in trust._SEARCH_QUERIES["pr"]
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        ({"__typename": "PullRequest"}, "not of the kind asked for"),
+        ({"number": "1"}, "no usable number"),
+        ({"labels": _page([], "L1")}, "labels of acme/widgets#1 are not read in full"),
+        ({"timelineItems": _page([{"__typename": "LabeledEvent"}])}, "not asked for"),
+        ({"author": {"login": "the-human"}}, "has no __typename"),
+        ({"userContentEdits": {"nodes": []}}, "has no pageInfo"),
+        ({"repository": None}, "repo is missing"),
+    ],
+)
+def test_search_items_malformed_result_raises(
+    answer: Any, change: dict[str, Any], match: str
+) -> None:
+    answer({trust._SEARCH_QUERIES["issue"]: [_search([{**_hit(1), **change}])]})
+    with pytest.raises(TrustReadError, match=match):
+        _search_issues()
+
+
+@pytest.mark.parametrize(
+    ("page", "match"),
+    [
+        ({}, "the search is missing"),
+        ({"search": {"nodes": [], "pageInfo": {"hasNextPage": False}}}, "has no issueCount"),
+        ({"search": {"issueCount": True, "nodes": []}}, "no usable issueCount"),
+        ({"search": {"issueCount": 0, "nodes": []}}, "has no pageInfo"),
+    ],
+)
+def test_search_items_malformed_page_raises(answer: Any, page: Any, match: str) -> None:
+    answer({trust._SEARCH_QUERIES["issue"]: [page]})
+    with pytest.raises(TrustReadError, match=match):
+        _search_issues()
+
+
+def test_search_items_api_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(query: str, **variables: object) -> dict[str, Any]:
+        raise _api_error("gh: Something went wrong\nHTTP 502")
+
+    monkeypatch.setattr(vergil_tooling.lib.github, "graphql", fail)
+    with pytest.raises(TrustReadError, match="search_items issue") as info:
+        _search_issues()
+    assert "SPAM-MARKER-TEXT" not in str(info.value)
+
+
+def test_search_items_loads_configured_authors(
+    answer: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answer({trust._SEARCH_QUERIES["issue"]: [_search([_hit(1)])]})
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    hits, _ = trust.search_items("x", kind="issue")
+    assert [h.number for h in hits] == [1]
+
+
+def test_list_items_reads_the_repository(answer: Any) -> None:
+    query = trust._LIST_QUERIES["pr", "open"]
+    pr = _hit(3, AGENT, typename="PullRequest", title="Logbook: 2026-11-22")
+    outsider = _hit(4, OUTSIDER, typename="PullRequest", title="Logbook: spam")
+    fake = answer(
+        {
+            query: [
+                _listing([pr], "P1", key="pullRequests"),
+                _listing([outsider], key="pullRequests"),
+            ]
+        }
+    )
+    hits, skipped = trust.list_items(REPO, kind="pr", state="open", authors=AUTHORS)
+    assert [(h.number, h.title) for h in hits] == [(3, "Logbook: 2026-11-22")]
+    assert [(s.number, s.kind, s.cause) for s in skipped] == [(4, "pr", trust.UNTRUSTED)]
+    assert fake.calls[0][1] == {"owner": ORG, "name": "widgets"}
+    assert fake.calls[1][1] == {"owner": ORG, "name": "widgets", "after": "P1"}
+
+
+@pytest.mark.parametrize(
+    ("kind", "state", "selection"),
+    [
+        ("issue", "open", "issues(states: [OPEN]"),
+        ("issue", "closed", "issues(states: [CLOSED]"),
+        ("issue", "all", "issues(orderBy"),
+        ("pr", "open", "pullRequests(states: [OPEN]"),
+        ("pr", "closed", "pullRequests(states: [CLOSED]"),
+        ("pr", "merged", "pullRequests(states: [MERGED]"),
+        ("pr", "all", "pullRequests(orderBy"),
+    ],
+)
+def test_list_items_state_filter(kind: str, state: str, selection: str) -> None:
+    assert selection in trust._LIST_QUERIES[kind, state]
+
+
+def test_list_items_issue_has_no_merged_state() -> None:
+    with pytest.raises(ValueError, match="no 'merged' state"):
+        trust.list_items(REPO, kind="issue", state="merged", authors=AUTHORS)
+
+
+def test_list_items_missing_connection_raises(answer: Any) -> None:
+    answer({trust._LIST_QUERIES["issue", "open"]: [{"repository": {}}]})
+    with pytest.raises(TrustReadError, match="has no issues"):
+        trust.list_items(REPO, kind="issue", state="open", authors=AUTHORS)
+
+
+def test_list_items_loads_configured_authors(answer: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    answer({trust._LIST_QUERIES["issue", "open"]: [_listing([_hit(1)])]})
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    hits, _ = trust.list_items(REPO, kind="issue", state="open")
+    assert [h.number for h in hits] == [1]

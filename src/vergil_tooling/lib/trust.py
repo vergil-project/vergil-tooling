@@ -25,7 +25,9 @@ is load-bearing they raise :class:`UntrustedContentError` instead. Reviews and
 inline review comments follow the same rule (:func:`read_reviews`). A close
 or reopen is trusted when its actor is (:func:`read_events`,
 :func:`close_judgement`). A PR found by its branch is same-repo and has a
-trusted author (:func:`prs_for_branch`); a fork PR never matches.
+trusted author (:func:`prs_for_branch`); a fork PR never matches. A search
+or list result is trusted when its body is, and everyone who renamed it holds
+a role (:func:`search_items`, :func:`list_items`).
 
 **Failing loudly** (spec §3). An API error, a missing field or a connection
 that is not read in full raises :class:`TrustReadError`, never "trusted",
@@ -1038,6 +1040,337 @@ def read_reviews(
         review_comments=tuple(trusted_inline),
         skipped=tuple(skipped + skipped_inline),
     )
+
+
+# --- searches and lists -----------------------------------------------------------
+
+ItemKind = Literal["issue", "pr"]
+ListState = Literal["open", "closed", "merged", "all"]
+
+_TYPENAMES: dict[str, str] = {"issue": "Issue", "pr": "PullRequest"}
+
+# GitHub's search returns at most this many results for one query; a query
+# that matches more is refused rather than judged on a part of its results.
+SEARCH_RESULT_CAP = 1000
+
+
+def _renames_selection(after: str = "") -> str:
+    return (
+        f"timelineItems(first: {_PAGE}{after}, itemTypes: [RENAMED_TITLE_EVENT])"
+        f" {{ {_PAGE_INFO} nodes {{ __typename ... on RenamedTitleEvent"
+        f" {{ actor {_ACTOR} createdAt }} }} }}"
+    )
+
+
+def _hit_selection(kind: ItemKind) -> str:
+    """What a search or list reads of each result: one GraphQL type per query."""
+    return (
+        f"__typename ... on {_TYPENAMES[kind]} {{"
+        f" number title url state repository {{ nameWithOwner }}"
+        f" labels(first: {_PAGE}) {{ {_PAGE_INFO} nodes {{ name }} }}"
+        f" {_BODY_FIELDS} {_renames_selection()} }}"
+    )
+
+
+def _search_query(kind: ItemKind) -> str:
+    return f"""
+query($q: String!, $after: String) {{
+  search(query: $q, type: ISSUE, first: {_PAGE}, after: $after) {{
+    issueCount {_PAGE_INFO}
+    nodes {{ {_hit_selection(kind)} }}
+  }}
+}}
+"""
+
+
+_SEARCH_QUERIES = {kind: _search_query(kind) for kind in _TYPENAMES}
+
+_LIST_STATES: dict[tuple[str, str], str] = {
+    ("issue", "open"): "states: [OPEN], ",
+    ("issue", "closed"): "states: [CLOSED], ",
+    ("issue", "all"): "",
+    ("pr", "open"): "states: [OPEN], ",
+    ("pr", "closed"): "states: [CLOSED], ",
+    ("pr", "merged"): "states: [MERGED], ",
+    ("pr", "all"): "",
+}
+
+
+def _list_query(kind: str, state: str) -> str:
+    connection = "issues" if kind == "issue" else "pullRequests"
+    order = "orderBy: {field: CREATED_AT, direction: DESC}, "
+    return f"""
+query($owner: String!, $name: String!, $after: String) {{
+  repository(owner: $owner, name: $name) {{
+    {connection}({_LIST_STATES[kind, state]}{order}first: {_PAGE}, after: $after) {{
+      {_PAGE_INFO}
+      nodes {{ {_hit_selection(cast("ItemKind", kind))} }}
+    }}
+  }}
+}}
+"""
+
+
+_LIST_QUERIES = {key: _list_query(*key) for key in _LIST_STATES}
+
+_RENAMES_QUERY = f"""
+query($owner: String!, $name: String!, $number: Int!, $after: String!) {{
+  repository(owner: $owner, name: $name) {{
+    issueOrPullRequest(number: $number) {{
+      {_on_issue_and_pr(_renames_selection(", after: $after"))}
+    }}
+  }}
+}}
+"""
+
+
+@dataclass(frozen=True)
+class TrustedHit:
+    """A search or list result whose body and title the layer trusts.
+
+    *kind* is ``issue`` or ``pr``; *state* is GraphQL's ``OPEN``, ``CLOSED``
+    or ``MERGED``. *body_role* is the body's author's role; every editor of
+    the body and everyone who renamed the item (by the reader's
+    :data:`EditorRule`) holds a role the reader accepts.
+    """
+
+    repo: str
+    number: int
+    kind: str
+    title: str
+    url: str
+    state: str
+    labels: tuple[str, ...]
+    body: str
+    body_role: Role
+
+
+@dataclass
+class _Hit:
+    repo: str
+    number: int
+    title: str
+    url: str
+    state: str
+    labels: tuple[str, ...]
+    body: _Content
+    renames: list[tuple[Identity, str]]
+    renames_cursor: str | None
+
+
+def _rename(node: object, call: str, what: str) -> tuple[Identity, str]:
+    event = _obj(node, call, f"a rename of {what}")
+    if _get(event, "__typename", call, f"a rename of {what}") != "RenamedTitleEvent":
+        raise TrustReadError(call, f"a rename of {what} is of a type that was not asked for")
+    return (
+        _actor(event, "actor", call, f"a rename of {what}"),
+        _text(event, "createdAt", call, f"a rename of {what}"),
+    )
+
+
+def _hit(node: object, call: str, kind: ItemKind) -> _Hit:
+    item = _obj(node, call, "a result")
+    if _get(item, "__typename", call, "a result") != _TYPENAMES[kind]:
+        raise TrustReadError(call, f"a result is not of the kind asked for ({kind})")
+    number = _get(item, "number", call, "a result")
+    if not isinstance(number, int) or isinstance(number, bool):
+        raise TrustReadError(call, "a result has no usable number")
+    repository = _obj(_get(item, "repository", call, f"#{number}"), call, f"#{number}'s repo")
+    repo = _text(repository, "nameWithOwner", call, f"#{number}'s repository")
+    what = f"{repo}#{number}"
+    label_nodes, label_cursor = _connection(
+        _get(item, "labels", call, what), call, f"the labels of {what}"
+    )
+    if label_cursor is not None:
+        raise TrustReadError(call, f"the labels of {what} are not read in full")
+    labels = tuple(
+        _text(_obj(label, call, f"a label of {what}"), "name", call, f"a label of {what}")
+        for label in label_nodes
+    )
+    rename_nodes, renames_cursor = _connection(
+        _get(item, "timelineItems", call, what), call, f"the renames of {what}"
+    )
+    return _Hit(
+        repo=repo,
+        number=number,
+        title=_text(item, "title", call, what, empty=True),
+        url=_text(item, "url", call, what),
+        state=_text(item, "state", call, what),
+        labels=labels,
+        body=_content(item, call, f"the body of {what}"),
+        renames=[_rename(rename, call, what) for rename in rename_nodes],
+        renames_cursor=renames_cursor,
+    )
+
+
+def _read_hit_history(hit: _Hit, call: str) -> None:
+    """Follow every further page of *hit*'s body edits and title renames."""
+    owner, name = _split_repo(hit.repo)
+    where = {"owner": owner, "name": name, "number": hit.number}
+    what = f"{hit.repo}#{hit.number}"
+    body = hit.body
+    while body.edits_cursor is not None:
+        page = _item(_graphql(call, _BODY_EDITS_QUERY, **where, after=body.edits_cursor), call)
+        nodes, body.edits_cursor = _connection(
+            _get(page, "userContentEdits", call, what), call, f"the edits of {what}"
+        )
+        body.edits += [_edit(edit, call, what) for edit in nodes]
+    while hit.renames_cursor is not None:
+        page = _item(_graphql(call, _RENAMES_QUERY, **where, after=hit.renames_cursor), call)
+        nodes, hit.renames_cursor = _connection(
+            _get(page, "timelineItems", call, what), call, f"the renames of {what}"
+        )
+        hit.renames += [_rename(rename, call, what) for rename in nodes]
+
+
+def _judge_hit(
+    hit: _Hit,
+    *,
+    kind: ItemKind,
+    roles: frozenset[Role],
+    editors: EditorRule,
+    authors: TrustedAuthors,
+) -> TrustedHit | Skipped:
+    """The hit, trusted, or the first untrusted thing about its body or title."""
+    role, _, skipped = _judge(
+        hit.body,
+        repo=hit.repo,
+        number=hit.number,
+        kind=kind,
+        field="body",
+        roles=roles,
+        editors=editors,
+        authors=authors,
+    )
+    if skipped is not None:
+        return skipped
+    org = hit.repo.partition("/")[0]
+    renames = hit.renames if editors == "every" else hit.renames[-1:]
+    for identity, at in renames:
+        judgement = _accepted(identity, org=org, roles=roles, authors=authors)
+        if judgement.cause is not None:
+            return Skipped(
+                hit.repo, hit.number, "event", _bare(identity), at, "title", judgement.cause
+            )
+    return TrustedHit(
+        repo=hit.repo,
+        number=hit.number,
+        kind=kind,
+        title=hit.title,
+        url=hit.url,
+        state=hit.state,
+        labels=hit.labels,
+        body=hit.body.body,
+        body_role=cast("Role", role),
+    )
+
+
+def _judge_hits(
+    hits: Sequence[_Hit],
+    *,
+    call: str,
+    kind: ItemKind,
+    roles: frozenset[Role],
+    editors: EditorRule,
+    authors: TrustedAuthors,
+) -> tuple[list[TrustedHit], list[Skipped]]:
+    trusted: list[TrustedHit] = []
+    skipped: list[Skipped] = []
+    for hit in hits:
+        _read_hit_history(hit, call)
+        result = _judge_hit(hit, kind=kind, roles=roles, editors=editors, authors=authors)
+        if isinstance(result, Skipped):
+            skipped.append(result)
+        else:
+            trusted.append(result)
+    return trusted, skipped
+
+
+def search_items(
+    query: str,
+    *,
+    kind: ItemKind,
+    roles: frozenset[Role] = ALL_ROLES,
+    editors: EditorRule = "every",
+    authors: TrustedAuthors | None = None,
+) -> tuple[list[TrustedHit], list[Skipped]]:
+    """The issues (or PRs) GitHub's search finds for *query*, trusted ones only.
+
+    *query* is GitHub search syntax; ``is:issue`` or ``is:pr`` is added by
+    *kind*. Every page is read, and every result is judged as a body is
+    (spec §5.2: its author and its editors), and its title too: everyone who
+    renamed it must hold a role in *roles*. Each other result is returned as
+    :class:`Skipped` for the caller to report, never dropped. A query that
+    matches more than :data:`SEARCH_RESULT_CAP` items raises
+    :class:`TrustReadError`: GitHub would return only part of them.
+    """
+    if authors is None:
+        authors = load_trusted_authors()
+    full = f"{query} is:{kind}"
+    call = f"search_items {kind}"
+    hits: list[_Hit] = []
+    cursor: str | None = None
+    while True:
+        variables: dict[str, object] = {"q": full}
+        if cursor is not None:
+            variables["after"] = cursor
+        data = _graphql(call, _SEARCH_QUERIES[kind], **variables)
+        search = _obj(data.get("search"), call, "the search")
+        count = _get(search, "issueCount", call, "the search")
+        if not isinstance(count, int) or isinstance(count, bool):
+            raise TrustReadError(call, "the search has no usable issueCount")
+        if count > SEARCH_RESULT_CAP:
+            raise TrustReadError(
+                call,
+                f"the search matches {count} items, more than the {SEARCH_RESULT_CAP}"
+                " GitHub's search returns; narrow the query",
+            )
+        nodes, cursor = _connection(search, call, "the search results")
+        hits += [_hit(node, call, kind) for node in nodes]
+        if cursor is None:
+            break
+    return _judge_hits(hits, call=call, kind=kind, roles=roles, editors=editors, authors=authors)
+
+
+def list_items(
+    repo: str,
+    *,
+    kind: ItemKind,
+    state: ListState,
+    roles: frozenset[Role] = ALL_ROLES,
+    editors: EditorRule = "every",
+    authors: TrustedAuthors | None = None,
+) -> tuple[list[TrustedHit], list[Skipped]]:
+    """*repo*'s issues (or PRs) in *state*, newest first, trusted ones only.
+
+    A GraphQL read of the repository's ``issues`` or ``pullRequests``, every
+    page, judged as :func:`search_items` judges its results. ``merged`` is a
+    PR state only. Unlike a search, it reads the repository itself, so an
+    item opened a moment ago is not missing from it.
+    """
+    if (kind, state) not in _LIST_STATES:
+        msg = f"an issue has no {state!r} state"
+        raise ValueError(msg)
+    if authors is None:
+        authors = load_trusted_authors()
+    owner, name = _split_repo(repo)
+    call = f"list_items {repo} {kind}"
+    connection = "issues" if kind == "issue" else "pullRequests"
+    hits: list[_Hit] = []
+    cursor: str | None = None
+    while True:
+        variables: dict[str, object] = {"owner": owner, "name": name}
+        if cursor is not None:
+            variables["after"] = cursor
+        data = _graphql(call, _LIST_QUERIES[kind, state], **variables)
+        repository = _obj(data.get("repository"), call, "the repository")
+        nodes, cursor = _connection(
+            _get(repository, connection, call, "the repository"), call, f"the {connection}"
+        )
+        hits += [_hit(node, call, kind) for node in nodes]
+        if cursor is None:
+            break
+    return _judge_hits(hits, call=call, kind=kind, roles=roles, editors=editors, authors=authors)
 
 
 # --- reporting ----------------------------------------------------------------

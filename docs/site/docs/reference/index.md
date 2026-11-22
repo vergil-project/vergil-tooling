@@ -58,6 +58,7 @@ the dev-tree override venv.
 | [vrg-host](dev/host.md) | Report, upgrade and pin the macOS host dependencies |
 | [vrg-tooling-install](cli-tools-overview.md#vrg-tooling-install) | Install an exact vergil-tooling release on the host, locked to its `uv.lock` |
 | [vrg-issue-create](cli-tools-overview.md#vrg-issue-create) | Create an issue and link it under an epic in one step |
+| [vrg-issue-read](cli-tools-overview.md#vrg-issue-read) | Print an issue's or PR's trusted content, or the trusted results of a search or list |
 | [vrg-epic-create](cli-tools-overview.md#vrg-epic-create) | Create a top-level epic in its home repo |
 | [vrg-epic-docs](cli-tools-overview.md#vrg-epic-docs) | Write an epic's Documents section |
 | [vrg-epic-link](cli-tools-overview.md#vrg-epic-link) | Link a task under an epic as a native sub-issue |
