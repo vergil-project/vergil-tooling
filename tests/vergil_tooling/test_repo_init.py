@@ -719,7 +719,7 @@ class TestRenderCiWorkflow:
             primary_language=language or None,
         )
         ruleset = desired_ci_gates_rulesets(
-            project, CiConfig(versions=["latest"], integration_tests=False), ghas=True
+            project, CiConfig(versions=["latest"], integration_tests=False)
         )[0]
         required = {
             str(check["context"])
@@ -800,21 +800,23 @@ class TestRenderCiWorkflow:
         content = render_ci_workflow(ctx)
         assert "ci-test.yml@v2.1" in content
 
-    def test_private_repo_disables_sarif_upload(self) -> None:
-        ctx = RepoInitContext(org="logical-minds-foundry", name="test", visibility="private")
-        ctx.ci_versions = ["latest"]
-        ctx.release_model = "none"
-        content = render_ci_workflow(ctx)
-        assert "upload-sarif: false" in content
-        assert "actions: read" in content
+    @pytest.mark.parametrize("language", ["python", None])
+    def test_repo_init_ci_has_no_upload_sarif(self, language: str | None) -> None:
+        """Every repo is public: no SARIF opt-out, and no ``actions: read`` grant.
 
-    def test_public_repo_keeps_sarif_upload(self) -> None:
+        ci-security.yml@v2.1 no longer requests ``actions: read`` (epic
+        vergil-project/.github#1476), so the security job grants only what it uses.
+        """
         ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = language
         ctx.ci_versions = ["latest"]
         ctx.release_model = "none"
         content = render_ci_workflow(ctx)
-        assert "upload-sarif: false" not in content
-        assert "actions: read" in content
+        assert "upload-sarif" not in content
+        security = content.split("\n  security:\n", 1)[1].split("\n\n", 1)[0]
+        assert "ci-security.yml@" in security
+        assert "    permissions:\n      contents: read\n      security-events: write\n" in security
+        assert "actions: read" not in security
 
     def test_pins_are_v2_1(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -916,7 +918,7 @@ class TestCiGatesProducibility:
     requires on a pull_request — the parity #2720 restores and guards."""
 
     @staticmethod
-    def _unproducible(ctx: RepoInitContext, *, ghas: bool, docs: bool) -> list[str]:
+    def _unproducible(ctx: RepoInitContext, *, docs: bool) -> list[str]:
         from vergil_tooling.lib.github_config import (
             desired_ci_gates_rulesets,
             required_status_contexts,
@@ -932,10 +934,10 @@ class TestCiGatesProducibility:
         )
         ci = CiConfig(versions=ctx.ci_versions, integration_tests=ctx.integration_tests)
         ruleset = desired_ci_gates_rulesets(
-            project, ci, ghas=ghas, docs=docs, integration_versions=ctx.ci_versions
+            project, ci, docs=docs, integration_versions=ctx.ci_versions
         )[0]
         result: list[str] = unproducible_ci_yaml_contexts(
-            render_ci_workflow(ctx), required_status_contexts(ruleset), ghas=ghas
+            render_ci_workflow(ctx), required_status_contexts(ruleset)
         )
         return result
 
@@ -947,15 +949,7 @@ class TestCiGatesProducibility:
         ctx.ci_versions = ["3.14"]
         ctx.release_model = "tagged-release"
         ctx.publish_docs = True
-        assert self._unproducible(ctx, ghas=True, docs=True) == []
-
-    def test_private_docs_repo_is_fully_producible(self) -> None:
-        ctx = RepoInitContext(org="logical-minds-foundry", name="docs", visibility="private")
-        ctx.primary_language = "python"
-        ctx.ci_versions = ["3.14"]
-        ctx.release_model = "tagged-release"
-        ctx.publish_docs = True
-        assert self._unproducible(ctx, ghas=False, docs=True) == []
+        assert self._unproducible(ctx, docs=True) == []
 
     def test_integration_tests_leave_an_unproducible_context(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -964,7 +958,7 @@ class TestCiGatesProducibility:
         ctx.release_model = "tagged-release"
         ctx.integration_tests = True
         ctx.publish_docs = True
-        assert self._unproducible(ctx, ghas=True, docs=True) == ["test / integration / 3.14"]
+        assert self._unproducible(ctx, docs=True) == ["test / integration / 3.14"]
 
 
 class TestAssertCiGatesProducible:
@@ -975,7 +969,7 @@ class TestAssertCiGatesProducible:
         (wf / "ci.yml").write_text(render_ci_workflow(ctx))
         return ctx
 
-    def _desired(self, ctx: RepoInitContext, *, ghas: bool) -> Any:
+    def _desired(self, ctx: RepoInitContext) -> Any:
         """A minimal desired-state stand-in: the guard only reads ``.rulesets``."""
         from types import SimpleNamespace
 
@@ -992,7 +986,6 @@ class TestAssertCiGatesProducible:
         rulesets = desired_ci_gates_rulesets(
             project,
             ci,
-            ghas=ghas,
             docs=ctx.publish_docs,
             integration_versions=ctx.ci_versions,
         )
@@ -1006,7 +999,7 @@ class TestAssertCiGatesProducible:
         ctx.publish_docs = True
         self._ctx_with_ci(tmp_path, ctx)
         # Does not raise.
-        _assert_ci_gates_producible(ctx, self._desired(ctx, ghas=True), ghas=True)
+        _assert_ci_gates_producible(ctx, self._desired(ctx))
 
     def test_raises_for_integration_tests(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -1017,7 +1010,7 @@ class TestAssertCiGatesProducible:
         ctx.publish_docs = True
         self._ctx_with_ci(tmp_path, ctx)
         with pytest.raises(RuntimeError) as exc:
-            _assert_ci_gates_producible(ctx, self._desired(ctx, ghas=True), ghas=True)
+            _assert_ci_gates_producible(ctx, self._desired(ctx))
         message = str(exc.value)
         assert "test / integration / 3.14" in message
         assert "2721" in message
@@ -1288,7 +1281,6 @@ class TestStepCreateRepo:
         ctx = RepoInitContext(
             org="vergil-project",
             name="vergil-vm",
-            visibility="public",
             description="Test repo",
         )
         calls: list[tuple[str, ...]] = []
@@ -1305,13 +1297,16 @@ class TestStepCreateRepo:
         ):
             step_create_repo(ctx)
 
-        assert any("repo" in c and "create" in c for c in calls)
+        create = [c for c in calls if "repo" in c and "create" in c]
+        assert len(create) == 1
+        # Every repo is created public (epic vergil-project/.github#1476).
+        assert "--public" in create[0]
+        assert "--private" not in create[0]
 
     def test_skips_when_repo_exists_nonadopt(self) -> None:
         ctx = RepoInitContext(
             org="vergil-project",
             name="vergil-vm",
-            visibility="public",
         )
 
         with patch(
@@ -2430,15 +2425,12 @@ class TestStepGithubConfig:
             labels_synced.append(repo)
 
         with (
-            patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
             patch("vergil_tooling.lib.github_config.compute_desired_state"),
             patch("vergil_tooling.lib.github_config.apply_desired_state", side_effect=mock_apply),
             patch("vergil_tooling.lib.repo_init.sync_labels", side_effect=mock_sync),
             patch("vergil_tooling.lib.config.read_config"),
             patch("vergil_tooling.lib.repo_init._assert_ci_gates_producible"),
         ):
-            mock_fetch.return_value.owner_type = "Organization"
-            mock_fetch.return_value.visibility = "public"
             step_github_config(ctx)
 
         assert config_applied
@@ -2462,7 +2454,6 @@ class TestStepGithubConfig:
                 "vergil_tooling.lib.automation_identity.automation_app_slug",
                 return_value="acme-automation",
             ) as mock_slug,
-            patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
             patch(
                 "vergil_tooling.lib.github_config.apply_desired_state", return_value=[]
             ) as mock_apply,
@@ -2470,8 +2461,6 @@ class TestStepGithubConfig:
             patch("vergil_tooling.lib.config.read_config", return_value=cfg),
             patch("vergil_tooling.lib.repo_init._assert_ci_gates_producible"),
         ):
-            mock_fetch.return_value.owner_type = "Organization"
-            mock_fetch.return_value.visibility = "public"
             step_github_config(ctx)
 
         mock_slug.assert_called_once_with("vergil-project")
@@ -2518,15 +2507,12 @@ class TestStepGithubConfig:
                 "vergil_tooling.lib.automation_identity.automation_app_slug",
                 return_value="acme-automation",
             ),
-            patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
             patch(
                 "vergil_tooling.lib.github_config.apply_desired_state", return_value=[]
             ) as mock_apply,
             patch("vergil_tooling.lib.repo_init.sync_labels"),
             patch("vergil_tooling.lib.config.read_config", return_value=cfg),
         ):
-            mock_fetch.return_value.owner_type = "Organization"
-            mock_fetch.return_value.visibility = "public"
             step_github_config(ctx)
 
         desired = mock_apply.call_args.args[1]
@@ -3028,15 +3014,12 @@ class TestStepGithubConfigExtended:
             ]
 
         with (
-            patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
             patch("vergil_tooling.lib.github_config.compute_desired_state"),
             patch("vergil_tooling.lib.github_config.apply_desired_state", side_effect=mock_apply),
             patch("vergil_tooling.lib.repo_init.sync_labels"),
             patch("vergil_tooling.lib.config.read_config"),
             patch("vergil_tooling.lib.repo_init._assert_ci_gates_producible"),
         ):
-            mock_fetch.return_value.owner_type = "Organization"
-            mock_fetch.return_value.visibility = "public"
             step_github_config(ctx)
 
     def test_version_window_error_stops_cleanly_before_apply(
@@ -3054,14 +3037,11 @@ class TestStepGithubConfigExtended:
         failure = ResolutionError("[ci].versions pins 1.25, which is not in the go window")
 
         with (
-            patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
             patch("vergil_tooling.lib.github_config.compute_desired_state", side_effect=failure),
             patch("vergil_tooling.lib.github_config.apply_desired_state") as mock_apply,
             patch("vergil_tooling.lib.config.read_config"),
             pytest.raises(SystemExit) as exc,
         ):
-            mock_fetch.return_value.owner_type = "Organization"
-            mock_fetch.return_value.visibility = "public"
             step_github_config(ctx)
         assert exc.value.code == 1
         assert re.search(r"^ERROR: \[ci\]\.versions pins 1\.25", capsys.readouterr().err, re.M)

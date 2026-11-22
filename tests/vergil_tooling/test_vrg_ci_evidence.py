@@ -723,7 +723,6 @@ def _wire_remote_config(monkeypatch: pytest.MonkeyPatch, response: Any) -> dict[
         download=_full_download(("test",)),
     )
     monkeypatch.setattr(ci_evidence, "resolve_required_gates", _REAL_RESOLVE_REQUIRED_GATES)
-    monkeypatch.setattr(github, "repo_visibility", lambda _repo: "PUBLIC")
     seen: dict[str, Any] = {"contents": []}
 
     def _read_json(*args: str) -> Any:

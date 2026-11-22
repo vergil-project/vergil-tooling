@@ -129,7 +129,7 @@ to name the clone's parent directory explicitly. The clone uses SSH
 The wizard runs ten steps, each committed as `chore(init): step N - …`
 so an interrupted run resumes where it stopped:
 
-1. Create the GitHub repository (`--visibility`, default public).
+1. Create the GitHub repository, always public.
 2. Clone it.
 3. Generate `vergil.toml` from your answers (see Step 4).
 4. Scaffold `VERSION`, `CLAUDE.md`, `.claude/settings.json`,

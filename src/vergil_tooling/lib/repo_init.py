@@ -54,7 +54,6 @@ class RepoInitContext:
     org: str
     name: str
     adopt: bool = False
-    visibility: str = "public"
     description: str = ""
     work_dir: Path | None = None
     # Where the clone's parent directory is. ``None`` means "use CWD" — the
@@ -608,25 +607,11 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             "    permissions:\n",
             "      contents: read\n",
             "      security-events: write\n",
-            "      # Requested by ci-security.yml@v2.1.3: codeql-action/upload-sarif\n",
-            "      # needs it on private repos. See vergil-project/vergil-actions#698.\n",
-            "      actions: read\n",
             "    with:\n",
             lang_line,
             "      run-security: ${{ inputs.run-security != 'false' }}\n",
         ]
     )
-
-    if ctx.visibility == "private":
-        lines.extend(
-            [
-                "      # Private repo without GHAS: scanners gate via exit codes,\n",
-                "      # SARIF is kept as build artifacts, and CodeQL is skipped.\n",
-                "      # See vergil-project/vergil-actions#693; to enable GHAS later\n",
-                "      # see docs/specs/2026-06-06-ghas-posture-design.md.\n",
-                "      upload-sarif: false\n",
-            ]
-        )
 
     # The same set decides whether the CI-gates ruleset requires CodeQL, so the
     # ruleset never waits on a check this ci.yml skips (issue #4381).
@@ -952,7 +937,7 @@ def step_create_repo(ctx: RepoInitContext) -> None:
         "repo",
         "create",
         ctx.repo,
-        f"--{ctx.visibility}",
+        "--public",
         "--description",
         ctx.description,
     ]
@@ -1799,7 +1784,7 @@ def check_workflows_registered(ctx: RepoInitContext) -> None:
     raise SystemExit(1)
 
 
-def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState, *, ghas: bool) -> None:
+def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState) -> None:
     """Fail loudly when a CI-gates ruleset requires a check ci.yml never emits.
 
     Cross-checks the required status-check contexts of every derived CI-gates
@@ -1815,9 +1800,7 @@ def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState, *, 
     if ctx.work_dir is None:  # pragma: no cover
         raise RuntimeError("work_dir not set")
     ci_yaml = (ctx.work_dir / ".github" / "workflows" / "ci.yml").read_text()
-    assert_ci_gates_producible(
-        desired, ci_yaml, ghas=ghas, source="the generated .github/workflows/ci.yml"
-    )
+    assert_ci_gates_producible(desired, ci_yaml, source="the generated .github/workflows/ci.yml")
 
 
 def step_github_config(ctx: RepoInitContext) -> None:
@@ -1827,8 +1810,6 @@ def step_github_config(ctx: RepoInitContext) -> None:
     from vergil_tooling.lib.github_config import (
         apply_desired_state,
         compute_desired_state,
-        fetch_actual_state,
-        ghas_available,
     )
     from vergil_tooling.lib.versions import VersionsError
 
@@ -1841,15 +1822,11 @@ def step_github_config(ctx: RepoInitContext) -> None:
     # automation-branch ruleset needs the org automation App's ID, read the way
     # a human run reads it (epic vergil-project/.github#1064).
     app_id = automation_app_id(automation_app_slug(ctx.repo.split("/", 1)[0]))
-    result = fetch_actual_state(ctx.repo)
-    is_org = result.owner_type == "Organization"
     # A resumed run skips step 3's version check, and the window may have moved
     # since; a pin outside it stops here as one line, like step 3 (#3670).
     try:
         desired = compute_desired_state(
             cfg,
-            visibility=result.visibility,
-            is_org=is_org,
             skip_bypass=False,
             automation_app_id=app_id,
         )
@@ -1861,9 +1838,7 @@ def step_github_config(ctx: RepoInitContext) -> None:
     # repository which cannot merge its first PR with every check green (#2720).
     # Checked before the ruleset is written, so a mismatch fails at creation
     # rather than at the first merge.
-    _assert_ci_gates_producible(
-        ctx, desired, ghas=ghas_available(cfg, visibility=result.visibility)
-    )
+    _assert_ci_gates_producible(ctx, desired)
     cleanup_reports = apply_desired_state(ctx.repo, desired)
     for report in cleanup_reports:
         print(f"  Classic protection on {report.branch}: {report.summary()}")

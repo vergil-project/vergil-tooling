@@ -43,7 +43,6 @@ from vergil_tooling.lib.github_config import (
     compute_diff,
     fetch_actual_state,
     format_rules_delta,
-    ghas_available,
 )
 from vergil_tooling.lib.mechanized_pr import MechanizedPRError, SyncResult, open_sync_pr
 from vergil_tooling.lib.output import emit_error
@@ -593,11 +592,8 @@ def _audit_repo(repo: str, config: VergilConfig, *, log_bypass: bool = False) ->
     automation = identity_mode.is_automation()
     skip_bypass, app_id = _bypass_mode(repo, automation=automation)
     result = fetch_actual_state(repo)
-    is_org = result.owner_type == "Organization"
     desired = compute_desired_state(
         config,
-        visibility=result.visibility,
-        is_org=is_org,
         skip_bypass=skip_bypass,
         automation_app_id=app_id,
     )
@@ -714,11 +710,7 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
         else:
             print(f"    {nc.field}: not checked (needs {nc.permission})")
     for field_name in diff.skipped:
-        if field_name.startswith("security."):
-            print(
-                f"    {field_name}: skipped (requires GitHub Advanced Security for private repos)"
-            )
-        elif field_name.endswith(".bypass_actors"):
+        if field_name.endswith(".bypass_actors"):
             print(f"    {field_name}: skipped (not visible with GitHub App credentials)")
     _print_warnings(diff)
 
@@ -737,12 +729,8 @@ def _apply_repo(repo: str, config: VergilConfig) -> list[ClassicProtectionReport
     """
     owner = repo.split("/", 1)[0]
     app_id = automation_app_id(automation_app_slug(owner))
-    result = fetch_actual_state(repo)
-    is_org = result.owner_type == "Organization"
     desired = compute_desired_state(
         config,
-        visibility=result.visibility,
-        is_org=is_org,
         skip_bypass=False,
         automation_app_id=app_id,
     )
@@ -750,7 +738,6 @@ def _apply_repo(repo: str, config: VergilConfig) -> list[ClassicProtectionReport
     assert_ci_gates_producible(
         desired,
         ci_yaml,
-        ghas=ghas_available(config, visibility=result.visibility),
         source=f"{repo}@{_DEFAULT_BRANCH}:{_CI_WORKFLOW_PATH}",
     )
     return apply_desired_state(repo, desired)

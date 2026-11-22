@@ -42,7 +42,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import github
 from vergil_tooling.lib.github_config import (
-    ghas_available,
     required_evidence_gates,
     resolved_integration_versions,
 )
@@ -817,19 +816,15 @@ def resolve_required_gates(repo: str, ref: str) -> tuple[EvidenceGate, ...]:
     file raises :class:`~vergil_tooling.lib.remote_config.RemoteConfigError`;
     there is no fallback.
 
-    Resolves the repo's GHAS posture (a declared
-    ``[project].ghas`` wins, else it is inferred from repo visibility via the
-    GitHub API), then defers to
+    Defers to
     :func:`~vergil_tooling.lib.github_config.required_evidence_gates` — the same
     required-status-check computation that drives branch protection, so the
     enforced gates and the evidence-required gates cannot drift apart.
     """
     config = require_config_at_ref(repo, ref)
-    ghas = ghas_available(config, visibility=github.repo_visibility(repo))
     return required_evidence_gates(
         config.project,
         config.ci,
-        ghas=ghas,
         docs=config.publish.docs,
         package=bool(config.packages),
         integration_versions=resolved_integration_versions(config),

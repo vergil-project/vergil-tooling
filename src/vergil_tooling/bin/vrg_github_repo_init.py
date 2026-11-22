@@ -14,7 +14,6 @@ from vergil_tooling.lib.repo_init import (
     RepoInitContext,
     foreign_repo_refusal,
     integration_tests_refusal,
-    prompt_choice,
     prompt_free_text,
     prompt_yes_no,
     run_wizard,
@@ -81,17 +80,6 @@ def main(argv: list[str] | None = None) -> int:
         ctx = RepoInitContext(org=org, name=name)
         if args.target_dir is not None:
             ctx.target_dir = Path(args.target_dir)
-
-        if args.visibility:
-            ctx.visibility = args.visibility
-        elif args.non_interactive:
-            ctx.visibility = "public"
-        else:
-            ctx.visibility = prompt_choice(
-                "Repository visibility",
-                ["public", "private"],
-                default="public",
-            )
 
         # --description is a required flag under --non-interactive (validated in
         # parse_args), so it is always present there; the else is reached only by
@@ -169,20 +157,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Adopt an existing repo (run from inside its clone)",
     )
     parser.add_argument(
-        "--visibility",
-        choices=("public", "private"),
-        help="Repository visibility, new repos only (default: public)",
-    )
-    parser.add_argument(
         "--target-dir",
         help="Parent directory to clone into (new repos only; default: current "
         "directory). Names the clone location explicitly so it does not depend on "
         "where the command is run.",
     )
 
-    # Wizard-prompt flags. Each overrides the matching interactive prompt exactly
-    # as --visibility already does; supplying all of them runs the tool with zero
-    # prompts (issue #2382).
+    # Wizard-prompt flags. Each overrides the matching interactive prompt;
+    # supplying all of them runs the tool with zero prompts (issue #2382).
     parser.add_argument(
         "--description",
         help="Project description (one paragraph)",

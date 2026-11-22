@@ -398,16 +398,12 @@ def _missing_merge_setting_fetch() -> FetchResult:
     """A fetch of a compliant repo whose response left out allow_merge_commit (#4322)."""
     state = compute_desired_state(
         _make_config(),
-        visibility="public",
-        is_org=True,
         skip_bypass=False,
         automation_app_id=_APP_ID,
     )
     state.repo_settings.allow_merge_commit = False  # the placeholder for the unread field
     return FetchResult(
         state=state,
-        visibility="public",
-        owner_type="Organization",
         not_checked=[
             NotChecked(field="repo_settings.allow_merge_commit", permission=MERGE_SETTINGS_READ)
         ],
@@ -543,7 +539,7 @@ def test_audit_github_api_error_exits_two_without_traceback(
     assert "Traceback" not in err
 
 
-def test_apply_surfaces_actionable_forking_error(
+def test_apply_surfaces_runtime_error(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with (
@@ -554,17 +550,13 @@ def test_apply_surfaces_actionable_forking_error(
         patch(f"{_MODULE}._resolve_config"),
         patch(
             f"{_MODULE}._apply_repo",
-            side_effect=RuntimeError(
-                "o/r: cannot set 'allow_forking' because the organization disallows "
-                "forking private repositories. Enable the org-level setting "
-                "'members_can_fork_private_repositories'."
-            ),
+            side_effect=RuntimeError("o/r: cannot apply repository settings: Server Error"),
         ),
     ):
         result = main(["apply", "--repo", "o/r"])
     assert result == 1
     err = capsys.readouterr().err
-    assert "members_can_fork_private_repositories" in err
+    assert "cannot apply repository settings: Server Error" in err
     assert "Traceback" not in err
 
 
@@ -603,14 +595,8 @@ def test_apply_reports_classic_protection_cleanup(capsys: pytest.CaptureFixture[
     assert "required_pull_request_reviews" in output
 
 
-def test_audit_prints_skipped_fields(capsys: pytest.CaptureFixture[str]) -> None:
-    diff = ConfigDiff(
-        items=[],
-        skipped=[
-            "security.secret_scanning",
-            "security.secret_scanning_push_protection",
-        ],
-    )
+def test_audit_prints_skipped_bypass_fields(capsys: pytest.CaptureFixture[str]) -> None:
+    diff = ConfigDiff(items=[], skipped=["rulesets.Tag protection.bypass_actors"])
     with (
         patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
@@ -621,9 +607,7 @@ def test_audit_prints_skipped_fields(capsys: pytest.CaptureFixture[str]) -> None
         result = main(["audit", "--repo", "o/r"])
     assert result == 0
     output = capsys.readouterr().out
-    assert "secret_scanning: skipped" in output
-    assert "secret_scanning_push_protection: skipped" in output
-    assert "requires GitHub Advanced Security" in output
+    assert "bypass_actors: skipped (not visible with GitHub App credentials)" in output
 
 
 def test_audit_compliant_public_repo_no_skipped(capsys: pytest.CaptureFixture[str]) -> None:
@@ -639,10 +623,10 @@ def test_audit_compliant_public_repo_no_skipped(capsys: pytest.CaptureFixture[st
     assert "skipped" not in output
 
 
-def test_audit_non_security_skipped_fields_not_printed(
+def test_audit_non_bypass_skipped_fields_not_printed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    diff = ConfigDiff(items=[], skipped=["repo_settings.allow_forking"])
+    diff = ConfigDiff(items=[], skipped=["security.secret_scanning"])
     with (
         patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
@@ -953,15 +937,13 @@ def _fetch_with_empty_bypass() -> FetchResult:
     """A repo in sync but for Tag protection's bypass list, which reads back empty."""
     state = compute_desired_state(
         _make_config(),
-        visibility="public",
-        is_org=True,
         skip_bypass=False,
         automation_app_id=_APP_ID,
     )
     for rs in state.rulesets:
         if rs.name == "Tag protection":
             rs.bypass_actors = []
-    return FetchResult(state=state, visibility="public", owner_type="Organization")
+    return FetchResult(state=state)
 
 
 def test_unreadable_bypass_stops_apply_before_any_write(
@@ -1018,8 +1000,6 @@ def _fetch_with_legacy_ci_gates() -> FetchResult:
     """A repo in sync but still on the shared ``CI gates`` ruleset (pre-split)."""
     state = compute_desired_state(
         _make_config(),
-        visibility="public",
-        is_org=True,
         skip_bypass=False,
         automation_app_id=_APP_ID,
     )
@@ -1029,7 +1009,7 @@ def _fetch_with_legacy_ci_gates() -> FetchResult:
     )
     state.rulesets = [rs for rs in state.rulesets if not rs.name.startswith("CI gates")]
     state.rulesets.append(legacy)
-    return FetchResult(state=state, visibility="public", owner_type="Organization")
+    return FetchResult(state=state)
 
 
 def test_repo_config_reports_both(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1061,7 +1041,6 @@ def test_repo_config_reports_both(capsys: pytest.CaptureFixture[str]) -> None:
 def test_repo_config_apply_writes_both() -> None:
     """``apply`` checks and writes both CI-gates rulesets, and not the legacy one."""
     with (
-        patch(f"{_MODULE}.fetch_actual_state", return_value=_actual_state()),
         patch(f"{_MODULE}.github.read_json", return_value=_ci_contents(_ALL_CI_JOBS)),
         patch(f"{_MODULE}.apply_desired_state", return_value=[]) as mock_apply,
     ):
@@ -1081,7 +1060,6 @@ def test_apply_repo_never_skips_bypass(
     mock_slug, _ = _hermetic_automation_app
     with (
         patch(f"{_MODULE}.github.is_app_mode", return_value=True),
-        patch(f"{_MODULE}.fetch_actual_state", return_value=_fetch_with_empty_bypass()),
         patch(f"{_MODULE}.compute_desired_state") as mock_desired,
         patch(f"{_MODULE}._fetch_ci_workflow", return_value="ci"),
         patch(f"{_MODULE}.assert_ci_gates_producible"),
@@ -1102,7 +1080,9 @@ def test_apply_repo_calls_pipeline() -> None:
         patch(f"{_MODULE}.apply_desired_state", return_value=[]) as mock_apply,
     ):
         result = _apply_repo("o/r", cfg)
-    mock_fetch.assert_called_once_with("o/r")
+    # The desired state no longer depends on the repo's visibility or owner, so
+    # apply reads nothing of the actual state before writing it.
+    mock_fetch.assert_not_called()
     mock_ci.assert_called_once_with("o/r", "develop")
     mock_guard.assert_called_once()
     mock_apply.assert_called_once()
@@ -1136,15 +1116,8 @@ def _ci_contents(jobs: list[str]) -> dict[str, object]:
 _ALL_CI_JOBS = ["audit", "quality", "security", "docs", "test", "version"]
 
 
-def _actual_state() -> object:
-    from types import SimpleNamespace
-
-    return SimpleNamespace(visibility="public", owner_type="Organization")
-
-
 def test_apply_repo_applies_when_ci_yml_emits_every_required_gate() -> None:
     with (
-        patch(f"{_MODULE}.fetch_actual_state", return_value=_actual_state()),
         patch(f"{_MODULE}.github.read_json", return_value=_ci_contents(_ALL_CI_JOBS)) as mock_read,
         patch(f"{_MODULE}.apply_desired_state", return_value=[]) as mock_apply,
     ):
@@ -1160,7 +1133,6 @@ def test_apply_repo_refuses_unproducible_required_gate() -> None:
     ci.yml has no docs job on pull_request — refuse before writing anything."""
     jobs = [j for j in _ALL_CI_JOBS if j != "docs"]
     with (
-        patch(f"{_MODULE}.fetch_actual_state", return_value=_actual_state()),
         patch(f"{_MODULE}.github.read_json", return_value=_ci_contents(jobs)),
         patch(f"{_MODULE}.apply_desired_state") as mock_apply,
         pytest.raises(RuntimeError) as exc,
@@ -1179,7 +1151,6 @@ def test_apply_repo_refuses_when_ci_yml_absent() -> None:
         "gh: Not Found (HTTP 404)",
     )
     with (
-        patch(f"{_MODULE}.fetch_actual_state", return_value=_actual_state()),
         patch(f"{_MODULE}.github.read_json", side_effect=not_found),
         patch(f"{_MODULE}.apply_desired_state") as mock_apply,
         pytest.raises(RuntimeError, match=r"\.github/workflows/ci\.yml is absent"),
@@ -1196,7 +1167,6 @@ def test_apply_repo_ci_yml_fetch_other_error_propagates() -> None:
         "gh: Server Error (HTTP 500)",
     )
     with (
-        patch(f"{_MODULE}.fetch_actual_state", return_value=_actual_state()),
         patch(f"{_MODULE}.github.read_json", side_effect=server_error),
         patch(f"{_MODULE}.apply_desired_state") as mock_apply,
         pytest.raises(GitHubAPIError),
@@ -1213,7 +1183,6 @@ def test_main_apply_refusal_exits_nonzero(capsys: pytest.CaptureFixture[str]) ->
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._resolve_config", return_value=_make_config()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
-        patch(f"{_MODULE}.fetch_actual_state", return_value=_actual_state()),
         patch(f"{_MODULE}.github.read_json", return_value=_ci_contents(jobs)),
         patch(f"{_MODULE}.apply_desired_state") as mock_apply,
     ):
@@ -2118,12 +2087,10 @@ def _fetch_in_sync() -> FetchResult:
     """A repo whose rulesets, bypass lists included, read back as desired."""
     state = compute_desired_state(
         _make_config(),
-        visibility="public",
-        is_org=True,
         skip_bypass=False,
         automation_app_id=_APP_ID,
     )
-    return FetchResult(state=state, visibility="public", owner_type="Organization")
+    return FetchResult(state=state)
 
 
 def _desired_ruleset_names() -> list[str]:
@@ -2243,8 +2210,9 @@ def test_audit_repo_logs_no_bypass_read_outside_update(capsys: pytest.CaptureFix
     assert "read back" not in capsys.readouterr().out
 
 
-def test_update_skipped_security_field_is_not_a_refusal() -> None:
-    # Secret scanning on a private repo without GHAS is unmanaged, not unread.
+def test_update_skipped_non_bypass_field_is_not_a_refusal() -> None:
+    # Only a skipped bypass list refuses an update: any other skipped field is
+    # unmanaged, not unread.
     diff = ConfigDiff(items=[], skipped=["security.secret_scanning"])
     stack, mocks = _update_env(github_diff=diff)
     with stack:
