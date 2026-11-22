@@ -34,7 +34,6 @@ from vergil_tooling.lib import epics, github, proxies
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.labels import ensure_labels_or_report
 
-
 # The standing kinds --standing ensures: every one homed only in <org>/.github.
 # The ad-hoc epic is per repo; vrg-adhoc-epic ensure provisions it.
 STANDING_CHOICES: tuple[str, ...] = tuple(
