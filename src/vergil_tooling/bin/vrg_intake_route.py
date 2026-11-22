@@ -68,13 +68,15 @@ def main(argv: list[str] | None = None) -> int:
         intake_route.RouteHalfAppliedError,
         epics.StandingEpicNotVisibleError,
         trust.TrustReadError,
+        trust.UntrustedContentError,
         trusted_authors.TrustedAuthorsNotConfiguredError,
     ) as exc:
         # A half-applied route already names the item's state and the fix; a
         # queue epic created but not confirmed names the new epic to check. A
         # planning item's comments read through the trust layer fail before
         # any write when they cannot be read in full or no trusted authors
-        # are configured; the message is metadata only.
+        # are configured, and so does an item whose body the layer does not
+        # trust; the message is metadata only.
         print(f"{_PROG}: {exc}", file=sys.stderr)
         return 1
     except github.NoInstallationError as exc:

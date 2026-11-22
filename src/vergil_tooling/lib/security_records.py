@@ -556,17 +556,16 @@ def _source_tied_to_move(source: IssueRef, ghsa_id: str, wanted: Sequence[IssueR
 
     Either its body still names *ghsa_id* (a run interrupted before its
     unmark finished) or it carries the comment :func:`unmark_issue` posts,
-    naming exactly *wanted* (a run that finished). It is read at its current
-    ref, so a transferred source is judged where it now is.
+    naming exactly *wanted* (a run that finished), from a trusted author
+    (:func:`trusted_comments.bodies`): an outsider's copy of that comment
+    never ties a source to a move. It is read at its current ref, so a
+    transferred source is judged where it now is.
     """
     current, _present, body = _issue_state(source)
     if ghsa_id in parse_advisory_refs(body):
         return True
-    comments = github.read_json_paginated(
-        f"{_issue_endpoint(current)}/comments", jq="[.[] | .body]"
-    )
     names = {ref.slug for ref in wanted}
-    return names in _moved_targets([str(comment) for comment in comments])
+    return names in _moved_targets(trusted_comments.bodies(current))
 
 
 def _check_source(

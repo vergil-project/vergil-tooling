@@ -91,7 +91,10 @@ issue it tracks, so a route never stops tracking another issue; a one-off
 reads those issues before it moves anything. A split
 of an item naming several advisories is refused before any change, since which
 advisory goes to which task cannot be inferred. The planning route leaves the
-advisories alone.
+advisories alone. The advisory lines a split or a move reads come only from a
+body the trust layer trusts: an untrusted body is a stop before any write
+(:class:`~vergil_tooling.lib.trust.UntrustedContentError`), and a recreate
+copies that same trusted body, read before the move.
 
 A task in a development epic, an epic, and an unparented issue are refused
 (``planning`` alone accepts an unparented issue, the ``epic-create`` free-text
@@ -116,7 +119,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from vergil_tooling.lib import epics, github, security_records, trusted_comments
+from vergil_tooling.lib import epics, github, security_records, trust, trusted_comments
 from vergil_tooling.lib.epic_size import (
     LABEL_PREFIX,
     Sizing,
@@ -769,8 +772,9 @@ def _move_one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) ->
     if dest == source:
         _link_and_check(ref, epic, ref, old_parent)
         return RouteResult(final=ref, moved_by="none")
-    # Read before the move: a transfer drops labels the target repo lacks.
-    ghsas = _item_advisories(ref)
+    # Read before the move: a transfer drops labels the target repo lacks, and
+    # a recreate copies this trusted body.
+    body, ghsas = _item_security(ref)
     tracked = _tracked_before_move(ref, ghsas)
     unlinked = _unlink_before_transfer(ref, old_parent)
     try:
@@ -780,7 +784,7 @@ def _move_one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) ->
     except subprocess.CalledProcessError as exc:
         if unlinked is not None:
             _relink_after_failed_transfer(ref, unlinked, dest, exc)
-        new = _recreate(ref, dest, exc, tracked)
+        new = _recreate(ref, dest, exc, tracked, body)
         # A recreated issue has no parent to carry over: link it, then check.
         _link_and_check(ref, epic, new, None)
         return RouteResult(final=new, moved_by="recreate")
@@ -930,13 +934,32 @@ def _security_ghsas(ref: IssueRef, labels: set[str], body: str) -> tuple[str, ..
     return ()
 
 
-def _item_advisories(ref: IssueRef) -> tuple[str, ...]:
-    """Read *ref*'s labels and body; return every advisory it tracks, in body order."""
+def _trusted_body(ref: IssueRef) -> str:
+    """*ref*'s body, read through the trust layer; an untrusted body is a stop.
+
+    The routed item's body is load-bearing: its ``Security advisory:`` lines
+    pick the advisories a route retargets, and a recreate copies it. So a body
+    whose author or an editor holds no role raises
+    :class:`~vergil_tooling.lib.trust.UntrustedContentError` (metadata only),
+    before any write, and nothing falls back to an untrusted copy.
+    """
+    content = trust.read_issue(_repo_of(ref), ref.number, require_body=True)
+    return cast("str", content.body)
+
+
+def _item_security(ref: IssueRef) -> tuple[str, tuple[str, ...]]:
+    """*ref*'s trusted body and every advisory it tracks, in body order."""
     raw: Any = github.read_json(
-        "issue", "view", str(ref.number), "--repo", _repo_of(ref), "--json", "labels,body"
+        "issue", "view", str(ref.number), "--repo", _repo_of(ref), "--json", "labels"
     )
     names = {str(label.get("name", "")) for label in raw.get("labels") or []}
-    return _security_ghsas(ref, names, str(raw.get("body") or ""))
+    body = _trusted_body(ref)
+    return body, _security_ghsas(ref, names, body)
+
+
+def _item_advisories(ref: IssueRef) -> tuple[str, ...]:
+    """Every advisory *ref* tracks, in body order, from its labels and trusted body."""
+    return _item_security(ref)[1]
 
 
 @dataclass(frozen=True)
@@ -1339,10 +1362,16 @@ def _retarget_to_copy(ref: IssueRef, new: IssueRef, tracked: _Tracked) -> None:
 
 
 def _recreate(
-    ref: IssueRef, dest: str, exc: subprocess.CalledProcessError, tracked: _Tracked | None
+    ref: IssueRef,
+    dest: str,
+    exc: subprocess.CalledProcessError,
+    tracked: _Tracked | None,
+    body: str,
 ) -> IssueRef:
     """Copy *ref* into *dest* with a link back, then close the original with a pointer.
 
+    The copy's body is *body*, the trusted body read before the move
+    (:func:`_trusted_body`), never one read again from the original.
     Every advisory a security item names (*tracked*, in body order) is
     retargeted from *ref* to the copy, keeping every other issue it tracks,
     before the original closes; if any retarget fails the original stays open
@@ -1350,7 +1379,7 @@ def _recreate(
     """
     source = _repo_of(ref)
     raw: Any = github.read_json(
-        "issue", "view", str(ref.number), "--repo", source, "--json", "title,body,labels,url"
+        "issue", "view", str(ref.number), "--repo", source, "--json", "title,labels,url"
     )
     names = [str(label.get("name", "")) for label in raw.get("labels") or []]
     registry = {entry["name"] for entry in load_labels()["labels"]}
@@ -1364,7 +1393,7 @@ def _recreate(
         ensure_labels(dest, carried)
     original_url = str(raw["url"])
     moved_from = MOVED_FROM_LINE.format(url=original_url)
-    body = (raw.get("body") or "").rstrip()
+    body = body.rstrip()
     new_url = github.create_issue(
         repo=dest,
         title=str(raw["title"]),
