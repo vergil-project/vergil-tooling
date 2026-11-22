@@ -26,32 +26,34 @@ _ALERT = Alert(
 
 
 def test_cli_clean_exits_0(capsys: pytest.CaptureFixture[str]) -> None:
-    with patch(_FETCH, return_value=[]), patch(_VISIBILITY) as mock_vis:
+    with patch(_FETCH, return_value=[]):
         assert vrg_dependabot_audit.main(["--repo", "o/r"]) == 0
     assert capsys.readouterr().out.strip() == "o/r: no open Dependabot alerts"
-    mock_vis.assert_not_called()
 
 
-def test_cli_alerts_exit_1(capsys: pytest.CaptureFixture[str]) -> None:
-    with patch(_FETCH, return_value=[_ALERT]), patch(_VISIBILITY, return_value="PRIVATE"):
+def test_report_never_prints_alert_detail(capsys: pytest.CaptureFixture[str]) -> None:
+    canary = Alert(
+        severity="high",
+        ecosystem="npm",
+        package="leftpad-canary",
+        manifest_path="package-lock.json",
+        ghsa_id="GHSA-xxxx-canary",
+        html_url="https://github.com/o/r/security/dependabot/7",
+    )
+    no_visibility = AssertionError("the audit must not read the repo's visibility")
+    with (
+        patch(_FETCH, return_value=[_ALERT, canary]),
+        patch(_VISIBILITY, side_effect=no_visibility, create=True),
+    ):
         assert vrg_dependabot_audit.main(["--repo", "o/r"]) == 1
-    out = capsys.readouterr().out
-    assert "1 open Dependabot alert: 1 critical, 0 high, 0 medium, 0 low" in out
-    assert "requests" in out
-    assert "GHSA-xxxx-yyyy-zzzz" in out
-
-
-@pytest.mark.parametrize("visibility", ["PUBLIC", "INTERNAL"])
-def test_cli_non_private_repo_counts_only(
-    visibility: str, capsys: pytest.CaptureFixture[str]
-) -> None:
-    with patch(_FETCH, return_value=[_ALERT]), patch(_VISIBILITY, return_value=visibility):
-        assert vrg_dependabot_audit.main(["--repo", "o/r"]) == 1
-    out = capsys.readouterr().out
-    assert "1 critical" in out
-    assert "https://github.com/o/r/security/dependabot" in out
-    assert "requests" not in out
-    assert "GHSA-" not in out
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "o/r: 2 open Dependabot alerts: 1 critical, 1 high, 0 medium, 0 low\n"
+        "Review or dismiss at https://github.com/o/r/security/dependabot\n"
+    )
+    assert captured.err == ""
+    for detail in ("leftpad-canary", "GHSA-xxxx-canary", "requests", "package-lock.json"):
+        assert detail not in captured.out
 
 
 def test_cli_scopes_token_to_repo_owner() -> None:
@@ -91,22 +93,6 @@ def test_cli_app_auth_error_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
     with patch(_FETCH, side_effect=err):
         assert vrg_dependabot_audit.main(["--repo", "o/r"]) == 2
     assert capsys.readouterr().err.startswith("vrg-dependabot-audit: ")
-
-
-def test_cli_visibility_unresolvable_uses_public_format(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    err = github.GitHubAPIError(1, ("gh", "repo", "view"), "", "HTTP 403")
-    with patch(_FETCH, return_value=[_ALERT]), patch(_VISIBILITY, side_effect=err):
-        assert vrg_dependabot_audit.main(["--repo", "o/r"]) == 1
-    captured = capsys.readouterr()
-    assert (
-        "could not resolve visibility for o/r; using the public (counts-only) format"
-        in captured.err
-    )
-    assert "GHSA-" not in captured.out
-    assert "requests" not in captured.out
-    assert "1 critical" in captured.out
 
 
 @pytest.mark.parametrize("repo", ["noslash", "/r", "o/", "o/r/x"])

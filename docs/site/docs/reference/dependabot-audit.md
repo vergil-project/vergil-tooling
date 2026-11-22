@@ -76,10 +76,10 @@ stderr, prefixed `vrg-dependabot-audit:`. The common causes are:
 | `the GitHub App has no installation for owner '…'` | No App installation for the repo's owner. |
 | `could not read Dependabot alerts for OWNER/REPO: …` | Any other API failure; the first line of the error follows. |
 
-## Output: public vs private repos
+## Output
 
-Every report starts with a totals line, then ends with a link to the
-repo's Security tab:
+The report is a totals line, counting the open alerts by severity,
+followed by a link to the repo's Security tab:
 
 ```text
 o/r: 2 open Dependabot alerts: 1 critical, 0 high, 0 medium, 1 low
@@ -89,17 +89,9 @@ Review or dismiss at https://github.com/o/r/security/dependabot
 A severity GitHub adds beyond the four known ones is still counted,
 and it is listed after `low`.
 
-- **Private repos** also get one line per alert, ordered by severity
-  and then package. Each line carries the severity, ecosystem, package,
-  manifest path, GHSA ID, and the alert's URL.
-- **Public repos** get the totals line and the link only. Package
-  names, manifest paths, and GHSA IDs never appear, because the log of
-  a public repo's workflow run is world-readable. An internal repo is
-  treated like a public one.
-
-If the repo's visibility cannot be resolved, the command warns on
-stderr and uses the public, counts-only format. It never itemizes a
-repo it has not confirmed is private.
+The report never lists individual alerts. Package names, manifest
+paths, and GHSA IDs never appear, because the log of the nightly
+workflow run is world-readable. The Security tab holds the detail.
 
 ## Clearing an alert
 

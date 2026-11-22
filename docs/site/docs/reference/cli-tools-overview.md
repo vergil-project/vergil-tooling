@@ -1902,9 +1902,8 @@ See the [GitHub Config Audit reference](config-audit.md).
 ### vrg-dependabot-audit
 
 Fail on any open Dependabot alert, at any severity: the gate for the
-fleet's report-only Dependabot posture. Private repos get an itemized
-report; public repos (and any repo whose visibility cannot be resolved)
-get counts by severity and the Security-tab link only. See the
+fleet's report-only Dependabot posture. Every repo gets counts by
+severity and the Security-tab link only, never per-alert detail. See the
 [Dependabot Alert Audit reference](dependabot-audit.md).
 
 | Attribute | Value |
