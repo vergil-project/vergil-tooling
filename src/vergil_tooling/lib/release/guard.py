@@ -167,7 +167,14 @@ def _login(value: object, repo: str, number: int, what: str) -> str:
 
 
 class _Connection:
-    """One paginated connection of the identities read, gathered page by page."""
+    """One paginated connection of the identities read, gathered page by page.
+
+    *count* names the field that counts the connection's items. ``totalCount``
+    counts them all on every page. ``filteredCount``, which a type-filtered
+    ``timelineItems`` needs (its ``totalCount`` ignores the filter), counts
+    only the items from the page's cursor on, so the items of earlier pages
+    are added to it.
+    """
 
     def __init__(self, field: str, count: str = "totalCount") -> None:
         self.field = field
@@ -194,6 +201,8 @@ class _Connection:
             if nodes or has_next:
                 raise _read_error(repo, number, f"{self.field} grew while it was read")
             return
+        if self.count == "filteredCount":
+            total += len(self.nodes)
         self.nodes.extend(cast("list[object]", nodes))
         self.total = total
         if has_next:
@@ -245,6 +254,7 @@ def read_identities(repo: str, number: int) -> IssueIdentities:
     owner, name = repo.split("/", 1)
     edits = _Connection("userContentEdits")
     # The type filter applies to filteredCount; totalCount counts every item.
+    # filteredCount counts from the cursor on: see _Connection.
     timeline = _Connection("timelineItems", "filteredCount")
     author = last_editor = None
     first = True

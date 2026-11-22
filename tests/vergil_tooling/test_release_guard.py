@@ -33,16 +33,20 @@ def _conn(nodes: list[Any], *, total: int | None = None, cursor: str | None = No
     }
 
 
-# Timeline items of types the read does not ask for: GitHub's totalCount counts
-# them whatever the type filter, so it is above the filteredCount the read uses.
-_UNFILTERED = 7
+# GitHub's totalCount on a type-filtered timeline counts every item of every
+# type on every page, so it is above any filteredCount the read uses.
+_UNFILTERED = 100
 
 
 def _timeline(nodes: list[Any], *, total: int | None = None, cursor: str | None = None) -> Any:
-    """A type-filtered timeline page: *total* is its filteredCount."""
+    """A type-filtered timeline page: *total* is its filteredCount.
+
+    As GitHub reports it, a page's filteredCount counts the items from that
+    page's cursor on: this page's and every later page's, never earlier ones.
+    """
     conn = _conn(nodes, total=total, cursor=cursor)
     conn["filteredCount"] = conn.pop("totalCount")
-    conn["totalCount"] = conn["filteredCount"] + _UNFILTERED
+    conn["totalCount"] = _UNFILTERED
     return conn
 
 
@@ -211,11 +215,11 @@ def test_guard_reads_every_page_of_both_connections() -> None:
     )
     second = _page(
         edits=_conn([_edit("agent")], total=2),
-        timeline=_timeline([_event("IssueComment", "human")], total=3, cursor="t2"),
+        timeline=_timeline([_event("IssueComment", "human")], total=2, cursor="t2"),
     )
     third = _page(
         edits=_conn([], total=2),
-        timeline=_timeline([_event("ReopenedEvent", "agent")], total=3),
+        timeline=_timeline([_event("ReopenedEvent", "agent")], total=1),
     )
     with patch(_MOD + ".github.graphql", side_effect=[first, second, third]) as gql:
         identities = read_identities("owner/repo", 42)
@@ -237,7 +241,7 @@ def test_guard_rereads_an_empty_connection_from_the_start() -> None:
     first = _page(
         edits=empty, timeline=_timeline([_event("IssueComment", "x")], total=2, cursor="t1")
     )
-    second = _page(edits=empty, timeline=_timeline([_event("IssueComment", "y")], total=2))
+    second = _page(edits=empty, timeline=_timeline([_event("IssueComment", "y")], total=1))
     with patch(_MOD + ".github.graphql", side_effect=[first, second]) as gql:
         identities = read_identities("owner/repo", 42)
     assert identities.editors == ()
@@ -281,6 +285,15 @@ def test_guard_timeline_truncated_by_filtered_count_raises() -> None:
     with pytest.raises(github.GitHubAPIError) as info:
         _read(page)
     assert "GitHub lists 2 timelineItems but returned 1" in str(info.value.stderr)
+
+
+def test_guard_timeline_short_on_a_later_page_raises() -> None:
+    """A later page's filteredCount counts from its cursor on; the read adds the earlier pages."""
+    first = _page(timeline=_timeline([_event("IssueComment", "x")], total=3, cursor="t1"))
+    second = _page(timeline=_timeline([_event("IssueComment", "y")], total=3))
+    with pytest.raises(github.GitHubAPIError) as info:
+        _read(first, second)
+    assert "GitHub lists 4 timelineItems but returned 2" in str(info.value.stderr)
 
 
 def test_guard_query_reads_timeline_filtered_count() -> None:
