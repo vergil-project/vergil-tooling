@@ -1,8 +1,9 @@
 # Dependency Update Reference (`[dependency-update]`)
 
-Every `vrg-release` ends with an `update-deps` stage that updates the
-repo's dependencies to the newest versions their declared bounds allow
-(see [Dependency updates](../guides/releasing.md#dependency-updates)).
+Every `vrg-release` runs an `update-deps` stage, once the release is
+tagged and published, that updates the repo's dependencies to the
+newest versions their declared bounds allow (see
+[Dependency updates](../guides/releasing.md#dependency-updates)).
 [`vrg-update-deps`](dev/update-deps.md) runs the same pipeline by hand.
 This page covers what that pipeline updates: the built-in updaters, the
 per-repo hook a repo configures with `[dependency-update]` in

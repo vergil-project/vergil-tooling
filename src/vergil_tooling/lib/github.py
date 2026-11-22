@@ -2922,7 +2922,7 @@ def refuse_truncated(rows: object, limit: int, what: str) -> None:
 def list_org_repos(org: str) -> list[str]:
     """Return the bare names of all (non-archived) repositories in *org*.
 
-    Asks for up to :data:`~vergil_tooling.lib.LISTING_LIMIT` repos and
+    Asks for up to :data:`~vergil_tooling.lib.github.LISTING_LIMIT` repos and
     raises :class:`EpicListTruncatedError` when it
     gets that many, since the list may then be cut off (#4051). A response
     that is not a list, or a row with no string ``name``, raises
@@ -2955,7 +2955,7 @@ def list_org_repos(org: str) -> list[str]:
 def list_project_repos(owner: str, project: str) -> list[str]:
     """Return sorted, unique repos of *owner* linked to GitHub Project *project*.
 
-    Lists up to :data:`~vergil_tooling.lib.LISTING_LIMIT` of *owner*'s
+    Lists up to :data:`~vergil_tooling.lib.github.LISTING_LIMIT` of *owner*'s
     repos and filters them here rather than through ``--jq``, so the
     truncation check sees every row gh returned: a listing that reaches the
     limit raises :class:`EpicListTruncatedError`

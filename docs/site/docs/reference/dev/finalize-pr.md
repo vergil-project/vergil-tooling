@@ -440,7 +440,9 @@ lock, fast-forwards `develop` itself and cuts from the new head, even if
 another PR merged in between (see
 [The develop sync](../../guides/releasing.md#the-develop-sync)). Short of
 full success, the release is skipped and the run says why. A failed
-release never un-merges a PR: re-run `vrg-release` alone.
+release never un-merges a PR: finish it with `vrg-release --resume`
+once it has opened its tracking issue, or re-run `vrg-release` alone if
+it stopped before that.
 
 ## Batch PRs (one PR closing several issues)
 

@@ -416,12 +416,16 @@ High-level summary:
 2. Run `vrg-release` from the root checkout. It creates the tracking
    issue and the `release/<version>` branch, generates the changelog,
    merges the release PR to `main`, waits for CD to tag and publish,
-   merges the version bump back to `develop`, and cleans up.
-3. As its last step, `vrg-release` runs the dependency update on the
-   new `develop` version and opens a `dependency-update` PR when
-   anything changed. If its validation or merge fails, the PR stays open
-with a fix task, and the next
-   release refuses to start until it is dealt with.
+   merges the version bump back to `develop`, moves the rolling `vX.Y`
+   tag, and cleans up.
+3. It then runs the dependency update on the new `develop` version,
+   opening a `dependency-update` PR when anything changed, and the
+   repo's install. If the update's validation or merge fails, the PR
+   stays open with a fix task, and the next release refuses to start
+   until it is dealt with.
+4. Last, it posts a `Released:` record on every issue the release
+   closes and closes the tracking issue. Any failed stage leaves the
+   issue open, and `vrg-release --resume` finishes the release.
 
 ## Adoption for a new repo
 
