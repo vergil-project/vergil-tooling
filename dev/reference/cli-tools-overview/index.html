@@ -21345,10 +21345,8 @@ an older proxy up to date; a proxy is found by its <code>Primary:</code> line an
 never its title. The comment is posted only when no trusted comment on the
 primary already names the proxy, so a re-run on an up-to-date proxy writes
 nothing. It refuses, before any write, a primary in the
-target's own org, a primary that is not an open development epic (a standing
-epic, a proxy, an archive or a closed epic), and a private primary repo,
-target or <code>.github</code>: a proxy exists only between public repos, and the task
-must not be filed in an ad-hoc epic instead. It reads and writes each org
+target's own org and a primary that is not an open development epic (a standing
+epic, a proxy, an archive or a closed epic). It reads and writes each org
 under that org's App token. The title and body are derived, so it takes no
 <code>--title</code>, <code>--body</code>, <code>--body-file</code>, <code>--label</code> or <code>--assignee</code>.</p>
 <table>
@@ -21468,8 +21466,7 @@ run carries on.</p>
 <h3 id="vrg-epic-link">vrg-epic-link<a class="headerlink" href="#vrg-epic-link" title="Permanent link">&para;</a></h3>
 <p>Link a task under an epic as a native GitHub sub-issue, reopening a closed
 epic first. Used when creating a task under an epic and to backfill
-reflink-only children. A bare <code>#N</code> epic ref resolves to the task's epic home.
-A public task may not link under a private epic.</p>
+reflink-only children. A bare <code>#N</code> epic ref resolves to the task's epic home.</p>
 <table>
 <thead>
 <tr>
@@ -21804,7 +21801,7 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A refused route — not allowed from the item's container, a development-epic task other than a follow-on brainstorm sent to planning, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, a cross-org target, or a private item headed to a public repo or epic — exits 1 with the reason on stderr, as does a bad sizing (a task count below 1, an empty or multi-line reason, <code>--tasks</code> or <code>--reason</code> alone on <code>planning</code>). A route half-applied by a failure raises with the state it left and how to fix it</td>
+<td>A refused route — not allowed from the item's container, a development-epic task other than a follow-on brainstorm sent to planning, a planning item while any of its development epics is open, an ad-hoc item with an open closing PR, or a cross-org target — exits 1 with the reason on stderr, as does a bad sizing (a task count below 1, an empty or multi-line reason, <code>--tasks</code> or <code>--reason</code> alone on <code>planning</code>). A route half-applied by a failure raises with the state it left and how to fix it</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -21866,7 +21863,7 @@ from a file to an advisory's description (append-only). Advisory text is printed
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A partial pair exits 1 naming what exists and the exact <code>--resume</code> command that finishes it; a private <code>.github</code>, a duplicate draft, or <code>--details</code> under <code>VRG_EPIC_SWEEP</code> is refused; <code>retarget</code> refuses, before any write, a <code>--from</code> the advisory does not track and dropping an open tracked issue, printing the command that would succeed, and <code>--to</code> refs spanning orgs, naming the two ways out; a cross-org <code>retarget</code> that fails partway is finished by the identical command; <code>create</code> refuses an advisory that already tracks another issue, and <code>create</code> and <code>note</code> refuse caller text holding a <code>Moved from:</code> or <code>Moved to:</code> line; <code>sync</code> exits 1 on a broken pair after syncing the rest</td>
+<td>A partial pair exits 1 naming what exists and the exact <code>--resume</code> command that finishes it; a duplicate draft or <code>--details</code> under <code>VRG_EPIC_SWEEP</code> is refused; <code>retarget</code> refuses, before any write, a <code>--from</code> the advisory does not track and dropping an open tracked issue, printing the command that would succeed, and <code>--to</code> refs spanning orgs, naming the two ways out; a cross-org <code>retarget</code> that fails partway is finished by the identical command; <code>create</code> refuses an advisory that already tracks another issue, and <code>create</code> and <code>note</code> refuse caller text holding a <code>Moved from:</code> or <code>Moved to:</code> line; <code>sync</code> exits 1 on a broken pair after syncing the rest</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -21978,11 +21975,11 @@ listing for <code>/vergil:hoshin</code>'s stale-task check.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>GitHub App credentials for the target org. The planning and deferred views read the configured trusted authors (the VM's <code>trusted-authors.toml</code>, else the host's <code>identities.toml</code> stanza). The planning view also reads the org's advisories when its <code>.github</code> exists, or when a planning item has an advisory line (then a <code>.github</code> that is not public is refused): the identity needs Repository security advisories access</td>
+<td>GitHub App credentials for the target org. The planning and deferred views read the configured trusted authors (the VM's <code>trusted-authors.toml</code>, else the host's <code>identities.toml</code> stanza). The planning view also reads the org's advisories when its <code>.github</code> exists, or when a planning item has an advisory line: the identity needs Repository security advisories access</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: no queue yet</code> and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a <code>.github</code> that is not public; an advisory line naming another org; a malformed response; trusted authors not configured or invalid) is named on stderr as <code>vrg-queue: &lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt; could not be read: &lt;reason&gt;</code> and the run exits 1; with no queue named, a text run still lists the other queues and prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: not shown (failed; see stderr)</code> in its place, and a <code>--json</code> run prints nothing on stdout. For <code>adhoc</code>, a failed read of the epics, a task's sub-issues, a task, its blockers or a blocker's state, an epic search that reaches its listing limit, two live ad-hoc epics for one repo, a failed read of any in-flight source (the open PRs, the remote refs, a relay payload, a clone's branches or remotes), a malformed relay payload, repo roots that cannot be determined (no <code>--root</code> on a physical host) or do not exist, or a repo with open ad-hoc tasks and no clone, or two, under the repo roots is reported the same way (<code>adhoc queue for &lt;name&gt; in &lt;home&gt; could not be read</code>) and exits 1; no ad-hoc epic is an empty list and exit 0. For <code>hoshin</code>, the same task, blocker and in-flight failures, a hoshin epic search that reaches its listing limit, or two live hoshin epics, are reported as <code>hoshin queue for &lt;name&gt; in &lt;home&gt; could not be read</code>; no hoshin epic is an empty list and exit 0. When every queue was read but an item's sizing is in error, the full listing is printed (<code>--json</code> included), each such item is named on stderr as <code>vrg-queue: &lt;ref&gt;: &lt;error&gt;</code>, and the run exits 2. <code>--sort</code> or <code>--size</code> with a queue other than <code>planning</code>, or with none, and an unknown <code>--size</code> token exit 1. Nothing is created</td>
+<td>A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: no queue yet</code> and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; an advisory line naming another org; a malformed response; trusted authors not configured or invalid) is named on stderr as <code>vrg-queue: &lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt; could not be read: &lt;reason&gt;</code> and the run exits 1; with no queue named, a text run still lists the other queues and prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: not shown (failed; see stderr)</code> in its place, and a <code>--json</code> run prints nothing on stdout. For <code>adhoc</code>, a failed read of the epics, a task's sub-issues, a task, its blockers or a blocker's state, an epic search that reaches its listing limit, two live ad-hoc epics for one repo, a failed read of any in-flight source (the open PRs, the remote refs, a relay payload, a clone's branches or remotes), a malformed relay payload, repo roots that cannot be determined (no <code>--root</code> on a physical host) or do not exist, or a repo with open ad-hoc tasks and no clone, or two, under the repo roots is reported the same way (<code>adhoc queue for &lt;name&gt; in &lt;home&gt; could not be read</code>) and exits 1; no ad-hoc epic is an empty list and exit 0. For <code>hoshin</code>, the same task, blocker and in-flight failures, a hoshin epic search that reaches its listing limit, or two live hoshin epics, are reported as <code>hoshin queue for &lt;name&gt; in &lt;home&gt; could not be read</code>; no hoshin epic is an empty list and exit 0. When every queue was read but an item's sizing is in error, the full listing is printed (<code>--json</code> included), each such item is named on stderr as <code>vrg-queue: &lt;ref&gt;: &lt;error&gt;</code>, and the run exits 2. <code>--sort</code> or <code>--size</code> with a queue other than <code>planning</code>, or with none, and an unknown <code>--size</code> token exit 1. Nothing is created</td>
 </tr>
 <tr>
 <td>Exit codes</td>
