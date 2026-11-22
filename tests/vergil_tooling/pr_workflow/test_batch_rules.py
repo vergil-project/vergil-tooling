@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epics, github, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.pr_workflow import batch_rules
 from vergil_tooling.lib.pr_workflow.batch_rules import (
@@ -285,6 +285,40 @@ def test_hard_rules_refuse_on_a_graphql_error(
     monkeypatch.setattr(epics, "parent_of", fail)
     message = _refused(["#10", "#11"], "same epic")
     assert "could not read the parent of #10: GraphQL errors: boom" in message
+
+
+def test_hard_rules_refuse_on_a_trust_read_failure(
+    world: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(ref: IssueRef) -> list[IssueRef]:
+        raise trust.TrustReadError("issue", "HTTP 502")
+
+    monkeypatch.setattr(epics, "blockers_of", fail)
+    message = _refused(["#10", "#11"], "no open deployment blocker")
+    assert "could not read the Blocked-by lines of #10" in message
+    assert "cannot read who wrote the content (issue): HTTP 502" in message
+
+
+def test_hard_rules_refuse_on_an_untrusted_body(
+    world: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    item = trust.Skipped(
+        repo=REPO,
+        number=10,
+        kind="issue",
+        login="outsider",
+        at="2026-01-01T00:00:00Z",
+        field="body",
+        cause=trust.UNTRUSTED,
+    )
+
+    def stop(ref: IssueRef) -> list[IssueRef]:
+        raise trust.UntrustedContentError(item, "the Blocked-by lines are untrusted")
+
+    monkeypatch.setattr(epics, "blockers_of", stop)
+    message = _refused(["#10", "#11"], "no open deployment blocker")
+    assert "could not read the Blocked-by lines of #10" in message
+    assert "stopped before any write: the Blocked-by lines are untrusted" in message
 
 
 def test_hard_rules_let_a_missing_token_reach_the_cli(

@@ -1,11 +1,11 @@
 """A fake GraphQL backend for the trust layer, for the tests of its callers.
 
 The tests of a module that reads issues through
-:func:`vergil_tooling.lib.trust.read_issue` drive the real layer: they patch
-``github.graphql`` with :class:`FakeItems`, which answers the layer's item query
-for each issue it holds, in the field shapes of a recorded GitHub response
-(``{ __typename login }`` actors, paged connections), and patch the loader with
-:data:`AUTHORS`.
+:func:`vergil_tooling.lib.trust.read_issue` (or judges a close) drive the real
+layer: they patch ``github.graphql`` with :class:`FakeItems`, which answers the
+layer's item and events queries for each issue it holds, in the field shapes
+of a recorded GitHub response (``{ __typename login }`` actors, paged
+connections), and patch the loader with :data:`AUTHORS`.
 """
 
 from __future__ import annotations
@@ -90,24 +90,51 @@ def item(
     }
 
 
+def closed_timeline(actor: Any = HUMAN) -> dict[str, Any]:
+    """The events query's answer for an issue closed once, by *actor*."""
+    return {
+        "repository": {
+            "issueOrPullRequest": {
+                "__typename": "Issue",
+                "timelineItems": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [{"__typename": "ClosedEvent", "actor": actor, "createdAt": EDITED}],
+                },
+            }
+        }
+    }
+
+
 class FakeItems:
-    """A ``github.graphql`` stand-in answering the layer's item query per issue.
+    """A ``github.graphql`` stand-in answering the layer's item and events queries per issue.
 
     *items* maps ``(owner/name, number)`` to an :func:`item` answer; an issue it
     does not hold is a trusted item with no comments, or, with ``strict=True``,
-    a test failure.
+    a test failure. *closers* maps the same keys to the actor of the issue's
+    one close event (:func:`closed_timeline`); an issue it does not hold was
+    closed by the trusted human, or, with ``strict=True``, is a test failure.
     """
 
     def __init__(
-        self, items: dict[tuple[str, int], dict[str, Any]] | None = None, *, strict: bool = False
+        self,
+        items: dict[tuple[str, int], dict[str, Any]] | None = None,
+        *,
+        strict: bool = False,
+        closers: dict[tuple[str, int], Any] | None = None,
     ) -> None:
         self.items = items if items is not None else {}
+        self.closers = closers if closers is not None else {}
         self.strict = strict
         self.reads: list[tuple[str, int]] = []
+        self.event_reads: list[tuple[str, int]] = []
 
     def __call__(self, query: str, **variables: Any) -> dict[str, Any]:
-        assert query == trust._ITEM_QUERY, "only the item query is faked"
+        assert query in (trust._ITEM_QUERY, trust._EVENTS_QUERY), "only items and events are faked"
         key = (f"{variables['owner']}/{variables['name']}", int(variables["number"]))
+        if query == trust._EVENTS_QUERY:
+            self.event_reads.append(key)
+            assert key in self.closers or not self.strict, f"unexpected events read of {key}"
+            return closed_timeline(self.closers.get(key, HUMAN))
         self.reads.append(key)
         if key not in self.items:
             assert not self.strict, f"unexpected read of {key}"

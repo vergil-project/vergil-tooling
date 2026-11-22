@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 _MOD = "vergil_tooling.lib.intake_route"
 # Captured before any patching, to run the real planning ensure under Env.
 _REAL_ENSURE_PLANNING_EPIC = epics.ensure_planning_epic
+_REAL_PARENT_OF = epics.parent_of
 
 ITEM = IssueRef("org", ".github", 352)
 INTAKE = IssueRef("org", ".github", 7)
@@ -412,6 +413,35 @@ def _assert_untouched(env: Env) -> None:
     env.run.assert_not_called()
     env.reparent_child.assert_not_called()
     env.ensure_deferred_epic.assert_not_called()
+
+
+def test_route_parent_fallback_trusted_only(
+    env: Env, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With no native parent, the item's container comes from its body's
+    # Parent: line, which counts only from a trusted body. Outside Actions,
+    # so the skip is reported per item, not counted by cause.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    env.issue_view = {**env.issue_view, "body": f"It is slow.\n\nParent: {INTAKE.slug}\n"}
+    with patch(f"{_MOD}.epics.parent_of", _REAL_PARENT_OF):
+        route(ITEM, Drop(reason="not feasible"), today=TODAY)
+    assert [c.args[:2] for c in env.run.call_args_list] == [("issue", "close")]
+    assert capsys.readouterr().err == ""
+
+    # The same line in a body an outsider edited gives no parent: a refusal.
+    env.run.reset_mock()
+    env.body_editor = trust_stubs.OUTSIDER
+    with (
+        patch(f"{_MOD}.epics.parent_of", _REAL_PARENT_OF),
+        pytest.raises(RouteRefusedError, match="has no parent"),
+    ):
+        route(ITEM, Drop(reason="not feasible"), today=TODAY)
+    _assert_untouched(env)
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: {ITEM.slug} edit drive-by at {trust_stubs.EDITED}"
+        " on body (untrusted)\n"
+    )
 
 
 def _planning_item(env: Env) -> None:

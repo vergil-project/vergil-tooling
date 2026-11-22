@@ -29,7 +29,7 @@ import subprocess
 from functools import partial
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import epics, git, github, linkage
+from vergil_tooling.lib import epics, git, github, linkage, trust
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.trusted_authors import (
@@ -50,6 +50,9 @@ _APP_PREFIX = "app/"
 # never a pass: a GitHubAPIError is a CalledProcessError, GraphQL errors are
 # RuntimeError, a malformed response or configuration is ValueError (JSON
 # decoding included), and a malformed GraphQL node is KeyError or TypeError.
+# A parent or blocker read goes through the trust layer, which ends a failed
+# read in TrustReadError and an untrusted body in UntrustedContentError; both
+# messages are metadata only, so they are safe to show.
 _READ_ERRORS: tuple[type[Exception], ...] = (
     subprocess.CalledProcessError,
     OSError,
@@ -58,6 +61,8 @@ _READ_ERRORS: tuple[type[Exception], ...] = (
     KeyError,
     TypeError,
     TrustedAuthorsNotConfiguredError,
+    trust.TrustReadError,
+    trust.UntrustedContentError,
 )
 
 # A commit subject's trailing issue ref: " (#N)" at the very end.

@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import subprocess
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import epic_docs, epics, github
+from tests.vergil_tooling import trust_stubs
+from vergil_tooling.lib import epic_docs, epics, github, trust
 from vergil_tooling.lib.epics import _SUBISSUES_QUERY, ChildState, IssueRef
 from vergil_tooling.lib.labels import load_labels
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from tests.vergil_tooling.trust_stubs import FakeItems
 
 EPIC = IssueRef("org", ".github", 40)
 TASK = IssueRef("org", "repo-a", 101)
@@ -18,6 +25,41 @@ TASK = IssueRef("org", "repo-a", 101)
 
 def _repo_node(login: str, name: str) -> dict[str, object]:
     return {"name": name, "owner": {"login": login}}
+
+
+@pytest.fixture(autouse=True)
+def layer(monkeypatch: pytest.MonkeyPatch) -> FakeItems:
+    """The trust layer's reads: trusted bodies and closes unless a test says otherwise.
+
+    A test that patches ``github.graphql`` itself routes the layer's queries
+    here with :func:`_with_layer`.
+    """
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+    fake = trust_stubs.FakeItems()
+    monkeypatch.setattr(github, "graphql", fake)
+    return fake
+
+
+def _with_layer(layer: FakeItems, answer: object) -> Callable[..., object]:
+    """A ``github.graphql`` that gives the layer's queries to *layer* and *answer* to the rest."""
+
+    def graphql(query: str, **variables: Any) -> object:
+        if query in (trust._ITEM_QUERY, trust._EVENTS_QUERY):
+            return layer(query, **variables)
+        return answer
+
+    return graphql
+
+
+def _mirror(layer: FakeItems, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Give *layer* each search row's body as a trusted body, and return *rows*."""
+    for row in rows:
+        name_with_owner = (row.get("repository") or {}).get("nameWithOwner")
+        if name_with_owner:
+            body = str(row.get("body") or "")
+            layer.items[(name_with_owner, int(row["number"]))] = trust_stubs.item(body=body)
+    return rows
 
 
 # -- single_target_org (issue #2070) -----------------------------------------
@@ -98,7 +140,7 @@ def test_native_children_has_no_reflink_fallback() -> None:
     mock_search.assert_not_called()
 
 
-def test_child_states_reflink_fallback_when_native_empty() -> None:
+def test_child_states_reflink_fallback_when_native_empty(layer: FakeItems) -> None:
     empty = {"node": {"subIssues": {"nodes": []}}}
     search = [
         {
@@ -110,8 +152,10 @@ def test_child_states_reflink_fallback_when_native_empty() -> None:
     ]
     with (
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
-        patch("vergil_tooling.lib.github.graphql", return_value=empty),
-        patch("vergil_tooling.lib.github.read_json", return_value=search) as mock_search,
+        patch("vergil_tooling.lib.github.graphql", side_effect=_with_layer(layer, empty)),
+        patch(
+            "vergil_tooling.lib.github.read_json", return_value=_mirror(layer, search)
+        ) as mock_search,
     ):
         result = epics.child_states(EPIC)
     assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN")]
@@ -156,7 +200,7 @@ def test_child_states_native_carries_title() -> None:
     assert "title" in _SUBISSUES_QUERY
 
 
-def test_child_states_reflink_carries_title() -> None:
+def test_child_states_reflink_carries_title(layer: FakeItems) -> None:
     # The portable Parent: reflink fallback also requests and propagates title.
     empty = {"node": {"subIssues": {"nodes": []}}}
     search = [
@@ -170,8 +214,10 @@ def test_child_states_reflink_carries_title() -> None:
     ]
     with (
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
-        patch("vergil_tooling.lib.github.graphql", return_value=empty),
-        patch("vergil_tooling.lib.github.read_json", return_value=search) as mock_search,
+        patch("vergil_tooling.lib.github.graphql", side_effect=_with_layer(layer, empty)),
+        patch(
+            "vergil_tooling.lib.github.read_json", return_value=_mirror(layer, search)
+        ) as mock_search,
     ):
         result = epics.child_states(EPIC)
     assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN", "Fallback task")]
@@ -215,7 +261,7 @@ def test_child_states_native_includes_closed_at() -> None:
     assert "closedAt" in _SUBISSUES_QUERY
 
 
-def test_child_states_reflink_includes_closed_at() -> None:
+def test_child_states_reflink_includes_closed_at(layer: FakeItems) -> None:
     # The portable Parent: reflink fallback also propagates closedAt.
     empty = {"node": {"subIssues": {"nodes": []}}}
     search = [
@@ -230,8 +276,8 @@ def test_child_states_reflink_includes_closed_at() -> None:
     ]
     with (
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
-        patch("vergil_tooling.lib.github.graphql", return_value=empty),
-        patch("vergil_tooling.lib.github.read_json", return_value=search),
+        patch("vergil_tooling.lib.github.graphql", side_effect=_with_layer(layer, empty)),
+        patch("vergil_tooling.lib.github.read_json", return_value=_mirror(layer, search)),
     ):
         result = epics.child_states(EPIC)
     assert result[0].closed_at == "2026-05-10T00:00:00Z"
@@ -276,25 +322,61 @@ def test_parent_of_native() -> None:
         assert epics.parent_of(TASK) == IssueRef("org", ".github", 40)
 
 
-def test_parent_of_reflink_fallback_parses_body() -> None:
-    no_parent = {"node": {"parent": None}}
-    body = "Some description.\n\nParent: org/.github#40\n"
-    with (
-        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
-        patch("vergil_tooling.lib.github.graphql", return_value=no_parent),
-        patch("vergil_tooling.lib.github.read_output", return_value=body),
-    ):
-        assert epics.parent_of(TASK) == IssueRef("org", ".github", 40)
-
-
-def test_parent_of_none_when_unlinked() -> None:
+def _unlinked_parent_of(layer: FakeItems, task: IssueRef = TASK) -> IssueRef | None:
+    """:func:`epics.parent_of` for a *task* with no native parent."""
     no_parent = {"node": {"parent": None}}
     with (
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
-        patch("vergil_tooling.lib.github.graphql", return_value=no_parent),
-        patch("vergil_tooling.lib.github.read_output", return_value="no marker here"),
+        patch("vergil_tooling.lib.github.graphql", side_effect=_with_layer(layer, no_parent)),
     ):
-        assert epics.parent_of(TASK) is None
+        return epics.parent_of(task)
+
+
+def test_parent_of_reflink_fallback_parses_body(layer: FakeItems) -> None:
+    layer.items[("org/repo-a", 101)] = trust_stubs.item(
+        body="Some description.\n\nParent: org/.github#40\n"
+    )
+    assert _unlinked_parent_of(layer) == IssueRef("org", ".github", 40)
+    assert layer.reads == [("org/repo-a", 101)]
+
+
+def test_parent_of_none_when_unlinked(layer: FakeItems) -> None:
+    layer.items[("org/repo-a", 101)] = trust_stubs.item(body="no marker here")
+    assert _unlinked_parent_of(layer) is None
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "login", "cause"),
+    [
+        (trust_stubs.OUTSIDER, None, "drive-by", "untrusted"),
+        (trust_stubs.HUMAN, trust_stubs.OUTSIDER, "drive-by", "untrusted"),
+        (trust_stubs.IMPOSTOR, None, "vergil-user", "wrong-type"),
+    ],
+)
+def test_parent_of_ignores_untrusted_body_line(
+    layer: FakeItems,
+    capsys: pytest.CaptureFixture[str],
+    author: dict[str, str],
+    editor: dict[str, str] | None,
+    login: str,
+    cause: str,
+) -> None:
+    # A forged Parent: line in a body an outsider wrote or edited names no parent.
+    layer.items[("org/repo-a", 101)] = trust_stubs.item(
+        body=f"{trust_stubs.SPAM_TEXT}\nParent: org/.github#40\n",
+        author=author,
+        editor=editor,
+        nodes=[trust_stubs.comment(9, trust_stubs.SPAM_TEXT, trust_stubs.OUTSIDER)],
+    )
+    assert _unlinked_parent_of(layer) is None
+    err = capsys.readouterr().err
+    kind = "edit" if editor is not None else "issue"
+    at = trust_stubs.EDITED if editor is not None else trust_stubs.CREATED
+    # Only the body is reported, metadata only: the comment is not this reader's.
+    assert err == (
+        f"skipped untrusted content: org/repo-a#101 {kind} {login} at {at} on body ({cause})\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
 
 
 # -- add_child (reopen-on-late-child) ----------------------------------------
@@ -378,7 +460,7 @@ def test_issue_closed_at_reads_via_rest() -> None:
     assert m.call_args.args == ("api", "repos/org/repo-a/issues/101", "--jq", '.closed_at // ""')
 
 
-def test_reflink_skips_results_without_repo() -> None:
+def test_reflink_skips_results_without_repo(layer: FakeItems) -> None:
     search = [
         {
             "number": 41,
@@ -392,15 +474,15 @@ def test_reflink_skips_results_without_repo() -> None:
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
         patch(
             "vergil_tooling.lib.github.graphql",
-            return_value={"node": {"subIssues": {"nodes": []}}},
+            side_effect=_with_layer(layer, {"node": {"subIssues": {"nodes": []}}}),
         ),
-        patch("vergil_tooling.lib.github.read_json", return_value=search),
+        patch("vergil_tooling.lib.github.read_json", return_value=_mirror(layer, search)),
     ):
         result = epics.child_states(EPIC)
     assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN")]
 
 
-def test_reflink_rejects_full_text_false_positive() -> None:
+def test_reflink_rejects_full_text_false_positive(layer: FakeItems) -> None:
     # gh search issues is punctuation-blind full-text search: a foreign issue can
     # match on words alone. Without a real ``Parent: <epic slug>`` line in its
     # body it must not be treated as a child (issue #2259, Fix D).
@@ -428,12 +510,75 @@ def test_reflink_rejects_full_text_false_positive() -> None:
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
         patch(
             "vergil_tooling.lib.github.graphql",
-            return_value={"node": {"subIssues": {"nodes": []}}},
+            side_effect=_with_layer(layer, {"node": {"subIssues": {"nodes": []}}}),
+        ),
+        patch("vergil_tooling.lib.github.read_json", return_value=_mirror(layer, search)),
+    ):
+        result = epics.child_states(EPIC)
+    assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN")]
+
+
+def test_child_states_search_ignores_untrusted_bodies(
+    layer: FakeItems, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A forged Parent: line in an outsider's body makes no reflink child, even
+    # when the search row's body carries it; the trusted child stays.
+    forged = f"{trust_stubs.SPAM_TEXT}\nParent: org/.github#40"
+    search = [
+        {
+            "number": 41,
+            "state": "OPEN",
+            "repository": {"nameWithOwner": "org/.github"},
+            "body": "Parent: org/.github#40",
+        },
+        {
+            "number": 66,
+            "state": "OPEN",
+            "repository": {"nameWithOwner": "org/repo-a"},
+            "body": forged,
+        },
+    ]
+    _mirror(layer, search)
+    layer.items[("org/repo-a", 66)] = trust_stubs.item(body=forged, author=trust_stubs.OUTSIDER)
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch(
+            "vergil_tooling.lib.github.graphql",
+            side_effect=_with_layer(layer, {"node": {"subIssues": {"nodes": []}}}),
         ),
         patch("vergil_tooling.lib.github.read_json", return_value=search),
     ):
         result = epics.child_states(EPIC)
     assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN")]
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: org/repo-a#66 issue drive-by at {trust_stubs.CREATED}"
+        " on body (untrusted)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+def test_child_states_search_uses_the_trusted_body_not_the_search_row(layer: FakeItems) -> None:
+    # The search row's body is only a candidate filter: the Parent: line must be
+    # on the body the layer read and trusts.
+    search = [
+        {
+            "number": 41,
+            "state": "OPEN",
+            "repository": {"nameWithOwner": "org/.github"},
+            "body": "Parent: org/.github#40",
+        },
+    ]
+    layer.items[("org/.github", 41)] = trust_stubs.item(body="Parent: org/.github#99")
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch(
+            "vergil_tooling.lib.github.graphql",
+            side_effect=_with_layer(layer, {"node": {"subIssues": {"nodes": []}}}),
+        ),
+        patch("vergil_tooling.lib.github.read_json", return_value=search),
+    ):
+        assert epics.child_states(EPIC) == []
 
 
 # -- is_epic / rollup --------------------------------------------------------
@@ -575,11 +720,33 @@ def test_render_blocked_by_empty_is_empty_string() -> None:
     assert epics.render_blocked_by([]) == ""
 
 
-def test_blockers_of_parses_reflink_body() -> None:
+def test_blockers_of_parses_reflink_body(layer: FakeItems) -> None:
     body = "Do the thing.\nBlocked-by: o/r#5\nBlocked-by: o/r#8\n"
-    with patch("vergil_tooling.lib.github.read_output", return_value=body):
-        refs = epics.blockers_of(IssueRef("o", "r", 42))
+    layer.items[("o/r", 42)] = trust_stubs.item(body=body, author=trust_stubs.AGENT)
+    refs = epics.blockers_of(IssueRef("o", "r", 42))
     assert refs == [IssueRef("o", "r", 5), IssueRef("o", "r", 8)]
+    assert layer.reads == [("o/r", 42)]
+
+
+@pytest.mark.parametrize(
+    ("author", "editor"),
+    [(trust_stubs.OUTSIDER, None), (trust_stubs.AGENT, trust_stubs.OUTSIDER)],
+)
+def test_blockers_of_untrusted_body_raises(
+    layer: FakeItems, author: dict[str, str], editor: dict[str, str] | None
+) -> None:
+    # Load-bearing: a forged (or forged-away) Blocked-by: line is a stop, never
+    # "no blockers".
+    layer.items[("o/r", 42)] = trust_stubs.item(
+        body=f"{trust_stubs.SPAM_TEXT}\nBlocked-by: o/r#5\n", author=author, editor=editor
+    )
+    with pytest.raises(trust.UntrustedContentError) as excinfo:
+        epics.blockers_of(IssueRef("o", "r", 42))
+    assert excinfo.value.item.repo == "o/r"
+    assert excinfo.value.item.number == 42
+    assert excinfo.value.item.field == "body"
+    assert excinfo.value.item.login == "drive-by"
+    assert "SPAM-MARKER-TEXT" not in str(excinfo.value)
 
 
 def test_issue_state_reads_the_rest_state_upper_cased() -> None:
@@ -604,9 +771,9 @@ def test_issue_author_refuses_an_empty_login() -> None:
         epics.issue_author(IssueRef("o", "r", 42))
 
 
-def test_blockers_of_empty_when_no_reflinks() -> None:
-    with patch("vergil_tooling.lib.github.read_output", return_value="no dependencies here"):
-        assert epics.blockers_of(IssueRef("o", "r", 42)) == []
+def test_blockers_of_empty_when_no_reflinks(layer: FakeItems) -> None:
+    layer.items[("o/r", 42)] = trust_stubs.item(body="no dependencies here")
+    assert epics.blockers_of(IssueRef("o", "r", 42)) == []
 
 
 def test_all_blockers_closed_true_when_all_closed() -> None:
@@ -634,18 +801,86 @@ def test_all_blockers_closed_true_when_no_blockers() -> None:
         assert epics.all_blockers_closed(IssueRef("o", "r", 42)) is True
 
 
-def test_rollup_closes_finite_epic_when_all_children_closed() -> None:
+SIBLING = IssueRef("org", "repo-b", 102)
+
+
+def _finite_rollup(layer: FakeItems) -> Any:
+    """Run :func:`epics.rollup` on TASK under a finite EPIC whose children are all closed.
+
+    Returns the ``github.run`` mock.
+    """
+    children = [ChildState(TASK, "CLOSED"), ChildState(SIBLING, "CLOSED")]
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
         patch("vergil_tooling.lib.epics.is_epic", return_value=True),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic"}),
         patch("vergil_tooling.lib.epics.all_children_closed", return_value=True),
+        patch("vergil_tooling.lib.epics.child_states", return_value=children),
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         epics.rollup(TASK)
+    return mock_run
+
+
+def test_rollup_closes_finite_epic_when_all_children_closed(layer: FakeItems) -> None:
+    mock_run = _finite_rollup(layer)
     mock_run.assert_called_once()
     assert mock_run.call_args.args[:2] == ("issue", "close")
     assert "40" in mock_run.call_args.args
+    # Every child's close was judged: the task's and its sibling's, once each.
+    assert sorted(layer.event_reads) == [("org/repo-a", 101), ("org/repo-b", 102)]
+
+
+@pytest.mark.parametrize("closed", [TASK, SIBLING])
+@pytest.mark.parametrize(
+    ("actor", "login", "cause"),
+    [
+        (trust_stubs.OUTSIDER, "drive-by", "untrusted"),
+        (None, None, "deleted"),
+        (trust_stubs.IMPOSTOR, "vergil-user", "wrong-type"),
+    ],
+)
+def test_rollup_stops_on_outsider_close(
+    layer: FakeItems, closed: IssueRef, actor: Any, login: str | None, cause: str
+) -> None:
+    # A close by an untrusted actor is not a close: the rollup stops before any
+    # write, whether it is the task's own close or a sibling's.
+    layer.closers[(f"{closed.owner}/{closed.repo}", closed.number)] = actor
+    with pytest.raises(trust.UntrustedContentError) as excinfo:
+        _finite_rollup(layer)
+    item = excinfo.value.item
+    assert (item.repo, item.number) == (f"{closed.owner}/{closed.repo}", closed.number)
+    assert (item.kind, item.field, item.login, item.cause) == ("event", "close", login, cause)
+    assert item.at == trust_stubs.EDITED
+
+
+def test_rollup_stops_on_outsider_close_before_the_drain(layer: FakeItems) -> None:
+    # A standing epic's drain acts on the task's close too: an untrusted close
+    # moves nothing.
+    layer.closers[("org/.github", 101)] = trust_stubs.OUTSIDER
+    task = IssueRef("org", ".github", 101)
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=IssueRef("org", ".github", 40)),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "intake"}),
+        patch("vergil_tooling.lib.epics.drain_standing_child") as mock_drain,
+        pytest.raises(trust.UntrustedContentError),
+    ):
+        epics.rollup(task)
+    mock_drain.assert_not_called()
+
+
+def test_rollup_proxy_reads_no_close(layer: FakeItems) -> None:
+    # A proxy is never rolled up, so its child's close is not read.
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "proxy"}),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.rollup(TASK)
+    mock_run.assert_not_called()
+    assert layer.event_reads == []
 
 
 def test_rollup_holds_epic_open_while_validation_child_open() -> None:
@@ -1272,8 +1507,8 @@ def _reflink_hits(count: int) -> list[dict]:
     ]
 
 
-def test_reflink_child_states_sees_a_child_past_hit_30() -> None:
-    fake_search = _fake_issue_list(_reflink_hits(31))
+def test_reflink_child_states_sees_a_child_past_hit_30(layer: FakeItems) -> None:
+    fake_search = _fake_issue_list(_mirror(layer, _reflink_hits(31)))
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_search):
         states = epics._reflink_child_states(EPIC)
     assert sorted(s.ref.number for s in states) == list(range(1, 32))

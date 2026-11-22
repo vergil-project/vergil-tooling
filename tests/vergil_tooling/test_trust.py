@@ -936,6 +936,39 @@ def test_close_judgement_no_close_raises(answer: Any) -> None:
     assert info.value.call == f"close_judgement {REPO}#7"
 
 
+def test_require_trusted_close_gives_the_role(answer: Any) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("ClosedEvent", AGENT)])]})
+    assert trust.require_trusted_close(REPO, 7, authors=AUTHORS) == Role.AGENTS
+
+
+@pytest.mark.parametrize(
+    ("actor", "login", "cause"),
+    [(OUTSIDER, "drive-by", trust.UNTRUSTED), (DELETED, None, trust.DELETED)],
+)
+def test_require_trusted_close_untrusted_is_a_stop(
+    answer: Any, actor: Any, login: str | None, cause: str
+) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("ClosedEvent", actor, at=EDITED)])]})
+    with pytest.raises(UntrustedContentError) as info:
+        trust.require_trusted_close(REPO, 7, authors=AUTHORS)
+    assert info.value.item == trust.Skipped(REPO, 7, "event", login, EDITED, "close", cause)
+    assert str(info.value).startswith("stopped before any write: the close is untrusted:")
+
+
+def test_require_trusted_close_roles_parameter_narrows(answer: Any) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("ClosedEvent", AGENT)])]})
+    with pytest.raises(UntrustedContentError) as info:
+        trust.require_trusted_close(REPO, 7, roles=frozenset({Role.HUMAN}), authors=AUTHORS)
+    assert info.value.item.cause == trust.NOT_ACCEPTED
+
+
+def test_require_trusted_close_no_close_raises(answer: Any) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("LabeledEvent")])]})
+    with pytest.raises(TrustReadError, match="has no close event") as info:
+        trust.require_trusted_close(REPO, 7, authors=AUTHORS)
+    assert info.value.call == f"require_trusted_close {REPO}#7"
+
+
 def test_close_judgement_loads_configured_authors(
     answer: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

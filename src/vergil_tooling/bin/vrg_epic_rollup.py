@@ -10,6 +10,11 @@ tasks are now closed.
 so this is safe to fire on *every* issue close. Moving rollup here makes it
 event-driven — it no longer depends on ``vrg-finalize-pr`` running.
 
+A close by an untrusted actor, of the task or of a sibling the epic's close
+relies on, is a stop (epic vergil-project/.github#1467, spec §5.3): nothing is
+written, the stop is printed metadata only (under GitHub Actions, counted by
+cause), and the exit is 1.
+
 Refs are ``owner/repo#N`` or bare ``#N`` (bare resolves to the current repo).
 """
 
@@ -18,7 +23,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epics, github, trust
 from vergil_tooling.lib.cli import cli_main
 
 
@@ -39,6 +44,13 @@ def main(argv: list[str] | None = None) -> int:
     except github.NoInstallationError as exc:
         print(f"vrg-epic-rollup: {github.no_installation_message(exc)}", file=sys.stderr)
         return 1
+    except trust.UntrustedContentError as exc:
+        # A batch run's stop (spec §5.3): metadata only, and under Actions,
+        # whose logs are public, counts by cause.
+        stops = trust.BatchStops()
+        stops.add(exc.item, exc.item.cause)
+        stops.print_summary(sys.stderr)
+        return stops.exit_code()
     print(f"Epic rollup check complete for {task.slug}.")
     return 0
 
