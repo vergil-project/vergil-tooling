@@ -18667,7 +18667,7 @@ see <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/
   mechanized PRs on <code>automation/</code> branches use too (epics
   vergil-project/.github#1064 and #1168). Agents cannot turn auto-merge
   on for a PR, and never submit one.</li>
-<li><code>vrg-submit-pr</code> then runs <code>vrg-finalize-pr</code> by default, which watches
+<li><code>vrg-submit-pr</code> then always runs <code>vrg-finalize-pr</code>, which watches
   the PRs merge, then syncs <code>develop</code>, deletes the merged branches and
   their worktrees, prunes remote refs and validates <code>develop</code> once.</li>
 </ul>
@@ -18826,8 +18826,8 @@ full flag list.</p>
   only.</li>
 <li>Runs the provenance check, then turns GitHub auto-merge on, pinned to
   the pushed head: squash for a single-issue PR, rebase for a batch PR.</li>
-<li>Runs <code>vrg-finalize-pr</code> on the PR by default (see step 5);
-  <code>--no-finalize</code> opens it and returns.</li>
+<li>Always runs <code>vrg-finalize-pr</code> on the PR (see step 5), so it returns
+  only once the PR has merged or cannot merge.</li>
 </ul>
 <p>See the <a href="../../reference/dev/submit-pr/">vrg-submit-pr reference</a>.</p>
 <div class="admonition note">
@@ -18901,9 +18901,9 @@ after submit does not hold the merge; the agent's <code>pr-watch</code> handles 
 and fixes a failing check or a conflict while the PR is open. To stop a
 merge, turn the PR's auto-merge off.</p>
 <h3 id="5-finalize-with-vrg-finalize-pr">5. Finalize with <code>vrg-finalize-pr</code><a class="headerlink" href="#5-finalize-with-vrg-finalize-pr" title="Permanent link">&para;</a></h3>
-<p><code>vrg-submit-pr</code> runs this for you by default. Run it by hand after
-<code>vrg-submit-pr --no-finalize</code>, after a fix to a PR that did not merge,
-or to settle <code>develop</code> after something merged on GitHub:</p>
+<p><code>vrg-submit-pr</code> always runs this for you. Run it by hand after a fix to
+a PR that did not merge, or to settle <code>develop</code> after something merged
+on GitHub:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-finalize-pr<span class="w"> </span>&lt;PR&gt;<span class="o">[</span>,&lt;PR&gt;…<span class="o">]</span><span class="w">   </span><span class="c1"># watch the PRs merge, then settle develop</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-finalize-pr<span class="w"> </span>--cleanup-only<span class="w"> </span><span class="c1"># settle develop with no PRs</span>
 </code></pre></div>

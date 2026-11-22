@@ -20307,9 +20307,9 @@ submit never rebases a branch. After the table the PRs open as a
 progress rollup, one stage per PR named after its branch, like
 <code>vrg-release</code>'s: each ends on one ✓/✗ line with its outcome, and the detail
 goes to <code>.vergil/vrg-submit-pr-&lt;stamp&gt;.log</code>. A PR whose submit fails is
-named in the summary and the others go on. Then, by default, one <code>vrg-finalize-pr &lt;pr&gt;,&lt;pr&gt;,…</code>
-watches every opened PR merge and settles <code>develop</code> once; <code>--no-finalize</code>
-opens the PRs and returns. <code>--finalize</code>, <code>--install</code> and <code>--yes</code> are
+named in the summary and the others go on. Then one <code>vrg-finalize-pr &lt;pr&gt;,&lt;pr&gt;,…</code>
+always watches every opened PR merge and settles <code>develop</code> once.
+<code>--finalize</code>, <code>--no-finalize</code>, <code>--install</code>, <code>--no-install</code> and <code>--yes</code> are
 removed and refused by name. See <a href="../dev/submit-pr/">vrg-submit-pr</a>.</p>
 <table>
 <thead>
@@ -20325,7 +20325,7 @@ removed and refused by name. See <a href="../dev/submit-pr/">vrg-submit-pr</a>.<
 </tr>
 <tr>
 <td>Args</td>
-<td>positional <code>branches</code> (relay mode); or <code>--issue</code> (required), <code>--summary</code> (required), <code>--linkage</code> (default: Ref; <code>vrg-submit-pr</code> auto-selects <code>Closes</code> for a managed task — <code>Fixes</code>/<code>Resolves</code> are banned), <code>--notes</code>, <code>--title</code>; <code>--all</code>/<code>--select</code> (from the repo root), <code>--base</code> (<code>develop</code> only), <code>--no-finalize</code>, <code>--release</code>, <code>--no-install</code>, <code>--dry-run</code>, <code>--output-window</code>, <code>--output-format</code>. <code>--finalize</code>, <code>--install</code>, <code>--allow-provenance-violation</code> and <code>--yes</code> are removed and are an error</td>
+<td>positional <code>branches</code> (relay mode); or <code>--issue</code> (required), <code>--summary</code> (required), <code>--linkage</code> (default: Ref; <code>vrg-submit-pr</code> auto-selects <code>Closes</code> for a managed task — <code>Fixes</code>/<code>Resolves</code> are banned), <code>--notes</code>, <code>--title</code>; <code>--all</code>/<code>--select</code> (from the repo root), <code>--base</code> (<code>develop</code> only), <code>--release</code>, <code>--dry-run</code>, <code>--output-window</code>, <code>--output-format</code>. <code>--finalize</code>, <code>--no-finalize</code>, <code>--install</code>, <code>--no-install</code>, <code>--allow-provenance-violation</code> and <code>--yes</code> are removed and are an error</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -21077,7 +21077,7 @@ commit and one changelog entry per issue. See
 </tr>
 <tr>
 <td>Args</td>
-<td><code>PR</code> (a number or URL, or a comma list of them; optional), <code>--all</code>, <code>--cleanup-only</code>, <code>--target-branch</code> (default: develop), <code>--wait-cd</code>, <code>--release</code>, <code>--no-install</code> (with <code>--release</code>), <code>--clean-dirty</code>, <code>--dry-run</code>, <code>--yes</code>. <code>--strategy</code>, <code>--no-wait-cd</code>, <code>--skip-post-checks</code>, <code>--install</code> and <code>--allow-provenance-violation</code> are removed and are an error</td>
+<td><code>PR</code> (a number or URL, or a comma list of them; optional), <code>--all</code>, <code>--cleanup-only</code>, <code>--target-branch</code> (default: develop), <code>--wait-cd</code>, <code>--release</code>, <code>--clean-dirty</code>, <code>--dry-run</code>, <code>--yes</code>. <code>--strategy</code>, <code>--no-wait-cd</code>, <code>--skip-post-checks</code>, <code>--install</code>, <code>--no-install</code> and <code>--allow-provenance-violation</code> are removed and are an error</td>
 </tr>
 <tr>
 <td>Preconditions</td>

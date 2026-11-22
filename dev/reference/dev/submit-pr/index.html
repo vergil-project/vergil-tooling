@@ -15124,10 +15124,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#finalize-by-default" class="md-nav__link">
+  <a href="#submit-always-finishes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Finalize by default
+        Submit always finishes
       
     </span>
   </a>
@@ -18390,10 +18390,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#finalize-by-default" class="md-nav__link">
+  <a href="#submit-always-finishes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Finalize by default
+        Submit always finishes
       
     </span>
   </a>
@@ -18543,7 +18543,7 @@
 <p><strong>Installed as:</strong> <code>vrg-submit-pr</code> (Python console script)</p>
 <p><strong>Source:</strong> <code>src/vergil_tooling/bin/vrg_submit_pr.py</code></p>
 <p>Opens standards-compliant pull requests against <code>develop</code> with GitHub
-auto-merge on, then, by default, runs one
+auto-merge on, then always runs one
 <a href="../finalize-pr/"><code>vrg-finalize-pr</code></a> over them, which watches them merge
 and settles <code>develop</code> once (epic vergil-project/.github#1218). Submitting
 a PR is the human's decision to merge it: GitHub merges it once its
@@ -18666,7 +18666,7 @@ worktree's checked-out HEAD must be that commit, a branch reopened by
 and relay ref that disagree are refused, and origin's tip is checked
 against the recorded head again right before <code>gh pr create</code>. Auto-merge
 is pinned to that same head.</p>
-<h2 id="finalize-by-default">Finalize by default<a class="headerlink" href="#finalize-by-default" title="Permanent link">&para;</a></h2>
+<h2 id="submit-always-finishes">Submit always finishes<a class="headerlink" href="#submit-always-finishes" title="Permanent link">&para;</a></h2>
 <p>Once every PR in the selection has been tried, submit runs <strong>one</strong>
 <code>vrg-finalize-pr &lt;pr&gt;,&lt;pr&gt;,…</code> over the PRs whose submit succeeded, from
 the main worktree. It watches them merge, then syncs, cleans up and
@@ -18675,19 +18675,14 @@ whose submit failed is left out of that list and named after finalize's
 report. When no PR opened, finalize is not run at all.
 <code>$VRG_FINALIZE_DEADLINE</code> is checked before any PR opens, so a malformed
 value refuses the run with nothing done.</p>
+<p>Submit returns only once each PR has merged or cannot merge; there is
+no way to open the PRs and return without watching them.</p>
 <ul>
 <li><strong><code>--release</code></strong> is passed to finalize, which chains into <code>vrg-release</code>
   only on full success. It is dropped when any PR failed to submit, and
-  the summary says the release was skipped. <code>vrg-release</code> installs by
-  default; <code>--no-install</code> (which requires <code>--release</code>) passes through to
-  skip the install. <code>--release</code> is refused on a repo that is not
-  released, before any push, PR or merge.</li>
-<li><strong><code>--no-finalize</code></strong> opens the PRs with auto-merge on and returns
-  without watching them. It prints each PR's URL, the
-  <code>/vergil:pr-watch &lt;PR_URL&gt;</code> line that starts the agent's monitoring,
-  and the <code>vrg-finalize-pr</code> command that would have watched them. The PRs
-  still merge on their own; run that command later to settle <code>develop</code>.
-  It cannot be combined with <code>--release</code>.</li>
+  the summary says the release was skipped. Install is part of every
+  release. <code>--release</code> is refused on a repo that is not released, before
+  any push, PR or merge.</li>
 </ul>
 <p>A finalize that exits with a tool error leaves the PRs open with
 auto-merge on, and submit prints the command to re-run the finalize
@@ -18737,12 +18732,11 @@ agent's <code>report-ready</code> mirrors its ready-state onto the reserved ref
 branch (for example a workflow-file change the agent's token could not
 push), it is pushed with the human's credentials and opened locally
 instead (issue #2794).</p>
-<p>The PRs then follow the one submit path and the default finalize like
+<p>The PRs then follow the one submit path and the same finalize as
 any other mode: finalizing, releasing and installing act on the PRs and
 the remote, so the branches need no local checkout. A branch that
 already carries a submitted PR is refused, naming the
-<code>vrg-finalize-pr &lt;url&gt;</code> command to watch it instead; with
-<code>--no-finalize</code> it is reported and skipped.</p>
+<code>vrg-finalize-pr &lt;url&gt;</code> command to watch it instead.</p>
 <div class="admonition warning">
 <p class="admonition-title">The relay ref is world-readable</p>
 <p>On a public repo, anyone can read <code>refs/vergil/pr-workflow/&lt;branch&gt;</code>.
@@ -18808,19 +18802,9 @@ orphaned relay ref whose branch no longer exists.</p>
 <td>From the repo root: a comma-separated list of ready worktrees, by issue number or worktree directory name</td>
 </tr>
 <tr>
-<td><code>--no-finalize</code></td>
-<td>No</td>
-<td>Open the PRs with auto-merge on and return without watching them</td>
-</tr>
-<tr>
 <td><code>--release</code></td>
 <td>No</td>
-<td>Pass <code>--release</code> to <code>vrg-finalize-pr</code>, which chains into <code>vrg-release</code> (installing by default) on full success. Not allowed with <code>--no-finalize</code></td>
-</tr>
-<tr>
-<td><code>--no-install</code></td>
-<td>No</td>
-<td>With <code>--release</code>, run <code>vrg-release --no-install</code></td>
+<td>Pass <code>--release</code> to <code>vrg-finalize-pr</code>, which chains into <code>vrg-release</code> (install is part of every release) on full success</td>
 </tr>
 <tr>
 <td><code>--dry-run</code></td>
@@ -18841,7 +18825,7 @@ orphaned relay ref whose branch no longer exists.</p>
 </table>
 <h3 id="removed-flags">Removed flags<a class="headerlink" href="#removed-flags" title="Permanent link">&para;</a></h3>
 <p>Each removed flag is refused by name before any side effect, exits 1 and
-names the new default:</p>
+says why it is gone:</p>
 <table>
 <thead>
 <tr>
@@ -18852,11 +18836,15 @@ names the new default:</p>
 <tbody>
 <tr>
 <td><code>--finalize</code></td>
-<td>Finalizing is the default; <code>--no-finalize</code> opts out</td>
+<td>Finalizing is the default</td>
 </tr>
 <tr>
-<td><code>--install</code></td>
-<td><code>--release</code> installs by default; <code>--no-install</code> opts out</td>
+<td><code>--no-finalize</code></td>
+<td><code>vrg-submit-pr</code> returns once each PR has merged or cannot merge</td>
+</tr>
+<tr>
+<td><code>--install</code>, <code>--no-install</code></td>
+<td>Install is part of every release</td>
 </tr>
 <tr>
 <td><code>--allow-provenance-violation</code></td>
@@ -18880,23 +18868,20 @@ issue with an <code>epic</code>-labelled parent) so it closes on merge. <code>Fi
 <a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="c1"># Every ready worktree, one table, one finalize</span>
 <a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>vrg-submit-pr<span class="w"> </span>--all
 <a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="c1"># Merge, then release (installing by default)</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="c1"># Merge, then release (install is part of every release)</span>
 <a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>vrg-submit-pr<span class="w"> </span>--release
 <a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="c1"># Open with auto-merge on and return; watch later with vrg-finalize-pr</span>
-<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>vrg-submit-pr<span class="w"> </span>--no-finalize
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="c1"># Relay branch mode: open PRs for cloud-implemented branches, worktree-free</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>vrg-submit-pr<span class="w"> </span>feature/123-x<span class="w"> </span>feature/124-y
 <a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>
-<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="c1"># Relay branch mode: open PRs for cloud-implemented branches, worktree-free</span>
-<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>vrg-submit-pr<span class="w"> </span>feature/123-x<span class="w"> </span>feature/124-y
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="c1"># List the selection without submitting</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>vrg-submit-pr<span class="w"> </span>--dry-run
 <a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>
-<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="c1"># List the selection without submitting</span>
-<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>vrg-submit-pr<span class="w"> </span>--dry-run
-<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>
-<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="c1"># Emergency CLI mode</span>
-<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>vrg-submit-pr<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">"Add new lint check for X"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">"feat(lint): add new check for X"</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="c1"># Emergency CLI mode</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>vrg-submit-pr<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">"Add new lint check for X"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">"feat(lint): add new check for X"</span>
 </code></pre></div>
 <h2 id="batch-prs-one-pr-closing-several-issues">Batch PRs (one PR closing several issues)<a class="headerlink" href="#batch-prs-one-pr-closing-several-issues" title="Permanent link">&para;</a></h2>
 <p>A <code>report-ready</code> state can hand off a <strong>batch</strong>: 2 to 8 issues of one epic,
@@ -18962,15 +18947,15 @@ failed to submit it returns at least 3, and a tool error from finalize
 <tbody>
 <tr>
 <td>0</td>
-<td>Every PR opened and finalize reached full success (with <code>--no-finalize</code>: every PR opened with auto-merge on). Also a worktree whose PR is already submitted</td>
+<td>Every PR opened and finalize reached full success. Also a worktree whose PR is already submitted</td>
 </tr>
 <tr>
 <td>1</td>
-<td>A usage error or a refusal before anything opened (a removed or contradictory flag, an agent identity, no submittable worktree, a malformed <code>$VRG_FINALIZE_DEADLINE</code>, <code>--release</code> on a repo that is not released), or a tool error from finalize</td>
+<td>A usage error or a refusal before anything opened (a removed flag, an agent identity, no submittable worktree, a malformed <code>$VRG_FINALIZE_DEADLINE</code>, <code>--release</code> on a repo that is not released), or a tool error from finalize</td>
 </tr>
 <tr>
 <td>3</td>
-<td>Not every PR merged: a submit failed, or finalize reported a PR not merged. With <code>--no-finalize</code>, or when no PR opened, a failed submit exits 3</td>
+<td>Not every PR merged: a submit failed, or finalize reported a PR not merged. When no PR opened, a failed submit exits 3</td>
 </tr>
 <tr>
 <td>4</td>
