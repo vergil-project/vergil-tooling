@@ -310,11 +310,16 @@ and `publish-status` run on every run and are never recorded done.
   a deferred `package-index`), a `close-finalize` that left the issue
   open, and a `consumer-refresh` that was held back (a deferred publish,
   an earlier failed stage, or `--no-install`). A failed `update-deps` is
-  not recorded done either, so the resume runs it again.
+  not recorded done either. A resume can only find an open tracking
+  issue, though, and `update-deps` runs after `close-finalize`, which
+  closes the issue unless something was deferred. So a resume runs a
+  failed `update-deps` again only when the issue was left open, for
+  example by a deferred publish.
 - **`--without-deps`** given on a resume is recorded in the state block,
   as one given on the first run is. It skips `update-deps` on that run
-  and on every later resume, and the skip records the stage done, so a
-  release whose dependency update keeps failing finishes without it.
+  and on every later resume, and the skip records the stage done. Like
+  the rerun above, it applies only to a release whose tracking issue is
+  still open.
 
 `--resume` refuses a tracking issue with no state block, or one whose
 block is malformed, names another version, or records a stage the
@@ -638,7 +643,8 @@ and it is the first change on the new `develop` version. It runs after
 `close-finalize`, once the release is tagged and published, so it can
 never affect the release itself. Pass `--without-deps` to skip it. The
 flag is recorded on the tracking issue, so every later `--resume` skips
-the stage too; given on a resume, it skips an update that failed.
+the stage too. Given on a resume of a release whose tracking issue is
+still open, it skips an update that failed.
 
 The stage brings the root checkout's `develop` up to date with
 `origin/develop` (the root checkout must be on `develop`), then runs the
