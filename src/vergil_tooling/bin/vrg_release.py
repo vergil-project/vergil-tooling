@@ -12,10 +12,17 @@ from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.orchestrator import ReleaseState, build_stages
 from vergil_tooling.lib.release.resume import find_resume_target
 
-INSTALL_REMOVED = (
-    "vrg-release: --install was removed; installing is now the default "
-    "(use --no-install to skip it)"
-)
+# Flags that were removed, in the order they are checked: promote and install
+# are part of every release (spec §4.8 of epic vergil-project/.github#1440;
+# --install since #1184). Each is still parsed, hidden from --help, so that
+# passing it is a clear fatal error rather than argparse's generic
+# "unrecognized arguments".
+REMOVED_FLAGS = ("--no-promote", "--no-install", "--install")
+
+
+def removed_message(flag: str) -> str:
+    """The error *flag*, a removed flag, exits with."""
+    return f"vrg-release: {flag} was removed; promote and install are part of every release"
 
 
 @cli_main
@@ -34,12 +41,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    # --install was removed when installing became the default (#1184): a
-    # caller still passing it is told so loudly, before any side effect,
-    # rather than having the flag silently accepted.
-    if args.install:
-        print(INSTALL_REMOVED, file=sys.stderr)
-        return 1
+    # A caller still passing a removed flag is told so loudly, before any
+    # side effect, rather than having the flag silently accepted.
+    for flag in REMOVED_FLAGS:
+        if getattr(args, _dest(flag)):
+            print(removed_message(flag), file=sys.stderr)
+            return 1
 
     repo_root = git.repo_root()
 
@@ -77,10 +84,8 @@ def main(argv: list[str] | None = None) -> int:
     state = ReleaseState(
         version_override=args.version_override,
         repo_root=repo_root,
-        promote=not args.no_promote,
         without_deps=args.without_deps,
         allow_pending_deps=args.allow_pending_deps,
-        install=not args.no_install,
         resume=resume_requested,
         resume_version=resume_version,
         resume_issue_number=resume_issue_number,
@@ -105,13 +110,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     # The progress renderer collapses each finished stage to a one-line
     # summary. The install stage runs the commands itself and, after a run
-    # that succeeded, leaves nothing to read; what it does leave (the
-    # commands under --no-install, or a failed run's full output) is
-    # re-printed below the summary.
+    # that succeeded, leaves nothing to read; what it does leave (a failed
+    # run's full output) is re-printed below the summary.
     if state.ctx is not None and state.ctx.install_message:
         print()
         print(state.ctx.install_message)
     return rc
+
+
+def _dest(flag: str) -> str:
+    """The argparse attribute *flag* is stored under."""
+    return flag.removeprefix("--").replace("-", "_")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -125,12 +134,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("minor", "major"),
         default=None,
         help="Bump to next minor or major before releasing (default: release current version).",
-    )
-    parser.add_argument(
-        "--no-promote",
-        action="store_true",
-        default=False,
-        help="Skip rolling-tag promotion after release.",
     )
     parser.add_argument(
         "--without-deps",
@@ -152,20 +155,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "only); the bypass is logged on the tracking issue."
         ),
     )
-    parser.add_argument(
-        "--no-install",
-        action="store_true",
-        default=False,
-        help=(
-            "Skip the install step. By default the install stage runs the "
-            "[publish].install commands once promote has moved vX.Y; with this "
-            "flag it only prints them."
-        ),
-    )
-    # Removed (#1184): still parsed, and hidden from --help, only so that
-    # passing it is the clear fatal error main() prints rather than
-    # argparse's generic "unrecognized arguments".
-    parser.add_argument("--install", action="store_true", default=False, help=argparse.SUPPRESS)
+    for flag in REMOVED_FLAGS:
+        parser.add_argument(flag, action="store_true", default=False, help=argparse.SUPPRESS)
     parser.add_argument(
         "--resume",
         nargs="?",

@@ -49,9 +49,8 @@ def install(ctx: ReleaseContext) -> None:
 
     The version-expanded command block is stored on ``ctx.install_commands``.
     ``ctx.install_message`` is set only when the human has something to read
-    once the progress renderer has collapsed this stage: the commands shown
-    under ``--no-install``, or a failed run's full output. ``vrg-release``
-    re-prints it below the summary.
+    once the progress renderer has collapsed this stage: a failed run's full
+    output. ``vrg-release`` re-prints it below the summary.
 
     On success the commands' output is not shown, so the stage is the one
     ``✓ install`` line. On failure the full output is shown and the stage
@@ -67,14 +66,6 @@ def install(ctx: ReleaseContext) -> None:
 
     commands = expand(template, ctx.version)
     ctx.install_commands = commands
-
-    if not ctx.install:
-        ctx.install_message = (
-            f"Install commands for v{ctx.version} (not run: --no-install):\n\n{commands}"
-        )
-        print(ctx.install_message)
-        progress.note("not run (--no-install)")
-        return
 
     _require_promote(ctx)
     check_line_on_release(ctx)

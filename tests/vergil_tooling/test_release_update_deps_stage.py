@@ -312,7 +312,7 @@ def written() -> Iterator[list[StateBlock]]:
 
 def _run_stage(ctx: ReleaseContext) -> None:
     """Run the tracked update-deps stage as the pipeline does."""
-    state = ReleaseState(version_override=None, repo_root=Path("/r"), promote=True)
+    state = ReleaseState(version_override=None, repo_root=Path("/r"))
     state.ctx = ctx
     with (
         patch(_ORCH + ".comment_phase_complete"),
@@ -330,7 +330,7 @@ def _resume(monkeypatch: pytest.MonkeyPatch, block: StateBlock, *, given: bool) 
     ctx.issue_number = 42
     ctx.state = block
     state = ReleaseState(
-        version_override=None, repo_root=Path("/r"), promote=True, resume=True, without_deps=given
+        version_override=None, repo_root=Path("/r"), resume=True, without_deps=given
     )
     monkeypatch.setattr(_ORCH + ".preflight", lambda **_kw: ctx)
     _preflight_stage(state)
@@ -431,7 +431,7 @@ def test_fresh_start_takes_without_deps_from_the_flag(
     """A fresh start has no state block yet: prepare creates it from the flag."""
     ctx = _rctx()
     state = ReleaseState(
-        version_override=None, repo_root=Path("/r"), promote=True, without_deps=True
+        version_override=None, repo_root=Path("/r"), without_deps=True
     )
     monkeypatch.setattr(_ORCH + ".preflight", lambda **_kw: ctx)
     _preflight_stage(state)
@@ -445,7 +445,7 @@ def test_resume_without_a_state_block_refuses(
 ) -> None:
     ctx = _rctx()
     state = ReleaseState(
-        version_override=None, repo_root=Path("/r"), promote=True, resume=True, without_deps=True
+        version_override=None, repo_root=Path("/r"), resume=True, without_deps=True
     )
     monkeypatch.setattr(_ORCH + ".preflight", lambda **_kw: ctx)
     with pytest.raises(ReleaseError, match="no release state block"):

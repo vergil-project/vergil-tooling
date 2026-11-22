@@ -155,19 +155,6 @@ def test_install_failure_raises_and_keeps_full_output(
     assert "Resolving...\nerror: no such tag v2.1.0" in message
 
 
-def test_install_no_install_shows_the_commands_without_running(template: MagicMock) -> None:
-    _set(template, "uv tool install pkg@v<VERSION>")
-    ctx = _ctx()
-    ctx.install = False
-    with patch(_MOD + ".run_install") as m_run:
-        install(ctx)
-    m_run.assert_not_called()
-    message = ctx.install_message or ""
-    assert "Install commands for v2.1.0" in message
-    assert "--no-install" in message
-    assert "uv tool install pkg@v2.1.0" in message
-
-
 def test_install_none_configured_is_not_a_warning(
     template: MagicMock, capsys: pytest.CaptureFixture[str]
 ) -> None:

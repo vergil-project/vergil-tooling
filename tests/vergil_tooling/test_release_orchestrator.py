@@ -53,13 +53,12 @@ def write_state() -> Iterator[MagicMock]:
         yield m_write
 
 
-def _ctx(*, promote: bool = True) -> ReleaseContext:
+def _ctx() -> ReleaseContext:
     ctx = ReleaseContext(
         repo="owner/repo",
         version="2.1.0",
         repo_root=Path("/tmp/repo"),  # noqa: S108
         version_override=None,
-        promote=promote,
     )
     ctx.issue_number = 42
     ctx.state = _initial("2.1.0")
@@ -117,7 +116,7 @@ def test_teardown_stage_runs_after_back_merge_and_fails_fast() -> None:
 
 
 def test_teardown_stage_is_tracked_and_calls_teardown_worktree() -> None:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = _ctx()
     with (
         patch(_MOD + ".teardown_worktree") as m_teardown,
@@ -135,7 +134,7 @@ def test_teardown_stage_is_tracked_and_calls_teardown_worktree() -> None:
 
 def test_failed_teardown_stops_the_run(tmp_path: Path) -> None:
     """A failed teardown stops the run: confirm-develop and finalize never run."""
-    state = ReleaseState(version_override=None, repo_root=tmp_path, promote=True)
+    state = ReleaseState(version_override=None, repo_root=tmp_path)
     state.ctx = _ctx()
     args = argparse.Namespace(output_format="plain", output_window=None)
     names = ("teardown-worktree", "confirm-develop", "finalize")
@@ -161,7 +160,7 @@ def test_failed_teardown_stops_the_run(tmp_path: Path) -> None:
 
 
 def test_preflight_stage_populates_ctx() -> None:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=False)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     ctx = _ctx()
     with patch(_MOD + ".preflight", return_value=ctx) as m_preflight:
         _preflight_stage(state)
@@ -175,14 +174,13 @@ def test_preflight_stage_populates_ctx() -> None:
         stages=[stage.name for stage in build_stages()],
     )
     assert state.ctx is ctx
-    assert ctx.promote is False
 
 
 def test_preflight_stage_renders_the_checklist_the_issue_is_created_with() -> None:
     # #4367: the stages before prepare are ticked; prepare onward are open.
     from vergil_tooling.lib.release import checklist
 
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     ctx = _ctx()
     with patch(_MOD + ".preflight", return_value=ctx):
         _preflight_stage(state)
@@ -197,7 +195,6 @@ def test_preflight_stage_passes_allow_pending_deps() -> None:
     state = ReleaseState(
         version_override=None,
         repo_root=Path("/tmp/repo"),  # noqa: S108
-        promote=True,
         allow_pending_deps=True,
     )
     with patch(_MOD + ".preflight", return_value=_ctx()) as m_preflight:
@@ -208,14 +205,14 @@ def test_preflight_stage_passes_allow_pending_deps() -> None:
 def test_audit_stage_runs_audit() -> None:
     from vergil_tooling.lib.release.orchestrator import _audit_stage
 
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     with patch(_MOD + ".run_audit") as m_audit:
         _audit_stage(state)
     m_audit.assert_called_once_with(Path("/tmp/repo"))  # noqa: S108
 
 
 def test_tracked_stage_comments_on_success() -> None:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = _ctx()
     fn = MagicMock()
     with (
@@ -229,7 +226,7 @@ def test_tracked_stage_comments_on_success() -> None:
 
 
 def test_tracked_stage_ticks_checklist_with_prior_stages_prechecked() -> None:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = _ctx()
     with (
         patch(_MOD + ".comment_phase_complete"),
@@ -251,7 +248,7 @@ def test_stage_names_match_pipeline_order() -> None:
 
 
 def test_tracked_stage_comments_release_error_on_failure() -> None:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = _ctx()
     exc = ReleaseError(phase="prepare", command="git checkout", message="branch exists")
     fn = MagicMock(side_effect=exc)
@@ -266,7 +263,7 @@ def test_tracked_stage_comments_release_error_on_failure() -> None:
 
 def test_tracked_stage_never_comments_a_breach() -> None:
     """A suspected breach stops the run before any write: no failure comment (spec §4.2)."""
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = _ctx()
     fn = MagicMock(side_effect=TrackingIssueBreach("agent", "edited the body", number=42))
     with (
@@ -283,7 +280,7 @@ def test_tracked_stage_never_comments_a_breach() -> None:
 
 
 def test_tracked_stage_wraps_and_comments_on_failure() -> None:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = _ctx()
     fn = MagicMock(side_effect=RuntimeError("boom"))
     with (
@@ -295,7 +292,7 @@ def test_tracked_stage_wraps_and_comments_on_failure() -> None:
 
 
 def test_tracked_stage_wraps_a_failed_command_from_its_fields() -> None:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = _ctx()
     failed = subprocess.CalledProcessError(1, ["git", "push"], stderr="rejected")
     fn = MagicMock(side_effect=failed)
@@ -310,7 +307,7 @@ def test_tracked_stage_wraps_a_failed_command_from_its_fields() -> None:
 
 
 def test_tracked_stage_requires_ctx() -> None:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     with pytest.raises(ReleaseError, match="preflight did not run"):
         _tracked("prepare", MagicMock())(state)
 
@@ -320,7 +317,7 @@ def test_tracked_stage_lists_a_deferred_publish_as_failed(name: str) -> None:
     """A deferred publish is a failed stage like any other: the hold rule lets
     promote, finalize and install run past it, but close-tracking holds on it,
     so the tracking issue stays open (spec §4.4, §4.5)."""
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     ctx = state.ctx = _ctx()
 
     def _defer(_ctx: ReleaseContext) -> None:
@@ -338,7 +335,7 @@ def test_tracked_stage_lists_a_deferred_publish_as_failed(name: str) -> None:
 
 def _held_run(name: str, ctx: ReleaseContext) -> tuple[MagicMock, MagicMock, MagicMock]:
     """Run tracked stage *name* on *ctx*; return its fn, warn and comment mocks."""
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = ctx
     fn = MagicMock()
     with (
@@ -366,7 +363,7 @@ def test_promote_held_by_failed_confirm_develop(write_state: MagicMock) -> None:
     ctx.deferred_failures = ["confirm-develop"]
     with patch(_MOD + ".promote") as m_promote:
         stage = next(s for s in build_stages() if s.name == "promote")
-        state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+        state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
         state.ctx = ctx
         with patch(_MOD + ".mark_warn"):
             stage.fn(state)
@@ -401,22 +398,13 @@ def test_tracked_stage_applies_the_hold_rule(
     assert fn.called is runs
 
 
-def test_promote_phase_calls_promote_when_enabled() -> None:
+def test_promote_phase_calls_promote() -> None:
     from vergil_tooling.lib.release.orchestrator import _promote_phase
 
-    ctx = _ctx(promote=True)
+    ctx = _ctx()
     with patch(_MOD + ".promote") as mock_promote:
         _promote_phase(ctx)
     mock_promote.assert_called_once_with(ctx.version)
-
-
-def test_promote_phase_skips_when_disabled() -> None:
-    from vergil_tooling.lib.release.orchestrator import _promote_phase
-
-    ctx = _ctx(promote=False)
-    with patch(_MOD + ".promote") as mock_promote:
-        _promote_phase(ctx)
-    mock_promote.assert_not_called()
 
 
 def test_phase_details_prepare() -> None:
@@ -515,14 +503,6 @@ def test_phase_details_promote() -> None:
     assert "v2.1" in details
 
 
-def test_phase_details_promote_skipped() -> None:
-    from vergil_tooling.lib.release.orchestrator import _phase_details
-
-    ctx = _ctx(promote=False)
-    details = _phase_details(ctx, "promote")
-    assert "skipped" in details.lower()
-
-
 def test_phase_details_cd_publish_says_nothing_is_left() -> None:
     assert _phase_details(_ctx(), "cd-publish") == "No failed CD publish job is left to deliver."
 
@@ -535,7 +515,7 @@ def test_phase_details_promote_with_a_deferred_publish_still_promotes(deferred: 
 
 
 def _run_promote_stage(ctx: ReleaseContext) -> MagicMock:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = ctx
     with (
         patch(_MOD + ".promote") as m_promote,
@@ -555,23 +535,15 @@ def test_promote_stage_moves_the_tag() -> None:
     assert "promote" in ctx.state.done
 
 
-def test_promote_runs_with_index_deferred(capsys: pytest.CaptureFixture[str]) -> None:
+def test_promote_runs_with_index_deferred() -> None:
     """promote moves vX.Y once the tag and the Release exist, whatever the index
     shows (spec §4.6): a deferred index no longer holds it back."""
     ctx = _ctx()
     defer_publish(ctx, "package-index")
     ctx.deferred_failures = ["package-index"]
     _run_promote_stage(ctx).assert_called_once_with("2.1.0")
-    assert "Skipping promote" not in capsys.readouterr().out
     assert ctx.state is not None
     assert "promote" in ctx.state.done
-
-
-def test_promote_stage_skips_with_no_promote() -> None:
-    ctx = _ctx(promote=False)
-    _run_promote_stage(ctx).assert_not_called()
-    assert ctx.state is not None
-    assert "promote" not in ctx.state.done
 
 
 def test_phase_details_finalize() -> None:
@@ -586,13 +558,6 @@ def test_phase_details_install_ran() -> None:
     ctx = _ctx()
     ctx.install_commands = "uv tool install pkg@v2.1.0"
     assert _phase_details(ctx, "install") == "Install commands for v2.1.0 ran."
-
-
-def test_phase_details_install_no_install() -> None:
-    ctx = _ctx()
-    ctx.install_commands = "uv tool install pkg@v2.1.0"
-    ctx.install = False
-    assert "not run (--no-install)" in _phase_details(ctx, "install")
 
 
 def test_phase_details_install_none_configured() -> None:
@@ -904,7 +869,7 @@ def test_package_index_and_cd_publish_follow_promote() -> None:
 
 
 def test_package_index_stage_runs_wait_for_index_tracked() -> None:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = _ctx()
     with (
         patch(_MOD + ".wait_for_index") as m_wait,
@@ -1175,7 +1140,7 @@ def test_merge_release_skips_when_already_merged() -> None:
 
 
 def _state() -> ReleaseState:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/r"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/r"))  # noqa: S108
     state.ctx = ReleaseContext(
         repo="o/r",
         version="2.1.2",
@@ -1237,7 +1202,7 @@ def test_update_deps_stage_between_finalize_and_install() -> None:
 
 
 def test_update_deps_stage_is_tracked_and_runs_update_deps() -> None:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = _ctx()
     with (
         patch(_MOD + ".update_deps") as m_update,
@@ -1347,13 +1312,13 @@ def test_publish_status_reports_both_failures() -> None:
 
 
 def test_publish_status_noop_without_ctx() -> None:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/r"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/r"))  # noqa: S108
     _publish_status_stage(state)  # no raise
 
 
 def test_package_index_success_records_index_listed() -> None:
     """A package-index that saw every package records index_listed (spec §4.5 of epic 1440)."""
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = _ctx()
 
     def listed(ctx: ReleaseContext) -> None:
@@ -1371,7 +1336,7 @@ def test_package_index_success_records_index_listed() -> None:
 
 
 def test_package_index_without_packages_leaves_index_listed_unset() -> None:
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = _ctx()
     with (
         patch(_MOD + ".comment_phase_complete"),
@@ -1388,7 +1353,6 @@ def test_preflight_stage_copies_resume() -> None:
     state = ReleaseState(
         version_override=None,
         repo_root=Path("/tmp/repo"),  # noqa: S108
-        promote=True,
         resume=True,
         resume_version="2.1.0",
         resume_issue_number=42,
@@ -1402,7 +1366,6 @@ def test_preflight_stage_copies_without_deps() -> None:
     state = ReleaseState(
         version_override=None,
         repo_root=Path("/tmp/repo"),  # noqa: S108
-        promote=True,
         without_deps=True,
     )
     ctx = _ctx()
@@ -1435,7 +1398,7 @@ _PREFLIGHT = "vergil_tooling.lib.release.preflight"
 
 def _tracked_run(name: str, ctx: ReleaseContext, fn: MagicMock) -> MagicMock:
     """Run *fn* as tracked stage *name* on *ctx*; return the tick-stage mock."""
-    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
     state.ctx = ctx
     with (
         patch(_MOD + ".comment_phase_complete"),
@@ -1500,24 +1463,6 @@ def test_tracked_stage_failure_is_not_recorded_done(write_state: MagicMock) -> N
     write_state.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    ("name", "setup"),
-    [
-        ("promote", lambda c: setattr(c, "promote", False)),
-        ("install", lambda c: setattr(c, "install", False)),
-    ],
-)
-def test_opted_out_stage_is_not_recorded_done(
-    write_state: MagicMock, name: str, setup: Callable[[ReleaseContext], None]
-) -> None:
-    """A stage an opt-out flag skipped runs again on a resume."""
-    ctx = _ctx()
-    setup(ctx)
-    ctx.install_commands = "vrg-tooling-install v2.1"
-    _tracked_run(name, ctx, MagicMock())
-    write_state.assert_not_called()
-
-
 def test_install_with_none_configured_is_done(write_state: MagicMock) -> None:
     ctx = _ctx()
     ctx.install_commands = None
@@ -1532,7 +1477,6 @@ def test_resume_after_finalize_skips_branch_stages(write_state: MagicMock) -> No
     state = ReleaseState(
         version_override=None,
         repo_root=Path("/tmp/repo"),  # noqa: S108
-        promote=True,
         resume=True,
         resume_version="2.1.0",
         resume_issue_number=42,

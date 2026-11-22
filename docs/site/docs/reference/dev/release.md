@@ -72,14 +72,25 @@ vrg-release [minor|major] [options]
 | Argument | Required | Description |
 | -------- | -------- | ----------- |
 | `minor` / `major` | No | Bump to the next minor or major version before releasing. Default: release the current `develop` version |
-| `--no-promote` | No | Skip moving the rolling `vX.Y` tag |
 | `--without-deps` | No | Skip the `update-deps` stage. Recorded in the tracking issue's state block, so every later `--resume` skips it too. Allowed with `--resume`, where it skips an update that failed, so the release finishes without it |
 | `--allow-pending-deps` | No | Release even though an open `dependency-update` PR blocks it. For urgent fixes only; the bypassed PRs are listed on the tracking issue |
-| `--no-install` | No | Skip the install step. By default the `install` stage runs the `[publish].install` commands (`<VERSION>` and `<MINOR>` expanded) once `promote` is done and `vX.Y` names the release; with this flag it prints them below the summary instead. With none configured the stage line says `none configured`, which is not an error. `--install` was removed: passing it exits 1 and names this default |
 | `--resume [X.Y.Z]` | No | Resume an interrupted release from its open tracking issue. Name the version when more than one release is in flight. Cannot be combined with `minor`/`major` |
 | `--skip-audit` | No | Skip the `audit` stage |
 | `--output-window N` | No | Rolling output window for the terminal renderer (`0` streams everything) |
 | `--output-format` | No | Force the renderer: `rich`, `gha` or `plain` |
+
+Promote and install are part of every release: every run moves the
+rolling `vX.Y` tag in the `promote` stage, and the `install` stage runs
+the `[publish].install` commands (`<VERSION>` and `<MINOR>` expanded)
+once `promote` is done and `vX.Y` names the release. With none
+configured the stage line says `none configured`, which is not an
+error. The only stages a flag skips are `update-deps` (`--without-deps`)
+and `audit` (`--skip-audit`).
+
+`--no-promote`, `--no-install` and `--install` were removed. Each is
+still parsed, hidden from `--help`, only to exit 1 before any side
+effect with `vrg-release: --<flag> was removed; promote and install are
+part of every release`.
 
 ## Prerequisites
 

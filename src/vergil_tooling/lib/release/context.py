@@ -86,17 +86,13 @@ class ReleaseContext:
     package_index_urls: tuple[str, ...] = ()
 
     # What the install stage leaves for the human to read below the summary:
-    # the commands it did not run (--no-install), or a failed run's full
-    # output. None after a run that succeeded, or with none configured.
+    # a failed run's full output. None after a run that succeeded, or with
+    # none configured.
     install_message: str | None = None
 
     # The version-expanded [publish].install command block the stage runs
     # (issue #1643). None when no install is configured.
     install_commands: str | None = None
-
-    # False with --no-install: the install stage shows the commands instead
-    # of running them.
-    install: bool = True
 
     # Names of the stages that failed in this run, deferred publishes
     # included, in pipeline order. The hold rule (release.handoff.holds)
@@ -110,8 +106,6 @@ class ReleaseContext:
     # index. The stage runs again on every resume until the state block
     # records the index listed, so a miss is always this run's.
     index_missed: bool = False
-
-    promote: bool = True
 
     # update-deps stage (epic vergil-project/.github#381, spec §5.1). Skipped
     # with --without-deps, given on the run or recorded in the state block by
