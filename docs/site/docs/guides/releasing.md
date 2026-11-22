@@ -173,9 +173,9 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
    is the normal case: the stage line says `none configured`. On
    success the stage is one `✓ install` line; on failure its full
    output is printed below the summary, the stage fails, `vrg-release`
-   exits 1, and `vrg-release --resume` runs the install again. Pass
-   `--no-install` to have it print the commands below the summary
-   instead. `[publish].consumer-refresh`, the key's old name, is still
+   exits 1, and `vrg-release --resume` runs the install again. No flag
+   skips it: the install is part of every release.
+   `[publish].consumer-refresh`, the key's old name, is still
    read, with a deprecation warning, for one minor version; setting both
    is an error.
 5. Last, `close-tracking` closes the tracking issue with a summary, but
@@ -210,12 +210,12 @@ stages not recorded done.
 | `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, refreshes the lockfile (`uv lock` for Python and `cargo update --workspace` for Rust, in the dev container; for TypeScript, a direct edit of `package-lock.json`'s root version fields that runs no npm), and merges it to `develop`. Records the back-merge's merge commit |
 | `teardown-worktree` | fail-fast | Removes the release worktree and returns to the root checkout. Fail-fast, as every branch-work stage is, so `finalize`, which prunes the release branches, runs only once all of them have succeeded |
 | `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed publish job (the docs publish) is recorded in the state block and deferred to `cd-publish` |
-| `promote` | deferred | Moves the rolling `vX.Y` tag to the new release once the tag and the GitHub Release exist, whatever `cd-publish` and `package-index` show (skipped with `--no-promote`; see [Promote and the index](#promote-and-the-index)) |
+| `promote` | deferred | Moves the rolling `vX.Y` tag to the new release once the tag and the GitHub Release exist, whatever `cd-publish` and `package-index` show (see [Promote and the index](#promote-and-the-index)) |
 | `cd-publish` | deferred | Delivers the CD publish jobs the confirm stages recorded as failed (see [Failed CD publish jobs](#failed-cd-publish-jobs)). Nothing to do when none failed. A fresh run fails it, deferred, naming the jobs; `vrg-release --resume` re-runs them |
 | `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index. A miss is a deferred publish failure; a resume dispatches the index workflow and waits again |
 | `finalize` | deferred | Runs `vrg-finalize-pr --cleanup-only`, which prunes the release branches. The tracking issue stays open until `close-tracking` |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
-| `install` | deferred | Runs the `[publish].install` commands once `promote` is done and `vX.Y` names the release (prints them instead with `--no-install`). `none configured` when the repo has none. Success is one check line; a failure prints the full output below the summary |
+| `install` | deferred | Runs the `[publish].install` commands once `promote` is done and `vX.Y` names the release. `none configured` when the repo has none. Success is one check line; a failure prints the full output below the summary |
 | `close-tracking` | deferred | Closes the tracking issue with a summary, once no stage before it has failed |
 | `publish-status` | deferred | When a stage failed, names what is left of the release, any deferred publish and any dependency-update failure, and the one command that finishes it: `vrg-release --resume`, or, for a release that cannot finish, `vrg-release --supersede X.Y.Z`. It warns, never failing a second time |
 
@@ -360,10 +360,9 @@ and `publish-status` run on every run and are never recorded done.
   runs from the root checkout, and never needs the release branches,
   which `finalize` may already have pruned.
 - **A stage that did not do its work** is not recorded done, so a resume
-  runs it again: a stage that failed, one [the hold rule](#the-hold-rule)
-  held back, a `promote` skipped with `--no-promote`, and an `install`
-  that only printed its commands under `--no-install`. Any failed stage
-  leaves the tracking issue open, so the resume always finds it.
+  runs it again: a stage that failed, and one
+  [the hold rule](#the-hold-rule) held back. Any failed stage leaves
+  the tracking issue open, so the resume always finds it.
 - **`--without-deps`** given on a resume is recorded in the state block,
   as one given on the first run is. It skips `update-deps` on that run
   and on every later resume, and the skip records the stage done.
@@ -655,29 +654,21 @@ not.
 ### How long a rollback lasts
 
 A rollback lasts until the next release, whose `promote` stage moves `v2.1`
-forward again. Keeping it in place until the fix ships is managed by hand:
-the human who rolled back makes sure the next release carries the fix, or
-cuts it with `vrg-release --no-promote`. A release cut with `--no-promote`
-leaves `v2.1` where it is; promote it later with the `vrg-promote` steps in
-[Move the tag back](#move-the-tag-back), passing its version. Rolling
-forward again is the same steps with the latest `v2.1.Z`. Nothing holds the
-tag automatically. An issue that blocks promotion until it is closed is a
-separate idea,
+forward again: promote is part of every release, and no flag skips it.
+Keeping the rollback in place until the fix ships is managed by hand: the
+human who rolled back cuts no release of the repo until one carries the
+fix. Rolling forward again is the [Move the tag back](#move-the-tag-back)
+steps with the latest `v2.1.Z`. Nothing holds the tag automatically. An
+issue that blocks promotion until it is closed is a separate idea,
 [vergil-project/.github#763](https://github.com/vergil-project/.github/issues/763).
 
-Two cases undo a rollback with no prompt, because the `promote` stage asks
-nothing:
-
-- **A release already in flight.** A vergil-claude-plugin release that is
-  still running moves `v2.1` forward when it reaches `promote`. So does any
-  open `release: <version>` tracking issue whose `promote` is not recorded
-  done, the release you are rolling back included: `vrg-release --resume`
-  runs `promote` then. Before you roll back, let a running release finish,
-  and close every open tracking issue or resume it only with `--no-promote`.
-- **A resume without `--no-promote`.** `vrg-release` does not remember
-  `--no-promote`: each run, `--resume` included, promotes unless that run
-  passes the flag. Pass `--no-promote` to every `vrg-release --resume` of a
-  release you are holding back.
+A release already in flight undoes a rollback with no prompt, because the
+`promote` stage asks nothing. A vergil-claude-plugin release that is still
+running moves `v2.1` forward when it reaches `promote`. So does
+`vrg-release --resume` of any open `release: <version>` tracking issue whose
+`promote` is not recorded done, the release you are rolling back included.
+Before you roll back, let a running release finish, and resume every open
+tracking issue to its end.
 
 ## Dependency updates
 

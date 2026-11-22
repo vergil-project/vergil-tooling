@@ -47,7 +47,7 @@ release = false
 """
 
 
-@pytest.mark.parametrize("argv", [[], ["--no-install"], ["--resume"], ["minor"]])
+@pytest.mark.parametrize("argv", [[], ["--without-deps"], ["--resume"], ["minor"]])
 def test_main_refuses_repo_not_released(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
 ) -> None:
@@ -95,23 +95,6 @@ def test_parse_args_major() -> None:
     assert args.version_override == "major"
 
 
-def test_parse_args_no_promote() -> None:
-    args = parse_args(["--no-promote"])
-    assert args.no_promote is True
-    assert args.version_override is None
-
-
-def test_parse_args_default_promote() -> None:
-    args = parse_args([])
-    assert args.no_promote is False
-
-
-def test_parse_args_no_promote_with_minor() -> None:
-    args = parse_args(["--no-promote", "minor"])
-    assert args.no_promote is True
-    assert args.version_override == "minor"
-
-
 def test_parse_args_has_progress_flags() -> None:
     args = parse_args(["--skip-audit", "--output-format", "plain"])
     assert args.skip_audit is True
@@ -130,9 +113,8 @@ def test_main_runs_pipeline() -> None:
         patch(_MOD + ".git") as m_git,
         patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
     ):
-        assert main(["--no-promote", "--output-format", "plain"]) == 0
+        assert main(["--output-format", "plain"]) == 0
     state = m_pipeline.call_args.args[0]
-    assert state.promote is False
     assert state.repo_root is m_git.repo_root.return_value
 
 
@@ -148,7 +130,6 @@ def test_main_without_deps_reaches_state() -> None:
         assert main(["--without-deps", "--output-format", "plain"]) == 0
     state = m_pipeline.call_args.args[0]
     assert state.without_deps is True
-    assert state.promote is True
 
 
 def test_main_defaults_to_running_deps() -> None:
@@ -309,7 +290,6 @@ def test_main_passes_version_override() -> None:
         main(["minor"])
     state = m_pipeline.call_args.args[0]
     assert state.version_override == "minor"
-    assert state.promote is True
     kwargs = m_pipeline.call_args.kwargs
     assert kwargs["command"] == "vrg-release"
     assert kwargs["label"] == "vrg-release"
@@ -335,47 +315,56 @@ def test_main_success_label_names_released_tag() -> None:
     assert success_label() == "vrg-release v2.1.44"
 
 
-# -- install by default; --no-install skips it (issues #1643, #1184) --
+# -- promote and install are part of every release (spec §4.8 of epic
+# vergil-project/.github#1440; #1184) --
+
+_REMOVED = "was removed; promote and install are part of every release"
 
 
-def test_parse_args_no_install_defaults_false() -> None:
-    assert parse_args([]).no_install is False
-
-
-def test_parse_args_no_install_flag() -> None:
-    assert parse_args(["--no-install"]).no_install is True
-
-
-def test_help_lists_no_install_and_hides_install(capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize("flag", ["--no-promote", "--no-install", "--install"])
+def test_help_hides_removed_flags(capsys: pytest.CaptureFixture[str], flag: str) -> None:
     with pytest.raises(SystemExit):
         parse_args(["--help"])
-    out = capsys.readouterr().out
-    assert "--no-install" in out
-    assert "--install" not in out.replace("--no-install", "")
+    assert flag not in capsys.readouterr().out
 
 
-@pytest.mark.parametrize(("argv", "install"), [([], True), (["--no-install"], False)])
-def test_install_flag_reaches_the_stage(argv: list[str], install: bool) -> None:
-    """Installing is the default; --no-install tells the install stage
-    to show the commands instead of running them."""
+def _assert_refused(capsys: pytest.CaptureFixture[str], argv: list[str], flag: str) -> None:
+    """*argv* exits 1 with *flag*'s removal message, before any side effect."""
     with (
-        patch(_MOD + ".git"),
-        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+        patch(_MOD + ".git") as m_git,
+        patch(_MOD + ".gate.unreleased_refusal") as m_gate,
+        patch(_MOD + ".find_resume_target") as m_resume,
+        patch(_MOD + ".progress.run_pipeline") as m_pipeline,
     ):
-        assert main(argv) == 0
-    assert m_pipeline.call_args.args[0].install is install
+        assert main(argv) == 1
+    m_git.repo_root.assert_not_called()
+    m_gate.assert_not_called()
+    m_resume.assert_not_called()
+    m_pipeline.assert_not_called()
+    assert capsys.readouterr().err == f"vrg-release: {flag} {_REMOVED}\n"
+
+
+def test_no_promote_removed_message(capsys: pytest.CaptureFixture[str]) -> None:
+    _assert_refused(capsys, ["--no-promote"], "--no-promote")
+
+
+def test_no_install_removed_message(capsys: pytest.CaptureFixture[str]) -> None:
+    _assert_refused(capsys, ["--no-install"], "--no-install")
 
 
 def test_install_flag_is_fatal(capsys: pytest.CaptureFixture[str]) -> None:
-    """--install was removed: exit 1 with the exact message, before any stage."""
-    with (
-        patch(_MOD + ".git") as m_git,
-        patch(_MOD + ".progress.run_pipeline") as m_pipeline,
-    ):
-        assert main(["--install"]) == 1
-    m_git.repo_root.assert_not_called()
-    m_pipeline.assert_not_called()
-    assert capsys.readouterr().err == (
-        "vrg-release: --install was removed; installing is now the default "
-        "(use --no-install to skip it)\n"
-    )
+    _assert_refused(capsys, ["--install"], "--install")
+
+
+@pytest.mark.parametrize(
+    ("argv", "flag"),
+    [
+        (["--resume", "--no-promote"], "--no-promote"),
+        (["minor", "--no-install"], "--no-install"),
+        (["--no-promote", "--no-install"], "--no-promote"),
+    ],
+)
+def test_removed_flag_refused_with_other_args(
+    capsys: pytest.CaptureFixture[str], argv: list[str], flag: str
+) -> None:
+    _assert_refused(capsys, argv, flag)

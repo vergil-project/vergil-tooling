@@ -57,14 +57,12 @@ class ReleaseState:
 
     version_override: str | None
     repo_root: Path
-    promote: bool
     ctx: ReleaseContext | None = None
     resume: bool = False
     resume_version: str | None = None
     resume_issue_number: int | None = None
     without_deps: bool = False
     allow_pending_deps: bool = False
-    install: bool = True
 
 
 def _audit_stage(state: ReleaseState) -> None:
@@ -81,10 +79,8 @@ def _preflight_stage(state: ReleaseState) -> None:
         allow_pending_deps=state.allow_pending_deps,
         stages=_stage_names(),
     )
-    ctx.promote = state.promote
     ctx.resume = state.resume
     ctx.without_deps = _without_deps(ctx, given=state.without_deps)
-    ctx.install = state.install
     # The read-only stages before prepare ran before the issue existed, so the
     # checklist the issue is created with has them ticked already (#4367).
     names = _stage_names()
@@ -126,9 +122,8 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
     returns, so a resume runs only what is not done. A stage the hold rule
     holds back (:func:`~vergil_tooling.lib.release.handoff.holds`: a stage it
     needs failed in this run) does not run, is marked with a warning and is
-    not recorded done. A stage that succeeds, and was not skipped by an
-    opt-out flag (:func:`_opted_out`), records itself done in the state block
-    with the facts later stages need (:func:`_record_done`). The checklist is
+    not recorded done. A stage that succeeds records itself done in the
+    state block with the facts later stages need (:func:`_record_done`). The checklist is
     still ticked for the human (spec §4.3 and §4.4 of epic
     vergil-project/.github#1440).
     """
@@ -153,8 +148,7 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
             return
         try:
             fn(ctx)
-            if not _opted_out(ctx, name):
-                _record_done(ctx, name)
+            _record_done(ctx, name)
         except TrackingIssueBreach:
             # A suspected breach stops the run before any write, so the
             # failure is never commented on the issue (spec §4.2).
@@ -179,21 +173,6 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
         tick_stage(ctx, name)
 
     return stage
-
-
-def _opted_out(ctx: ReleaseContext, name: str) -> bool:
-    """Whether stage *name* returned without doing its work for an opt-out flag.
-
-    Such a stage is not recorded done, so it runs again on a resume:
-    ``promote`` under ``--no-promote``, and ``install`` under
-    ``--no-install`` with commands configured. An ``install`` with none
-    configured has nothing to do, so it is recorded done.
-    """
-    if name == "promote":
-        return not ctx.promote
-    if name == "install":
-        return ctx.install_commands is not None and not ctx.install
-    return False
 
 
 def _record_done(ctx: ReleaseContext, name: str) -> None:
@@ -390,16 +369,13 @@ def _sync_release_branch(ctx: ReleaseContext, pr_url: str) -> None:
 
 
 def _promote_phase(ctx: ReleaseContext) -> None:
-    """Move the vX.Y rolling tag to this release, unless ``--no-promote``.
+    """Move the vX.Y rolling tag to this release.
 
     It runs once the tag and the GitHub Release exist, whatever the package
     index or the CD publish jobs show: while the index is deferred, vX.Y may
     name a version whose packages are not listed yet, which is accepted
     (spec §4.6 of epic vergil-project/.github#1440).
     """
-    if not ctx.promote:
-        print("Skipping promote (--no-promote).")
-        return
     promote(ctx.version)
 
 
@@ -492,10 +468,7 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
     elif phase == "cd-publish":
         lines.append("No failed CD publish job is left to deliver.")
     elif phase == "promote":
-        if not ctx.promote:
-            lines.append("Promote skipped (--no-promote).")
-        else:
-            lines.append(f"Promoted v{minor(ctx.version)} -> v{ctx.version}")
+        lines.append(f"Promoted v{minor(ctx.version)} -> v{ctx.version}")
     elif phase == "finalize":
         lines.append("Repository finalized.")
     elif phase == "close-tracking":
@@ -511,8 +484,6 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
     elif phase == "install":
         if ctx.install_commands is None:
             lines.append("None configured: vergil.toml has no [publish].install.")
-        elif not ctx.install:
-            lines.append("Install commands shown, not run (--no-install).")
         else:
             lines.append(f"Install commands for v{ctx.version} ran.")
     elif phase == "update-deps":
