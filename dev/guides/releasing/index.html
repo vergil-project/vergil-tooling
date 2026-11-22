@@ -18230,6 +18230,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#superseding-a-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Superseding a release
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#a-failed-back-merge-bump" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18714,6 +18725,17 @@
     <span class="md-ellipsis">
       
         A failed release job
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#superseding-a-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Superseding a release
       
     </span>
   </a>
@@ -19538,6 +19560,68 @@ before judging it:</p>
    A release job that passes clears the recorded run; one that fails
    again keeps it recorded, and the next resume recovers it again.</li>
 </ol>
+<p>When the defect is in the release commit itself, so no re-run can pass,
+supersede the release instead (see
+<a href="#superseding-a-release">Superseding a release</a>).</p>
+<h3 id="superseding-a-release">Superseding a release<a class="headerlink" href="#superseding-a-release" title="Permanent link">&para;</a></h3>
+<p>A release that <code>--resume</code> cannot finish, because the defect is in its
+tagged commit, is replaced by a new one with
+<code>vrg-release --supersede X.Y.Z</code>. It is eligible only when <code>X.Y.Z</code> is
+the open release and either:</p>
+<ul>
+<li><strong>Tagged:</strong> its tag and GitHub Release exist, and its only stages left
+  before <code>release-records</code> are among <code>cd-publish</code>, <code>package-index</code>,
+  <code>update-deps</code> and <code>install</code>; or</li>
+<li><strong>Untagged:</strong> it halted at <code>confirm-main</code> with no tag because its CD
+  release job failed, as its state block records (the
+  <a href="#a-failed-release-job">failed release run</a>).</li>
+</ul>
+<p>Otherwise the run refuses, naming what is open, and says to finish the
+release with <code>vrg-release --resume X.Y.Z</code>. A bare <code>vrg-release</code> never
+supersedes: it refuses while the release is open
+(<a href="#one-release-at-a-time">one release at a time</a>).</p>
+<p>The superseding release is a fresh release, with every fresh-start
+check. It combines with a <code>minor</code> or <code>major</code> bump, and cannot be
+combined with <code>--resume</code>: passing both is a usage error (exit 2).
+Before anything else, <code>preflight</code> reads the superseded
+release's state block under
+<a href="#the-lock-and-the-identity-rule">the lock and the identity rule</a>,
+checks it is eligible, and confirms its facts against GitHub and git as
+a resume does. It also confirms the GitHub Release of a tagged one
+exists, and that the tag of an untagged one does not exist on <code>origin</code>.
+Then:</p>
+<ul>
+<li>The <a href="#one-release-at-a-time">open-release check</a> passes over the
+  superseded release's tracking issue, and only it.</li>
+<li>The new release <strong>absorbs</strong> the superseded release's issue list,
+  read from its state block, into its own. An issue on both lists
+  appears once, with the PRs from both. The tracking issue's Contents
+  section names the superseded release under <code>### Supersedes</code> and marks
+  each absorbed issue, and the state block records the superseded
+  version and the absorbed issues.</li>
+<li>Once the new tracking issue and its release PR exist, <code>prepare</code>
+  closes the superseded one, with a comment naming the release that
+  superseded it. Closing it last means a failure there leaves the
+  release branch's version bump pushed, for the resume to adopt. The
+  superseded release posts no records. A resume of the new release
+  closes it if a stopped run did not.</li>
+<li>The new release's <a href="#released-records">records</a> name the new version.
+  On each absorbed issue the record also says
+  <code>- Supersedes: vX.Y.Z</code>.</li>
+</ul>
+<p>An <strong>untagged</strong> superseded release left its release commit on <code>main</code>
+without a tag, and stopped before its back-merge:</p>
+<ul>
+<li>The <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>
+  accepts that commit and its ancestors on <code>main</code>, the superseded
+  release PR's merge commit, and refuses any other commit <code>main</code> has
+  that <code>develop</code> lacks. The new release's back-merge reconciles it.</li>
+<li><code>develop</code>'s VERSION was never bumped, so it must still be <code>X.Y.Z</code>,
+  and the new release takes the next patch, <code>X.Y.(Z+1)</code>, bumped on its
+  release branch, unless a <code>minor</code> or <code>major</code> bump is given.</li>
+<li>When its tracking issue is closed, its release worktree and its
+  <code>release/X.Y.Z</code> branch, local and on <code>origin</code>, are removed first.</li>
+</ul>
 <h3 id="a-failed-back-merge-bump">A failed back-merge-bump<a class="headerlink" href="#a-failed-back-merge-bump" title="Permanent link">&para;</a></h3>
 <p><code>back-merge-bump</code> can fail part-way, after it has created
 <code>release/post-&lt;version&gt;</code>: in its lockfile refresh, say, or before its PR
@@ -19975,6 +20059,9 @@ any other fresh-start check, when <code>origin/main</code> has commits not on
 <p>Open a PR from <code>release/back-merge-main</code> to <code>develop</code> and merge it
   with a merge commit. A squash merge leaves <code>main</code>'s commits off
   <code>develop</code>, and the check keeps refusing. Then re-run <code>vrg-release</code>.</p>
+<p>A release that supersedes an untagged one (see
+<a href="#superseding-a-release">Superseding a release</a>) passes when <code>main</code> is
+ahead only by the superseded release's commit and its ancestors.</p>
 <p>If preflight cannot fetch <code>main</code> or compare the branches, it refuses
 rather than skipping.</p>
 <h3 id="one-release-at-a-time">One release at a time<a class="headerlink" href="#one-release-at-a-time" title="Permanent link">&para;</a></h3>
@@ -19991,6 +20078,9 @@ its recovery:</p>
   tooling, which <code>--resume</code> cannot finish. Finish that release by hand,
   then close the issue.</li>
 </ul>
+<p>The one exception is <code>vrg-release --supersede X.Y.Z</code>, whose check
+passes over release <code>X.Y.Z</code>'s own tracking issue, and only it (see
+<a href="#superseding-a-release">Superseding a release</a>).</p>
 <p><code>--resume X.Y.Z</code> still takes a version, for a repo that older tooling
 left with several releases open. If preflight cannot list the open
 issues, or the listing may be truncated, it refuses rather than
@@ -20077,7 +20167,9 @@ three parts in its body:</p>
   <code>vrg-repo-status</code> shows it), read in <code>preflight</code> pinned to the
   <code>develop</code> commit the release branch is cut from, and under it the
   issues the release contains with their closing PRs (see
-  <a href="#the-issue-list">The issue list</a>);</li>
+  <a href="#the-issue-list">The issue list</a>); a release that supersedes another
+  also names it, and marks the issues it absorbed from it (see
+  <a href="#superseding-a-release">Superseding a release</a>);</li>
 <li>the stage checklist (see
   <a href="#an-interrupted-release">An interrupted release</a>);</li>
 <li>the <strong>state block</strong>, a fenced <code>json</code> document between
@@ -20163,6 +20255,9 @@ contents lookup.</p>
   done.</li>
 <li>Every issue in the list gets its record, whatever its state: closed as
   completed, reopened, or closed another way.</li>
+<li>A release that supersedes another adds a <code>- Supersedes: vX.Y.Z</code> line
+  to the record on each issue it absorbed from it (see
+  <a href="#superseding-a-release">Superseding a release</a>).</li>
 <li>A record counts only when its comment's author and last editor are
   both <code>human</code> logins of <code>vrg-trusted-authors</code>. A record marker in a
   comment by any other identity, or last edited by one, never counts:

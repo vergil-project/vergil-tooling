@@ -18413,6 +18413,7 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 <code>--release</code> on such a repo the same way, before any push, PR or watch.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-release<span class="w"> </span><span class="o">[</span>minor<span class="p">|</span>major<span class="o">]</span><span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>vrg-release<span class="w"> </span><span class="o">[</span>minor<span class="p">|</span>major<span class="o">]</span><span class="w"> </span>--supersede<span class="w"> </span>X.Y.Z<span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
@@ -18443,6 +18444,11 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 <td><code>--resume [X.Y.Z]</code></td>
 <td>No</td>
 <td>Resume an interrupted release from its open tracking issue. Name the version when more than one release is in flight. Cannot be combined with <code>minor</code>/<code>major</code></td>
+</tr>
+<tr>
+<td><code>--supersede X.Y.Z</code></td>
+<td>No</td>
+<td>Start a fresh release that supersedes open release <code>X.Y.Z</code>, which <code>--resume</code> cannot finish: one tagged with only <code>cd-publish</code>, <code>package-index</code>, <code>update-deps</code> or <code>install</code> left, or one halted at <code>confirm-main</code> with no tag after its CD release job failed. It absorbs <code>X.Y.Z</code>'s issues and closes its tracking issue. Combines with <code>minor</code>/<code>major</code>; passing it with <code>--resume</code> is a usage error (exit 2). See <a href="../../../guides/releasing/#superseding-a-release">Superseding a release</a></td>
 </tr>
 <tr>
 <td><code>--skip-audit</code></td>
@@ -18488,6 +18494,15 @@ version. The refusal names each open issue and the
 state block (left by older tooling), says to finish that release by
 hand and then close the issue. Lookup failures refuse the release. See
 <a href="../../../guides/releasing/#one-release-at-a-time">One release at a time</a>.</p>
+<p><code>--supersede X.Y.Z</code> is the one exception: its check passes over release
+<code>X.Y.Z</code>'s own tracking issue, which it reads under the identity rule
+and closes once its own exists. A release it supersedes posts no
+records; the new release absorbs its issues, and their records name the
+new version and say <code>- Supersedes: vX.Y.Z</code>. When <code>X.Y.Z</code> is untagged,
+the main-ahead check accepts its release commit on <code>main</code>, the new
+release takes <code>X.Y.(Z+1)</code> unless <code>minor</code> or <code>major</code> is given, and
+<code>X.Y.Z</code>'s release worktree and branch are removed. See
+<a href="../../../guides/releasing/#superseding-a-release">Superseding a release</a>.</p>
 <h2 id="the-dependency-update-gate">The dependency-update gate<a class="headerlink" href="#the-dependency-update-gate" title="Permanent link">&para;</a></h2>
 <p>On a fresh start (not on <code>--resume</code>), preflight refuses while an open
 PR carries the <code>dependency-update</code> label. First it closes, with a
@@ -18632,6 +18647,10 @@ failed checks as its likely cause (issue #4294).</p>
 <tr>
 <td>1</td>
 <td>A stage failed, including a deferred failure such as a missed publish job, a failed install or a failed dependency update; or the command was refused</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Usage error, such as <code>--supersede</code> with <code>--resume</code> or a <code>--supersede</code> version that is not <code>X.Y.Z</code></td>
 </tr>
 <tr>
 <td>130</td>
