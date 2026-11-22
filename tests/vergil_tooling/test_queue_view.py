@@ -9,7 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib import epics, github, in_flight, queue_view
+from tests.vergil_tooling import trust_stubs
+from vergil_tooling.lib import epics, github, in_flight, queue_view, trust
 from vergil_tooling.lib.epic_size import SizeRecord
 from vergil_tooling.lib.epics import ChildState, IssueRef
 from vergil_tooling.lib.queue_view import AdvisoryHold, Deferral, PlanningMarkers, QueueItem
@@ -32,6 +33,36 @@ def trusted() -> Iterator[MagicMock]:
         yield loader
 
 
+# What the trust layer reads for each issue number: its comment nodes. Each
+# _FakeGh registers its views here; an issue not registered has no comments.
+_LAYER: dict[int, list[dict[str, Any]]] = {}
+
+
+@pytest.fixture(autouse=True)
+def layer(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
+    """The trust layer's GraphQL reads, answered from :data:`_LAYER`; the loader patched."""
+    _LAYER.clear()
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+    def graphql(query: str, **variables: Any) -> dict[str, Any]:
+        return trust_stubs.item(nodes=_LAYER.get(int(variables["number"]), []))
+
+    with (
+        patch("vergil_tooling.lib.github.graphql", side_effect=graphql) as fake,
+        patch(f"{_MOD}.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+    ):
+        yield fake
+
+
+def _layer_actor(login: str) -> dict[str, str]:
+    """A ``(author, body)`` comment's author as GraphQL gives it; ``someone`` is the human."""
+    if login == "someone":
+        return trust_stubs.HUMAN
+    if login.startswith("app/"):
+        return {"__typename": "Bot", "login": login.removeprefix("app/")}
+    return {"__typename": "User", "login": login}
+
+
 def _view(
     title: str,
     created_at: str,
@@ -39,16 +70,33 @@ def _view(
     labels: tuple[str, ...] = (),
     comments: tuple[str | tuple[str, str], ...] = (),
     body: str = "",
+    nodes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """An issue view; a comment is a body (by ``someone``) or ``(author, body)``."""
+    """An issue view; a comment is a body (by ``someone``) or ``(author, body)``.
+
+    The trust layer reads the same comments (``someone`` as the trusted human),
+    or, given, the comment *nodes* (whose bodies ``gh`` then shows too).
+    """
     authored = [c if isinstance(c, tuple) else ("someone", c) for c in comments]
+    if nodes is None:
+        nodes = [
+            trust_stubs.comment(i, b, _layer_actor(a)) for i, (a, b) in enumerate(authored, start=1)
+        ]
+    else:
+        authored = [(str(n["author"]["login"]), str(n["body"])) for n in nodes]
     return {
         "title": title,
         "createdAt": created_at,
         "labels": [{"name": name} for name in labels],
         "comments": [{"author": {"login": a}, "body": b} for a, b in authored],
         "body": body,
+        "_nodes": nodes,
     }
+
+
+def _register(views: dict[int, dict[str, Any]]) -> None:
+    for number, view in views.items():
+        _LAYER[number] = view["_nodes"]
 
 
 class _FakeGh:
@@ -62,6 +110,7 @@ class _FakeGh:
         listing: list[dict[str, Any]] | None = None,
     ) -> None:
         self.views = views
+        _register(views)
         self.states = states or {}
         self.listing = listing or []
         self.calls: list[tuple[str, ...]] = []
@@ -344,6 +393,7 @@ def test_issue_view_rejects_non_object_response() -> None:
 def test_docs_task_state_rejects_non_object_response() -> None:
     view = _view("p", "2026-10-01T00:00:00Z", labels=("in-progress",), comments=_ALL_MARKERS)
     children = [ChildState(IssueRef("org", ".github", 5), "OPEN", "")]
+    _register({5: view})
     responses: list[object] = [view, []]
     with (
         patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC),
@@ -450,6 +500,106 @@ def test_deferred_items_missing_queue_epic_raises() -> None:
         pytest.raises(queue_view.QueueNotFoundError, match=r"Epic \(deferred\): org.*org/\.github"),
     ):
         queue_view.deferred_items("org/.github", "org")
+
+
+# -- trusted comments only (epic vergil-project/.github#1467) -----------------------
+
+_FORGED = (
+    f"Epic: org/.github#70\nDocs task: org/.github#71\nTasks filed: yes\n{trust_stubs.SPAM_TEXT}"
+)
+
+
+def _assert_reported(err: str, *lines: str) -> None:
+    """*err* is exactly the metadata-only skip reports *lines*, and no untrusted text."""
+    assert err.splitlines() == [f"skipped untrusted content: {line}" for line in lines]
+    assert "SPAM-MARKER-TEXT" not in err
+    assert "example.invalid" not in err
+
+
+def test_forged_planning_markers_ignored_and_reported(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    nodes = [
+        trust_stubs.comment(1, "Epic: org/.github#50\nDocs task: org/.github#51"),
+        trust_stubs.comment(2, _FORGED, trust_stubs.OUTSIDER),
+        trust_stubs.comment(3, _FORGED, trust_stubs.HUMAN, editor=trust_stubs.OUTSIDER),
+        trust_stubs.comment(4, _FORGED, trust_stubs.IMPOSTOR),
+    ]
+    view = _view("plan x", "2026-10-01T00:00:00Z", labels=("in-progress",), nodes=nodes)
+    # The forged markers would name a closed docs task and set Tasks filed: yes.
+    [item] = _planning({5: view}, {51: "OPEN", 71: "CLOSED"})
+    assert item.state == "in-progress"
+    assert item.epic == IssueRef("org", ".github", 50)
+    assert item.note == "Epic: org/.github#50"
+    created, edited = trust_stubs.CREATED, trust_stubs.EDITED
+    _assert_reported(
+        capsys.readouterr().err,
+        f"org/.github#5 comment drive-by at {created} on comment 2 (untrusted)",
+        f"org/.github#5 edit drive-by at {edited} on comment 3 (untrusted)",
+        f"org/.github#5 comment vergil-user at {created} on comment 4 (wrong-type)",
+    )
+
+
+def test_forged_deferral_ignored(capsys: pytest.CaptureFixture[str]) -> None:
+    forged = f"Deferred 2026-11-20: {trust_stubs.SPAM_TEXT}\nRevisit when: never"
+    nodes = [
+        trust_stubs.comment(1, "Deferred 2026-10-01: waits on X\nRevisit when: X ships"),
+        trust_stubs.comment(2, forged, trust_stubs.OUTSIDER),
+    ]
+    [item] = _deferred({1: _view("d", "2026-09-01T00:00:00Z", nodes=nodes)})
+    assert item.note == "Deferred 2026-10-01: waits on X | Revisit when: X ships"
+    _assert_reported(
+        capsys.readouterr().err,
+        f"org/.github#1 comment drive-by at {trust_stubs.CREATED} on comment 2 (untrusted)",
+    )
+
+
+def test_latest_note_from_trusted_only(capsys: pytest.CaptureFixture[str]) -> None:
+    nodes = [
+        trust_stubs.comment(1, "the trusted note\nmore"),
+        trust_stubs.comment(2, trust_stubs.SPAM_TEXT, trust_stubs.OUTSIDER),
+    ]
+    children = [ChildState(IssueRef("org", "tool", 3), "OPEN", "")]
+    views = {3: _view("t", "2026-10-20T00:00:00Z", nodes=nodes)}
+    with (
+        patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC),
+        patch(f"{_MOD}.epics.child_states", return_value=children),
+        patch(f"{_MOD}.github.read_json", side_effect=_fake_gh(views)),
+    ):
+        [item] = queue_view.intake_items("org/.github", "org")
+    assert item.note == "the trusted note"
+    _assert_reported(
+        capsys.readouterr().err,
+        f"org/tool#3 comment drive-by at {trust_stubs.CREATED} on comment 2 (untrusted)",
+    )
+    # The planning view's latest note is a trusted comment's too.
+    [planning] = _planning({5: _view("p", "2026-10-01T00:00:00Z", nodes=nodes)})
+    assert planning.note == "the trusted note"
+
+
+def test_untrusted_body_not_reported_by_the_comment_read(
+    layer: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The views take nothing from the body through the layer's read.
+    layer.side_effect = lambda query, **v: trust_stubs.item(
+        author=trust_stubs.OUTSIDER, nodes=trust_stubs.comments("a note")
+    )
+    bodies = queue_view.trusted_comment_bodies(IssueRef("org", "tool", 3), trust_stubs.AUTHORS)
+    assert bodies == ["a note"]
+    assert capsys.readouterr().err == ""
+
+
+def test_comment_read_failure_fails_the_view(layer: MagicMock) -> None:
+    layer.side_effect = lambda query, **v: {"repository": None}
+    children = [ChildState(IssueRef("org", "tool", 3), "OPEN", "")]
+    views = {3: _view("t", "2026-10-20T00:00:00Z")}
+    with (
+        patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC),
+        patch(f"{_MOD}.epics.child_states", return_value=children),
+        patch(f"{_MOD}.github.read_json", side_effect=_fake_gh(views)),
+        pytest.raises(trust.TrustReadError, match="read_issue org/tool#3"),
+    ):
+        queue_view.intake_items("org/.github", "org")
 
 
 # -- planning: the security-advisory hold ------------------------------------------

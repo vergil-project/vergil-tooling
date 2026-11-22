@@ -15,6 +15,7 @@ from vergil_tooling.lib import (
     in_flight,
     live_branches,
     queue_view,
+    trust,
     trusted_authors,
 )
 from vergil_tooling.lib.epic_size import SizeRecord
@@ -156,6 +157,10 @@ _BAD_LISTING = ValueError("advisory list row lacks a ghsa_id or state")
     [
         (github.GitHubAPIError(1, ["gh", "api"], "", "HTTP 403: Forbidden"), "HTTP 403"),
         (ValueError("advisory list row lacks a ghsa_id or state"), "lacks a ghsa_id"),
+        (
+            trust.TrustReadError("read_issue org/.github#5", "the comments is missing"),
+            "cannot read who wrote the content (read_issue org/.github#5)",
+        ),
     ],
 )
 def test_vrg_queue_named_queue_read_failure_is_reported(

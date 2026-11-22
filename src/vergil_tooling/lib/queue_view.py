@@ -65,6 +65,14 @@ ad-hoc view's fields, states, marks, dispositions and order: both share one
 body. The epic is looked up, never created; a home with none is an empty
 list. With a ``repo``, only the epic's children in that repo are listed.
 
+The markers and notes come from **trusted comments** only (spec §5.2 of epic
+vergil-project/.github#1467): each view reads every open item's comments
+through :func:`vergil_tooling.lib.trust.read_issue`, loading the trusted
+authors once per view, so a comment the layer does not trust (an outsider's,
+or one an outsider edited) never sets a planning marker, a deferral note or
+the latest note. Each skipped comment is reported on stderr, metadata only,
+and the view carries on; a read the layer cannot complete fails the view.
+
 Planning and deferred items carry an **epic size**
 (:mod:`vergil_tooling.lib.epic_size`): each view reads the item's labels and
 its comments with their authors, and derives its size record from the
@@ -84,6 +92,7 @@ reported as :class:`QueueNotFoundError` rather than an empty queue.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -95,8 +104,10 @@ from vergil_tooling.lib import (
     in_flight,
     live_branches,
     security_records,
+    trust,
 )
 from vergil_tooling.lib.epics import IssueRef
+from vergil_tooling.lib.trusted_authors import load_trusted_authors
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -105,6 +116,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.epic_size import SizeRecord
     from vergil_tooling.lib.in_flight import Disposition
     from vergil_tooling.lib.security_records import Advisory
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 # Progress-marker line prefixes. ``epic-create`` writes the first three as lines
 # in planning-issue comments and the last in the new epic's body; the skill
@@ -272,8 +284,19 @@ def _open_children(kind: epics.StandingKind, home: str, name: str) -> list[Issue
     return [c.ref for c in epics.child_states(epic) if c.state == "OPEN"]
 
 
-def _comment_bodies(view: dict[str, Any]) -> list[str]:
-    return [str(c.get("body") or "") for c in view.get("comments") or []]
+def trusted_comment_bodies(ref: IssueRef, authors: TrustedAuthors | None = None) -> list[str]:
+    """The bodies of *ref*'s trusted comments, oldest first; each skipped one is reported.
+
+    Only the comments are judged here: nothing is taken from the body through
+    this read, so an untrusted body is not reported by it. *authors* defaults
+    to the loaded configuration; the layer's
+    :class:`~vergil_tooling.lib.trust.TrustReadError` propagates.
+    """
+    content = trust.read_issue(f"{ref.owner}/{ref.repo}", ref.number, authors=authors)
+    trust.report_skipped(
+        [item for item in content.skipped if item.field != "body"], stream=sys.stderr
+    )
+    return [comment.body for comment in content.comments]
 
 
 def _authored_comments(view: dict[str, Any]) -> list[tuple[str, str]]:
@@ -320,16 +343,17 @@ def _oldest_first(items: list[QueueItem]) -> list[QueueItem]:
 
 def intake_items(home: str, name: str) -> list[QueueItem]:
     """The open intake items under *home*'s intake epic for *name*, oldest first."""
+    authors = load_trusted_authors()
     items: list[QueueItem] = []
     for ref in _open_children(epics.INTAKE, home, name):
-        view = _view(ref, "title,createdAt,comments")
+        view = _view(ref, "title,createdAt")
         items.append(
             QueueItem(
                 ref=ref,
                 title=str(view.get("title") or ""),
                 created_at=str(view.get("createdAt") or ""),
                 state="waiting",
-                note=_latest_note(_comment_bodies(view)),
+                note=_latest_note(trusted_comment_bodies(ref, authors)),
                 epic=None,
             )
         )
@@ -503,6 +527,7 @@ def planning_items(home: str, name: str) -> list[QueueItem]:
     latest-comment note but does not hold it.
     """
     trusted = epic_size.trusted_logins()
+    authors = load_trusted_authors()
     views = [
         (ref, _view(ref, "title,createdAt,labels,comments,body"))
         for ref in _open_children(epics.PLANNING, home, name)
@@ -510,7 +535,7 @@ def planning_items(home: str, name: str) -> list[QueueItem]:
     holds = _holds(views)
     items: list[QueueItem] = []
     for ref, view in views:
-        comments = _comment_bodies(view)
+        comments = trusted_comment_bodies(ref, authors)
         markers = parse_planning_markers(comments)
         hold = holds[ref]
         state, demoted = _planning_state(_labels(view), markers, advisory_held=hold.held)
@@ -542,11 +567,12 @@ def deferred_items(home: str, name: str) -> list[QueueItem]:
     with an empty note.
     """
     trusted = epic_size.trusted_logins()
+    authors = load_trusted_authors()
     keyed: list[tuple[str, QueueItem]] = []
     for ref in _open_children(epics.DEFERRED, home, name):
         view = _view(ref, "title,createdAt,labels,comments")
         size = _size_record(view, trusted)
-        deferral = parse_latest_deferral(_comment_bodies(view))
+        deferral = parse_latest_deferral(trusted_comment_bodies(ref, authors))
         note = (
             f"Deferred {deferral.day}: {deferral.reason} | Revisit when: {deferral.revisit_when}"
             if deferral is not None
