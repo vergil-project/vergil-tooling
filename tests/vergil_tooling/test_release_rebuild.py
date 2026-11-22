@@ -70,8 +70,16 @@ class _Facts:
     jobs: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     closed: list[dict[str, Any]] = field(default_factory=list)
     parents: dict[str, str] = field(default_factory=dict)
+    # An answer, or an exception to raise, in place of a gh command's, by its
+    # first two words.
+    answers: dict[tuple[str, ...], object] = field(default_factory=dict)
 
     def read_json(self, *args: str) -> object:
+        if args[:2] in self.answers:
+            answer = self.answers[args[:2]]
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
         if args[:2] == ("pr", "list"):
             return self.merged.get(args[args.index("--head") + 1], [])
         if args[:2] == ("run", "list"):
@@ -225,6 +233,87 @@ def test_an_issue_list_that_cannot_be_rebuilt_refuses(
     _, mocks = facts
     mocks["issues"].side_effect = PendingReleaseError("compare failed")
     with pytest.raises(ReleaseError, match="issue list could not be rebuilt: compare failed"):
+        _rebuild()
+
+
+_FAILED = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502")
+
+
+@pytest.mark.parametrize(
+    ("untagged", "command", "answer", "match"),
+    [
+        (False, ("pr", "list"), {"not": "a list"}, "is not a list"),
+        (False, ("pr", "list"), [{"url": "u", "mergeCommit": None}], "has no URL, merge"),
+        (True, ("run", "list"), _FAILED, "main CD runs for mmmmmmmmmmmm could not be read"),
+        (True, ("run", "list"), {"not": "a list"}, "could not be listed in full"),
+        (True, ("run", "list"), [{"databaseId": "x"}], "include an unreadable run"),
+        (True, ("run", "view"), _FAILED, "the jobs of CD run 111 could not be read"),
+        (True, ("run", "view"), {"jobs": None}, "CD run 111's jobs could not be read"),
+        (True, ("run", "view"), {"jobs": [{"name": None}]}, "has an unreadable job"),
+        (False, ("issue", "list"), _FAILED, "the release that 2.1.5 superseded could not be"),
+        (False, ("issue", "list"), {"not": "a list"}, "could not be searched in full"),
+        (False, ("issue", "list"), ["not an issue"], "returned 'not an issue'"),
+        (
+            False,
+            ("issue", "list"),
+            [{"number": 39, "title": f"release: {_PRIOR}", "comments": None}],
+            "issue 39's comments are None",
+        ),
+    ],
+)
+def test_an_unexpected_answer_refuses(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+    untagged: bool,  # noqa: FBT001 - a parametrized flag
+    command: tuple[str, ...],
+    answer: object,
+    match: str,
+) -> None:
+    found, _ = facts
+    if untagged:
+        _untagged(found)
+    found.answers[command] = answer
+    with pytest.raises(ReleaseError, match=match):
+        _rebuild()
+
+
+def test_a_comment_that_is_not_an_object_does_not_count(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+) -> None:
+    found, mocks = facts
+    found.closed = [{"number": 39, "title": f"release: {_PRIOR}", "comments": ["text"]}]
+    assert _rebuild().issues == _OWN
+    mocks["read"].assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("fails", "match"),
+    [(1, "origin/main could not be read"), (2, "tag v2.1.5 could not be read")],
+    ids=["fetch-main", "fetch-tag"],
+)
+def test_a_failed_fetch_refuses(
+    facts: tuple[_Facts, dict[str, MagicMock]], fails: int, match: str
+) -> None:
+    _, mocks = facts
+    mocks["run"].side_effect = [*([None] * (fails - 1)), _FAILED]
+    with pytest.raises(ReleaseError, match=match):
+        _rebuild()
+
+
+def test_a_failed_git_read_refuses(facts: tuple[_Facts, dict[str, MagicMock]]) -> None:
+    with (
+        patch(_REBUILD + ".git.read_output", side_effect=_FAILED),
+        pytest.raises(ReleaseError, match="`git ls-remote --tags origin refs/tags/v2.1.5`"),
+    ):
+        _rebuild()
+
+
+def test_a_breached_superseded_release_with_no_merged_release_pr_refuses(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+) -> None:
+    found, mocks = facts
+    found.closed = [_prior_issue(_closing_comment("human"))]
+    mocks["read"].side_effect = TrackingIssueBreach("ghost", "reopened the issue", number=39)
+    with pytest.raises(ReleaseError, match="the release it superseded, 2.1.4, has no merged"):
         _rebuild()
 
 

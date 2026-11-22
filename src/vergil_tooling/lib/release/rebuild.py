@@ -150,10 +150,15 @@ def _merged_pr(repo: str, version: str, head: str, base: str) -> _MergedPR | Non
     merge = pr.get("mergeCommit") if isinstance(pr, dict) else None
     oid = merge.get("oid") if isinstance(merge, dict) else None
     head_oid = pr.get("headRefOid") if isinstance(pr, dict) else None
-    if not (isinstance(url, str) and url and isinstance(oid, str) and oid):
-        raise _refuse(version, f"{what} has no URL or merge commit: {pr!r}.")
-    if not (isinstance(head_oid, str) and head_oid):
-        raise _refuse(version, f"{what} has no head commit: {pr!r}.")
+    if not (
+        isinstance(url, str)
+        and url
+        and isinstance(oid, str)
+        and oid
+        and isinstance(head_oid, str)
+        and head_oid
+    ):
+        raise _refuse(version, f"{what} has no URL, merge commit or head commit: {pr!r}.")
     return _MergedPR(url=url, merge_commit=oid, head=head_oid)
 
 

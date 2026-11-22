@@ -1030,6 +1030,43 @@ def test_issue_list_of_a_pinned_range_refuses_a_ref_that_is_not_a_sha(base: str,
     read.assert_not_called()
 
 
+def test_issue_list_of_a_pinned_range_warns_on_an_uncounted_reference(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    s1 = _sha(1)
+    commits = _linear([s1])
+    with (
+        patch("vergil_tooling.lib.pending_release.load_trusted_authors", return_value=_TRUSTED),
+        patch("vergil_tooling.lib.git.remote_url", return_value=_URL),
+        patch("vergil_tooling.lib.github.read_json", return_value=_page(commits, 1)),
+        patch(
+            "vergil_tooling.lib.github.graphql",
+            side_effect=_GraphQL({s1: _assoc(_feature_pr(1, 10, author="mallory"))}),
+        ),
+    ):
+        assert gather_issue_list(base=_MAIN, head=s1) == ()
+    assert "WARNING: #1: closing reference #10 not counted" in capsys.readouterr().err
+
+
+def test_issue_list_of_a_pinned_range_refuses_a_remote_off_github() -> None:
+    with (
+        patch("vergil_tooling.lib.pending_release.load_trusted_authors", return_value=_TRUSTED),
+        patch("vergil_tooling.lib.git.remote_url", return_value="https://example.com/o/r.git"),
+        pytest.raises(PendingReleaseError, match="origin is not a github.com remote"),
+    ):
+        gather_issue_list(base=_MAIN, head=_sha(1))
+
+
+def test_issue_list_of_a_pinned_range_refuses_an_incomplete_compare() -> None:
+    with (
+        patch("vergil_tooling.lib.pending_release.load_trusted_authors", return_value=_TRUSTED),
+        patch("vergil_tooling.lib.git.remote_url", return_value=_URL),
+        patch("vergil_tooling.lib.github.read_json", return_value=_page([], 3)),
+        pytest.raises(PendingReleaseError, match="returned 0 of 3 commits"),
+    ):
+        gather_issue_list(base=_MAIN, head=_sha(1))
+
+
 def test_issue_list_of_a_pinned_range_lookup_failure_raises() -> None:
     failure = subprocess.CalledProcessError(1, ["gh", "api"], stderr="HTTP 502")
     with (
