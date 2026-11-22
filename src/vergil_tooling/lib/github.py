@@ -637,9 +637,10 @@ def get_installation_token(
 
     With *require_installation*, an org that has no App installation
     raises :class:`NoInstallationError` instead of returning ``None``
-    — an App token minted for a different installation cannot reach
-    the requested owner's private repos, so silently falling back
-    would mask the failure as a missing grant. Without it, a
+    — an App token minted for a different installation cannot write
+    to the requested owner's repos or use the permissions granted
+    there, so silently falling back would mask the failure as a
+    missing grant. Without it, a
     no-installation org still returns ``None`` (with a warning): the
     cwd-scoped callers (#2070 kept ``vrg-finalize-pr`` on it
     deliberately, and anonymous ``git fetch`` of public repos) depend on
@@ -2574,8 +2575,8 @@ def current_repo(*, cwd: str | Path | None = None) -> str:
     *cwd* lets a caller resolve another local checkout (e.g. a fleet sweep's
     clone) the same way, without changing the process's directory. The App
     token is then minted for the clone's own org, read from its ``origin``
-    remote, never the org of the process's directory: another installation's
-    token cannot see the clone's repo when it is private (#3463). A clone
+    remote, never the org of the process's directory, so the call runs under
+    the installation of the org that owns the clone (#3463). A clone
     whose org cannot be detected raises :class:`ValueError`, and an org with
     no App installation raises :class:`NoInstallationError`.
     """

@@ -77,9 +77,9 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    # Every read runs under the audited org's token, never the cwd repo's: a
-    # token minted for another org lists only the audited org's public repos,
-    # which silently under-reported its private work (#3513).
+    # Every read and write runs under the audited org's token, never the cwd
+    # repo's: --close writes to the audited org's issues, which only that org's
+    # installation can do (#3513).
     with github.target_org(org):
         return _audit(args, org)
 
@@ -112,18 +112,6 @@ def _audit(args: argparse.Namespace, org: str) -> int:
     """The drift audit (and, with ``--close``, its passes) of *org*, under its token."""
     # An owner with no .github has no home to audit (#3613).
     home = epics.require_org_home(org)
-    # Refuse a partial result as complete: a token that cannot see every repo
-    # stops --close before any write and marks the preview partial (#3513).
-    gap = epic_audit.coverage_gap(org)
-    if gap is not None:
-        print(f"vrg-epic-audit: incomplete coverage: {gap}", file=sys.stderr)
-        if args.close:
-            print(
-                "vrg-epic-audit: --close refused: it would act on a partial view "
-                "of the org; run it as an identity that sees every repo.",
-                file=sys.stderr,
-            )
-            return 1
     since = (datetime.now(UTC) - timedelta(days=args.window_days)).date().isoformat()
     tasks = epic_audit.task_drift(since, org=org)
     epics_drift = epic_audit.epic_drift(org)
@@ -232,11 +220,10 @@ def _audit(args: argparse.Namespace, org: str) -> int:
             proxy_errors=proxy_errors,
             # It reads trusted comments too, so it never runs under --close.
             misplaced_adhoc=epic_audit.misplaced_adhoc(org, issues=issues),
-            coverage_gap=gap,
         )
     )
-    # A partial preview never exits clean (#3513), nor one with a broken proxy link.
-    return 1 if gap is not None or proxy_errors else security_rc
+    # A preview with a broken proxy link never exits clean.
+    return 1 if proxy_errors else security_rc
 
 
 def _apply_orphan_pass(org: str, issues: list[epic_audit.OpenIssue]) -> int:
@@ -277,9 +264,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         epilog=(
             "Scope: the org is auto-detected from this repo's 'origin' remote, "
             "so run it from inside a repo in the org you want to audit (there is "
-            "no --org flag). Output is Markdown on stdout. Every read runs under "
-            "the audited org's token; if that token cannot see every repo in the "
-            "org, the report is marked partial and exits 1, and --close is refused."
+            "no --org flag). Output is Markdown on stdout. Every read and write "
+            "runs under the audited org's token."
         ),
     )
     parser.add_argument(
