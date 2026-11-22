@@ -741,8 +741,8 @@ fails after creation, the created issue's URL is reported for recovery with
 
 ### vrg-epic-create
 
-Create a top-level epic (labelled `epic`, no parent) in its home repo:
-`<org>/.github` for a public target, the target repo itself when private.
+Create a top-level epic (labelled `epic`, no parent) in its home repo, the
+target's `<org>/.github`.
 The sanctioned path for creating epics, used by the `epic-create` skill.
 
 The epic also gets its **category label**, derived from its other labels:
@@ -802,9 +802,8 @@ file's existence is not checked. A path is repo-relative, with no leading
 and a body that is already correct is not edited. The skills run it when an
 epic is created and at each docs PR handoff.
 
-`backfill (--org ORG | --repo OWNER/REPO)` writes the section on every epic
-of an epic home, open and closed: `--org` works on the org's `.github`, and
-`--repo` on a private repo that keeps its own epics. It skips the standing
+`backfill --org ORG` writes the section on every epic of the org's
+`.github`, open and closed. It skips the standing
 epics (ad hoc, intake, planning, deferred, hoshin, the retired `standing`
 label, and titles starting `Epic (standing):`), proxy epics and `[archived]`
 epics. For each epic it
@@ -838,7 +837,7 @@ Both subcommands run every read and write under the epic owner's App token.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_epic_docs` (format, parser and discovery: `lib/epic_docs.py`) |
-| Args | `set`: `--epic` (required), `--spec PATH`, `--plan PATH`, `--retrospective PATH`; `backfill`: `--org ORG` or `--repo OWNER/REPO` (one required), `--apply` |
+| Args | `set`: `--epic` (required), `--spec PATH`, `--plan PATH`, `--retrospective PATH`; `backfill`: `--org ORG` (required), `--apply` |
 | Preconditions | GitHub App credentials for the epic's org |
 | Failure mode | Error on stderr; for `set`, an issue that is not an epic, a bad `PATH`, or a malformed section (half a section, a bad entry) is refused with nothing edited. For `backfill`, a failed listing edits nothing; an epic that needs a decision or fails is named and left unchanged while the rest run |
 | Exit codes | 0 written or already correct, or (`backfill`) no epic needs a decision or failed, including a dry run with changes still to make; 1 error, or any epic that needs a decision or failed; 2 bad arguments |
@@ -915,8 +914,7 @@ quarter-named epics to that form; both are dry runs unless `--apply`.
 
 Capture an uncurated item — a bug, an idea, an investigation, a one-line
 "don't forget X" — into the intake queue (epic vergil-project/.github#176).
-The issue is filed in the current repo's queue home (`<org>/.github` for a
-public repo, the repo itself for a self-homed private one) and linked under
+The issue is filed in the current repo's queue home, `<org>/.github`, and linked under
 that home's `Epic (intake): <name>` as it is created, so there is no unlinked
 path. It carries no kind label. The intake epic is resolved (created if
 absent) *before* the issue is created; if linking the created issue fails, the
@@ -1156,9 +1154,8 @@ the projects mount on a Lima VM, none on a physical host). Every repo with open
 ad-hoc tasks must have exactly one clone there: a missing clone is fatal, never
 skipped or assumed clean. The epics come from one label search; an archive carrying the same
 labels (`Archive (ad hoc): …`, or the legacy `Epic (ad hoc): <repo> — <quarter>`
-form) is skipped. With `--repo`, a public repo narrows the list to its own
-ad-hoc epic in the org's `.github`, and a repo with none gives an empty list;
-a self-homed private repo selects its own home, as for the other queues. It is
+form) is skipped. With `--repo`, the list narrows to that repo's own
+ad-hoc epic in the org's `.github`, and a repo with none gives an empty list. It is
 not a review queue, so a bare `vrg-queue` never shows it. It is the collect
 step of `epic-implement adhoc`, as the other queues are of `epic-review`.
 
@@ -1166,8 +1163,8 @@ step of `epic-implement adhoc`, as the other queues are of `epic-review`.
 (`Epic (hoshin): <org>`, labelled `epic` + `hoshin`), the `Logbook:` tasks
 `/vergil:hoshin` files, with the same lines, kinds, states, marks,
 dispositions, order, `--json` output and `--root` as `vrg-queue adhoc` (the
-two share one body). Its home is always the org's `.github`, never a self-homed
-private repo, and the epic is looked up, never created: an org with none gives
+two share one body). Its home is the org's `.github`, and the epic is looked
+up, never created: an org with none gives
 an empty list. With `--repo`, only the epic's tasks in that repo are listed.
 It is not a review queue, so a bare `vrg-queue` never shows it. It is the
 listing for `/vergil:hoshin`'s stale-task check.
@@ -1175,22 +1172,22 @@ listing for `/vergil:hoshin`'s stale-task check.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_queue` (views: `lib/queue_view.py`) |
-| Args | `{intake,planning,deferred,adhoc,hoshin}` (optional; default: intake, planning and deferred); `--repo OWNER/NAME` (that repo's queue home, for `adhoc` on a public repo its own ad-hoc epic, and for `hoshin` the org's hoshin epic narrowed to the repo's tasks; default: the current org's `.github` queues); `--root DIR` (`adhoc` and `hoshin` only, repeatable: where to find each repo's main clone; default: the platform's repo roots); `--sort age\|size\|tasks` and `--size LIST` (`planning` only; refused with any other queue or with none); `--json` (a list of items; with no queue named, an object keyed by queue, `null` for a missing one) |
-| Preconditions | GitHub App credentials for the target org. The planning and deferred views read the configured trusted authors (the VM's `trusted-authors.toml`, else the host's `identities.toml` stanza). The planning view also reads the org's advisories when its `.github` is public, or when a planning item has an advisory line (then a `.github` that is not public is refused): the identity needs Repository security advisories access |
+| Args | `{intake,planning,deferred,adhoc,hoshin}` (optional; default: intake, planning and deferred); `--repo OWNER/NAME` (that repo's org's `.github` queues, for `adhoc` the repo's own ad-hoc epic, and for `hoshin` the org's hoshin epic narrowed to the repo's tasks; default: the current org's `.github` queues); `--root DIR` (`adhoc` and `hoshin` only, repeatable: where to find each repo's main clone; default: the platform's repo roots); `--sort age\|size\|tasks` and `--size LIST` (`planning` only; refused with any other queue or with none); `--json` (a list of items; with no queue named, an object keyed by queue, `null` for a missing one) |
+| Preconditions | GitHub App credentials for the target org. The planning and deferred views read the configured trusted authors (the VM's `trusted-authors.toml`, else the host's `identities.toml` stanza). The planning view also reads the org's advisories when its `.github` exists, or when a planning item has an advisory line (then a `.github` that is not public is refused): the identity needs Repository security advisories access |
 | Failure mode | A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints `<queue> queue for <name> in <home>: no queue yet` and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; a `.github` that is not public; an advisory line naming another org; a malformed response; trusted authors not configured or invalid) is named on stderr as `vrg-queue: <queue> queue for <name> in <home> could not be read: <reason>` and the run exits 1; with no queue named, a text run still lists the other queues and prints `<queue> queue for <name> in <home>: not shown (failed; see stderr)` in its place, and a `--json` run prints nothing on stdout. For `adhoc`, a failed read of the epics, a task's sub-issues, a task, its blockers or a blocker's state, an epic search that reaches its listing limit, two live ad-hoc epics for one repo, a failed read of any in-flight source (the open PRs, the remote refs, a relay payload, a clone's branches or remotes), a malformed relay payload, repo roots that cannot be determined (no `--root` on a physical host) or do not exist, or a repo with open ad-hoc tasks and no clone, or two, under the repo roots is reported the same way (`adhoc queue for <name> in <home> could not be read`) and exits 1; no ad-hoc epic is an empty list and exit 0. For `hoshin`, the same task, blocker and in-flight failures, a hoshin epic search that reaches its listing limit, or two live hoshin epics, are reported as `hoshin queue for <name> in <home> could not be read`; no hoshin epic is an empty list and exit 0. When every queue was read but an item's sizing is in error, the full listing is printed (`--json` included), each such item is named on stderr as `vrg-queue: <ref>: <error>`, and the run exits 2. `--sort` or `--size` with a queue other than `planning`, or with none, and an unknown `--size` token exit 1. Nothing is created |
 | Exit codes | 0 success; 2 every queue read, one or more items' sizing in error; 1 a queue could not be read, or bad arguments (every usage error exits 1, never 2). 1 wins over 2 |
 | Status | Active |
 
 ### vrg-roadmap
 
-Print the generated project roadmap: the open epics in a repo's resolved
-epic home, apart from the standing and proxy epics. The docs-refresh workflow
+Print the generated project roadmap: the open epics in an org's `.github`,
+apart from the standing and proxy epics. The docs-refresh workflow
 publishes the same rendering.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_roadmap` |
-| Args | `--org ORG` or `--repo OWNER/NAME` (default: the current repo's owner) |
+| Args | `--org ORG` (default: the current repo's owner) |
 | Preconditions | GitHub App credentials for the target org |
 | Failure mode | Error on stderr |
 | Exit codes | 0 success, 1 error |
@@ -1542,10 +1539,7 @@ security-records pass of `vrg-security-record sync` (`--close` does not run
 it).
 
 The org comes from the current repo's `origin` remote (there is no `--org`
-flag). `--repo OWNER/NAME` audits that repo's resolved epic home instead of
-the org's `.github`, so a private repo that self-homes its epics can be
-audited; the home-scoped checks (epic drift, stray issues, operation-pending
-epics, and the `--close` drift closes) then target it.
+flag), and the home audited is that org's `.github`.
 
 Every read runs under the audited org's token, wherever the command is run
 from. Before any check, the audit confirms that this token sees every repo in
@@ -1596,9 +1590,9 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_epic_audit` (checks and passes: `lib/epic_audit.py`; security pass: `lib/security_records.py`) |
-| Args | `--window-days N` (positive; default 30), `--repo OWNER/NAME`, `--epic REF`, `--close` |
+| Args | `--window-days N` (positive; default 30), `--epic REF`, `--close` |
 | Preconditions | Run inside a repo in the target org; GitHub App credentials for that org. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The read-only report's security-records preview needs Repository security advisories: Read; `--close` needs no advisories access |
-| Failure mode | `--close` in an agent session is refused before any network call; a `--repo` without `/`, an org that cannot be detected, or an org with no `.github` home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and `--close` is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose `Primary:` link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without `--close`. With `--epic`, a ref that is not an epic, or proxy link drift, exits 1 |
+| Failure mode | `--close` in an agent session is refused before any network call; an org that cannot be detected, or an org with no `.github` home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and `--close` is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose `Primary:` link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without `--close`. With `--epic`, a ref that is not an epic, or proxy link drift, exits 1 |
 | Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, incomplete coverage, a pass failed, or error, 2 bad arguments |
 | Status | Active |
 

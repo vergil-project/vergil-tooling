@@ -29,7 +29,7 @@ def label_gh() -> Iterator[MagicMock]:
 
 @pytest.fixture
 def cwd_public() -> Iterator[dict[str, MagicMock]]:
-    """A cwd in a public repo of ``org``: its queue home is ``org/.github``."""
+    """A cwd in a repo of ``org``: its queue home is ``org/.github``."""
     with (
         patch(f"{_MOD}.github.detect_org", return_value="org") as detect,
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling") as current,
@@ -66,50 +66,24 @@ def test_intake_create_files_in_org_dotgithub_and_links_under_intake(
     assert f"Created {_URL} (intake, under {_INTAKE.slug})." in capsys.readouterr().out
 
 
-def test_intake_create_private_repo_files_in_repo(capsys: pytest.CaptureFixture[str]) -> None:
-    # A private repo self-homes: the capture lands in the repo itself and is
-    # linked under that repo's own intake epic ("Epic (intake): secret"),
-    # never in .github (Review Focus 2).
-    secret_intake = IssueRef(owner="org", repo="secret", number=4)
-    url = "https://github.com/org/secret/issues/12"
+def test_intake_create_links_under_the_org_intake_epic() -> None:
+    # End to end through the real queue_home/ensure_intake_epic: the standing
+    # epic is looked up as "Epic (intake): org" in the org's .github.
     with (
         patch(f"{_MOD}.github.detect_org", return_value="org"),
-        patch(f"{_MOD}.github.current_repo", return_value="org/secret"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/secret", "secret")),
-        patch(f"{_MOD}.epics.ensure_intake_epic", return_value=secret_intake) as ensure,
-        patch(f"{_MOD}.epics.add_child") as add_child,
-        patch(f"{_MOD}.github.create_issue", return_value=url) as create,
-    ):
-        rc = main(["--title", "T"])
-    assert rc == 0
-    assert create.call_args.kwargs["repo"] == "org/secret"
-    ensure.assert_called_once_with("org/secret")
-    add_child.assert_called_once_with(
-        secret_intake, IssueRef(owner="org", repo="secret", number=12)
-    )
-    assert "under org/secret#4" in capsys.readouterr().out
-
-
-def test_intake_create_private_repo_links_under_the_named_intake_epic() -> None:
-    # End to end through the real queue_home/ensure_intake_epic: the private
-    # repo's standing epic is looked up as "Epic (intake): secret" in itself.
-    with (
-        patch(f"{_MOD}.github.detect_org", return_value="org"),
-        patch(f"{_MOD}.github.current_repo", return_value="org/secret"),
-        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/secret"),
+        patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
+        patch("vergil_tooling.lib.epics.github.repo_exists", return_value=True),
         patch(
             "vergil_tooling.lib.epics._find_epic_by_title",
-            return_value=IssueRef(owner="org", repo="secret", number=4),
+            return_value=IssueRef(owner="org", repo=".github", number=4),
         ) as find,
         patch(f"{_MOD}.epics.add_child"),
-        patch(
-            f"{_MOD}.github.create_issue",
-            return_value="https://github.com/org/secret/issues/12",
-        ),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as create,
     ):
         rc = main(["--title", "T"])
     assert rc == 0
-    assert find.call_args.args[:2] == ("org/secret", "Epic (intake): secret")
+    assert create.call_args.kwargs["repo"] == "org/.github"
+    assert find.call_args.args[:2] == ("org/.github", "Epic (intake): org")
 
 
 def test_intake_create_applies_no_kind_label(cwd_public: dict[str, MagicMock]) -> None:

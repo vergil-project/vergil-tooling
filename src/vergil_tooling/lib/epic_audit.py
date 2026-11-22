@@ -194,20 +194,15 @@ def task_drift(since: str, *, org: str, today: date | None = None) -> list[TaskD
     return drift
 
 
-def epic_drift(org: str | None = None, *, home: str | None = None) -> list[roadmap.EpicSummary]:
+def epic_drift(org: str | None = None) -> list[roadmap.EpicSummary]:
     """Open, non-perpetual epics whose children are all closed (should roll up).
 
     A proxy epic is excluded with the standing epics (``roadmap.gather``): it
     lives as long as its primary, so an all-closed proxy is not drift.
 
-    Scoped to the resolved epic *home* (default: the org's ``.github``), so a
-    ``--repo``-targeted audit sees only that repo's epics.
+    Scoped to the org's ``.github``, the home of every epic.
     """
-    return [
-        epic
-        for epic in roadmap.gather(org, home=home)
-        if epic.total > 0 and epic.closed == epic.total
-    ]
+    return [epic for epic in roadmap.gather(org) if epic.total > 0 and epic.closed == epic.total]
 
 
 @dataclass(frozen=True)
@@ -280,21 +275,18 @@ def child_status(epic: epics.IssueRef) -> ChildStatus:
     return ChildStatus(epic=epic, runnable=tuple(runnable), blocked=tuple(blocked))
 
 
-def operational_pending(org: str, *, home: str | None = None) -> list[OperationalStatus]:
+def operational_pending(org: str) -> list[OperationalStatus]:
     """Open finite epics with outstanding operational children.
 
     Reports the "code-complete, operation-pending" state that keeps an epic
     honestly not-done: its code tasks may all be merged, but until its
     operational tasks (validations, deployments, …) run the epic is not finished.
-    Only epics with at least one open operational child appear. Scoped to the
-    resolved epic *home* (default ``<org>/.github``).
+    Only epics with at least one open operational child appear. Scoped to
+    ``<org>/.github``, the home of every epic.
     """
-    if home is None:
-        home = f"{org}/.github"
-    home_owner, home_repo = home.split("/", 1)
     pending: list[OperationalStatus] = []
-    for summary in roadmap.gather(org, home=home):
-        status = operational_status(epics.IssueRef(home_owner, home_repo, summary.number))
+    for summary in roadmap.gather(org):
+        status = operational_status(epics.IssueRef(org, ".github", summary.number))
         if status.pending:
             pending.append(status)
     return pending
@@ -400,9 +392,8 @@ def stray_dotgithub_issue(org: str, *, home: str | None = None) -> list[str]:
     queue item is parented under its queue epic, so no kind-label exemption is needed). An
     open issue that is none of these — an unlinked, non-epic, non-archive issue —
     is a stray; returns their
-    slugs. *home* defaults to ``<org>/.github``; a ``--repo``-targeted audit passes
-    the repo's resolved home. When a candidate's parent cannot be confirmed as an
-    epic it is reported (fail-loud, the human decides).
+    slugs. *home* defaults to ``<org>/.github``, the home of every epic. When a
+    candidate's parent cannot be confirmed as an epic it is reported (fail-loud, the human decides).
     """
     if home is None:
         home = f"{org}/.github"
@@ -795,8 +786,7 @@ def orphan_drift(org: str, *, issues: list[OpenIssue] | None = None) -> list[Orp
     attached), issues with a native parent, and issues whose body ``Parent:``
     line names an epic (those count as parented; :func:`nativize_parents`
     converts them). Each orphan targets the intake epic of its queue home
-    (:func:`epics.queue_home`): ``<org>/.github`` for a public repo, the repo
-    itself for a private one.
+    (:func:`epics.queue_home`), ``<org>/.github``.
     """
     if issues is None:
         issues = open_issues(org)

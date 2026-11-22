@@ -857,7 +857,7 @@ def test_stray_dotgithub_issue_scopes_to_home() -> None:
     assert "org/lab" in mock_list.call_args.args  # read the home, not <org>/.github
 
 
-def test_operational_pending_scopes_to_home() -> None:
+def test_operational_pending_reads_dotgithub_epics() -> None:
     captured: list[epics.IssueRef] = []
 
     def fake_status(epic: epics.IssueRef) -> epic_audit.OperationalStatus:
@@ -868,8 +868,8 @@ def test_operational_pending_scopes_to_home() -> None:
         patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=[MagicMock(number=5)]),
         patch("vergil_tooling.lib.epic_audit.operational_status", side_effect=fake_status),
     ):
-        epic_audit.operational_pending("org", home="org/lab")
-    assert (captured[0].owner, captured[0].repo) == ("org", "lab")
+        epic_audit.operational_pending("org")
+    assert captured == [epics.IssueRef("org", ".github", 5)]
 
 
 def test_close_drift_closes_epics_in_home() -> None:
@@ -881,10 +881,10 @@ def test_close_drift_closes_epics_in_home() -> None:
     assert run.call_args.args[:5] == ("issue", "close", "5", "--repo", "org/lab")
 
 
-def test_epic_drift_scopes_to_home() -> None:
+def test_epic_drift_reads_the_org_roadmap() -> None:
     with patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=[]) as gather:
-        epic_audit.epic_drift("org", home="org/lab")
-    assert gather.call_args.kwargs["home"] == "org/lab"
+        epic_audit.epic_drift("org")
+    gather.assert_called_once_with("org")
 
 
 def test_render_banner_names_home_when_repo_scoped() -> None:
@@ -2284,7 +2284,7 @@ def test_epic_drift_skips_proxy() -> None:
         patch("vergil_tooling.lib.github.read_json", return_value=epic_list),
         patch("vergil_tooling.lib.epics.child_states", return_value=closed),
     ):
-        result = epic_audit.epic_drift("vergil-project", home="vergil-project/.github")
+        result = epic_audit.epic_drift("vergil-project")
     assert [e.number for e in result] == [40]
 
 

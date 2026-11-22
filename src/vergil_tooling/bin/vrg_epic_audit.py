@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     # than via resolve_epic_ref so the read-only 'adhoc' sentinel (which *creates*
     # an epic) is not reachable from an enumeration. With no task to anchor on, a
     # bare '#N' reads against the current repo's epic home (#3415), and the
-    # visibility probe behind it runs under the current repo owner's App token.
+    # existence check behind it runs under the current repo owner's App token.
     if args.epic is not None:
         repo = github.current_repo()
         try:
@@ -68,25 +68,15 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    if args.repo:
-        if "/" not in args.repo:
-            print(
-                f"vrg-epic-audit: --repo must be 'owner/repo' (got {args.repo!r})",
-                file=sys.stderr,
-            )
-            return 1
-        org = args.repo.split("/", 1)[0]
-    else:
-        detected = github.detect_org()
-        if detected is None:
-            print(
-                "vrg-epic-audit: could not determine the GitHub org from this "
-                "repo's 'origin' remote; run it from inside a repo in the org you "
-                "want to audit.",
-                file=sys.stderr,
-            )
-            return 1
-        org = detected
+    org = github.detect_org()
+    if org is None:
+        print(
+            "vrg-epic-audit: could not determine the GitHub org from this "
+            "repo's 'origin' remote; run it from inside a repo in the org you "
+            "want to audit.",
+            file=sys.stderr,
+        )
+        return 1
     # Every read runs under the audited org's token, never the cwd repo's: a
     # token minted for another org lists only the audited org's public repos,
     # which silently under-reported its private work (#3513).
@@ -120,11 +110,8 @@ def _epic_listing(epic: epics.IssueRef) -> int:
 
 def _audit(args: argparse.Namespace, org: str) -> int:
     """The drift audit (and, with ``--close``, its passes) of *org*, under its token."""
-    if args.repo:
-        home = epics.resolve_epic_home(org, args.repo.split("/", 1)[1])
-    else:
-        # An owner with no .github has no org-wide home to audit (#3613).
-        home = epics.require_org_home(org)
+    # An owner with no .github has no home to audit (#3613).
+    home = epics.require_org_home(org)
     # Refuse a partial result as complete: a token that cannot see every repo
     # stops --close before any write and marks the preview partial (#3513).
     gap = epic_audit.coverage_gap(org)
@@ -139,7 +126,7 @@ def _audit(args: argparse.Namespace, org: str) -> int:
             return 1
     since = (datetime.now(UTC) - timedelta(days=args.window_days)).date().isoformat()
     tasks = epic_audit.task_drift(since, org=org)
-    epics_drift = epic_audit.epic_drift(org, home=home)
+    epics_drift = epic_audit.epic_drift(org)
     # One listing of the home's epics feeds both per-epic checks (epic .github#819).
     # The home is always in the audited org, so the org's token reads it.
     home_epics = epic_audit.list_home_epics(home)
@@ -202,7 +189,7 @@ def _audit(args: argparse.Namespace, org: str) -> int:
         return 1 if proxy_errors else orphan_rc
     epics_outside = epic_audit.epic_outside_dotgithub(org)
     stray = epic_audit.stray_dotgithub_issue(org, home=home)
-    pending_operational = epic_audit.operational_pending(org, home=home)
+    pending_operational = epic_audit.operational_pending(org)
     closed_operational_no_success = epic_audit.closed_operational_without_success(org)
     # Read-only preview of the ad-hoc drain the --close sweep would perform (epic
     # #238): apply=False mutates nothing. It reads under the org's token, as
@@ -320,8 +307,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "Enumerate a single epic's child tasks as machine-readable JSON "
             "instead of running the drift audit. REF is an epic ref "
             "('owner/repo#N', used as written, or a bare '#N' resolved against "
-            "the current repo's epic home: '<org>/.github' for a public repo, "
-            "the repo itself for a private repo that homes its own epics). "
+            "the current repo's epic home, '<org>/.github'). "
             'Emits {"epic": <slug>, "children": [{repo, number, title, '
             "state}, ...]} — a stable array of objects (native sub-issues, with "
             "the portable Parent: reflink fallback), so "
@@ -332,15 +318,6 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             '"primary": <slug> key. A Primary:/Proxy: link that is broken or '
             "disagrees exits 1 with the problems on stderr and no JSON. Read-only; "
             "ignores the drift-audit flags."
-        ),
-    )
-    parser.add_argument(
-        "--repo",
-        help=(
-            "Audit a single repo's resolved epic home ('owner/repo') instead of "
-            "the org's .github — a private repo self-homes its epics. The "
-            "home-scoped checks (epic drift, stray issues, operational-pending, "
-            "and --close) then target that repo."
         ),
     )
     parser.add_argument(

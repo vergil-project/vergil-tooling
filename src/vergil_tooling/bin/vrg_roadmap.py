@@ -1,4 +1,4 @@
-"""Print the generated project roadmap (open epics in a repo's resolved epic home).
+"""Print the generated project roadmap (open epics in an org's ``.github``).
 
 A pure read-and-render command — see :mod:`vergil_tooling.lib.roadmap`. The
 nightly job that writes/publishes the rendered markdown is separate (T8c).
@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from vergil_tooling.lib import epics, github, roadmap
+from vergil_tooling.lib import github, roadmap
 from vergil_tooling.lib.cli import cli_main
 
 
@@ -20,36 +20,16 @@ def main(argv: list[str] | None = None) -> int:
         "--org",
         help="GitHub org whose .github epics to read (default: current repo's owner).",
     )
-    parser.add_argument(
-        "--repo",
-        help=(
-            "Target repo 'owner/repo' whose roadmap to show (its resolved epic "
-            "home; a private repo self-homes its epics). Mutually exclusive with --org."
-        ),
-    )
     args = parser.parse_args(argv)
-    if args.org and args.repo:
-        print("vrg-roadmap: --org and --repo are mutually exclusive", file=sys.stderr)
-        return 1
-    if args.repo and "/" not in args.repo:
-        print(
-            f"vrg-roadmap: --repo must be 'owner/repo' (got {args.repo!r})",
-            file=sys.stderr,
-        )
-        return 1
-    # Resolve the org/home and render inside one try: every step here shells out
-    # to gh, so a missing token or missing installation must surface as a clean
+    # Resolve the org and render inside one try: every step here shells out to
+    # gh, so a missing token or missing installation must surface as a clean
     # message, not a traceback. Scope the App token to the org being read so a
-    # cross-org --org/--repo selects that org's installation, not the cwd repo's
+    # cross-org --org selects that org's installation, not the cwd repo's
     # (#2070).
     try:
-        if args.repo:
-            owner, bare = args.repo.split("/", 1)
-            org, home = owner, epics.resolve_epic_home(owner, bare)
-        else:
-            org, home = args.org or github.current_org(), None
+        org = args.org or github.current_org()
         with github.target_org(org):
-            print(roadmap.render(roadmap.gather(org, home=home), org, home=home))
+            print(roadmap.render(roadmap.gather(org), org))
     except github.MissingGitHubTokenError:
         print(github.missing_token_message("vrg-roadmap"), file=sys.stderr)
         return 1

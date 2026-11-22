@@ -1,8 +1,7 @@
 """Ensure a repo's ad-hoc epic exists (create-if-missing), idempotently.
 
 The ``Epic (ad hoc): <repo>`` umbrella (labelled ``epic`` + ``ad-hoc``) lives in
-the repo's resolved epic home — ``<org>/.github`` for a public repo, the repo
-itself when private — one per repo. This provisions it before linking
+the repo's epic home, ``<org>/.github``, one per repo. This provisions it before linking
 pre-existing issues to it as ad-hoc tasks. Routing
 work to ``adhoc`` (``vrg-issue-create``/``vrg-epic-move --epic adhoc``) also
 ensures it via the same path.
@@ -37,8 +36,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Manage a repo's ad-hoc epic. The live epic is 'Epic (ad hoc): "
             "<repo>' labelled epic + ad-hoc; stamped per-quarter buckets are "
             "'Archive (ad hoc): <repo> — YYYY-Qn' labelled archive + ad-hoc. "
-            "Homed by visibility: <org>/.github for a public repo, the repo "
-            "itself when private."
+            "Homed in <org>/.github."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -80,10 +78,10 @@ def cmd_ensure(args: argparse.Namespace) -> int:
         return 1
     owner, bare = repo.split("/", 1)
     # Scope the App token to the target repo's owner, not the cwd org: a
-    # cwd-scoped token cannot see a private repo in another org (#3409).
+    # cwd-scoped token is minted for the wrong org (#3409).
     with github.target_org(owner):
         home = epics.resolve_epic_home(owner, bare)
-        print(f"-> epic home: {home} [{github.repo_visibility(home)}]")
+        print(f"-> epic home: {home}")
         epic = epics.ensure_adhoc_epic(repo)
     print(f"Ad-hoc epic: {epic.slug}")
     return 0

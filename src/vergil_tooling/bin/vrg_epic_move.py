@@ -9,8 +9,7 @@ The sentinels and a bare ``#N`` epic ref are read against the **task's** repo,
 never the cwd repo: ``adhoc`` is the task repo's ad-hoc epic, ``intake`` and
 ``planning`` its intake and planning queue epics, ``hoshin`` its org's hoshin
 epic (always in ``<org>/.github``), and ``#N``
-is issue N in the task repo's epic home (``<org>/.github`` for a public repo,
-the repo itself for a self-homed private one). A fully qualified
+is issue N in the task repo's epic home, ``<org>/.github``. A fully qualified
 ``owner/repo#N`` is taken as written (#3409, #3411).
 
 The deferred queue is entered and left only through ``vrg-intake-route``, which
@@ -63,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         with github.target_org(task.owner):
             # 'adhoc' and a bare '#N' resolve against the *task's* repo (its
             # ad-hoc epic / its epic home), never the cwd repo (#3409, #3411).
-            # The epic-home visibility probes run under the task owner's token.
+            # The epic-home existence check runs under the task owner's token.
             try:
                 epic = epics.resolve_epic_ref(args.epic, repo=task_repo)
             except (ValueError, epics.StandingEpicNotVisibleError) as exc:
@@ -110,8 +109,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Target epic: 'adhoc' (the task repo's ad-hoc epic), 'intake' or "
         "'planning' (the task repo's intake or planning queue epic), 'hoshin' (the "
         "task org's hoshin epic, in <org>/.github), #N (issue N in the "
-        "task repo's epic home: <org>/.github for a public repo, the repo itself for "
-        "a self-homed private one), or owner/repo#N (taken as written)",
+        "task repo's epic home, <org>/.github), or owner/repo#N (taken as written)",
     )
     return parser.parse_args(argv)
 

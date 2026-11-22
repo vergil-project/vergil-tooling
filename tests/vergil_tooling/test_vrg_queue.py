@@ -73,7 +73,6 @@ def _missing(kind: str) -> object:
 def test_vrg_queue_deferred_text_and_json(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
         patch.dict(f"{_MOD}._VIEWS", {"deferred": lambda _h, _n: [_DEFERRED_ITEM]}),
     ):
         assert main(["deferred"]) == 0
@@ -101,7 +100,6 @@ def test_vrg_queue_deferred_text_and_json(capsys: pytest.CaptureFixture[str]) ->
 def test_vrg_queue_named_deferred_missing_fails_loud(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
         patch.dict(f"{_MOD}._VIEWS", {"deferred": _missing("deferred")}),
     ):
         rc = main(["deferred"])
@@ -121,14 +119,12 @@ def test_vrg_queue_bare_lists_all_three_and_tolerates_missing(
     }
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")) as home,
         patch.dict(f"{_MOD}._VIEWS", views),
     ):
         assert main([]) == 0
         captured = capsys.readouterr()
         assert main(["--json"]) == 0
         data = json.loads(capsys.readouterr().out)
-    assert home.call_count == 2
     assert captured.err == ""
     lines = captured.out.splitlines()
     assert lines[0] == "intake queue for org in org/.github: 1 open item(s)"
@@ -173,7 +169,6 @@ def test_vrg_queue_named_queue_read_failure_is_reported(
     # An advisory-lookup failure is one clear line and exit 1, never a traceback (#3826).
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
         patch.dict(f"{_MOD}._VIEWS", {"planning": _failing(exc)}),
     ):
         rc = main(["planning"])
@@ -193,7 +188,6 @@ def test_vrg_queue_missing_token_keeps_the_guided_message(
     exc = github.MissingGitHubTokenError(1, ["gh", "api"], "", "no token")
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
         patch.dict(f"{_MOD}._VIEWS", {"planning": _failing(exc)}, clear=True),
         pytest.raises(SystemExit) as excinfo,
     ):
@@ -214,7 +208,6 @@ def test_vrg_queue_bare_text_keeps_other_queues_when_one_fails(
     }
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
         patch.dict(f"{_MOD}._VIEWS", views),
     ):
         rc = main([])
@@ -242,7 +235,6 @@ def test_vrg_queue_bare_json_prints_no_partial_object(
     }
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
         patch.dict(f"{_MOD}._VIEWS", views),
     ):
         rc = main(["--json"])
@@ -256,15 +248,20 @@ def test_vrg_queue_bare_json_prints_no_partial_object(
 
 
 def test_vrg_queue_json_output(capsys: pytest.CaptureFixture[str]) -> None:
+    seen: list[tuple[str, str]] = []
+
+    def _planning(home: str, name: str) -> list[QueueItem]:
+        seen.append((home, name))
+        return [_ITEM]
+
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")) as home,
-        patch.dict(f"{_MOD}._VIEWS", {"planning": lambda _h, _n: [_ITEM]}),
+        patch.dict(f"{_MOD}._VIEWS", {"planning": _planning}),
     ):
         rc = main(["planning", "--json"])
     assert rc == 0
     # Default home: the current org's .github pair, not the cwd repo.
-    home.assert_called_once_with("org/.github")
+    assert seen == [("org/.github", "org")]
     assert json.loads(capsys.readouterr().out) == [
         {
             "ref": {"owner": "org", "repo": ".github", "number": 5},
@@ -277,7 +274,9 @@ def test_vrg_queue_json_output(capsys: pytest.CaptureFixture[str]) -> None:
     ]
 
 
-def test_vrg_queue_repo_flag_selects_private_home(capsys: pytest.CaptureFixture[str]) -> None:
+def test_vrg_queue_repo_flag_selects_its_org_dotgithub(
+    capsys: pytest.CaptureFixture[str], dotgithub_exists: MagicMock
+) -> None:
     seen: list[tuple[str, str, str | None]] = []
 
     def _intake(home: str, name: str) -> list[QueueItem]:
@@ -286,22 +285,20 @@ def test_vrg_queue_repo_flag_selects_private_home(capsys: pytest.CaptureFixture[
 
     with (
         patch(f"{_MOD}.github.current_repo") as cur,
-        patch(f"{_MOD}.epics.queue_home", return_value=("other/secret", "secret")) as home,
         patch.dict(f"{_MOD}._VIEWS", {"intake": _intake}),
     ):
-        rc = main(["intake", "--repo", "other/secret"])
+        rc = main(["intake", "--repo", "other/tool"])
     assert rc == 0
     cur.assert_not_called()
-    home.assert_called_once_with("other/secret")
-    # The token is scoped to the --repo owner.
-    assert seen == [("other/secret", "secret", "other")]
-    assert capsys.readouterr().out == "intake queue for secret in other/secret: 0 open item(s)\n"
+    dotgithub_exists.assert_called_once_with("other", ".github")
+    # The home is the --repo owner's .github, under that owner's token.
+    assert seen == [("other/.github", "other", "other")]
+    assert capsys.readouterr().out == "intake queue for other in other/.github: 0 open item(s)\n"
 
 
 def test_vrg_queue_text_output(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
         patch.dict(f"{_MOD}._VIEWS", {"planning": lambda h, n: [_ITEM]}),
     ):
         rc = main(["planning"])
@@ -312,11 +309,12 @@ def test_vrg_queue_text_output(capsys: pytest.CaptureFixture[str]) -> None:
     assert lines[1].endswith("d  ready-to-close  plan the thing  — Tasks filed: yes")
 
 
-def test_vrg_queue_rejects_bare_repo(capsys: pytest.CaptureFixture[str]) -> None:
-    with patch(f"{_MOD}.epics.queue_home") as home:
-        rc = main(["intake", "--repo", "secret"])
+def test_vrg_queue_rejects_bare_repo(
+    capsys: pytest.CaptureFixture[str], dotgithub_exists: MagicMock
+) -> None:
+    rc = main(["intake", "--repo", "tool"])
     assert rc == 1
-    home.assert_not_called()
+    dotgithub_exists.assert_not_called()
     assert "--repo must be 'owner/repo'" in capsys.readouterr().err
 
 
@@ -327,7 +325,6 @@ def test_vrg_queue_missing_queue_epic_fails_loud(capsys: pytest.CaptureFixture[s
 
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
         patch.dict(f"{_MOD}._VIEWS", {"intake": _missing}),
     ):
         rc = main(["intake"])
@@ -340,67 +337,35 @@ def test_vrg_queue_missing_queue_epic_fails_loud(capsys: pytest.CaptureFixture[s
 def test_vrg_queue_org_wide_probes_dotgithub(dotgithub_exists: MagicMock) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
         patch.dict(f"{_MOD}._VIEWS", {"intake": lambda _h, _n: []}),
     ):
         assert main(["intake"]) == 0
     dotgithub_exists.assert_called_once_with("org", ".github")
 
 
-def test_vrg_queue_public_repo_without_dotgithub_fails_clearly(
-    capsys: pytest.CaptureFixture[str],
+def _unreachable(home: str, name: str) -> list[QueueItem]:
+    raise AssertionError(f"the view must not be read ({home}, {name})")
+
+
+@pytest.mark.parametrize("argv", [["intake"], ["intake", "--repo", "owner/site"]])
+def test_vrg_queue_without_dotgithub_fails_clearly(
+    capsys: pytest.CaptureFixture[str], argv: list[str]
 ) -> None:
-    # --repo on a public repo whose owner has no .github: one clear line, exit 1 (#3643).
-    def is_public(nwo: str) -> bool:
-        if nwo == "owner/.github":
-            raise github.GitHubAPIError(1, "cmd", "", "Could not resolve to a Repository")
-        return True
-
-    with (
-        patch(f"{_MOD}.epics.github.is_public", side_effect=is_public),
-        pytest.raises(SystemExit) as excinfo,
-    ):
-        main(["intake", "--repo", "owner/site"])
-    assert excinfo.value.code == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == (
-        "vrg-queue: owner/site is public, so its epics and queues live in "
-        "owner/.github, which does not exist; create the owner/.github repository "
-        "and try again\n"
-    )
-
-
-def test_vrg_queue_repo_flag_skips_dotgithub_probe(dotgithub_exists: MagicMock) -> None:
-    # --repo reaches a self-homed repo's own queues, .github or not.
-    with (
-        patch(f"{_MOD}.epics.queue_home", return_value=("owner/notes", "notes")),
-        patch.dict(f"{_MOD}._VIEWS", {"intake": lambda _h, _n: []}),
-    ):
-        assert main(["intake", "--repo", "owner/notes"]) == 0
-    dotgithub_exists.assert_not_called()
-
-
-def test_vrg_queue_org_wide_without_dotgithub_fails_clearly(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # An owner with no .github has no org-wide queue: one clear line, exit 1 (#3613).
+    # An owner with no .github has no queue home, with --repo or without: one
+    # clear line, exit 1 (#3613).
     with (
         patch(f"{_MOD}.github.current_repo", return_value="owner/notes"),
         patch(f"{_MOD}.epics.github.repo_exists", return_value=False),
-        patch(f"{_MOD}.epics.queue_home") as home,
+        patch.dict(f"{_MOD}._VIEWS", {"intake": _unreachable}),
         pytest.raises(SystemExit) as excinfo,
     ):
-        main(["intake"])
+        main(argv)
     assert excinfo.value.code == 1
-    home.assert_not_called()
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == (
         "vrg-queue: owner has no .github repository, so there is no org-wide "
-        "queue or epic home; create the owner/.github repository to give it one, "
-        "or pass --repo owner/<repo> to reach a private, self-homed "
-        "repo's own queues and epics\n"
+        "queue or epic home; create the owner/.github repository to give it one\n"
     )
 
 
@@ -472,7 +437,6 @@ def test_vrg_queue_bare_does_not_list_adhoc_or_hoshin(capsys: pytest.CaptureFixt
     }
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
         patch.dict(f"{_MOD}._VIEWS", views),
         patch(f"{_MOD}.queue_view.adhoc_items") as items,
         patch(f"{_MOD}.queue_view.hoshin_items") as hoshin,
@@ -488,7 +452,7 @@ def test_vrg_queue_bare_does_not_list_adhoc_or_hoshin(capsys: pytest.CaptureFixt
     assert list(data) == ["intake", "planning", "deferred"]
 
 
-def test_vrg_queue_adhoc_repo_narrows_a_public_repo(
+def test_vrg_queue_adhoc_repo_narrows_to_its_epic(
     capsys: pytest.CaptureFixture[str], dotgithub_exists: MagicMock
 ) -> None:
     seen: list[str | None] = []
@@ -499,30 +463,18 @@ def test_vrg_queue_adhoc_repo_narrows_a_public_repo(
 
     with (
         patch(f"{_MOD}.github.current_repo") as cur,
-        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github") as home,
         patch(f"{_MOD}.queue_view.adhoc_items", side_effect=_items) as items,
     ):
         rc = main(["adhoc", "--repo", "org/no-adhoc-yet"])
     # No ad-hoc epic for the repo is an empty list and exit 0, not an error.
     assert rc == 0
     cur.assert_not_called()
-    dotgithub_exists.assert_not_called()
-    home.assert_called_once_with("org", "no-adhoc-yet")
+    dotgithub_exists.assert_called_once_with("org", ".github")
     items.assert_called_once_with("org/.github", repo="org/no-adhoc-yet", roots=None)
     assert seen == ["org"]
     assert capsys.readouterr().out == (
         "adhoc queue for no-adhoc-yet in org/.github: 0 open task(s)\n"
     )
-
-
-def test_vrg_queue_adhoc_repo_selects_a_private_home(capsys: pytest.CaptureFixture[str]) -> None:
-    with (
-        patch(f"{_MOD}.epics.resolve_epic_home", return_value="other/secret"),
-        patch(f"{_MOD}.queue_view.adhoc_items", return_value=[]) as items,
-    ):
-        assert main(["adhoc", "--repo", "other/secret"]) == 0
-    items.assert_called_once_with("other/secret", repo="other/secret", roots=None)
-    assert capsys.readouterr().out == "adhoc queue for secret in other/secret: 0 open task(s)\n"
 
 
 @pytest.mark.parametrize(
@@ -625,7 +577,9 @@ def test_parse_args_accepts_hoshin() -> None:
     assert parse_args(["hoshin"]).queue == "hoshin"
 
 
-def test_vrg_queue_hoshin_json(capsys: pytest.CaptureFixture[str]) -> None:
+def test_vrg_queue_hoshin_json(
+    capsys: pytest.CaptureFixture[str], dotgithub_exists: MagicMock
+) -> None:
     seen: list[str | None] = []
 
     def _items(home: str, *, repo: str | None = None, roots: Any = None) -> list[AdhocItem]:
@@ -634,10 +588,6 @@ def test_vrg_queue_hoshin_json(capsys: pytest.CaptureFixture[str]) -> None:
 
     with (
         patch(f"{_MOD}.github.current_repo") as cur,
-        patch(
-            f"{_MOD}.epics.hoshin_home", return_value=("vergil-project/.github", "vergil-project")
-        ) as home,
-        patch(f"{_MOD}.epics.resolve_epic_home") as epic_home,
         patch(f"{_MOD}.queue_view.adhoc_items") as adhoc,
         patch(f"{_MOD}.queue_view.hoshin_items", side_effect=_items) as items,
     ):
@@ -646,9 +596,8 @@ def test_vrg_queue_hoshin_json(capsys: pytest.CaptureFixture[str]) -> None:
         )
     assert rc == 0
     cur.assert_not_called()
-    # The hoshin home is the org's .github, never the repo's own epic home.
-    home.assert_called_once_with("vergil-project/docs")
-    epic_home.assert_not_called()
+    # The hoshin home is the org's .github.
+    dotgithub_exists.assert_called_once_with("vergil-project", ".github")
     adhoc.assert_not_called()
     items.assert_called_once_with(
         "vergil-project/.github", repo="vergil-project/docs", roots=[Path("/r")]
@@ -726,7 +675,6 @@ def _run(
 ) -> tuple[int, str, str]:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
         patch.dict(f"{_MOD}._VIEWS", views),
     ):
         rc = main(argv)
@@ -904,7 +852,6 @@ def test_trusted_authors_missing_fails_through_the_real_view(
     exc = trusted_authors.TrustedAuthorsNotConfiguredError("trusted authors are not configured")
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch(f"{_MOD}.epics.queue_home", return_value=("org/.github", "org")),
         patch("vergil_tooling.lib.epic_size.load_trusted_authors", side_effect=exc),
     ):
         rc = main(["planning"])

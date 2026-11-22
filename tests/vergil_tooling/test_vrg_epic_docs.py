@@ -482,13 +482,6 @@ def test_backfill_failed_write_continues(capsys: pytest.CaptureFixture[str]) -> 
     assert "1 added, 0 changed, 0 no change, 0 need a decision, 1 failed" in captured.out
 
 
-def test_backfill_repo_flag() -> None:
-    home = _Home([], set())
-    assert home.run(["backfill", "--repo", "o/private"]) == 0
-    assert home.home == "o/private"
-    assert home.default_branch.call_args.args == ("o", "private")
-
-
 def test_backfill_keeps_existing_link() -> None:
     spec = DocLink("o", "vergil-vm", "docs/specs/hand-set.md", "main")
     body = epic_docs.render(
@@ -571,12 +564,9 @@ def test_backfill_missing_token_is_left_to_cli_main(capsys: pytest.CaptureFixtur
     "argv",
     [
         ["backfill"],
-        ["backfill", "--org", "o", "--repo", "o/x"],
+        ["backfill", "--repo", "o/x"],
         ["backfill", "--org", "o/x"],
         ["backfill", "--org", "-o"],
-        ["backfill", "--repo", "o"],
-        ["backfill", "--repo", "o/.."],
-        ["backfill", "--repo", "o/a b"],
     ],
 )
 def test_backfill_rejects_bad_arguments(argv: list[str]) -> None:

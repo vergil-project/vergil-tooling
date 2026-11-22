@@ -459,16 +459,13 @@ def _held_note(ref: IssueRef, hold: AdvisoryHold) -> str:
 def _org_advisories(org: str, *, named: bool) -> list[Advisory]:
     """Every advisory in *org*'s advisory home, or none when the org can hold none.
 
-    Security records live only in a public ``<org>/.github``. When an item of
-    *org* names an advisory, the home is resolved with
-    :func:`security_records.advisory_home`, which refuses a home that is not
-    public loudly. When none does, an org whose ``.github`` is absent or not
-    public holds no advisory that could track an item, so nothing is listed;
-    any failed GitHub call propagates.
+    Security records live only in ``<org>/.github``. When an item of *org*
+    names an advisory, the home is resolved with
+    :func:`security_records.advisory_home`. When none does, an org with no
+    ``.github`` holds no advisory that could track an item, so nothing is
+    listed; any failed GitHub call propagates.
     """
-    if not named and not (
-        github.repo_exists(org, ".github") and github.is_public(f"{org}/.github")
-    ):
+    if not named and not github.repo_exists(org, ".github"):
         return []
     return security_records.list_advisories(security_records.advisory_home(org))
 
@@ -659,8 +656,8 @@ def adhoc_items(
 
     Grouped by repo (repos in name order), oldest first within each. With
     *repo* (``owner/name``), only that repo's ad-hoc epic is read, and a repo
-    with none gives an empty list. The caller resolves *home*: for *repo*, with
-    :func:`epics.resolve_epic_home`. A task with any in-flight mark is
+    with none gives an empty list. The caller resolves *home*, the org's
+    ``.github``, with :func:`epics.require_org_home`. A task with any in-flight mark is
     ``in-flight``, whatever its blockers; the marks of each repo with open
     tasks are read from its main clone under *roots* (default: the platform's
     repo roots). A failed read of the epics, a sub-issue list, a task, a
@@ -679,9 +676,8 @@ def hoshin_items(
 
     The epic is ``Epic (hoshin): <owner>``, *home*'s owner, looked up with
     :func:`epics.find_standing_epic` (never created); a home with none gives
-    an empty list. The caller resolves *home*: for *repo*, with
-    :func:`epics.hoshin_home`, since a hoshin epic always lives in the org's
-    ``.github``, never in a self-homed private repo. With *repo*
+    an empty list. The caller resolves *home*, the org's ``.github``, with
+    :func:`epics.require_org_home`. With *repo*
     (``owner/name``), only the epic's children in that repo are listed.
     Fields, states, in-flight marks, dispositions, order and failures are
     :func:`adhoc_items`'s.

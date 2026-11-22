@@ -8,8 +8,7 @@ when creating a task under an epic, and to backfill reflink-only children.
 
 Refs are ``owner/repo#N`` or bare ``#N``. A bare task ref resolves to the
 current repo. A bare epic ref resolves to the **task's** epic home, never the
-cwd repo: ``<org>/.github`` for a public task repo, the task repo itself for a
-self-homed private one (#3411). A fully qualified epic ref is taken as written.
+cwd repo: ``<org>/.github`` (#3411). A fully qualified epic ref is taken as written.
 A public task may not
 hard-link under a private epic — that would leak the private repo's name and
 break cross-boundary roll-up; such dependencies use a soft ``Blocked-by:``
@@ -93,8 +92,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--epic",
         required=True,
         help="Epic ref: owner/repo#N (taken as written), or #N (issue N in the task "
-        "repo's epic home: <org>/.github for a public repo, the repo itself for a "
-        "self-homed private one)",
+        "repo's epic home, <org>/.github)",
     )
     parser.add_argument(
         "--task", required=True, help="Task ref: owner/repo#N, or #N in the current repo"

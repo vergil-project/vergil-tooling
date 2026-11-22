@@ -10,8 +10,7 @@ review's logbook tasks, always in ``<org>/.github``), or an explicit
 
 The target repo is ``--repo`` (default: the current repo). The sentinels and a
 bare ``#N`` are all read against it, never the cwd repo: ``#N`` is issue N in the
-target repo's epic home (``<org>/.github`` for a public repo, the repo itself
-for a self-homed private one). A fully qualified ``owner/repo#N`` is taken as
+target repo's epic home, ``<org>/.github``. A fully qualified ``owner/repo#N`` is taken as
 written (#3409, #3411).
 
 If the issue is created but the link fails, the created issue's URL is reported
@@ -214,8 +213,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Epic ref: 'adhoc' (the target repo's ad-hoc epic), 'intake' or "
         "'planning' (the target repo's intake or planning queue epic), 'hoshin' (the "
         "target org's hoshin epic, in <org>/.github), #N (issue N in the "
-        "target repo's epic home: <org>/.github for a public repo, the repo itself "
-        "for a self-homed private one), or owner/repo#N (taken as written)",
+        "target repo's epic home, <org>/.github), or owner/repo#N (taken as written)",
     )
     parser.add_argument("--title", required=True, help="Issue title")
     parser.add_argument("--body", default="", help="Issue body text")
