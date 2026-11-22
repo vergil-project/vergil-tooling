@@ -132,7 +132,9 @@ def test_guard_stops_on_agent_last_editor() -> None:
 
 def test_guard_stops_on_foreign_reopen() -> None:
     identities = _read(
-        _page(timeline=_timeline([_event("ClosedEvent", "human"), _event("ReopenedEvent", "agent")]))
+        _page(
+            timeline=_timeline([_event("ClosedEvent", "human"), _event("ReopenedEvent", "agent")])
+        )
     )
     with pytest.raises(TrackingIssueBreach, match="agent reopened the issue"):
         check_tracking_issue(identities, HUMANS)
@@ -232,7 +234,9 @@ def test_guard_reads_every_page_of_both_connections() -> None:
 def test_guard_rereads_an_empty_connection_from_the_start() -> None:
     """An empty connection has no cursor, so it is re-read from the start, and stays empty."""
     empty = {"totalCount": 0, "pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": []}
-    first = _page(edits=empty, timeline=_timeline([_event("IssueComment", "x")], total=2, cursor="t1"))
+    first = _page(
+        edits=empty, timeline=_timeline([_event("IssueComment", "x")], total=2, cursor="t1")
+    )
     second = _page(edits=empty, timeline=_timeline([_event("IssueComment", "y")], total=2))
     with patch(_MOD + ".github.graphql", side_effect=[first, second]) as gql:
         identities = read_identities("owner/repo", 42)
