@@ -775,7 +775,7 @@ def test_qualifying_run_predicate_is_reusable() -> None:
 # --- resolve_required_gates ---------------------------------------------
 
 
-def test_resolve_required_gates_wires_config_ghas_and_derivation(
+def test_resolve_required_gates_wires_config_and_derivation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
@@ -792,14 +792,12 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
         return cfg
 
     monkeypatch.setattr(ci_evidence, "require_config_at_ref", fake_config)
-    monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
 
-    def fake_ghas(config: Any, *, visibility: str) -> bool:
-        captured["ghas_config"] = config
-        captured["visibility"] = visibility
-        return True
+    def never_visibility(_repo: str) -> str:
+        msg = "the required gates never depend on the repo's visibility"
+        raise AssertionError(msg)
 
-    monkeypatch.setattr(ci_evidence, "ghas_available", fake_ghas)
+    monkeypatch.setattr(github, "repo_visibility", never_visibility)
 
     def fake_integration(config: Any) -> tuple[str, ...]:
         captured["integration_config"] = config
@@ -813,12 +811,11 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
         project: Any,
         ci: Any,
         *,
-        ghas: bool,
         docs: bool,
         package: bool,
         integration_versions: tuple[str, ...],
     ) -> Any:
-        captured["derivation_args"] = (project, ci, ghas, docs, package, integration_versions)
+        captured["derivation_args"] = (project, ci, docs, package, integration_versions)
         return expected_gates
 
     monkeypatch.setattr(ci_evidence, "required_evidence_gates", fake_required)
@@ -828,11 +825,9 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
     assert result is expected_gates
     # The config is the --repo target's, fetched at the given ref (#3226).
     assert captured["config_at"] == ("o/r", "cafef00d")
-    assert captured["ghas_config"] is cfg
-    assert captured["visibility"] == "public"
-    # docs is wired from config.publish.docs (here False) alongside ghas, and
-    # package from the presence of a [package] section (here absent).
-    assert captured["derivation_args"] == ("PROJECT", "CI", True, False, False, ("3.14",))
+    # docs is wired from config.publish.docs (here False), and package from
+    # the presence of a [package] section (here absent).
+    assert captured["derivation_args"] == ("PROJECT", "CI", False, False, ("3.14",))
     # The integration checks come from the resolver, for the same config.
     assert captured["integration_config"] is cfg
 
@@ -864,8 +859,6 @@ def test_package_section_makes_harvest_download_ci_evidence_package(
         packages=(SimpleNamespace(builder="python"),),
     )
     monkeypatch.setattr(ci_evidence, "require_config_at_ref", lambda _repo, _ref: cfg)
-    monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
-    monkeypatch.setattr(ci_evidence, "ghas_available", lambda _c, *, visibility: True)
 
     required = ci_evidence.resolve_required_gates("o/r", "cafef00d")
     assert "package" in {g.name for g in required}
@@ -907,8 +900,6 @@ def _images_repo_required_gates(monkeypatch: pytest.MonkeyPatch, *, images: bool
         packages=(),
     )
     monkeypatch.setattr(ci_evidence, "require_config_at_ref", lambda _repo, _ref: cfg)
-    monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
-    monkeypatch.setattr(ci_evidence, "ghas_available", lambda _c, *, visibility: True)
     return ci_evidence.resolve_required_gates("o/r", "cafef00d")
 
 

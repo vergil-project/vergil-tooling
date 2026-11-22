@@ -211,9 +211,9 @@ audit does not guess the value. It reports the setting as not checked:
   requirement for any other field, so the line for one of those says
   `needs a token GitHub returns the field to`. A repo setting of the
   wrong type is an error.
-- A setting the desired state leaves unmanaged (secret scanning on a
-  private repo without GHAS) is skipped as before, not listed as not
-  checked.
+- A setting the desired state leaves unmanaged (a ruleset's
+  `bypass_actors` under a token that cannot see them) is skipped as
+  before, not listed as not checked.
 - A 403 that names no missing permission (a rate limit, for example) is
   still an error, as is any other unexpected status.
 - **An empty bypass list under the automation identity is not checked.**
@@ -540,13 +540,10 @@ each difference as a `security.<field>` `DiffItem`:
 
 | Field | Desired | Notes |
 |---|---|---|
-| `security.vulnerability_alerts` | `true` | Dependabot alerts on, for **every** repo, public or private |
+| `security.vulnerability_alerts` | `true` | Dependabot alerts on, for **every** repo |
 | `security.dependabot_security_updates` | `disabled` | Dependabot never opens a security-update PR |
-| `security.secret_scanning` | `enabled` | Only when GHAS is available; otherwise unmanaged |
-| `security.secret_scanning_push_protection` | `enabled` | Only when GHAS is available; otherwise unmanaged |
-
-GHAS is available when `[project].ghas` in `vergil.toml` says so, and
-otherwise exactly when the repo is not private.
+| `security.secret_scanning` | `enabled` | For every repo |
+| `security.secret_scanning_push_protection` | `enabled` | For every repo |
 
 The first two rows are the **report-only Dependabot posture** (epic
 [vergil-project/.github#420](https://github.com/vergil-project/.github/issues/420)):

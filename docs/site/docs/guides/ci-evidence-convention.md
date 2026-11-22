@@ -74,9 +74,8 @@ Each evidence-producing gate uploads exactly one workflow-run artifact:
 
 Every gate — **including the security scanners** — uploads its report(s) as a
 `ci-evidence-<gate>` artifact **unconditionally**, decoupled from any
-code-scanning upload. Under GitHub Advanced Security, CodeQL still drops its
-SARIF as an artifact alongside its code-scanning upload; Trivy and Semgrep do
-the same regardless of GHAS availability.
+code-scanning upload. CodeQL, Trivy and Semgrep each drop their SARIF as an
+artifact alongside their code-scanning upload.
 
 The harvester therefore reads **artifacts only** and never touches the
 code-scanning API — one code path, no GHAS branching, one fewer external
@@ -143,8 +142,8 @@ evidence, so it does not satisfy the gate.
 The set of gates that MUST emit evidence is **not a hand-maintained list.** It
 is **derived from the same source of truth that drives branch protection**:
 `lib/github_config.py:desired_ci_gates_rulesets()` computes a repo's required
-status checks from its `VergilConfig` (language, resolved versions, GHAS
-availability, and whether a `[package]` section is present). The evidence
+status checks from its `VergilConfig` (language, resolved versions, and
+whether a `[package]` section is present). The evidence
 layer consumes that *same* computation, so the gates that are **enforced to
 merge** and the gates that are **required to have evidence** are provably the
 same set, with no drift.
@@ -185,8 +184,9 @@ and at least one report file, or the release fails completeness.
 
 ### Per-repo correctness for free
 
-Because the set is *derived*, a repo with a different real profile — no GHAS
-(CodeQL not required), a non-Python stack, or a gate legitimately disabled —
+Because the set is *derived*, a repo with a different real profile — a
+language CodeQL does not analyze (CodeQL not required), a non-Python stack, or a
+gate legitimately disabled —
 demands evidence for exactly the gates it actually gates on. It cannot
 spuriously fail for a gate it never ran. Adding a future required gate
 automatically pulls it into the evidence set via the shared config; the

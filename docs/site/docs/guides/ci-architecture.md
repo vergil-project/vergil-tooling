@@ -247,8 +247,7 @@ security:
 CodeQL is skipped when `run-codeql` is `false` (set for languages
 CodeQL does not support; `vrg-github-repo-init` reads the same language
 set as the [CI gates](#ci-gates) ruleset, so a repo is never required to
-report a CodeQL check its CI skips) or when `upload-sarif` is `false` (set for
-private repositories without GitHub Advanced Security).
+report a CodeQL check its CI skips).
 `container-suffix` is a deprecated no-op here, and the old
 standards-compliance job is gone: PR issue linkage is now checked by
 `vrg-submit-pr` when it builds the PR body.
@@ -490,15 +489,14 @@ require these checks. The list is computed from
 | `version / version-bump` | `[project].release-model` is not `none` |
 | `package / evidence` | `vergil.toml` has `[package]` |
 | `images / evidence` | `[ci].images` is on |
-| `security / codeql`, `CodeQL` | GHAS is available and CodeQL supports the language (`python`, `go`, `rust`, `cpp` or `typescript`) |
-| `Trivy`, `Semgrep OSS` | GHAS is available |
+| `security / codeql`, `CodeQL` | CodeQL supports the language (`python`, `go`, `rust`, `cpp` or `typescript`) |
+| `Trivy`, `Semgrep OSS` | Always |
 | `test / integration / <version>` | `[ci].integration-tests` is on (one per resolved version). No CI job produces it yet, so the setting is refused (#2721) |
 
-GHAS (GitHub Advanced Security) is taken from `[project].ghas` when it
-is set. Otherwise it counts as available for any repository that is not
-private. The bare `CodeQL`, `Trivy` and `Semgrep OSS` checks come from
-GitHub code scanning, not from a workflow job. Without GHAS those checks
-never report, so they are not required.
+The bare `CodeQL`, `Trivy` and `Semgrep OSS` checks come from GitHub
+code scanning (GitHub Advanced Security), not from a workflow job. Every
+repository is public, so code scanning is always available and those
+checks are always required.
 
 ### Every check that runs is a gate
 
