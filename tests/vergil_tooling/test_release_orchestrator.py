@@ -502,6 +502,10 @@ def test_phase_details_promote_skipped() -> None:
     assert "skipped" in details.lower()
 
 
+def test_phase_details_cd_publish_says_nothing_is_left() -> None:
+    assert _phase_details(_ctx(), "cd-publish") == "No failed CD publish job is left to deliver."
+
+
 def test_phase_details_promote_held_back_by_index_deferral() -> None:
     """A deferred package-index skips promote; the comment names the pending step (#4293)."""
     ctx = _ctx()

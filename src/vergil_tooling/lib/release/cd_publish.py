@@ -44,7 +44,7 @@ from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.state import FailedJob
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from vergil_tooling.lib.release.context import ReleaseContext
 
@@ -96,7 +96,7 @@ def deliver_failed_jobs(ctx: ReleaseContext) -> None:
             ctx,
             branch,
             [FailedJob(branch=branch, run_id=run_id, job=name) for name in still],
-            replaces=lambda job, b=branch, r=run_id: job.branch == b and job.run_id == r,
+            replaces=_on_run(branch, run_id),
             phase=PHASE,
         )
     remaining = _current_state(ctx, PHASE).failed_jobs
@@ -111,6 +111,15 @@ def deliver_failed_jobs(ctx: ReleaseContext) -> None:
             ),
         )
     print("Every failed CD publish job is delivered.")
+
+
+def _on_run(branch: str, run_id: str) -> Callable[[FailedJob], bool]:
+    """Whether a recorded failed job is one of *branch*'s CD run *run_id*."""
+
+    def matches(job: FailedJob) -> bool:
+        return job.branch == branch and job.run_id == run_id
+
+    return matches
 
 
 def _describe(jobs: Sequence[FailedJob]) -> str:

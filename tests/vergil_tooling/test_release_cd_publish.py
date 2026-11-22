@@ -296,3 +296,32 @@ def test_deferred_publish_failures_derived_from_state() -> None:
     # A view: writing to the list it returns changes nothing.
     ctx.deferred_publish_failures.append("x")
     assert ctx.deferred_publish_failures == []
+
+
+def test_cd_publish_develop_job_rerun_by_hand_is_delivered_without_a_rerun() -> None:
+    ctx = _ctx(FailedJob("develop", "200", _DOCS))
+    with (
+        patch(_MOD + "._settled_run_jobs", return_value=[_job(_DOCS)]),
+        patch(_MOD + ".github.read_output") as read,
+        patch(_MOD + ".rerun_and_watch") as rerun,
+    ):
+        deliver_failed_jobs(ctx)
+    rerun.assert_not_called()
+    read.assert_not_called()
+    assert ctx.state is not None
+    assert ctx.state.failed_jobs == ()
+
+
+def test_cd_publish_develop_job_missing_from_the_run_refuses() -> None:
+    """A recorded job the run no longer has is not delivered, and cannot be re-run."""
+    ctx = _ctx(FailedJob("develop", "200", _DOCS))
+    listing = _develop_runs((200, _RECORDED_AT, "completed"))
+    with (
+        patch(_MOD + "._settled_run_jobs", return_value=[_job(_PYPI)]),
+        patch(_MOD + "._fetch_run_jobs", return_value=[_job(_PYPI)]),
+        patch(_MOD + ".github.read_output", side_effect=[_RECORDED_AT, listing]),
+        patch(_MOD + ".rerun_and_watch") as rerun,
+        pytest.raises(ReleaseError, match="is not in CD run 200"),
+    ):
+        deliver_failed_jobs(ctx)
+    rerun.assert_not_called()

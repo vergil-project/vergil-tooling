@@ -1149,6 +1149,19 @@ def test_rerun_and_watch_attempt_never_registers_fails() -> None:
     watch.assert_not_called()
 
 
+def test_rerun_and_watch_unreadable_attempt_fails_loudly() -> None:
+    from vergil_tooling.lib.release.confirm import rerun_and_watch
+
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".github.read_output", return_value="null"),
+        patch(_MOD + ".github.run") as run,
+        pytest.raises(ValueError, match="returned 'null', not an attempt number"),
+    ):
+        rerun_and_watch(ctx, "5", check_status=False, phase="cd-publish")
+    run.assert_not_called()
+
+
 def test_confirm_main_without_a_state_block_refuses() -> None:
     ctx = _ctx()
     ctx.state = None
