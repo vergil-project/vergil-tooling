@@ -267,6 +267,18 @@ def _closing_prs(
             raise RecordReadError(where, f"a PR has no number: {node!r}")
         if node.get("merged") is not True:
             continue
+        # trusted_closing_refs returns issue numbers in the PR's own repo, so
+        # a PR in another repo closing its own #<number> must not count.
+        owner_repo = node.get("repository")
+        pr_repo = owner_repo.get("nameWithOwner") if isinstance(owner_repo, dict) else None
+        if not isinstance(pr_repo, str) or not pr_repo:
+            raise RecordReadError(where, f"PR #{pr} has no repository: {owner_repo!r}")
+        if pr_repo.lower() != repo.lower():
+            warnings.append(
+                f"closing PR {pr_repo}#{pr} of {repo}#{number} does not count: it is in "
+                "another repo, so the ancestry check skips it"
+            )
+            continue
         issues, _ = trusted_closing_refs(node, vouched)
         if number not in issues:
             warnings.append(

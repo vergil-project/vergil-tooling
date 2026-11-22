@@ -348,6 +348,41 @@ def test_check_untrusted_closing_pr_does_not_count(
     ]
 
 
+def test_check_closing_pr_in_another_repo_does_not_count(
+    origin: _Origin, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A PR in another repo that closes o/r#5 and its own #5 is not a closing PR of the task."""
+    origin.commit("feat: the change (#7)")
+    origin.tag("v2.1.2")
+    foreign = _closing_pr(7, "f" * 40, repo="o/other")
+    foreign["body"] = "Summary.\n\nCloses #5\nCloses o/r#5"
+    refs = foreign["closingIssuesReferences"]
+    refs["nodes"].append({"number": 5, "repository": {"nameWithOwner": _REPO}})
+    refs["totalCount"] = 2
+    fake = _FakeGitHub([_comment(_record("2.1.2"))], [foreign])
+    rc, out, _ = _run(fake, origin, capsys)
+    assert rc == 3
+    assert out is not None
+    assert out["ancestry"] == "fail"
+    assert out["warnings"] == [
+        "closing PR o/other#7 of o/r#5 does not count: it is in another repo, so the "
+        "ancestry check skips it",
+        f"no closing PR of {_TASK} counts, so nothing confirms that v2.1.2 contains it",
+    ]
+
+
+def test_check_closing_pr_without_repository_exits_1(
+    origin: _Origin, capsys: pytest.CaptureFixture[str]
+) -> None:
+    node = _closing_pr(7, "a" * 40)
+    node["repository"] = None
+    fake = _FakeGitHub([_comment(_record("2.1.2"))], [node])
+    rc, out, err = _run(fake, origin, capsys)
+    assert rc == 1
+    assert out is None
+    assert "PR #7 has no repository" in err
+
+
 def test_check_counts_hand_linked_pr_by_filtered_count(
     origin: _Origin, capsys: pytest.CaptureFixture[str]
 ) -> None:
