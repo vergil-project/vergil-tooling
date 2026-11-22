@@ -18412,7 +18412,7 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 <tr>
 <td><code>--without-deps</code></td>
 <td>No</td>
-<td>Skip the <code>update-deps</code> stage</td>
+<td>Skip the <code>update-deps</code> stage. Recorded in the tracking issue's state block, so every later <code>--resume</code> skips it too. Allowed with <code>--resume</code>, where it skips an update that failed, if the tracking issue is still open (<code>close-finalize</code> closes it before <code>update-deps</code> runs unless something was deferred)</td>
 </tr>
 <tr>
 <td><code>--allow-pending-deps</code></td>
