@@ -5,19 +5,23 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import git, github, pr_create, pr_merge
+from vergil_tooling.lib import git, github, pr_create, pr_merge, trust
 from vergil_tooling.lib.labels import ensure_labels
 from vergil_tooling.lib.managed_worktree import remove_worktree
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.update_deps import changes, report
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL, DepsFailure, UpdateDepsError
 from vergil_tooling.lib.update_deps.failure import failure_markdown, tail_output
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from vergil_tooling.lib.update_deps.context import FailureKind, UpdateDepsContext
 
 # The release gate parses this line out of the PR body (spec §5.3).
@@ -237,9 +241,11 @@ def find_open_fix_task(repo: str, version: str, kind: FailureKind) -> str | None
 
     A task matches on its exact title (version-keyed) and on the ``## Failure:
     <kind>`` heading its body carries, so a re-run that fails the same way at
-    the same version reuses it (#3560). GitHub search tokenizes on punctuation,
-    so the query is a broad net, filtered client-side. A failed or malformed
-    lookup raises: never guess, and never silently file a possible duplicate.
+    the same version reuses it (#3560). Only a task with a trusted body is
+    adopted (:func:`_oldest_adoptable_fix_task`). GitHub search tokenizes on
+    punctuation, so the query is a broad net, filtered client-side. A failed or
+    malformed lookup raises: never guess, and never silently file a possible
+    duplicate.
     """
     title = fix_task_title(version)
     cmd = (
@@ -281,17 +287,42 @@ def find_open_fix_task(repo: str, version: str, kind: FailureKind) -> str | None
                 "list may be truncated; no fix task was filed."
             ),
         )
-    heading = re.compile(rf"^## Failure: {re.escape(kind)}$", re.MULTILINE)
-    matches: list[tuple[int, str]] = []
+    candidates: list[tuple[int, str]] = []
     for raw in results:
         if not isinstance(raw, dict):
             continue
         item = cast("dict[str, object]", raw)
-        if item.get("title") == title and heading.search(str(item.get("body", ""))):
-            matches.append((int(str(item["number"])), str(item["url"])))
-    if not matches:
-        return None
-    return min(matches)[1]
+        if item.get("title") == title:
+            candidates.append((int(str(item["number"])), str(item["url"])))
+    return _oldest_adoptable_fix_task(repo, sorted(candidates), kind)
+
+
+def _oldest_adoptable_fix_task(
+    repo: str, candidates: Sequence[tuple[int, str]], kind: FailureKind
+) -> str | None:
+    """The URL of the oldest of *candidates* whose trusted body has *kind*'s heading.
+
+    Each body is read through :func:`trust.read_issue`, so a task is adopted
+    only when its author and every editor of its body are trusted; the
+    search's own copy of the body is never judged. An untrusted task is never
+    adopted, and is reported on stderr, metadata only (GHSA-777j-j57r-92ff).
+    A read failure raises :class:`UpdateDepsError`: no fix task is filed.
+    """
+    heading = re.compile(rf"^## Failure: {re.escape(kind)}$", re.MULTILINE)
+    for number, url in candidates:
+        try:
+            content = trust.read_issue(repo, number)
+        except (trust.TrustReadError, TrustedAuthorsNotConfiguredError) as exc:
+            raise UpdateDepsError(
+                phase="fix-task",
+                command=f"read_issue {repo}#{number}",
+                message="Could not read who wrote an open fix task; no fix task was filed.",
+                detail=str(exc),
+            ) from exc
+        trust.report_skipped(content.skipped, stream=sys.stderr)
+        if content.body is not None and heading.search(content.body):
+            return url
+    return None
 
 
 def _repeat_failure_comment(ctx: UpdateDepsContext, failure: DepsFailure) -> str:

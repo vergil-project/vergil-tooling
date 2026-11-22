@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib import progress
+from vergil_tooling.lib import progress, trust
 from vergil_tooling.lib.pending_release import PendingRelease, ReleaseTags
 from vergil_tooling.lib.release import checklist, confirm, records, state, supersede
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
@@ -37,7 +37,7 @@ from vergil_tooling.lib.release.supersede import (
 from vergil_tooling.lib.release.tracking import create_tracking_issue
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator, Iterator
 
 _ORCH = "vergil_tooling.lib.release.orchestrator"
 _PREFLIGHT = "vergil_tooling.lib.release.preflight"
@@ -202,6 +202,27 @@ def _release_issue(ver: str, number: int, body: str) -> dict[str, object]:
     return {"number": number, "title": f"release: {ver}", "body": body}
 
 
+@contextlib.contextmanager
+def _open_releases(issues: list[dict[str, object]]) -> Generator[None]:
+    """The open-release search lists *issues*; the trust layer reads each body as trusted."""
+    bodies = {int(str(issue["number"])): str(issue["body"]) for issue in issues}
+
+    def _read_issue(_repo: str, number: int) -> trust.IssueContent:
+        return trust.IssueContent(
+            body=bodies[number],
+            body_role=trust.Role.AGENTS,
+            author_role=trust.Role.AGENTS,
+            comments=(),
+            skipped=(),
+        )
+
+    with (
+        patch(_RESUME_READ, return_value=issues),
+        patch(_PREFLIGHT + ".trust.read_issue", side_effect=_read_issue),
+    ):
+        yield
+
+
 def _body(current: StateBlock) -> str:
     return f"## Release\n\n{state.render_state(current)}\n"
 
@@ -211,7 +232,7 @@ def test_supersede_refuses_bare_release() -> None:
     check_eligible(eligible)
     open_issues = [_release_issue(_OLD, 40, _body(eligible))]
     with (
-        patch(_RESUME_READ, return_value=open_issues),
+        _open_releases(open_issues),
         pytest.raises(ReleaseError, match="One release runs at a time") as info,
     ):
         _check_no_open_release(_REPO)
@@ -222,12 +243,12 @@ def test_open_release_check_exempts_only_the_superseded_issue(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     eligible = _body(_simulated_state("cd-publish"))
-    with patch(_RESUME_READ, return_value=[_release_issue(_OLD, 40, eligible)]):
+    with _open_releases([_release_issue(_OLD, 40, eligible)]):
         _check_no_open_release(_REPO, exempt=40)
     assert "only the superseded release #40 is open" in capsys.readouterr().out
     other = _release_issue("2.1.6", 41, eligible.replace(_OLD, "2.1.6"))
     with (
-        patch(_RESUME_READ, return_value=[_release_issue(_OLD, 40, eligible), other]),
+        _open_releases([_release_issue(_OLD, 40, eligible), other]),
         pytest.raises(ReleaseError, match="release 2.1.6"),
     ):
         _check_no_open_release(_REPO, exempt=40)

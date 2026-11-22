@@ -127,7 +127,10 @@ On a fresh start (not on `--resume`), preflight refuses while any
 version. The refusal names each open issue and the
 `vrg-release --resume X.Y.Z` that finishes it, or, for an issue with no
 state block (left by older tooling), says to finish that release by
-hand and then close the issue. Lookup failures refuse the release. See
+hand and then close the issue. Only an issue whose body is trusted
+counts: one opened or edited by an identity with no trusted role is
+reported on stderr, metadata only, and never blocks the start. Lookup
+failures refuse the release. See
 [One release at a time](../../guides/releasing.md#one-release-at-a-time).
 
 `--supersede X.Y.Z` is the one exception: its check passes over release
@@ -149,7 +152,10 @@ On a fresh start (not on `--resume`), preflight refuses while an open
 PR carries the `dependency-update` label. First it closes, with a
 comment, any such PR whose linked fix task was closed as completed (the
 update landed through the fix PR), and deletes its head branch. A failed
-branch delete is reported, not fatal. `--allow-pending-deps` lets the
+branch delete is reported, not fatal. The `Fix task:` link counts only
+from a trusted PR body, and a completed close counts only when a trusted
+identity closed the fix task: a close by anyone else stops the release
+before any PR is touched, naming who closed it. `--allow-pending-deps` lets the
 release past whatever still blocks. Lookup failures refuse the release.
 See [The dependency-update gate](../../guides/releasing.md#the-dependency-update-gate).
 
