@@ -800,8 +800,8 @@ class TestRenderCiWorkflow:
         content = render_ci_workflow(ctx)
         assert "ci-test.yml@v2.1" in content
 
-    @pytest.mark.parametrize("language", ["python", None])
-    def test_repo_init_ci_has_no_upload_sarif(self, language: str | None) -> None:
+    @pytest.mark.parametrize("language", ["python", ""])
+    def test_repo_init_ci_has_no_upload_sarif(self, language: str) -> None:
         """Every repo is public: no SARIF opt-out, and no ``actions: read`` grant.
 
         ci-security.yml@v2.1 no longer requests ``actions: read`` (epic
