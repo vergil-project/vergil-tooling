@@ -34,7 +34,6 @@ from vergil_tooling.lib import (
     linkage,
     proxies,
     release,
-    remote_config,
     roadmap,
 )
 from vergil_tooling.lib.labels import RETIRED_LABELS
@@ -678,68 +677,6 @@ def open_issues(org: str) -> list[OpenIssue]:
     return issues
 
 
-# GitHub's 403 for /installation/repositories under a token that is not an App
-# installation token (a human's own gh login).
-_NOT_AN_INSTALLATION_403 = "installation access token"
-
-
-def coverage_gap(org: str) -> str | None:
-    """Why the active token may not see every repo in *org*, or None when it sees them all.
-
-    The org-wide passes enumerate *org* through :func:`github.list_org_repos`,
-    which silently lists only the repos the token can see (#3513). An App
-    installation token covers all of *org* only when it is installed on *org*
-    with ``repository_selection`` ``all``; a human's own login covers it when
-    it owns *org* (or *org* is that login's own account). Anything else is a
-    gap the caller must report, never a clean result. Any other API error
-    propagates.
-
-    The installation probe asks for one row on purpose: only the account
-    that row belongs to and the installation's ``repository_selection`` are
-    read, never the repo list, so no listing can be cut short.
-    """
-    try:
-        data: Any = github.read_json("api", "installation/repositories?per_page=1")
-    except github.GitHubAPIError as exc:
-        if _NOT_AN_INSTALLATION_403 not in (exc.stderr or "") + (exc.stdout or ""):
-            raise
-        return _login_coverage_gap(org)
-    if not isinstance(data, dict):
-        raise RuntimeError("unexpected /installation/repositories response")
-    rows = data.get("repositories") or []
-    account = str(((rows[0] or {}).get("owner") or {}).get("login") or "") if rows else ""
-    if account.lower() != org.lower():
-        return f"the GitHub App token in use is not installed on {org}"
-    selection = data.get("repository_selection")
-    if selection != "all":
-        return (
-            f"the GitHub App installation on {org} covers only selected repositories "
-            f"(repository_selection: {selection})"
-        )
-    return None
-
-
-def _login_coverage_gap(org: str) -> str | None:
-    """:func:`coverage_gap` for a human's own gh login (not an App token)."""
-    try:
-        membership: Any = github.read_json("api", f"user/memberships/orgs/{org}")
-    except github.GitHubAPIError as exc:
-        if not remote_config.is_not_found(exc):
-            raise
-        user: Any = github.read_json("api", "user")
-        login = str((user or {}).get("login") or "") if isinstance(user, dict) else ""
-        if login and login.lower() == org.lower():
-            return None
-        return f"the GitHub login in use is not a member of {org}"
-    if (
-        isinstance(membership, dict)
-        and membership.get("state") == "active"
-        and membership.get("role") == "admin"
-    ):
-        return None
-    return f"the GitHub login in use is not an owner of {org}, so it may not see every repo"
-
-
 def _epic_body_parent(issue: OpenIssue) -> epics.IssueRef | None:
     """The epic a body-only ``Parent:`` line names (no native parent), else None."""
     if issue.native_parent is not None:
@@ -788,53 +725,39 @@ def orphan_drift(org: str, *, issues: list[OpenIssue] | None = None) -> list[Orp
     return orphans
 
 
-_QUEUE_FULL_HINT = {
-    "intake": "Run epic-review intake.",
-    "planning": "Run epic-review planning.",
-    "deferred": "Run epic-review deferred.",
-}
-
-
 class StandingEpicFull(RuntimeError):  # noqa: N818 - the name is the plan's interface
-    """A queue epic is at the open-children cap; the pass stopped before overflowing it.
+    """An intake epic is at the open-children cap; the orphan pass stopped before overflowing it.
 
-    Raised before any write that would exceed the cap, naming every item not yet
-    linked, so nothing is attached past the cap and nothing is silently dropped.
+    Raised before any write that would exceed the cap, naming every orphan not
+    yet attached, so nothing is attached past the cap and nothing is silently
+    dropped.
     """
 
     def __init__(
-        self,
-        epic: epics.IssueRef,
-        open_children: int,
-        pending: list[epics.IssueRef],
-        *,
-        kind: str = "intake",
-        noun: str = "orphan(s) not attached",
+        self, epic: epics.IssueRef, open_children: int, pending: list[epics.IssueRef]
     ) -> None:
         self.epic = epic
         self.open_children = open_children
         self.pending = pending
         listed = ", ".join(ref.slug for ref in pending)
         super().__init__(
-            f"{kind} epic {epic.slug} is full ({open_children} open); "
-            f"{len(pending)} {noun}: {listed}. {_QUEUE_FULL_HINT[kind]}"
+            f"intake epic {epic.slug} is full ({open_children} open); "
+            f"{len(pending)} orphan(s) not attached: {listed}. Run epic-review intake."
         )
 
 
 class _QueueCapacity:
-    """Open-children counts per queue epic, checked before each link (the cap)."""
+    """Open-children counts per intake epic, checked before each link (the cap)."""
 
     def __init__(self) -> None:
         self._open: dict[epics.IssueRef, int] = {}
 
-    def reserve(
-        self, epic: epics.IssueRef, pending: list[epics.IssueRef], *, kind: str, noun: str
-    ) -> None:
+    def reserve(self, epic: epics.IssueRef, pending: list[epics.IssueRef]) -> None:
         """Count one more open child under *epic*, or raise if it is already full."""
         if epic not in self._open:
             self._open[epic] = sum(1 for c in epics.child_states(epic) if c.state == "OPEN")
         if self._open[epic] >= epics._ADHOC_ARCHIVE_SEGMENT_CAP:
-            raise StandingEpicFull(epic, self._open[epic], pending, kind=kind, noun=noun)
+            raise StandingEpicFull(epic, self._open[epic], pending)
         self._open[epic] += 1
 
 
@@ -854,7 +777,7 @@ def attach_orphans(orphans: list[Orphan]) -> int:
             targets[key] = epics.ensure_standing_epic(epics.INTAKE, orphan.home, orphan.name)
         target = targets[key]
         pending = [o.ref for o in orphans[index:]]
-        capacity.reserve(target, pending, kind="intake", noun="orphan(s) not attached")
+        capacity.reserve(target, pending)
         epics.add_child(target, orphan.ref)
     return len(orphans)
 
@@ -1336,13 +1259,8 @@ def render(
     proxy_closures: list[ProxyClosure] | None = None,
     proxy_errors: list[str] | None = None,
     misplaced_adhoc: list[MisplacedTask] | None = None,
-    coverage_gap: str | None = None,
 ) -> str:
     """Format the drift + invariant report; a clean state says so explicitly.
-
-    A ``coverage_gap`` (from :func:`coverage_gap`) opens the report with an
-    **Incomplete coverage** section and replaces the clean-state line, so a
-    partial report is never read as a complete one (#3513).
 
     The orphan pass (epic .github#176) adds ``orphans``, ``retired_labels``
     and ``body_only`` (what ``--close`` would apply). ``misplaced`` is the
@@ -1403,18 +1321,7 @@ def render(
             misplaced_adhoc,
         ]
     ):
-        if coverage_gap is not None:
-            return "\n".join(
-                [
-                    *header,
-                    *_render_coverage_gap(coverage_gap),
-                    "_No drift in the repos this identity can see; the report is partial._",
-                    "",
-                ]
-            )
         return "\n".join([*header, "_No drift — everything that should be closed is closed._", ""])
-    if coverage_gap is not None:
-        header = [*header, *_render_coverage_gap(coverage_gap)]
     lines = [*header, "## Task drift (merged PR, task still open)", ""]
     if tasks:
         for task in sorted(tasks, key=lambda t: (t.repo, t.task)):
@@ -1552,17 +1459,6 @@ def _render_proxy_errors(errors: list[str]) -> list[str]:
         "## Proxy link errors (the run fails; fix each link by hand)",
         "",
         *[f"- {error}" for error in errors],
-    ]
-
-
-def _render_coverage_gap(gap: str) -> list[str]:
-    return [
-        "## Incomplete coverage",
-        "",
-        f"- **This report is partial:** {gap}. Repos the identity cannot see are "
-        "not audited, so a missing finding does not mean a clean state. Run the "
-        "audit as an identity that sees every repo in the org.",
-        "",
     ]
 
 

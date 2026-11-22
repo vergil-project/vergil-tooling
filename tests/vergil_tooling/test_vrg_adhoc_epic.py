@@ -175,7 +175,6 @@ def test_archive_malformed_repo_errors(capsys: pytest.CaptureFixture[str]) -> No
 def test_archive_all_in_apply(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.target_org") as mock_scope,
-        patch(f"{_MOD}.epic_audit.coverage_gap", return_value=None),
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]) as mock_org,
     ):
         rc = main(["archive", "--all-in", "org", "--apply"])
@@ -193,7 +192,6 @@ def test_archive_all_in_renders_each_plan(capsys: pytest.CaptureFixture[str]) ->
     )
     with (
         patch(f"{_MOD}.github.target_org"),
-        patch(f"{_MOD}.epic_audit.coverage_gap", return_value=None),
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[plan]),
     ):
         rc = main(["archive", "--all-in", "org"])
@@ -219,7 +217,6 @@ def test_normalize_dry_run_lists_conversions(capsys: pytest.CaptureFixture[str])
     ]
     with (
         patch(f"{_MOD}.github.target_org"),
-        patch(f"{_MOD}.epic_audit.coverage_gap", return_value=None),
         patch(f"{_MOD}.epics.normalize_adhoc_archives", return_value=conv) as mock_norm,
     ):
         rc = main(["normalize", "--all-in", "org"])
@@ -233,74 +230,8 @@ def test_normalize_dry_run_lists_conversions(capsys: pytest.CaptureFixture[str])
 def test_normalize_apply_passes_apply_true() -> None:
     with (
         patch(f"{_MOD}.github.target_org"),
-        patch(f"{_MOD}.epic_audit.coverage_gap", return_value=None),
         patch(f"{_MOD}.epics.normalize_adhoc_archives", return_value=[]) as mock_norm,
     ):
         rc = main(["normalize", "--all-in", "org", "--apply"])
     assert rc == 0
     mock_norm.assert_called_once_with("org", apply=True)
-
-
-_GAP = "the GitHub App installation on org covers only selected repositories"
-
-
-@pytest.mark.parametrize("apply", [False, True])
-def test_archive_all_in_refuses_a_partial_view(
-    capsys: pytest.CaptureFixture[str], *, apply: bool
-) -> None:
-    # A token that may not see every repo must not read as "no private homes" (#4579).
-    scoped: list[str | None] = []
-
-    def _gap(org: str) -> str:
-        scoped.append(github._target_org.get())
-        assert org == "org"
-        return _GAP
-
-    argv = ["archive", "--all-in", "org", *(["--apply"] if apply else [])]
-    with (
-        patch(f"{_MOD}.epic_audit.coverage_gap", side_effect=_gap),
-        patch(f"{_MOD}.epics.drain_adhoc_org") as mock_org,
-    ):
-        rc = main(argv)
-    assert rc == 1
-    mock_org.assert_not_called()
-    assert scoped == ["org"]  # probed under the org's token
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert f"vrg-adhoc-epic: --all-in org refused: {_GAP}" in captured.err
-
-
-@pytest.mark.parametrize("apply", [False, True])
-def test_normalize_refuses_a_partial_view(
-    capsys: pytest.CaptureFixture[str], *, apply: bool
-) -> None:
-    scoped: list[str | None] = []
-
-    def _gap(_org: str) -> str:
-        scoped.append(github._target_org.get())
-        return _GAP
-
-    argv = ["normalize", "--all-in", "org", *(["--apply"] if apply else [])]
-    with (
-        patch(f"{_MOD}.epic_audit.coverage_gap", side_effect=_gap),
-        patch(f"{_MOD}.epics.normalize_adhoc_archives") as mock_norm,
-    ):
-        rc = main(argv)
-    assert rc == 1
-    mock_norm.assert_not_called()
-    assert scoped == ["org"]
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert f"vrg-adhoc-epic: --all-in org refused: {_GAP}" in captured.err
-
-
-def test_archive_repo_skips_the_org_coverage_probe() -> None:
-    # A single --repo drain reads its one repo directly, never the org's repo list.
-    with (
-        patch(f"{_MOD}.github.target_org"),
-        patch(f"{_MOD}.epic_audit.coverage_gap") as mock_gap,
-        patch(f"{_MOD}.epics.drain_adhoc_repo", return_value=None),
-    ):
-        rc = main(["archive", "--repo", "org/tooling"])
-    assert rc == 0
-    mock_gap.assert_not_called()

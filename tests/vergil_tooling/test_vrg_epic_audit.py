@@ -46,7 +46,6 @@ def standing_drain() -> Iterator[MagicMock]:
     with (
         patch(f"{_MOD}.epics.drain_standing_org", return_value=[]) as mock_drain,
         patch(f"{_MOD}.epic_audit.open_issues", return_value=[]),
-        patch(f"{_MOD}.epic_audit.coverage_gap", return_value=None),
         patch(f"{_MOD}.epic_audit.list_home_epics", return_value=[]),
         patch(f"{_MOD}.epic_audit.epic_documents", return_value=[]),
         patch(f"{_MOD}.epics.github.repo_exists", return_value=True),
@@ -155,7 +154,7 @@ def test_main_lists_home_epics_under_the_home_owner_token() -> None:
 
 
 def test_main_reads_the_whole_audit_under_the_audited_org_token() -> None:
-    # Every read uses the audited org's token, never a cwd-scoped one (#3513).
+    # Every read uses the audited org's token, never a cwd-scoped one.
     seen: dict[str, str | None] = {}
 
     def record(name: str, value: Any) -> Any:
@@ -168,7 +167,6 @@ def test_main_reads_the_whole_audit_under_the_audited_org_token() -> None:
     with (
         patch(f"{_MOD}.github.detect_org", return_value="lab-org"),
         patch(f"{_MOD}.epics.require_org_home", side_effect=record("home", "lab-org/.github")),
-        patch(f"{_MOD}.epic_audit.coverage_gap", side_effect=record("coverage", None)),
         patch(f"{_MOD}.epic_audit.task_drift", side_effect=record("tasks", [])),
         patch(f"{_MOD}.epic_audit.epic_drift", side_effect=record("epics", [])),
         patch(f"{_MOD}.epic_audit.open_issues", side_effect=record("issues", [])),
@@ -181,50 +179,7 @@ def test_main_reads_the_whole_audit_under_the_audited_org_token() -> None:
     ):
         assert main([]) == 0
     assert seen == dict.fromkeys(
-        ("home", "coverage", "tasks", "epics", "outside", "drain", "issues"), "lab-org"
-    )
-
-
-def test_main_preview_with_a_coverage_gap_is_partial_and_exits_1(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    with (
-        _patched(_report_patches()),
-        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
-        patch(f"{_MOD}.epic_audit.coverage_gap", return_value="the token is not installed on org"),
-    ):
-        rc = main([])
-    assert rc == 1
-    captured = capsys.readouterr()
-    assert captured.err == (
-        "vrg-epic-audit: incomplete coverage: the token is not installed on org\n"
-    )
-    assert "## Incomplete coverage" in captured.out
-    assert "the report is partial" in captured.out
-    assert "everything that should be closed is closed" not in captured.out
-
-
-def test_close_with_a_coverage_gap_is_refused_before_any_write(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    close_drift = MagicMock(return_value=[])
-    with (
-        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
-        patch(f"{_MOD}.github.detect_org", return_value="org"),
-        patch(f"{_MOD}.epic_audit.coverage_gap", return_value="gap"),
-        patch(f"{_MOD}.epic_audit.task_drift") as drift,
-        patch(f"{_MOD}.epic_audit.close_drift", close_drift),
-        patch(f"{_MOD}.epics.drain_adhoc_org") as drain,
-    ):
-        rc = main(["--close"])
-    assert rc == 1
-    drift.assert_not_called()
-    close_drift.assert_not_called()
-    drain.assert_not_called()
-    assert capsys.readouterr().err == (
-        "vrg-epic-audit: incomplete coverage: gap\n"
-        "vrg-epic-audit: --close refused: it would act on a partial view of the "
-        "org; run it as an identity that sees every repo.\n"
+        ("home", "tasks", "epics", "outside", "drain", "issues"), "lab-org"
     )
 
 

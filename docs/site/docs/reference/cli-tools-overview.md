@@ -905,8 +905,8 @@ quarter-named epics to that form; both are dry runs unless `--apply`.
 |---|---|
 | Source | `vergil_tooling.bin.vrg_adhoc_epic` |
 | Args | `ensure [--repo]`; `archive --repo` or `archive --all-in ORG`, each with optional `--apply`; `normalize --all-in ORG [--apply]` |
-| Preconditions | GitHub App credentials for the target org; `--all-in` also needs an identity that sees every repo in ORG |
-| Failure mode | Error on stderr; `--all-in` refuses before any read when the identity may not see every repo in ORG |
+| Preconditions | GitHub App credentials for the target org |
+| Failure mode | Error on stderr |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 
@@ -1540,15 +1540,8 @@ it).
 The org comes from the current repo's `origin` remote (there is no `--org`
 flag), and the home audited is that org's `.github`.
 
-Every read runs under the audited org's token, wherever the command is run
-from. Before any check, the audit confirms that this token sees every repo in
-the org: an App token must belong to an installation on that org with access
-to all repositories, and a human's own `gh` login must be an owner of the org
-(or the org must be that login's own account). If it does not, the audit
-names the gap on stderr. The read-only report then opens with an
-**Incomplete coverage** section and exits 1, and `--close` is refused before
-any write. A full preview therefore needs the org's App installation with
-access to all repositories, or an org owner's own login.
+Every read and write runs under the audited org's token, wherever the
+command is run from.
 
 `--epic REF` is a separate read-only mode: it prints one epic's children as
 JSON (`{"epic": <slug>, "children": [{repo, number, title, state}, …]}`) and
@@ -1590,8 +1583,8 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 | Source | `vergil_tooling.bin.vrg_epic_audit` (checks and passes: `lib/epic_audit.py`; security pass: `lib/security_records.py`) |
 | Args | `--window-days N` (positive; default 30), `--epic REF`, `--close` |
 | Preconditions | Run inside a repo in the target org; GitHub App credentials for that org. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The read-only report's security-records preview needs Repository security advisories: Read; `--close` needs no advisories access |
-| Failure mode | `--close` in an agent session is refused before any network call; an org that cannot be detected, or an org with no `.github` home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and `--close` is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose `Primary:` link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without `--close`. With `--epic`, a ref that is not an epic, or proxy link drift, exits 1 |
-| Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, incomplete coverage, a pass failed, or error, 2 bad arguments |
+| Failure mode | `--close` in an agent session is refused before any network call; an org that cannot be detected, or an org with no `.github` home exits 1. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose `Primary:` link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without `--close`. With `--epic`, a ref that is not an epic, or proxy link drift, exits 1 |
+| Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, or error, 2 bad arguments |
 | Status | Active |
 
 ### vrg-repo-status
@@ -2178,8 +2171,8 @@ toward keeping. An image is kept when:
 
 Only an image that matches none of these is removed. Origin is read with
 `git ls-remote`, so a branch deleted on GitHub counts as gone. When a
-repo's origin cannot be read (typically a private repo the agent's App
-cannot see), that repo's local `refs/remotes/origin/*` stand in, with a
+repo's origin cannot be read (a network error, or an origin repo that no
+longer exists), that repo's local `refs/remotes/origin/*` stand in, with a
 warning naming the repo; stale tracking refs can only keep extra images,
 never remove live ones. Any other failure to read the repo set, the images,
 the containers or a repo's branches stops the run before anything is
