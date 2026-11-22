@@ -1211,20 +1211,22 @@ multi-page form for a docs site (`index.md`, `days/<date>.md`,
 
 ### vrg-trusted-authors
 
-The one accessor for the trusted-authors configuration: the GitHub logins
-whose issues and comments automation may trust. It reads
-`~/.config/vergil/trusted-authors.toml` (delivered into agent VMs by `vrg-vm`)
-if it exists, else the `[trusted_authors]` stanza of
-`~/.config/vergil/identities.toml`, and prints `human: <login>` and
-`agent: <login>`, one per line. Skills and doctrine name this command, never
-the logins. See
+The one accessor for the trusted-authors configuration: the GitHub identities
+whose issues and comments automation may trust, and the Vergil orgs with their
+automation Apps. It reads `~/.config/vergil/trusted-authors.toml` (delivered
+into agent VMs by `vrg-vm`) if it exists, else the `[trusted_authors]` and
+`[orgs.<org>]` stanzas of `~/.config/vergil/identities.toml`, else, in a
+GitHub Actions job with neither file, `$VRG_TRUSTED_AUTHORS`. It prints
+`human: <login>` and `agent: <login>`, one per line, then
+`org: <org> automation: <slug>` for each Vergil org. Skills and doctrine name
+this command, never the logins. See
 [Trusted authors](../guides/account-setup.md#trusted-authors).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_trusted_authors` (config: `lib/trusted_authors.py`) |
-| Args | `--json` (prints `{"human": [...], "agents": [...]}`) |
-| Preconditions | The VM file or the host stanza exists |
+| Args | `--json` (prints `{"human": [...], "agents": [...], "orgs": {"<org>": {"automation_app": "<slug>"}}}`) |
+| Preconditions | The VM file or the host stanzas exist, or, under GitHub Actions only, `$VRG_TRUSTED_AUTHORS` is set |
 | Failure mode | Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default |
 | Exit codes | 0 success, 1 not configured or invalid, 2 bad arguments |
 | Status | Active |

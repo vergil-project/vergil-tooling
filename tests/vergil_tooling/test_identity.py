@@ -19,7 +19,7 @@ from vergil_tooling.lib.identity import (
     resolve_vm_tag,
     resolve_workspace,
 )
-from vergil_tooling.lib.trusted_authors import TrustedAuthors
+from vergil_tooling.lib.trusted_authors import OrgConfig, TrustedAuthors
 
 
 @pytest.fixture()
@@ -175,7 +175,33 @@ def test_load_config_rejects_unknown_auth_type(tmp_path: Path) -> None:
         load_config(p)
 
 
-def test_identity_config_parses_trusted_authors_stanza(tmp_path: Path) -> None:
+def test_load_config_carries_orgs(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [trusted_authors]
+        human = ["example-human"]
+        agents = ["example-agent"]
+
+        [orgs.example-org]
+        automation_app = "example-org-automation"
+
+        [identities.vergil-user]
+        vm_instance = "vergil-user"
+    """)
+    )
+    cfg = load_config(p)
+    assert cfg.trusted_authors == TrustedAuthors(
+        human=("example-human",),
+        agents=("example-agent",),
+        orgs={"example-org": OrgConfig(automation_app="example-org-automation")},
+    )
+    assert set(cfg.identities) == {"vergil-user"}
+
+
+def test_identity_config_rejects_trusted_authors_without_orgs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     p = tmp_path / "identities.toml"
     p.write_text(
         textwrap.dedent("""\
@@ -187,11 +213,9 @@ def test_identity_config_parses_trusted_authors_stanza(tmp_path: Path) -> None:
         vm_instance = "vergil-user"
     """)
     )
-    cfg = load_config(p)
-    assert cfg.trusted_authors == TrustedAuthors(
-        human=("example-human",), agents=("example-agent",)
-    )
-    assert set(cfg.identities) == {"vergil-user"}
+    with pytest.raises(SystemExit):
+        load_config(p)
+    assert "no [orgs.<org>] stanza" in capsys.readouterr().err
 
 
 def test_identity_config_trusted_authors_absent_is_none(config_file: Path) -> None:

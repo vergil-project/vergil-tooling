@@ -178,10 +178,10 @@ _TRUSTED_AUTHORS_FILE = f"~/.config/vergil/{VM_FILE_NAME}"
 
 
 def inject_trusted_authors(transport: Transport, authors: TrustedAuthors | None) -> None:
-    """Deliver the host's ``[trusted_authors]`` stanza into the VM, or remove it.
+    """Deliver the host's ``[trusted_authors]`` and ``[orgs.*]`` stanzas into the VM, or remove them.
 
-    Writes ``~/.config/vergil/trusted-authors.toml`` (mode 600) when *authors* is
-    set. When the host has no stanza (*authors* is ``None``) the VM file is
+    Writes ``~/.config/vergil/trusted-authors.toml`` (mode 600), with the
+    ``[orgs.<org>]`` tables, when *authors* is set. When the host has no stanza (*authors* is ``None``) the VM file is
     **deleted**, so ``vrg-trusted-authors`` in the VM fails loudly instead of
     trusting a stale list from an earlier delivery.
     """

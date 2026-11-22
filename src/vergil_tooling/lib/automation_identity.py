@@ -5,11 +5,15 @@ belongs to a process whose GitHub credential is an installation token of the
 org's automation App. It is used only for mechanized work, never for anything
 an AI agent does (epic vergil-project/.github#1064, spec §3 and §6.1).
 
-**Which App is the automation App** is configuration, not code. Each org sets
-the App's slug once, as the org-level Actions variable ``VRG_AUTOMATION_APP``.
-A workflow job that runs as the automation identity copies it into the
-``VRG_AUTOMATION_APP`` environment variable; a local human run reads the org
-variable back through the API.
+**Which App is the automation App** is configuration, not code. The human's
+trusted-authors configuration names each Vergil org's App slug once, as the
+``automation_app`` of its ``[orgs.<org>]`` stanza
+(:mod:`vergil_tooling.lib.trusted_authors`, epic vergil-project/.github#1467,
+spec §5.1a). The org-level Actions variable ``VRG_AUTOMATION_APP`` is a copy
+derived from it; a workflow job that runs as the automation identity copies
+that into the ``VRG_AUTOMATION_APP`` environment variable.
+:func:`automation_app_slug` reads the environment variable only for the job's
+own org, and the configuration otherwise; it never reads the API.
 
 **The environment variable only decides whether verification runs.** With it
 set, :func:`~vergil_tooling.lib.identity_mode.resolve` calls
@@ -35,7 +39,7 @@ from __future__ import annotations
 import os
 from typing import cast
 
-from vergil_tooling.lib import retry
+from vergil_tooling.lib import trusted_authors
 from vergil_tooling.lib.process_errors import error_text
 
 # ``lib.github`` is imported inside the functions that call GitHub, never at
@@ -45,6 +49,8 @@ from vergil_tooling.lib.process_errors import error_text
 
 AUTOMATION_ENV = "VRG_AUTOMATION_APP"
 ORG_VARIABLE = "VRG_AUTOMATION_APP"
+# The org of the job's own repo, set by GitHub Actions in every job.
+_REPOSITORY_OWNER_ENV = "GITHUB_REPOSITORY_OWNER"
 
 _VIEWER_LOGIN_QUERY = "query { viewer { login } }"
 
@@ -80,37 +86,40 @@ def env_slug() -> str | None:
     return slug
 
 
+def _is_own_org(org: str) -> bool:
+    """Whether *org* is the org of the job's own repo (``$GITHUB_REPOSITORY_OWNER``)."""
+    owner = os.environ.get(_REPOSITORY_OWNER_ENV, "").strip()
+    return bool(owner) and owner.casefold() == org.casefold()
+
+
 def automation_app_slug(org: str) -> str:
-    """The automation App's slug for *org*.
+    """The automation App's slug for *org*; never read from the API.
 
-    ``$VRG_AUTOMATION_APP`` when set; otherwise the org-level Actions variable,
-    read through ``GET orgs/<org>/actions/variables/VRG_AUTOMATION_APP`` (the
-    human's token holds the org admin right that endpoint needs). Raises
-    :class:`AutomationIdentityError` when the variable is unset or empty, or
-    cannot be read.
+    ``$VRG_AUTOMATION_APP`` only when *org* is the job's own org
+    (``$GITHUB_REPOSITORY_OWNER``): that variable is the job's own org's
+    value. Otherwise the ``automation_app`` of *org*'s ``[orgs.<org>]``
+    stanza in the trusted-authors configuration
+    (:func:`~vergil_tooling.lib.trusted_authors.load_trusted_authors`).
+    Raises :class:`AutomationIdentityError` when the configuration cannot be
+    loaded or has no stanza for *org*.
     """
-    slug = env_slug()
-    if slug is not None:
-        return slug
-    from vergil_tooling.lib import github
-
-    endpoint = f"orgs/{org}/actions/variables/{ORG_VARIABLE}"
+    if _is_own_org(org):
+        slug = env_slug()
+        if slug is not None:
+            return slug
     try:
-        payload = github.read_json("api", endpoint)
-    except github.GitHubAPIError as exc:
-        if retry.is_not_found(exc):
-            msg = f"the org-level Actions variable {ORG_VARIABLE} is not set in {org}"
-        else:
-            msg = (
-                f"could not read the org-level Actions variable {ORG_VARIABLE} in {org}: "
-                f"{error_text(exc)}"
-            )
+        authors = trusted_authors.load_trusted_authors()
+    except (trusted_authors.TrustedAuthorsNotConfiguredError, ValueError) as exc:
+        msg = f"could not read the automation App of {org} from the configuration: {exc}"
         raise AutomationIdentityError(msg) from exc
-    value = _field(payload, "value")
-    if not isinstance(value, str) or not value.strip():
-        msg = f"the org-level Actions variable {ORG_VARIABLE} in {org} is empty"
+    config = trusted_authors.org_config(authors, org)
+    if config is None:
+        msg = (
+            f"{org} is not a Vergil org: the trusted-authors configuration has no"
+            f" [{trusted_authors.ORGS_STANZA}.{org}] stanza naming its automation App"
+        )
         raise AutomationIdentityError(msg)
-    return value.strip()
+    return config.automation_app
 
 
 def automation_app_id(slug: str) -> int:

@@ -19,7 +19,7 @@ the dev-tree override venv.
 | [vrg-gh](cli-tools-overview.md#vrg-gh) | Identity-aware `gh` wrapper with a per-identity allowlist |
 | [vrg-whoami](cli-tools-overview.md#vrg-whoami) | Print the resolved identity role or platform |
 | [vrg-hook-guard](cli-tools-overview.md#vrg-hook-guard) | Claude Code hook that blocks raw `git` and `gh` |
-| [vrg-trusted-authors](cli-tools-overview.md#vrg-trusted-authors) | Print the GitHub logins whose issues and comments automation may trust |
+| [vrg-trusted-authors](cli-tools-overview.md#vrg-trusted-authors) | Print the GitHub identities whose issues and comments automation may trust, and the Vergil orgs |
 | [vrg-resolve-tracking-issue](cli-tools-overview.md#vrg-resolve-tracking-issue) | Print a merge commit's tracking issue |
 | [vrg-vm](cli-tools-overview.md#vrg-vm) | Manage the identity agent VMs |
 | [vrg-vm-resolve-session](cli-tools-overview.md#vrg-vm-resolve-session) | Pick and start a Claude Code session inside an identity VM (run by `vrg-vm session`) |

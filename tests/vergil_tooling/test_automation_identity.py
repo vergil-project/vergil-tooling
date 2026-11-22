@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -16,8 +17,24 @@ from vergil_tooling.lib.automation_identity import (
     env_slug,
     verify_token_is_app,
 )
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
-_SLUG = "vergil-project-automation"
+if TYPE_CHECKING:
+    from pathlib import Path
+
+_SLUG = "example-org-automation"
+# Invented orgs and logins only.
+_IDENTITIES = """\
+[trusted_authors]
+human = ["example-human"]
+agents = ["example-agent"]
+
+[orgs.example-org]
+automation_app = "example-org-automation"
+
+[orgs.example-other-org]
+automation_app = "example-other-automation"
+"""
 _READ_JSON = "vergil_tooling.lib.github.read_json"
 _GRAPHQL = "vergil_tooling.lib.github.graphql"
 
@@ -47,43 +64,78 @@ class TestEnvSlug:
 
 
 class TestAutomationAppSlug:
-    def test_env_wins_without_api_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The slug: ``$VRG_AUTOMATION_APP`` for the job's own org, else the configuration."""
+
+    @pytest.fixture(autouse=True)
+    def _config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("VRG_TRUSTED_AUTHORS", raising=False)
+        monkeypatch.delenv("GITHUB_REPOSITORY_OWNER", raising=False)
+
+    @staticmethod
+    def _write_config(tmp_path: Path) -> None:
+        d = tmp_path / ".config" / "vergil"
+        d.mkdir(parents=True)
+        (d / "identities.toml").write_text(_IDENTITIES)
+
+    def test_automation_app_slug_env_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(AUTOMATION_ENV, _SLUG)
+        monkeypatch.setenv("GITHUB_REPOSITORY_OWNER", "Example-Org")
         with patch(_READ_JSON) as read:
-            assert automation_app_slug("vergil-project") == _SLUG
+            assert automation_app_slug("example-org") == _SLUG
         read.assert_not_called()
 
-    def test_automation_app_slug_reads_org_variable_without_env(self) -> None:
-        payload = {"name": ORG_VARIABLE, "value": f"{_SLUG}\n", "visibility": "all"}
-        with patch(_READ_JSON, return_value=payload) as read:
-            assert automation_app_slug("vergil-project") == _SLUG
-        read.assert_called_once_with(
-            "api", "orgs/vergil-project/actions/variables/VRG_AUTOMATION_APP"
+    def test_own_org_empty_env_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(AUTOMATION_ENV, "")
+        monkeypatch.setenv("GITHUB_REPOSITORY_OWNER", "example-org")
+        with pytest.raises(AutomationIdentityError, match="set but empty"):
+            automation_app_slug("example-org")
+
+    def test_automation_app_slug_other_org_ignores_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._write_config(tmp_path)
+        monkeypatch.setenv(AUTOMATION_ENV, _SLUG)
+        monkeypatch.setenv("GITHUB_REPOSITORY_OWNER", "example-org")
+        with patch(_READ_JSON) as read:
+            assert automation_app_slug("example-other-org") == "example-other-automation"
+        read.assert_not_called()
+
+    def test_env_without_repository_owner_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A process outside Actions that sets the variable by hand names no
+        # org of its own: the configuration decides.
+        self._write_config(tmp_path)
+        monkeypatch.setenv(AUTOMATION_ENV, "example-hand-set")
+        assert automation_app_slug("example-org") == _SLUG
+
+    def test_automation_app_slug_reads_config(self, tmp_path: Path) -> None:
+        self._write_config(tmp_path)
+        with patch(_READ_JSON) as read:
+            assert automation_app_slug("example-org") == _SLUG
+            assert automation_app_slug("EXAMPLE-ORG") == _SLUG
+        read.assert_not_called()
+
+    def test_automation_app_slug_unlisted_org_raises(self, tmp_path: Path) -> None:
+        self._write_config(tmp_path)
+        with pytest.raises(AutomationIdentityError, match=r"example-unlisted.*\[orgs\.example-unlisted\]"):
+            automation_app_slug("example-unlisted")
+
+    def test_unconfigured_raises(self) -> None:
+        with pytest.raises(AutomationIdentityError, match="not configured") as excinfo:
+            automation_app_slug("example-org")
+        assert isinstance(excinfo.value.__cause__, TrustedAuthorsNotConfiguredError)
+
+    def test_invalid_config_raises(self, tmp_path: Path) -> None:
+        d = tmp_path / ".config" / "vergil"
+        d.mkdir(parents=True)
+        (d / "identities.toml").write_text(
+            '[trusted_authors]\nhuman = ["example-human"]\nagents = ["example-agent"]\n'
         )
-
-    def test_automation_app_slug_missing_raises(self) -> None:
-        with (
-            patch(_READ_JSON, side_effect=_api_error("gh: Not Found (HTTP 404)")),
-            pytest.raises(AutomationIdentityError, match="is not set in vergil-project"),
-        ):
-            automation_app_slug("vergil-project")
-
-    @pytest.mark.parametrize("payload", [{"value": ""}, {"value": "  "}, {}, {"value": 7}, []])
-    def test_empty_org_variable_raises(self, payload: object) -> None:
-        with (
-            patch(_READ_JSON, return_value=payload),
-            pytest.raises(AutomationIdentityError, match="is empty"),
-        ):
-            automation_app_slug("vergil-project")
-
-    def test_other_read_failure_names_the_cause(self) -> None:
-        with (
-            patch(_READ_JSON, side_effect=_api_error("gh: Must have admin rights (HTTP 403)")),
-            pytest.raises(AutomationIdentityError, match="HTTP 403") as excinfo,
-        ):
-            automation_app_slug("vergil-project")
-        assert "could not read" in str(excinfo.value)
-        assert isinstance(excinfo.value.__cause__, github.GitHubAPIError)
+        with pytest.raises(AutomationIdentityError, match=r"no \[orgs\.<org>\] stanza"):
+            automation_app_slug("example-org")
 
 
 class TestAutomationAppId:
