@@ -12,7 +12,6 @@ from vergil_tooling.lib import github
 from vergil_tooling.lib.dependabot_alerts import Alert, AuditUnavailable
 
 _FETCH = "vergil_tooling.bin.vrg_dependabot_audit.fetch_open_alerts"
-_VISIBILITY = "vergil_tooling.bin.vrg_dependabot_audit.github.repo_visibility"
 _TARGET_ORG = "vergil_tooling.bin.vrg_dependabot_audit.github.target_org"
 
 _ALERT = Alert(
@@ -40,11 +39,7 @@ def test_report_never_prints_alert_detail(capsys: pytest.CaptureFixture[str]) ->
         ghsa_id="GHSA-xxxx-canary",
         html_url="https://github.com/o/r/security/dependabot/7",
     )
-    no_visibility = AssertionError("the audit must not read the repo's visibility")
-    with (
-        patch(_FETCH, return_value=[_ALERT, canary]),
-        patch(_VISIBILITY, side_effect=no_visibility, create=True),
-    ):
+    with patch(_FETCH, return_value=[_ALERT, canary]):
         assert vrg_dependabot_audit.main(["--repo", "o/r"]) == 1
     captured = capsys.readouterr()
     assert captured.out == (

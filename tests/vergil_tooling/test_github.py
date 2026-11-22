@@ -2970,7 +2970,7 @@ class TestAppAuthError:
         assert not issubclass(github.AppAuthError, subprocess.CalledProcessError)
 
     def test_repo_exists_does_not_swallow_it(self) -> None:
-        github.repo_visibility.cache_clear()
+        github._repo_probe.cache_clear()
         with (
             patch("vergil_tooling.lib.github.read_json", side_effect=_app_auth_error()),
             pytest.raises(github.AppAuthError),
@@ -3763,63 +3763,65 @@ def test_closed_pr_for_branch_rejects_a_payload_not_dict() -> None:
         github.closed_pr_for_branch("feature/1445-finalize-cleanup-race")
 
 
-# -- repo_visibility / is_public (epic #130) ---------------------------------
-def test_is_public_true_for_public_repo() -> None:
-    github.repo_visibility.cache_clear()
-    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "PUBLIC"}):
-        assert github.is_public("org/repo") is True
+# -- repo_exists (issues #2709, #4907) ---------------------------------------
+def test_repo_exists_does_not_read_visibility() -> None:
+    # The probe asks GitHub for the repo's name only, never its visibility.
+    # A missing repo returns False; any other API error raises.
+    github._repo_probe.cache_clear()
+    with patch(
+        "vergil_tooling.lib.github.read_json", return_value={"nameWithOwner": "org/repo"}
+    ) as rj:
+        assert github.repo_exists("org", "repo") is True
+    rj.assert_called_once_with("repo", "view", "org/repo", "--json", "nameWithOwner")
+    assert not any("visibility" in str(arg).lower() for arg in rj.call_args.args)
 
-
-def test_is_public_false_for_private_and_internal() -> None:
-    github.repo_visibility.cache_clear()
-    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "PRIVATE"}):
-        assert github.is_public("org/priv") is False
-    github.repo_visibility.cache_clear()
-    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "INTERNAL"}):
-        assert github.is_public("org/intern") is False
-
-
-def test_repo_visibility_memoizes_one_probe_per_repo() -> None:
-    github.repo_visibility.cache_clear()
-    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "PUBLIC"}) as rj:
-        github.repo_visibility("org/repo")
-        github.repo_visibility("org/repo")
-    assert rj.call_count == 1
-
-
-def test_repo_visibility_fails_loud_on_empty() -> None:
-    github.repo_visibility.cache_clear()
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value={}),
-        pytest.raises(github.GitHubAPIError),
-    ):
-        github.repo_visibility("org/repo")
-
-
-# -- repo_exists (issue #2709) -----------------------------------------------
-def test_repo_exists_true_for_real_repo() -> None:
-    github.repo_visibility.cache_clear()
-    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "PRIVATE"}):
-        # A private repo the caller CAN see still exists — direct probe, not
-        # list membership.
-        assert github.repo_exists("org", "priv-repo") is True
-
-
-def test_repo_exists_false_for_missing_repo() -> None:
-    github.repo_visibility.cache_clear()
+    github._repo_probe.cache_clear()
     not_found = github.GitHubAPIError(
         1, ["gh", "repo", "view"], stderr="GraphQL: Could not resolve to a Repository"
     )
     with patch("vergil_tooling.lib.github.read_json", side_effect=not_found):
         assert github.repo_exists("org", "ghost-repo") is False
 
-
-def test_repo_exists_reraises_other_errors() -> None:
-    github.repo_visibility.cache_clear()
+    github._repo_probe.cache_clear()
     other = github.GitHubAPIError(1, ["gh", "repo", "view"], stderr="HTTP 401: Bad credentials")
     with (
         patch("vergil_tooling.lib.github.read_json", side_effect=other),
         pytest.raises(github.GitHubAPIError, match="Bad credentials"),
+    ):
+        github.repo_exists("org", "repo")
+
+
+def test_repo_exists_memoizes_one_probe_per_repo() -> None:
+    github._repo_probe.cache_clear()
+    with patch(
+        "vergil_tooling.lib.github.read_json", return_value={"nameWithOwner": "org/repo"}
+    ) as rj:
+        assert github.repo_exists("org", "repo") is True
+        assert github.repo_exists("org", "repo") is True
+    assert rj.call_count == 1
+
+
+def test_repo_exists_does_not_memoize_a_missing_repo() -> None:
+    # Only a found repo is remembered: a repo created later in the same
+    # process is seen on the next probe.
+    github._repo_probe.cache_clear()
+    not_found = github.GitHubAPIError(
+        1, ["gh", "repo", "view"], stderr="GraphQL: Could not resolve to a Repository"
+    )
+    with patch(
+        "vergil_tooling.lib.github.read_json",
+        side_effect=[not_found, {"nameWithOwner": "org/new"}],
+    ):
+        assert github.repo_exists("org", "new") is False
+        assert github.repo_exists("org", "new") is True
+
+
+@pytest.mark.parametrize("data", [{}, {"nameWithOwner": ""}, ["org/repo"]])
+def test_repo_exists_fails_loud_on_empty(data: object) -> None:
+    github._repo_probe.cache_clear()
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=data),
+        pytest.raises(github.GitHubAPIError, match="empty or missing nameWithOwner"),
     ):
         github.repo_exists("org", "repo")
 

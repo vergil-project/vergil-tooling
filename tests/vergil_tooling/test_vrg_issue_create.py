@@ -880,21 +880,21 @@ def test_main_bare_epic_resolves_against_target_epic_home() -> None:
 
 
 def _dotgithub_probe(error: str) -> object:
-    """A repo_visibility fake whose ``owner/.github`` lookup fails with *error*."""
+    """A ``_repo_probe`` fake whose ``owner/.github`` lookup fails with *error*."""
 
-    def visibility(nwo: str) -> str:
+    def probe(nwo: str) -> str:
         if nwo == "owner/.github":
             raise github.GitHubAPIError(1, ["gh", "repo", "view"], "", error)
-        return "PUBLIC"
+        return nwo
 
-    return visibility
+    return probe
 
 
 def test_main_repo_without_dotgithub_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
     """A repo whose owner has no .github fails up front, creating nothing (#3643)."""
     probe = _dotgithub_probe("GraphQL: Could not resolve to a Repository")
     with (
-        patch("vergil_tooling.lib.github.repo_visibility", side_effect=probe),
+        patch("vergil_tooling.lib.github._repo_probe", side_effect=probe),
         patch(f"{_MOD}.github.create_issue") as mock_create,
         pytest.raises(SystemExit) as excinfo,
     ):
@@ -911,7 +911,7 @@ def test_main_epic_home_api_error_is_a_clean_failure(capsys: pytest.CaptureFixtu
     """Any other failed home check exits 1 with a one-line message, creating nothing."""
     probe = _dotgithub_probe("HTTP 502: Bad Gateway")
     with (
-        patch("vergil_tooling.lib.github.repo_visibility", side_effect=probe),
+        patch("vergil_tooling.lib.github._repo_probe", side_effect=probe),
         patch(f"{_MOD}.github.create_issue") as mock_create,
         pytest.raises(SystemExit) as excinfo,
     ):

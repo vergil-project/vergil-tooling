@@ -30,13 +30,8 @@ def test_parse_args_requires_epic_and_task() -> None:
 
 
 def test_main_links_task_under_epic() -> None:
-    # Every repo is public (epic vergil-project/.github#1476): no visibility probe.
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(
-            "vergil_tooling.lib.github.is_public",
-            side_effect=AssertionError("is_public must not be called"),
-        ),
         patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--epic", "org/.github#40", "--task", "#42"])

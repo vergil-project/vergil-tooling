@@ -497,8 +497,8 @@ class TestTargetOwnerInstallationSelection:
             ["repo", "view", "other-owner/repo"],
             ["repo", "view", "github.com/other-owner/repo"],
             ["repo", "view", "https://github.com/other-owner/repo"],
-            ["repo", "view", "other-owner/repo", "--json", "visibility"],
-            ["repo", "view", "--json", "visibility", "other-owner/repo"],
+            ["repo", "view", "other-owner/repo", "--json", "nameWithOwner"],
+            ["repo", "view", "--json", "nameWithOwner", "other-owner/repo"],
             # repo list: positional owner, before or after flags
             ["repo", "list", "other-owner"],
             ["repo", "list", "--limit", "1000", "other-owner", "--json", "name"],

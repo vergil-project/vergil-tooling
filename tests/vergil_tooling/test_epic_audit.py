@@ -193,7 +193,7 @@ def test_task_drift_resolves_cross_repo_ref() -> None:
 
 
 def test_task_drift_skips_unresolvable_task(capsys: pytest.CaptureFixture[str]) -> None:
-    # A ref to a task this run can't see (cross-org, private, deleted) must be
+    # A ref to a task this run can't see (cross-org or deleted) must be
     # skipped with a warning, not crash the sweep (issue #2111).
     prs = [
         {
@@ -344,18 +344,10 @@ def test_invariant1_reports_every_non_dotgithub_epic() -> None:
     # Every epic outside .github is a violation, whatever its repo's visibility,
     # and no visibility field is read (epic vergil-project/.github#1476).
     issues = [{"number": 4, "repository": {"nameWithOwner": "vergil-project/lab"}}]
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value=issues),
-        patch(
-            "vergil_tooling.lib.github.is_public",
-            side_effect=AssertionError("invariant 1 must not probe visibility"),
-        ),
-        patch(
-            "vergil_tooling.lib.github.repo_visibility",
-            side_effect=AssertionError("invariant 1 must not read visibility"),
-        ),
-    ):
+    with patch("vergil_tooling.lib.github.read_json", return_value=issues) as mock_search:
         assert epic_audit.epic_outside_dotgithub("vergil-project") == ["vergil-project/lab#4"]
+    mock_search.assert_called_once()
+    assert not any("visibility" in str(arg) for arg in mock_search.call_args.args)
 
 
 def test_stray_dotgithub_issue_flags_unlinked_non_epic() -> None:
