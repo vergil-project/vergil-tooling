@@ -146,6 +146,7 @@ from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release import gate
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
@@ -537,11 +538,13 @@ class _SubmitFailedError(Exception):
 
 # The failures that end one PR's submit without stopping the others: a refusal
 # from this module's checks (SystemExit with its message), a failed git or gh
-# call, a malformed GitHub payload, and auto-merge that could not be turned on.
+# call, a malformed GitHub payload, a provenance check with no trusted-authors
+# configuration to classify by, and auto-merge that could not be turned on.
 _PER_PR_ERRORS = (
     SystemExit,
     subprocess.CalledProcessError,
     ValueError,
+    TrustedAuthorsNotConfiguredError,
     auto_merge.AutoMergeError,
     _SubmitFailedError,
 )

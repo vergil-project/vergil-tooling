@@ -406,7 +406,13 @@ def _run_watched(args: argparse.Namespace, root: Path, prs: list[str]) -> int:
                 log=log,
                 describe=_describe_watch,
             )
-        except (finalize_watch.FinalizeWatchError, ValueError) as exc:
+        except (
+            finalize_watch.FinalizeWatchError,
+            TrustedAuthorsNotConfiguredError,
+            ValueError,
+        ) as exc:
+            # A provenance check with no trusted-authors configuration stops
+            # the watch like any other failed read: one line, never a traceback.
             print(f"vrg-finalize-pr: the watch stopped: {exc}", file=sys.stderr)
             return EXIT_ERROR
         merged = [r.pr for r in results if r.outcome == "merged"]

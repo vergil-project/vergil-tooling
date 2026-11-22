@@ -4410,3 +4410,19 @@ def test_a_watch_error_fails_the_stage(tmp_path: Path, capsys: pytest.CaptureFix
     assert "vrg-finalize-pr: the watch stopped: " in captured.err
     (log,) = _run_logs(tmp_path)
     assert "=== watch: failed (FinalizeWatchError: " in log.read_text()
+
+
+@pytest.mark.usefixtures("plain_renderer")
+def test_watch_without_trusted_authors_exits_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The watch's provenance check with no trusted-authors configuration stops
+    the run with one line and exit 1, never a traceback."""
+    calls: list[str] = []
+    watch = MagicMock(side_effect=TrustedAuthorsNotConfiguredError("no trusted authors"))
+    with _settle_env(tmp_path, calls), patch(_MOD + ".finalize_watch.watch", watch):
+        assert main([_PR_A]) == 1
+    assert calls == []
+    err = capsys.readouterr().err
+    assert "vrg-finalize-pr: the watch stopped: no trusted authors\n" in err
+    assert "Traceback" not in err
