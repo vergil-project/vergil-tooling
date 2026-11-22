@@ -1464,6 +1464,8 @@
       
         
       
+        
+      
     
     
     
@@ -1516,6 +1518,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.334/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.334
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14598,6 +14628,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-release-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-release-record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-promote" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15919,6 +15960,8 @@
       
         
       
+        
+      
     
     
     
@@ -16038,6 +16081,34 @@
     
   
     vrg-release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/release-record/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-release-record
   
 
     
@@ -19231,6 +19302,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-release-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-release-record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-promote" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -20307,9 +20389,9 @@ submit never rebases a branch. After the table the PRs open as a
 progress rollup, one stage per PR named after its branch, like
 <code>vrg-release</code>'s: each ends on one ✓/✗ line with its outcome, and the detail
 goes to <code>.vergil/vrg-submit-pr-&lt;stamp&gt;.log</code>. A PR whose submit fails is
-named in the summary and the others go on. Then, by default, one <code>vrg-finalize-pr &lt;pr&gt;,&lt;pr&gt;,…</code>
-watches every opened PR merge and settles <code>develop</code> once; <code>--no-finalize</code>
-opens the PRs and returns. <code>--finalize</code>, <code>--install</code> and <code>--yes</code> are
+named in the summary and the others go on. Then one <code>vrg-finalize-pr &lt;pr&gt;,&lt;pr&gt;,…</code>
+always watches every opened PR merge and settles <code>develop</code> once.
+<code>--finalize</code>, <code>--no-finalize</code>, <code>--install</code>, <code>--no-install</code> and <code>--yes</code> are
 removed and refused by name. See <a href="../dev/submit-pr/">vrg-submit-pr</a>.</p>
 <table>
 <thead>
@@ -20325,7 +20407,7 @@ removed and refused by name. See <a href="../dev/submit-pr/">vrg-submit-pr</a>.<
 </tr>
 <tr>
 <td>Args</td>
-<td>positional <code>branches</code> (relay mode); or <code>--issue</code> (required), <code>--summary</code> (required), <code>--linkage</code> (default: Ref; <code>vrg-submit-pr</code> auto-selects <code>Closes</code> for a managed task — <code>Fixes</code>/<code>Resolves</code> are banned), <code>--notes</code>, <code>--title</code>; <code>--all</code>/<code>--select</code> (from the repo root), <code>--base</code> (<code>develop</code> only), <code>--no-finalize</code>, <code>--release</code>, <code>--no-install</code>, <code>--dry-run</code>, <code>--output-window</code>, <code>--output-format</code>. <code>--finalize</code>, <code>--install</code>, <code>--allow-provenance-violation</code> and <code>--yes</code> are removed and are an error</td>
+<td>positional <code>branches</code> (relay mode); or <code>--issue</code> (required), <code>--summary</code> (required), <code>--linkage</code> (default: Ref; <code>vrg-submit-pr</code> auto-selects <code>Closes</code> for a managed task — <code>Fixes</code>/<code>Resolves</code> are banned), <code>--notes</code>, <code>--title</code>; <code>--all</code>/<code>--select</code> (from the repo root), <code>--base</code> (<code>develop</code> only), <code>--release</code>, <code>--dry-run</code>, <code>--output-window</code>, <code>--output-format</code>. <code>--finalize</code>, <code>--no-finalize</code>, <code>--install</code>, <code>--no-install</code>, <code>--allow-provenance-violation</code> and <code>--yes</code> are removed and are an error</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -20687,12 +20769,24 @@ posted again.</p>
 <h3 id="vrg-release">vrg-release<a class="headerlink" href="#vrg-release" title="Permanent link">&para;</a></h3>
 <p>Run the full release workflow from <code>develop</code> to <code>main</code>: tracking issue,
 changelog, release PR and merge, CD confirmation, back-merge and version
-bump, rolling-tag promotion, cleanup, the <code>update-deps</code> stage, which
-runs the dependency update on the new <code>develop</code> version, and finally
-the consumer refresh, which runs the <code>[publish].consumer-refresh</code>
-commands (held while any publish is deferred). On a fresh start, preflight refuses while an open PR
+bump, rolling-tag promotion, the delivery of failed CD publish jobs
+(<code>cd-publish</code>, which a <code>--resume</code> re-runs), the package-index wait,
+cleanup, the <code>update-deps</code> stage, which runs the dependency update on the
+new <code>develop</code> version, the install, which runs the <code>[publish].install</code>
+commands once <code>promote</code> has moved <code>vX.Y</code> to the release, a <code>Released:</code>
+record on every issue the release contains, and finally the
+close of the tracking issue, which any failed stage or missing record holds back, so a
+<code>--resume</code> can finish the release. On a fresh start, preflight refuses while any
+<code>release: X.Y.Z</code> tracking issue is open, naming its recovery (only
+<code>--supersede X.Y.Z</code>, which starts a fresh release that absorbs open release
+<code>X.Y.Z</code>'s issues and closes its tracking issue, passes over that release), and while an open PR
 carries the <code>dependency-update</code> label, after first closing any whose fix
-task completed. Human-only. See the <a href="../dev/release/">vrg-release reference</a>
+task completed. Preflight then prints the release's contents: the
+pending-release table and the issues its <code>feature/</code> PRs close by a
+trusted closing reference. The tracking issue's body carries those
+contents and its state block. The issue is locked, and its state is
+trusted only while every identity that authored, edited, closed or
+reopened it is a <code>human</code> login of <code>vrg-trusted-authors</code>. Human-only. See the <a href="../dev/release/">vrg-release reference</a>
 and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 <table>
 <thead>
@@ -20708,7 +20802,7 @@ and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>minor</code>/<code>major</code> (optional positional), <code>--no-promote</code>, <code>--without-deps</code>, <code>--allow-pending-deps</code>, <code>--no-install</code>, <code>--resume [X.Y.Z]</code>, <code>--skip-audit</code>, <code>--output-window</code>, <code>--output-format</code></td>
+<td><code>minor</code>/<code>major</code> (optional positional), <code>--without-deps</code>, <code>--allow-pending-deps</code>, <code>--resume [X.Y.Z]</code>, <code>--skip-audit</code>, <code>--output-window</code>, <code>--output-format</code>. <code>--no-promote</code>, <code>--no-install</code> and <code>--install</code> are removed and are an error</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -20721,6 +20815,54 @@ and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 any failure or refusal, 130 interrupted</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-release-record">vrg-release-record<a class="headerlink" href="#vrg-release-record" title="Permanent link">&para;</a></h3>
+<p>Read a task's <code>Released:</code> record, which <code>vrg-release</code> posts, as release
+evidence. <code>check</code> reads every comment on the task and uses the newest record
+that counts (its comment's author and last editor are <code>human</code> logins of
+<code>vrg-trusted-authors</code>); every other record is a warning. It then checks that
+the merge commit of each closing PR of the task whose closing reference
+passes the release's trust rule, read from GitHub and never from the record,
+is an ancestor of the record's tag, in a temporary bare fetch of the task's
+repo. A record that ancestry does not confirm is a failed verdict, never a
+pass. It prints one JSON object: <code>task</code>, <code>verdict</code> (<code>pass</code>, <code>fail</code> or
+<code>none</code>), <code>record</code> (<code>version</code>, <code>tag</code> and the Release <code>url</code>, or <code>null</code>),
+<code>ancestry</code> (<code>pass</code>, <code>fail</code> or <code>null</code>) and <code>warnings</code>. A deployment task
+confirms a blocked-by task's release with it. See the
+<a href="../dev/release-record/">vrg-release-record reference</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_release_record</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>check OWNER/REPO#N</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td><code>gh</code> authenticated; the trusted-authors configuration; read access to the task's repo for <code>git ls-remote</code> and <code>git fetch</code></td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A failed or incomplete GitHub or git read is an error on stderr, never "no record"</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 <code>pass</code>, 3 <code>fail</code>, 4 <code>none</code> (no counting record), 1 an error, 2 a usage error</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -21067,7 +21209,7 @@ commit and one changelog entry per issue. See
 </tr>
 <tr>
 <td>Args</td>
-<td><code>PR</code> (a number or URL, or a comma list of them; optional), <code>--all</code>, <code>--cleanup-only</code>, <code>--target-branch</code> (default: develop), <code>--wait-cd</code>, <code>--release</code>, <code>--no-install</code> (with <code>--release</code>), <code>--clean-dirty</code>, <code>--dry-run</code>, <code>--yes</code>. <code>--strategy</code>, <code>--no-wait-cd</code>, <code>--skip-post-checks</code>, <code>--install</code> and <code>--allow-provenance-violation</code> are removed and are an error</td>
+<td><code>PR</code> (a number or URL, or a comma list of them; optional), <code>--all</code>, <code>--cleanup-only</code>, <code>--target-branch</code> (default: develop), <code>--wait-cd</code>, <code>--release</code>, <code>--clean-dirty</code>, <code>--dry-run</code>, <code>--yes</code>. <code>--strategy</code>, <code>--no-wait-cd</code>, <code>--skip-post-checks</code>, <code>--install</code>, <code>--no-install</code> and <code>--allow-provenance-violation</code> are removed and are an error</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -23548,7 +23690,7 @@ constraints (refusing an empty export or one naming a non-registry package),
 and runs <code>uv tool install --force --no-config --python 3.15 --managed-python</code>
 of that commit under them, with <code>UV_PYTHON</code>, <code>UV_PYTHON_PREFERENCE</code> and
 <code>UV_NO_MANAGED_PYTHON</code> cleared. vergil-tooling's release runs it on the Mac
-through its <code>[publish].consumer-refresh</code>; any other host runs it to upgrade. A
+through its <code>[publish].install</code>; any other host runs it to upgrade. A
 fresh host, or one whose installed copy fails, installs by hand (see
 <a href="../../getting-started/">Getting Started</a>).</p>
 <table>

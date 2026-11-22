@@ -1464,6 +1464,8 @@
       
         
       
+        
+      
     
     
     
@@ -1516,6 +1518,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.334/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.334
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14931,6 +14961,8 @@
       
         
       
+        
+      
     
     
     
@@ -15050,6 +15082,34 @@
     
   
     vrg-release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release-record/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-release-record
   
 
     
@@ -18776,7 +18836,7 @@ prints one line per dependency saying what it actually did:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>skipped  uv: current (0.13.1)
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>upgraded git: 2.54.0 -&gt; 2.56.0_1
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>unchanged bash: still 5.3.9, latest 5.3.20 (the upgrade command succeeded but did not change the installed version)
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>skipped  vergil-tooling: 2.1.244 installed by the vergil-tooling release (its consumer-refresh installs it); vrg-host does not upgrade it
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>skipped  vergil-tooling: 2.1.244 installed by the vergil-tooling release (its install stage installs it); vrg-host does not upgrade it
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>held     gh: pinned to 2.40.x (2.41.0 breaks vrg-gh auth) at 2.40.1, holding back from 2.42.0; run 'vrg-host unpin gh' or pass --force to upgrade past the pin
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>ERROR    lima: missing (not installed by brew-formula); vrg-host upgrades, it does not install
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>skipped (upgrade = manual, upgrade by hand): docker-desktop, macos
@@ -19126,7 +19186,7 @@ itself. Current entries:</p>
   as a personal tool; that was reversed in
   <a href="https://github.com/vergil-project/vergil-tooling/issues/3300">#3300</a>.</li>
 <li><strong><code>vergil-tooling</code> is installed by its own release.</strong> Releasing
-  vergil-tooling runs the <code>[publish].consumer-refresh</code> in its <code>vergil.toml</code>,
+  vergil-tooling runs the <code>[publish].install</code> in its <code>vergil.toml</code>,
   which reinstalls the host tools at the just-released tag with
   <a href="../../cli-tools-overview/#vrg-tooling-install"><code>vrg-tooling-install</code></a>, so <code>vrg-host</code> never
   installs or upgrades it

@@ -1464,6 +1464,8 @@
       
         
       
+        
+      
     
     
     
@@ -1516,6 +1518,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.334/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.334
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14931,6 +14961,8 @@
       
         
       
+        
+      
     
     
     
@@ -15050,6 +15082,34 @@
     
   
     vrg-release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release-record/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-release-record
   
 
     
@@ -18740,10 +18800,10 @@ auto-merge on, and GitHub merges each one once its required checks pass.
 <li><strong>Release.</strong> With <code>--release</code>, and only on full success, it chains into
    <code>vrg-release</code>.</li>
 </ol>
-<p><code>vrg-submit-pr</code> runs finalize itself by default, over every PR it opened,
-so finalize is normally run by hand only to watch PRs opened with
-<code>vrg-submit-pr --no-finalize</code>, to watch them again after a fix, or to
-settle <code>develop</code> after something merged on GitHub (<code>--cleanup-only</code>).</p>
+<p><code>vrg-submit-pr</code> always runs finalize itself, over every PR it opened, so
+finalize is run by hand only to watch PRs again after a fix to a PR that
+did not merge, or to settle <code>develop</code> after something merged on GitHub
+(<code>--cleanup-only</code>).</p>
 <p>Must be run from the <strong>main worktree</strong>: the cleanup removes worktrees,
 which is unsafe when the calling shell's CWD is inside one.</p>
 <h2 id="choosing-the-prs">Choosing the PRs<a class="headerlink" href="#choosing-the-prs" title="Permanent link">&para;</a></h2>
@@ -18765,7 +18825,7 @@ which is unsafe when the calling shell's CWD is inside one.</p>
   pre-answers the yes/no prompts, but not the menu.</li>
 <li><code>vrg-finalize-pr --cleanup-only</code>: no PRs and no watch. It runs the
   settle phase and the CD report only, never prompts and never reads
-  stdin. <code>vrg-release</code> runs it in its <code>close-finalize</code> stage, and a human
+  stdin. <code>vrg-release</code> runs it in its <code>finalize</code> stage, and a human
   runs it after an automated job merges a PR on GitHub. Its exit codes are
   a watched run's.</li>
 </ul>
@@ -18773,7 +18833,7 @@ which is unsafe when the calling shell's CWD is inside one.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-finalize-pr<span class="w"> </span><span class="o">[</span>PR<span class="o">[</span>,PR…<span class="o">]</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>--all<span class="w"> </span><span class="p">|</span><span class="w"> </span>--cleanup-only<span class="o">]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                </span><span class="o">[</span>--target-branch<span class="w"> </span>BRANCH<span class="o">]</span><span class="w"> </span><span class="o">[</span>--wait-cd<span class="o">]</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">                </span><span class="o">[</span>--release<span class="w"> </span><span class="o">[</span>--no-install<span class="o">]]</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">                </span><span class="o">[</span>--release<span class="o">]</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">                </span><span class="o">[</span>--clean-dirty<span class="o">]</span><span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span><span class="w"> </span><span class="o">[</span>--yes<span class="o">]</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
@@ -18807,11 +18867,7 @@ which is unsafe when the calling shell's CWD is inside one.</p>
 </tr>
 <tr>
 <td><code>--release</code></td>
-<td>On full success, chain into <code>vrg-release</code>, which installs by default. Refused on a repo that is not released (<code>[publish] release = true</code>), before any watch or cleanup.</td>
-</tr>
-<tr>
-<td><code>--no-install</code></td>
-<td>With <code>--release</code>, run <code>vrg-release --no-install</code>. Refused without <code>--release</code>.</td>
+<td>On full success, chain into <code>vrg-release</code> (install is part of every release). Refused on a repo that is not released (<code>[publish] release = true</code>), before any watch or cleanup.</td>
 </tr>
 <tr>
 <td><code>--clean-dirty</code></td>
@@ -18851,8 +18907,8 @@ names what replaced it:</p>
 <td>One run watches every listed PR, then settles <code>develop</code> once. Pass the PRs as a comma list.</td>
 </tr>
 <tr>
-<td><code>--install</code></td>
-<td><code>--release</code> installs by default; <code>--no-install</code> opts out.</td>
+<td><code>--install</code>, <code>--no-install</code></td>
+<td>Install is part of every release.</td>
 </tr>
 <tr>
 <td><code>--allow-provenance-violation</code></td>
@@ -19201,8 +19257,7 @@ step, and a provenance violation is named loudly:</p>
 <h3 id="5-release-release">5. Release (<code>--release</code>)<a class="headerlink" href="#5-release-release" title="Permanent link">&para;</a></h3>
 <p>On <strong>full success</strong> (every PR merged with no provenance violation, the
 validate passed and, with <code>--wait-cd</code>, CD did not fail), finalize runs
-<code>vrg-release</code>, or <code>vrg-release --no-install</code> with <code>--no-install</code>. It
-starts after the lock is let go, so the release's preflight takes the
+<code>vrg-release</code>, which installs as part of every release. It starts after the lock is let go, so the release's preflight takes the
 lock, fast-forwards <code>develop</code> itself and cuts from the new head, even if
 another PR merged in between (see
 <a href="../../../guides/releasing/#the-develop-sync">The develop sync</a>). Short of

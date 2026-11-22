@@ -14,7 +14,7 @@
         <link rel="prev" href="../submit-pr/">
       
       
-        <link rel="next" href="../update-deps/">
+        <link rel="next" href="../release-record/">
       
       
         
@@ -1464,6 +1464,8 @@
       
         
       
+        
+      
     
     
     
@@ -1516,6 +1518,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.334/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.334
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14931,6 +14961,8 @@
       
         
       
+        
+      
     
     
     
@@ -15135,6 +15167,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#one-release-at-a-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One release at a time
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-dependency-update-gate" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15182,6 +15225,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release-record/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-release-record
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -18267,6 +18338,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#one-release-at-a-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One release at a time
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-dependency-update-gate" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18333,10 +18415,60 @@
 <code>src/vergil_tooling/lib/release/orchestrator.py</code>)</p>
 <p>Runs the whole release workflow from <code>develop</code> to <code>main</code>: preflight,
 tracking issue, changelog, release PR, merge, CD confirmation,
-back-merge and version bump, rolling-tag promotion, cleanup, the
-post-release dependency update, and last the consumer refresh. The stages and what
+back-merge and version bump, rolling-tag promotion, publish delivery,
+cleanup, the post-release dependency update, the install, a
+<code>Released:</code> record on every issue the release contains, and last the
+close of the tracking issue. The stages and what
 they leave behind are described in the
 <a href="../../../guides/releasing/#the-vrg-release-pipeline">Releasing guide</a>.</p>
+<p>A failed stage holds back only the stages that need it
+(<a href="../../../guides/releasing/#the-hold-rule">the hold rule</a>): a failed CD
+publish job, a package-index miss or a failed dependency update still
+lets <code>promote</code>, <code>finalize</code> and <code>install</code> run, and leaves the tracking
+issue open. The run then ends naming what is left and the one command
+that finishes it, <code>vrg-release --resume</code>, or, for a release that cannot
+finish, <code>vrg-release --supersede X.Y.Z</code>.</p>
+<p>On a fresh start, <code>preflight</code> prints the release's contents: the
+pending-release table of <code>main..&lt;cut&gt;</code> and the issues the release
+contains, each with its closing PRs, from the trusted closing
+references of its <code>feature/</code> PRs (see
+<a href="../../../guides/releasing/#the-issue-list">The issue list</a>).</p>
+<p>The <code>release: &lt;version&gt;</code> tracking issue's body carries a Contents
+section (the pending-release table and the issues the release
+contains), the stage checklist, and the release's state block, which
+only <code>vrg-release</code> writes; see
+<a href="../../../guides/releasing/#release-tracking-artifacts">Release tracking artifacts</a>.
+<code>prepare</code> locks the issue, and <code>vrg-release</code> trusts the state block only
+while every identity that authored, edited, closed or reopened the issue
+is a <code>human</code> login of <code>vrg-trusted-authors</code>: any other identity stops
+the run before it writes anything, as a suspected security breach; see
+<a href="../../../guides/releasing/#the-lock-and-the-identity-rule">The lock and the identity rule</a>.
+Such a release can never be resumed; it is replaced with
+<code>vrg-release --supersede X.Y.Z</code>, which rebuilds it from GitHub and git
+facts.
+Each stage that succeeds records itself done in the state block, with
+the PRs, the tag and the CD runs it produced. <code>--resume</code> checks those
+facts against GitHub and git, then runs only the stages not recorded
+done; see
+<a href="../../../guides/releasing/#resuming-a-release">Resuming a release</a>.</p>
+<p>Once every earlier stage has succeeded, <code>release-records</code> posts a
+<code>Released:</code> record, as the human running the release, on each issue in
+the issue list that has no counting record yet. A record counts only
+when its comment's author and last editor are <code>human</code> logins of
+<code>vrg-trusted-authors</code>; a resume posts only the missing ones, and
+<code>close-tracking</code> closes the tracking issue only once every record is
+posted; see
+<a href="../../../guides/releasing/#released-records"><code>Released:</code> records</a>.
+<a href="../release-record/"><code>vrg-release-record check</code></a> reads a task's record as
+release evidence.</p>
+<p>A CD publish job that fails is recorded in the state block, by its run
+and full job name, and the <code>cd-publish</code> stage delivers it on <code>--resume</code>:
+it re-runs <code>main</code>'s failed jobs, and re-runs a <code>develop</code> job only when
+no later <code>develop</code> CD run's same job has succeeded. A failed CD release
+job is recorded too, and the resume's <code>confirm-main</code> re-runs the release
+PR's CI run and then that CD run before judging it again; see
+<a href="../../../guides/releasing/#failed-cd-publish-jobs">Failed CD publish jobs</a>
+and <a href="../../../guides/releasing/#a-failed-release-job">A failed release job</a>.</p>
 <p>Releasing is a human maintainer action. <code>vrg-release</code> refuses to run
 under an agent identity.</p>
 <p><code>vrg-release</code> only releases a repo that declares itself released with
@@ -18346,6 +18478,7 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 <code>--release</code> on such a repo the same way, before any push, PR or watch.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-release<span class="w"> </span><span class="o">[</span>minor<span class="p">|</span>major<span class="o">]</span><span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>vrg-release<span class="w"> </span><span class="o">[</span>minor<span class="p">|</span>major<span class="o">]</span><span class="w"> </span>--supersede<span class="w"> </span>X.Y.Z<span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
@@ -18363,14 +18496,9 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 <td>Bump to the next minor or major version before releasing. Default: release the current <code>develop</code> version</td>
 </tr>
 <tr>
-<td><code>--no-promote</code></td>
-<td>No</td>
-<td>Skip moving the rolling <code>vX.Y</code> tag</td>
-</tr>
-<tr>
 <td><code>--without-deps</code></td>
 <td>No</td>
-<td>Skip the <code>update-deps</code> stage</td>
+<td>Skip the <code>update-deps</code> stage. Recorded in the tracking issue's state block, so every later <code>--resume</code> skips it too. Allowed with <code>--resume</code>, where it skips an update that failed, so the release finishes without it</td>
 </tr>
 <tr>
 <td><code>--allow-pending-deps</code></td>
@@ -18378,14 +18506,14 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 <td>Release even though an open <code>dependency-update</code> PR blocks it. For urgent fixes only; the bypassed PRs are listed on the tracking issue</td>
 </tr>
 <tr>
-<td><code>--no-install</code></td>
-<td>No</td>
-<td>Skip the install step. By default the <code>consumer-refresh</code> stage runs the <code>[publish].consumer-refresh</code> commands as the release's last stage, unless a deferred publish holds it; with this flag it prints them below the summary instead. With none configured the stage says there is nothing to run, which is not an error. <code>--install</code> was removed: passing it exits 1 and names this default</td>
-</tr>
-<tr>
 <td><code>--resume [X.Y.Z]</code></td>
 <td>No</td>
 <td>Resume an interrupted release from its open tracking issue. Name the version when more than one release is in flight. Cannot be combined with <code>minor</code>/<code>major</code></td>
+</tr>
+<tr>
+<td><code>--supersede X.Y.Z</code></td>
+<td>No</td>
+<td>Start a fresh release that supersedes open release <code>X.Y.Z</code>, which <code>--resume</code> cannot finish: one tagged with only <code>cd-publish</code>, <code>package-index</code>, <code>update-deps</code> or <code>install</code> left, or one halted at <code>confirm-main</code> with no tag after its CD release job failed. One whose tracking issue fails the identity rule is rebuilt from GitHub and git facts instead of its state block. It absorbs <code>X.Y.Z</code>'s issues and closes its tracking issue. Combines with <code>minor</code>/<code>major</code>; passing it with <code>--resume</code> is a usage error (exit 2). See <a href="../../../guides/releasing/#superseding-a-release">Superseding a release</a></td>
 </tr>
 <tr>
 <td><code>--skip-audit</code></td>
@@ -18404,6 +18532,17 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 </tr>
 </tbody>
 </table>
+<p>Promote and install are part of every release: every run moves the
+rolling <code>vX.Y</code> tag in the <code>promote</code> stage, and the <code>install</code> stage runs
+the <code>[publish].install</code> commands (<code>&lt;VERSION&gt;</code> and <code>&lt;MINOR&gt;</code> expanded)
+once <code>promote</code> is done and <code>vX.Y</code> names the release. With none
+configured the stage line says <code>none configured</code>, which is not an
+error. The only stages a flag skips are <code>update-deps</code> (<code>--without-deps</code>)
+and <code>audit</code> (<code>--skip-audit</code>).</p>
+<p><code>--no-promote</code>, <code>--no-install</code> and <code>--install</code> were removed. Each is
+still parsed, hidden from <code>--help</code>, only to exit 1 before any side
+effect with <code>vrg-release: --&lt;flag&gt; was removed; promote and install are
+part of every release</code>.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Run from the root checkout, on <code>develop</code>, with a clean working tree
@@ -18412,6 +18551,26 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
   <code>gh</code>. <code>git-cliff</code> runs in the dev container through <code>vrg-container-run</code>,
   so it is not needed on the host.</li>
 </ul>
+<h2 id="one-release-at-a-time">One release at a time<a class="headerlink" href="#one-release-at-a-time" title="Permanent link">&para;</a></h2>
+<p>On a fresh start (not on <code>--resume</code>), preflight refuses while any
+<code>release: X.Y.Z</code> tracking issue is open in the repo, whatever its
+version. The refusal names each open issue and the
+<code>vrg-release --resume X.Y.Z</code> that finishes it, or, for an issue with no
+state block (left by older tooling), says to finish that release by
+hand and then close the issue. Lookup failures refuse the release. See
+<a href="../../../guides/releasing/#one-release-at-a-time">One release at a time</a>.</p>
+<p><code>--supersede X.Y.Z</code> is the one exception: its check passes over release
+<code>X.Y.Z</code>'s own tracking issue, which it reads under the identity rule
+and closes once its own exists. When that issue fails the identity
+rule, its state block is not read: the release is rebuilt from GitHub
+and git facts; see
+<a href="../../../guides/releasing/#a-breached-tracking-issue">A breached tracking issue</a>. A release it supersedes posts no
+records; the new release absorbs its issues, and their records name the
+new version and say <code>- Supersedes: vX.Y.Z</code>. When <code>X.Y.Z</code> is untagged,
+the main-ahead check accepts its release commit on <code>main</code>, the new
+release takes <code>X.Y.(Z+1)</code> unless <code>minor</code> or <code>major</code> is given, and
+<code>X.Y.Z</code>'s release worktree and branch are removed. See
+<a href="../../../guides/releasing/#superseding-a-release">Superseding a release</a>.</p>
 <h2 id="the-dependency-update-gate">The dependency-update gate<a class="headerlink" href="#the-dependency-update-gate" title="Permanent link">&para;</a></h2>
 <p>On a fresh start (not on <code>--resume</code>), preflight refuses while an open
 PR carries the <code>dependency-update</code> label. First it closes, with a
@@ -18555,7 +18714,11 @@ failed checks as its likely cause (issue #4294).</p>
 </tr>
 <tr>
 <td>1</td>
-<td>A stage failed, including a deferred failure such as a missed publish job, a failed consumer refresh or a failed dependency update; or the command was refused</td>
+<td>A stage failed, including a deferred failure such as a missed publish job, a failed install or a failed dependency update; or the command was refused</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Usage error, such as <code>--supersede</code> with <code>--resume</code> or a <code>--supersede</code> version that is not <code>X.Y.Z</code></td>
 </tr>
 <tr>
 <td>130</td>

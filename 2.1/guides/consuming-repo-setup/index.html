@@ -1464,6 +1464,8 @@
       
         
       
+        
+      
     
     
     
@@ -1516,6 +1518,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.334/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.334
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14918,6 +14948,8 @@
       
         
       
+        
+      
     
     
     
@@ -15034,6 +15066,34 @@
     
   
     vrg-release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/release-record/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-release-record
   
 
     
@@ -18997,7 +19057,11 @@ version window.</p>
 </tbody>
 </table>
 <p><code>[publish]</code> (<code>release</code>, default <code>false</code>; <code>docs</code>, default <code>true</code>; <code>vrg-release</code>
-refuses a repo whose <code>release</code> is not <code>true</code>) and
+refuses a repo whose <code>release</code> is not <code>true</code>; <code>install</code>, the shell lines the
+release's <code>install</code> stage runs, with <code>&lt;VERSION&gt;</code> and <code>&lt;MINOR&gt;</code> expanded to
+the release's <code>X.Y.Z</code> and <code>X.Y</code>, none by default; its deprecated name
+<code>consumer-refresh</code> is still read, with a warning, and setting both is an
+error) and
 <code>[ci].integration-tests</code> (default <code>false</code>) are optional, as is
 <code>[ci].images</code> (a boolean, default <code>false</code>), which only a repo whose <code>ci.yml</code>
 calls a repo-local <code>ci-images.yml</code> as job <code>images</code> sets; it makes
@@ -19457,7 +19521,7 @@ Code session loaded, or a managed file edited by hand (re-run
 <code>vrg-github-repo-init --adopt</code>).</p>
 <h2 id="keeping-up-to-date">Keeping up to date<a class="headerlink" href="#keeping-up-to-date" title="Permanent link">&para;</a></h2>
 <p>Each <code>vergil-tooling</code> release installs itself on the Mac that runs it:
-its <code>[publish].consumer-refresh</code> runs <code>vrg-tooling-install</code> with the
+its <code>[publish].install</code> runs <code>vrg-tooling-install</code> with the
 just-released version. On any other host, run
 <code>vrg-tooling-install vX.Y.Z</code> with the new release. If it fails, reinstall
 with the <a href="#step-2-install-vergil-tooling">Step 2</a> lines. Do not use
