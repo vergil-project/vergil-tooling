@@ -444,6 +444,100 @@ def test_route_parent_fallback_trusted_only(
     )
 
 
+_EVERY_ROUTE: list[RouteAction] = [
+    Drop(reason="not feasible"),
+    Defer(reason="r", revisit_when="w"),
+    OneOff(repo="org/tool"),
+    ToPlanning(),
+    ToPlanning(sizing=Sizing(14, "med", "One sentence.")),
+    ToIntake(),
+    Split(into=(IssueRef("org", "tool", 10), IssueRef("org", "lib", 11)), reason="two fixes"),
+    SizeItem(Sizing(14, "med", "One sentence.")),
+]
+
+
+def _assert_nothing_resolved_or_written(env: Env) -> None:
+    for mock in (
+        env.run,
+        env.read_output,
+        env.read_json,
+        env.create_issue,
+        env.ensure_labels,
+        env.add_child,
+        env.reparent_child,
+        env.remove_child,
+        env.ensure_planning_epic,
+        env.ensure_intake_epic,
+        env.ensure_deferred_epic,
+        env.resolve_epic_ref,
+        env.retarget,
+    ):
+        mock.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("author", "login", "cause"),
+    [
+        (trust_stubs.OUTSIDER, "drive-by", "untrusted"),
+        (trust_stubs.IMPOSTOR, "vergil-user", "wrong-type"),
+    ],
+    ids=["outsider", "impostor"],
+)
+@pytest.mark.parametrize("action", _EVERY_ROUTE, ids=lambda a: type(a).__name__)
+def test_route_outsider_issue_stops(
+    env: Env, action: RouteAction, author: Any, login: str, cause: str
+) -> None:
+    # A tool pointed at an outsider-opened item acts on nothing: every route
+    # stops before anything resolves or is written, naming only metadata.
+    env.issue_view = {**env.issue_view, "body": f"Parent: {INTAKE.slug}\n{trust_stubs.SPAM_TEXT}"}
+    env.body_author = author
+    with (
+        patch(f"{_MOD}.epics.parent_of") as parent_of,
+        pytest.raises(trust.UntrustedContentError) as excinfo,
+    ):
+        route(ITEM, action, today=TODAY)
+    parent_of.assert_not_called()
+    _assert_nothing_resolved_or_written(env)
+    item = excinfo.value.item
+    assert (item.repo, item.number, item.kind, item.login, item.field, item.cause) == (
+        f"{ITEM.owner}/{ITEM.repo}",
+        ITEM.number,
+        "issue",
+        login,
+        "body",
+        cause,
+    )
+    assert excinfo.value.reason == "the item was opened by an untrusted author"
+    assert "SPAM-MARKER-TEXT" not in str(excinfo.value)
+    assert str(excinfo.value).startswith("stopped before any write: ")
+
+
+@pytest.mark.parametrize(
+    "action",
+    [SizeItem(Sizing(14, "med", "One sentence.")), ToPlanning(sizing=Sizing(3, "high", "Small."))],
+    ids=["size", "to-planning-sized"],
+)
+def test_size_outsider_issue_stops(env: Env, action: RouteAction) -> None:
+    # Sizing runs only through routing (epic_size reads nothing from GitHub),
+    # so sizing an outsider-opened item is the routing stop: no Sized comment
+    # and no epic-size label.
+    env.parent = PLANNING
+    env.native_parent[ITEM] = PLANNING
+    env.body_author = trust_stubs.OUTSIDER
+    with pytest.raises(trust.UntrustedContentError):
+        route(ITEM, action, today=TODAY)
+    _assert_nothing_resolved_or_written(env)
+
+
+def test_route_trusted_item_with_outsider_comment_is_routed(env: Env) -> None:
+    # Only the author decides the stop: an outsider's comment on a trusted
+    # item does not stop the route.
+    env.comment_nodes = [trust_stubs.comment(11, trust_stubs.SPAM_TEXT, trust_stubs.OUTSIDER)]
+    result = route(ITEM, Drop(reason="not feasible"), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    assert [c.args[:2] for c in env.run.call_args_list] == [("issue", "close")]
+
+
 def _planning_item(env: Env) -> None:
     env.parent = PLANNING
     env.native_parent[ITEM] = PLANNING
@@ -1937,7 +2031,8 @@ def test_recreate_copies_the_trusted_body_read_before_the_move(env: Env) -> None
     env.issue_view = {**env.issue_view, "body": "changed since the read"}
     with patch("vergil_tooling.lib.github.graphql", side_effect=graphql):
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
-    assert reads == 1
+    # Both reads come before the move: the outsider-opened check, then the body.
+    assert reads == 2
     body = env.create_issue.call_args.kwargs["body"]
     assert body.startswith(f"{trusted_body}\n\n")
     assert "changed since the read" not in body

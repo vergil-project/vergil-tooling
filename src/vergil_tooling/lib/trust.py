@@ -774,6 +774,22 @@ def read_issue(
     )
 
 
+def outsider_opened(content: IssueContent) -> Skipped | None:
+    """The author's :class:`Skipped` record when an outsider opened the item, else ``None``.
+
+    An item whose author holds no role the read accepted is outsider-opened
+    (spec §5.3): a run that merely encounters one reports this record, and a
+    tool pointed at one raises :class:`UntrustedContentError` with it.
+    """
+    if content.author_role is not None:
+        return None
+    for item in content.skipped:
+        if item.field == "body" and item.kind in ("issue", "pr"):
+            return item
+    # read_issue always records an untrusted author's body; never guess one.
+    raise TrustReadError("outsider_opened", "an untrusted author has no skip record")
+
+
 # --- events -------------------------------------------------------------------
 
 

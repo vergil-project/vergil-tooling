@@ -309,6 +309,60 @@ def test_read_issue_outsider_body_reported_without_require(fake: Any) -> None:
     assert content.skipped[0].kind == "issue"
 
 
+# --- outsider_opened -----------------------------------------------------------
+
+
+def test_outsider_opened_names_the_author(fake: Any) -> None:
+    fake(_item(author=OUTSIDER, body=SPAM, comments=[_comment("4", OUTSIDER, SPAM)]))
+    assert trust.outsider_opened(_read()) == Skipped(
+        REPO, 7, "issue", "drive-by", CREATED, "body", trust.UNTRUSTED
+    )
+
+
+def test_outsider_opened_pr_and_impostor(fake: Any) -> None:
+    fake(_item(typename="PullRequest", author={"__typename": "User", "login": "the-agent"}))
+    opened = trust.outsider_opened(_read())
+    assert opened is not None
+    assert (opened.kind, opened.login, opened.cause) == ("pr", "the-agent", trust.WRONG_TYPE)
+
+
+def test_outsider_opened_none_for_trusted_author_with_untrusted_edit_and_comment(
+    fake: Any,
+) -> None:
+    # Only the author decides it: an outsider's edit or comment does not.
+    fake(
+        _item(
+            editor=OUTSIDER,
+            edited=True,
+            edits=_edits([OUTSIDER]),
+            comments=[_comment("5", OUTSIDER, SPAM)],
+        )
+    )
+    content = _read()
+    assert content.body is None
+    assert trust.outsider_opened(content) is None
+
+
+def test_outsider_opened_finds_the_body_record_among_others() -> None:
+    comment = Skipped(REPO, 7, "comment", "drive-by", CREATED, "comment 4", trust.UNTRUSTED)
+    body = Skipped(REPO, 7, "issue", "drive-by", CREATED, "body", trust.UNTRUSTED)
+    content = trust.IssueContent(
+        body=None, body_role=None, author_role=None, comments=(), skipped=(comment, body)
+    )
+    assert trust.outsider_opened(content) == body
+
+
+def test_outsider_opened_without_a_skip_record_is_a_read_error() -> None:
+    # An edit record is not the author's: with no body record, nothing is guessed.
+    edit = Skipped(REPO, 7, "edit", "drive-by", EDITED, "body", trust.UNTRUSTED)
+    for skipped in ((), (edit,)):
+        content = trust.IssueContent(
+            body=None, body_role=None, author_role=None, comments=(), skipped=skipped
+        )
+        with pytest.raises(trust.TrustReadError, match="outsider_opened"):
+            trust.outsider_opened(content)
+
+
 def test_read_issue_skips_spam_comment_and_reports(
     fake: Any, capsys: pytest.CaptureFixture[str]
 ) -> None:
