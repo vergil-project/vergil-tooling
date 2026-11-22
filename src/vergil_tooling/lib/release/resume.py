@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import functools
 import re
+import subprocess
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import git, github, host_versions
+from vergil_tooling.lib import git, github, host_versions, version
 from vergil_tooling.lib.release import state
 from vergil_tooling.lib.release.context import ReleaseError
 
@@ -203,6 +204,80 @@ def restore_context(ctx: ReleaseContext, current: StateBlock) -> None:
     if current.develop_cd_run is not None:
         ctx.develop_cd_run_id = current.develop_cd_run
         ctx.develop_cd_run_url = _run_url(ctx.repo, current.develop_cd_run)
+
+
+def _branch_version(ctx: ReleaseContext, *, committed: bool) -> str:
+    """The release worktree's VERSION, as committed at ``HEAD`` or as in the working tree."""
+    where = "HEAD:VERSION" if committed else "VERSION"
+    try:
+        return version.show(ctx.work_root, ref="HEAD" if committed else None)
+    except (
+        FileNotFoundError,
+        version.VersionSyncError,
+        version.CargoVersionError,
+        subprocess.CalledProcessError,
+    ) as exc:
+        raise ReleaseError(
+            phase="resume",
+            command=f"version.show {where}",
+            message=(
+                f"Cannot read the VERSION of '{ctx.release_branch}' in its worktree "
+                f"{ctx.work_root}: {exc}"
+            ),
+        ) from exc
+
+
+def check_release_version(ctx: ReleaseContext, current: StateBlock) -> None:
+    """Hold a resume on the release branch to the target version the state block records (#4899).
+
+    Run in the release worktree, before ``merge-release`` is done. The
+    branch's committed VERSION must be ``current.version``. When it is the
+    VERSION that ``current.version_bump`` moves to that target and
+    ``prepare`` is not done, the stopped run never committed the bump:
+    ``ctx.version_override`` is set to it, so ``prepare`` completes it. Any
+    other VERSION, and a working tree whose VERSION differs from the
+    committed one, is a refusal naming both versions: a resume never
+    continues at a version other than the target.
+    """
+    target = current.version
+    branch = ctx.release_branch
+    committed = _branch_version(ctx, committed=True)
+    working = _branch_version(ctx, committed=False)
+    if working != committed:
+        raise ReleaseError(
+            phase="resume",
+            command="git status --porcelain",
+            message=(
+                f"The worktree of '{branch}' has VERSION {working} uncommitted over the "
+                f"committed {committed}; the release's target version is {target}. "
+                "Discard the uncommitted version change (git checkout) and resume, so "
+                "prepare makes the bump in full."
+            ),
+        )
+    if committed == target:
+        return
+    bump = current.version_bump
+    if (
+        bump is not None
+        and "prepare" not in current.done
+        and version.next_version(committed, bump) == target
+    ):
+        ctx.version_override = bump
+        print(
+            f"'{branch}' is still at VERSION {committed}: prepare completes its {bump} "
+            f"bump to the target version {target}."
+        )
+        return
+    recorded = f"a {bump} bump" if bump is not None else "no bump"
+    raise ReleaseError(
+        phase="resume",
+        command="version.show",
+        message=(
+            f"'{branch}' has VERSION {committed}, but the release state records the "
+            f"target version {target} ({recorded}). A resume never continues at another "
+            "version. Find out what changed the branch's VERSION before resuming."
+        ),
+    )
 
 
 def _run_url(repo: str, run_id: str) -> str:

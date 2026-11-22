@@ -2234,11 +2234,13 @@ def _resume(
     *,
     post_merge: Path | None = _RESUME_WT,
     acquire_error: ReleaseError | None = None,
+    version_error: ReleaseError | None = None,
 ) -> tuple[ReleaseContext, dict[str, MagicMock]]:
     """Run a resume preflight whose tracking issue records *done*; return the ctx and mocks.
 
-    *post_merge* is what the post-merge worktree set-up returns (#4889), and
-    *acquire_error*, when given, is what adopting the release worktree raises.
+    *post_merge* is what the post-merge worktree set-up returns (#4889),
+    *acquire_error*, when given, is what adopting the release worktree raises,
+    and *version_error* what the release branch's VERSION check raises (#4899).
     """
     current = replace(
         state.initial_state(version="2.3.0", cut=_CUT, issues=(), without_deps=False),
@@ -2253,11 +2255,13 @@ def _resume(
         "_check_packages_unpublished",
         "pending_deps_prs",
         "verify_facts",
+        "check_release_version",
         "os.chdir",
         "version.show",
     )
     with contextlib.ExitStack() as stack:
         mocks = {name: stack.enter_context(patch(f"{_MOD}.{name}")) for name in names}
+        mocks["check_release_version"].side_effect = version_error
         mocks["host"] = stack.enter_context(patch(_MOD + "._check_host_prerequisites"))
         mocks["auth"] = stack.enter_context(
             patch(_MOD + ".check_gh_auth", return_value="owner/repo")
@@ -2333,6 +2337,33 @@ def test_resume_at_prepare_adopts_worktree() -> None:
     mocks["worktree"].assert_called_once_with(_ROOT, "release/2.3.0", resume=True)
     mocks["post_merge"].assert_not_called()
     assert ctx.worktree_path == _RESUME_WT
+
+
+@pytest.mark.parametrize("done", [(), ("prepare",)], ids=["at-prepare", "at-merge-release"])
+def test_resume_before_the_merge_checks_the_branch_version(done: tuple[str, ...]) -> None:
+    # #4899: on the release branch, its VERSION is held to the recorded target,
+    # once the run is in the worktree.
+    ctx, mocks = _resume(done)
+    mocks["check_release_version"].assert_called_once_with(ctx, mocks["read_state"].return_value)
+
+
+@pytest.mark.parametrize(
+    "done",
+    [
+        ("prepare", "merge-release"),
+        ("prepare", "merge-release", "confirm-main", "back-merge-bump", "teardown-worktree"),
+    ],
+    ids=["past-the-merge", "after-teardown"],
+)
+def test_resume_past_the_merge_never_checks_the_branch_version(done: tuple[str, ...]) -> None:
+    _, mocks = _resume(done)
+    mocks["check_release_version"].assert_not_called()
+
+
+def test_resume_version_refusal_stops_preflight() -> None:
+    refusal = ReleaseError(phase="resume", command="version.show", message="has VERSION 2.2.0")
+    with pytest.raises(ReleaseError, match="has VERSION 2.2.0"):
+        _resume((), version_error=refusal)
 
 
 def test_resume_before_the_merge_still_refuses_a_missing_branch() -> None:

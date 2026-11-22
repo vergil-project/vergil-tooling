@@ -32,6 +32,8 @@ _FENCE_RE = re.compile(r"\A\s*```json\n(?P<json>.*)\n```\s*\Z", re.DOTALL)
 
 # The branches a CD run publishes from, by name, typed for :class:`FailedJob`.
 _BRANCHES: dict[str, Literal["main", "develop"]] = {"main": "main", "develop": "develop"}
+# The version bumps prepare may apply on the release branch.
+VERSION_BUMPS = ("patch", "minor", "major")
 
 
 class StateBlockError(Exception):
@@ -59,7 +61,13 @@ class FailedJob:
 class StateBlock:
     """Everything a release records about itself on its tracking issue."""
 
+    # The release's target version, recorded before any branch work.
     version: str
+    # The bump prepare applies to develop's VERSION on the release branch to
+    # reach ``version`` (one of :data:`VERSION_BUMPS`), or None when develop's
+    # VERSION is released as it is. A resume completes a bump a stopped run
+    # did not commit, and refuses any other VERSION (#4899).
+    version_bump: str | None
     cut: str
     issues: tuple[IssueEntry, ...]
     release_pr: str | None
@@ -92,18 +100,22 @@ def initial_state(  # noqa: PLR0913 - the state's creation fields, each named
     cut: str,
     issues: tuple[IssueEntry, ...],
     without_deps: bool,
+    version_bump: str | None = None,
     supersedes: str | None = None,
     absorbed: tuple[str, ...] = (),
     superseded_main_commit: str | None = None,
 ) -> StateBlock:
     """The state a tracking issue is created with: nothing done yet.
 
+    *version* is the release's target version and *version_bump* the bump
+    that produces it from develop's VERSION, None for none.
     A superseding release (spec §4.7) also records the release it
     supersedes, the refs of the issues it absorbed from it, and, when that
     release was untagged, the release commit it left on ``main``.
     """
     return StateBlock(
         version=version,
+        version_bump=version_bump,
         cut=cut,
         issues=issues,
         release_pr=None,
@@ -223,6 +235,13 @@ def _issue(key: str, value: object) -> IssueEntry:
     return IssueEntry(ref=_string(f"{key}.ref", obj["ref"]), prs=tuple(prs))
 
 
+def _version_bump(key: str, value: object) -> str | None:
+    bump = _optional_string(key, value)
+    if bump is not None and bump not in VERSION_BUMPS:
+        raise _fail(key, '"patch", "minor", "major" or null', bump)
+    return bump
+
+
 def _failed_job(key: str, value: object) -> FailedJob:
     obj = _object(key, value, ("branch", "run_id", "job"))
     name = _string(f"{key}.branch", obj["branch"])
@@ -265,6 +284,7 @@ def parse_state(body: str) -> StateBlock:
     _check_keys("", data, _FIELDS)
     return StateBlock(
         version=_string("version", data["version"]),
+        version_bump=_version_bump("version_bump", data["version_bump"]),
         cut=_string("cut", data["cut"]),
         issues=tuple(
             _issue(f"issues[{i}]", item) for i, item in enumerate(_list("issues", data["issues"]))

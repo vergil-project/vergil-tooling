@@ -92,6 +92,7 @@ def create_tracking_issue(ctx: ReleaseContext) -> None:
         cut=ctx.cut,
         issues=ctx.issues,
         without_deps=ctx.without_deps,
+        version_bump=ctx.version_override,
         supersedes=None if superseded is None else superseded.version,
         absorbed=absorbed,
         superseded_main_commit=None if superseded is None else superseded.main_commit,
