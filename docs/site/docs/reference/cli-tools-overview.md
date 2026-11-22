@@ -1219,13 +1219,33 @@ GitHub Actions job with neither file, `$VRG_TRUSTED_AUTHORS`. It prints
 this command, never the logins. See
 [Trusted authors](../guides/account-setup.md#trusted-authors).
 
+Three subcommands handle the GitHub Actions copies, the org variables
+`VRG_TRUSTED_AUTHORS` (the `--json` value) and `VRG_AUTOMATION_APP` (the
+org's own `automation_app`). Each takes `--org ORG`, or without it acts on
+every listed org:
+
+- `publish` writes both variables from the configuration, visibility `all`.
+  It runs only as the human (a setup step, at org setup and whenever the
+  file changes), and refuses an org where a repository-level variable of
+  either name would shadow the org copy.
+- `check` reads them back and prints a `FINDING:` line for each variable
+  that is missing, invalid or not visible to every repo, for a
+  `VRG_AUTOMATION_APP` that differs from the org's slug in
+  `VRG_TRUSTED_AUTHORS`, and for each repository-level variable of either
+  name. It runs as the org's automation App (in the daily config audit) or
+  the human, and refuses the agent modes. `--values-out PATH` writes the
+  current values as `{"<org>": {"<name>": "<value>"}}`, even with findings.
+  With `--org` it needs no configuration.
+- `render` prints the values the configuration implies, in that same shape,
+  with no GitHub call, for comparison with the audit's values.
+
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_trusted_authors` (config: `lib/trusted_authors.py`) |
-| Args | `--json` (prints `{"human": [...], "agents": [...], "orgs": {"<org>": {"automation_app": "<slug>"}}}`) |
-| Preconditions | The VM file or the host stanzas exist, or, under GitHub Actions only, `$VRG_TRUSTED_AUTHORS` is set |
-| Failure mode | Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default |
-| Exit codes | 0 success, 1 not configured or invalid, 2 bad arguments |
+| Source | `vergil_tooling.bin.vrg_trusted_authors` (config: `lib/trusted_authors.py`; Actions copies: `lib/trust_publish.py`) |
+| Args | `--json` (prints `{"human": [...], "agents": [...], "orgs": {"<org>": {"automation_app": "<slug>"}}}`); `publish [--org ORG]`; `check [--org ORG] [--values-out PATH]`; `render [--org ORG]` |
+| Preconditions | The VM file or the host stanzas exist, or, under GitHub Actions only, `$VRG_TRUSTED_AUTHORS` is set (not needed by `check --org`). `publish`: an org admin's `gh` credential. `check`: read-only Variables permission at organization and repository level |
+| Failure mode | Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default. A GitHub API error stops `publish` and `check` with the failing call named |
+| Exit codes | 0 success; 1 not configured or invalid, `publish` refused or failed, or `check` findings; 2 bad arguments, or `check` could not run (refused identity, API error, no configuration) |
 | Status | Active |
 
 ### vrg-ruling

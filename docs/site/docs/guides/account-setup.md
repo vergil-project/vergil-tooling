@@ -366,6 +366,16 @@ automation_app = "<automation-app-slug>"
   {"automation_app": "<slug>"}}}`, from `$VRG_TRUSTED_AUTHORS`. It is read
   only when `GITHUB_ACTIONS` is `true` and neither file exists; when it is
   missing or invalid there, the read fails.
+- **Publishing the Actions copy.** It comes from two org Actions variables,
+  `VRG_TRUSTED_AUTHORS` (that JSON) and `VRG_AUTOMATION_APP` (the org's own
+  `automation_app`), which the human writes from the host file with
+  `vrg-trusted-authors publish`, once per org at setup and again whenever
+  the file changes. The daily config audit runs `vrg-trusted-authors check`
+  as the org's automation App, which needs read-only Variables permission
+  at organization and repository level: it flags a missing, invalid or
+  not-`all`-visible variable and any repository-level variable of either
+  name. `vrg-trusted-authors render` prints what the host file implies, to
+  compare with the audit's values.
 - **Read it through `vrg-trusted-authors`, never by hand.** It reads the VM
   file if present, else the host stanzas, and prints `human: <login>`,
   `agent: <login>` and `org: <org> automation: <slug>` lines (`--json`
