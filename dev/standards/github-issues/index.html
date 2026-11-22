@@ -19845,8 +19845,8 @@ org's <code>.github</code>.</p>
 <h3 id="compliance-invariants">Compliance invariants<a class="headerlink" href="#compliance-invariants" title="Permanent link">&para;</a></h3>
 <p><code>vrg-epic-audit</code> reports (read-only) any drift from the model:</p>
 <ul>
-<li><strong>Epics live in <code>.github</code>.</strong> An open <code>epic</code>-labelled issue outside <code>.github</code> in
-  a <em>public</em> repo is a violation (a private repo self-homes legitimately).</li>
+<li><strong>Epics live in <code>.github</code>.</strong> An open <code>epic</code>-labelled issue outside <code>.github</code>
+  is a violation.</li>
 <li><strong>No stray <code>.github</code> issues.</strong> The epic home holds only epics, the
   <code>archive</code>-labelled per-quarter buckets, and issues linked under an epic —
   managed tasks and intake/planning/deferred items alike; any other open issue
@@ -19861,13 +19861,8 @@ org's <code>.github</code>.</p>
   each <strong>orphan</strong> — an open issue in a managed repo (non-archived, with a
   <code>vergil.toml</code>) that is not a legitimate top-level kind and has no epic parent —
   together with the intake epic it would be attached to. It also lists issues
-  still carrying the retired <code>triage</code> / <code>idea</code> / <code>research</code> labels, issues
-  parented only by a body <code>Parent:</code> line, and self-homed queue epics
-  in a repo that has since become public.</li>
-<li><strong>No private work under public epics.</strong> An issue in a private repo parented
-  under a public <code>.github</code> epic is reported as a likely unsupported
-  public → private flip, for a human to resolve. Tooling never migrates or
-  retracts it.</li>
+  still carrying the retired <code>triage</code> / <code>idea</code> / <code>research</code> labels, and issues
+  parented only by a body <code>Parent:</code> line.</li>
 <li><strong>An archive stands top-level, labelled <code>archive</code>.</strong> An open archive (an
   <code>archive</code> label, or a stamped <code>Archive (&lt;kind&gt;): &lt;name&gt; — &lt;YYYY&gt;-Qn</code> title)
   with a native parent, one whose stamped title lacks the <code>archive</code> label, or
@@ -19894,10 +19889,6 @@ with an org-wide <strong>orphan pass</strong>, in order:</p>
    consumer reads the same parent.</li>
 <li><strong>Strip</strong> the retired <code>triage</code> / <code>idea</code> / <code>research</code> labels from every open
    issue (its parent is left alone).</li>
-<li><strong>Move</strong> a now-public repo's self-homed intake, planning and deferred items
-   under the
-   <code>.github</code> queues, then close the emptied self-homed epics — the only epics
-   the pass ever closes.</li>
 <li><strong>Attach</strong> every orphan to its home's intake epic (creating it if absent).
    Placement is intake review's job, not the sweep's.</li>
 </ol>

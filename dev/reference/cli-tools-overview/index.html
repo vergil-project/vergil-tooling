@@ -22509,8 +22509,7 @@ an open finite epic whose children are all closed (a standing or
 <a href="../../standards/github-issues/#proxy-epics">proxy epic</a> never is). The <strong>invariant</strong> checks
 are the <a href="../../standards/github-issues/#compliance-invariants">compliance invariants</a>:
 epics outside <code>.github</code>, stray <code>.github</code> issues, a closed epic with an open
-child, orphans, retired kind labels, body-only <code>Parent:</code> links, self-homed
-queues in a now-public repo, private work under a public epic, and a
+child, orphans, retired kind labels, body-only <code>Parent:</code> links, and a
 misplaced archive (one with a parent, one without its <code>archive</code> label, or one
 labelled <code>archive</code> whose title is not a stamped archive title). It also
 lists open epics with operational tasks still pending, and closed
@@ -22581,9 +22580,8 @@ stderr and no JSON, so the retrospective gate stops on it.</p>
    hoshin epics into per-quarter archives, and close past archives (see
    <a href="../../standards/github-issues/#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>).</li>
 <li>Run the <a href="../../standards/github-issues/#the-orphan-pass-auto-heal">orphan pass</a>:
-   nativize body-only <code>Parent:</code> links, strip the retired kind labels, move a
-   now-public repo's queue items under <code>.github</code>, and attach every orphan to
-   its home's intake epic.</li>
+   nativize body-only <code>Parent:</code> links, strip the retired kind labels, and
+   attach every orphan to its home's intake epic.</li>
 </ol>
 <p><code>--close</code> makes no security-advisory call: it neither syncs advisory states
 nor checks advisory/issue pairs. That is <code>vrg-security-record sync</code>, run by
