@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.release_stubs import defer_publish
 from vergil_tooling.lib.release import package_index
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 
@@ -298,7 +299,7 @@ def test_times_out_and_defers(release_ctx_with_package: ReleaseContext) -> None:
 def test_timeout_does_not_duplicate_deferred_entry(
     release_ctx_with_package: ReleaseContext,
 ) -> None:
-    release_ctx_with_package.deferred_publish_failures.append("package-index")
+    defer_publish(release_ctx_with_package, "package-index")
     with pytest.raises(ReleaseError):
         package_index.wait_for_index(
             release_ctx_with_package,

@@ -3,11 +3,15 @@ from __future__ import annotations
 import itertools
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
-from unittest.mock import patch
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from vergil_tooling.lib import ci_evidence
 from vergil_tooling.lib.release.confirm import (
@@ -16,6 +20,7 @@ from vergil_tooling.lib.release.confirm import (
     confirm_main,
 )
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+from vergil_tooling.lib.release.state import FailedJob, StateBlock, initial_state
 from vergil_tooling.lib.retry import KnownResourceNotFoundError
 
 _MOD = "vergil_tooling.lib.release.confirm"
@@ -44,7 +49,19 @@ def _ctx() -> ReleaseContext:
     # back-merge-bump records this; confirm-develop pins its CD run to it (#3329).
     ctx.bump_pr_url = "https://github.com/o/r/pull/101"
     ctx.bump_merge_sha = _SHA
+    ctx.state = initial_state(version="2.1.0", cut="c" * 40, issues=(), without_deps=False)
     return ctx
+
+
+@pytest.fixture(autouse=True)
+def write_state() -> Iterator[MagicMock]:
+    """Stand in for the tracking-issue write: keep the new state on *ctx*."""
+
+    def fake(ctx: ReleaseContext, new: StateBlock) -> None:
+        ctx.state = new
+
+    with patch(_MOD + ".write_state", side_effect=fake) as m_write:
+        yield m_write
 
 
 def test_watch_cd_reports_completed(
@@ -145,7 +162,7 @@ def test_confirm_main_fails_release_job_not_found() -> None:
 
 
 def test_confirm_main_non_release_job_failure_defers_not_raises() -> None:
-    # A failing docs job is recorded in deferred_publish_failures, not re-raised.
+    # A failing docs job is recorded in the state block, not re-raised.
     ctx = _ctx()
     jobs = [_job("docs / docs", conclusion="failure"), _job("release / release")]
     with (
@@ -154,7 +171,9 @@ def test_confirm_main_non_release_job_failure_defers_not_raises() -> None:
         patch(_MOD + "._verify_artifacts"),
     ):
         confirm_main(ctx)  # must NOT raise
-    assert "docs" in ctx.deferred_publish_failures
+    assert ctx.deferred_publish_failures == ["docs / docs"]
+    assert ctx.state is not None
+    assert ctx.state.failed_jobs == (FailedJob("main", "123", "docs / docs"),)
 
 
 def test_confirm_main_fails_tag_missing() -> None:
@@ -400,7 +419,7 @@ def test_confirm_main_defers_docker_publish_failure() -> None:
         patch(_MOD + "._verify_artifacts"),
     ):
         confirm_main(ctx)  # must NOT raise
-    assert ctx.deferred_publish_failures == ["docker-publish"]
+    assert ctx.deferred_publish_failures == ["docker-publish / publish: prod-base:latest"]
     assert ctx.cd_run_id == "123"
 
 
@@ -436,7 +455,9 @@ def test_confirm_develop_defers_docs_failure() -> None:
         patch(_MOD + "._settled_run_jobs", return_value=jobs),
     ):
         confirm_develop(ctx)  # must NOT raise
-    assert ctx.deferred_publish_failures == ["docs"]
+    assert ctx.deferred_publish_failures == ["docs / docs"]
+    assert ctx.state is not None
+    assert ctx.state.failed_jobs == (FailedJob("develop", "9", "docs / docs"),)
     assert ctx.develop_cd_run_id == "9"
 
 
@@ -483,10 +504,11 @@ def test_confirm_main_clean_run_does_not_mark_warn() -> None:
 
 def test_confirm_develop_marks_stage_warn_on_deferral() -> None:
     """A deferred publish failure downgrades confirm-develop's stage row to ⚠,
-    even when the same family was already deferred on main (dedup keeps the
-    list from growing, but the stage still observed a break)."""
+    and is recorded beside the jobs already deferred on main, which it keeps."""
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["docker-publish"]
+    main_job = FailedJob("main", "1", "docker-publish / publish: prod-base:latest")
+    assert ctx.state is not None
+    ctx.state = replace(ctx.state, failed_jobs=(main_job,))
     jobs = [_job("docker-publish / publish: dev-base:latest", conclusion="failure")]
     with (
         patch(_MOD + "._watch_cd", return_value=("9", "https://run/9")),
@@ -496,8 +518,10 @@ def test_confirm_develop_marks_stage_warn_on_deferral() -> None:
         confirm_develop(ctx)
     mark_warn.assert_called_once()
     assert "docker-publish" in mark_warn.call_args.args[0]
-    # dedup: the shared family is not re-appended
-    assert ctx.deferred_publish_failures == ["docker-publish"]
+    assert ctx.state.failed_jobs == (
+        main_job,
+        FailedJob("develop", "9", "docker-publish / publish: dev-base:latest"),
+    )
 
 
 def test_confirm_develop_clean_run_does_not_mark_warn() -> None:
@@ -852,7 +876,7 @@ def test_confirm_main_unsettled_job_in_failed_run_is_deferred_by_full_name() -> 
         patch(_MOD + "._verify_artifacts"),
     ):
         confirm_main(ctx)
-    assert ctx.deferred_publish_failures == ["release / package-matrix (never settled)"]
+    assert ctx.deferred_publish_failures == ["release / package-matrix"]
 
 
 def test_confirm_main_settles_lagging_non_release_job() -> None:
@@ -896,9 +920,9 @@ def test_confirm_main_combines_deferral_and_stale_warning() -> None:
         patch(_MOD + ".progress.mark_warn") as mark_warn,
     ):
         confirm_main(ctx)
-    assert ctx.deferred_publish_failures == ["docker-publish"]
+    assert ctx.deferred_publish_failures == ["docker-publish / publish: x"]
     mark_warn.assert_called_once_with(
-        "publish deferred: docker-publish; stale job record: release / package-matrix"
+        "publish deferred: docker-publish / publish: x; stale job record: release / package-matrix"
     )
 
 
@@ -926,141 +950,231 @@ def test_run_conclusion_reads_run_level_conclusion() -> None:
     assert args[5:] == ("--json", "conclusion", "--jq", ".conclusion")
 
 
-# --- A failed CD release job names its recovery (#4405) -----------------
+# --- A failed CD release job is recorded, and recovered on resume ---------
+# (spec §4.5 of epic vergil-project/.github#1440; replaces #4405's hand-run steps)
 
 _RELEASE_PR = "https://github.com/owner/repo/pull/10"
 _PR_HEAD = "feedface1234"
 _FAILED_RELEASE = [_job("docs / docs"), _job("release / release", conclusion="failure")]
 
 
-def _resumed_ctx() -> ReleaseContext:
-    """A resumed release: prepare adopted the merged release PR."""
+def _resumed_ctx(failed_release_run: str | None = "222") -> ReleaseContext:
+    """A resumed release whose last run failed at the release job of CD run 222."""
     ctx = _ctx()
     ctx.release_pr_url = _RELEASE_PR
+    assert ctx.state is not None
+    ctx.state = replace(ctx.state, failed_release_run=failed_release_run)
     return ctx
 
 
-def _confirm_failed_release(ctx: ReleaseContext, **ci_lookup: Any) -> ReleaseError:
-    """Run confirm_main over a CD run whose release job failed; return the error."""
+def test_confirm_main_records_failed_release_run(write_state: MagicMock) -> None:
+    """A failed CD release job writes failed_release_run before the stage fails."""
+    ctx = _ctx()
+    ctx.release_pr_url = _RELEASE_PR
     with (
         patch(_MOD + "._watch_cd", return_value=("222", "https://run/222")),
         patch(_MOD + "._settled_run_jobs", return_value=_FAILED_RELEASE),
-        patch(_MOD + ".github.head_sha", return_value=_PR_HEAD) as head_sha,
-        patch(_MOD + ".ci_evidence.select_ci_run", **ci_lookup) as select,
         patch(_MOD + "._verify_artifacts") as verify_artifacts,
+        patch(_MOD + ".rerun_and_watch") as rerun,
         pytest.raises(ReleaseError, match="Release job did not succeed") as raised,
     ):
         confirm_main(ctx)
     verify_artifacts.assert_not_called()
-    if ctx.release_pr_url is not None:
-        head_sha.assert_called_once_with(_RELEASE_PR)
-        select.assert_called_once_with("owner/repo", _PR_HEAD)
-    else:
-        head_sha.assert_not_called()
-        select.assert_not_called()
-    return raised.value
-
-
-def test_failed_release_job_prints_exact_recovery_steps() -> None:
-    err = _confirm_failed_release(_resumed_ctx(), return_value={"id": 111})
-    assert err.phase == "confirm-main"
-    assert str(err) == (
-        "Release job did not succeed (conclusion: 'failure'). Resuming alone re-judges "
-        "the same failed CD run. Once the cause is fixed and the fix is released, "
-        "recover this release: "
-        "(1) `gh run rerun 111 --repo owner/repo` (the release PR's CI run, so CD "
-        "harvests fresh evidence); "
-        "(2) `gh run watch 111 --repo owner/repo --exit-status`; "
-        "(3) `gh run rerun 222 --repo owner/repo` (the failed CD run on main); "
-        "(4) `gh run watch 222 --repo owner/repo --exit-status`; "
-        "(5) `vrg-release --resume 2.1.0`."
-    )
-
-
-def test_failed_release_job_ci_lookup_failure_is_named_not_masking() -> None:
-    err = _confirm_failed_release(
-        _resumed_ctx(),
-        side_effect=ci_evidence.NoQualifyingRunError(_PR_HEAD),
-    )
-    message = str(err)
-    assert message.startswith("Release job did not succeed (conclusion: 'failure').")
-    assert f"`gh run list --repo owner/repo --workflow CI --commit {_PR_HEAD}`" in message
-    assert f"no completed+success CI run for head SHA {_PR_HEAD}" in message
-    # The CD steps still carry the failed run's ID.
-    assert "`gh run rerun 222 --repo owner/repo`" in message
+    rerun.assert_not_called()
+    write_state.assert_called_once()
+    assert ctx.state is not None
+    assert ctx.state.failed_release_run == "222"
+    message = str(raised.value)
+    assert raised.value.phase == "confirm-main"
+    assert "CD run 222 is recorded as the failed release run" in message
     assert "`vrg-release --resume 2.1.0`" in message
+    # No hand-run steps: the resume does the re-runs.
+    assert "gh run rerun" not in message
 
 
-def test_failed_release_job_ci_api_error_is_named() -> None:
-    err = _confirm_failed_release(
-        _resumed_ctx(),
-        side_effect=subprocess.CalledProcessError(1, ["gh", "api"], stderr="HTTP 502"),
-    )
-    assert "it could not be looked up:" in str(err)
-    assert "`gh run rerun 222 --repo owner/repo`" in str(err)
+def _recover(ctx: ReleaseContext, jobs: list[dict[str, Any]], **rerun: Any) -> MagicMock:
+    """Run confirm_main on a resume whose recorded CD release run 222 is on main's tip."""
+    with (
+        patch(_MOD + "._cd_head_sha", return_value=_SHA),
+        patch(_MOD + ".github.read_output", return_value=_SHA),
+        patch(_MOD + ".github.head_sha", return_value=_PR_HEAD) as head_sha,
+        patch(_MOD + ".ci_evidence.select_ci_run", return_value={"id": 111}) as select,
+        patch(_MOD + ".rerun_and_watch", **rerun) as m_rerun,
+        patch(_MOD + "._watch_cd", return_value=("222", "https://run/222")),
+        patch(_MOD + "._settled_run_jobs", return_value=jobs),
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        try:
+            confirm_main(ctx)
+        finally:
+            head_sha.assert_called_once_with(_RELEASE_PR)
+            select.assert_called_once_with("owner/repo", _PR_HEAD)
+    return m_rerun
 
 
-def test_failed_release_job_without_release_pr_says_so() -> None:
-    ctx = _ctx()
-    assert ctx.release_pr_url is None
-    # The helper asserts that no head-SHA or CI-run lookup ran.
-    err = _confirm_failed_release(ctx, return_value={"id": 111})
-    assert "the release PR is not recorded" in str(err)
-    assert "`gh run rerun 222 --repo owner/repo`" in str(err)
-
-
-def test_release_job_not_found_carries_no_recovery() -> None:
+def test_confirm_main_resume_reruns_ci_then_cd() -> None:
     ctx = _resumed_ctx()
+    rerun = _recover(ctx, _MAIN_JOBS_OK)
+    assert [(c.args[1], c.kwargs["check_status"]) for c in rerun.call_args_list] == [
+        ("111", True),
+        ("222", False),
+    ]
+    assert all(c.kwargs.get("rerun_args", ()) == () for c in rerun.call_args_list)
+    assert ctx.cd_run_id == "222"
+    assert ctx.state is not None
+    assert ctx.state.failed_release_run is None
+
+
+def test_confirm_main_resume_ci_rerun_failure_stops_before_cd() -> None:
+    ctx = _resumed_ctx()
+    failure = subprocess.CalledProcessError(1, ["gh", "run", "watch"], stderr="failed")
+    with pytest.raises(ReleaseError, match="CI run 111 did not succeed") as raised:
+        _recover(ctx, _MAIN_JOBS_OK, side_effect=failure)
+    assert "--exit-status" in raised.value.command
+    assert ctx.state is not None
+    assert ctx.state.failed_release_run == "222"
+
+
+def test_confirm_main_resume_while_release_still_fails_keeps_it_recorded() -> None:
+    ctx = _resumed_ctx()
+    with pytest.raises(ReleaseError, match="Release job did not succeed"):
+        _recover(ctx, _FAILED_RELEASE)
+    assert ctx.state is not None
+    assert ctx.state.failed_release_run == "222"
+
+
+def test_recovery_refuses_a_run_not_on_mains_tip() -> None:
+    ctx = _resumed_ctx()
+    with (
+        patch(_MOD + "._cd_head_sha", return_value=_SHA),
+        patch(_MOD + ".github.read_output", return_value="0" * 12),
+        patch(_MOD + ".rerun_and_watch") as rerun,
+        pytest.raises(ReleaseError, match="not main's tip"),
+    ):
+        confirm_main(ctx)
+    rerun.assert_not_called()
+
+
+def test_recovery_without_release_pr_refuses() -> None:
+    ctx = _resumed_ctx()
+    ctx.release_pr_url = None
+    with (
+        patch(_MOD + "._cd_head_sha", return_value=_SHA),
+        patch(_MOD + ".github.read_output", return_value=_SHA),
+        patch(_MOD + ".rerun_and_watch") as rerun,
+        pytest.raises(ReleaseError, match="release PR is not recorded"),
+    ):
+        confirm_main(ctx)
+    rerun.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ci_evidence.NoQualifyingRunError(_PR_HEAD),
+        subprocess.CalledProcessError(1, ["gh", "api"], stderr="HTTP 502"),
+    ],
+)
+def test_recovery_ci_lookup_failure_is_named(error: Exception) -> None:
+    ctx = _resumed_ctx()
+    with (
+        patch(_MOD + "._cd_head_sha", return_value=_SHA),
+        patch(_MOD + ".github.read_output", return_value=_SHA),
+        patch(_MOD + ".github.head_sha", return_value=_PR_HEAD),
+        patch(_MOD + ".ci_evidence.select_ci_run", side_effect=error),
+        patch(_MOD + ".rerun_and_watch") as rerun,
+        pytest.raises(ReleaseError, match="CI run could not be looked up") as raised,
+    ):
+        confirm_main(ctx)
+    rerun.assert_not_called()
+    assert (
+        raised.value.command == f"gh run list --repo owner/repo --workflow CI --commit {_PR_HEAD}"
+    )
+
+
+def test_release_job_not_found_records_nothing(write_state: MagicMock) -> None:
+    ctx = _ctx()
     with (
         patch(_MOD + "._watch_cd", return_value=("222", "https://run/222")),
         patch(_MOD + "._settled_run_jobs", return_value=[_job("docs / docs")]),
-        patch(_MOD + ".github.head_sha") as head_sha,
         pytest.raises(ReleaseError, match=r"^Release job 'release / release' not found"),
     ):
         confirm_main(ctx)
-    head_sha.assert_not_called()
+    write_state.assert_not_called()
 
 
-def test_successful_release_job_makes_no_recovery_lookup() -> None:
-    ctx = _resumed_ctx()
+def test_no_recorded_failed_release_run_reruns_nothing(write_state: MagicMock) -> None:
+    ctx = _resumed_ctx(failed_release_run=None)
     with (
         patch(_MOD + "._watch_cd", return_value=("222", "https://run/222")),
         patch(_MOD + "._settled_run_jobs", return_value=_MAIN_JOBS_OK),
-        patch(_MOD + ".github.head_sha") as head_sha,
-        patch(_MOD + ".ci_evidence.select_ci_run") as select,
+        patch(_MOD + ".rerun_and_watch") as rerun,
         patch(_MOD + "._verify_artifacts"),
     ):
         confirm_main(ctx)
-    head_sha.assert_not_called()
-    select.assert_not_called()
+    rerun.assert_not_called()
+    write_state.assert_not_called()
 
 
-def test_resume_after_failed_release_job_judges_the_rerun_attempt() -> None:
-    """The recovery end to end: the first run fails at the release job; once the
-    human re-runs CD, ``--resume`` watches the same run's new attempt and passes."""
-    ctx = _resumed_ctx()
+def test_rerun_and_watch_waits_for_the_new_attempt() -> None:
+    from vergil_tooling.lib.release.confirm import rerun_and_watch
+
+    ctx = _ctx()
     with (
-        patch(_MOD + "._watch_cd", return_value=("222", "https://run/222")),
-        patch(_MOD + "._fetch_run_jobs", side_effect=[_FAILED_RELEASE, _MAIN_JOBS_OK]) as fetch,
-        patch(_MOD + ".github.head_sha", return_value=_PR_HEAD),
-        patch(_MOD + ".ci_evidence.select_ci_run", return_value={"id": 111}),
-        patch(_MOD + "._verify_artifacts") as verify_artifacts,
+        patch(_MOD + ".github.read_output", side_effect=["1", "1", "2"]),
+        patch(_MOD + ".github.run") as run,
+        patch(_MOD + "._watch_run", return_value="https://run/5") as watch,
+        patch(_MOD + ".time.sleep"),
     ):
-        with pytest.raises(ReleaseError, match="gh run rerun 222"):
-            confirm_main(ctx)
-        verify_artifacts.assert_not_called()
-        confirm_main(ctx)  # the resume, after the re-run succeeded
-    assert fetch.call_count == 2
-    verify_artifacts.assert_called_once_with(ctx)
-    assert ctx.cd_run_id == "222"
+        url = rerun_and_watch(
+            ctx, "5", rerun_args=("--failed",), check_status=True, phase="cd-publish"
+        )
+    run.assert_called_once_with("run", "rerun", "5", "--repo", "owner/repo", "--failed")
+    watch.assert_called_once_with(ctx, "5", check_status=True)
+    assert url == "https://run/5"
 
 
-def test_resume_while_rerun_still_fails_keeps_failing_loudly() -> None:
-    """A re-run that fails again is re-judged and refused, with the steps again."""
-    ctx = _resumed_ctx()
-    for _ in range(2):
-        err = _confirm_failed_release(ctx, return_value={"id": 111})
-        assert "(5) `vrg-release --resume 2.1.0`" in str(err)
+def test_rerun_and_watch_attempt_never_registers_fails() -> None:
+    from vergil_tooling.lib.release.confirm import rerun_and_watch
+
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".github.read_output", return_value="1"),
+        patch(_MOD + ".github.run"),
+        patch(_MOD + "._watch_run") as watch,
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(ReleaseError, match="no attempt after attempt 1 registered"),
+    ):
+        rerun_and_watch(ctx, "5", check_status=False, phase="cd-publish")
+    watch.assert_not_called()
+
+
+def test_confirm_main_without_a_state_block_refuses() -> None:
+    ctx = _ctx()
+    ctx.state = None
+    jobs = [_job("release / release"), _job("docs / docs", conclusion="failure")]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._settled_run_jobs", return_value=jobs),
+        pytest.raises(ReleaseError, match="no release state block"),
+    ):
+        confirm_main(ctx)
+
+
+def test_confirm_main_resume_judgement_replaces_mains_recorded_jobs() -> None:
+    """A re-judged main run's failures replace main's recorded jobs; develop's stay."""
+    ctx = _ctx()
+    develop_job = FailedJob("develop", "9", "docs / docs")
+    assert ctx.state is not None
+    ctx.state = replace(ctx.state, failed_jobs=(FailedJob("main", "123", "old / job"), develop_job))
+    jobs = [_job("release / release"), _job("pypi / publish", conclusion="failure")]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._settled_run_jobs", return_value=jobs),
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)
+    assert ctx.state.failed_jobs == (develop_job, FailedJob("main", "123", "pypi / publish"))
 
 
 # -- a superseded CD run (epic vergil-project/.github#1218, Task 7) ----------
@@ -1135,7 +1249,7 @@ def test_docs_only_supersede_no_redispatch() -> None:
     dispatch.assert_not_called()
     verify.assert_called_once_with(ctx)
     assert ctx.cd_run_id == "100"
-    assert ctx.deferred_publish_failures == ["docs"]
+    assert ctx.deferred_publish_failures == ["docs / docs"]
 
 
 def test_redispatch_ignores_cancelled_run() -> None:
@@ -1216,7 +1330,6 @@ def test_confirm_main_other_cancel_fails() -> None:
         patch(_MOD + "._settled_run_jobs", return_value=_SUPERSEDED_MAIN_JOBS),
         patch(_MOD + "._supersede_group", return_value=None),
         patch(_MOD + ".github.run") as dispatch,
-        patch(_MOD + "._failed_release_recovery", return_value="(recovery)"),
         patch(_MOD + "._verify_artifacts") as verify,
         pytest.raises(ReleaseError, match="conclusion: 'cancelled'"),
     ):
@@ -1282,7 +1395,7 @@ def test_confirm_develop_other_cancel_still_defers() -> None:
         patch(_MOD + "._supersede_group", return_value=None),
     ):
         confirm_develop(ctx)
-    assert ctx.deferred_publish_failures == ["docs"]
+    assert ctx.deferred_publish_failures == ["docs / docs"]
 
 
 def test_confirm_develop_unreadable_supersede_defers_and_says_why(
@@ -1295,5 +1408,5 @@ def test_confirm_develop_unreadable_supersede_defers_and_says_why(
         patch(_MOD + "._supersede_group", side_effect=ValueError("no jobs list")),
     ):
         confirm_develop(ctx)
-    assert ctx.deferred_publish_failures == ["docs"]
+    assert ctx.deferred_publish_failures == ["docs / docs"]
     assert "no jobs list" in capsys.readouterr().out

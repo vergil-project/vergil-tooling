@@ -406,6 +406,21 @@ def _did_not_succeed(job: dict[str, Any]) -> bool:
     )
 
 
+def failed_job_names(jobs: list[dict[str, Any]]) -> list[str]:
+    """Ordered-unique full names of completed non-release jobs that did not succeed.
+
+    The jobs :func:`failed_job_labels` collapses to families, each by its own
+    name, as ``vrg-release`` records them in its state block so a resume can
+    match the same job in a later run. The release job is never listed.
+    """
+    failed: list[str] = []
+    for job in jobs:
+        name = job.get("name", "")
+        if name and not is_release_job(name) and _did_not_succeed(job) and name not in failed:
+            failed.append(name)
+    return failed
+
+
 def failed_job_labels(jobs: list[dict[str, Any]]) -> list[str]:
     """Ordered-unique families of completed non-release jobs that did not succeed.
 

@@ -11,6 +11,9 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.pending_release import PendingRelease
     from vergil_tooling.lib.release.state import IssueEntry, StateBlock
 
+# The package-index stage's name, by which a deferred index miss is listed.
+INDEX_STAGE = "package-index"
+
 
 @dataclass
 class ReleaseContext:
@@ -21,8 +24,9 @@ class ReleaseContext:
     repo_root: Path
     version_override: str | None
 
-    # True on vrg-release --resume: package-index then dispatches the index
-    # workflow itself before it waits (spec §4.5 of epic
+    # True on vrg-release --resume: cd-publish then delivers the CD publish
+    # jobs that a fresh run only records, and package-index dispatches the
+    # index workflow itself before it waits (spec §4.5 of epic
     # vergil-project/.github#1440).
     resume: bool = False
 
@@ -100,13 +104,10 @@ class ReleaseContext:
     # release stays resumable (#1612).
     deferred_failures: list[str] = field(default_factory=list)
 
-    # Families of CD publish jobs that did not succeed (e.g. "docker-publish",
-    # "docs"). The release itself is valid (tag + Release published); these are
-    # re-publishable. Surfaced by the publish-status stage (exit 1), the open
-    # tracking issue, and the consumer-refresh hold-warning. Separate from
-    # deferred_failures, which the _tracked wrapper fills with failed STAGE
-    # names (#1853).
-    deferred_publish_failures: list[str] = field(default_factory=list)
+    # True once this run's package-index stage missed the release in the
+    # index. The stage runs again on every resume until the state block
+    # records the index listed, so a miss is always this run's.
+    index_missed: bool = False
 
     promote: bool = True
 
@@ -138,6 +139,28 @@ class ReleaseContext:
     # (#3332). GitHub's delete-on-merge never covers a closed PR, so a leftover
     # is named in the prepare-stage tracking comment rather than left silent.
     undeleted_deps_branches: list[str] = field(default_factory=list)
+
+    @property
+    def deferred_publish_failures(self) -> list[str]:
+        """The publishes this release has deferred, derived from the state block.
+
+        Each failed CD publish job recorded in ``state.failed_jobs``, by its
+        job name and once however many runs it is recorded for, then
+        ``package-index`` when this run's index wait missed the release
+        (:attr:`index_missed`) and the state does not record it listed. The
+        release itself is valid (tag and GitHub Release published); these are
+        delivered by ``vrg-release --resume``. Separate from
+        ``deferred_failures``, which the ``_tracked`` wrapper fills with
+        failed stage names (#1853). Each read returns a new list: it is a
+        view, never written (spec §4.3 of epic vergil-project/.github#1440).
+        """
+        failures: list[str] = []
+        if self.state is not None:
+            failures.extend(dict.fromkeys(job.job for job in self.state.failed_jobs))
+        listed = self.state is not None and self.state.index_listed
+        if self.index_missed and not listed and INDEX_STAGE not in failures:
+            failures.append(INDEX_STAGE)
+        return failures
 
     @property
     def work_root(self) -> Path:

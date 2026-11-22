@@ -11,6 +11,7 @@ from vergil_tooling.lib.progress import Stage, mark_warn, note
 from vergil_tooling.lib.promote import promote
 from vergil_tooling.lib.release import checklist, package_index
 from vergil_tooling.lib.release.bump import back_merge_and_bump
+from vergil_tooling.lib.release.cd_publish import deliver_failed_jobs
 from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
 from vergil_tooling.lib.release.conflict import merge_main_into_release
 from vergil_tooling.lib.release.context import ReleaseError
@@ -231,13 +232,16 @@ def _record_done(ctx: ReleaseContext, name: str) -> None:
 
 
 def _record_failure(ctx: ReleaseContext, name: str) -> None:
-    """Record a failed stage as halted, unless it deferred itself as a publish.
+    """Record a failed stage as halted, unless it failed as a deferred publish.
 
-    A stage that recorded its own failure in ``deferred_publish_failures``
-    (package-index) left the release complete, not halted: close-finalize must
-    still post the deferral comment and leave the issue open, not treat it as
-    a stage to fix and ``--resume`` (#3557).
+    A stage whose failure is a deferred publish (package-index, which missed
+    the index, or cd-publish while the state still records failed CD jobs)
+    left the release complete, not halted: close-finalize must still post the
+    deferral comment and leave the issue open, not treat it as a stage to fix
+    and ``--resume`` (#3557).
     """
+    if name == "cd-publish" and ctx.state is not None and ctx.state.failed_jobs:
+        return
     if name not in ctx.deferred_publish_failures:
         ctx.deferred_failures.append(name)
 
@@ -274,6 +278,10 @@ def build_stages() -> list[Stage]:
             _tracked("confirm-develop", confirm_develop),
             mode="fail_defer",
         ),
+        # Delivers the CD publish jobs confirm-main and confirm-develop
+        # recorded as failed: a fresh run fails it deferred, a resume re-runs
+        # them (spec §4.5 of epic vergil-project/.github#1440).
+        Stage("cd-publish", _tracked("cd-publish", deliver_failed_jobs), mode="fail_defer"),
         # Waits for the published package index before close-finalize, so a
         # miss (a deferred publish) leaves the tracking issue open with the
         # deferral comment (#3557); the consumer refresh then holds on it.
@@ -530,6 +538,8 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
     elif phase == "confirm-develop":
         if ctx.develop_cd_run_url:
             lines.append(f"Develop CD: {ctx.develop_cd_run_url}")
+    elif phase == "cd-publish":
+        lines.append("No failed CD publish job is left to deliver.")
     elif phase == "promote":
         if not ctx.promote:
             lines.append("Promote skipped (--no-promote).")

@@ -200,10 +200,11 @@ stages not recorded done.
 | `preflight` | fail-fast | Checks the host prerequisites, `gh` auth and `vergil.toml`. A [resume](#resuming-a-release) runs only these checks. A fresh start then checks that the root checkout is a clean `develop`, [brings it up to `origin/develop`](#the-develop-sync), runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, checks that [no other release is open](#one-release-at-a-time), runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it. On a fresh start it then reads the release's [contents](#release-tracking-artifacts), pinned to the commit the branch is cut from, and prints them: the pending-release table and, under it, the [issue list](#the-issue-list) |
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, with its Contents section, stage checklist and state block, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
-| `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see [Stale job records](#stale-job-records)) |
+| `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed: a failed one is recorded in the state block, and recovered by the resume (see [A failed release job](#a-failed-release-job)). Every other failed publish job is recorded in the state block, by its run and full name, and deferred to `cd-publish` (see [Stale job records](#stale-job-records)) |
 | `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, refreshes the lockfile (`uv lock` for Python and `cargo update --workspace` for Rust, in the dev container; for TypeScript, a direct edit of `package-lock.json`'s root version fields that runs no npm), and merges it to `develop`. Records the back-merge's merge commit |
 | `teardown-worktree` | fail-fast | Removes the release worktree and returns to the root checkout. Fail-fast, as every branch-work stage is, so `close-finalize`, which prunes the release branches, runs only once all of them have succeeded |
-| `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed docs publish is deferred |
+| `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed publish job (the docs publish) is recorded in the state block and deferred to `cd-publish` |
+| `cd-publish` | deferred | Delivers the CD publish jobs the confirm stages recorded as failed (see [Failed CD publish jobs](#failed-cd-publish-jobs)). Nothing to do when none failed. A fresh run fails it, deferred, naming the jobs; `vrg-release --resume` re-runs them |
 | `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index. A miss is a deferred publish failure, not a halted stage |
 | `promote` | deferred | Moves the rolling `vX.Y` tag to the new release (skipped with `--no-promote`). It runs after `package-index`, so `vX.Y` moves only once the index has the release, and skips when `package-index` deferred (see [A promote held back by the index](#a-promote-held-back-by-the-index)) |
 | `close-finalize` | deferred | Closes the tracking issue with a summary and runs `vrg-finalize-pr --cleanup-only` |
@@ -215,11 +216,36 @@ stages not recorded done.
 when an earlier stage has failed, so the release can be resumed with
 `vrg-release --resume`. A deferred publish failure also leaves the
 issue open, with a comment that says how to finish each deferred item:
-re-run the CD publish (or the `publish-index` workflow, for a
-`package-index` miss), then run `vrg-release --resume`, which finishes
-the stages not yet done and closes the issue. For a `package-index`
-miss the re-run is optional: the resume dispatches the `publish-index`
-workflow itself.
+fix the cause of the failed CD publish jobs, which the resume re-runs
+(or re-run the `publish-index` workflow, for a `package-index` miss),
+then run `vrg-release --resume`, which finishes the stages not yet done
+and closes the issue. For a `package-index` miss the re-run is optional:
+the resume dispatches the `publish-index` workflow itself.
+
+#### Failed CD publish jobs
+
+`confirm-main` and `confirm-develop` record each CD publish job that did
+not succeed in the tracking issue's state block, as its branch, its CD
+run and its full job name. A fresh run's `cd-publish` fails, deferred,
+naming them, and the release carries on. Once the cause is fixed,
+`vrg-release --resume` delivers them:
+
+- **On `main`**, each recorded run is re-run with
+  `gh run rerun <run> --failed` and watched, and its jobs are judged
+  again as `confirm-main` judges them: the release job must still have
+  succeeded.
+- **On `develop`**, a recorded job counts as delivered when a later
+  `develop` CD run's same job has succeeded, so an older run never
+  overwrites newer docs. Only a job no later run delivered is re-run,
+  by itself (`gh run rerun <run> --job <job>`). A listing of `develop`'s
+  newest CD runs that does not reach back to the recorded run stops the
+  stage rather than re-run it on a guess.
+
+A recorded job whose run has succeeded since, re-run by hand say, is
+delivered without a re-run. Each delivered job leaves the state block
+as soon as its run is judged, so a second resume re-runs only what is
+still recorded. While any job is left, `cd-publish` fails, the issue
+stays open, and the consumer refresh holds.
 
 `confirm-develop` checks the CD run for the back-merge's merge commit,
 not for the current tip of `develop`. On `vrg-release --resume`, other
@@ -331,26 +357,22 @@ issue.
 ### A failed release job
 
 When the CD release job on `main` does not succeed, `confirm-main`
-fails, and the release PR is already merged. `vrg-release --resume`
-alone cannot recover it: it watches the latest attempt of the same CD
-run and judges that same failed release job again. `vrg-release` does
-not re-run the job itself, since only you can tell that the cause is
-fixed. The `confirm-main` failure, on the terminal and on the tracking
-issue, lists the recovery steps with the run IDs filled in:
+records the CD run in the state block as the failed release run, then
+fails. The release PR is already merged. Fix the cause, then run
+`vrg-release --resume <version>`. Its `confirm-main` recovers the run
+before judging it:
 
-1. `gh run rerun <ci-run> --repo <repo>`: re-run the release PR's CI
-   run. The release job's evidence gate harvests that run's artifacts,
-   so a fix that changes what CI writes reaches the gate only through a
-   fresh CI attempt.
-2. `gh run watch <ci-run> --repo <repo> --exit-status`.
-3. `gh run rerun <cd-run> --repo <repo>`: re-run the failed CD run on
-   `main`.
-4. `gh run watch <cd-run> --repo <repo> --exit-status`.
-5. `vrg-release --resume <version>`.
-
-Run them once the fix for the cause is released. Stop at any watch that
-fails. The resume judges the CD run's new attempt through the same
-release-job gate.
+1. It checks that the recorded run is for `main`'s tip, the release
+   merge, and refuses to re-run it otherwise.
+2. It re-runs the release PR's CI run and watches it with
+   `--exit-status`. The release job's evidence gate harvests that run's
+   artifacts, so a fix that changes what CI writes reaches the gate only
+   through a fresh CI attempt. A CI re-run that fails stops the resume
+   before the CD run is touched.
+3. It re-runs the failed CD run and watches it.
+4. It judges the CD run's new attempt through the same release-job gate.
+   A release job that passes clears the recorded run; one that fails
+   again keeps it recorded, and the next resume recovers it again.
 
 ### A failed back-merge-bump
 
@@ -400,12 +422,13 @@ conclusion to judge:
   warning, `stale job record: <job>`, and nothing is deferred. No CD
   re-run is needed.
 - Under any other run conclusion the job may really have failed, so it is
-  deferred as `<job> (never settled)`.
+  deferred: recorded as a failed job and shown as
+  `<job> (never settled)`.
 
-A failed job in the release job's own family, such as
-`release / package-sign`, is reported by its full name rather than as
-`release`, so the message is never mistaken for the release itself
-failing.
+A deferred job is recorded and reported by its full name, such as
+`release / package-sign` or `docs / docs`, so `cd-publish` can find the
+same job again, and a failed job in the release job's own family is
+never mistaken for the release itself failing.
 
 ### Consumer steps
 

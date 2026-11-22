@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.vergil_tooling.release_stubs import defer_publish
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.finalize import (
     _build_summary,
@@ -195,7 +196,7 @@ def test_close_and_finalize_publish_deferred_leaves_open() -> None:
     from vergil_tooling.lib.release import finalize
 
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["docker-publish"]
+    defer_publish(ctx, "docker-publish")
     with (
         patch.object(finalize, "comment_publish_deferred") as comment,
         patch.object(finalize, "close_tracking_issue") as close,
@@ -212,7 +213,7 @@ def test_close_and_finalize_publish_deferred_prints_per_kind_remedy(
     from vergil_tooling.lib.release import finalize
 
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["package-index"]
+    defer_publish(ctx, "package-index")
     with (
         patch.object(finalize, "comment_publish_deferred"),
         patch.object(finalize, "close_tracking_issue"),
