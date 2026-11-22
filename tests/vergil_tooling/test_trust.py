@@ -652,4 +652,4 @@ def test_batch_summary_lists_read_failures_under_actions(monkeypatch: pytest.Mon
 
 
 def test_all_roles() -> None:
-    assert ALL_ROLES == {Role.HUMAN, Role.AGENTS, Role.AUTOMATION}
+    assert {Role.HUMAN, Role.AGENTS, Role.AUTOMATION} == ALL_ROLES

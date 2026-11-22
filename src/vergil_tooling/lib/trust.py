@@ -313,7 +313,7 @@ def _optional_text(node: Mapping[str, Any], key: str, call: str, what: str) -> s
     value = _get(node, key, call, what)
     if value is not None and not isinstance(value, str):
         raise TrustReadError(call, f"{what} has no usable {key}")
-    return cast("str | None", value)
+    return value
 
 
 def _actor(node: Mapping[str, Any], key: str, call: str, what: str) -> Identity:
@@ -336,11 +336,11 @@ def _connection(value: object, call: str, what: str) -> tuple[list[Any], str | N
     if not isinstance(nodes, list) or not isinstance(has_next, bool):
         raise TrustReadError(call, f"{what} is not shaped as a connection")
     if not has_next:
-        return cast("list[Any]", nodes), None
+        return nodes, None
     cursor = _get(info, "endCursor", call, f"{what}'s pageInfo")
     if not isinstance(cursor, str) or not cursor:
         raise TrustReadError(call, f"{what} has a next page but no cursor")
-    return cast("list[Any]", nodes), cursor
+    return nodes, cursor
 
 
 def _edit(node: object, call: str, what: str) -> tuple[Identity, str]:
