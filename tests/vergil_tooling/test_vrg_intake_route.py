@@ -188,6 +188,12 @@ def test_main_refusal_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
     [
         trust.TrustReadError("read_issue org/.github#352", "the comments is missing"),
         trusted_authors.TrustedAuthorsNotConfiguredError("trusted authors are not configured"),
+        trust.UntrustedContentError(
+            trust.Skipped(
+                "org/.github", 352, "issue", "drive-by", "2026-11-01T09:30:00Z", "body", "untrusted"
+            ),
+            "the issue body is untrusted",
+        ),
     ],
 )
 def test_main_trust_failure_exits_1(capsys: pytest.CaptureFixture[str], exc: Exception) -> None:

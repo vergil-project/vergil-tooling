@@ -124,8 +124,10 @@ completes whatever steps are missing:
   line;
 - without `--issue`, it looks among the intake epic's sub-issues for one
   whose body has the advisory's `Security advisory:` line (it never uses
-  search, whose index can lag). If none is found it creates the issue and
-  links it. Then it writes the tracking line.
+  search, whose index can lag). A match counts only when the trust layer
+  trusts that body (its author and every editor trusted); any other is
+  skipped and reported on stderr, metadata only. If none is found it
+  creates the issue and links it. Then it writes the tracking line.
 
 Every step is idempotent, so running a resume command twice is safe.
 
@@ -180,6 +182,17 @@ refusal names every missing advisory:
 ```text
 vrg-security-record: advisory GHSA-xxxx-xxxx-xxxx does not exist in vergil-project/.github
 vrg-security-record: advisories GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy do not exist in vergil-project/.github
+```
+
+Given an issue, `show` prints only the advisories that **track** it, whose
+`Tracking issue:` lines name it: a body line alone, which anyone who can
+write the body can add, never shows a pair. Each named advisory that does
+not track the issue is named on stderr and not shown, and an issue none of
+whose advisories track it is refused:
+
+```text
+vrg-security-record: not shown: advisory GHSA-xxxx-xxxx-xxxx does not track vergil-project/tool#12
+vrg-security-record: no advisory vergil-project/tool#12 names tracks it
 ```
 
 ## retarget

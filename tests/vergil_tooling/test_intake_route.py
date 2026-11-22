@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from tests.vergil_tooling import trust_stubs
-from vergil_tooling.lib import epics, github, intake_route, security_records
+from vergil_tooling.lib import epics, github, intake_route, security_records, trust
 from vergil_tooling.lib.epic_size import Sizing
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.intake_route import (
@@ -73,6 +73,9 @@ class Env:
         # The item's comment nodes as the trust layer reads them; by default
         # one per entry of *comments*, by a trusted human.
         self.comment_nodes: list[dict[str, Any]] | None = None
+        # Who wrote and last edited the item's body, as the trust layer reads it.
+        self.body_author: Any = trust_stubs.HUMAN
+        self.body_editor: Any = None
         # Closing-PR URL -> state (OPEN, CLOSED, MERGED).
         self.closing_prs: dict[str, str] = {}
         self.native_parent: dict[IssueRef, IssueRef | None] = {}
@@ -192,13 +195,17 @@ class Env:
         return [str(node["body"]) for node in self.comment_nodes]
 
     def graphql(self, query: str, **variables: Any) -> dict[str, Any]:
-        """The trust layer's item read: the item's comments, any other issue's none."""
+        """The trust layer's item read: the item's body and comments, any other issue's none."""
         nodes = self.comment_nodes
         if nodes is None:
             nodes = trust_stubs.comments(*self.comments)
-        fake = trust_stubs.FakeItems(
-            {(f"{ITEM.owner}/{ITEM.repo}", ITEM.number): trust_stubs.item(nodes=nodes)}
+        item = trust_stubs.item(
+            body=str(self.issue_view.get("body") or ""),
+            author=self.body_author,
+            editor=self.body_editor,
+            nodes=nodes,
         )
+        fake = trust_stubs.FakeItems({(f"{ITEM.owner}/{ITEM.repo}", ITEM.number): item})
         return fake(query, **variables)
 
     def _read_output(self, *args: str) -> str:
@@ -1850,6 +1857,62 @@ def test_split_security_item_retargets_to_all_tasks_before_close(env: Env) -> No
     assert order == ["retarget", "issue:close"]
 
 
+@pytest.mark.parametrize(
+    ("author", "editor", "kind", "login"),
+    [
+        (trust_stubs.OUTSIDER, None, "issue", "drive-by"),
+        (trust_stubs.HUMAN, trust_stubs.OUTSIDER, "edit", "drive-by"),
+        (trust_stubs.IMPOSTOR, None, "issue", "vergil-user"),
+    ],
+)
+@pytest.mark.parametrize(
+    "action",
+    [Split(into=SPLIT_INTO, reason="two fixes"), OneOff(repo="org/tool")],
+    ids=["split", "one-off"],
+)
+def test_route_security_lines_untrusted_body_raises(
+    env: Env, action: RouteAction, author: Any, editor: Any, kind: str, login: str
+) -> None:
+    # The advisory lines of a body the layer does not trust pick nothing: the
+    # route stops before any write, naming only metadata.
+    env.make_security_item()
+    env.issue_view = {
+        **env.issue_view,
+        "body": f"{env.issue_view['body']}\n{trust_stubs.SPAM_TEXT}",
+    }
+    env.body_author, env.body_editor = author, editor
+    with pytest.raises(trust.UntrustedContentError) as excinfo:
+        route(ITEM, action, today=TODAY)
+    assert (excinfo.value.item.kind, excinfo.value.item.login) == (kind, login)
+    assert excinfo.value.item.field == "body"
+    assert "SPAM-MARKER-TEXT" not in str(excinfo.value)
+    env.retarget.assert_not_called()
+    env.run.assert_not_called()
+    env.read_output.assert_not_called()
+    env.create_issue.assert_not_called()
+    env.remove_child.assert_not_called()
+
+
+def test_recreate_copies_the_trusted_body_read_before_the_move(env: Env) -> None:
+    _transfer_fails(env)
+    trusted_body = env.issue_view["body"]
+    reads = 0
+
+    def graphql(query: str, **variables: Any) -> dict[str, Any]:
+        nonlocal reads
+        reads += 1
+        return trust_stubs.item(body=str(trusted_body))
+
+    # The body gh would show after the failed transfer is never copied.
+    env.issue_view = {**env.issue_view, "body": "changed since the read"}
+    with patch("vergil_tooling.lib.github.graphql", side_effect=graphql):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert reads == 1
+    body = env.create_issue.call_args.kwargs["body"]
+    assert body.startswith(f"{trusted_body}\n\n")
+    assert "changed since the read" not in body
+
+
 def test_split_security_item_retarget_failure_leaves_original_open(env: Env) -> None:
     env.make_security_item()
     env.retarget.side_effect = RETARGET_FAILED
@@ -1924,7 +1987,7 @@ def test_transfer_security_item_retargets_to_final(env: Env) -> None:
     # for its size (and in-progress), once for its advisories.
     assert env.read_json.call_args_list == [
         call("issue", "view", "352", "--repo", "org/.github", "--json", "labels,comments"),
-        call("issue", "view", "352", "--repo", "org/.github", "--json", "labels,body"),
+        call("issue", "view", "352", "--repo", "org/.github", "--json", "labels"),
     ]
 
 

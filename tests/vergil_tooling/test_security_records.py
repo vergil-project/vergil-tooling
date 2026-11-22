@@ -1181,6 +1181,32 @@ def test_retarget_refuses_unrelated_source_when_targets_match(
     assert issues.writes == []
 
 
+@pytest.mark.parametrize(
+    "author", [trust_stubs.OUTSIDER, trust_stubs.IMPOSTOR], ids=["outsider", "impostor"]
+)
+def test_retarget_rerun_ignores_outsider_moved_comment(
+    issues: Issues, capsys: pytest.CaptureFixture[str], author: dict[str, str]
+) -> None:
+    # Only the record's own "moved" comment ties a source to a finished move:
+    # an untrusted copy naming exactly the targets is refused like no comment.
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
+    issues.add(B, "Unrelated.")
+    issues.untrusted[B] = [trust_stubs.comment(41, "Security record moved to org/tool#12", author)]
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        retarget(HOME, GHSA, (C,), source=B)
+    assert "it tracks org/tool#12" in str(excinfo.value)
+    assert issues.writes == []
+    err = capsys.readouterr().err
+    assert f"org/.github#11 comment {author['login']} at {trust_stubs.CREATED}" in err
+    assert SECRET not in err
+    # The same comment from a trusted author is the finished move: nothing to do.
+    issues.untrusted[B] = []
+    issues.comments[B] = ["Security record moved to org/tool#12"]
+    assert retarget(HOME, GHSA, (C,), source=B) == ()
+    assert issues.writes == []
+
+
 def test_retarget_rerun_from_a_transferred_source(issues: Issues) -> None:
     """A transfer's recovery command: --from the old number, which leads to the target."""
     issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
