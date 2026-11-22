@@ -433,10 +433,10 @@ and the [Releasing guide](../guides/releasing.md).
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_release` |
-| Args | `minor`/`major` (optional positional), `--without-deps`, `--allow-pending-deps`, `--resume [X.Y.Z]`, `--skip-audit`, `--output-window`, `--output-format`. `--no-promote`, `--no-install` and `--install` are removed and are an error |
-| Preconditions | Human identity; on `develop`, clean working tree, local develop matches `origin/develop`; `gh` authenticated and a reachable container runtime (docker or nerdctl) for `vrg-container-run`, which runs `git-cliff` |
-| Failure mode | Fail-fast stages stop the run; deferred stages (including `update-deps`) record the failure, let later stages run, and are summarized at the end |
-| Exit codes | 0 success, 1 any failure or refusal, 130 interrupted |
+| Args | `minor`/`major` (optional positional), `--without-deps`, `--allow-pending-deps`, `--resume [X.Y.Z]`, `--supersede X.Y.Z` (not with `--resume`), `--skip-audit`, `--output-window`, `--output-format`. `--no-promote`, `--no-install` and `--install` are removed and are an error |
+| Preconditions | Human identity; `gh` authenticated and a reachable container runtime (docker or nerdctl) for `vrg-container-run`, which runs `git-cliff`. A fresh start also needs the root checkout on a clean `develop` that has not diverged from `origin/develop` (one that is only behind is fast-forwarded); a `--resume` runs only the host, auth and config checks |
+| Failure mode | Fail-fast stages stop the run; deferred stages (including `update-deps`) record the failure, let later stages run except those the hold rule holds back, and are summarized at the end, with the tracking issue left open for `--resume` |
+| Exit codes | 0 success, 1 any failure or refusal, 2 usage error (such as `--supersede` with `--resume`), 130 interrupted |
 | Status | Active |
 
 ### vrg-release-record

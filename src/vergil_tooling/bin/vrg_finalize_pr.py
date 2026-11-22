@@ -1953,8 +1953,9 @@ def _chain_release(root: Path, cmd: tuple[str, ...]) -> int:
     the cascade outcome.
 
     A failure here never un-merges a PR — they were already merged and
-    develop settled — so report it clearly and let the human re-run
-    vrg-release alone.
+    develop settled — so report it clearly and let the human finish it with
+    ``vrg-release --resume``, or re-run vrg-release alone if it stopped
+    before opening its tracking issue.
     """
     print()
     print(f"--release: handing off to {shlex.join(cmd)}")
@@ -1967,7 +1968,8 @@ def _chain_release(root: Path, cmd: tuple[str, ...]) -> int:
         print(
             f"vrg-finalize-pr: release failed (exit {result.returncode}); "
             "the merged PRs and the settled develop are unaffected.\n"
-            f"  Re-run the release alone with: {shlex.join(cmd)}",
+            "  Once it has opened its tracking issue, finish it with: vrg-release --resume\n"
+            f"  If it stopped before that, re-run the release alone with: {shlex.join(cmd)}",
             file=sys.stderr,
         )
     return result.returncode

@@ -250,9 +250,11 @@ def build_stages() -> list[Stage]:
             mode="fail_fast",
         ),
         # fail_fast, as every branch-work stage is: finalize prunes the release
-        # branches, so it runs only once all of them have succeeded, and a
-        # resume that reaches one always finds its branch (spec §4.3 of epic
-        # vergil-project/.github#1440).
+        # branches, so it runs only once all of them have succeeded (spec §4.3
+        # of epic vergil-project/.github#1440). A resume before merge-release
+        # adopts release/<version>; one past it never needs that branch, which
+        # GitHub deletes on merge, and runs in the existing release worktree, a
+        # worktree detached at develop, or the root checkout (#4889).
         Stage(
             "teardown-worktree",
             _tracked("teardown-worktree", teardown_worktree),

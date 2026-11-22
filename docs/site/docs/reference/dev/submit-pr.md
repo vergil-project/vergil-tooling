@@ -263,7 +263,7 @@ says why it is gone:
 
 | Flag | Why it is gone |
 | ---- | -------------- |
-| `--finalize` | Finalizing is the default |
+| `--finalize` | `vrg-submit-pr` always finalizes |
 | `--no-finalize` | `vrg-submit-pr` returns once each PR has merged or cannot merge |
 | `--install`, `--no-install` | Install is part of every release |
 | `--allow-provenance-violation` | A provenance violation always fails: fix its cause, or fix the classifier if the violation is a false one |

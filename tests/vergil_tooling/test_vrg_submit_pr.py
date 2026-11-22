@@ -1344,7 +1344,7 @@ class TestFinalizeByDefault:
     @pytest.mark.parametrize(
         ("argv", "message"),
         [
-            (["--finalize"], "--finalize was removed; finalizing is now the default"),
+            (["--finalize"], "--finalize was removed; vrg-submit-pr always finalizes"),
             (["--no-finalize"], NO_FINALIZE_REMOVED.removeprefix("vrg-submit-pr: ")),
             (["--release", "--no-finalize"], "--no-finalize was removed"),
             (["--install"], "--install was removed; install is part of every release"),

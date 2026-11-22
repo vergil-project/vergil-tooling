@@ -491,8 +491,9 @@ root:
 
 Every managed repo pins `vergil-tooling` to the **rolling major-minor
 tag** `vX.Y`, never a specific patch. The nightly `ops.yml` job installs
-`vergil-tooling@vX.Y`, which always resolves to the latest patch under
-that line — including its fragment set. So:
+`vergil-tooling@vX.Y`, which resolves to the release the rolling tag
+names, the latest patch under that line unless a rollback moved it
+back — including its fragment set. So:
 
 > change a fragment → release a `vergil-tooling` patch under `vX.Y` →
 > **every repo's nightly `update` finds the fence drifted** and opens a

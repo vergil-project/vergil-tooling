@@ -105,7 +105,7 @@ wins. When no PR opened, a failed submit exits 3. A usage error, or a
 refusal before anything opened, exits 1.
 
 **Removed flags** are refused by name before any side effect: ``--finalize``
-(finalizing is the default), ``--no-finalize`` (submit returns once each PR
+(submit always finalizes), ``--no-finalize`` (submit returns once each PR
 has merged or cannot merge), ``--install`` and ``--no-install`` (install is
 part of every release), ``--allow-provenance-violation`` (a provenance
 violation always fails; fix its cause or the classifier) and ``--yes``/``-y``
@@ -302,7 +302,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-FINALIZE_REMOVED = "vrg-submit-pr: --finalize was removed; finalizing is now the default"
+FINALIZE_REMOVED = "vrg-submit-pr: --finalize was removed; vrg-submit-pr always finalizes"
 NO_FINALIZE_REMOVED = (
     "vrg-submit-pr: --no-finalize was removed; "
     "vrg-submit-pr returns once each PR has merged or cannot merge"

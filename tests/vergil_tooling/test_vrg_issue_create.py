@@ -289,6 +289,7 @@ def test_deployment_scaffold_names_check_command() -> None:
         " confirms it, and exit 3 (`fail`) is an unmet precondition."
     ) in prose
     assert "Exit 4 (`none`) means the task carries no release record" in prose
+    assert "Exit 1 is a read error, never a pass" in prose
     assert "Every other precondition is checked as before." in prose
 
 

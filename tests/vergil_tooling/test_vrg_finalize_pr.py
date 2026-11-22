@@ -3557,7 +3557,8 @@ def test_exit_5_release_failed(tmp_path: Path, capsys: pytest.CaptureFixture[str
         assert main([_PR_A, "--release"]) == 5
     err = capsys.readouterr().err
     assert "release failed (exit 2)" in err
-    assert "  Re-run the release alone with: vrg-release\n" in err
+    assert "  Once it has opened its tracking issue, finish it with: vrg-release --resume\n" in err
+    assert "  If it stopped before that, re-run the release alone with: vrg-release\n" in err
 
 
 def test_chained_release_runs_after_lock_released(tmp_path: Path) -> None:

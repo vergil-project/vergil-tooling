@@ -18,8 +18,9 @@ Where this deployment depends on a blocked-by development task having been
 released, confirm that release with
 `vrg-release-record check <owner>/<repo>#<N>`: exit 0 (`pass`) confirms it,
 and exit 3 (`fail`) is an unmet precondition. Exit 4 (`none`) means the task
-carries no release record, so confirm its release as before. Every other
-precondition is checked as before.
+carries no release record, so confirm its release as before. Exit 1 is a read
+error, never a pass: retry the check, or stop and report the error. Every
+other precondition is checked as before.
 
 {preconditions}
 

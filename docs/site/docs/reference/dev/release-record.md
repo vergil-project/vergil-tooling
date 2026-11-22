@@ -24,7 +24,7 @@ vrg-release-record check OWNER/REPO#N
 
 | Argument | Meaning |
 |---|---|
-| `OWNER/REPO#N` | The task issue whose record is checked |
+| `OWNER/REPO#N` | The task issue whose record is checked. Type `OWNER/REPO` as GitHub spells it: a record's repo is matched exactly, case included, so a ref in another case finds no record and the verdict is `none` |
 
 ## What it does
 
