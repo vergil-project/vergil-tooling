@@ -18838,8 +18838,6 @@
       
         
       
-        
-      
     
     
     
@@ -18900,34 +18898,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../guides/epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -21351,8 +21321,8 @@ fails after creation, the created issue's URL is reported for recovery with
 </tbody>
 </table>
 <h3 id="vrg-epic-create">vrg-epic-create<a class="headerlink" href="#vrg-epic-create" title="Permanent link">&para;</a></h3>
-<p>Create a top-level epic (labelled <code>epic</code>, no parent) in its home repo:
-<code>&lt;org&gt;/.github</code> for a public target, the target repo itself when private.
+<p>Create a top-level epic (labelled <code>epic</code>, no parent) in its home repo, the
+target's <code>&lt;org&gt;/.github</code>.
 The sanctioned path for creating epics, used by the <code>epic-create</code> skill.</p>
 <p>The epic also gets its <strong>category label</strong>, derived from its other labels:
 <code>epic-management</code> for an intake, planning, deferred or hoshin epic (<code>--label
@@ -21431,9 +21401,8 @@ file's existence is not checked. A path is repo-relative, with no leading
 <code>-</code> and <code>_</code>. Hand-written document lines elsewhere in the body are removed,
 and a body that is already correct is not edited. The skills run it when an
 epic is created and at each docs PR handoff.</p>
-<p><code>backfill (--org ORG | --repo OWNER/REPO)</code> writes the section on every epic
-of an epic home, open and closed: <code>--org</code> works on the org's <code>.github</code>, and
-<code>--repo</code> on a private repo that keeps its own epics. It skips the standing
+<p><code>backfill --org ORG</code> writes the section on every epic of the org's
+<code>.github</code>, open and closed. It skips the standing
 epics (ad hoc, intake, planning, deferred, hoshin, the retired <code>standing</code>
 label, and titles starting <code>Epic (standing):</code>), proxy epics and <code>[archived]</code>
 epics. For each epic it
@@ -21476,7 +21445,7 @@ run carries on.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>set</code>: <code>--epic</code> (required), <code>--spec PATH</code>, <code>--plan PATH</code>, <code>--retrospective PATH</code>; <code>backfill</code>: <code>--org ORG</code> or <code>--repo OWNER/REPO</code> (one required), <code>--apply</code></td>
+<td><code>set</code>: <code>--epic</code> (required), <code>--spec PATH</code>, <code>--plan PATH</code>, <code>--retrospective PATH</code>; <code>backfill</code>: <code>--org ORG</code> (required), <code>--apply</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -21658,8 +21627,7 @@ quarter-named epics to that form; both are dry runs unless <code>--apply</code>.
 <h3 id="vrg-intake-create">vrg-intake-create<a class="headerlink" href="#vrg-intake-create" title="Permanent link">&para;</a></h3>
 <p>Capture an uncurated item — a bug, an idea, an investigation, a one-line
 "don't forget X" — into the intake queue (epic vergil-project/.github#176).
-The issue is filed in the current repo's queue home (<code>&lt;org&gt;/.github</code> for a
-public repo, the repo itself for a self-homed private one) and linked under
+The issue is filed in the current repo's queue home, <code>&lt;org&gt;/.github</code>, and linked under
 that home's <code>Epic (intake): &lt;name&gt;</code> as it is created, so there is no unlinked
 path. It carries no kind label. The intake epic is resolved (created if
 absent) <em>before</em> the issue is created; if linking the created issue fails, the
@@ -21979,17 +21947,16 @@ the projects mount on a Lima VM, none on a physical host). Every repo with open
 ad-hoc tasks must have exactly one clone there: a missing clone is fatal, never
 skipped or assumed clean. The epics come from one label search; an archive carrying the same
 labels (<code>Archive (ad hoc): …</code>, or the legacy <code>Epic (ad hoc): &lt;repo&gt; — &lt;quarter&gt;</code>
-form) is skipped. With <code>--repo</code>, a public repo narrows the list to its own
-ad-hoc epic in the org's <code>.github</code>, and a repo with none gives an empty list;
-a self-homed private repo selects its own home, as for the other queues. It is
+form) is skipped. With <code>--repo</code>, the list narrows to that repo's own
+ad-hoc epic in the org's <code>.github</code>, and a repo with none gives an empty list. It is
 not a review queue, so a bare <code>vrg-queue</code> never shows it. It is the collect
 step of <code>epic-implement adhoc</code>, as the other queues are of <code>epic-review</code>.</p>
 <p><code>vrg-queue hoshin</code> lists the open tasks under the org's hoshin epic
 (<code>Epic (hoshin): &lt;org&gt;</code>, labelled <code>epic</code> + <code>hoshin</code>), the <code>Logbook:</code> tasks
 <code>/vergil:hoshin</code> files, with the same lines, kinds, states, marks,
 dispositions, order, <code>--json</code> output and <code>--root</code> as <code>vrg-queue adhoc</code> (the
-two share one body). Its home is always the org's <code>.github</code>, never a self-homed
-private repo, and the epic is looked up, never created: an org with none gives
+two share one body). Its home is the org's <code>.github</code>, and the epic is looked
+up, never created: an org with none gives
 an empty list. With <code>--repo</code>, only the epic's tasks in that repo are listed.
 It is not a review queue, so a bare <code>vrg-queue</code> never shows it. It is the
 listing for <code>/vergil:hoshin</code>'s stale-task check.</p>
@@ -22007,11 +21974,11 @@ listing for <code>/vergil:hoshin</code>'s stale-task check.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>{intake,planning,deferred,adhoc,hoshin}</code> (optional; default: intake, planning and deferred); <code>--repo OWNER/NAME</code> (that repo's queue home, for <code>adhoc</code> on a public repo its own ad-hoc epic, and for <code>hoshin</code> the org's hoshin epic narrowed to the repo's tasks; default: the current org's <code>.github</code> queues); <code>--root DIR</code> (<code>adhoc</code> and <code>hoshin</code> only, repeatable: where to find each repo's main clone; default: the platform's repo roots); <code>--sort age\|size\|tasks</code> and <code>--size LIST</code> (<code>planning</code> only; refused with any other queue or with none); <code>--json</code> (a list of items; with no queue named, an object keyed by queue, <code>null</code> for a missing one)</td>
+<td><code>{intake,planning,deferred,adhoc,hoshin}</code> (optional; default: intake, planning and deferred); <code>--repo OWNER/NAME</code> (that repo's org's <code>.github</code> queues, for <code>adhoc</code> the repo's own ad-hoc epic, and for <code>hoshin</code> the org's hoshin epic narrowed to the repo's tasks; default: the current org's <code>.github</code> queues); <code>--root DIR</code> (<code>adhoc</code> and <code>hoshin</code> only, repeatable: where to find each repo's main clone; default: the platform's repo roots); <code>--sort age\|size\|tasks</code> and <code>--size LIST</code> (<code>planning</code> only; refused with any other queue or with none); <code>--json</code> (a list of items; with no queue named, an object keyed by queue, <code>null</code> for a missing one)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>GitHub App credentials for the target org. The planning and deferred views read the configured trusted authors (the VM's <code>trusted-authors.toml</code>, else the host's <code>identities.toml</code> stanza). The planning view also reads the org's advisories when its <code>.github</code> is public, or when a planning item has an advisory line (then a <code>.github</code> that is not public is refused): the identity needs Repository security advisories access</td>
+<td>GitHub App credentials for the target org. The planning and deferred views read the configured trusted authors (the VM's <code>trusted-authors.toml</code>, else the host's <code>identities.toml</code> stanza). The planning view also reads the org's advisories when its <code>.github</code> exists, or when a planning item has an advisory line (then a <code>.github</code> that is not public is refused): the identity needs Repository security advisories access</td>
 </tr>
 <tr>
 <td>Failure mode</td>
@@ -22028,8 +21995,8 @@ listing for <code>/vergil:hoshin</code>'s stale-task check.</p>
 </tbody>
 </table>
 <h3 id="vrg-roadmap">vrg-roadmap<a class="headerlink" href="#vrg-roadmap" title="Permanent link">&para;</a></h3>
-<p>Print the generated project roadmap: the open epics in a repo's resolved
-epic home, apart from the standing and proxy epics. The docs-refresh workflow
+<p>Print the generated project roadmap: the open epics in an org's <code>.github</code>,
+apart from the standing and proxy epics. The docs-refresh workflow
 publishes the same rendering.</p>
 <table>
 <thead>
@@ -22045,7 +22012,7 @@ publishes the same rendering.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--org ORG</code> or <code>--repo OWNER/NAME</code> (default: the current repo's owner)</td>
+<td><code>--org ORG</code> (default: the current repo's owner)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -22581,10 +22548,7 @@ and the ones it would leave open), the ad-hoc and queue-epic drains that
 security-records pass of <code>vrg-security-record sync</code> (<code>--close</code> does not run
 it).</p>
 <p>The org comes from the current repo's <code>origin</code> remote (there is no <code>--org</code>
-flag). <code>--repo OWNER/NAME</code> audits that repo's resolved epic home instead of
-the org's <code>.github</code>, so a private repo that self-homes its epics can be
-audited; the home-scoped checks (epic drift, stray issues, operation-pending
-epics, and the <code>--close</code> drift closes) then target it.</p>
+flag), and the home audited is that org's <code>.github</code>.</p>
 <p>Every read runs under the audited org's token, wherever the command is run
 from. Before any check, the audit confirms that this token sees every repo in
 the org: an App token must belong to an installation on that org with access
@@ -22641,7 +22605,7 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--window-days N</code> (positive; default 30), <code>--repo OWNER/NAME</code>, <code>--epic REF</code>, <code>--close</code></td>
+<td><code>--window-days N</code> (positive; default 30), <code>--epic REF</code>, <code>--close</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -22649,7 +22613,7 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>--close</code> in an agent session is refused before any network call; a <code>--repo</code> without <code>/</code>, an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and <code>--close</code> is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose <code>Primary:</code> link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without <code>--close</code>. With <code>--epic</code>, a ref that is not an epic, or proxy link drift, exits 1</td>
+<td><code>--close</code> in an agent session is refused before any network call; an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and <code>--close</code> is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose <code>Primary:</code> link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without <code>--close</code>. With <code>--epic</code>, a ref that is not an epic, or proxy link drift, exits 1</td>
 </tr>
 <tr>
 <td>Exit codes</td>

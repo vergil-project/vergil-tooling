@@ -18365,8 +18365,6 @@
       
         
       
-        
-      
     
     
     
@@ -18427,34 +18425,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../guides/epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -19454,9 +19424,8 @@ gate rollup:</p>
 tools find and test standing epics by the labels in the table alone.</p>
 <p>Intake, planning and deferred are the three <strong>queue epics</strong>. Their <strong>queue
 home</strong> follows the <a href="#epic-home-the-orggithub-rule">epic-home rule</a>: every
-public repo shares the org's set in <code>&lt;org&gt;/.github</code> (<code>&lt;name&gt;</code> is the org),
-while a <strong>private</strong> repo self-homes its own set (<code>&lt;name&gt;</code> is the repo), so
-private work never surfaces in a public issue. <code>vrg-issue-create --epic</code>
+repo shares the org's set in <code>&lt;org&gt;/.github</code> (<code>&lt;name&gt;</code> is the org).
+<code>vrg-issue-create --epic</code>
 accepts <code>adhoc</code>, <code>intake</code>, <code>planning</code> and <code>hoshin</code> as sentinels that resolve
 (creating if absent) the target repo's standing epic of that kind. It refuses
 <code>deferred</code>, as does <code>vrg-epic-move</code>: an item enters and leaves the deferred
@@ -19464,8 +19433,7 @@ queue only through <code>vrg-intake-route</code>, which records the deferral (se
 <a href="#the-deferred-queue">The deferred queue</a>).</p>
 <p>The <strong>hoshin epic</strong> is not a queue: its tasks are PR-workable, but only
 <code>/vergil:hoshin</code> files and works them, so no queue processor picks them up.
-It is homed in <code>&lt;org&gt;/.github</code> whatever the target repo's visibility, and
-named for the org. Only <code>vrg-issue-create</code> (hoshin's filing) and
+It is homed in <code>&lt;org&gt;/.github</code>, like the queues, and named for the org. Only <code>vrg-issue-create</code> (hoshin's filing) and
 <code>vrg-epic-move</code> accept the <code>hoshin</code> sentinel; <code>vrg-intake-route</code> refuses a
 one-off into the hoshin epic, by sentinel or by ref. Its closed children
 drain into per-quarter <code>Archive (hoshin): &lt;org&gt;</code> archives like the other
@@ -19574,8 +19542,8 @@ ad-hoc epic ends up holding only its still-open children.</p>
 <ul>
 <li><strong>Archives</strong> are titled <code>Archive (ad hoc): &lt;repo&gt; — &lt;YYYY&gt;-Q&lt;n&gt;</code> (the
   separator is a space, an em-dash <code>—</code>, and a space). They live in the same
-  resolved home as the live epic and carry the <code>archive</code> + <code>ad-hoc</code> labels. The
-  <code>archive</code> label replaced the <code>epic</code> label these buckets used to carry (<code>ad-hoc</code>
+  home as the live epic, <code>&lt;org&gt;/.github</code>, and carry the <code>archive</code> +
+  <code>ad-hoc</code> labels. The <code>archive</code> label replaced the <code>epic</code> label these buckets used to carry (<code>ad-hoc</code>
   is kept), so terminal per-quarter buckets no longer clutter <code>label:epic</code>
   views; only the live <code>Epic (ad hoc): &lt;repo&gt;</code> epic keeps <code>epic</code> + <code>ad-hoc</code>.</li>
 <li><strong>Bucketing is by close quarter.</strong> Each closed child is re-parented into the
@@ -19620,11 +19588,11 @@ ad-hoc epic ends up holding only its still-open children.</p>
 <a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="c1"># Apply the moves and closes.</span>
 <a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>vrg-adhoc-epic<span class="w"> </span>archive<span class="w"> </span>--repo<span class="w"> </span>&lt;owner&gt;/&lt;repo&gt;<span class="w"> </span>--apply
 <a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># Visibility-aware sweep across every repo in an org.</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># Sweep across every repo in an org.</span>
 <a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>vrg-adhoc-epic<span class="w"> </span>archive<span class="w"> </span>--all-in<span class="w"> </span>&lt;ORG&gt;<span class="w"> </span>--apply
 </code></pre></div>
 <p><code>--repo</code> targets a single repo; <code>--all-in &lt;ORG&gt;</code> sweeps every repo in the org,
-resolving each repo's ad-hoc home by visibility. Without <code>--apply</code> the command
+each repo's ad-hoc epic in <code>&lt;org&gt;/.github</code>. Without <code>--apply</code> the command
 mutates nothing.</p>
 <p><code>--all-in</code> (here and for <code>normalize</code>) first checks that the identity in use can
 see every repo in the org: an App token installed on the org for all its
@@ -19643,9 +19611,8 @@ normalize</code> converts them in place to the current form — retitling to
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># Apply the conversions.</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>vrg-adhoc-epic<span class="w"> </span>normalize<span class="w"> </span>--all-in<span class="w"> </span>&lt;ORG&gt;<span class="w"> </span>--apply
 </code></pre></div>
-<p>It sweeps every repo's resolved home, so it covers both the centrally-homed
-archives of public repos and the self-homed archives of private ones, and it
-converts both open and closed archives. It is <strong>idempotent</strong> — an
+<p>It scans <code>&lt;org&gt;/.github</code>, the home of every repo's archives, and it converts
+both open and closed archives. It is <strong>idempotent</strong> — an
 already-converted archive is new-form and is skipped — so it is safe to re-run
 and doubles as a straggler net. The creation path is also self-healing: the next
 time the drain touches a quarter whose archive is still in legacy form, it heals
@@ -19868,21 +19835,13 @@ the entry rules. The backfill also brings existing epics into line: it finds
 each epic's documents, keeps every link already written, and removes
 hand-written <code>Documents:</code>, <code>Spec:</code>, <code>Plan:</code> and <code>Retrospective:</code> lines.</p>
 <h3 id="epic-home-the-orggithub-rule">Epic home (the <code>&lt;org&gt;/.github</code> rule)<a class="headerlink" href="#epic-home-the-orggithub-rule" title="Permanent link">&para;</a></h3>
-<p>An epic's home repo is derived from repository visibility:</p>
-<ul>
-<li>A <strong>public</strong> repo homes its epics centrally in the org's <code>.github</code>.</li>
-<li>A <strong>private</strong> repo (with a public <code>.github</code>) homes its epics <strong>in itself</strong>.</li>
-<li>A <strong>private</strong> <code>.github</code> means the whole org is private, so everything homes in
-  <code>.github</code>.</li>
-<li>A <strong>private</strong> repo whose owner has <strong>no</strong> <code>.github</code> at all (typically a
-  personal account) homes its epics <strong>in itself</strong>: there is no central home.
-  Only GitHub's "repository does not exist" answer counts as no <code>.github</code>; any
-  other failure to read its visibility is an error.</li>
-</ul>
-<p>Ad-hoc epics follow the same rule — <code>Epic (ad hoc): &lt;repo&gt;</code> lives in the repo's
-resolved home. See
-<a href="../../guides/epic-home-visibility-flip/">Epic home visibility flips</a> for
-relocating epics when a repo's visibility changes.</p>
+<p>Every repo homes its epics and queues centrally in the org's <code>.github</code>. An
+owner with <strong>no</strong> <code>.github</code> at all (typically a personal account) has no
+home: the tools refuse up front, naming the <code>&lt;org&gt;/.github</code> repository to
+create. Only GitHub's "repository does not exist" answer counts as no
+<code>.github</code>; any other failure to check for it is an error.</p>
+<p>Ad-hoc epics follow the same rule — <code>Epic (ad hoc): &lt;repo&gt;</code> lives in the
+org's <code>.github</code>.</p>
 <h3 id="compliance-invariants">Compliance invariants<a class="headerlink" href="#compliance-invariants" title="Permanent link">&para;</a></h3>
 <p><code>vrg-epic-audit</code> reports (read-only) any drift from the model:</p>
 <ul>
@@ -19907,9 +19866,8 @@ relocating epics when a repo's visibility changes.</p>
   in a repo that has since become public.</li>
 <li><strong>No private work under public epics.</strong> An issue in a private repo parented
   under a public <code>.github</code> epic is reported as a likely unsupported
-  public → private flip, for a human to resolve (see
-  <a href="../../guides/epic-home-visibility-flip/">Epic home visibility flips</a>). Tooling
-  never migrates or retracts it.</li>
+  public → private flip, for a human to resolve. Tooling never migrates or
+  retracts it.</li>
 <li><strong>An archive stands top-level, labelled <code>archive</code>.</strong> An open archive (an
   <code>archive</code> label, or a stamped <code>Archive (&lt;kind&gt;): &lt;name&gt; — &lt;YYYY&gt;-Qn</code> title)
   with a native parent, one whose stamped title lacks the <code>archive</code> label, or
@@ -20028,9 +19986,8 @@ item, with no category to choose. Create one with the sanctioned tool (the
 <code>intake-capture</code> skill drives it):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-intake-create<span class="w"> </span>--title<span class="w"> </span><span class="s2">"&lt;what&gt;"</span><span class="w"> </span><span class="o">[</span>--body<span class="w"> </span>TEXT<span class="w"> </span><span class="p">|</span><span class="w"> </span>--body-file<span class="w"> </span>PATH<span class="o">]</span>
 </code></pre></div>
-<p>The issue is filed in the current repo's queue home — <code>&lt;org&gt;/.github</code> for a
-public repo, the repo itself for a private one (override with <code>--repo</code>) — and is
-linked under that home's intake epic as it is created; there is no unlinked
+<p>The issue is filed in the current repo's queue home, <code>&lt;org&gt;/.github</code> (override
+with <code>--repo</code>), and is linked under that home's intake epic as it is created; there is no unlinked
 path.</p>
 <h3 id="viewing-the-queues-vrg-queue">Viewing the queues: <code>vrg-queue</code><a class="headerlink" href="#viewing-the-queues-vrg-queue" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-queue<span class="w"> </span>intake<span class="w">    </span><span class="c1"># open intake items, oldest first</span>
@@ -20041,8 +19998,8 @@ path.</p>
 <a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>vrg-queue<span class="w"> </span>hoshin<span class="w">    </span><span class="c1"># open tasks under the org's hoshin epic</span>
 </code></pre></div>
 <p>It defaults to the current org's <code>.github</code> queues; <code>--repo &lt;owner&gt;/&lt;repo&gt;</code>
-selects that repo's queue home (a self-homed private repo's own queues), and
-<code>--json</code> emits machine-readable output. It is read-only.</p>
+selects that repo's org's queues (and narrows <code>adhoc</code> and <code>hoshin</code> to the
+repo), and <code>--json</code> emits machine-readable output. It is read-only.</p>
 <p>Planning and deferred items show their <a href="#epic-size">epic size</a> (<code>M/14</code>, <code>?</code> unsized, <code>!</code> in
 error). <code>vrg-queue planning --sort size</code> (or <code>tasks</code>) puts the small end of the
 planning queue first, and <code>--size S,unsized</code> filters it; an item in error is
