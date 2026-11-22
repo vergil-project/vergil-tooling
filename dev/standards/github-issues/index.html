@@ -19214,7 +19214,7 @@ tracked, reviewable, and auditable.</p>
 kind or has an epic parent.</strong> The legitimate top-level kinds are:</p>
 <ul>
 <li><strong>epics</strong> (<code>epic</code> label), including the standing ad-hoc, intake, planning,
-  deferred and hoshin epics, and the <a href="#proxy-epics">proxy epics</a>;</li>
+  deferred, hoshin and operations epics, and the <a href="#proxy-epics">proxy epics</a>;</li>
 <li><strong>archives</strong> (<code>archive</code> label) — the per-quarter buckets of closed standing-epic
   children;</li>
 <li><strong>release tracking issues</strong> (<code>release: X.Y.Z</code>), which <code>vrg-release</code> creates
@@ -19368,7 +19368,7 @@ cross-forge fallback.</p>
   with <a href="#viewing-the-queues-vrg-queue"><code>vrg-queue adhoc</code></a>.</li>
 </ul>
 <h3 id="standing-epics">Standing epics<a class="headerlink" href="#standing-epics" title="Permanent link">&para;</a></h3>
-<p>The ad-hoc epic is one of five kinds of <strong>standing epic</strong> — perpetual
+<p>The ad-hoc epic is one of six kinds of <strong>standing epic</strong> — perpetual
 umbrellas that are created and reused idempotently, never auto-close, and never
 gate rollup:</p>
 <table>
@@ -19417,16 +19417,23 @@ gate rollup:</p>
 <td>one per org, always in <code>&lt;org&gt;/.github</code></td>
 <td>the <code>Logbook:</code> tasks <code>/vergil:hoshin</code> files and works</td>
 </tr>
+<tr>
+<td>Operations</td>
+<td><code>Epic (operations): &lt;org&gt;</code></td>
+<td><code>epic</code> + <code>operations</code></td>
+<td>one per org, always in <code>&lt;org&gt;/.github</code></td>
+<td>the ops issues of the org's unattended jobs</td>
+</tr>
 </tbody>
 </table>
-<p>An intake, planning, deferred or hoshin epic also gets the display-only
+<p>An intake, planning, deferred, hoshin or operations epic also gets the display-only
 <code>epic-management</code> <a href="#epic-categories">category label</a> when it is created; the
 tools find and test standing epics by the labels in the table alone.</p>
 <p>Intake, planning and deferred are the three <strong>queue epics</strong>. Their <strong>queue
 home</strong> follows the <a href="#epic-home-the-orggithub-rule">epic-home rule</a>: every
 repo shares the org's set in <code>&lt;org&gt;/.github</code> (<code>&lt;name&gt;</code> is the org).
 <code>vrg-issue-create --epic</code>
-accepts <code>adhoc</code>, <code>intake</code>, <code>planning</code> and <code>hoshin</code> as sentinels that resolve
+accepts <code>adhoc</code>, <code>intake</code>, <code>planning</code>, <code>hoshin</code> and <code>operations</code> as sentinels that resolve
 (creating if absent) the target repo's standing epic of that kind. It refuses
 <code>deferred</code>, as does <code>vrg-epic-move</code>: an item enters and leaves the deferred
 queue only through <code>vrg-intake-route</code>, which records the deferral (see
@@ -19438,6 +19445,14 @@ It is homed in <code>&lt;org&gt;/.github</code>, like the queues, and named for 
 one-off into the hoshin epic, by sentinel or by ref. Its closed children
 drain into per-quarter <code>Archive (hoshin): &lt;org&gt;</code> archives like the other
 standing kinds.</p>
+<p>The <strong>operations epic</strong> is not a queue either: it holds one ops issue per
+failing unattended job, whatever repo the job ran in, and an ops issue is
+closed by hand once the problem is dealt with. It is homed in
+<code>&lt;org&gt;/.github</code> and named for the org, like the hoshin epic.
+<code>vrg-issue-create</code> and <code>vrg-epic-move</code> accept the <code>operations</code> sentinel, and
+<code>vrg-epic-create --standing operations --org &lt;org&gt;</code> ensures the epic without
+filing a task. Its closed children drain into per-quarter
+<code>Archive (operations): &lt;org&gt;</code> archives like the other standing kinds.</p>
 <h3 id="proxy-epics">Proxy epics<a class="headerlink" href="#proxy-epics" title="Permanent link">&para;</a></h3>
 <p>A <strong>proxy epic</strong> is a same-org umbrella for the tasks that a development epic
 in another org (its <strong>primary</strong>) has in this org. It is titled
@@ -19490,7 +19505,7 @@ label, so one label filter in the GitHub UI shows each category:</p>
 <tbody>
 <tr>
 <td>Management</td>
-<td>the intake, planning, deferred and hoshin epics</td>
+<td>the intake, planning, deferred, hoshin and operations epics</td>
 <td><code>epic-management</code></td>
 </tr>
 <tr>
@@ -19519,13 +19534,14 @@ missing or stray one changes nothing.</p>
 <p>The tools apply the category label when they create an epic.
 <a href="../../reference/cli-tools-overview/#vrg-epic-create"><code>vrg-epic-create</code></a>
 derives it from the epic's other labels, adding <code>epic-development</code> to a plain
-epic and <code>epic-management</code> to an intake, planning, deferred or hoshin one. It
+epic and <code>epic-management</code> to an intake, planning, deferred, hoshin or
+operations one. It
 refuses, creating nothing, a caller-given <code>--label epic-development</code> or
 <code>--label epic-management</code> and labels that mark two categories at once (for
 example <code>ad-hoc</code> and <code>proxy</code>). Every tool that creates a standing epic on
 demand (for example through the <code>--epic</code> sentinels of <code>vrg-issue-create</code>)
-adds <code>epic-management</code> when the new epic is an intake, planning, deferred or
-hoshin one, and nothing more to a new ad-hoc epic. An
+adds <code>epic-management</code> when the new epic is an intake, planning, deferred,
+hoshin or operations one, and nothing more to a new ad-hoc epic. An
 existing standing epic is still found by its kind's own labels, so one without
 <code>epic-management</code> is reused, never duplicated. A proxy keeps <code>epic</code> + <code>proxy</code>.</p>
 <p>Epics created before the category labels existed are labelled once, by a
@@ -19620,7 +19636,7 @@ hazard between the code landing and this sweep running.</p>
   its close-quarter archive.</li>
 <li><strong>Backstop + backfill.</strong> The daily <code>vrg-epic-audit --close</code> sweep runs the
   org-wide drain for every standing kind (ad-hoc, intake, planning,
-  deferred, hoshin): it
+  deferred, hoshin, operations): it
   distributes any backlog the steady-state path missed and closes past-quarter
   archives. This is the same trusted sweep that closes other
   provably-complete drift, so it is allowed to mutate under the scheduled
@@ -19746,7 +19762,7 @@ so tools can find and replace it:</p>
 <li><strong>One writer:</strong> only <a href="../../reference/cli-tools-overview/#vrg-epic-docs"><code>vrg-epic-docs</code></a>
   writes the section, never a hand edit, so its format lives in one place.</li>
 <li><strong>Scope:</strong> every epic except the standing epics (ad hoc, intake, planning,
-  deferred, hoshin, and the retired <code>standing</code> label or <code>Epic (standing):</code> title),
+  deferred, hoshin, operations, and the retired <code>standing</code> label or <code>Epic (standing):</code> title),
   <a href="#proxy-epics">proxy epics</a> (their primary carries the documents) and
   <code>[archived]</code> epics. Task issues have no section.</li>
 </ul>
@@ -20378,6 +20394,14 @@ up to date (see
 <td>Marks the standing hoshin epic (with <code>epic</code>) and its archives (with <code>archive</code>); never auto-closes</td>
 </tr>
 <tr>
+<td><code>operations</code></td>
+<td>Marks the standing operations epic (with <code>epic</code>) and its archives (with <code>archive</code>); never auto-closes</td>
+</tr>
+<tr>
+<td><code>ops-report</code></td>
+<td>Ops issue filed for an unattended job, under the operations epic; never auto-closes</td>
+</tr>
+<tr>
 <td><code>proxy</code></td>
 <td>Marks a <a href="#proxy-epics">proxy epic</a> (with <code>epic</code>): a same-org umbrella for another org's epic tasks; open until its primary closes</td>
 </tr>
@@ -20387,7 +20411,7 @@ up to date (see
 </tr>
 <tr>
 <td><code>epic-management</code></td>
-<td>Management epic: the intake, planning, deferred or hoshin epic; never auto-closes (a display-only <a href="#epic-categories">category label</a>)</td>
+<td>Management epic: the intake, planning, deferred, hoshin or operations epic; never auto-closes (a display-only <a href="#epic-categories">category label</a>)</td>
 </tr>
 <tr>
 <td><code>in-progress</code></td>
@@ -20399,7 +20423,7 @@ up to date (see
 </tr>
 <tr>
 <td><code>archive</code></td>
-<td>Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred, hoshin); historical record</td>
+<td>Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred, hoshin, operations); historical record</td>
 </tr>
 <tr>
 <td><code>hotfix</code></td>
@@ -20428,7 +20452,7 @@ up to date (see
 </tbody>
 </table>
 <p>The parent epic carries an issue's state, so no label restates it. <code>intake</code>,
-<code>planning</code>, <code>deferred</code> and <code>hoshin</code> label only the standing epics (and their
+<code>planning</code>, <code>deferred</code>, <code>hoshin</code> and <code>operations</code> label only the standing epics (and their
 archives), the way <code>ad-hoc</code>
 does. The per-item queue labels are <code>in-progress</code>, used only on planning
 items, and the <code>epic-size:*</code> family, used only on planning and deferred items

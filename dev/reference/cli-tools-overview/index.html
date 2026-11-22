@@ -21297,8 +21297,10 @@ ruleset rule), a branch with no PR, or a branch whose name was reused
 <p>Create an issue and link it under an epic (a native sub-issue) in one step.
 It is the sanctioned issue-creation path: <code>vrg-gh</code> denies raw
 <code>gh issue create</code>. <code>--epic</code> takes <code>adhoc</code>, <code>intake</code>, <code>planning</code>, <code>hoshin</code>
-(the org's hoshin epic, always in <code>&lt;org&gt;/.github</code>), <code>#N</code> (read against the
-target repo's epic home) or <code>owner/repo#N</code>. <code>--kind</code> stamps an
+(the org's hoshin epic, always in <code>&lt;org&gt;/.github</code>), <code>operations</code> (the org's
+operations epic, <code>Epic (operations): &lt;org&gt;</code>, also always in <code>&lt;org&gt;/.github</code>
+and created on first use), <code>#N</code> (read against the target repo's epic home) or
+<code>owner/repo#N</code>. <code>--kind</code> stamps an
 operational (<code>validation</code>, <code>deployment</code>) or <code>retrospective</code> label and body
 scaffold, and <code>--blocked-by</code> stamps a <code>Blocked-by:</code> reference. With
 <code>--kind validation</code> or <code>--kind deployment</code>, <code>--body-file</code> fills the scaffold
@@ -21415,8 +21417,8 @@ or <code>Closes</code> line (<code>{"repo", "number", "keyword"}</code>).</p>
 target's <code>&lt;org&gt;/.github</code>.
 The sanctioned path for creating epics, used by the <code>epic-create</code> skill.</p>
 <p>The epic also gets its <strong>category label</strong>, derived from its other labels:
-<code>epic-management</code> for an intake, planning, deferred or hoshin epic (<code>--label
-intake</code> and so on), <code>epic-development</code> for a plain epic, and nothing more for
+<code>epic-management</code> for an intake, planning, deferred, hoshin or operations
+epic (<code>--label intake</code> and so on), <code>epic-development</code> for a plain epic, and nothing more for
 an ad-hoc epic, whose <code>ad-hoc</code> label is its category label. Every label is
 created in the home from the label registry before the epic is. It refuses,
 creating nothing, a <code>--label epic-development</code> or <code>--label epic-management</code>
@@ -21439,6 +21441,16 @@ target's own org and a primary that is not an open development epic (a standing
 epic, a proxy, an archive or a closed epic). It reads and writes each org
 under that org's App token. The title and body are derived, so it takes no
 <code>--title</code>, <code>--body</code>, <code>--body-file</code>, <code>--label</code> or <code>--assignee</code>.</p>
+<p><code>--standing KIND --org ORG</code> instead ensures ORG's standing epic of that kind
+in <code>ORG/.github</code>, where <code>KIND</code> is <code>intake</code>, <code>planning</code>, <code>deferred</code>, <code>hoshin</code> or
+<code>operations</code>: it creates the epic if absent (titled <code>Epic (&lt;kind&gt;): ORG</code>,
+labelled <code>epic</code>, the kind and <code>epic-management</code>) and reuses it otherwise, then
+prints <code>&lt;Kind&gt; epic: ORG/.github#N</code>. It creates no task. It takes the same path
+as <code>vrg-issue-create --epic KIND</code> on first use, under ORG's App token. The
+title, body, labels and home are derived, so it takes no <code>--title</code>, <code>--body</code>,
+<code>--body-file</code>, <code>--label</code>, <code>--assignee</code> or <code>--repo</code>, and it is refused with
+<code>--proxy-for</code>. The ad-hoc epic is per repo: <code>vrg-adhoc-epic ensure</code> provisions
+it.</p>
 <table>
 <thead>
 <tr>
@@ -21453,7 +21465,7 @@ under that org's App token. The title and body are derived, so it takes no
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--title</code> (required unless <code>--proxy-for</code>), <code>--body</code> / <code>--body-file</code>, <code>--repo OWNER/NAME</code>, <code>--label</code> (repeatable), <code>--assignee</code> (repeatable), <code>--proxy-for OWNER/REPO#N</code> (needs <code>--repo</code>)</td>
+<td><code>--title</code> (required unless <code>--proxy-for</code> or <code>--standing</code>), <code>--body</code> / <code>--body-file</code>, <code>--repo OWNER/NAME</code>, <code>--label</code> (repeatable), <code>--assignee</code> (repeatable), <code>--proxy-for OWNER/REPO#N</code> (needs <code>--repo</code>), <code>--standing {intake,planning,deferred,hoshin,operations}</code> (needs <code>--org</code>), <code>--org ORG</code> (<code>--standing</code> only)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -21461,11 +21473,11 @@ under that org's App token. The title and body are derived, so it takes no
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Error on stderr; a refused label set writes nothing, a failed label create creates no epic, and a <code>--proxy-for</code> refusal or link error writes nothing</td>
+<td>Error on stderr; a refused label set writes nothing, a failed label create creates no epic, a <code>--proxy-for</code> refusal or link error writes nothing, and a <code>--standing</code> refusal (a flag it derives, no <code>--org</code>, or an org with no <code>.github</code>) writes nothing; two open standing epics with the same title, or a new one that is not listed in time, is an error naming them</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 created (or, with <code>--proxy-for</code>, ensured), 1 error or refusal</td>
+<td>0 created (or, with <code>--proxy-for</code> or <code>--standing</code>, ensured), 1 error or refusal</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -21491,7 +21503,7 @@ and a body that is already correct is not edited. The skills run it when an
 epic is created and at each docs PR handoff.</p>
 <p><code>backfill --org ORG</code> writes the section on every epic of the org's
 <code>.github</code>, open and closed. It skips the standing
-epics (ad hoc, intake, planning, deferred, hoshin, the retired <code>standing</code>
+epics (ad hoc, intake, planning, deferred, hoshin, operations, the retired <code>standing</code>
 label, and titles starting <code>Epic (standing):</code>), proxy epics and <code>[archived]</code>
 epics. For each epic it
 looks for the documents, in order:</p>
@@ -21593,8 +21605,8 @@ reflink-only children. A bare <code>#N</code> epic ref resolves to the task's ep
 </table>
 <h3 id="vrg-epic-move">vrg-epic-move<a class="headerlink" href="#vrg-epic-move" title="Permanent link">&para;</a></h3>
 <p>Move a task under a different epic (unlink, then link). <code>--epic</code> accepts
-<code>adhoc</code>, <code>intake</code>, <code>planning</code>, <code>hoshin</code>, <code>#N</code> or <code>owner/repo#N</code>, read against
-the task's repo. Moving a task already under the target is a no-op. The deferred
+<code>adhoc</code>, <code>intake</code>, <code>planning</code>, <code>hoshin</code>, <code>operations</code>, <code>#N</code> or
+<code>owner/repo#N</code>, read against the task's repo. Moving a task already under the target is a no-op. The deferred
 queue is entered and left only through <code>vrg-intake-route</code>, so this refuses
 it.</p>
 <table>
@@ -22695,8 +22707,8 @@ stderr and no JSON, so the retrospective gate stops on it.</p>
    proxy that still has an open task is reported and left open, never closed
    silently. Then reopen each epic closed while a child was still open. Each
    close and reopen carries an explanatory comment.</li>
-<li>Drain the closed children of the ad-hoc, intake, planning, deferred and
-   hoshin epics into per-quarter archives, and close past archives (see
+<li>Drain the closed children of the ad-hoc, intake, planning, deferred, hoshin
+   and operations epics into per-quarter archives, and close past archives (see
    <a href="../../standards/github-issues/#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>).</li>
 <li>Run the <a href="../../standards/github-issues/#the-orphan-pass-auto-heal">orphan pass</a>:
    nativize body-only <code>Parent:</code> links, strip the retired kind labels, and
