@@ -20687,11 +20687,13 @@ posted again.</p>
 <h3 id="vrg-release">vrg-release<a class="headerlink" href="#vrg-release" title="Permanent link">&para;</a></h3>
 <p>Run the full release workflow from <code>develop</code> to <code>main</code>: tracking issue,
 changelog, release PR and merge, CD confirmation, back-merge and version
-bump, the delivery of failed CD publish jobs (<code>cd-publish</code>, which a
-<code>--resume</code> re-runs), rolling-tag promotion, cleanup, the <code>update-deps</code> stage, which
-runs the dependency update on the new <code>develop</code> version, and finally
-the consumer refresh, which runs the <code>[publish].consumer-refresh</code>
-commands (held while any publish is deferred). On a fresh start, preflight refuses while any
+bump, rolling-tag promotion, the delivery of failed CD publish jobs
+(<code>cd-publish</code>, which a <code>--resume</code> re-runs), the package-index wait,
+cleanup, the <code>update-deps</code> stage, which runs the dependency update on the
+new <code>develop</code> version, the install, which runs the <code>[publish].install</code>
+commands once <code>promote</code> has moved <code>vX.Y</code> to the release, and finally the
+close of the tracking issue, which any failed stage holds back, so a
+<code>--resume</code> can finish the release. On a fresh start, preflight refuses while any
 <code>release: X.Y.Z</code> tracking issue is open, naming its recovery, and while an open PR
 carries the <code>dependency-update</code> label, after first closing any whose fix
 task completed. Preflight then prints the release's contents: the
@@ -23555,7 +23557,7 @@ constraints (refusing an empty export or one naming a non-registry package),
 and runs <code>uv tool install --force --no-config --python 3.15 --managed-python</code>
 of that commit under them, with <code>UV_PYTHON</code>, <code>UV_PYTHON_PREFERENCE</code> and
 <code>UV_NO_MANAGED_PYTHON</code> cleared. vergil-tooling's release runs it on the Mac
-through its <code>[publish].consumer-refresh</code>; any other host runs it to upgrade. A
+through its <code>[publish].install</code>; any other host runs it to upgrade. A
 fresh host, or one whose installed copy fails, installs by hand (see
 <a href="../../getting-started/">Getting Started</a>).</p>
 <table>

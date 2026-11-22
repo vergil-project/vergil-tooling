@@ -18309,7 +18309,7 @@ interpreter, but with its dependencies resolved fresh. The second,
 <a href="../reference/cli-tools-overview/#vrg-tooling-install"><code>vrg-tooling-install</code></a>,
 reinstalls the same tag with its dependencies pinned by that tag's own
 <code>uv.lock</code>. Each vergil-tooling release runs <code>vrg-tooling-install</code> with the
-just-released version (its <code>[publish].consumer-refresh</code> in <code>vergil.toml</code>),
+just-released version (its <code>[publish].install</code> in <code>vergil.toml</code>),
 but only on the Mac that runs that release. On any other host, run
 <code>vrg-tooling-install vX.Y.Z</code> with the new version to upgrade; see
 <a href="../guides/consuming-repo-setup/#keeping-up-to-date">Keeping up to date</a>. If

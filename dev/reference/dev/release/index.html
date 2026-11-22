@@ -18355,10 +18355,18 @@
 <code>src/vergil_tooling/lib/release/orchestrator.py</code>)</p>
 <p>Runs the whole release workflow from <code>develop</code> to <code>main</code>: preflight,
 tracking issue, changelog, release PR, merge, CD confirmation,
-back-merge and version bump, rolling-tag promotion, cleanup, the
-post-release dependency update, and last the consumer refresh. The stages and what
+back-merge and version bump, rolling-tag promotion, publish delivery,
+cleanup, the post-release dependency update, the install, and last the
+close of the tracking issue. The stages and what
 they leave behind are described in the
 <a href="../../../guides/releasing/#the-vrg-release-pipeline">Releasing guide</a>.</p>
+<p>A failed stage holds back only the stages that need it
+(<a href="../../../guides/releasing/#the-hold-rule">the hold rule</a>): a failed CD
+publish job, a package-index miss or a failed dependency update still
+lets <code>promote</code>, <code>finalize</code> and <code>install</code> run, and leaves the tracking
+issue open. The run then ends naming what is left and the one command
+that finishes it, <code>vrg-release --resume</code>, or, for a release that cannot
+finish, <code>vrg-release --supersede X.Y.Z</code>.</p>
 <p>On a fresh start, <code>preflight</code> prints the release's contents: the
 pending-release table of <code>main..&lt;cut&gt;</code> and the issues the release
 contains, each with its closing PRs, from the trusted closing
@@ -18420,7 +18428,7 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 <tr>
 <td><code>--without-deps</code></td>
 <td>No</td>
-<td>Skip the <code>update-deps</code> stage. Recorded in the tracking issue's state block, so every later <code>--resume</code> skips it too. Allowed with <code>--resume</code>, where it skips an update that failed, if the tracking issue is still open (<code>close-finalize</code> closes it before <code>update-deps</code> runs unless something was deferred)</td>
+<td>Skip the <code>update-deps</code> stage. Recorded in the tracking issue's state block, so every later <code>--resume</code> skips it too. Allowed with <code>--resume</code>, where it skips an update that failed, so the release finishes without it</td>
 </tr>
 <tr>
 <td><code>--allow-pending-deps</code></td>
@@ -18430,7 +18438,7 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 <tr>
 <td><code>--no-install</code></td>
 <td>No</td>
-<td>Skip the install step. By default the <code>consumer-refresh</code> stage runs the <code>[publish].consumer-refresh</code> commands as the release's last stage, unless a deferred publish holds it; with this flag it prints them below the summary instead. With none configured the stage says there is nothing to run, which is not an error. <code>--install</code> was removed: passing it exits 1 and names this default</td>
+<td>Skip the install step. By default the <code>install</code> stage runs the <code>[publish].install</code> commands (<code>&lt;VERSION&gt;</code> and <code>&lt;MINOR&gt;</code> expanded) once <code>promote</code> is done and <code>vX.Y</code> names the release; with this flag it prints them below the summary instead. With none configured the stage line says <code>none configured</code>, which is not an error. <code>--install</code> was removed: passing it exits 1 and names this default</td>
 </tr>
 <tr>
 <td><code>--resume [X.Y.Z]</code></td>
@@ -18613,7 +18621,7 @@ failed checks as its likely cause (issue #4294).</p>
 </tr>
 <tr>
 <td>1</td>
-<td>A stage failed, including a deferred failure such as a missed publish job, a failed consumer refresh or a failed dependency update; or the command was refused</td>
+<td>A stage failed, including a deferred failure such as a missed publish job, a failed install or a failed dependency update; or the command was refused</td>
 </tr>
 <tr>
 <td>130</td>
