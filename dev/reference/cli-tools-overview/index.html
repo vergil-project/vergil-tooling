@@ -21608,11 +21608,11 @@ quarter-named epics to that form; both are dry runs unless <code>--apply</code>.
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>GitHub App credentials for the target org; <code>--all-in</code> also needs an identity that sees every repo in ORG</td>
+<td>GitHub App credentials for the target org</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Error on stderr; <code>--all-in</code> refuses before any read when the identity may not see every repo in ORG</td>
+<td>Error on stderr</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -22548,15 +22548,8 @@ security-records pass of <code>vrg-security-record sync</code> (<code>--close</c
 it).</p>
 <p>The org comes from the current repo's <code>origin</code> remote (there is no <code>--org</code>
 flag), and the home audited is that org's <code>.github</code>.</p>
-<p>Every read runs under the audited org's token, wherever the command is run
-from. Before any check, the audit confirms that this token sees every repo in
-the org: an App token must belong to an installation on that org with access
-to all repositories, and a human's own <code>gh</code> login must be an owner of the org
-(or the org must be that login's own account). If it does not, the audit
-names the gap on stderr. The read-only report then opens with an
-<strong>Incomplete coverage</strong> section and exits 1, and <code>--close</code> is refused before
-any write. A full preview therefore needs the org's App installation with
-access to all repositories, or an org owner's own login.</p>
+<p>Every read and write runs under the audited org's token, wherever the
+command is run from.</p>
 <p><code>--epic REF</code> is a separate read-only mode: it prints one epic's children as
 JSON (<code>{"epic": &lt;slug&gt;, "children": [{repo, number, title, state}, …]}</code>) and
 skips the drift audit. A bare <code>#N</code> resolves against the current repo's epic
@@ -22611,11 +22604,11 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>--close</code> in an agent session is refused before any network call; an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A token that cannot see every repo in the org exits 1: the report is marked partial and <code>--close</code> is refused before any write. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose <code>Primary:</code> link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without <code>--close</code>. With <code>--epic</code>, a ref that is not an epic, or proxy link drift, exits 1</td>
+<td><code>--close</code> in an agent session is refused before any network call; an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose <code>Primary:</code> link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without <code>--close</code>. With <code>--epic</code>, a ref that is not an epic, or proxy link drift, exits 1</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success (the read-only report exits 0 even when it finds drift), 1 refused, incomplete coverage, a pass failed, or error, 2 bad arguments</td>
+<td>0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, or error, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -23434,8 +23427,8 @@ toward keeping. An image is kept when:</p>
 </ul>
 <p>Only an image that matches none of these is removed. Origin is read with
 <code>git ls-remote</code>, so a branch deleted on GitHub counts as gone. When a
-repo's origin cannot be read (typically a private repo the agent's App
-cannot see), that repo's local <code>refs/remotes/origin/*</code> stand in, with a
+repo's origin cannot be read (a network error, or an origin repo that no
+longer exists), that repo's local <code>refs/remotes/origin/*</code> stand in, with a
 warning naming the repo; stale tracking refs can only keep extra images,
 never remove live ones. Any other failure to read the repo set, the images,
 the containers or a repo's branches stops the run before anything is
