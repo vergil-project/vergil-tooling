@@ -18383,6 +18383,9 @@ while every identity that authored, edited, closed or reopened the issue
 is a <code>human</code> login of <code>vrg-trusted-authors</code>: any other identity stops
 the run before it writes anything, as a suspected security breach; see
 <a href="../../../guides/releasing/#the-lock-and-the-identity-rule">The lock and the identity rule</a>.
+Such a release can never be resumed; it is replaced with
+<code>vrg-release --supersede X.Y.Z</code>, which rebuilds it from GitHub and git
+facts.
 Each stage that succeeds records itself done in the state block, with
 the PRs, the tag and the CD runs it produced. <code>--resume</code> checks those
 facts against GitHub and git, then runs only the stages not recorded
@@ -18448,7 +18451,7 @@ changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> ref
 <tr>
 <td><code>--supersede X.Y.Z</code></td>
 <td>No</td>
-<td>Start a fresh release that supersedes open release <code>X.Y.Z</code>, which <code>--resume</code> cannot finish: one tagged with only <code>cd-publish</code>, <code>package-index</code>, <code>update-deps</code> or <code>install</code> left, or one halted at <code>confirm-main</code> with no tag after its CD release job failed. It absorbs <code>X.Y.Z</code>'s issues and closes its tracking issue. Combines with <code>minor</code>/<code>major</code>; passing it with <code>--resume</code> is a usage error (exit 2). See <a href="../../../guides/releasing/#superseding-a-release">Superseding a release</a></td>
+<td>Start a fresh release that supersedes open release <code>X.Y.Z</code>, which <code>--resume</code> cannot finish: one tagged with only <code>cd-publish</code>, <code>package-index</code>, <code>update-deps</code> or <code>install</code> left, or one halted at <code>confirm-main</code> with no tag after its CD release job failed. One whose tracking issue fails the identity rule is rebuilt from GitHub and git facts instead of its state block. It absorbs <code>X.Y.Z</code>'s issues and closes its tracking issue. Combines with <code>minor</code>/<code>major</code>; passing it with <code>--resume</code> is a usage error (exit 2). See <a href="../../../guides/releasing/#superseding-a-release">Superseding a release</a></td>
 </tr>
 <tr>
 <td><code>--skip-audit</code></td>
@@ -18496,7 +18499,10 @@ hand and then close the issue. Lookup failures refuse the release. See
 <a href="../../../guides/releasing/#one-release-at-a-time">One release at a time</a>.</p>
 <p><code>--supersede X.Y.Z</code> is the one exception: its check passes over release
 <code>X.Y.Z</code>'s own tracking issue, which it reads under the identity rule
-and closes once its own exists. A release it supersedes posts no
+and closes once its own exists. When that issue fails the identity
+rule, its state block is not read: the release is rebuilt from GitHub
+and git facts; see
+<a href="../../../guides/releasing/#a-breached-tracking-issue">A breached tracking issue</a>. A release it supersedes posts no
 records; the new release absorbs its issues, and their records name the
 new version and say <code>- Supersedes: vX.Y.Z</code>. When <code>X.Y.Z</code> is untagged,
 the main-ahead check accepts its release commit on <code>main</code>, the new
