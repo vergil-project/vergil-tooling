@@ -329,30 +329,52 @@ Notes:
 
 An optional top-level `[trusted_authors]` stanza lists the GitHub logins
 whose issues and comments automation may trust: your own login, and the
-logins of your agent identities (the Apps' bot accounts).
+logins of your agent identities (the Apps' bot accounts). Beside it, one
+`[orgs.<org>]` stanza per org Vergil manages names that org's automation
+App, the App that runs its fully mechanized workflows.
 
 ```toml
 [trusted_authors]
 human = ["<your-login>"]
 agents = ["<user-app-bot-login>", "<audit-app-bot-login>"]
+
+[orgs.<org>]
+automation_app = "<automation-app-slug>"
 ```
 
+- **Three roles.** `human` (a user account) and `agents` (bot accounts) are
+  trusted in every Vergil org; an org's `automation_app` (login
+  `<slug>[bot]`) is trusted only in that org's repos.
+- **The listed orgs are the Vergil orgs.** An org without a stanza is not
+  managed by Vergil. Adding an org to Vergil adds its stanza, as a step of
+  setting the org up. The slug is an opaque value: copy it from the App,
+  never derive it from the org's name.
 - **Both lists are required and non-empty**, every entry is a non-empty
-  string, and no login may appear in both lists.
+  string, no login may appear in two roles, at least one `[orgs.<org>]`
+  stanza is required, and each needs its `automation_app`.
 - **Store the bare login.** GitHub reports an issue opened by an App as
-  `app/<login>` but that App's comments as `<login>`; an `app/`-prefixed
-  entry is rejected, and consumers strip a leading `app/` before comparing.
-- **Delivery into VMs.** `vrg-vm` writes the stanza into every agent VM as
+  `app/<login>`, that App's comments as `<login>`, and some reads as
+  `<login>[bot]`; an `app/`-prefixed or `[bot]`-suffixed entry is
+  rejected, and consumers strip them before comparing.
+- **Delivery into VMs.** `vrg-vm` writes the stanzas into every agent VM as
   `~/.config/vergil/trusted-authors.toml` (mode 600) on every path that
   writes vergil config: `create`, `start`, `restart`, `rebuild`, the cloud
-  credentials stage, and `update`. When the host has no stanza, `vrg-vm`
-  **removes** that file, so a VM never trusts a stale list.
+  credentials stage, and `update`. When the host has no `[trusted_authors]`
+  stanza, `vrg-vm` **removes** that file, so a VM never trusts a stale list.
+- **Delivery into GitHub Actions jobs.** A job reads a derived copy, the
+  compact JSON `{"human": [...], "agents": [...], "orgs": {"<org>":
+  {"automation_app": "<slug>"}}}`, from `$VRG_TRUSTED_AUTHORS`. It is read
+  only when `GITHUB_ACTIONS` is `true` and neither file exists; when it is
+  missing or invalid there, the read fails.
 - **Read it through `vrg-trusted-authors`, never by hand.** It reads the VM
-  file if present, else the host stanza, and prints `human: <login>` and
-  `agent: <login>` lines (`--json` prints
-  `{"human": [...], "agents": [...]}`). With nothing configured it exits 1
-  with an error naming both paths; it never prints a default. Skills and
+  file if present, else the host stanzas, and prints `human: <login>`,
+  `agent: <login>` and `org: <org> automation: <slug>` lines (`--json`
+  prints the same JSON as the Actions copy). With nothing configured it exits
+  1 with an error naming both paths; it never prints a default. Skills and
   doctrine name only this command, never the logins themselves.
+- **The automation App's slug** for an org comes from its stanza, except in a
+  GitHub Actions job of that same org, which uses the job's
+  `$VRG_AUTOMATION_APP`; it is never read from the API.
 - An invalid stanza makes every `vrg-vm` command fail loudly when it loads
   `identities.toml`.
 
