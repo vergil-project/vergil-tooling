@@ -10,6 +10,8 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
+from vergil_tooling.lib.trust import PRRef, Role, TrustReadError
+from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.worktrees import (
     MainCheckoutStatus,
     RawWorktree,
@@ -22,6 +24,7 @@ from vergil_tooling.lib.worktrees import (
     _probe_pr_workflow,
     _rebase_head_name,
     classify_worktree,
+    closed_pr_for_branch,
     discover_repo_worktrees,
     discover_worktrees,
     gather_detached_status,
@@ -42,13 +45,25 @@ from vergil_tooling.lib.worktrees import (
 _MOD = "vergil_tooling.lib.worktrees"
 
 
+def _pr_ref(number: int, title: str, *, state: str = "OPEN", head_oid: str = "a" * 40) -> PRRef:
+    """A same-repo trusted PR, as ``trust.prs_for_branch`` returns it."""
+    return PRRef(
+        number=number,
+        url=f"https://github.com/o/r/pull/{number}",
+        title=title,
+        head="feature/7-foo",
+        head_oid=head_oid,
+        author_role=Role.HUMAN,
+        state=state,
+    )
+
+
 def test_gather_populates_timestamps() -> None:
     wt = Worktree(path=Path("/repo/.worktrees/issue-7-foo"), branch="feature/7-foo")
     with (
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".git.commits_ahead", return_value=1),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        patch(_MOD + ".branch_prs", return_value=[]),
         patch(_MOD + ".git.committer_timestamp", return_value=1_699_900_000),
         patch(_MOD + "._newest_mtime", return_value=1_699_999_999.0),
     ):
@@ -64,8 +79,7 @@ def test_gather_no_commits_ahead_shows_no_last_commit() -> None:
     with (
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".git.commits_ahead", return_value=0),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        patch(_MOD + ".branch_prs", return_value=[]),
         patch(_MOD + ".git.committer_timestamp", return_value=1_699_900_000),
         patch(_MOD + "._newest_mtime", return_value=1_699_999_999.0),
     ):
@@ -80,8 +94,7 @@ def test_gather_without_freshness_leaves_timestamps_none() -> None:
     with (
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".git.commits_ahead", return_value=1),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        patch(_MOD + ".branch_prs", return_value=[]),
         patch(_MOD + ".git.committer_timestamp") as commit_ts,
         patch(_MOD + "._newest_mtime") as newest,
     ):
@@ -192,7 +205,7 @@ def test_gather_detached_status_rebasing_resolves_branch(tmp_path: Path) -> None
         patch(_MOD + ".git.ref_exists", return_value=True),
         patch(_MOD + ".git.commits_ahead", return_value=3),
         patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".branch_prs", return_value=[]),
     ):
         status = gather_detached_status(raw, target="develop")
     assert status.state is WorktreeState.REBASING
@@ -215,7 +228,7 @@ def test_gather_detached_status_falls_back_to_dir_name(tmp_path: Path) -> None:
         patch(_MOD + ".git.ref_exists", return_value=False),
         patch(_MOD + ".git.commits_ahead") as ahead,
         patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".branch_prs", return_value=[]),
     ):
         status = gather_detached_status(raw, target="develop")
     assert status.state is WorktreeState.DETACHED
@@ -242,17 +255,17 @@ def test_gather_detached_status_keeps_the_open_pr_of_a_branch_mid_rebase(tmp_pat
     raw = RawWorktree(
         path=Path("/repo/.worktrees/issue-4529-docs-review-parallel-merging"), branch=None
     )
-    open_pr = {"number": "4673", "url": "u", "title": "t", "headRefOid": "a" * 40}
+    open_pr = _pr_ref(4673, "t")
     with (
         patch(_MOD + ".git.worktree_git_dir", return_value=_rebasing_git_dir(tmp_path, branch)),
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".git.ref_exists", return_value=True),
         patch(_MOD + ".git.commits_ahead", return_value=1),
         patch(_MOD + "._probe_pr_workflow", return_value=("ready", None, False)),
-        patch(_MOD + ".github.pr_for_branch", return_value=open_pr) as lookup,
+        patch(_MOD + ".branch_prs", return_value=[open_pr]) as lookup,
     ):
         status = gather_detached_status(raw, target="develop")
-    lookup.assert_called_once_with(branch)
+    lookup.assert_called_once_with(branch, state="open")
     assert status.state is WorktreeState.REBASING
     assert status.pr_number == 4673
 
@@ -268,7 +281,7 @@ def test_gather_detached_status_pr_lookup_failure_is_in_the_detail(tmp_path: Pat
         patch(_MOD + ".git.ref_exists", return_value=True),
         patch(_MOD + ".git.commits_ahead", return_value=1),
         patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
-        patch(_MOD + ".github.pr_for_branch", side_effect=failure),
+        patch(_MOD + ".branch_prs", side_effect=failure),
     ):
         status = gather_detached_status(raw, target="develop")
     assert status.state is WorktreeState.REBASING
@@ -286,7 +299,7 @@ def test_gather_detached_status_without_a_branch_looks_up_no_pr(tmp_path: Path) 
         patch(_MOD + ".git.worktree_git_dir", return_value=git_dir),
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
-        patch(_MOD + ".github.pr_for_branch") as lookup,
+        patch(_MOD + ".branch_prs") as lookup,
     ):
         status = gather_detached_status(raw, target="develop")
     lookup.assert_not_called()
@@ -309,7 +322,7 @@ def test_gather_detached_status_last_commit_follows_ahead(tmp_path: Path) -> Non
             patch(_MOD + ".git.ref_exists", return_value=ref_exists),
             patch(_MOD + ".git.commits_ahead", return_value=ahead),
             patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
-            patch(_MOD + ".github.pr_for_branch", return_value=None),
+            patch(_MOD + ".branch_prs", return_value=[]),
             patch(_MOD + ".git.committer_timestamp", return_value=1_699_900_000),
             patch(_MOD + "._newest_mtime", return_value=1_699_999_999.0),
         ):
@@ -538,15 +551,13 @@ def test_gather_open_pr_short_circuits_closed_lookup() -> None:
         patch(_MOD + ".git.commits_ahead", return_value=2),
         patch(_MOD + ".git.read_output", return_value=""),
         patch(
-            _MOD + ".github.pr_for_branch",
-            return_value={"number": "10", "url": "", "title": "t"},
+            _MOD + ".branch_prs",
+            return_value=[_pr_ref(9, "old", state="MERGED"), _pr_ref(10, "t")],
         ),
-        patch(_MOD + ".github.closed_pr_for_branch") as closed,
     ):
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.state is WorktreeState.OPEN_PR
     assert status.pr_number == 10
-    closed.assert_not_called()
 
 
 def test_gather_merged_pr_is_removable() -> None:
@@ -554,12 +565,10 @@ def test_gather_merged_pr_is_removable() -> None:
         patch(_MOD + ".git.commits_ahead", return_value=1),
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={"number": "11", "url": "", "title": "t", "headRefOid": "cafef00d"},
+            _MOD + ".branch_prs",
+            return_value=[_pr_ref(11, "t", state="MERGED", head_oid="cafef00d")],
         ),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
     ):
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.state is WorktreeState.MERGED
@@ -572,12 +581,10 @@ def test_gather_dirty_overlay_blocks_removal() -> None:
         patch(_MOD + ".git.commits_ahead", return_value=1),
         patch(_MOD + ".git.read_output", return_value=" M file.py"),
         patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={"number": "11", "url": "", "title": "t", "headRefOid": "cafef00d"},
+            _MOD + ".branch_prs",
+            return_value=[_pr_ref(11, "t", state="MERGED", head_oid="cafef00d")],
         ),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
     ):
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.state is WorktreeState.MERGED
@@ -594,12 +601,10 @@ def test_gather_merged_dirty_flags_attention_with_dirt_detail() -> None:
         patch(_MOD + ".git.commits_ahead", return_value=2),
         patch(_MOD + ".git.read_output", return_value=porcelain),
         patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={"number": "11", "url": "", "title": "t", "headRefOid": "cafef00d"},
+            _MOD + ".branch_prs",
+            return_value=[_pr_ref(11, "t", state="MERGED", head_oid="cafef00d")],
         ),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
     ):
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.state is WorktreeState.MERGED
@@ -620,12 +625,10 @@ def test_gather_merged_dirt_detail_truncates_long_lists() -> None:
         patch(_MOD + ".git.commits_ahead", return_value=0),
         patch(_MOD + ".git.read_output", return_value=porcelain),
         patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={"number": "11", "url": "", "title": "t", "headRefOid": "cafef00d"},
+            _MOD + ".branch_prs",
+            return_value=[_pr_ref(11, "t", state="MERGED", head_oid="cafef00d")],
         ),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
     ):
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.detail is not None
@@ -638,12 +641,10 @@ def test_gather_merged_clean_has_no_attention_or_dirt_detail() -> None:
         patch(_MOD + ".git.commits_ahead", return_value=1),
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={"number": "11", "url": "", "title": "t", "headRefOid": "cafef00d"},
+            _MOD + ".branch_prs",
+            return_value=[_pr_ref(11, "t", state="MERGED", head_oid="cafef00d")],
         ),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
     ):
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.removable is True
@@ -659,12 +660,10 @@ def test_gather_reused_branch_name_is_not_removable() -> None:
         patch(_MOD + ".git.read_output", return_value=""),
         # The local tip is a fresh commit; the merged PR points at an old one.
         patch(_MOD + ".git.commit_sha", return_value="7ead128"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={"number": "293", "url": "", "title": "docs", "headRefOid": "0ldd0cs"},
+            _MOD + ".branch_prs",
+            return_value=[_pr_ref(293, "docs", state="MERGED", head_oid="0ldd0cs")],
         ),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
     ):
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.state is WorktreeState.NO_PR
@@ -682,12 +681,10 @@ def test_gather_missing_head_sha_withholds_removal() -> None:
         patch(_MOD + ".git.commits_ahead", return_value=2),
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".git.commit_sha", return_value="7ead128"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={"number": "11", "url": "", "title": "t", "headRefOid": ""},
+            _MOD + ".branch_prs",
+            return_value=[_pr_ref(11, "t", state="MERGED", head_oid="")],
         ),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
     ):
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.state is WorktreeState.NO_PR
@@ -698,8 +695,7 @@ def test_gather_no_pr_with_commits_is_stalled() -> None:
     with (
         patch(_MOD + ".git.commits_ahead", return_value=3),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        patch(_MOD + ".branch_prs", return_value=[]),
     ):
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.state is WorktreeState.NO_PR
@@ -712,11 +708,140 @@ def test_gather_pr_lookup_failure_is_unknown() -> None:
     with (
         patch(_MOD + ".git.commits_ahead", return_value=0),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".github.pr_for_branch", side_effect=err),
+        patch(_MOD + ".branch_prs", side_effect=err),
     ):
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.state is WorktreeState.UNKNOWN
     assert "boom" in (status.detail or "")
+
+
+_SPAM_LOGIN = "spam-login-xyz"
+_SPAM_TITLE = "SPAM-MARKER-TEXT get the fix here: [download](https://example.invalid/a)"
+
+
+def _graphql_pr(number: int, *, fork: bool, state: str, author: str, title: str) -> object:
+    """A ``pullRequests`` node as GitHub's GraphQL returns it."""
+    return {
+        "number": number,
+        "url": f"https://github.com/o/r/pull/{number}",
+        "title": title,
+        "headRefName": _SAMPLE_WT.branch,
+        "headRefOid": "cafef00d",
+        "state": state,
+        "createdAt": "2026-11-01T09:30:00Z",
+        "author": {"__typename": "User", "login": author},
+        "isCrossRepository": fork,
+        "headRepositoryOwner": {"login": "mallory" if fork else "o"},
+        "headRepository": {"name": "r"},
+    }
+
+
+def test_worktree_state_ignores_fork_pr(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fork's merged PR on the branch name never makes the worktree MERGED or
+    removable (GHSA-r4j2-cwcp-xg56); a fork's open PR is no open PR either.
+    Each is reported on stderr, metadata only, and its text appears nowhere."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
+    nodes = [
+        _graphql_pr(70, fork=True, state="MERGED", author=_SPAM_LOGIN, title=_SPAM_TITLE),
+        _graphql_pr(71, fork=True, state="OPEN", author=_SPAM_LOGIN, title=_SPAM_TITLE),
+    ]
+    page = {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
+    authors = TrustedAuthors(human=("the-human",), agents=("the-agent",), orgs={})
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=2),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
+        patch(_MOD + ".github.current_repo", return_value="o/r"),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=authors),
+        patch(
+            "vergil_tooling.lib.github.graphql",
+            return_value={"repository": {"pullRequests": page}},
+        ),
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.state is WorktreeState.NO_PR
+    assert status.pr_number is None
+    assert status.removable is False
+    captured = capsys.readouterr()
+    assert captured.err == "".join(
+        f"skipped untrusted content: o/r#{n} pr {_SPAM_LOGIN} at 2026-11-01T09:30:00Z"
+        " on head (cross-repository)\n"
+        for n in (70, 71)
+    )
+    assert "SPAM-MARKER-TEXT" not in captured.out + captured.err + (status.detail or "")
+
+
+def test_gather_several_open_prs_is_unknown_naming_them() -> None:
+    """Several open PRs on one branch are a failed lookup naming them, never the first."""
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=1),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".branch_prs", return_value=[_pr_ref(10, "a"), _pr_ref(12, "b")]),
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.state is WorktreeState.UNKNOWN
+    assert "#10, #12" in (status.detail or "")
+
+
+_TRUST_FAILURES = [
+    pytest.param(
+        TrustReadError("prs_for_branch o/r feature/7-foo", "the GraphQL call failed: 502"),
+        "the GraphQL call failed: 502",
+        id="read-failure",
+    ),
+    pytest.param(
+        TrustedAuthorsNotConfiguredError("no trusted authors are configured"),
+        "no trusted authors are configured",
+        id="not-configured",
+    ),
+]
+
+
+@pytest.mark.parametrize(("err", "reason"), _TRUST_FAILURES)
+def test_gather_trust_failure_is_unknown(err: Exception, reason: str) -> None:
+    """A trust-layer read or configuration failure is UNKNOWN with its reason,
+    never 'no PR' and never a traceback."""
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=1),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".branch_prs", side_effect=err),
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.state is WorktreeState.UNKNOWN
+    assert reason in (status.detail or "")
+
+
+@pytest.mark.parametrize(("err", "reason"), _TRUST_FAILURES)
+def test_gather_detached_trust_failure_is_reported(
+    tmp_path: Path, err: Exception, reason: str
+) -> None:
+    """A detached worktree's failed open-PR lookup is named in its detail."""
+    git_dir = tmp_path / "gitdir"
+    git_dir.mkdir()
+    raw = RawWorktree(path=Path("/repo/.worktrees/issue-42-widget"), branch=None)
+    with (
+        patch(_MOD + ".git.worktree_git_dir", return_value=git_dir),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".git.ref_exists", return_value=False),
+        patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
+        patch(_MOD + ".branch_prs", side_effect=err),
+    ):
+        status = gather_detached_status(raw, target="develop")
+    assert status.state is WorktreeState.DETACHED
+    assert status.pr_number is None
+    assert f"open-PR lookup for feature/42-widget failed: {err}" in (status.detail or "")
+    assert reason in (status.detail or "")
+
+
+def test_closed_pr_for_branch_takes_the_latest_closed() -> None:
+    prs = [_pr_ref(5, "a", state="MERGED"), _pr_ref(9, "b", state="CLOSED"), _pr_ref(11, "c")]
+    with patch(_MOD + ".branch_prs", return_value=prs) as lookup:
+        found = closed_pr_for_branch("feature/7-foo")
+    lookup.assert_called_once_with("feature/7-foo", state="all")
+    assert found is not None
+    assert found.number == 9
 
 
 # -- _probe_pr_workflow (local .vergil/pr-workflow.json) ---------------------
@@ -820,8 +945,7 @@ def test_gather_attaches_pr_workflow_probe(tmp_path: Path) -> None:
     with (
         patch(_MOD + ".git.commits_ahead", return_value=3),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        patch(_MOD + ".branch_prs", return_value=[]),
     ):
         status = gather_worktree_status(wt, target="develop")
     assert status.state is WorktreeState.NO_PR

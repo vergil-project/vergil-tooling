@@ -153,17 +153,24 @@ def test_api_fallback_prefers_merged_pr(capsys: pytest.CaptureFixture[str]) -> N
     assert capsys.readouterr().out.strip() == "100"
 
 
-def test_api_fallback_uses_first_pr_if_none_merged(capsys: pytest.CaptureFixture[str]) -> None:
-    api_response = [{"number": 55, "merged_at": None}]
+def test_resolve_tracking_issue_no_first_pr_fallback(capsys: pytest.CaptureFixture[str]) -> None:
+    """Several PRs and no merged one: an error naming them, never the first
+    (GHSA-r4j2-cwcp-xg56). No PR body is read."""
+    api_response = [{"number": 55, "merged_at": None}, {"number": 56, "merged_at": None}]
     with (
         patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.github.read_json_paginated", return_value=api_response),
-        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF),
+        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF) as mock_json,
     ):
         result = main([])
-    assert result == 0
-    assert capsys.readouterr().out.strip() == "100"
+    assert result == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no merged PR" in captured.err
+    assert "#55, #56" in captured.err
+    assert "--pr N" in captured.err
+    mock_json.assert_not_called()
 
 
 def test_api_fallback_empty_list_reports_all_strategies(
@@ -221,6 +228,7 @@ def test_api_fallback_reads_every_page(capsys: pytest.CaptureFixture[str]) -> No
 
 
 def test_api_fallback_non_int_number(capsys: pytest.CaptureFixture[str]) -> None:
+    """A merged PR with no usable number is a malformed response, never 'no PR'."""
     api_response = [{"number": "not-an-int", "merged_at": "2026-01-01T00:00:00Z"}]
     with (
         patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
@@ -228,8 +236,8 @@ def test_api_fallback_non_int_number(capsys: pytest.CaptureFixture[str]) -> None
         patch(f"{_MOD}.github.read_json_paginated", return_value=api_response),
     ):
         result = main([])
-    assert result == 1
-    assert "cannot determine PR" in capsys.readouterr().err
+    assert result == 2
+    assert "malformed GitHub API response" in capsys.readouterr().err
 
 
 def test_api_fallback_error_still_reports_strategies(

@@ -41,7 +41,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     main,
     parse_args,
 )
-from vergil_tooling.lib import text_table
+from vergil_tooling.lib import text_table, worktrees
 from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cd_runs import (
     CDRunProblem,
@@ -54,6 +54,8 @@ from vergil_tooling.lib.finalize_watch import FinalizeWatchError, Outcome, PRRes
 from vergil_tooling.lib.github import ClosingIssue, GitHubAPIError, PRClosingReferences
 from vergil_tooling.lib.live_branches import RepoSetError
 from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
+from vergil_tooling.lib.trust import PRRef, Role, TrustReadError
+from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
 
@@ -266,7 +268,20 @@ def _make_profile(tmp_path: Path, model: str) -> None:
     )
 
 
-_PR_EVIDENCE = {"number": "9", "url": "https://github.com/o/r/pull/9", "title": "Done"}
+def _pr_ref(number: int, title: str, *, state: str = "OPEN", head_oid: str = "f" * 40) -> PRRef:
+    """A same-repo trusted PR, as ``worktrees.open_pr_for_branch`` returns it."""
+    return PRRef(
+        number=number,
+        url=f"https://github.com/o/r/pull/{number}",
+        title=title,
+        head=f"feature/{number}-x",
+        head_oid=head_oid,
+        author_role=Role.HUMAN,
+        state=state,
+    )
+
+
+_PR_EVIDENCE = _pr_ref(9, "Done", state="MERGED")
 
 
 @contextmanager
@@ -279,7 +294,7 @@ def _sweep_guards_pass() -> Generator[None]:
     """
     with (
         patch(_MOD + ".git.commit_sha", side_effect=lambda ref: f"sha-of-{ref}"),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=_PR_EVIDENCE),
+        patch(_MOD + ".worktrees.closed_pr_for_branch", return_value=_PR_EVIDENCE),
     ):
         yield
 
@@ -1240,8 +1255,8 @@ def test_no_pr_arg_is_cleanup_only(tmp_path: Path) -> None:
 
 # -- PR inference and always-confirm (issue #1423) ----------------------------
 
-_PR7 = {"number": "7", "url": "https://github.com/o/r/pull/7", "title": "Foo"}
-_PR8 = {"number": "8", "url": "https://github.com/o/r/pull/8", "title": "Bar"}
+_PR7 = _pr_ref(7, "Foo")
+_PR8 = _pr_ref(8, "Bar")
 _WT7 = Worktree(path=Path("/repo/.worktrees/issue-7-foo"), branch="feature/7-foo")
 _WT8 = Worktree(path=Path("/repo/.worktrees/issue-8-bar"), branch="feature/8-bar")
 
@@ -1280,7 +1295,7 @@ def test_no_arg_single_candidate_confirms_and_finalizes(tmp_path: Path) -> None:
     with (
         _cleanup_path_mocks(tmp_path),
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
-        patch(_MOD + ".github.pr_for_branch", return_value=_PR7),
+        patch(_MOD + ".worktrees.open_pr_for_branch", return_value=_PR7),
         patch(_MOD + ".confirm", return_value=True) as confirm,
         patch(_MOD + "._run_watched", return_value=0) as prov,
     ):
@@ -1297,7 +1312,7 @@ def test_yes_single_candidate_skips_tty_guard_and_finalizes(tmp_path: Path) -> N
         _cleanup_path_mocks(tmp_path),
         patch(_MOD + ".worktrees.require_tty") as guard,
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
-        patch(_MOD + ".github.pr_for_branch", return_value=_PR7),
+        patch(_MOD + ".worktrees.open_pr_for_branch", return_value=_PR7),
         patch(_MOD + "._run_watched", return_value=0) as prov,
     ):
         rc = main(["--yes", "--dry-run"])
@@ -1310,13 +1325,13 @@ def test_yes_multiple_candidates_still_disambiguates(tmp_path: Path) -> None:
     """--yes never auto-picks among PRs: the disambiguation menu is still
     shown, and only the post-choice confirm is pre-answered (issue #1644)."""
 
-    def _pr_for(branch: str) -> dict[str, str]:
+    def _pr_for(branch: str) -> PRRef:
         return _PR7 if branch == "feature/7-foo" else _PR8
 
     with (
         _cleanup_path_mocks(tmp_path),
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7, _WT8]),
-        patch(_MOD + ".github.pr_for_branch", side_effect=_pr_for),
+        patch(_MOD + ".worktrees.open_pr_for_branch", side_effect=_pr_for),
         patch(_MOD + ".prompt_choice", return_value="PR #8 (feature/8-bar): Bar") as menu,
         patch(_MOD + "._run_watched", return_value=0) as prov,
     ):
@@ -1329,7 +1344,7 @@ def test_yes_multiple_candidates_still_disambiguates(tmp_path: Path) -> None:
 def test_no_arg_single_candidate_decline_exits_zero_without_action() -> None:
     with (
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
-        patch(_MOD + ".github.pr_for_branch", return_value=_PR7),
+        patch(_MOD + ".worktrees.open_pr_for_branch", return_value=_PR7),
         patch(_MOD + ".confirm", return_value=False),
         patch(_MOD + "._run_watched", return_value=0) as fin,
         patch(_MOD + ".git.current_branch") as branch,
@@ -1341,13 +1356,13 @@ def test_no_arg_single_candidate_decline_exits_zero_without_action() -> None:
 
 
 def test_no_arg_multiple_candidates_menu_then_confirm(tmp_path: Path) -> None:
-    def _pr_for(branch: str) -> dict[str, str]:
+    def _pr_for(branch: str) -> PRRef:
         return _PR7 if branch == "feature/7-foo" else _PR8
 
     with (
         _cleanup_path_mocks(tmp_path),
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7, _WT8]),
-        patch(_MOD + ".github.pr_for_branch", side_effect=_pr_for),
+        patch(_MOD + ".worktrees.open_pr_for_branch", side_effect=_pr_for),
         patch(_MOD + ".prompt_choice", return_value="PR #8 (feature/8-bar): Bar") as menu,
         patch(_MOD + ".confirm", return_value=True),
         patch(_MOD + "._run_watched", return_value=0) as prov,
@@ -1361,7 +1376,7 @@ def test_no_arg_multiple_candidates_menu_then_confirm(tmp_path: Path) -> None:
 def test_no_arg_no_candidates_confirms_cleanup_only() -> None:
     with (
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".worktrees.open_pr_for_branch", return_value=None),
         patch(_MOD + ".confirm", return_value=False) as confirm,
     ):
         rc = main([])
@@ -1376,13 +1391,13 @@ def test_no_arg_excluded_worktree_prints_reason(
     """No silent exclusions: a worktree without an open PR says why it
     was skipped while another worktree proceeds."""
 
-    def _pr_for(branch: str) -> dict[str, str] | None:
+    def _pr_for(branch: str) -> PRRef | None:
         return _PR7 if branch == "feature/7-foo" else None
 
     with (
         _cleanup_path_mocks(tmp_path),
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7, _WT8]),
-        patch(_MOD + ".github.pr_for_branch", side_effect=_pr_for),
+        patch(_MOD + ".worktrees.open_pr_for_branch", side_effect=_pr_for),
         patch(_MOD + ".confirm", return_value=True),
         patch(_MOD + "._run_watched", return_value=0),
     ):
@@ -1656,7 +1671,7 @@ def test_sweep_skips_zero_commit_branch(tmp_path: Path, capsys: pytest.CaptureFi
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=["feature/1439-fresh"]),
         patch(_MOD + ".git.commit_sha", return_value="same-sha"),
-        patch(_MOD + ".github.closed_pr_for_branch") as evidence,
+        patch(_MOD + ".worktrees.closed_pr_for_branch") as evidence,
         patch(_MOD + "._report_cd_run"),
     ):
         result = main([])
@@ -1688,7 +1703,7 @@ def test_sweep_skips_branch_without_merge_evidence(
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=["feature/77-stale-tip"]),
         patch(_MOD + ".git.commit_sha", side_effect=lambda ref: f"sha-of-{ref}"),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        patch(_MOD + ".worktrees.closed_pr_for_branch", return_value=None),
         patch(_MOD + "._report_cd_run"),
     ):
         result = main([])
@@ -1745,7 +1760,7 @@ def test_explicit_target_cleanup_bypasses_sweep_guards(tmp_path: Path) -> None:
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + ".git.read_output", return_value="feature/7-foo"),
         patch(_MOD + ".git.commit_sha") as sha,
-        patch(_MOD + ".github.closed_pr_for_branch") as evidence,
+        patch(_MOD + ".worktrees.closed_pr_for_branch") as evidence,
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
         patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + "._report_cd_run"),
@@ -2731,7 +2746,7 @@ def test_sweep_keeps_open_pr_worktree(tmp_path: Path) -> None:
         patch(_MOD + ".git.merged_branches", return_value=["feature/2-y"]),
         patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
         patch(_MOD + ".worktrees.gather_worktree_status", return_value=not_removable),
-        patch(_MOD + ".github.closed_pr_for_branch") as ancestry_evidence,
+        patch(_MOD + ".worktrees.closed_pr_for_branch") as ancestry_evidence,
         patch(_MOD + "._delete_branch_and_worktree") as deleter,
         patch(_MOD + "._report_cd_run"),
     ):
@@ -2791,12 +2806,10 @@ def test_sweep_keeps_reused_branch_name_worktree(tmp_path: Path) -> None:
         patch(_wt_mod + ".git.commits_ahead", return_value=9),
         patch(_wt_mod + ".git.read_output", return_value=""),
         patch(_wt_mod + ".git.commit_sha", return_value="7ead128"),
-        patch(_wt_mod + ".github.pr_for_branch", return_value=None),
         patch(
-            _wt_mod + ".github.closed_pr_for_branch",
-            return_value={"number": "293", "url": "", "title": "docs", "headRefOid": "0ldd0cs"},
+            _wt_mod + ".branch_prs",
+            return_value=[_pr_ref(293, "docs", state="MERGED", head_oid="0ldd0cs")],
         ),
-        patch(_wt_mod + ".github.pr_state", return_value="MERGED"),
         patch(_MOD + "._delete_branch_and_worktree") as deleter,
         patch(_MOD + "._report_cd_run"),
     ):
@@ -3672,17 +3685,17 @@ def test_skip_post_checks_fatal(tmp_path: Path, capsys: pytest.CaptureFixture[st
 def test_all_selects_worktree_prs(tmp_path: Path) -> None:
     wts = [_WT8, _WT7]
 
-    def pr_for(branch: str) -> dict[str, str]:
+    def pr_for(branch: str) -> PRRef:
         return _PR7 if branch == "feature/7-foo" else _PR8
 
     with (
         _settle_env(tmp_path, []),
         patch(_MOD + ".worktrees.list_worktrees", return_value=wts),
-        patch(_MOD + ".github.pr_for_branch", side_effect=pr_for),
+        patch(_MOD + ".worktrees.open_pr_for_branch", side_effect=pr_for),
         patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged) as watch,
     ):
         assert main(["--all"]) == 0
-    watch.assert_called_once_with([_PR7["url"], _PR8["url"]])
+    watch.assert_called_once_with([_PR7.url, _PR8.url])
 
 
 def test_all_with_no_open_prs_returns_zero(
@@ -3695,6 +3708,115 @@ def test_all_with_no_open_prs_returns_zero(
         assert main(["--all"]) == 0
     watch.assert_not_called()
     assert "no open PRs found in worktrees" in capsys.readouterr().out
+
+
+_SPAM_LOGIN = "spam-login-xyz"
+_SPAM_TITLE = "SPAM-MARKER-TEXT get the fix here: [download](https://example.invalid/a)"
+
+
+def _fork_pr_page(number: int, branch: str) -> dict[str, object]:
+    """A GraphQL page of one open fork PR on *branch*, shaped as GitHub returns it."""
+    node = {
+        "number": number,
+        "url": f"https://github.com/o/r/pull/{number}",
+        "title": _SPAM_TITLE,
+        "headRefName": branch,
+        "headRefOid": "e" * 40,
+        "state": "OPEN",
+        "createdAt": "2026-11-01T09:30:00Z",
+        "author": {"__typename": "User", "login": _SPAM_LOGIN},
+        "isCrossRepository": True,
+        "headRepositoryOwner": {"login": "mallory"},
+        "headRepository": {"name": "r"},
+    }
+    page = {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [node]}
+    return {"repository": {"pullRequests": page}}
+
+
+def test_finalize_never_adopts_fork_pr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fork PR on a worktree's branch name is never watched (GHSA-r4j2-cwcp-xg56):
+    it is reported on stderr, metadata only, and its text appears nowhere."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
+    authors = TrustedAuthors(human=("the-human",), agents=("the-agent",), orgs={})
+    with (
+        _settle_env(tmp_path, []),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
+        patch("vergil_tooling.lib.worktrees.github.current_repo", return_value="o/r"),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=authors),
+        patch(
+            "vergil_tooling.lib.github.graphql",
+            return_value=_fork_pr_page(66, _WT7.branch),
+        ),
+        patch(_MOD + ".finalize_watch.watch") as watch,
+    ):
+        assert main(["--all"]) == 0
+    watch.assert_not_called()
+    captured = capsys.readouterr()
+    assert "no open PRs found in worktrees" in captured.out
+    assert captured.err == (
+        f"skipped untrusted content: o/r#66 pr {_SPAM_LOGIN} at 2026-11-01T09:30:00Z"
+        " on head (cross-repository)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in captured.out + captured.err
+
+
+def test_all_refuses_several_open_prs_on_one_branch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Several open PRs on a branch are an error naming them, never the first."""
+    err = worktrees.BranchPRError("2 open PRs on feature/7-foo (#7, #8): name the PR to act on")
+    with (
+        _settle_env(tmp_path, []),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
+        patch(_MOD + ".worktrees.open_pr_for_branch", side_effect=err),
+        patch(_MOD + ".finalize_watch.watch") as watch,
+    ):
+        assert main(["--all"]) == 1
+    watch.assert_not_called()
+    assert "#7, #8" in capsys.readouterr().err
+
+
+_TRUST_FAILURES = [
+    pytest.param(
+        TrustReadError("prs_for_branch o/r feature/7-foo", "the GraphQL call failed: 502"),
+        "the GraphQL call failed: 502",
+        id="read-failure",
+    ),
+    pytest.param(
+        TrustedAuthorsNotConfiguredError("no trusted authors are configured"),
+        "no trusted authors are configured",
+        id="not-configured",
+    ),
+]
+
+
+@pytest.mark.parametrize(("argv", "prefix"), [([], "vrg-finalize-pr: "), (["--all"], "--all: ")])
+@pytest.mark.parametrize(("err", "reason"), _TRUST_FAILURES)
+def test_branch_lookup_trust_failure_exits_one(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    prefix: str,
+    err: Exception,
+    reason: str,
+) -> None:
+    """A branch lookup the trust layer cannot read, or cannot judge for want of
+    a trusted-authors configuration, is a one-line error and exit 1, never 'no
+    PR' and never a traceback: in the interactive pick and under --all."""
+    with (
+        _settle_env(tmp_path, []),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
+        patch(_MOD + ".worktrees.open_pr_for_branch", side_effect=err),
+        patch(_MOD + ".finalize_watch.watch") as watch,
+    ):
+        assert main(argv) == 1
+    watch.assert_not_called()
+    err_text = capsys.readouterr().err
+    assert f"{prefix}{err}\n" in err_text
+    assert reason in err_text
+    assert "Traceback" not in err_text
 
 
 def test_cleanup_only_settles_without_watch(tmp_path: Path) -> None:
@@ -3924,15 +4046,15 @@ def test_resolve_open_prs_skips_worktrees_without_pr() -> None:
         Worktree(path=Path("/r/.worktrees/issue-1-a"), branch="feature/1-a"),
     ]
 
-    def pr_for(branch: str):
-        return {"url": f"https://x/{branch}"} if branch == "feature/1-a" else None
+    def pr_for(branch: str) -> PRRef | None:
+        return _pr_ref(1, "a") if branch == "feature/1-a" else None
 
     with (
         patch(_FIN_MOD + ".worktrees.list_worktrees", return_value=wts),
-        patch(_FIN_MOD + ".github.pr_for_branch", side_effect=pr_for),
+        patch(_FIN_MOD + ".worktrees.open_pr_for_branch", side_effect=pr_for),
     ):
         # branch-sorted: feature/1-a precedes feature/2-b; only 1-a has a PR
-        assert _resolve_open_prs(Path("/r")) == ["https://x/feature/1-a"]
+        assert _resolve_open_prs(Path("/r")) == ["https://github.com/o/r/pull/1"]
 
 
 # -- relay-ref cleanup (issue #2369) ---------------------------------------

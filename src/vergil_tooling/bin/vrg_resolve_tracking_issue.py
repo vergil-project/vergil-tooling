@@ -9,7 +9,10 @@ PR discovery uses three strategies in order:
 
 1. Merge-commit pattern: ``Merge pull request #N from ...``
 2. Squash-merge pattern: ``description (#N)``
-3. GitHub API fallback: ``repos/{owner}/{repo}/commits/{sha}/pulls``
+3. GitHub API fallback: ``repos/{owner}/{repo}/commits/{sha}/pulls``,
+   taking the commit's merged PR. Its other PRs (open or closed unmerged
+   ones, a fork's included) are never taken in its place: with no merged PR
+   the lookup fails, naming them (GHSA-r4j2-cwcp-xg56).
 
 The ``--pr`` flag bypasses commit parsing entirely.
 
@@ -62,6 +65,13 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 2
+            except UnmergedPRsError as exc:
+                print(
+                    f"ERROR: commit {args.commit} has no merged PR, only {exc}. "
+                    "Use --pr N to specify the PR number directly.",
+                    file=sys.stderr,
+                )
+                return 1
 
     if pr_num is None:
         print(
@@ -94,7 +104,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+class UnmergedPRsError(Exception):
+    """The commit has PRs, but none of them merged: its message names them."""
+
+
 def _pr_from_api(commit: str) -> int | None:
+    """The merged PR of *commit*, or ``None`` when it has no PR at all.
+
+    A commit's PR list also holds PRs that never merged it, a fork's
+    included, so only a merged one is taken: with none, the PRs found raise
+    :class:`UnmergedPRsError`, never the first of them (GHSA-r4j2-cwcp-xg56).
+    """
     repo = github.current_repo()
     sha = git.read_output("rev-parse", commit)
     # Paginated (issue #3162) so a merged PR past the first page is still seen.
@@ -104,12 +124,14 @@ def _pr_from_api(commit: str) -> int | None:
     for pr in prs:
         if pr.get("merged_at"):
             num = pr.get("number")
-            if isinstance(num, int):
-                return num
-    if prs:
-        num = prs[0].get("number")
-        if isinstance(num, int):
+            if not isinstance(num, int) or isinstance(num, bool):
+                msg = f"a merged PR has no usable number ({num!r})"
+                raise ValueError(msg)
             return num
+    if prs:
+        named = ", ".join(f"#{pr.get('number')}" for pr in prs)
+        msg = f"{len(prs)} unmerged PR(s): {named}"
+        raise UnmergedPRsError(msg)
     return None
 
 

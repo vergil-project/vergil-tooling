@@ -109,6 +109,7 @@ from vergil_tooling.lib import (
     github,
     progress,
     text_table,
+    trust,
     worktrees,
 )
 from vergil_tooling.lib.cache_prune import clean_branch_images, prune_orphan_branch_images
@@ -139,6 +140,7 @@ from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.progress import Stage, StageResult, StageStatus
 from vergil_tooling.lib.release import gate
 from vergil_tooling.lib.repo_init import prompt_choice
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.versions import VersionsError
 
 if TYPE_CHECKING:
@@ -243,7 +245,15 @@ def main(argv: list[str] | None = None) -> int:
         return _run_settle_only(args, root)
 
     if args.all_prs:
-        prs = _resolve_open_prs(root)
+        try:
+            prs = _resolve_open_prs(root)
+        except (
+            trust.TrustReadError,
+            TrustedAuthorsNotConfiguredError,
+            worktrees.BranchPRError,
+        ) as exc:
+            print(f"vrg-finalize-pr --all: {exc}", file=sys.stderr)
+            return EXIT_ERROR
         if not prs:
             print("vrg-finalize-pr --all: no open PRs found in worktrees.")
             return EXIT_OK
@@ -259,6 +269,13 @@ def main(argv: list[str] | None = None) -> int:
             if exc.code == 0:
                 return EXIT_OK
             raise
+        except (
+            trust.TrustReadError,
+            TrustedAuthorsNotConfiguredError,
+            worktrees.BranchPRError,
+        ) as exc:
+            print(f"vrg-finalize-pr: {exc}", file=sys.stderr)
+            return EXIT_ERROR
         if picked is None:
             return _run_settle_only(args, root)
         prs = [picked]
@@ -358,15 +375,17 @@ def _resolve_open_prs(root: Path) -> list[str]:
     """Return the URLs of every open PR in canonical worktrees, branch-sorted.
 
     Deterministic order (by branch name) so a batch is reproducible. Skips
-    worktrees with no open PR, printing why — no silent exclusions.
+    worktrees with no open PR, printing why — no silent exclusions. Only a
+    same-repo PR with a trusted author counts (``worktrees.open_pr_for_branch``):
+    a fork PR on the same branch name is reported, never adopted.
     """
     urls: list[str] = []
     for wt in sorted(worktrees.list_worktrees(root), key=lambda w: w.branch):
-        pr = github.pr_for_branch(wt.branch)
+        pr = worktrees.open_pr_for_branch(wt.branch)
         if pr is None:
             print(f"  {wt.path.name}: no open PR for {wt.branch} — skipping")
             continue
-        urls.append(pr["url"])
+        urls.append(pr.url)
     return urls
 
 
@@ -1020,9 +1039,9 @@ def _infer_pr(root: Path, target_branch: str, *, assume_yes: bool = False) -> st
     a disambiguation, not a yes/no, so it is still presented even under
     ``--yes`` — there is no single obvious answer to skip to.
     """
-    pairs: list[tuple[worktrees.Worktree, dict[str, str]]] = []
+    pairs: list[tuple[worktrees.Worktree, trust.PRRef]] = []
     for wt in worktrees.list_worktrees(root):
-        pr = github.pr_for_branch(wt.branch)
+        pr = worktrees.open_pr_for_branch(wt.branch)
         if pr is None:
             # No silent exclusions: every skipped worktree says why.
             print(f"  {wt.path.name}: no open PR for {wt.branch} — not a candidate")
@@ -1051,18 +1070,18 @@ def _infer_pr(root: Path, target_branch: str, *, assume_yes: bool = False) -> st
     if len(pairs) == 1:
         wt, pr = pairs[0]
     else:
-        labels = [f"PR #{p['number']} ({w.branch}): {p['title']}" for w, p in pairs]
+        labels = [f"PR #{p.number} ({w.branch}): {p.title}" for w, p in pairs]
         chosen = prompt_choice("Multiple PRs ready to finalize", labels)
         wt, pr = pairs[labels.index(chosen)]
 
     if not confirm(
-        f"Finalize PR #{pr['number']} ({pr['title']})?",
+        f"Finalize PR #{pr.number} ({pr.title})?",
         assume_yes=assume_yes,
         default=False,
     ):
         print("Aborted.")
         raise SystemExit(0)
-    return pr["url"]
+    return pr.url
 
 
 NO_CD_WORKFLOW_LINE = "  CD: no CD workflow in this repo"
@@ -1509,8 +1528,9 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
         # distinguish a merged branch from one created off an older
         # target tip; only sweep branches whose head has a closed or
         # merged PR. The just-merged PR branch is handled by the
-        # explicit-target step above, which keeps its own behavior.
-        if github.closed_pr_for_branch(branch) is None:
+        # explicit-target step above, which keeps its own behavior. A fork
+        # PR closed on the same branch name is no evidence.
+        if worktrees.closed_pr_for_branch(branch) is None:
             print(f"  Skipping {branch}: no closed or merged PR for this branch")
             continue
         if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
