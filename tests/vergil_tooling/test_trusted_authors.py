@@ -203,6 +203,21 @@ class TestParse:
                 {"example-org": stanza},
             )
 
+    def test_parse_rejects_padded_automation_app(self) -> None:
+        with pytest.raises(ValueError, match="surrounding whitespace"):
+            parse_trusted_authors(
+                {"human": ["example-human"], "agents": ["example-agent"]},
+                {"example-org": {"automation_app": " example-org-automation"}},
+            )
+
+    @pytest.mark.parametrize("org", ["", " ", " example-org"])
+    def test_parse_rejects_bad_org_name(self, org: str) -> None:
+        with pytest.raises(ValueError, match="org name"):
+            parse_trusted_authors(
+                {"human": ["example-human"], "agents": ["example-agent"]},
+                {org: {"automation_app": "example-org-automation"}},
+            )
+
     def test_parse_rejects_non_table_org(self) -> None:
         with pytest.raises(ValueError, match=r"\[orgs\.example-org\] must be a table"):
             parse_trusted_authors(

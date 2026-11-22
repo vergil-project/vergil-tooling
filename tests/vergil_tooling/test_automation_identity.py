@@ -120,8 +120,15 @@ class TestAutomationAppSlug:
 
     def test_automation_app_slug_unlisted_org_raises(self, tmp_path: Path) -> None:
         self._write_config(tmp_path)
-        with pytest.raises(AutomationIdentityError, match=r"example-unlisted.*\[orgs\.example-unlisted\]"):
+        with pytest.raises(AutomationIdentityError, match=r"\[orgs\.example-unlisted\]"):
             automation_app_slug("example-unlisted")
+
+    def test_own_org_without_env_reads_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._write_config(tmp_path)
+        monkeypatch.setenv("GITHUB_REPOSITORY_OWNER", "example-org")
+        assert automation_app_slug("example-org") == _SLUG
 
     def test_unconfigured_raises(self) -> None:
         with pytest.raises(AutomationIdentityError, match="not configured") as excinfo:

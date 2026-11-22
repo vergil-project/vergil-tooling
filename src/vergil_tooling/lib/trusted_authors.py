@@ -370,13 +370,15 @@ def render_vm_file(authors: TrustedAuthors) -> str:
 
 
 def as_json_object(authors: TrustedAuthors) -> dict[str, object]:
-    """*authors* as ``{"human": [...], "agents": [...], "orgs": {"<org>": {"automation_app": ...}}}``."""
+    """*authors* as one JSON object, the shape ``vrg-trusted-authors --json`` prints.
+
+    ``{"human": [...], "agents": [...], "orgs": {"<org>": {"automation_app": "<slug>"}}}``
+    """
     return {
         "human": list(authors.human),
         "agents": list(authors.agents),
         ORGS_STANZA: {
-            org: {AUTOMATION_APP_KEY: config.automation_app}
-            for org, config in authors.orgs.items()
+            org: {AUTOMATION_APP_KEY: config.automation_app} for org, config in authors.orgs.items()
         },
     }
 
