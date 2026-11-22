@@ -1167,6 +1167,18 @@ def _intake_epic(home: str) -> epics.IssueRef:
     return epics.IssueRef(owner, repo, 100 if owner == "org" else 7)
 
 
+@pytest.fixture
+def trusted_reads() -> Any:
+    """Read every orphan through the real trust layer as opened by the trusted human."""
+    items = trust_stubs.FakeItems()
+    with (
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+    ):
+        yield items
+
+
+@pytest.mark.usefixtures("trusted_reads")
 def test_attach_orphans_attaches_each_under_its_intake_epic() -> None:
     orphans = [
         epic_audit.Orphan(epics.IssueRef("org", "tool", 5), home="org/.github", name="org"),
@@ -1192,6 +1204,7 @@ def test_attach_orphans_attaches_each_under_its_intake_epic() -> None:
     ]
 
 
+@pytest.mark.usefixtures("trusted_reads")
 def test_attach_orphans_is_idempotent() -> None:
     # After the attach, each issue has a native parent, so a re-run finds nothing.
     intake = epics.IssueRef("org", ".github", 100)
@@ -1207,6 +1220,7 @@ def test_attach_orphans_is_idempotent() -> None:
     assert epic_audit.orphan_drift("org", issues=after) == []
 
 
+@pytest.mark.usefixtures("trusted_reads")
 def test_attach_orphans_stops_at_cap() -> None:
     intake = epics.IssueRef("org", ".github", 100)
     full = [
@@ -1235,6 +1249,7 @@ def test_attach_orphans_stops_at_cap() -> None:
     )
 
 
+@pytest.mark.usefixtures("trusted_reads")
 def test_attach_orphans_stops_when_attaching_reaches_cap() -> None:
     intake = epics.IssueRef("org", ".github", 100)
     near = [
@@ -1254,6 +1269,129 @@ def test_attach_orphans_stops_when_attaching_reaches_cap() -> None:
         epic_audit.attach_orphans(orphans)
     assert add.call_count == 1  # the first fits; the second would exceed the cap
     assert excinfo.value.pending == [epics.IssueRef("org", "tool", 6)]
+
+
+def _outsider_orphans() -> tuple[list[epic_audit.Orphan], trust_stubs.FakeItems]:
+    """Orphans #5-#9: #5 and #7 outsider-opened, #9 a User named like the agent App.
+
+    #6 is the trusted human's; #8 is too, its body and a comment an outsider's.
+    """
+    spam = trust_stubs.SPAM_TEXT
+    items = trust_stubs.FakeItems(
+        {
+            ("org/tool", 5): trust_stubs.item(body=spam, author=trust_stubs.OUTSIDER),
+            ("org/tool", 6): trust_stubs.item(),
+            ("org/tool", 7): trust_stubs.item(body=spam, author=trust_stubs.OUTSIDER),
+            ("org/tool", 8): trust_stubs.item(
+                body=spam,
+                editor=trust_stubs.OUTSIDER,
+                nodes=[trust_stubs.comment(1, spam, trust_stubs.OUTSIDER)],
+            ),
+            ("org/tool", 9): trust_stubs.item(body=spam, author=trust_stubs.IMPOSTOR),
+        },
+        strict=True,
+    )
+    orphans = [
+        epic_audit.Orphan(epics.IssueRef("org", "tool", n), home="org/.github", name="org")
+        for n in (5, 6, 7, 8, 9)
+    ]
+    return orphans, items
+
+
+def test_attach_orphans_skips_outsider_issue_clean_exit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An outsider-opened orphan is never attached: it is reported, metadata
+    # only, and left out of the count, and the pass exits clean. Only the
+    # author decides it, so #8 (an outsider's edit and comment) is attached.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    orphans, items = _outsider_orphans()
+    intake = epics.IssueRef("org", ".github", 100)
+    with (
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=intake),
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+        patch("vergil_tooling.lib.epics.add_child") as add,
+    ):
+        assert epic_audit.attach_orphans(orphans) == 2
+    assert [c.args for c in add.call_args_list] == [
+        (intake, epics.IssueRef("org", "tool", 6)),
+        (intake, epics.IssueRef("org", "tool", 8)),
+    ]
+    assert items.reads == [("org/tool", n) for n in (5, 6, 7, 8, 9)]
+    err = capsys.readouterr().err
+    created = trust_stubs.CREATED
+    assert err == (
+        f"skipped untrusted content: org/tool#5 issue drive-by at {created} on body (untrusted)\n"
+        f"skipped untrusted content: org/tool#7 issue drive-by at {created} on body (untrusted)\n"
+        f"skipped untrusted content: org/tool#9 issue vergil-user at {created} on body"
+        " (wrong-type)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+def test_attach_orphans_outsider_issues_under_actions_are_counts(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    orphans, items = _outsider_orphans()
+    with (
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+        patch(
+            "vergil_tooling.lib.epics.ensure_standing_epic",
+            return_value=epics.IssueRef("org", ".github", 100),
+        ),
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+        patch("vergil_tooling.lib.epics.add_child"),
+    ):
+        assert epic_audit.attach_orphans(orphans) == 2
+    err = capsys.readouterr().err
+    assert err == "skipped 3 untrusted item(s) (untrusted: 2, wrong-type: 1)\n"
+
+
+def test_attach_orphans_outsider_issues_stay_out_of_the_cap() -> None:
+    # One slot left: the outsider-opened orphans before the trusted one take
+    # none of it, so the trusted one is attached and nothing is pending.
+    intake = epics.IssueRef("org", ".github", 100)
+    near = [
+        epics.ChildState(epics.IssueRef("org", "tool", 1000 + i), "OPEN", "c")
+        for i in range(epics._ADHOC_ARCHIVE_SEGMENT_CAP - 1)
+    ]
+    orphans, items = _outsider_orphans()
+    del orphans[3]  # keep #6 as the only trusted orphan
+    with (
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=intake),
+        patch("vergil_tooling.lib.epics.child_states", return_value=near),
+        patch("vergil_tooling.lib.epics.add_child") as add,
+    ):
+        assert epic_audit.attach_orphans(orphans) == 1
+    assert [c.args for c in add.call_args_list] == [(intake, epics.IssueRef("org", "tool", 6))]
+
+
+def test_attach_orphans_read_failure_attaches_nothing() -> None:
+    # Every orphan is judged before the first attach: a read the layer cannot
+    # complete stops the pass with nothing written.
+    orphans, _ = _outsider_orphans()
+
+    def failing(query: str, **variables: Any) -> dict[str, Any]:
+        if int(variables["number"]) == 9:
+            return {"repository": {"issueOrPullRequest": None}}
+        return trust_stubs.item()
+
+    with (
+        patch("vergil_tooling.lib.github.graphql", side_effect=failing),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+        patch("vergil_tooling.lib.epics.ensure_standing_epic") as ensure,
+        patch("vergil_tooling.lib.epics.add_child") as add,
+        pytest.raises(trust.TrustReadError),
+    ):
+        epic_audit.attach_orphans(orphans)
+    ensure.assert_not_called()
+    add.assert_not_called()
 
 
 def test_retired_label_drift_lists_kind_labelled_issues() -> None:

@@ -105,6 +105,12 @@ trusted comment names, as the trust layer judges it, or
 one whose body carries a ``Planning:`` line for it; #4001, #4170). An
 ad-hoc item refuses defer and planning while an open PR would close it. The whole route runs
 under the item owner's App token (:func:`github.target_org`).
+
+An item opened by an outsider (its author holds no role, as the trust layer
+judges it) is never routed or sized: every route on it is a stop before
+anything resolves or is written
+(:class:`~vergil_tooling.lib.trust.UntrustedContentError`, metadata only;
+spec §5.3 of epic vergil-project/.github#1467). The human decides next.
 """
 
 from __future__ import annotations
@@ -279,6 +285,7 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         # Refused by name before anything resolves: resolving the sentinel
         # would create the hoshin epic.
         raise RouteRefusedError(HOSHIN_REFUSAL.format(epic=f"--epic {action.epic}"))
+    _refuse_outsider_opened(ref)
     parent = epics.parent_of(ref)
     try:
         kind = _check_eligible(ref, action, parent)
@@ -351,6 +358,18 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         _link(intake, ref)
         return RouteResult(final=ref, moved_by="none")
     return _one_off(ref, action, parent, kind, today)
+
+
+def _refuse_outsider_opened(ref: IssueRef) -> None:
+    """Stop when an outsider opened *ref*: a tool pointed at it acts on nothing.
+
+    Only the author decides it: a trusted item with untrusted comments, or
+    with a body an outsider edited, is routed (its body is judged where a
+    route reads it, :func:`_trusted_body`).
+    """
+    opened = trust.outsider_opened(trust.read_issue(_repo_of(ref), ref.number))
+    if opened is not None:
+        raise trust.UntrustedContentError(opened, "the item was opened by an untrusted author")
 
 
 def _check_eligible(ref: IssueRef, action: RouteAction, parent: IssueRef | None) -> str | None:

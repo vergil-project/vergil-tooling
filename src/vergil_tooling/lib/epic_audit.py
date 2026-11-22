@@ -35,6 +35,7 @@ from vergil_tooling.lib import (
     proxies,
     release,
     roadmap,
+    trust,
     trusted_comments,
 )
 from vergil_tooling.lib.labels import RETIRED_LABELS
@@ -772,7 +773,13 @@ def attach_orphans(orphans: list[Orphan]) -> int:
     attach the epic's open children are checked against the cap; at the cap this
     raises :class:`StandingEpicFull` naming every orphan not yet attached. Writes
     to GitHub; the caller gates it and scopes the org token.
+
+    An orphan an outsider opened (its author holds no role, as the trust layer
+    judges it) is never attached: it is reported on stderr, metadata only
+    (counts under Actions), and left out of the count and the cap, with a
+    clean exit (spec §5.3 of epic vergil-project/.github#1467).
     """
+    orphans = _trusted_orphans(orphans)
     targets: dict[tuple[str, str], epics.IssueRef] = {}
     capacity = _QueueCapacity()
     for index, orphan in enumerate(orphans):
@@ -784,6 +791,21 @@ def attach_orphans(orphans: list[Orphan]) -> int:
         capacity.reserve(target, pending)
         epics.add_child(target, orphan.ref)
     return len(orphans)
+
+
+def _trusted_orphans(orphans: list[Orphan]) -> list[Orphan]:
+    """*orphans* without the outsider-opened ones, each of those reported."""
+    kept: list[Orphan] = []
+    skipped: list[trust.Skipped] = []
+    for orphan in orphans:
+        ref = orphan.ref
+        opened = trust.outsider_opened(trust.read_issue(f"{ref.owner}/{ref.repo}", ref.number))
+        if opened is None:
+            kept.append(orphan)
+        else:
+            skipped.append(opened)
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return kept
 
 
 @dataclass(frozen=True)
