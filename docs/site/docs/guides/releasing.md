@@ -1220,6 +1220,10 @@ Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
   to the rest, then fails naming each. `close-tracking` does not run,
   and `vrg-release --resume` posts the missing records, then closes the
   issue.
+- A record is release evidence for the issue:
+  [`vrg-release-record check`](../reference/dev/release-record.md) reads
+  it, confirms it against git and prints a verdict, which is how a
+  deployment task confirms that a blocked-by task is released.
 
 ### The lock and the identity rule
 

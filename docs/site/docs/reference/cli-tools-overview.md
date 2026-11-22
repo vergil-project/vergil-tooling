@@ -439,6 +439,31 @@ and the [Releasing guide](../guides/releasing.md).
 | Exit codes | 0 success, 1 any failure or refusal, 130 interrupted |
 | Status | Active |
 
+### vrg-release-record
+
+Read a task's `Released:` record, which `vrg-release` posts, as release
+evidence. `check` reads every comment on the task and uses the newest record
+that counts (its comment's author and last editor are `human` logins of
+`vrg-trusted-authors`); every other record is a warning. It then checks that
+the merge commit of each closing PR of the task whose closing reference
+passes the release's trust rule, read from GitHub and never from the record,
+is an ancestor of the record's tag, in a temporary bare fetch of the task's
+repo. A record that ancestry does not confirm is a failed verdict, never a
+pass. It prints one JSON object: `task`, `verdict` (`pass`, `fail` or
+`none`), `record` (`version`, `tag` and the Release `url`, or `null`),
+`ancestry` (`pass`, `fail` or `null`) and `warnings`. A deployment task
+confirms a blocked-by task's release with it. See the
+[vrg-release-record reference](dev/release-record.md).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_release_record` |
+| Args | `check OWNER/REPO#N` |
+| Preconditions | `gh` authenticated; the trusted-authors configuration; read access to the task's repo for `git ls-remote` and `git fetch` |
+| Failure mode | A failed or incomplete GitHub or git read is an error on stderr, never "no record" |
+| Exit codes | 0 `pass`, 3 `fail`, 4 `none` (no counting record), 1 an error, 2 a usage error |
+| Status | Active |
+
 ### vrg-promote
 
 Move the rolling `vX.Y` tag to release `vX.Y.Z`. It is human-only: it

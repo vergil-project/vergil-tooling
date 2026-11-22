@@ -365,8 +365,10 @@ def _compare(
 # An issue on either side of a ConnectedEvent; a PR on a side reads as ``{}``.
 _LINKED_ISSUE = "... on Issue { number repository { nameWithOwner } }"
 
-# What the issue list reads of each PR, besides the pending-release fields.
-_CLOSING_FIELDS = f"""
+# What the issue list reads of each PR, besides the pending-release fields: the
+# fields :func:`trusted_closing_refs` reads of a PR node, which
+# ``vrg-release-record check`` asks for too.
+CLOSING_FIELDS = f"""
           repository {{ nameWithOwner }}
           body
           author {{ login }}
@@ -376,7 +378,7 @@ _CLOSING_FIELDS = f"""
             totalCount nodes {{ number repository {{ nameWithOwner }} }}
           }}
           timelineItems(itemTypes: [CONNECTED_EVENT], first: {_CONNECTED_LIMIT}) {{
-            totalCount
+            filteredCount
             nodes {{
               ... on ConnectedEvent {{
                 actor {{ login }} subject {{ {_LINKED_ISSUE} }} source {{ {_LINKED_ISSUE} }}
@@ -386,7 +388,7 @@ _CLOSING_FIELDS = f"""
 
 
 def _pr_fields(*, closing: bool) -> str:
-    extra = _CLOSING_FIELDS if closing else ""
+    extra = CLOSING_FIELDS if closing else ""
     return f"""associatedPullRequests(first: {_PR_LIMIT}) {{
         totalCount
         nodes {{
@@ -413,9 +415,17 @@ def _pr_query(shas: Sequence[str], *, closing: bool = False) -> str:
     )
 
 
-def _complete_nodes(connection: dict[str, object], what: str) -> list[dict[str, object]]:
+def _complete_nodes(
+    connection: dict[str, object], what: str, *, count: str = "totalCount"
+) -> list[dict[str, object]]:
+    """The nodes of *connection*, raising when they fall short of its *count* field.
+
+    A ``timelineItems(itemTypes: ...)`` connection passes ``filteredCount``:
+    GitHub's ``totalCount`` there counts every timeline item, whatever the
+    type filter.
+    """
     nodes = [_obj(n, f"{what} node") for n in _list(connection["nodes"], f"{what} nodes")]
-    if _int(connection["totalCount"], f"{what} totalCount") > len(nodes):
+    if _int(connection[count], f"{what} {count}") > len(nodes):
         raise _error(f"{what} truncated")
     return nodes
 
@@ -572,7 +582,7 @@ def trusted_closing_refs(
 ) -> tuple[tuple[int, ...], list[str]]:
     """The issue numbers PR node *pr* closes by a trusted reference, and a warning for each other.
 
-    *pr* is a PR's GraphQL node with the fields of ``_CLOSING_FIELDS``;
+    *pr* is a PR's GraphQL node with the fields of ``CLOSING_FIELDS``;
     *trusted* holds bare logins. A closing reference counts only when it is
     in the PR's own repo and either a sanctioned closing line in the body
     names it (:data:`~vergil_tooling.lib.linkage.LINKAGE_RE`'s close family)
@@ -602,7 +612,9 @@ def _closing_refs(
         _obj(pr["userContentEdits"], "userContentEdits"), f"userContentEdits of #{number}"
     )
     events = _complete_nodes(
-        _obj(pr["timelineItems"], "timelineItems"), f"connected events of #{number}"
+        _obj(pr["timelineItems"], "timelineItems"),
+        f"connected events of #{number}",
+        count="filteredCount",
     )
 
     history = [_login(pr["author"]), *(_login(edit["editor"]) for edit in edits)]

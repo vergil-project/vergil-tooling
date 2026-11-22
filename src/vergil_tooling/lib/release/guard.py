@@ -78,7 +78,7 @@ query($owner: String!, $name: String!, $number: Int!, $edits: String, $timeline:
         nodes {{ editor {{ login }} }}
       }}
       timelineItems(first: {_PAGE}, after: $timeline, itemTypes: [{", ".join(_TIMELINE_TYPES)}]) {{
-        totalCount
+        filteredCount
         pageInfo {{ hasNextPage endCursor }}
         nodes {{
           __typename
@@ -174,10 +174,18 @@ def _login(value: object, repo: str, number: int, what: str) -> str:
 
 
 class _Connection:
-    """One paginated connection of the identities read, gathered page by page."""
+    """One paginated connection of the identities read, gathered page by page.
 
-    def __init__(self, field: str) -> None:
+    *count* names the field that counts the connection's items. ``totalCount``
+    counts them all on every page. ``filteredCount``, which a type-filtered
+    ``timelineItems`` needs (its ``totalCount`` ignores the filter), counts
+    only the items from the page's cursor on, so the items of earlier pages
+    are added to it.
+    """
+
+    def __init__(self, field: str, count: str = "totalCount") -> None:
         self.field = field
+        self.count = count
         self.nodes: list[object] = []
         self.cursor: str | None = None
         self.done = False
@@ -185,13 +193,13 @@ class _Connection:
 
     def add_page(self, issue: dict[str, Any], repo: str, number: int) -> None:
         conn = _obj(issue.get(self.field), repo, number, self.field)
-        total = conn.get("totalCount")
+        total = conn.get(self.count)
         nodes = conn.get("nodes")
         info = _obj(conn.get("pageInfo"), repo, number, f"{self.field}.pageInfo")
         has_next = info.get("hasNextPage")
         end = info.get("endCursor")
         if not isinstance(total, int) or isinstance(total, bool) or not isinstance(nodes, list):
-            raise _read_error(repo, number, f"{self.field} has no totalCount or nodes: {conn!r}")
+            raise _read_error(repo, number, f"{self.field} has no {self.count} or nodes: {conn!r}")
         if not isinstance(has_next, bool):
             raise _read_error(repo, number, f"{self.field}.pageInfo has no hasNextPage: {info!r}")
         if self.done:
@@ -200,6 +208,8 @@ class _Connection:
             if nodes or has_next:
                 raise _read_error(repo, number, f"{self.field} grew while it was read")
             return
+        if self.count == "filteredCount":
+            total += len(self.nodes)
         self.nodes.extend(cast("list[object]", nodes))
         self.total = total
         if has_next:
@@ -244,11 +254,15 @@ def read_identities(repo: str, number: int) -> IssueIdentities:
     One GraphQL query, followed page by page until both its edit history and
     its timeline are read in full. A failed call raises from
     :func:`github.graphql`; a response that is not what was asked for, or a
-    connection whose items do not add up to its ``totalCount``, raises
+    connection whose items do not add up to its count (``totalCount``, or
+    ``filteredCount`` for the type-filtered timeline), raises
     :class:`github.GitHubAPIError` naming the issue.
     """
     owner, name = repo.split("/", 1)
-    edits, timeline = _Connection("userContentEdits"), _Connection("timelineItems")
+    edits = _Connection("userContentEdits")
+    # The type filter applies to filteredCount; totalCount counts every item.
+    # filteredCount counts from the cursor on: see _Connection.
+    timeline = _Connection("timelineItems", "filteredCount")
     author = last_editor = None
     first = True
     while first or not (edits.done and timeline.done):
