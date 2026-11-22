@@ -153,9 +153,12 @@ query($owner: String!, $name: String!, $number: Int!, $after: String!) {{
 
 
 def _node_query(typename: str, selection: str) -> str:
-    """A query for one more page of a connection on the node ``$id``, a *typename*."""
+    """A query for a page of a connection on the node ``$id``, a *typename*.
+
+    ``$after`` is left out for the first page.
+    """
     return f"""
-query($id: ID!, $after: String!) {{
+query($id: ID!, $after: String) {{
   node(id: $id) {{
     ... on {typename} {{ {selection} }}
   }}
@@ -240,28 +243,24 @@ query($owner: String!, $name: String!, $branch: String!, $after: String) {{
 _BRANCH_QUERIES = {state: _branch_query(state) for state in _PR_STATES}
 
 
-def _review_comments_selection(after: str = "") -> str:
-    return f"comments(first: {_PAGE}{after}) {{ {_PAGE_INFO} nodes {{ {COMMENT_FIELDS} }} }}"
-
-
-def _reviews_selection() -> str:
-    return (
-        f"reviews(first: {_PAGE}, after: $after) {{ {_PAGE_INFO}"
-        f" nodes {{ {COMMENT_FIELDS} {_review_comments_selection()} }} }}"
-    )
-
-
+# GitHub refuses a query whose ``first:`` arguments, multiplied down its
+# nesting, could return more than 500,000 nodes. Each query here nests at most
+# two connections (100 x 100), so a review's inline comments, each with its
+# own edit history, are read per review, not inside the reviews query.
 _REVIEWS_QUERY = f"""
 query($owner: String!, $name: String!, $number: Int!, $after: String) {{
   repository(owner: $owner, name: $name) {{
-    pullRequest(number: $number) {{ {_reviews_selection()} }}
+    pullRequest(number: $number) {{
+      reviews(first: {_PAGE}, after: $after) {{ {_PAGE_INFO} nodes {{ {COMMENT_FIELDS} }} }}
+    }}
   }}
 }}
 """
 
 _REVIEW_EDITS_QUERY = _node_query("PullRequestReview", _edits_selection(", after: $after"))
 _REVIEW_COMMENTS_QUERY = _node_query(
-    "PullRequestReview", _review_comments_selection(", after: $after")
+    "PullRequestReview",
+    f"comments(first: {_PAGE}, after: $after) {{ {_PAGE_INFO} nodes {{ {COMMENT_FIELDS} }} }}",
 )
 _REVIEW_COMMENT_EDITS_QUERY = _node_query(
     "PullRequestReviewComment", _edits_selection(", after: $after")
@@ -683,9 +682,14 @@ def _kind_of(item: Mapping[str, Any], call: str) -> str:
     return "issue" if typename == "Issue" else "pr"
 
 
-def _node_page(call: str, query: str, node_id: str, cursor: str, what: str) -> dict[str, Any]:
-    """The node *node_id* from one more page of *query*, at *cursor*."""
-    return _obj(_graphql(call, query, id=node_id, after=cursor).get("node"), call, what)
+def _node_page(
+    call: str, query: str, node_id: str, cursor: str | None, what: str
+) -> dict[str, Any]:
+    """The node *node_id* from a page of *query*: at *cursor*, or the first page."""
+    variables: dict[str, object] = {"id": node_id}
+    if cursor is not None:
+        variables["after"] = cursor
+    return _obj(_graphql(call, query, **variables).get("node"), call, what)
 
 
 def _read_all_edits(comment: _Comment, call: str, query: str, label: str = "comment") -> None:
@@ -952,19 +956,19 @@ def prs_for_branch(
 # --- reviews --------------------------------------------------------------------
 
 
-def _review_comments(node: object, review: _Comment, call: str) -> list[_Comment]:
-    """Every inline comment of *review*: the first page from *node*, then the rest."""
+def _review_comments(review: _Comment, call: str) -> list[_Comment]:
+    """Every inline comment of *review*, page by page through its node."""
     what = f"review {review.database_id}"
-    conn = _get(_obj(node, call, what), "comments", call, what)
-    nodes, cursor = _connection(conn, call, f"the comments of {what}")
-    comments = [_comment(comment, call, "review comment") for comment in nodes]
-    while cursor is not None:
+    comments: list[_Comment] = []
+    cursor: str | None = None
+    while True:
         page = _node_page(call, _REVIEW_COMMENTS_QUERY, review.node_id, cursor, what)
         nodes, cursor = _connection(
             _get(page, "comments", call, what), call, f"the comments of {what}"
         )
         comments += [_comment(comment, call, "review comment") for comment in nodes]
-    return comments
+        if cursor is None:
+            return comments
 
 
 def read_reviews(
@@ -1000,13 +1004,11 @@ def read_reviews(
         nodes, cursor = _connection(
             _get(pull, "reviews", call, "the pull request"), call, "the reviews"
         )
-        for node in nodes:
-            review = _comment(node, call, "review")
-            reviews.append(review)
-            inline += _review_comments(node, review, call)
+        reviews += [_comment(node, call, "review") for node in nodes]
         if cursor is None:
             break
     for review in reviews:
+        inline += _review_comments(review, call)
         _read_all_edits(review, call, _REVIEW_EDITS_QUERY, "review")
     for comment in inline:
         _read_all_edits(comment, call, _REVIEW_COMMENT_EDITS_QUERY, "review comment")

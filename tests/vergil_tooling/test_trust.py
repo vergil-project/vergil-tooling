@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 from typing import Any
 
 import pytest
@@ -731,18 +732,24 @@ def _prs(nodes: list[Any], cursor: str | None = None) -> dict[str, Any]:
 
 
 def _review(
-    db_id: str,
-    author: Any = HUMAN,
-    body: str = "a trusted review",
-    *,
-    comments: list[Any] | None = None,
-    comments_cursor: str | None = None,
-    **content: Any,
+    db_id: str, author: Any = HUMAN, body: str = "a trusted review", **content: Any
 ) -> dict[str, Any]:
     review = _comment(db_id, author, body, **content)
     review["id"] = f"PRR_{db_id}"
-    review["comments"] = _page(comments or [], comments_cursor)
     return review
+
+
+def _inline(comments: list[Any], cursor: str | None = None) -> dict[str, Any]:
+    """A page of one review's inline comments, read through the review's node."""
+    return {"node": {"comments": _page(comments, cursor)}}
+
+
+def _review_answers(*reviews: tuple[dict[str, Any], list[Any]]) -> dict[str, Any]:
+    """One page of *reviews*, each with its one page of inline comments."""
+    return {
+        trust._REVIEWS_QUERY: [_reviews([review for review, _ in reviews])],
+        trust._REVIEW_COMMENTS_QUERY: [_inline(comments) for _, comments in reviews],
+    }
 
 
 def _review_comment(db_id: str, author: Any = HUMAN, body: str = "a nit", **content: Any) -> Any:
@@ -1075,16 +1082,10 @@ def _reviews_of(**kwargs: Any) -> trust.PRReviewContent:
 
 def test_read_reviews_trusted(answer: Any) -> None:
     calls = answer(
-        {
-            trust._REVIEWS_QUERY: [
-                _reviews(
-                    [
-                        _review("1", HUMAN, comments=[_review_comment("11", HUMAN)]),
-                        _review("2", AGENT, body=""),
-                    ]
-                )
-            ]
-        }
+        _review_answers(
+            (_review("1", HUMAN), [_review_comment("11", HUMAN)]),
+            (_review("2", AGENT, body=""), []),
+        )
     ).calls
     content = _reviews_of()
     assert [(r.id, r.body, r.role) for r in content.reviews] == [
@@ -1093,22 +1094,20 @@ def test_read_reviews_trusted(answer: Any) -> None:
     ]
     assert [(c.id, c.role, c.at) for c in content.review_comments] == [("11", Role.HUMAN, CREATED)]
     assert content.skipped == ()
-    assert calls == [(trust._REVIEWS_QUERY, {"owner": ORG, "name": "widgets", "number": 7})]
+    assert calls == [
+        (trust._REVIEWS_QUERY, {"owner": ORG, "name": "widgets", "number": 7}),
+        (trust._REVIEW_COMMENTS_QUERY, {"id": "PRR_1"}),
+        (trust._REVIEW_COMMENTS_QUERY, {"id": "PRR_2"}),
+    ]
 
 
 def test_read_reviews_skips_outsider_review(answer: Any) -> None:
     spam = {"__typename": "User", "login": SPAM_LOGIN}
     answer(
-        {
-            trust._REVIEWS_QUERY: [
-                _reviews(
-                    [
-                        _review("1", spam, SPAM, comments=[_review_comment("11", spam, SPAM)]),
-                        _review("2", HUMAN, comments=[_review_comment("21", DELETED, SPAM)]),
-                    ]
-                )
-            ]
-        }
+        _review_answers(
+            (_review("1", spam, SPAM), [_review_comment("11", spam, SPAM)]),
+            (_review("2", HUMAN), [_review_comment("21", DELETED, SPAM)]),
+        )
     )
     content = _reviews_of()
     assert [r.id for r in content.reviews] == ["2"]
@@ -1132,19 +1131,16 @@ def test_read_reviews_skips_edited_by_outsider(answer: Any) -> None:
         "edited": True,
         "edits": _edits([HUMAN, OUTSIDER]),
     }
-    answer(
-        {
-            trust._REVIEWS_QUERY: [
-                _reviews(
-                    [
-                        _review("1", comments=[_review_comment("11", **edited)], **edited),
-                        _review("2", **earlier),
-                    ]
-                )
-            ]
-            * 2
-        }
-    )
+
+    def install() -> None:
+        answer(
+            _review_answers(
+                (_review("1", **edited), [_review_comment("11", **edited)]),
+                (_review("2", **earlier), []),
+            )
+        )
+
+    install()
     content = _reviews_of()
     assert content.reviews == ()
     assert content.review_comments == ()
@@ -1154,28 +1150,27 @@ def test_read_reviews_skips_edited_by_outsider(answer: Any) -> None:
         ("edit", "drive-by", "review comment 11"),
     ]
     # Under the last-editor rule, only review 2 (last edited by the human) passes.
+    install()
     assert [r.id for r in _reviews_of(editors="last").reviews] == ["2"]
 
 
 def test_read_reviews_roles_parameter_narrows(answer: Any) -> None:
-    answer({trust._REVIEWS_QUERY: [_reviews([_review("1", AGENT), _review("2", HUMAN)])]})
+    answer(_review_answers((_review("1", AGENT), []), (_review("2", HUMAN), [])))
     content = _reviews_of(roles=frozenset({Role.HUMAN}))
     assert [r.id for r in content.reviews] == ["2"]
     assert [s.cause for s in content.skipped] == [trust.NOT_ACCEPTED]
 
 
 def test_read_reviews_pages_reviews_comments_and_edits(answer: Any) -> None:
-    review = _review(
-        "1",
-        edits=_edits([HUMAN], cursor="re1"),
-        comments=[_review_comment("11", edits=_edits([HUMAN], cursor="ce1"))],
-        comments_cursor="rc1",
-    )
+    review = _review("1", edits=_edits([HUMAN], cursor="re1"))
+    first = _review_comment("11", edits=_edits([HUMAN], cursor="ce1"))
     calls = answer(
         {
             trust._REVIEWS_QUERY: [_reviews([review], cursor="r1"), _reviews([_review("2")])],
             trust._REVIEW_COMMENTS_QUERY: [
-                {"node": {"comments": _page([_review_comment("12", OUTSIDER)])}}
+                _inline([first], cursor="rc1"),
+                _inline([_review_comment("12", OUTSIDER)]),
+                _inline([]),
             ],
             trust._REVIEW_EDITS_QUERY: [{"node": {"userContentEdits": _edits([OUTSIDER])}}],
             trust._REVIEW_COMMENT_EDITS_QUERY: [{"node": {"userContentEdits": _edits([OUTSIDER])}}],
@@ -1189,10 +1184,12 @@ def test_read_reviews_pages_reviews_comments_and_edits(answer: Any) -> None:
         ("edit", "review comment 11"),
         ("review-comment", "review comment 12"),
     ]
-    assert [(query, variables) for query, variables in calls[1:]] == [
-        (trust._REVIEW_COMMENTS_QUERY, {"id": "PRR_1", "after": "rc1"}),
+    assert calls[1:] == [
         (trust._REVIEWS_QUERY, {"owner": ORG, "name": "widgets", "number": 7, "after": "r1"}),
+        (trust._REVIEW_COMMENTS_QUERY, {"id": "PRR_1"}),
+        (trust._REVIEW_COMMENTS_QUERY, {"id": "PRR_1", "after": "rc1"}),
         (trust._REVIEW_EDITS_QUERY, {"id": "PRR_1", "after": "re1"}),
+        (trust._REVIEW_COMMENTS_QUERY, {"id": "PRR_2"}),
         (trust._REVIEW_COMMENT_EDITS_QUERY, {"id": "PRRC_11", "after": "ce1"}),
     ]
 
@@ -1200,47 +1197,101 @@ def test_read_reviews_pages_reviews_comments_and_edits(answer: Any) -> None:
 def test_read_reviews_loads_configured_authors(
     answer: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    answer({trust._REVIEWS_QUERY: [_reviews([_review("1")])]})
+    answer(_review_answers((_review("1"), [])))
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
     assert [r.id for r in trust.read_reviews(REPO, 7).reviews] == ["1"]
 
 
 @pytest.mark.parametrize(
-    ("page", "match"),
+    ("answers", "match"),
     [
-        pytest.param({"repository": {}}, "the pull request is missing", id="no-pr"),
-        pytest.param({"repository": {"pullRequest": {}}}, "has no reviews", id="no-reviews"),
         pytest.param(
-            _reviews([{**_review("1"), "author": {"login": "x"}}]),
+            {trust._REVIEWS_QUERY: [{"repository": {}}]}, "the pull request is missing", id="no-pr"
+        ),
+        pytest.param(
+            {trust._REVIEWS_QUERY: [{"repository": {"pullRequest": {}}}]},
+            "has no reviews",
+            id="no-reviews",
+        ),
+        pytest.param(
+            _review_answers(({**_review("1"), "author": {"login": "x"}}, [])),
             "has no __typename",
             id="untyped",
         ),
         pytest.param(
-            _reviews([{k: v for k, v in _review("1").items() if k != "comments"}]),
+            {trust._REVIEWS_QUERY: [_reviews([_review("1")])], trust._REVIEW_COMMENTS_QUERY: [{}]},
+            "review 1 is missing",
+            id="no-node",
+        ),
+        pytest.param(
+            {
+                trust._REVIEWS_QUERY: [_reviews([_review("1")])],
+                trust._REVIEW_COMMENTS_QUERY: [{"node": {}}],
+            },
             "review 1 has no comments",
             id="no-comments",
         ),
         pytest.param(
-            _reviews([_review("1", comments=[{"fullDatabaseId": "11"}])]),
+            _review_answers((_review("1"), [{"fullDatabaseId": "11"}])),
             "review comment 11 has no",
             id="comment-incomplete",
         ),
     ],
 )
-def test_read_reviews_malformed_raises(answer: Any, page: Any, match: str) -> None:
-    answer({trust._REVIEWS_QUERY: [page]})
+def test_read_reviews_malformed_raises(answer: Any, answers: Any, match: str) -> None:
+    answer(answers)
     with pytest.raises(TrustReadError, match=match) as info:
         _reviews_of()
     assert info.value.call == f"read_reviews {REPO}#7"
     assert "SPAM-MARKER-TEXT" not in str(info.value)
 
 
-def test_read_reviews_malformed_comments_page_raises(answer: Any) -> None:
-    answer(
-        {
-            trust._REVIEWS_QUERY: [_reviews([_review("1", comments_cursor="rc1")])],
-            trust._REVIEW_COMMENTS_QUERY: [{"node": None}],
-        }
-    )
-    with pytest.raises(TrustReadError, match="review 1 is missing"):
-        _reviews_of()
+# --- query cost ---------------------------------------------------------------------
+
+# GitHub refuses a query whose worst case exceeds this many nodes: the product
+# of the ``first:`` arguments down each nesting, summed over every connection.
+_NODE_LIMIT = 500_000
+
+
+def _worst_case_nodes(query: str) -> int:
+    total = 0
+    stack = [1]
+    pending: int | None = None
+    for token in re.findall(r"first: (\d+)|([{}])", query):
+        first, brace = token
+        if first:
+            pending = int(first)
+        elif brace == "{":
+            if pending is not None:
+                total += stack[-1] * pending
+                stack.append(stack[-1] * pending)
+                pending = None
+            else:
+                stack.append(stack[-1])
+        else:
+            stack.pop()
+    return total
+
+
+def test_worst_case_nodes_counts_nesting() -> None:
+    query = "{ a(first: 10) { nodes { b(first: 5) { x } } } c(first: 2) { y } }"
+    assert _worst_case_nodes(query) == 10 + 50 + 2
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        trust._ITEM_QUERY,
+        trust._BODY_EDITS_QUERY,
+        trust._COMMENTS_QUERY,
+        trust._COMMENT_EDITS_QUERY,
+        trust._EVENTS_QUERY,
+        *trust._BRANCH_QUERIES.values(),
+        trust._REVIEWS_QUERY,
+        trust._REVIEW_EDITS_QUERY,
+        trust._REVIEW_COMMENTS_QUERY,
+        trust._REVIEW_COMMENT_EDITS_QUERY,
+    ],
+)
+def test_every_query_is_under_githubs_node_limit(query: str) -> None:
+    assert _worst_case_nodes(query) <= _NODE_LIMIT
