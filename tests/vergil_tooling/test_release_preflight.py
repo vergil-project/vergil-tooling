@@ -620,6 +620,24 @@ def test_acquire_release_worktree_refuses_a_branch_only_on_origin() -> None:
     m_adopt.assert_not_called()
 
 
+def test_acquire_release_worktree_refuses_a_resume_whose_branch_is_missing() -> None:
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
+
+    with (
+        patch(_MOD + ".git.ref_exists", return_value=False) as m_exists,
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + ".adopt_worktree") as m_adopt,
+        patch(_MOD + ".create_worktree") as m_create,
+        pytest.raises(ReleaseError, match="'release/2.1.0' is missing both locally and on origin"),
+    ):
+        _acquire_release_worktree(Path("/tmp/repo"), "release/2.1.0", resume=True)  # noqa: S108
+    checked = [c.args[0] for c in m_exists.call_args_list]
+    assert checked == ["release/2.1.0", "origin/release/2.1.0"]
+    m_create.assert_not_called()
+    m_adopt.assert_not_called()
+    m_run.assert_not_called()
+
+
 class _Leftover:
     """Git stand-ins for a local release branch an interrupted fresh run left (#4367).
 

@@ -524,13 +524,28 @@ def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> 
     release branch (the lock), unless it is the leftover of an interrupted run
     that recorded nothing, which it adopts (#4367, :func:`_adopt_unrecorded_branch`);
     a resume adopts it — creating the local branch from origin if needed, then
-    attaching a worktree (#1612).
+    attaching a worktree (#1612). A resume whose branch exists neither locally
+    nor on origin refuses, naming it, rather than cutting a new one from
+    develop: a resume that reaches a branch-work stage always finds its branch
+    (#4886).
 
     Every git failure on the way, on the fresh path as on the resume path,
     surfaces as a :class:`ReleaseError` naming the branch, the worktree and
     the recovery step, never as a raw ``CalledProcessError`` (#4442).
     """
     exists = git.ref_exists(branch) or git.ref_exists(f"origin/{branch}")
+    if resume and not exists:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"git rev-parse --verify {branch} origin/{branch}",
+            message=(
+                f"Release branch '{branch}' is missing both locally and on origin, "
+                "so `vrg-release --resume` cannot adopt it, and a resume never cuts "
+                "a new one from develop. Find out what removed the branch and "
+                "restore it (for example, push it back to origin from a clone that "
+                "still has it), then re-run `vrg-release --resume`."
+            ),
+        )
     try:
         if exists and not resume:
             return _adopt_unrecorded_branch(repo_root, branch)
