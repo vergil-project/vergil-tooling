@@ -87,7 +87,7 @@ def test_preflight_fresh_start_records_the_cut_and_contents(
         patch(_MOD + ".os.chdir"),
     ):
         ctx = preflight(version_override=None, repo_root=root)
-    release_contents.assert_called_once_with(wt)
+    release_contents.assert_called_once_with(wt, None)
     assert ctx.cut == _CUT
     assert ctx.pending_release is _PENDING
     assert ctx.issues == _ISSUES

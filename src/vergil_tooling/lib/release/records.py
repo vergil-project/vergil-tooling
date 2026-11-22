@@ -343,10 +343,12 @@ def _record_issue(
     release: _Release,
     humans: Sequence[str],
     merge_commits: dict[int, str],
+    supersedes: str | None,
 ) -> bool:
     """Confirm or post *issue*'s record; True when it was posted by this call.
 
-    Each foreign record marker found on the issue is printed as a warning.
+    *supersedes* is the release the issue was absorbed from, or None. Each
+    foreign record marker found on the issue is printed as a warning.
     """
     found, warnings = counting_record(
         read_comments(issue.ref), release.repo, release.version, humans
@@ -367,9 +369,7 @@ def _record_issue(
             release_url=release.release_url,
             prs=[(pr, merge_commits[pr]) for pr in issue.prs],
             install=release.install,
-            # A superseding release's absorbed issues name the release they
-            # came from (spec §4.7); that is --supersede's to set.
-            supersedes=None,
+            supersedes=supersedes,
         ),
     )
     return True
@@ -399,7 +399,9 @@ def post_records(ctx: ReleaseContext) -> None:
     failures: list[str] = []
     for issue in pending:
         try:
-            new = _record_issue(issue, release, humans, merge_commits)
+            # An issue absorbed from a superseded release says so (spec §4.7).
+            absorbed = current.supersedes if issue.ref in current.absorbed else None
+            new = _record_issue(issue, release, humans, merge_commits, absorbed)
         except (subprocess.CalledProcessError, RuntimeError, ValueError) as exc:
             failures.append(f"{issue.ref}: {exc}")
             continue

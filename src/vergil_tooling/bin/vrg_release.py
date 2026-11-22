@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 
 from vergil_tooling.lib import git, github, identity_mode, progress
@@ -18,6 +19,7 @@ from vergil_tooling.lib.release.resume import find_resume_target
 # passing it is a clear fatal error rather than argparse's generic
 # "unrecognized arguments".
 REMOVED_FLAGS = ("--no-promote", "--no-install", "--install")
+_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 
 @cli_main
@@ -75,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"vrg-release: {exc}", file=sys.stderr)
             return 1
         print(f"Resuming release {resume_version} (issue #{resume_issue_number}).")
+    if args.supersede is not None:
+        print(f"Superseding release {args.supersede} with a fresh release.")
 
     state = ReleaseState(
         version_override=args.version_override,
@@ -84,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         resume=resume_requested,
         resume_version=resume_version,
         resume_issue_number=resume_issue_number,
+        supersede=args.supersede,
     )
 
     def success_label() -> str | None:
@@ -123,6 +128,14 @@ def _dest(flag: str) -> str:
     return flag.removeprefix("--").replace("-", "_")
 
 
+def _version(value: str) -> str:
+    """An ``X.Y.Z`` release version argument."""
+    if not _VERSION_RE.match(value):
+        msg = f"{value!r} is not a release version X.Y.Z"
+        raise argparse.ArgumentTypeError(msg)
+    return value
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -157,7 +170,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     for flag in REMOVED_FLAGS:
         parser.add_argument(flag, action="store_true", default=False, help=argparse.SUPPRESS)
-    parser.add_argument(
+    # A supersede is a fresh release and a resume finishes an existing one,
+    # so the two are a usage error together (spec §4.7 of epic
+    # vergil-project/.github#1440).
+    in_flight = parser.add_mutually_exclusive_group()
+    in_flight.add_argument(
         "--resume",
         nargs="?",
         const="",
@@ -166,6 +183,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Resume an interrupted release from its open tracking issue. "
             "Optionally name the version when more than one is in flight."
+        ),
+    )
+    in_flight.add_argument(
+        "--supersede",
+        type=_version,
+        default=None,
+        metavar="X.Y.Z",
+        help=(
+            "Start a fresh release that supersedes open release X.Y.Z, which "
+            "--resume cannot finish: one that is tagged with only cd-publish, "
+            "package-index, update-deps or install left, or one halted at "
+            "confirm-main with no tag after its CD release job failed. It absorbs "
+            "X.Y.Z's issues and closes its tracking issue. Combines with minor/major."
         ),
     )
     progress.add_progress_args(parser, build_stages())

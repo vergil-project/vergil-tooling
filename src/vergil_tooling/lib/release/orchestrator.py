@@ -64,6 +64,8 @@ class ReleaseState:
     resume_issue_number: int | None = None
     without_deps: bool = False
     allow_pending_deps: bool = False
+    # The open release a fresh start supersedes (vrg-release --supersede X.Y.Z).
+    supersede: str | None = None
 
 
 def _audit_stage(state: ReleaseState) -> None:
@@ -79,6 +81,7 @@ def _preflight_stage(state: ReleaseState) -> None:
         resume_issue_number=state.resume_issue_number,
         allow_pending_deps=state.allow_pending_deps,
         stages=_stage_names(),
+        supersede=state.supersede,
     )
     ctx.resume = state.resume
     ctx.without_deps = _without_deps(ctx, given=state.without_deps)

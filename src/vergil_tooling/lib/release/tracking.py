@@ -85,10 +85,23 @@ def create_tracking_issue(ctx: ReleaseContext) -> None:
                 "read them; refusing to create a tracking issue without its state block."
             ),
         )
+    superseded = ctx.superseded
+    absorbed = () if superseded is None else tuple(i.ref for i in superseded.state.issues)
     initial = state.initial_state(
-        version=ctx.version, cut=ctx.cut, issues=ctx.issues, without_deps=ctx.without_deps
+        version=ctx.version,
+        cut=ctx.cut,
+        issues=ctx.issues,
+        without_deps=ctx.without_deps,
+        supersedes=None if superseded is None else superseded.version,
+        absorbed=absorbed,
+        superseded_main_commit=None if superseded is None else superseded.main_commit,
     )
-    contents = render_contents(ctx.pending_release, ctx.issues)
+    contents = render_contents(
+        ctx.pending_release,
+        ctx.issues,
+        supersedes=None if superseded is None else superseded.version,
+        absorbed=absorbed,
+    )
     body = (
         f"## Release {ctx.version}\n\nRepo: {ctx.repo}\n\n{contents}\n\n"
         f"{ctx.progress_block}\n\n{state.render_state(initial)}\n"
@@ -145,13 +158,21 @@ def _change_row(change: PendingChange) -> tuple[str, str, str, str]:
     return (pr, branch, change.type_label, text_table.truncate(_neutral(change.title)))
 
 
-def render_contents(pending: PendingRelease, issues: Sequence[IssueEntry]) -> str:
+def render_contents(
+    pending: PendingRelease,
+    issues: Sequence[IssueEntry],
+    *,
+    supersedes: str | None = None,
+    absorbed: Sequence[str] = (),
+) -> str:
     """The tracking issue's ``## Contents`` section: the pending-release table and the issues.
 
     The table lists every change in ``main..<cut>``, as ``vrg-repo-status``
     does (a commit that reached the branch with no PR as ``PROBLEM``, with
     its short SHA); under it, each issue the release contains with its closing
-    PRs (spec §4.1-§4.2 of epic vergil-project/.github#1440).
+    PRs (spec §4.1-§4.2 of epic vergil-project/.github#1440). A superseding
+    release names the release it *supersedes*, and marks each issue it
+    *absorbed* from it (spec §4.7).
     """
     lines = ["## Contents", ""]
     if pending.changes:
@@ -159,9 +180,22 @@ def render_contents(pending: PendingRelease, issues: Sequence[IssueEntry]) -> st
         lines += ["```text", text_table.render(_CONTENTS_COLUMNS, rows), "```"]
     else:
         lines.append("No changes pending release.")
+    if supersedes is not None:
+        lines += [
+            "",
+            "### Supersedes",
+            "",
+            f"Release {supersedes}, which cannot finish: its issues are absorbed into this "
+            "release, and their records say it supersedes it.",
+        ]
     lines += ["", "### Issues", ""]
     if issues:
-        lines += [f"- {issue.ref} ({', '.join(f'#{pr}' for pr in issue.prs)})" for issue in issues]
+        marked = set(absorbed)
+        lines += [
+            f"- {issue.ref} ({', '.join(f'#{pr}' for pr in issue.prs)})"
+            + (f", absorbed from {supersedes}" if issue.ref in marked else "")
+            for issue in issues
+        ]
     else:
         lines.append("None: the release's PRs close no issues.")
     return "\n".join(lines)

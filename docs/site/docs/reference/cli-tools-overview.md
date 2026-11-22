@@ -418,7 +418,9 @@ commands once `promote` has moved `vX.Y` to the release, a `Released:`
 record on every issue the release contains, and finally the
 close of the tracking issue, which any failed stage or missing record holds back, so a
 `--resume` can finish the release. On a fresh start, preflight refuses while any
-`release: X.Y.Z` tracking issue is open, naming its recovery, and while an open PR
+`release: X.Y.Z` tracking issue is open, naming its recovery (only
+`--supersede X.Y.Z`, which starts a fresh release that absorbs open release
+`X.Y.Z`'s issues and closes its tracking issue, passes over that release), and while an open PR
 carries the `dependency-update` label, after first closing any whose fix
 task completed. Preflight then prints the release's contents: the
 pending-release table and the issues its `feature/` PRs close by a
