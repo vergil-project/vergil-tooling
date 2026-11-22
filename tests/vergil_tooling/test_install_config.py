@@ -1,8 +1,8 @@
 """vergil.toml's ``[publish].install``: the Mac's locked install (vergil-tooling#4827).
 
-vergil-tooling's own ``vergil.toml`` keeps the deprecated ``consumer-refresh``
-name until the tooling that reads ``install`` is installed (Task 14a of epic
-vergil-project/.github#1440), so the template is read under either key.
+vergil-tooling installs through the ``vX.Y`` line of the release, which promote
+has just moved to it (spec §4.6 of epic vergil-project/.github#1440), so the
+template names ``v<MINOR>``, not the exact ``v<VERSION>`` tag.
 """
 
 from __future__ import annotations
@@ -37,7 +37,8 @@ _FIRST_INSTALL = (
 
 def _template() -> str:
     publish = tomllib.loads((_ROOT / "vergil.toml").read_text())["publish"]
-    refresh = publish.get("install", publish.get("consumer-refresh"))
+    assert "consumer-refresh" not in publish
+    refresh = publish["install"]
     assert isinstance(refresh, str)
     return refresh
 
@@ -57,10 +58,10 @@ def _run(tmp_path: Path, **env: str) -> Run:
     return run_lines(script, tmp_path, env=env, path=[bin_dir])
 
 
-def test_install_installs_the_exact_tag(tmp_path: Path) -> None:
+def test_install_follows_the_release_line(tmp_path: Path) -> None:
     run = _run(tmp_path)
     assert run.returncode == 0, run.stderr
-    assert run.of("vrg-tooling-install") == [[f"v{_VERSION}"]]
+    assert run.of("vrg-tooling-install") == [["v2.1"]]
     assert run.of("vrg-vm") == [["update --all"]]
 
 
