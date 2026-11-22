@@ -23,7 +23,7 @@ the dev-tree override venv.
 | [vrg-resolve-tracking-issue](cli-tools-overview.md#vrg-resolve-tracking-issue) | Print a merge commit's tracking issue |
 | [vrg-vm](cli-tools-overview.md#vrg-vm) | Manage the identity agent VMs |
 | [vrg-vm-resolve-session](cli-tools-overview.md#vrg-vm-resolve-session) | Pick and start a Claude Code session inside an identity VM (run by `vrg-vm session`) |
-| [vrg-submit-pr](dev/submit-pr.md) | Open standards-compliant PRs with auto-merge on, then finalize them by default |
+| [vrg-submit-pr](dev/submit-pr.md) | Open standards-compliant PRs with auto-merge on, then finalize them |
 | [vrg-pr-workflow](cli-tools-overview.md#vrg-pr-workflow) | Record and manage the PR handoff state that `vrg-submit-pr` reads |
 | [vrg-pr-await](cli-tools-overview.md#vrg-pr-await) | Block until a PR merges (exit 0) or cannot merge (exit 1, naming why) |
 | [vrg-pr-review-comments](cli-tools-overview.md#vrg-pr-review-comments) | List a PR's inline review comments, read-only |

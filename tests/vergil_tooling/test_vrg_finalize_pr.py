@@ -3513,30 +3513,37 @@ def test_release_installs_by_default(tmp_path: Path) -> None:
     assert run.call_args.kwargs["cwd"] == tmp_path
 
 
-def test_no_install_passes_through(tmp_path: Path) -> None:
-    run = _release_ok()
-    with (
-        _settle_env(tmp_path, []),
-        patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged),
-        patch(_MOD + ".subprocess.run", run),
-    ):
-        assert main([_PR_A, "--release", "--no-install"]) == 0
-    assert run.call_args.args[0] == ("vrg-release", "--no-install")
-
-
-def test_finalize_install_fatal(capsys: pytest.CaptureFixture[str]) -> None:
-    """--install is refused by name before any side effect, naming the new default."""
+def _assert_removed(capsys: pytest.CaptureFixture[str], argv: list[str], message: str) -> None:
+    """*argv* exits 1 with *message* alone, before any side effect."""
     with (
         patch(_MOD + ".git.repo_root") as repo_root,
+        patch(_MOD + ".gate.unreleased_refusal") as gate_check,
         patch(_MOD + ".finalize_watch.watch") as watch,
         patch(_MOD + ".subprocess.run") as run,
     ):
-        assert main([_PR_A, "--install"]) == 1
-    for mock in (repo_root, watch, run):
+        assert main(argv) == 1
+    for mock in (repo_root, gate_check, watch, run):
         mock.assert_not_called()
-    err = capsys.readouterr().err
-    assert "vrg-finalize-pr: --install was removed" in err
-    assert "--release now installs by default" in err
+    assert capsys.readouterr().err == f"{message}\n"
+
+
+def test_finalize_install_fatal(capsys: pytest.CaptureFixture[str]) -> None:
+    """--install is refused by name before any side effect."""
+    _assert_removed(
+        capsys,
+        [_PR_A, "--install"],
+        "vrg-finalize-pr: --install was removed; install is part of every release",
+    )
+
+
+def test_no_install_removed_message(capsys: pytest.CaptureFixture[str]) -> None:
+    """--no-install is refused, with or without --release: install is part of every release."""
+    for argv in ([_PR_A, "--no-install"], [_PR_A, "--release", "--no-install"]):
+        _assert_removed(
+            capsys,
+            argv,
+            "vrg-finalize-pr: --no-install was removed; install is part of every release",
+        )
 
 
 def test_exit_5_release_failed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -3744,7 +3751,8 @@ def test_dry_run_watches_and_changes_nothing(
     ("argv", "message"),
     [
         (["1", "--strategy", "squash"], "--strategy was removed"),
-        (["1", "--no-install"], "--no-install requires --release"),
+        (["1", "--no-install"], "--no-install was removed"),
+        (["1", "--release", "--no-install"], "--no-install was removed"),
         (["1", "--install"], "--install was removed"),
         (["1", "--install", "--no-install"], "--install was removed"),
         (["1", "--skip-post-checks"], "--skip-post-checks was removed"),
@@ -3886,14 +3894,13 @@ def test_finalize_without_release_ignores_unreleased_repo(tmp_path: Path) -> Non
     m_gate.assert_not_called()
 
 
-def test_parse_args_release_and_install_flags() -> None:
+def test_parse_args_release_flag() -> None:
     assert parse_args([]).release is False
-    assert parse_args([]).no_install is False
-    assert parse_args(["--release", "--no-install"]).no_install is True
+    assert parse_args(["--release"]).release is True
 
 
 @pytest.mark.parametrize(
-    "flag", ["--install", "--skip-post-checks", "--allow-provenance-violation"]
+    "flag", ["--install", "--no-install", "--skip-post-checks", "--allow-provenance-violation"]
 )
 def test_removed_flags_hidden_from_help(capsys: pytest.CaptureFixture[str], flag: str) -> None:
     """A removed flag is still parsed, so it can be refused by name, but not advertised."""

@@ -164,15 +164,15 @@ submit never rebases a branch. After the table the PRs open as a
 progress rollup, one stage per PR named after its branch, like
 `vrg-release`'s: each ends on one ✓/✗ line with its outcome, and the detail
 goes to `.vergil/vrg-submit-pr-<stamp>.log`. A PR whose submit fails is
-named in the summary and the others go on. Then, by default, one `vrg-finalize-pr <pr>,<pr>,…`
-watches every opened PR merge and settles `develop` once; `--no-finalize`
-opens the PRs and returns. `--finalize`, `--install` and `--yes` are
+named in the summary and the others go on. Then one `vrg-finalize-pr <pr>,<pr>,…`
+always watches every opened PR merge and settles `develop` once.
+`--finalize`, `--no-finalize`, `--install`, `--no-install` and `--yes` are
 removed and refused by name. See [vrg-submit-pr](dev/submit-pr.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_submit_pr` |
-| Args | positional `branches` (relay mode); or `--issue` (required), `--summary` (required), `--linkage` (default: Ref; `vrg-submit-pr` auto-selects `Closes` for a managed task — `Fixes`/`Resolves` are banned), `--notes`, `--title`; `--all`/`--select` (from the repo root), `--base` (`develop` only), `--no-finalize`, `--release`, `--no-install`, `--dry-run`, `--output-window`, `--output-format`. `--finalize`, `--install`, `--allow-provenance-violation` and `--yes` are removed and are an error |
+| Args | positional `branches` (relay mode); or `--issue` (required), `--summary` (required), `--linkage` (default: Ref; `vrg-submit-pr` auto-selects `Closes` for a managed task — `Fixes`/`Resolves` are banned), `--notes`, `--title`; `--all`/`--select` (from the repo root), `--base` (`develop` only), `--release`, `--dry-run`, `--output-window`, `--output-format`. `--finalize`, `--no-finalize`, `--install`, `--no-install`, `--allow-provenance-violation` and `--yes` are removed and are an error |
 | Preconditions | Git repo, `gh` CLI on PATH; relay mode: named branches on origin with a resolvable ready-state and matching `head_sha` |
 | Failure mode | A PR whose push, `gh pr create`, provenance check or auto-merge fails is named in the summary and the rest go on; loud refusal, with nothing opened, on a missing ready-state, a state that is not ready, any head other than the recorded `head_sha`, a base other than `develop`, or a removed flag |
 | Exit codes | finalize's: 0 full success, 3 not every PR merged (at least 3 when a submit failed), 4 develop did not validate, 5 the release failed; 1 a usage error, a refusal, or a tool error from finalize |
@@ -661,7 +661,7 @@ commit and one changelog entry per issue. See
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_finalize_pr` |
-| Args | `PR` (a number or URL, or a comma list of them; optional), `--all`, `--cleanup-only`, `--target-branch` (default: develop), `--wait-cd`, `--release`, `--no-install` (with `--release`), `--clean-dirty`, `--dry-run`, `--yes`. `--strategy`, `--no-wait-cd`, `--skip-post-checks`, `--install` and `--allow-provenance-violation` are removed and are an error |
+| Args | `PR` (a number or URL, or a comma list of them; optional), `--all`, `--cleanup-only`, `--target-branch` (default: develop), `--wait-cd`, `--release`, `--clean-dirty`, `--dry-run`, `--yes`. `--strategy`, `--no-wait-cd`, `--skip-post-checks`, `--install`, `--no-install` and `--allow-provenance-violation` are removed and are an error |
 | Preconditions | Must run from the main worktree, `vrg-container-run` on PATH |
 | Failure mode | An unmerged PR exits 3 and a develop that did not validate exits 4; a watch that cannot read a PR, a failed close of an issue, a failed sync or cleanup, or a dirty working tree exits 1 |
 | Exit codes | 0 full success, 1 a tool or usage error, 3 develop healthy but not every PR merged (or one merged with a provenance violation), 4 develop did not validate (with `--wait-cd`, or CD did not succeed), 5 the chained release failed |
