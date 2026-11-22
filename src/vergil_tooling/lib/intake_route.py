@@ -99,9 +99,8 @@ path, and a follow-on brainstorm under a development epic), the refusal naming
 the parent. A planning item refuses drop, defer and
 one-off while any of its development epics is open (one an ``Epic:`` marker names, or
 one whose body carries a ``Planning:`` line for it; #4001, #4170). An
-ad-hoc item refuses defer and planning while an open PR would close it. A private repo's item
-is never routed to a public repo or epic. The whole route runs under the item
-owner's App token (:func:`github.target_org`).
+ad-hoc item refuses defer and planning while an open PR would close it. The whole route runs
+under the item owner's App token (:func:`github.target_org`).
 """
 
 from __future__ import annotations
@@ -176,7 +175,7 @@ _ISSUE_URL_RE = re.compile(r"https?://[^/\s]+/([^/\s]+)/([^/\s]+)/issues/([0-9]+
 
 
 class RouteRefusedError(ValueError):
-    """A route that must not run: wrong container, cross-org, or private → public."""
+    """A route that must not run: wrong container, cross-org, or a refused target."""
 
 
 class RouteHalfAppliedError(RuntimeError):
@@ -329,7 +328,6 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         if kind == epics.ADHOC.key:
             _guard_open_closing_pr(ref, "routing to planning")
         planning = epics.ensure_planning_epic(_repo_of(ref))
-        _guard_visibility(ref, _repo_of(planning))
         _link(planning, ref)
         if kind == _DEVELOPMENT:
             # _check_eligible only returns it for a parented item.
@@ -346,7 +344,6 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         return RouteResult(final=ref, moved_by="none")
     if isinstance(action, ToIntake):
         intake = epics.ensure_intake_epic(_repo_of(ref))
-        _guard_visibility(ref, _repo_of(intake))
         _link(intake, ref)
         return RouteResult(final=ref, moved_by="none")
     return _one_off(ref, action, parent, kind, today)
@@ -600,7 +597,6 @@ def _defer(ref: IssueRef, action: Defer, kind: str | None, parent: IssueRef, day
     if kind == epics.ADHOC.key:
         _guard_open_closing_pr(ref, "deferring")
     deferred = epics.ensure_deferred_epic(_repo_of(ref))
-    _guard_visibility(ref, _repo_of(deferred))
     body = f"{record}\n{DEFERRED_FROM_LINE.format(epic=parent.slug)}"
     _link(deferred, ref)
     stranded = f"{ref.slug} is under the deferred epic {deferred.slug} without a deferral record"
@@ -685,20 +681,6 @@ def _clear_size(final: IssueRef, day: date) -> None:
         ) from exc
 
 
-def _guard_visibility(ref: IssueRef, *targets: str) -> None:
-    """Refuse routing a private repo's item into any public *targets* repo."""
-    source = _repo_of(ref)
-    others = [target for target in dict.fromkeys(targets) if target != source]
-    if not others or github.is_public(source):
-        return
-    public = [target for target in others if github.is_public(target)]
-    if public:
-        raise RouteRefusedError(
-            f"{ref.slug} is in private repo {source}; refusing to route it to public "
-            f"{', '.join(public)}"
-        )
-
-
 def _one_off(
     ref: IssueRef, action: OneOff, old_parent: IssueRef | None, kind: str | None, today: date
 ) -> RouteResult:
@@ -775,11 +757,7 @@ def _move_one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) ->
             raise RouteRefusedError(
                 f"cross-org operation is out of scope: {ref.slug} -> epic {action.epic}"
             )
-    # Check the target repo before resolving the epic: resolving 'adhoc' may
-    # create the target's ad-hoc epic, which must not happen for a refused route.
-    _guard_visibility(ref, dest)
     epic = epics.resolve_epic_ref(action.epic, repo=dest)
-    _guard_visibility(ref, _repo_of(epic))
     if epics.queue_kind(epic) is not None:
         raise RouteRefusedError(
             f"{epic.slug} is a queue epic; a one-off goes under an ad-hoc or finite epic "
@@ -918,10 +896,9 @@ def _transfer_recovery(
 
 
 # The failures that leave an advisory not retargeted: the retarget itself, or
-# resolving the org's advisory home (a private or unreadable ``.github``).
+# reading the org's advisory home (an unreadable ``.github``).
 _RETARGET_ERRORS = (
     security_records.RetargetError,
-    security_records.PrivateHomeError,
     github.GitHubAPIError,
 )
 

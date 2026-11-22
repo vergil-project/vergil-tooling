@@ -150,7 +150,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "with --label, and labels marking two categories are refused. With "
             "--proxy-for OWNER/REPO#N --repo OWNER/REPO it instead ensures the "
             "proxy epic for that primary epic in the target's org .github, and "
-            "the 'Proxy:' comment on the primary; both repos must be public and "
+            "the 'Proxy:' comment on the primary; the two repos must be "
             "in different orgs."
         ),
     )

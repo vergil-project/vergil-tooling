@@ -251,7 +251,6 @@ class FakeGitHub:
         comments: list[dict[str, Any]] | None = None,
         proxies_in_home: dict[int, dict[str, Any]] | None = None,
         unlisted: frozenset[int] = frozenset(),
-        private: frozenset[str] = frozenset(),
         no_install: frozenset[str] = frozenset(),
     ) -> None:
         self.primary: dict[str, Any] = {
@@ -263,7 +262,6 @@ class FakeGitHub:
         self.home = dict(proxies_in_home or {})
         self.unlisted = unlisted
         self.listing: object = None
-        self.private = private
         self.no_install = no_install
         self.calls: list[tuple[str, str | None, Any]] = []
         self.next_number = 400
@@ -300,10 +298,6 @@ class FakeGitHub:
         assert repo == HOME
         proxy = self.home[number]
         return {**proxy, "labels": [{"name": name} for name in proxy["labels"]]}
-
-    def is_public(self, repo: str) -> bool:
-        self.calls.append(("is_public", self._org(), repo))
-        return repo not in self.private
 
     def ensure_labels(self, repo: str, names: list[str]) -> None:
         self.calls.append(("ensure_labels", self._org(), (repo, tuple(names))))
@@ -343,7 +337,6 @@ class FakeGitHub:
     def create(self, target: str = TARGET) -> proxies.ProxyResult:
         with (
             patch("vergil_tooling.lib.github.read_json", side_effect=self.read_json),
-            patch("vergil_tooling.lib.github.is_public", side_effect=self.is_public),
             patch("vergil_tooling.lib.github.run", side_effect=self.run),
             patch("vergil_tooling.lib.github.create_issue", side_effect=self.create_issue),
             patch("vergil_tooling.lib.proxies.ensure_labels", side_effect=self.ensure_labels),
@@ -456,26 +449,16 @@ def test_proxy_for_primary_not_open_dev_epic_refused(
     assert fake.writes() == []
 
 
-def test_proxy_for_private_primary_refused() -> None:
-    fake = FakeGitHub(private=frozenset({PRIMARY_REPO}))
-    with pytest.raises(proxies.ProxyRefusedError) as excinfo:
-        fake.create()
-    assert "not public" in str(excinfo.value)
-    assert "must not be filed in an ad-hoc epic" in str(excinfo.value)
-    assert fake.writes() == []
-    # Refused before the primary's title or comments are read.
-    assert [call for call in fake.calls if call[0] == "read"] == []
-
-
-@pytest.mark.parametrize("private", [TARGET, HOME])
-def test_proxy_for_private_target_refused(private: str) -> None:
-    fake = FakeGitHub(private=frozenset({private}))
-    with pytest.raises(proxies.ProxyRefusedError) as excinfo:
-        fake.create()
-    assert "not public" in str(excinfo.value)
-    assert "must not be filed in an ad-hoc epic" in str(excinfo.value)
-    assert fake.writes() == []
-    assert not any(call[0] == "read" and call[2][:2] == ("issue", "list") for call in fake.calls)
+def test_proxy_ensure_does_not_probe_visibility() -> None:
+    # Every repo is public (epic vergil-project/.github#1476): no visibility probe.
+    fake = FakeGitHub()
+    with patch(
+        "vergil_tooling.lib.github.is_public",
+        side_effect=AssertionError("is_public must not be called"),
+    ):
+        result = fake.create()
+    assert result.proxy == IssueRef("logical-minds-foundry", ".github", 400)
+    assert result.created
 
 
 def test_proxy_for_existing_open_proxy_reused() -> None:

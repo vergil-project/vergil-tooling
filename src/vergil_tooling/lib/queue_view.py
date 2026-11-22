@@ -41,9 +41,9 @@ alone, and fails closed:
 A line naming an org other than the issue's own is refused
 (:class:`AdvisoryLineError`), never ignored.
 
-Advisories are listed once per org per view. An org with no public
-``.github`` holds no advisories, so its listing is skipped, unless one of its
-items names an advisory: then the home is resolved anyway and refused loudly.
+Advisories are listed once per org per view. An org with no ``.github`` holds
+no advisories, so its listing is skipped, unless one of its items names an
+advisory: then the home is listed anyway, and a failed read fails the view.
 
 The ad-hoc view is not a review queue: it is the open tasks under every live
 ``Epic (ad hoc): <repo>`` epic (``epic`` + ``ad-hoc``) in a home, grouped by

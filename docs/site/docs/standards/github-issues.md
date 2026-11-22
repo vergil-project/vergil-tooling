@@ -784,8 +784,7 @@ that PR could no longer be submitted.
 
 A route is refused when the item's container epic does not allow
 it (see [`vrg-intake-route`](../reference/cli-tools-overview.md#vrg-intake-route)
-for the route table), for a cross-org target, and for a private item headed to a
-public repo or epic.
+for the route table), and for a cross-org target.
 
 A `security` item keeps its advisory links through every move. On a recreate,
 every advisory the item names is retargeted to the copy **before** the

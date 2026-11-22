@@ -49,12 +49,7 @@ advisory.
 - The advisory is always created in `<org>/.github`, where `<org>` is the
   owner of `--repo` (or of the `--from` and `--drop` refs for `retarget`, whose
   `--to` refs in another org move it there: see
-  [The cross-org move](#the-cross-org-move)). The command
-  checks that `<org>/.github` is public and otherwise refuses with:
-
-  ```text
-  vrg-security-record: <org>/.github is not public; security records need a public org .github (private orgs are unsupported)
-  ```
+  [The cross-org move](#the-cross-org-move)).
 
 - The issue is created in the affected repo's queue home, `<org>/.github`,
   and linked under
@@ -330,9 +325,9 @@ Every check runs before the first write, and each refusal exits 1:
   vrg-security-record: advisory <GHSA-id>: this would stop tracking the open issue <ref>; a move to <org>/.github closes this advisory, so it cannot keep tracking an issue in <org>. Close or retarget that work first, then run: vrg-security-record retarget <GHSA-id> --from '<ref>' --to '<ref>' …. Leaving an open issue untracked is the human's decision
   ```
 
-- The fix org's `.github` must be public. Its advisories are listed, and
-  each one with a `Moved from: <GHSA-id>` line naming this advisory alone
-  on its line is a candidate. One candidate is reused only when it is a
+- The fix org's `.github` advisories are listed, and each one with a
+  `Moved from: <GHSA-id>` line naming this advisory alone on its line is a
+  candidate. One candidate is reused only when it is a
   `draft` and not an external report; more than one candidate, or any
   that is an external report or in another state, refuses the move,
   naming each, and nothing is created. A reused copy must also be the one
@@ -419,8 +414,7 @@ Its summary line is `Security records: <n> advisory states synced, <m>
 broken pairs, <h> held, <e> errors.` Each noun agrees with its count, so a
 count of 1 reads `1 advisory state synced`, `1 broken pair` or `1 error`.
 It exits 1 when any pair is broken or any parent read failed (after
-syncing the rest), or when the pass fails, including when the org's
-`.github` is private. An org with no `security` issues and no `.github`
+syncing the rest), or when the pass fails. An org with no `security` issues and no `.github`
 repo prints `Security records: none.`
 
 | Flag | Meaning |
@@ -577,9 +571,9 @@ These commands read or move records as part of their own work:
   (`broken pair: …`) and the item is not held. The docs PR's planning
   close applies the same rule and gives the same reason.
 
-  It lists each org's advisories once per view, and skips an org whose
-  `.github` is absent or not public unless one of its items has an
-  advisory line (then the private home is refused). An advisory line
+  It lists each org's advisories once per view, and skips an org with no
+  `.github` unless one of its items has an advisory line (then the home
+  is read anyway, and a failed read fails the view). An advisory line
   naming an org other than the issue's own is refused, not ignored.
 
 ## Exit codes
@@ -587,5 +581,5 @@ These commands read or move records as part of their own work:
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Refused (a private `.github`, a duplicate, bad refs, an unreadable file, `--details` under the sweep, a `retarget`, `close` or `note` the checks refuse, a `create` onto an advisory already paired), a partial pair, a failed retarget, close or note, a broken pair or a failed parent read found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
+| 1 | Refused (a duplicate, bad refs, an unreadable file, `--details` under the sweep, a `retarget`, `close` or `note` the checks refuse, a `create` onto an advisory already paired), a partial pair, a failed retarget, close or note, a broken pair or a failed parent read found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
 | 2 | Invalid arguments |

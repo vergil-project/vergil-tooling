@@ -15,7 +15,6 @@ from vergil_tooling.lib import (
     in_flight,
     live_branches,
     queue_view,
-    security_records,
     trusted_authors,
 )
 from vergil_tooling.lib.epic_size import SizeRecord
@@ -149,16 +148,12 @@ def _failing(exc: Exception) -> object:
     return view
 
 
-_PRIVATE_HOME = security_records.PrivateHomeError(
-    "vrg-security-record: org/.github is not public; security records need a "
-    "public org .github (private orgs are unsupported)"
-)
+_BAD_LISTING = ValueError("advisory list row lacks a ghsa_id or state")
 
 
 @pytest.mark.parametrize(
     ("exc", "reason"),
     [
-        (_PRIVATE_HOME, "org/.github is not public"),
         (github.GitHubAPIError(1, ["gh", "api"], "", "HTTP 403: Forbidden"), "HTTP 403"),
         (ValueError("advisory list row lacks a ghsa_id or state"), "lacks a ghsa_id"),
     ],
@@ -203,7 +198,7 @@ def test_vrg_queue_bare_text_keeps_other_queues_when_one_fails(
 ) -> None:
     views = {
         "intake": lambda _h, _n: [_ITEM],
-        "planning": _failing(_PRIVATE_HOME),
+        "planning": _failing(_BAD_LISTING),
         "deferred": lambda _h, _n: [_DEFERRED_ITEM],
     }
     with (
@@ -221,7 +216,7 @@ def test_vrg_queue_bare_text_keeps_other_queues_when_one_fails(
     assert lines[6].startswith("org/tool#7  ")
     assert len(lines) == 7
     assert captured.err == (
-        f"vrg-queue: planning queue for org in org/.github could not be read: {_PRIVATE_HOME}\n"
+        f"vrg-queue: planning queue for org in org/.github could not be read: {_BAD_LISTING}\n"
     )
 
 
@@ -230,7 +225,7 @@ def test_vrg_queue_bare_json_prints_no_partial_object(
 ) -> None:
     views = {
         "intake": lambda _h, _n: [_ITEM],
-        "planning": _failing(_PRIVATE_HOME),
+        "planning": _failing(_BAD_LISTING),
         "deferred": _failing(ValueError("bad row")),
     }
     with (
@@ -242,7 +237,7 @@ def test_vrg_queue_bare_json_prints_no_partial_object(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.splitlines() == [
-        f"vrg-queue: planning queue for org in org/.github could not be read: {_PRIVATE_HOME}",
+        f"vrg-queue: planning queue for org in org/.github could not be read: {_BAD_LISTING}",
         "vrg-queue: deferred queue for org in org/.github could not be read: bad row",
     ]
 

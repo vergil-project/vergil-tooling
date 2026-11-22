@@ -19,7 +19,6 @@ from vergil_tooling.lib.security_records import (
     RetargetRefusedError,
     SecurityIssue,
 )
-from vergil_tooling.lib.security_records import advisory_home as real_advisory_home
 from vergil_tooling.lib.security_records import pair as real_pair
 from vergil_tooling.lib.security_records import pair_check as real_pair_check
 
@@ -1142,50 +1141,6 @@ def test_sync_help_names_its_permission(capsys: pytest.CaptureFixture[str]) -> N
     text = " ".join(capsys.readouterr().out.split())
     assert "Repository security advisories: read and write" in text
     assert "--dry-run" in text
-
-
-# --- private home -----------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["list"],
-        ["list", "--repo", "org/tool"],
-        ["show", GHSA],
-        ["show", ISSUE.slug],
-        ["retarget", GHSA, "--from", EXISTING.slug, "--to", ISSUE.slug],
-        ["sync"],
-        ["sync", "--dry-run"],
-        ["close", GHSA, "--reason", "dropped"],
-        None,  # create, filled in below
-    ],
-)
-def test_private_home_refused_for_every_subcommand(
-    env: MagicMock,
-    files: dict[str, str],
-    capsys: pytest.CaptureFixture[str],
-    argv: list[str] | None,
-) -> None:
-    env.advisory_home.side_effect = real_advisory_home
-    with patch.object(security_records.github, "repo_visibility", return_value="PRIVATE"):
-        rc = main(argv if argv is not None else _create_argv(files))
-    assert rc == 1
-    err = capsys.readouterr().err
-    assert err.strip() == (
-        "vrg-security-record: org/.github is not public; security records need a "
-        "public org .github (private orgs are unsupported)"
-    )
-    for name in (
-        "find_duplicate",
-        "create_advisory",
-        "create_issue",
-        "mark_issue",
-        "retarget",
-        "list_advisories",
-        "read_text",
-    ):
-        getattr(env, name).assert_not_called()
 
 
 # --- helpers ----------------------------------------------------------------
