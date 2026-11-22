@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from vergil_tooling.lib import cd_runs, config, git, github, host_versions, progress, version
@@ -17,6 +18,7 @@ from vergil_tooling.lib.checkout_lock import checkout_lock
 from vergil_tooling.lib.managed_worktree import (
     ManagedWorktreeError,
     adopt_worktree,
+    create_detached_worktree,
     create_worktree,
     worktree_path,
 )
@@ -45,7 +47,6 @@ from vergil_tooling.lib.update_deps.pr import FIX_TASK_PREFIX
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-    from pathlib import Path
 
     from vergil_tooling.lib.release.state import IssueEntry
 
@@ -197,10 +198,14 @@ def _resume_context(
     The state is read under the identity rule (:func:`tracking.read_state`),
     its facts are checked against GitHub and git (:func:`resume.verify_facts`)
     and restored on the context. The release worktree is adopted only when
-    the first undone stage is at or before ``teardown-worktree``, the last
-    branch-work stage; otherwise the run stays in the root checkout, since
+    the first undone stage is at or before ``merge-release``, the last stage
+    that works on ``release/<version>``, and a missing branch is then a
+    refusal (#4886). Past it, up to ``teardown-worktree``, the branch is not
+    needed, and GitHub deletes it once the release PR merges, so
+    :func:`_post_merge_worktree` sets up the worktree without it (#4889).
+    After ``teardown-worktree`` the run stays in the root checkout, since
     every later stage runs from it and ``finalize`` may already have pruned
-    the release branch (spec §4.3 of epic vergil-project/.github#1440).
+    the release branches (spec §4.3 of epic vergil-project/.github#1440).
     """
     if resume_version is None or resume_issue_number is None or not stages:
         raise ReleaseError(
@@ -225,8 +230,13 @@ def _resume_context(
     verify_facts(ctx, current)
     restore_context(ctx, current)
     first = first_undone(current, stages)
-    if first is not None and stages.index(first) <= stages.index(BRANCH_STAGES[-1]):
+    if first is not None and stages.index(first) <= stages.index("merge-release"):
         ctx.worktree_path = _acquire_release_worktree(repo_root, branch, resume=True)
+    elif first is not None and stages.index(first) <= stages.index(BRANCH_STAGES[-1]):
+        ctx.worktree_path = _post_merge_worktree(
+            repo_root, branch, needed="back-merge-bump" not in current.done
+        )
+    if ctx.worktree_path is not None:
         os.chdir(ctx.worktree_path)
         where = f"worktree {ctx.worktree_path}"
     else:
@@ -526,8 +536,9 @@ def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> 
     a resume adopts it — creating the local branch from origin if needed, then
     attaching a worktree (#1612). A resume whose branch exists neither locally
     nor on origin refuses, naming it, rather than cutting a new one from
-    develop: a resume that reaches a branch-work stage always finds its branch
-    (#4886).
+    develop (#4886). A resume calls this only before ``merge-release`` is
+    done, while the branch must still exist; past it, GitHub deletes the
+    merged branch, and :func:`_post_merge_worktree` is used instead (#4889).
 
     Every git failure on the way, on the fresh path as on the resume path,
     surfaces as a :class:`ReleaseError` naming the branch, the worktree and
@@ -573,6 +584,83 @@ def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> 
             ),
             detail=error_text(exc),
         ) from exc
+
+
+def _post_merge_worktree(repo_root: Path, branch: str, *, needed: bool) -> Path | None:
+    """The worktree a resume past ``merge-release`` runs in, never needing *branch* (#4889).
+
+    Once the release PR has merged, no stage reads ``release/<version>``, and
+    the fleet's ``delete_branch_on_merge`` has GitHub delete it on origin, so
+    a clone that never had it locally has no copy at all. The managed
+    worktree path is reused when it is there, whichever branch it is on (an
+    earlier run's ``back-merge-bump`` may have switched it to the post
+    branch); a path that is not a git worktree of its own is refused, since
+    git run there would act on the root checkout. With no worktree, one is
+    created detached at ``develop`` only when *needed* (``back-merge-bump``
+    is not done: it checks out its post branch in the worktree, never in the
+    root checkout). Otherwise the run needs none: it returns None, and
+    ``teardown-worktree`` has nothing to remove.
+    """
+    path = worktree_path(repo_root, branch)
+    if path.exists():
+        _check_is_worktree(path)
+        print(f"Reusing the release worktree {path}.")
+        return path
+    if not needed:
+        return None
+    try:
+        path = create_detached_worktree(repo_root, branch=branch, base="develop")
+    except ManagedWorktreeError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"git worktree add --detach {path} develop",
+            message=str(exc),
+            detail=exc.detail,
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=command_text(exc.cmd),
+            message=(
+                f"A git command failed while creating the release worktree {path}, "
+                "detached at develop, for back-merge-bump. Fix the cause git reports "
+                "below, then re-run `vrg-release --resume`."
+            ),
+            detail=error_text(exc),
+        ) from exc
+    print(
+        f"Created the release worktree {path}, detached at develop: the release PR "
+        f"has merged, so '{branch}' is no longer needed."
+    )
+    return path
+
+
+def _check_is_worktree(path: Path) -> None:
+    """Refuse *path* unless it is the top level of a git worktree of its own."""
+    command = f"git -C {path} rev-parse --show-toplevel"
+    try:
+        top = git.read_output("-C", str(path), "rev-parse", "--show-toplevel")
+    except subprocess.CalledProcessError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=command,
+            message=(
+                f"The release worktree path {path} exists, but git cannot read it as "
+                "a worktree. Find out what is there, remove it, then re-run "
+                "`vrg-release --resume`."
+            ),
+            detail=error_text(exc),
+        ) from exc
+    if Path(top).resolve() != path.resolve():
+        raise ReleaseError(
+            phase="preflight",
+            command=command,
+            message=(
+                f"The release worktree path {path} exists but is not a git worktree: "
+                f"git resolves it to {top}. Find out what is there, remove it, then "
+                "re-run `vrg-release --resume`."
+            ),
+        )
 
 
 def _adopt_unrecorded_branch(repo_root: Path, branch: str) -> Path:

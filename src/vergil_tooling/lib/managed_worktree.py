@@ -47,6 +47,22 @@ def create_worktree(repo_root: Path, *, branch: str, base: str) -> Path:
     return path
 
 
+def create_detached_worktree(repo_root: Path, *, branch: str, base: str) -> Path:
+    """Create *branch*'s ``.worktrees/`` worktree detached at *base*, on no branch.
+
+    For work that needs the managed worktree's path but not *branch* itself:
+    a resumed release past its merge, whose ``release/<version>`` GitHub may
+    already have deleted (#4889). The worktree checks out *base* with a
+    detached ``HEAD``; *branch* is neither read nor created.
+    """
+    path = worktree_path(repo_root, branch)
+    if path.exists():
+        msg = f"Worktree path already exists: {path}. Remove it and re-run."
+        raise ManagedWorktreeError(msg)
+    git.run("worktree", "add", "--detach", str(path), base)
+    return path
+
+
 def adopt_worktree(repo_root: Path, *, branch: str) -> Path:
     """Attach a worktree under ``.worktrees/`` to an existing *branch*.
 

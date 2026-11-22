@@ -8,6 +8,7 @@ import pytest
 from vergil_tooling.lib.managed_worktree import (
     ManagedWorktreeError,
     adopt_worktree,
+    create_detached_worktree,
     create_worktree,
     remove_worktree,
     worktree_path,
@@ -46,6 +47,25 @@ def test_create_worktree_rejects_existing_path(tmp_path: Path, monkeypatch) -> N
     target.mkdir(parents=True)
     with pytest.raises(ManagedWorktreeError, match="already exists"):
         create_worktree(tmp_path, branch="chore/dep-update-20260610", base="develop")
+
+
+def test_create_detached_worktree_adds_on_no_branch(tmp_path: Path, monkeypatch) -> None:
+    runs: list[tuple[str, ...]] = []
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: runs.append(a))
+    path = create_detached_worktree(tmp_path, branch="release/2.1.0", base="develop")
+    expected = tmp_path / ".worktrees" / "release-2.1.0"
+    assert path == expected
+    # Detached: release/2.1.0 names the path only; it is neither read nor created.
+    assert runs == [("worktree", "add", "--detach", str(expected), "develop")]
+
+
+def test_create_detached_worktree_rejects_existing_path(tmp_path: Path, monkeypatch) -> None:
+    runs: list[tuple[str, ...]] = []
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: runs.append(a))
+    (tmp_path / ".worktrees" / "release-2.1.0").mkdir(parents=True)
+    with pytest.raises(ManagedWorktreeError, match="already exists"):
+        create_detached_worktree(tmp_path, branch="release/2.1.0", base="develop")
+    assert runs == []
 
 
 def test_adopt_worktree_attaches_to_existing_branch(tmp_path: Path, monkeypatch) -> None:

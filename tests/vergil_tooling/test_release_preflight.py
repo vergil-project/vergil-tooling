@@ -2229,8 +2229,17 @@ _ROOT = Path("/tmp/repo")  # noqa: S108
 _RESUME_WT = Path("/tmp/repo/.worktrees/release-2.3.0")  # noqa: S108
 
 
-def _resume(done: tuple[str, ...]) -> tuple[ReleaseContext, dict[str, MagicMock]]:
-    """Run a resume preflight whose tracking issue records *done*; return the ctx and mocks."""
+def _resume(
+    done: tuple[str, ...],
+    *,
+    post_merge: Path | None = _RESUME_WT,
+    acquire_error: ReleaseError | None = None,
+) -> tuple[ReleaseContext, dict[str, MagicMock]]:
+    """Run a resume preflight whose tracking issue records *done*; return the ctx and mocks.
+
+    *post_merge* is what the post-merge worktree set-up returns (#4889), and
+    *acquire_error*, when given, is what adopting the release worktree raises.
+    """
     current = replace(
         state.initial_state(version="2.3.0", cut=_CUT, issues=(), without_deps=False),
         done=done,
@@ -2256,7 +2265,14 @@ def _resume(done: tuple[str, ...]) -> tuple[ReleaseContext, dict[str, MagicMock]
         mocks["config"] = stack.enter_context(patch(_MOD + "._read_and_validate_config"))
         mocks["read_state"] = stack.enter_context(patch(_MOD + ".read_state", return_value=current))
         mocks["worktree"] = stack.enter_context(
-            patch(_MOD + "._acquire_release_worktree", return_value=_RESUME_WT)
+            patch(
+                _MOD + "._acquire_release_worktree",
+                return_value=_RESUME_WT,
+                side_effect=acquire_error,
+            )
+        )
+        mocks["post_merge"] = stack.enter_context(
+            patch(_MOD + "._post_merge_worktree", return_value=post_merge)
         )
         ctx = preflight(
             version_override=None,
@@ -2307,20 +2323,62 @@ def test_resume_reads_and_verifies_the_state_and_restores_its_facts() -> None:
 def test_resume_at_merge_release_adopts_worktree() -> None:
     ctx, mocks = _resume(("prepare",))
     mocks["worktree"].assert_called_once_with(_ROOT, "release/2.3.0", resume=True)
+    mocks["post_merge"].assert_not_called()
     mocks["os.chdir"].assert_called_once_with(_RESUME_WT)
     assert ctx.worktree_path == _RESUME_WT
 
 
-def test_resume_at_teardown_adopts_worktree() -> None:
-    ctx, mocks = _resume(("prepare", "merge-release", "confirm-main", "back-merge-bump"))
-    mocks["worktree"].assert_called_once()
+def test_resume_at_prepare_adopts_worktree() -> None:
+    ctx, mocks = _resume(())
+    mocks["worktree"].assert_called_once_with(_ROOT, "release/2.3.0", resume=True)
+    mocks["post_merge"].assert_not_called()
     assert ctx.worktree_path == _RESUME_WT
+
+
+def test_resume_before_the_merge_still_refuses_a_missing_branch() -> None:
+    # The #4886 refusal stands for every stage before merge-release is done.
+    refusal = ReleaseError(phase="preflight", command="c", message="missing both")
+    with pytest.raises(ReleaseError, match="missing both"):
+        _resume(("prepare",), acquire_error=refusal)
+
+
+@pytest.mark.parametrize(
+    "done",
+    [
+        ("prepare", "merge-release"),
+        ("prepare", "merge-release", "confirm-main"),
+    ],
+    ids=["at-confirm-main", "at-back-merge-bump"],
+)
+def test_resume_past_the_merge_never_adopts_the_release_branch(done: tuple[str, ...]) -> None:
+    ctx, mocks = _resume(done)
+    mocks["worktree"].assert_not_called()
+    mocks["post_merge"].assert_called_once_with(_ROOT, "release/2.3.0", needed=True)
+    mocks["os.chdir"].assert_called_once_with(_RESUME_WT)
+    assert ctx.worktree_path == _RESUME_WT
+
+
+def test_resume_at_teardown_reuses_a_worktree_still_there() -> None:
+    ctx, mocks = _resume(("prepare", "merge-release", "confirm-main", "back-merge-bump"))
+    mocks["worktree"].assert_not_called()
+    mocks["post_merge"].assert_called_once_with(_ROOT, "release/2.3.0", needed=False)
+    mocks["os.chdir"].assert_called_once_with(_RESUME_WT)
+    assert ctx.worktree_path == _RESUME_WT
+
+
+def test_resume_at_teardown_with_no_worktree_runs_from_the_root() -> None:
+    done = ("prepare", "merge-release", "confirm-main", "back-merge-bump")
+    ctx, mocks = _resume(done, post_merge=None)
+    mocks["worktree"].assert_not_called()
+    mocks["os.chdir"].assert_called_once_with(_ROOT)
+    assert ctx.worktree_path is None
 
 
 def test_resume_after_teardown_does_not_adopt_worktree() -> None:
     done = ("prepare", "merge-release", "confirm-main", "back-merge-bump", "teardown-worktree")
     ctx, mocks = _resume(done)
     mocks["worktree"].assert_not_called()
+    mocks["post_merge"].assert_not_called()
     mocks["os.chdir"].assert_called_once_with(_ROOT)
     assert ctx.worktree_path is None
 
@@ -2342,3 +2400,138 @@ def test_resume_without_its_issue_refuses() -> None:
     ):
         preflight(version_override=None, repo_root=_ROOT, resume=True, stages=_STAGES)
     m_read.assert_not_called()
+
+
+# --- the worktree of a resume past merge-release (#4889) ---
+
+
+def test_post_merge_worktree_creates_one_detached_without_the_branch() -> None:
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    with (
+        patch(_MOD + ".git.ref_exists") as m_exists,
+        patch(_MOD + ".create_detached_worktree", return_value=_RESUME_WT) as m_create,
+        patch(_MOD + ".adopt_worktree") as m_adopt,
+        patch(_MOD + ".create_worktree") as m_branch,
+    ):
+        result = _post_merge_worktree(_ROOT, "release/2.3.0", needed=True)
+    assert result == _RESUME_WT
+    m_create.assert_called_once_with(_ROOT, branch="release/2.3.0", base="develop")
+    m_exists.assert_not_called()
+    m_adopt.assert_not_called()
+    m_branch.assert_not_called()
+
+
+def test_post_merge_worktree_needs_none_once_back_merge_bump_is_done() -> None:
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    with (
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + ".git.read_output") as m_read,
+        patch(_MOD + ".create_detached_worktree") as m_create,
+    ):
+        assert _post_merge_worktree(_ROOT, "release/2.3.0", needed=False) is None
+    m_create.assert_not_called()
+    m_run.assert_not_called()
+    m_read.assert_not_called()
+
+
+@pytest.mark.parametrize("needed", [True, False])
+def test_post_merge_worktree_reuses_a_worktree_still_there(tmp_path: Path, *, needed: bool) -> None:
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    path = tmp_path / ".worktrees" / "release-2.3.0"
+    path.mkdir(parents=True)
+    with (
+        patch(_MOD + ".git.read_output", return_value=str(path)) as m_read,
+        patch(_MOD + ".create_detached_worktree") as m_create,
+    ):
+        assert _post_merge_worktree(tmp_path, "release/2.3.0", needed=needed) == path
+    m_read.assert_called_once_with("-C", str(path), "rev-parse", "--show-toplevel")
+    m_create.assert_not_called()
+
+
+def test_post_merge_worktree_refuses_a_path_that_is_not_a_worktree(tmp_path: Path) -> None:
+    # A stray directory resolves to the root checkout; git run there would
+    # move the root's HEAD, so it is refused rather than used.
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    path = tmp_path / ".worktrees" / "release-2.3.0"
+    path.mkdir(parents=True)
+    with (
+        patch(_MOD + ".git.read_output", return_value=str(tmp_path)),
+        pytest.raises(ReleaseError, match="is not a git worktree") as info,
+    ):
+        _post_merge_worktree(tmp_path, "release/2.3.0", needed=True)
+    assert str(path) in str(info.value)
+
+
+def test_post_merge_worktree_refuses_a_path_git_cannot_read(tmp_path: Path) -> None:
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    (tmp_path / ".worktrees" / "release-2.3.0").mkdir(parents=True)
+    failure = subprocess.CalledProcessError(128, ("git", "rev-parse"), stderr="fatal: nope")
+    with (
+        patch(_MOD + ".git.read_output", side_effect=failure),
+        pytest.raises(ReleaseError, match="cannot read it as a worktree") as info,
+    ):
+        _post_merge_worktree(tmp_path, "release/2.3.0", needed=True)
+    assert info.value.detail is not None
+    assert "fatal: nope" in info.value.detail
+
+
+def test_post_merge_worktree_names_a_failed_create() -> None:
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    failure = subprocess.CalledProcessError(128, ("git", "worktree", "add"), stderr="fatal: x")
+    with (
+        patch(_MOD + ".create_detached_worktree", side_effect=failure),
+        pytest.raises(ReleaseError, match="detached at develop, for back-merge-bump") as info,
+    ):
+        _post_merge_worktree(_ROOT, "release/2.3.0", needed=True)
+    assert info.value.detail is not None
+    assert "fatal: x" in info.value.detail
+
+
+def test_post_merge_worktree_wraps_a_managed_worktree_error() -> None:
+    from vergil_tooling.lib.release.preflight import _post_merge_worktree
+
+    with (
+        patch(
+            _MOD + ".create_detached_worktree",
+            side_effect=ManagedWorktreeError("path in the way", detail="d"),
+        ),
+        pytest.raises(ReleaseError, match="path in the way") as info,
+    ):
+        _post_merge_worktree(_ROOT, "release/2.3.0", needed=True)
+    assert info.value.detail == "d"
+
+
+def test_post_merge_resume_real_git_runs_without_the_deleted_branch(
+    released: tuple[Path, Path],
+) -> None:
+    # The release PR merged and GitHub deleted release/1.0.0 on origin
+    # (delete_branch_on_merge); the root checkout never had it locally. The
+    # pre-merge path still refuses (#4886), and the post-merge path sets up a
+    # worktree in which back-merge-bump can cut its post branch from main,
+    # leaving the root checkout on develop (#4889).
+    from vergil_tooling.lib.release.preflight import (
+        _acquire_release_worktree,
+        _post_merge_worktree,
+    )
+
+    root, other = released
+    branch = "release/1.0.0"
+    _git(other, "push", "-q", "origin", "--delete", branch)
+    _git(root, "fetch", "-q", "--prune", "origin")
+    with patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None):
+        with pytest.raises(ReleaseError, match="missing both locally and on origin"):
+            _acquire_release_worktree(root, branch, resume=True)
+        path = _post_merge_worktree(root, branch, needed=True)
+    assert path == root / ".worktrees" / "release-1.0.0"
+    assert _git(path, "rev-parse", "--abbrev-ref", "HEAD") == "HEAD"
+    assert _git(root, "branch", "--list", branch) == ""
+    _git(path, "checkout", "-q", "-b", "release/post-1.0.0", "origin/main")
+    assert _git(root, "rev-parse", "--abbrev-ref", "HEAD") == "develop"
+    with patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None):
+        assert _post_merge_worktree(root, branch, needed=True) == path
