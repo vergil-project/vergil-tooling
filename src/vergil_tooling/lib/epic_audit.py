@@ -125,7 +125,7 @@ def _open_task_drift(entry: Any, pr_repo: str, ref: str) -> TaskDrift | None:
             "issue", "view", str(task), "--repo", task_repo, "--json", "state,title,body,labels"
         )
     except github.GitHubAPIError:
-        # The task is in a repo this run can't see (cross-org, private, or
+        # The task is in a repo this run can't see (cross-org or
         # deleted). Not this org's drift to close — warn and skip rather than
         # abort the whole sweep.
         print(
@@ -938,7 +938,7 @@ def misplaced_adhoc(org: str, *, issues: list[OpenIssue] | None = None) -> list[
     A task is a candidate when its title starts ``Logbook:`` (it belongs under
     the hoshin epic) or its body names an ``epic``-labelled issue in another
     org (it belongs under a proxy). A cross-org ref whose labels cannot be
-    read (private, deleted, an org the App cannot reach) is a candidate of its
+    read (deleted, or in an org the App cannot reach) is a candidate of its
     own, never raised and never skipped. A candidate is dropped when a trusted
     comment on it carries ``Standalone-confirmed`` alone on its line: the
     human ruled it standalone. Nothing is refused, moved, closed or labelled.

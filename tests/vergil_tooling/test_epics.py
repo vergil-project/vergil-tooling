@@ -663,8 +663,8 @@ def test_rollup_holds_epic_open_while_validation_child_open() -> None:
     mock_run.assert_not_called()  # epic stays open — a validation child is still open
 
 
-def test_rollup_public_repo_epic_archives_into_own_bucket() -> None:
-    # A public repo's ad-hoc epic lives in <org>/.github (so parent.repo is
+def test_rollup_repo_epic_archives_into_own_bucket() -> None:
+    # A repo's ad-hoc epic lives in <org>/.github (so parent.repo is
     # ".github"), but the archive target must come from the epic TITLE's bare
     # name — the child is filed into <org>/some-repo, NOT the ".github" bucket
     # (#2709). ``some-repo`` is a real repo, so the drain proceeds.
@@ -1009,7 +1009,7 @@ def test_qualify_epic_ref_home_check_error_propagates() -> None:
     # Fail loud: a failed home check never falls back to a guessed home.
     err = github.GitHubAPIError(1, "gh repo view", "boom")
     with (
-        patch("vergil_tooling.lib.github.repo_visibility", side_effect=err),
+        patch("vergil_tooling.lib.github._repo_probe", side_effect=err),
         pytest.raises(epics.EpicHomeError) as excinfo,
     ):
         epics.qualify_epic_ref("#12", repo="org/lab")
@@ -1512,15 +1512,9 @@ def test_resolve_epic_home_dotgithub_short_circuits() -> None:
         exists.assert_not_called()
 
 
-def test_resolve_epic_home_does_not_call_is_public() -> None:
-    # The home never depends on visibility: is_public is never consulted.
-    with (
-        patch(
-            "vergil_tooling.lib.epics.github.is_public",
-            side_effect=AssertionError("is_public must not be called"),
-        ),
-        patch("vergil_tooling.lib.epics.github.repo_exists", return_value=True) as exists,
-    ):
+def test_resolve_epic_home_probes_only_org_dotgithub() -> None:
+    # The home never depends on the repo itself: only <org>/.github is probed.
+    with patch("vergil_tooling.lib.epics.github.repo_exists", return_value=True) as exists:
         assert epics.resolve_epic_home("o", "r") == "o/.github"
     exists.assert_called_once_with("o", ".github")
 
@@ -1533,7 +1527,7 @@ def test_resolve_epic_home_missing_dotgithub_keeps_3643_message() -> None:
     # never with a visibility error or a silent self-home (#3643).
     with (
         patch(
-            "vergil_tooling.lib.github.repo_visibility",
+            "vergil_tooling.lib.github._repo_probe",
             side_effect=github.GitHubAPIError(1, "cmd", "", _NO_REPO),
         ),
         pytest.raises(epics.EpicHomeError) as excinfo,
@@ -1549,7 +1543,7 @@ def test_resolve_epic_home_fails_loud() -> None:
     # Any other failed check is a clear EpicHomeError, never a traceback.
     err = github.GitHubAPIError(1, "cmd", "", "HTTP 502: boom")
     with (
-        patch("vergil_tooling.lib.github.repo_visibility", side_effect=err),
+        patch("vergil_tooling.lib.github._repo_probe", side_effect=err),
         pytest.raises(epics.EpicHomeError, match=r"(?s)org/tooling:.*HTTP 502: boom") as excinfo,
     ):
         epics.resolve_epic_home("org", "tooling")
@@ -1560,7 +1554,7 @@ def test_resolve_epic_home_missing_token_is_not_rewrapped() -> None:
     # A missing token keeps its own error so cli_main prints the token fix.
     missing = github.MissingGitHubTokenError(4, "cmd", "", "set GH_TOKEN")
     with (
-        patch("vergil_tooling.lib.github.repo_visibility", side_effect=missing),
+        patch("vergil_tooling.lib.github._repo_probe", side_effect=missing),
         pytest.raises(github.MissingGitHubTokenError),
     ):
         epics.resolve_epic_home("owner", "notes")
@@ -1584,7 +1578,7 @@ def test_require_org_home_missing_dotgithub_is_clear() -> None:
     # and names the repo to create (#3613).
     with (
         patch(
-            "vergil_tooling.lib.epics.github.repo_visibility",
+            "vergil_tooling.lib.epics.github._repo_probe",
             side_effect=github.GitHubAPIError(1, "cmd", "", _NO_REPO),
         ),
         pytest.raises(epics.EpicHomeError) as excinfo,
@@ -1601,7 +1595,7 @@ def test_require_org_home_other_probe_error_fails_loud() -> None:
     # clear EpicHomeError carrying the API error.
     with (
         patch(
-            "vergil_tooling.lib.epics.github.repo_visibility",
+            "vergil_tooling.lib.epics.github._repo_probe",
             side_effect=github.GitHubAPIError(1, "cmd", "", "HTTP 502: boom"),
         ),
         pytest.raises(epics.EpicHomeError, match=r"(?s)cannot check for org/\.github,.*HTTP 502"),
@@ -1612,7 +1606,7 @@ def test_require_org_home_other_probe_error_fails_loud() -> None:
 def test_require_org_home_missing_token_is_not_rewrapped() -> None:
     missing = github.MissingGitHubTokenError(4, "cmd", "", "set GH_TOKEN")
     with (
-        patch("vergil_tooling.lib.epics.github.repo_visibility", side_effect=missing),
+        patch("vergil_tooling.lib.epics.github._repo_probe", side_effect=missing),
         pytest.raises(github.MissingGitHubTokenError),
     ):
         epics.require_org_home("org")
@@ -3342,7 +3336,6 @@ def test_resolve_epic_ref_hoshin() -> None:
     created = "https://github.com/vergil-project/.github/issues/77"
     with (
         patch("vergil_tooling.lib.github.repo_exists", return_value=True) as mock_exists,
-        patch("vergil_tooling.lib.github.is_public") as mock_public,
         patch(
             "vergil_tooling.lib.github.read_json",
             side_effect=[[], [{"number": 77, "title": "Epic (hoshin): vergil-project"}]],
@@ -3354,7 +3347,6 @@ def test_resolve_epic_ref_hoshin() -> None:
         got = epics.resolve_epic_ref("hoshin", repo="vergil-project/docs")
     assert got == IssueRef("vergil-project", ".github", 77)
     mock_exists.assert_called_once_with("vergil-project", ".github")
-    mock_public.assert_not_called()  # the hoshin home never depends on visibility
     mock_is_epic.assert_not_called()
     mock_ensure.assert_called_once_with(
         "vergil-project/.github", ["epic", "hoshin", "epic-management"]

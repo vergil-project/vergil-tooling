@@ -93,13 +93,14 @@ def test_security_label_constants_are_in_the_registry() -> None:
     assert security_records.SEVERITIES == ("critical", "high", "medium", "low")
 
 
-def test_advisory_home_is_org_dotgithub_without_visibility_probe(
+def test_advisory_home_is_org_dotgithub_without_a_gh_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Every repo is public (epic vergil-project/.github#1476): no visibility probe.
-    monkeypatch.setattr(
-        github, "repo_visibility", MagicMock(side_effect=AssertionError("no visibility probe"))
-    )
+    # Every repo is public (epic vergil-project/.github#1476): the home is a
+    # fixed name, read from no gh call.
+    no_gh = MagicMock(side_effect=AssertionError("no gh call"))
+    monkeypatch.setattr(github, "read_json", no_gh)
+    monkeypatch.setattr(github, "read_output", no_gh)
     assert advisory_home("org") == HOME
 
 

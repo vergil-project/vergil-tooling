@@ -228,11 +228,6 @@ def env() -> Iterator[Env]:
                 default_repo=repo,
             ),
         ),
-        # Every repo is public (epic vergil-project/.github#1476): no visibility probe.
-        patch(
-            "vergil_tooling.lib.github.is_public",
-            side_effect=AssertionError("is_public must not be called"),
-        ),
         patch(f"{_MOD}.github.run", state.run),
         patch(f"{_MOD}.github.read_output", state.read_output),
         patch(f"{_MOD}.github.read_json", state.read_json),

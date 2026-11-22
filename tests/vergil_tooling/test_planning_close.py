@@ -230,7 +230,6 @@ def test_planning_close_holds_on_a_tracking_line_alone(
         external=False,
     )
     monkeypatch.setattr(queue_view.github, "repo_exists", lambda _org, _repo: True)
-    monkeypatch.setattr(queue_view.github, "is_public", lambda _repo: True)
     _with_listing(monkeypatch, [tracking])
     result = planning_close.find(TASK)
     assert result is not None
@@ -240,7 +239,7 @@ def test_planning_close_holds_on_a_tracking_line_alone(
 
 
 def test_cross_repo_planning_issue_is_skipped(fake: Callable[..., _GitHub]) -> None:
-    task = IssueRef("acme", "private-repo", 20)
+    task = IssueRef("acme", "other-repo", 20)
     fake(views={7: {"state": "OPEN", "comments": [_docs_marker(task)]}})
     result = planning_close.find(task)
     assert result is not None

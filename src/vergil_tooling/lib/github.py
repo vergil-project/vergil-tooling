@@ -370,40 +370,35 @@ def repo_installation_token(repo: str | Path) -> str | None:
 
 
 @functools.cache
-def repo_visibility(name_with_owner: str) -> str:
-    """Return *name_with_owner*'s GitHub visibility (``PUBLIC``/``PRIVATE``/``INTERNAL``).
+def _repo_probe(name_with_owner: str) -> str:
+    """Return *name_with_owner*'s ``nameWithOwner`` as GitHub reports it.
 
-    Fail-loud: a ``gh`` error (missing repo, auth, network) propagates as
-    :class:`GitHubAPIError` from :func:`read_output`; an empty result is also an
-    error. Memoized per process so audit/roadmap sweeps probe each repo once.
+    The existence probe under :func:`repo_exists`; it requests the name and
+    nothing else. Fail-loud: a ``gh`` error (missing repo, auth, network)
+    propagates as :class:`GitHubAPIError` from :func:`read_output`, and an
+    empty result is also an error. Memoized per process, so an audit or
+    roadmap sweep probes each repo once; an error is never memoized.
     """
-    data = read_json("repo", "view", name_with_owner, "--json", "visibility")
-    visibility = data.get("visibility") if isinstance(data, dict) else None
-    if not isinstance(visibility, str) or not visibility:
+    data = read_json("repo", "view", name_with_owner, "--json", "nameWithOwner")
+    found = data.get("nameWithOwner") if isinstance(data, dict) else None
+    if not isinstance(found, str) or not found:
         raise GitHubAPIError(
             1,
-            f"gh repo view {name_with_owner} --json visibility",
-            "empty or missing visibility",
+            f"gh repo view {name_with_owner} --json nameWithOwner",
+            "empty or missing nameWithOwner",
         )
-    return visibility
-
-
-def is_public(name_with_owner: str) -> bool:
-    """True only when *name_with_owner* is ``PUBLIC`` (``INTERNAL`` and ``PRIVATE`` are not)."""
-    return repo_visibility(name_with_owner) == "PUBLIC"
+    return found
 
 
 def repo_exists(owner: str, name: str) -> bool:
     """True iff ``<owner>/<name>`` is a real repository the caller can see.
 
-    A direct existence probe, not list membership: a **private** repo the caller
-    is authorized for still returns True, so a self-homed private repo is never
-    wrongly reported absent (which ``list_org_repos`` would do when it cannot see
-    private repos). No silent failure — only GitHub's genuine "not found" answer
-    yields False; every other error (auth, network, rate limit) propagates.
+    A direct existence probe, not list membership. No silent failure: only
+    GitHub's genuine "not found" answer yields False, and every other error
+    (auth, network, rate limit) propagates.
     """
     try:
-        repo_visibility(f"{owner}/{name}")
+        _repo_probe(f"{owner}/{name}")
     except GitHubAPIError as exc:
         if is_repo_not_found(exc):
             return False

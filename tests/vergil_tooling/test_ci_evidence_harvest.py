@@ -793,12 +793,6 @@ def test_resolve_required_gates_wires_config_and_derivation(
 
     monkeypatch.setattr(ci_evidence, "require_config_at_ref", fake_config)
 
-    def never_visibility(_repo: str) -> str:
-        msg = "the required gates never depend on the repo's visibility"
-        raise AssertionError(msg)
-
-    monkeypatch.setattr(github, "repo_visibility", never_visibility)
-
     def fake_integration(config: Any) -> tuple[str, ...]:
         captured["integration_config"] = config
         return ("3.14",)

@@ -449,14 +449,10 @@ def test_proxy_for_primary_not_open_dev_epic_refused(
     assert fake.writes() == []
 
 
-def test_proxy_ensure_does_not_probe_visibility() -> None:
-    # Every repo is public (epic vergil-project/.github#1476): no visibility probe.
-    fake = FakeGitHub()
-    with patch(
-        "vergil_tooling.lib.github.is_public",
-        side_effect=AssertionError("is_public must not be called"),
-    ):
-        result = fake.create()
+def test_proxy_ensure_homes_the_proxy_in_org_dotgithub() -> None:
+    # Every repo is public (epic vergil-project/.github#1476): the proxy's
+    # home is the org's .github.
+    result = FakeGitHub().create()
     assert result.proxy == IssueRef("logical-minds-foundry", ".github", 400)
     assert result.created
 
