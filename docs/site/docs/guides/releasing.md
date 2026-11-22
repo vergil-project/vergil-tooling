@@ -215,7 +215,7 @@ stages not recorded done.
 | `package-index` | deferred | For repos with `[package]`, waits for the new version in the package index. A miss is a deferred publish failure; a resume dispatches the index workflow and waits again |
 | `finalize` | deferred | Runs `vrg-finalize-pr --cleanup-only`, which prunes the release branches. The tracking issue stays open until `close-tracking` |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
-| `install` | deferred | Runs the `[publish].install` commands once `promote` is done and `vX.Y` names the release (prints them instead with `--no-install`). `none configured` when the repo has none. Success is one check line; a failure prints the full output below the summary |
+| `install` | deferred | Runs the `[publish].install` commands once `promote` is done and `vX.Y` names the release. `none configured` when the repo has none. Success is one check line; a failure prints the full output below the summary |
 | `close-tracking` | deferred | Closes the tracking issue with a summary, once no stage before it has failed |
 | `publish-status` | deferred | When a stage failed, names what is left of the release, any deferred publish and any dependency-update failure, and the one command that finishes it: `vrg-release --resume`, or, for a release that cannot finish, `vrg-release --supersede X.Y.Z`. It warns, never failing a second time |
 
