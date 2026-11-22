@@ -2117,6 +2117,7 @@ def test_standing_kinds_table() -> None:
         epics.PLANNING,
         epics.DEFERRED,
         epics.HOSHIN,
+        epics.OPERATIONS,
     )
     assert epics.ADHOC.title_prefix == "Epic (ad hoc): "
     assert epics.ADHOC.labels == ("epic", "ad-hoc")
@@ -2136,6 +2137,7 @@ def test_standing_kinds_table() -> None:
         "planning",
         "deferred",
         "hoshin",
+        "operations",
     ]
 
 
@@ -3066,13 +3068,15 @@ def test_drain_standing_org_covers_only_dotgithub() -> None:
         ("planning", "org/.github", "org"),
         ("deferred", "org/.github", "org"),
         ("hoshin", "org/.github", "org"),
+        ("operations", "org/.github", "org"),
     ]
-    assert len(plans) == 4
+    assert len(plans) == 5
     assert [c.args[:3] for c in mock_apply.call_args_list] == [
         (epics.INTAKE, "org/.github", "org"),
         (epics.PLANNING, "org/.github", "org"),
         (epics.DEFERRED, "org/.github", "org"),
         (epics.HOSHIN, "org/.github", "org"),
+        (epics.OPERATIONS, "org/.github", "org"),
     ]
 
 
@@ -3106,11 +3110,12 @@ def test_drain_standing_org_skips_home_that_raises(capsys: pytest.CaptureFixture
         patch("vergil_tooling.lib.epics.apply_standing_drain") as mock_apply,
     ):
         plans = epics.drain_standing_org("org", apply=True, now=Q4_NOW)  # must NOT raise
-    assert plans == [good, good, good]
+    assert plans == [good, good, good, good]
     assert [c.args for c in mock_apply.call_args_list] == [
         (epics.PLANNING, "org/.github", "org", good),
         (epics.DEFERRED, "org/.github", "org", good),
         (epics.HOSHIN, "org/.github", "org", good),
+        (epics.OPERATIONS, "org/.github", "org", good),
     ]
     assert "skipped intake drain in org/.github: multiple intake epics" in capsys.readouterr().err
 
@@ -3119,7 +3124,14 @@ def test_drain_standing_org_skips_home_that_raises(capsys: pytest.CaptureFixture
 
 
 def test_epic_sentinels_are_the_standing_kinds_sentinels() -> None:
-    assert epics.EPIC_SENTINELS == ("adhoc", "intake", "planning", "deferred", "hoshin")
+    assert epics.EPIC_SENTINELS == (
+        "adhoc",
+        "intake",
+        "planning",
+        "deferred",
+        "hoshin",
+        "operations",
+    )
     assert tuple(k.sentinel for k in epics.STANDING_KINDS) == epics.EPIC_SENTINELS
 
 
@@ -3131,6 +3143,7 @@ def test_epic_sentinels_are_the_standing_kinds_sentinels() -> None:
         ("planning", "ensure_planning_epic"),
         ("deferred", "ensure_deferred_epic"),
         ("hoshin", "ensure_hoshin_epic"),
+        ("operations", "ensure_operations_epic"),
     ],
 )
 def test_resolve_epic_ref_handles_every_sentinel(epic_sentinel: str, ensure: str) -> None:
@@ -3289,7 +3302,7 @@ def test_drain_standing_org_covers_deferred() -> None:
 
     with patch("vergil_tooling.lib.epics.plan_standing_drain", side_effect=fake_plan):
         epics.drain_standing_org("org", apply=False, now=Q4_NOW)
-    assert seen == [epics.INTAKE, epics.PLANNING, epics.DEFERRED, epics.HOSHIN]
+    assert seen == [epics.INTAKE, epics.PLANNING, epics.DEFERRED, epics.HOSHIN, epics.OPERATIONS]
 
 
 # -- HOSHIN standing kind (epic vergil-project/.github#1417) -------------------
@@ -3305,6 +3318,7 @@ def test_hoshin_is_standing_not_queue() -> None:
         epics.PLANNING,
         epics.DEFERRED,
         epics.HOSHIN,
+        epics.OPERATIONS,
     )
     assert (kind.key, kind.sentinel) == ("hoshin", "hoshin")
     assert kind.title_prefix == "Epic (hoshin): "
@@ -3461,6 +3475,127 @@ def test_hoshin_epic_docs_skipped() -> None:
     assert epic_docs.is_skipped("Epic (hoshin): vergil-project", {"epic", "hoshin"})
 
 
+# -- OPERATIONS standing kind (epic vergil-project/.github#1494) ---------------
+
+
+def test_operations_kind_is_standing_not_queue() -> None:
+    kind = epics.OPERATIONS
+    assert kind in epics.STANDING_KINDS
+    assert epics.STANDING_KINDS.index(kind) == epics.STANDING_KINDS.index(epics.HOSHIN) + 1
+    assert kind not in epics.QUEUE_KINDS
+    assert "operations" not in epics.QUEUE_KIND_BY_KEY
+    assert (kind.key, kind.sentinel) == ("operations", "operations")
+    assert kind.title_prefix == "Epic (operations): "
+    assert kind.labels == ("epic", "operations")
+    assert kind.archive_prefix == "Archive (operations): "
+    assert kind.archive_labels == ("archive", "operations")
+    assert "operations" in epics.EPIC_SENTINELS
+    assert epics.standing_kind_of({"epic", "operations"}) is kind
+    assert epics.standing_kind_of({"archive", "operations"}) is None
+    with patch("vergil_tooling.lib.epics._labels", return_value={"epic", "operations"}):
+        assert epics.queue_kind(EPIC) is None
+        assert epics.container_kind(EPIC) == "operations"
+
+
+def test_operations_home_is_org_github() -> None:
+    with patch("vergil_tooling.lib.github.repo_exists", return_value=True) as mock_exists:
+        assert epics.operations_home("acme/widget") == ("acme/.github", "acme")
+    mock_exists.assert_called_once_with("acme", ".github")
+
+
+def test_operations_home_without_dotgithub_raises() -> None:
+    with (
+        patch("vergil_tooling.lib.github.repo_exists", return_value=False),
+        patch("vergil_tooling.lib.epics.ensure_standing_epic") as mock_ens,
+        pytest.raises(epics.EpicHomeError, match=r"has no \.github repository"),
+    ):
+        epics.ensure_operations_epic("someone/widget")
+    mock_ens.assert_not_called()
+
+
+def test_operations_home_repo_without_owner_raises() -> None:
+    with pytest.raises(ValueError, match="cannot resolve repo for operations epic"):
+        epics.operations_home("widget")
+
+
+def test_resolve_operations_sentinel_calls_ensure() -> None:
+    epic = IssueRef("acme", ".github", 31)
+    with (
+        patch("vergil_tooling.lib.epics.ensure_operations_epic", return_value=epic) as mock_ensure,
+        patch("vergil_tooling.lib.epics.qualify_epic_ref") as mock_qualify,
+    ):
+        assert epics.resolve_epic_ref("operations", repo="acme/widget") == epic
+    mock_ensure.assert_called_once_with("acme/widget")
+    mock_qualify.assert_not_called()
+
+
+def test_ensure_operations_epic_creates_in_org_github() -> None:
+    created = "https://github.com/acme/.github/issues/31"
+    with (
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=[[], [{"number": 31, "title": "Epic (operations): acme"}]],
+        ),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_labels,
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
+    ):
+        got = epics.ensure_operations_epic("acme/widget")
+    assert got == IssueRef("acme", ".github", 31)
+    mock_labels.assert_called_once_with("acme/.github", ["epic", "operations", "epic-management"])
+    kwargs = mock_create.call_args.kwargs
+    assert kwargs["repo"] == "acme/.github"
+    assert kwargs["title"] == "Epic (operations): acme"
+    assert kwargs["labels"] == ["epic", "operations", "epic-management"]
+    assert kwargs["body"].startswith("Perpetual operations epic for acme:")
+
+
+def test_ensure_operations_epic_reuses_existing() -> None:
+    existing = IssueRef("acme", ".github", 12)
+    with (
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
+        patch("vergil_tooling.lib.epics._find_epic_by_title", return_value=existing) as mock_find,
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+    ):
+        assert epics.ensure_operations_epic("acme/widget") == existing
+    mock_find.assert_called_once_with(
+        "acme/.github", "Epic (operations): acme", labels=("epic", "operations")
+    )
+    mock_create.assert_not_called()
+
+
+def test_operations_epic_gets_epic_management() -> None:
+    title = "Epic (operations): acme"
+    labels = epics.category_labels(epics.OPERATIONS.labels, title)
+    assert labels == ["epic", "operations", "epic-management"]
+
+
+def test_drain_standing_org_includes_operations() -> None:
+    assert epics.OPERATIONS in epics.DRAINED_STANDING_KINDS
+    seen: list[epics.StandingKind] = []
+
+    def fake_plan(
+        kind: epics.StandingKind, home: str, name: str, *, now: datetime
+    ) -> epics.DrainPlan | None:
+        seen.append(kind)
+        return None
+
+    with patch("vergil_tooling.lib.epics.plan_standing_drain", side_effect=fake_plan):
+        epics.drain_standing_org("acme", apply=False, now=Q4_NOW)
+    assert epics.OPERATIONS in seen
+
+
+def test_archive_title_operations() -> None:
+    title = epics.archive_title(epics.OPERATIONS, "acme", "2026-Q4")
+    assert title == "Archive (operations): acme — 2026-Q4"
+    assert epics.archive_re(epics.OPERATIONS).match(title)
+    assert epics.is_stamped_archive_title(title)
+
+
+def test_operations_epic_docs_skipped() -> None:
+    assert epic_docs.is_skipped("Epic (operations): acme", {"epic", "operations"})
+
+
 def test_rollup_skips_proxy() -> None:
     # A proxy epic lives as long as its primary (vergil-project/.github#1417):
     # with every task closed it stays open, and nothing drains or archives.
@@ -3499,7 +3634,7 @@ def test_epic_category_plain_epic_is_development() -> None:
     assert epics.epic_category({"epic"}, "Epic: X") == "development"
 
 
-@pytest.mark.parametrize("kind", ["intake", "planning", "deferred", "hoshin"])
+@pytest.mark.parametrize("kind", ["intake", "planning", "deferred", "hoshin", "operations"])
 def test_epic_category_each_management_kind(kind: str) -> None:
     assert epics.epic_category({"epic", kind}, f"Epic ({kind}): org") == "management"
 
@@ -3561,13 +3696,20 @@ def test_category_labels_are_in_registry() -> None:
         "Development epic: planned with epic-create, closes when its tasks close"
     )
     assert specs["epic-management"]["description"] == (
-        "Management epic: the intake, planning, deferred or hoshin epic; never auto-closes"
+        "Management epic: the intake, planning, deferred, hoshin or operations epic;"
+        " never auto-closes"
     )
     colours = {specs[name]["color"] for name in ("epic-development", "epic-management")}
     assert len(colours | {specs["ad-hoc"]["color"], specs["proxy"]["color"]}) == 4
 
 
-_MANAGEMENT_KINDS = {epics.INTAKE, epics.PLANNING, epics.DEFERRED, epics.HOSHIN}
+_MANAGEMENT_KINDS = {
+    epics.INTAKE,
+    epics.PLANNING,
+    epics.DEFERRED,
+    epics.HOSHIN,
+    epics.OPERATIONS,
+}
 
 
 @pytest.mark.parametrize("kind", epics.STANDING_KINDS, ids=lambda kind: kind.key)

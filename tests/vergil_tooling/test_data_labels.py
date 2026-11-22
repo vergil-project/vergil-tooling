@@ -58,3 +58,18 @@ def test_epic_size_labels_registered() -> None:
         assert band in entry["description"]
         colors.add(entry["color"])
     assert len(colors) == len(bands), "each epic-size label needs its own shade"
+
+
+def test_operations_labels_registered() -> None:
+    # The operations standing kind (epic vergil-project/.github#1494, spec 5.1).
+    by_name = {entry["name"]: entry for entry in _labels()}
+    assert by_name["operations"]["description"] == (
+        "Perpetual epic of an org's operational issues; never auto-closes"
+    )
+    assert by_name["ops-report"]["description"] == (
+        "Ops issue filed by vrg-ops-report for an unattended job; never auto-closes"
+    )
+    assert by_name["epic-management"]["description"] == (
+        "Management epic: the intake, planning, deferred, hoshin or operations epic;"
+        " never auto-closes"
+    )

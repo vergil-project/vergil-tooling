@@ -302,3 +302,129 @@ def test_proxy_for_needs_full_ref(ref: str, capsys: pytest.CaptureFixture[str]) 
     assert rc == 1
     assert "full 'owner/repo#N' ref" in capsys.readouterr().err
     create.assert_not_called()
+
+
+# -- --standing: ensure an org's standing epic (epic vergil-project/.github#1494) --
+
+_OPS_TITLE = "Epic (operations): acme"
+
+
+def test_ensure_standing_operations_creates_no_task(capsys: pytest.CaptureFixture[str]) -> None:
+    """No operations epic yet: it is created in acme/.github, and nothing else is."""
+    created = "https://github.com/acme/.github/issues/31"
+    with (
+        patch(f"{_MOD}.github.target_org") as mock_scope,
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=[[], [{"number": 31, "title": _OPS_TITLE}]],
+        ),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
+        patch("vergil_tooling.lib.epics.add_child") as mock_add,
+    ):
+        rc = main(["--standing", "operations", "--org", "acme"])
+    assert rc == 0
+    mock_scope.assert_called_once_with("acme")
+    mock_create.assert_called_once()
+    kwargs = mock_create.call_args.kwargs
+    assert kwargs["repo"] == "acme/.github"
+    assert kwargs["title"] == _OPS_TITLE
+    assert kwargs["labels"] == ["epic", "operations", "epic-management"]
+    mock_add.assert_not_called()
+    assert capsys.readouterr().out.strip() == "Operations epic: acme/.github#31"
+
+
+def test_ensure_standing_operations_reuses_existing(capsys: pytest.CaptureFixture[str]) -> None:
+    """An operations epic already open is reused: no create, its ref printed."""
+    with (
+        patch(f"{_MOD}.github.target_org"),
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            return_value=[{"number": 12, "title": _OPS_TITLE}],
+        ),
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+        patch("vergil_tooling.lib.epics.add_child") as mock_add,
+    ):
+        rc = main(["--standing", "operations", "--org", "acme"])
+    assert rc == 0
+    mock_create.assert_not_called()
+    mock_add.assert_not_called()
+    assert capsys.readouterr().out.strip() == "Operations epic: acme/.github#12"
+
+
+@pytest.mark.parametrize("kind", ["intake", "planning", "deferred", "hoshin", "operations"])
+def test_standing_resolves_the_kind_sentinel_in_org_github(kind: str) -> None:
+    epic = IssueRef("acme", ".github", 9)
+    with (
+        patch(f"{_MOD}.github.target_org"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=epic) as mock_resolve,
+    ):
+        assert main(["--standing", kind, "--org", "acme"]) == 0
+    mock_resolve.assert_called_once_with(kind, repo="acme/.github")
+
+
+def test_standing_refuses_adhoc(capsys: pytest.CaptureFixture[str]) -> None:
+    # The ad-hoc epic is per repo (vrg-adhoc-epic ensure), not an org epic.
+    with pytest.raises(SystemExit):
+        parse_args(["--standing", "adhoc", "--org", "acme"])
+    assert "invalid choice" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--title", "T"],
+        ["--body", "B"],
+        ["--body-file", "f"],
+        ["--label", "x"],
+        ["--assignee", "a"],
+        ["--repo", "acme/widget"],
+    ],
+)
+def test_standing_refuses_derived_flags(
+    extra: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    with patch(f"{_MOD}.epics.resolve_epic_ref") as mock_resolve:
+        rc = main(["--standing", "operations", "--org", "acme", *extra])
+    assert rc == 1
+    assert extra[0] in capsys.readouterr().err
+    mock_resolve.assert_not_called()
+
+
+@pytest.mark.parametrize("org", [[], ["--org", ""], ["--org", "acme/widget"]])
+def test_standing_needs_org(org: list[str], capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.epics.resolve_epic_ref") as mock_resolve:
+        rc = main(["--standing", "operations", *org])
+    assert rc == 1
+    assert "needs --org ORG" in capsys.readouterr().err
+    mock_resolve.assert_not_called()
+
+
+def test_standing_and_proxy_for_are_exclusive(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.epics.resolve_epic_ref") as mock_resolve,
+        patch(f"{_MOD}.proxies.create_proxy") as mock_proxy,
+    ):
+        rc = main(["--standing", "operations", "--org", "acme", "--proxy-for", "a/.github#1"])
+    assert rc == 1
+    assert "exclusive" in capsys.readouterr().err
+    mock_resolve.assert_not_called()
+    mock_proxy.assert_not_called()
+
+
+def test_org_without_standing_refused(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.github.create_issue") as mock_create:
+        rc = main(["--title", "T", "--org", "acme"])
+    assert rc == 1
+    assert "--org is only for --standing" in capsys.readouterr().err
+    mock_create.assert_not_called()
+
+
+def test_proxy_for_refuses_org(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.proxies.create_proxy") as mock_proxy:
+        rc = main([*_PROXY_ARGS, "--org", "acme"])
+    assert rc == 1
+    assert "--org" in capsys.readouterr().err
+    mock_proxy.assert_not_called()

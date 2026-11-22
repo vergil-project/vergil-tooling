@@ -718,8 +718,10 @@ ruleset rule), a branch with no PR, or a branch whose name was reused
 Create an issue and link it under an epic (a native sub-issue) in one step.
 It is the sanctioned issue-creation path: `vrg-gh` denies raw
 `gh issue create`. `--epic` takes `adhoc`, `intake`, `planning`, `hoshin`
-(the org's hoshin epic, always in `<org>/.github`), `#N` (read against the
-target repo's epic home) or `owner/repo#N`. `--kind` stamps an
+(the org's hoshin epic, always in `<org>/.github`), `operations` (the org's
+operations epic, `Epic (operations): <org>`, also always in `<org>/.github`
+and created on first use), `#N` (read against the target repo's epic home) or
+`owner/repo#N`. `--kind` stamps an
 operational (`validation`, `deployment`) or `retrospective` label and body
 scaffold, and `--blocked-by` stamps a `Blocked-by:` reference. With
 `--kind validation` or `--kind deployment`, `--body-file` fills the scaffold
@@ -794,8 +796,8 @@ target's `<org>/.github`.
 The sanctioned path for creating epics, used by the `epic-create` skill.
 
 The epic also gets its **category label**, derived from its other labels:
-`epic-management` for an intake, planning, deferred or hoshin epic (`--label
-intake` and so on), `epic-development` for a plain epic, and nothing more for
+`epic-management` for an intake, planning, deferred, hoshin or operations
+epic (`--label intake` and so on), `epic-development` for a plain epic, and nothing more for
 an ad-hoc epic, whose `ad-hoc` label is its category label. Every label is
 created in the home from the label registry before the epic is. It refuses,
 creating nothing, a `--label epic-development` or `--label epic-management`
@@ -820,13 +822,24 @@ epic, a proxy, an archive or a closed epic). It reads and writes each org
 under that org's App token. The title and body are derived, so it takes no
 `--title`, `--body`, `--body-file`, `--label` or `--assignee`.
 
+`--standing KIND --org ORG` instead ensures ORG's standing epic of that kind
+in `ORG/.github`, where `KIND` is `intake`, `planning`, `deferred`, `hoshin` or
+`operations`: it creates the epic if absent (titled `Epic (<kind>): ORG`,
+labelled `epic`, the kind and `epic-management`) and reuses it otherwise, then
+prints `<Kind> epic: ORG/.github#N`. It creates no task. It takes the same path
+as `vrg-issue-create --epic KIND` on first use, under ORG's App token. The
+title, body, labels and home are derived, so it takes no `--title`, `--body`,
+`--body-file`, `--label`, `--assignee` or `--repo`, and it is refused with
+`--proxy-for`. The ad-hoc epic is per repo: `vrg-adhoc-epic ensure` provisions
+it.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_epic_create` |
-| Args | `--title` (required unless `--proxy-for`), `--body` / `--body-file`, `--repo OWNER/NAME`, `--label` (repeatable), `--assignee` (repeatable), `--proxy-for OWNER/REPO#N` (needs `--repo`) |
+| Args | `--title` (required unless `--proxy-for` or `--standing`), `--body` / `--body-file`, `--repo OWNER/NAME`, `--label` (repeatable), `--assignee` (repeatable), `--proxy-for OWNER/REPO#N` (needs `--repo`), `--standing {intake,planning,deferred,hoshin,operations}` (needs `--org`), `--org ORG` (`--standing` only) |
 | Preconditions | GitHub App credentials for the target org (with `--proxy-for`, for both orgs) |
-| Failure mode | Error on stderr; a refused label set writes nothing, a failed label create creates no epic, and a `--proxy-for` refusal or link error writes nothing |
-| Exit codes | 0 created (or, with `--proxy-for`, ensured), 1 error or refusal |
+| Failure mode | Error on stderr; a refused label set writes nothing, a failed label create creates no epic, a `--proxy-for` refusal or link error writes nothing, and a `--standing` refusal (a flag it derives, no `--org`, or an org with no `.github`) writes nothing; two open standing epics with the same title, or a new one that is not listed in time, is an error naming them |
+| Exit codes | 0 created (or, with `--proxy-for` or `--standing`, ensured), 1 error or refusal |
 | Status | Active |
 
 ### vrg-epic-docs
@@ -850,7 +863,7 @@ epic is created and at each docs PR handoff.
 
 `backfill --org ORG` writes the section on every epic of the org's
 `.github`, open and closed. It skips the standing
-epics (ad hoc, intake, planning, deferred, hoshin, the retired `standing`
+epics (ad hoc, intake, planning, deferred, hoshin, operations, the retired `standing`
 label, and titles starting `Epic (standing):`), proxy epics and `[archived]`
 epics. For each epic it
 looks for the documents, in order:
@@ -907,8 +920,8 @@ reflink-only children. A bare `#N` epic ref resolves to the task's epic home.
 ### vrg-epic-move
 
 Move a task under a different epic (unlink, then link). `--epic` accepts
-`adhoc`, `intake`, `planning`, `hoshin`, `#N` or `owner/repo#N`, read against
-the task's repo. Moving a task already under the target is a no-op. The deferred
+`adhoc`, `intake`, `planning`, `hoshin`, `operations`, `#N` or
+`owner/repo#N`, read against the task's repo. Moving a task already under the target is a no-op. The deferred
 queue is entered and left only through `vrg-intake-route`, so this refuses
 it.
 
@@ -1648,8 +1661,8 @@ stderr and no JSON, so the retrospective gate stops on it.
    proxy that still has an open task is reported and left open, never closed
    silently. Then reopen each epic closed while a child was still open. Each
    close and reopen carries an explanatory comment.
-2. Drain the closed children of the ad-hoc, intake, planning, deferred and
-   hoshin epics into per-quarter archives, and close past archives (see
+2. Drain the closed children of the ad-hoc, intake, planning, deferred, hoshin
+   and operations epics into per-quarter archives, and close past archives (see
    [Ad-hoc epic archiving](../standards/github-issues.md#ad-hoc-epic-archiving)).
 3. Run the [orphan pass](../standards/github-issues.md#the-orphan-pass-auto-heal):
    nativize body-only `Parent:` links, strip the retired kind labels, and
