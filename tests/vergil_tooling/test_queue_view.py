@@ -235,17 +235,16 @@ def _planning(
     views: dict[int, dict[str, Any]],
     states: dict[int, str] | None = None,
     *,
-    dotgithub: str | None = None,
+    dotgithub: bool = False,
 ) -> list[QueueItem]:
-    """Run the planning view; *dotgithub* is the org ``.github``'s visibility, None if absent."""
+    """Run the planning view; *dotgithub* is whether the org ``.github`` exists."""
     children = [ChildState(IssueRef("org", ".github", n), "OPEN", "") for n in views]
     gh = _fake_gh(views, states)
     with (
         patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC) as find,
         patch(f"{_MOD}.epics.child_states", return_value=children),
         patch(f"{_MOD}.github.read_json", side_effect=gh),
-        patch(f"{_MOD}.github.repo_exists", return_value=dotgithub is not None),
-        patch(f"{_MOD}.github.is_public", return_value=dotgithub == "PUBLIC"),
+        patch(f"{_MOD}.github.repo_exists", return_value=dotgithub),
     ):
         items = queue_view.planning_items("org/.github", "org")
     find.assert_called_once_with(epics.PLANNING, "org/.github", "org")
@@ -488,7 +487,7 @@ def _security_planning(
     advisories: list[Advisory],
     states: dict[int, str] | None = None,
     *,
-    dotgithub: str | None = "PUBLIC",
+    dotgithub: bool = True,
 ) -> tuple[list[QueueItem], Any, Any]:
     with (
         patch(f"{_MOD}.security_records.advisory_home", return_value="org/.github") as home,
@@ -709,7 +708,7 @@ def test_tracking_line_holds_an_item_with_no_advisory_line() -> None:
     assert by_number[8].note == _HELD_NOTE.replace("'org/.github#5'", "'org/.github#8'")
 
 
-def test_no_advisory_lines_still_lists_a_public_home() -> None:
+def test_no_advisory_lines_still_lists_an_existing_home() -> None:
     views = {5: _ready_view(body="Mentions Security advisory: org/.github GHSA-x inline.")}
     items, home, listing = _security_planning(views, [_advisory(_GHSA, _PLAN)])
     assert [(i.state, i.note) for i in items] == [("in-progress", _HELD_NOTE)]
@@ -717,11 +716,10 @@ def test_no_advisory_lines_still_lists_a_public_home() -> None:
     listing.assert_called_once_with("org/.github")
 
 
-@pytest.mark.parametrize("dotgithub", [None, "PRIVATE", "INTERNAL"])
-def test_no_advisory_lines_and_no_public_home_lists_nothing(dotgithub: str | None) -> None:
-    # Security records live only in a public org .github, so there is none to list.
+def test_no_advisory_lines_and_no_dotgithub_lists_nothing() -> None:
+    # Security records live only in the org .github, so there is none to list.
     views = {5: _ready_view(body="An ordinary planning issue.")}
-    items, home, listing = _security_planning(views, [], dotgithub=dotgithub)
+    items, home, listing = _security_planning(views, [], dotgithub=False)
     assert [i.state for i in items] == ["ready-to-close"]
     home.assert_not_called()
     listing.assert_not_called()

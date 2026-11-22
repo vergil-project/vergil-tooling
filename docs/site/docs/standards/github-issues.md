@@ -198,9 +198,8 @@ tools find and test standing epics by the labels in the table alone.
 
 Intake, planning and deferred are the three **queue epics**. Their **queue
 home** follows the [epic-home rule](#epic-home-the-orggithub-rule): every
-public repo shares the org's set in `<org>/.github` (`<name>` is the org),
-while a **private** repo self-homes its own set (`<name>` is the repo), so
-private work never surfaces in a public issue. `vrg-issue-create --epic`
+repo shares the org's set in `<org>/.github` (`<name>` is the org).
+`vrg-issue-create --epic`
 accepts `adhoc`, `intake`, `planning` and `hoshin` as sentinels that resolve
 (creating if absent) the target repo's standing epic of that kind. It refuses
 `deferred`, as does `vrg-epic-move`: an item enters and leaves the deferred
@@ -209,8 +208,7 @@ queue only through `vrg-intake-route`, which records the deferral (see
 
 The **hoshin epic** is not a queue: its tasks are PR-workable, but only
 `/vergil:hoshin` files and works them, so no queue processor picks them up.
-It is homed in `<org>/.github` whatever the target repo's visibility, and
-named for the org. Only `vrg-issue-create` (hoshin's filing) and
+It is homed in `<org>/.github`, like the queues, and named for the org. Only `vrg-issue-create` (hoshin's filing) and
 `vrg-epic-move` accept the `hoshin` sentinel; `vrg-intake-route` refuses a
 one-off into the hoshin epic, by sentinel or by ref. Its closed children
 drain into per-quarter `Archive (hoshin): <org>` archives like the other
@@ -307,8 +305,8 @@ ad-hoc epic ends up holding only its still-open children.
 
 - **Archives** are titled `Archive (ad hoc): <repo> — <YYYY>-Q<n>` (the
   separator is a space, an em-dash `—`, and a space). They live in the same
-  resolved home as the live epic and carry the `archive` + `ad-hoc` labels. The
-  `archive` label replaced the `epic` label these buckets used to carry (`ad-hoc`
+  home as the live epic, `<org>/.github`, and carry the `archive` +
+  `ad-hoc` labels. The `archive` label replaced the `epic` label these buckets used to carry (`ad-hoc`
   is kept), so terminal per-quarter buckets no longer clutter `label:epic`
   views; only the live `Epic (ad hoc): <repo>` epic keeps `epic` + `ad-hoc`.
 - **Bucketing is by close quarter.** Each closed child is re-parented into the
@@ -355,12 +353,12 @@ vrg-adhoc-epic archive --repo <owner>/<repo>
 # Apply the moves and closes.
 vrg-adhoc-epic archive --repo <owner>/<repo> --apply
 
-# Visibility-aware sweep across every repo in an org.
+# Sweep across every repo in an org.
 vrg-adhoc-epic archive --all-in <ORG> --apply
 ```
 
 `--repo` targets a single repo; `--all-in <ORG>` sweeps every repo in the org,
-resolving each repo's ad-hoc home by visibility. Without `--apply` the command
+each repo's ad-hoc epic in `<org>/.github`. Without `--apply` the command
 mutates nothing.
 
 `--all-in` (here and for `normalize`) first checks that the identity in use can
@@ -385,9 +383,8 @@ vrg-adhoc-epic normalize --all-in <ORG>
 vrg-adhoc-epic normalize --all-in <ORG> --apply
 ```
 
-It sweeps every repo's resolved home, so it covers both the centrally-homed
-archives of public repos and the self-homed archives of private ones, and it
-converts both open and closed archives. It is **idempotent** — an
+It scans `<org>/.github`, the home of every repo's archives, and it converts
+both open and closed archives. It is **idempotent** — an
 already-converted archive is new-form and is skipped — so it is safe to re-run
 and doubles as a straggler net. The creation path is also self-healing: the next
 time the drain touches a quarter whose archive is still in legacy form, it heals
@@ -578,21 +575,14 @@ hand-written `Documents:`, `Spec:`, `Plan:` and `Retrospective:` lines.
 
 ### Epic home (the `<org>/.github` rule)
 
-An epic's home repo is derived from repository visibility:
+Every repo homes its epics and queues centrally in the org's `.github`. An
+owner with **no** `.github` at all (typically a personal account) has no
+home: the tools refuse up front, naming the `<org>/.github` repository to
+create. Only GitHub's "repository does not exist" answer counts as no
+`.github`; any other failure to check for it is an error.
 
-- A **public** repo homes its epics centrally in the org's `.github`.
-- A **private** repo (with a public `.github`) homes its epics **in itself**.
-- A **private** `.github` means the whole org is private, so everything homes in
-  `.github`.
-- A **private** repo whose owner has **no** `.github` at all (typically a
-  personal account) homes its epics **in itself**: there is no central home.
-  Only GitHub's "repository does not exist" answer counts as no `.github`; any
-  other failure to read its visibility is an error.
-
-Ad-hoc epics follow the same rule — `Epic (ad hoc): <repo>` lives in the repo's
-resolved home. See
-[Epic home visibility flips](../guides/epic-home-visibility-flip.md) for
-relocating epics when a repo's visibility changes.
+Ad-hoc epics follow the same rule — `Epic (ad hoc): <repo>` lives in the
+org's `.github`.
 
 ### Compliance invariants
 
@@ -619,9 +609,8 @@ relocating epics when a repo's visibility changes.
   in a repo that has since become public.
 - **No private work under public epics.** An issue in a private repo parented
   under a public `.github` epic is reported as a likely unsupported
-  public → private flip, for a human to resolve (see
-  [Epic home visibility flips](../guides/epic-home-visibility-flip.md)). Tooling
-  never migrates or retracts it.
+  public → private flip, for a human to resolve. Tooling never migrates or
+  retracts it.
 - **An archive stands top-level, labelled `archive`.** An open archive (an
   `archive` label, or a stamped `Archive (<kind>): <name> — <YYYY>-Qn` title)
   with a native parent, one whose stamped title lacks the `archive` label, or
@@ -727,9 +716,8 @@ item, with no category to choose. Create one with the sanctioned tool (the
 vrg-intake-create --title "<what>" [--body TEXT | --body-file PATH]
 ```
 
-The issue is filed in the current repo's queue home — `<org>/.github` for a
-public repo, the repo itself for a private one (override with `--repo`) — and is
-linked under that home's intake epic as it is created; there is no unlinked
+The issue is filed in the current repo's queue home, `<org>/.github` (override
+with `--repo`), and is linked under that home's intake epic as it is created; there is no unlinked
 path.
 
 ### Viewing the queues: `vrg-queue`
@@ -744,8 +732,8 @@ vrg-queue hoshin    # open tasks under the org's hoshin epic
 ```
 
 It defaults to the current org's `.github` queues; `--repo <owner>/<repo>`
-selects that repo's queue home (a self-homed private repo's own queues), and
-`--json` emits machine-readable output. It is read-only.
+selects that repo's org's queues (and narrows `adhoc` and `hoshin` to the
+repo), and `--json` emits machine-readable output. It is read-only.
 
 Planning and deferred items show their [epic size](#epic-size) (`M/14`, `?` unsized, `!` in
 error). `vrg-queue planning --sort size` (or `tasks`) puts the small end of the

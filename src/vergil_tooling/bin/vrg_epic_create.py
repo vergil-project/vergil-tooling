@@ -4,10 +4,9 @@ Epics are top-level (no parent), labelled ``epic`` plus the derived category
 label (:func:`vergil_tooling.lib.epics.category_labels`): ``epic-development``
 for a plain epic, ``epic-management`` for a queue or hoshin epic, none beyond
 ``ad-hoc`` for an ad-hoc one. The *home* — the repo where
-the epic issue physically lives — is derived from the target repo's visibility
-by :func:`vergil_tooling.lib.epics.resolve_epic_home`: a public target homes
-centrally in ``<org>/.github``; a private target (with a public ``.github``)
-homes its epics in itself. The target defaults to the current repo but is named
+the epic issue physically lives — is the target's ``<org>/.github``
+(:func:`vergil_tooling.lib.epics.resolve_epic_home`). The target defaults to
+the current repo but is named
 explicitly with ``--repo``. This is the sanctioned path for creating epics —
 ``vrg-gh`` denies raw ``gh issue create`` — used by the ``epic-create`` skill.
 
@@ -62,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     # issue-create, #2070). Without this a cross-org epic mints the token for the
     # wrong org and either fails to write or misreports the epic's location (#2722).
     with github.target_org(owner):
-        print(f"-> epic home: {home} [{github.repo_visibility(home)}]")
+        print(f"-> epic home: {home}")
         if not ensure_labels_or_report("vrg-epic-create", home, labels):
             return 1
         url = github.create_issue(
@@ -141,8 +140,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="vrg-epic-create",
         description=(
             "Create a top-level epic labelled 'epic' with no parent. The epic "
-            "home is derived from the target repo's visibility: a public target "
-            "homes in <org>/.github, a private target homes in itself."
+            "home is the target repo's <org>/.github."
         ),
         epilog=(
             "Extra --label values are added alongside 'epic' (e.g. --label "
@@ -163,7 +161,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--repo",
         help=(
             "Target repo 'owner/repo' the epic is for (default: current repo). "
-            "The epic home is derived from the target's visibility."
+            "The epic home is the target's <org>/.github."
         ),
     )
     parser.add_argument(

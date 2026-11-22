@@ -34,11 +34,10 @@ def test_title_required_without_proxy_for(capsys: pytest.CaptureFixture[str]) ->
     mock_create.assert_not_called()
 
 
-def test_default_target_is_current_repo_public_goes_to_dotgithub() -> None:
+def test_default_target_is_current_repo_goes_to_dotgithub() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github") as home,
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
     ):
         rc = main(["--title", "Epic: X", "--body", "B"])
@@ -58,7 +57,6 @@ def test_main_scopes_token_to_target_owner() -> None:
     with (
         patch(f"{_MOD}.github.target_org") as mock_scope,
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="other-org/.github"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
     ):
         rc = main(["--repo", "other-org/repo", "--title", "T"])
@@ -66,33 +64,19 @@ def test_main_scopes_token_to_target_owner() -> None:
     mock_scope.assert_called_once_with("other-org")
 
 
-def test_explicit_private_target_homes_in_self() -> None:
-    with (
-        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/lab") as home,
-        patch(f"{_MOD}.github.repo_visibility", return_value="PRIVATE"),
-        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-    ):
-        rc = main(["--repo", "org/lab", "--title", "T"])
-    assert rc == 0
-    home.assert_called_once_with("org", "lab")
-    assert mock_create.call_args.kwargs["repo"] == "org/lab"
-
-
 def test_prints_resolved_home(capsys: pytest.CaptureFixture[str]) -> None:
     with (
-        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/lab"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PRIVATE"),
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
     ):
         main(["--repo", "org/lab", "--title", "T"])
-    assert "epic home: org/lab [PRIVATE]" in capsys.readouterr().out
+    assert "-> epic home: org/.github\n" in capsys.readouterr().out
 
 
 def test_adds_extra_labels() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
     ):
         rc = main(["--title", "T", "--label", "ad-hoc"])
@@ -104,7 +88,6 @@ def test_dedups_epic_label() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
     ):
         main(["--title", "T", "--label", "epic"])
@@ -118,7 +101,6 @@ def _create(argv: list[str]) -> tuple[int, MagicMock]:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
     ):
         rc = main(argv)
@@ -169,7 +151,6 @@ def test_ensures_labels_before_create(_ensure_labels_ok: MagicMock) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(
             f"{_MOD}.github.create_issue",
             side_effect=lambda **_kwargs: calls.append("create") or _URL,

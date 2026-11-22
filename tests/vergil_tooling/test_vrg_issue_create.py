@@ -852,102 +852,65 @@ def test_main_scopes_token_to_repo_owner() -> None:
     mock_cur.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    ("repo", "public", "expected_epic"),
-    [
-        # Public target: its epics home in <org>/.github.
-        ("org/tooling", {"org/tooling", "org/.github"}, epics.IssueRef("org", ".github", 407)),
-        # Private target with a public .github: its epics home in the repo itself.
-        ("org/lab", {"org/.github"}, epics.IssueRef("org", "lab", 407)),
-    ],
-)
-def test_main_bare_epic_resolves_against_target_epic_home(
-    repo: str, public: set[str], expected_epic: epics.IssueRef
-) -> None:
+def test_main_bare_epic_resolves_against_target_epic_home() -> None:
     """A bare '--epic #N' reads against --repo's epic home, not the cwd repo (#3411).
 
-    The visibility probes run under the --repo owner's App token.
+    The home's existence check runs under the --repo owner's App token.
     """
-    seen_orgs: list[str | None] = []
+    seen: list[tuple[str, str, str | None]] = []
 
-    def is_public(nwo: str) -> bool:
-        seen_orgs.append(github._target_org.get())
-        return nwo in public
-
-    owner, name = repo.split("/", 1)
-    with (
-        patch(f"{_MOD}.github.current_repo", return_value="cwd-org/elsewhere"),
-        patch("vergil_tooling.lib.github.is_public", side_effect=is_public),
-        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
-        patch(f"{_MOD}.github.create_issue", return_value=f"https://github.com/{repo}/issues/9"),
-        patch(f"{_MOD}.epics.add_child") as mock_add,
-    ):
-        rc = main(["--repo", repo, "--epic", "#407", "--title", "T"])
-    assert rc == 0
-    mock_add.assert_called_once_with(expected_epic, epics.IssueRef(owner, name, 9))
-    assert seen_orgs
-    assert set(seen_orgs) == {"org"}
-
-
-def _personal_account_probe(dotgithub_error: str) -> object:
-    """A visibility probe for a private personal repo whose owner's .github fails."""
-
-    def is_public(nwo: str) -> bool:
-        if nwo == "owner/.github":
-            raise github.GitHubAPIError(1, ["gh", "repo", "view"], "", dotgithub_error)
-        return False
-
-    return is_public
-
-
-def test_main_personal_repo_without_dotgithub_self_homes() -> None:
-    """A private repo whose owner has no .github links under its own epic (#3603)."""
-    probe = _personal_account_probe("GraphQL: Could not resolve to a Repository")
-    with (
-        patch("vergil_tooling.lib.github.is_public", side_effect=probe),
-        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
-        patch(
-            f"{_MOD}.github.create_issue", return_value="https://github.com/owner/notes/issues/9"
-        ),
-        patch(f"{_MOD}.epics.add_child") as mock_add,
-    ):
-        rc = main(["--repo", "owner/notes", "--epic", "#4", "--title", "T"])
-    assert rc == 0
-    mock_add.assert_called_once_with(
-        epics.IssueRef("owner", "notes", 4), epics.IssueRef("owner", "notes", 9)
-    )
-
-
-def test_main_public_repo_without_dotgithub_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
-    """A public repo whose owner has no .github fails up front, creating nothing (#3643)."""
-
-    def is_public(nwo: str) -> bool:
-        if nwo == "owner/.github":
-            raise github.GitHubAPIError(
-                1, ["gh", "repo", "view"], "", "GraphQL: Could not resolve to a Repository"
-            )
+    def exists(owner: str, name: str) -> bool:
+        seen.append((owner, name, github._target_org.get()))
         return True
 
     with (
-        patch("vergil_tooling.lib.github.is_public", side_effect=is_public),
+        patch(f"{_MOD}.github.current_repo", return_value="cwd-org/elsewhere"),
+        patch("vergil_tooling.lib.github.repo_exists", side_effect=exists),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch(f"{_MOD}.github.create_issue", return_value="https://github.com/org/lab/issues/9"),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--repo", "org/lab", "--epic", "#407", "--title", "T"])
+    assert rc == 0
+    mock_add.assert_called_once_with(
+        epics.IssueRef("org", ".github", 407), epics.IssueRef("org", "lab", 9)
+    )
+    assert seen == [("org", ".github", "org")]
+
+
+def _dotgithub_probe(error: str) -> object:
+    """A repo_visibility fake whose ``owner/.github`` lookup fails with *error*."""
+
+    def visibility(nwo: str) -> str:
+        if nwo == "owner/.github":
+            raise github.GitHubAPIError(1, ["gh", "repo", "view"], "", error)
+        return "PUBLIC"
+
+    return visibility
+
+
+def test_main_repo_without_dotgithub_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
+    """A repo whose owner has no .github fails up front, creating nothing (#3643)."""
+    probe = _dotgithub_probe("GraphQL: Could not resolve to a Repository")
+    with (
+        patch("vergil_tooling.lib.github.repo_visibility", side_effect=probe),
         patch(f"{_MOD}.github.create_issue") as mock_create,
         pytest.raises(SystemExit) as excinfo,
     ):
         main(["--repo", "owner/site", "--epic", "#4", "--title", "T"])
     assert excinfo.value.code == 1
     assert capsys.readouterr().err == (
-        "vrg-issue-create: owner/site is public, so its epics and queues live in "
-        "owner/.github, which does not exist; create the owner/.github repository "
-        "and try again\n"
+        "vrg-issue-create: the epics and queues of owner/site live in owner/.github, "
+        "which does not exist; create the owner/.github repository and try again\n"
     )
     mock_create.assert_not_called()
 
 
 def test_main_epic_home_api_error_is_a_clean_failure(capsys: pytest.CaptureFixture[str]) -> None:
-    """Any other probe failure exits 1 with a one-line message, creating nothing."""
-    probe = _personal_account_probe("HTTP 502: Bad Gateway")
+    """Any other failed home check exits 1 with a one-line message, creating nothing."""
+    probe = _dotgithub_probe("HTTP 502: Bad Gateway")
     with (
-        patch("vergil_tooling.lib.github.is_public", side_effect=probe),
+        patch("vergil_tooling.lib.github.repo_visibility", side_effect=probe),
         patch(f"{_MOD}.github.create_issue") as mock_create,
         pytest.raises(SystemExit) as excinfo,
     ):

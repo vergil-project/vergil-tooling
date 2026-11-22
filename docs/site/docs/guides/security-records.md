@@ -651,9 +651,6 @@ each of these by hand:
       (`vrg-security-record create --issue`), and label each fixed one
       `security-disclosed`.
 
-The repo's epics move separately; see
-[Epic Home Visibility Flips](epic-home-visibility-flip.md).
-
 ## Accepted trade-offs
 
 - **Advisory states lag their issues.** No scheduled job syncs them:

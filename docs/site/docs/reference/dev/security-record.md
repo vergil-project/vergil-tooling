@@ -56,8 +56,8 @@ advisory.
   vrg-security-record: <org>/.github is not public; security records need a public org .github (private orgs are unsupported)
   ```
 
-- The issue is created in the affected repo's queue home (`<org>/.github`
-  for a public repo, the repo itself for a private one) and linked under
+- The issue is created in the affected repo's queue home, `<org>/.github`,
+  and linked under
   that home's intake epic, which is created if absent.
 
 Every run scopes its GitHub App token to `<org>`. In human mode the

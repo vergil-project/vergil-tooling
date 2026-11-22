@@ -36,9 +36,9 @@ reason and the run exits 1. A bare text run still lists the queues it could
 read; a bare ``--json`` run prints nothing on stdout, so a partial object is
 never taken for the whole.
 
-The default home is the current org's ``.github`` pair; ``--repo OWNER/REPO``
-selects that repo's queue home, which for a self-homed private repo is its own
-queue. Nothing is created or changed.
+The home is always an org's ``.github``, which must exist: by default the
+current org's, and with ``--repo OWNER/REPO`` that repo's org's. Nothing is
+created or changed.
 
 ``vrg-queue adhoc`` lists the open tasks under every live ad-hoc epic in the
 home, grouped by repo and oldest first, each with its kind, its open
@@ -48,15 +48,14 @@ task also shows its marks and its disposition, handed-off or resume (see
 main clone under the repo roots (``--root DIR``, repeatable, or the platform
 default), and a repo with open ad-hoc tasks but no clone there is an error. It
 is not a review queue, so a bare ``vrg-queue`` never shows it. With
-``--repo``, a public repo narrows the list to its own ad-hoc epic in the org's
-``.github`` (none gives an empty list), and a self-homed private repo selects
-its own home.
+``--repo``, the list narrows to that repo's own ad-hoc epic in the org's
+``.github`` (none gives an empty list).
 
 ``vrg-queue hoshin`` lists the open tasks under the org's ``Epic (hoshin):
 <org>`` epic, the tasks ``/vergil:hoshin`` files, in the ad-hoc form, with the
-same flags (``--json``, ``--repo``, ``--root``). Its home is always the org's
-``.github``, never a self-homed private repo; with ``--repo``, only the epic's
-tasks in that repo are listed. An org with no hoshin epic yet gives an empty
+same flags (``--json``, ``--repo``, ``--root``). Its home is the org's
+``.github``; with ``--repo``, only the epic's tasks in that repo are listed.
+An org with no hoshin epic yet gives an empty
 list. A bare ``vrg-queue`` never shows it.
 """
 
@@ -152,10 +151,8 @@ def main(argv: list[str] | None = None) -> int:
     failures: dict[str, Exception] = {}
     # Scope the App token to the target's owner, not the cwd org (#3409).
     with github.target_org(owner):
-        if args.repo is None:
-            # The org-wide default needs <owner>/.github to exist (#3613).
-            epics.require_org_home(owner)
-        home, name = epics.queue_home(target)
+        # The queues live in <owner>/.github, which must exist (#3613).
+        home, name = epics.require_org_home(owner), owner
         if args.queue is not None:
             try:
                 items = _VIEWS[args.queue](home, name)
@@ -226,25 +223,14 @@ def _tasks(
 ) -> int:
     """Show the ad-hoc or hoshin tasks (*view*): the org's, or one ``owner/name`` *repo*'s.
 
-    Without *repo* the home is the org's ``.github``, which must exist. With
-    it, an ad-hoc home is the repo's epic home: the org's ``.github`` for a
-    public repo, narrowed to its own ad-hoc epic, or a self-homed private repo
-    itself. A hoshin home is always the org's ``.github``
-    (:func:`epics.hoshin_home`), its epic's children narrowed to *repo*.
-    *roots* (``--root``) replace the platform's repo roots for the clones the
-    in-flight marks are read from.
+    The home is the org's ``.github``, which must exist. With *repo*, the
+    ad-hoc view narrows to that repo's own ad-hoc epic, and the hoshin view
+    to the hoshin epic's children in *repo*. *roots* (``--root``) replace the
+    platform's repo roots for the clones the in-flight marks are read from.
     """
     with github.target_org(owner):
-        if repo is None:
-            home = epics.require_org_home(owner)
-            name = owner
-        else:
-            name = repo.split("/", 1)[1]
-            home = (
-                epics.hoshin_home(repo)[0]
-                if view == _HOSHIN
-                else epics.resolve_epic_home(owner, name)
-            )
+        home = epics.require_org_home(owner)
+        name = owner if repo is None else repo.split("/", 1)[1]
         try:
             read = queue_view.hoshin_items if view == _HOSHIN else queue_view.adhoc_items
             items = read(home, repo=repo, roots=roots)
@@ -316,10 +302,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--repo",
         help=(
-            "Show this repo's queue home (owner/name); a self-homed private repo "
-            "has its own queues. With adhoc, a public repo narrows the list to "
-            "its own ad-hoc epic; with hoshin, the org's hoshin epic is narrowed "
-            "to the repo's tasks. Default: the current org's .github queues."
+            "Show the queues of this repo's org (owner/name), in its .github. "
+            "With adhoc, the list narrows to the repo's own ad-hoc epic; with "
+            "hoshin, the org's hoshin epic is narrowed to the repo's tasks. "
+            "Default: the current org's .github queues."
         ),
     )
     parser.add_argument(
