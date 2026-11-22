@@ -1455,9 +1455,7 @@ def render(
     ):
         lines += ["", "## Invariant violations (issues in the wrong place)", ""]
         if epics_outside:
-            lines.append(
-                "**Epics outside `.github`** — move each to the org's `.github`:"
-            )
+            lines.append("**Epics outside `.github`** — move each to the org's `.github`:")
             lines += [f"- {slug}" for slug in sorted(epics_outside)]
         if stray:
             lines.append("**Stray `.github` issues** — not an epic, intake, or linked task:")

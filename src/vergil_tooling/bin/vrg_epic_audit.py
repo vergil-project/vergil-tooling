@@ -244,8 +244,8 @@ def _apply_orphan_pass(org: str, issues: list[epic_audit.OpenIssue]) -> int:
 
     Order: nativize body-only ``Parent:`` links -> strip retired kind labels ->
     attach orphans to intake. Every write runs under the org's token that
-    main() scopes the whole audit to. A full queue epic stops the pass with the unlinked items on stderr and exit 1 —
-    never a silent skip.
+    main() scopes the whole audit to. A full queue epic stops the pass with the
+    unlinked items on stderr and exit 1 — never a silent skip.
     """
     nativized = epic_audit.nativize_parents(epic_audit.body_only_parents(org, issues=issues))
     print(f"Body-only Parent: links nativized: {nativized}.")
@@ -269,8 +269,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "non-perpetual epics whose children are all closed, and issues in "
             "the wrong place (epics outside .github; stray .github issues; "
             "orphans with no epic parent), and each epic's Documents section "
-            "(present and well formed; on a closed epic, nothing pending and every link naming a file; "
-            "checked only without --close). "
+            "(present and well formed; on a closed epic, nothing pending and "
+            "every link naming a file; checked only without --close). "
             "Read-only by default; pass --close (as a human) to close the drift "
             "it finds (invariant violations are report-only)."
         ),
