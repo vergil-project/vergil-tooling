@@ -224,12 +224,14 @@ stages not recorded done.
 A failed stage holds back only the stages that need it; no stage is
 optional:
 
-- `promote` and `finalize` need only the stages through
-  `confirm-develop`.
+- `promote`, `cd-publish` and `finalize` need only the stages through
+  `confirm-develop`. `cd-publish` delivers the jobs the confirm stages
+  record, so it waits for `confirm-develop` to succeed and record its own.
 - `install` needs those and `promote`.
 - `close-tracking` needs every stage before it.
-- Nothing holds back `cd-publish`, `package-index` or `update-deps`, and
-  their failure holds back none of `promote`, `finalize` and `install`.
+- Nothing holds back `package-index` or `update-deps`, and the failure of
+  `cd-publish`, `package-index` or `update-deps` holds back none of
+  `promote`, `finalize` and `install`.
 
 A held stage does not run (its line shows `held: <stages> failed`) and
 is not recorded done. So a failed CD publish job, a `package-index` miss

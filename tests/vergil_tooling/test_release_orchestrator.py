@@ -380,6 +380,8 @@ def test_promote_held_by_failed_confirm_develop(write_state: MagicMock) -> None:
         ("promote", ["cd-publish", "package-index"], True),
         ("finalize", ["cd-publish", "package-index"], True),
         ("finalize", ["confirm-develop"], False),
+        ("cd-publish", ["confirm-develop"], False),
+        ("cd-publish", ["promote"], True),
         ("install", ["cd-publish", "package-index", "finalize", "update-deps"], True),
         ("install", ["promote"], False),
         ("close-tracking", ["update-deps"], False),
@@ -766,6 +768,64 @@ def test_update_deps_failure_does_not_hold_install(
     assert "✗ update-deps" in out
     assert "✓ install" in out
     assert _DEPS_FAILURE in _publish_status(out)
+
+
+def _run_develop_then_publish(
+    tmp_path: Path, state: ReleaseState, confirm: MagicMock
+) -> tuple[int, MagicMock]:
+    """Run the real confirm-develop, cd-publish and close-tracking stages on *state*."""
+    names = ("confirm-develop", "cd-publish", "close-tracking")
+    args = argparse.Namespace(output_format="plain", output_window=None)
+    with (
+        patch(_MOD + ".confirm_develop", confirm),
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".comment_phase_failed"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+        patch(_FINALIZE + ".close_tracking_issue") as m_close,
+    ):
+        stages = [s for s in build_stages() if s.name in names]
+        rc = progress.run_pipeline(
+            state, stages, command="vrg-release", label="vrg-release", args=args, repo_root=tmp_path
+        )
+    return rc, m_close
+
+
+def test_cd_publish_waits_for_confirm_develop_across_a_resume(tmp_path: Path) -> None:
+    """A failed confirm-develop holds cd-publish, so a resume whose confirm-develop
+    records a failed develop job still delivers it, and the issue stays open
+    until it is delivered (merge review R1)."""
+    state = _state()
+    ctx = state.ctx
+    assert ctx is not None
+    ctx.issue_number = 42
+    failed = ReleaseError(phase="confirm-develop", command="gh run watch", message="timed out")
+    rc, m_close = _run_develop_then_publish(tmp_path, state, MagicMock(side_effect=failed))
+    assert rc == 1
+    m_close.assert_not_called()
+    assert ctx.state is not None
+    assert "cd-publish" not in ctx.state.done
+
+    # The resume: confirm-develop succeeds and records develop's failed docs job.
+    resumed = _state()
+    rctx = resumed.ctx
+    assert rctx is not None
+    rctx.issue_number = 42
+    rctx.resume = True
+    rctx.state = ctx.state
+
+    def record_docs_failure(c: ReleaseContext) -> None:
+        defer_publish(c, "docs")
+
+    with patch("vergil_tooling.lib.release.cd_publish._check_recorded_run") as m_check:
+        m_check.side_effect = ReleaseError(phase="cd-publish", command="x", message="not yet")
+        rc, m_close = _run_develop_then_publish(
+            tmp_path, resumed, MagicMock(side_effect=record_docs_failure)
+        )
+    assert rc == 1
+    m_check.assert_called_once()
+    m_close.assert_not_called()
+    assert rctx.deferred_failures == ["cd-publish"]
 
 
 def test_finalize_and_install_run_after_failed_cd_publish(tmp_path: Path) -> None:

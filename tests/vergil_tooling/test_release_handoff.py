@@ -23,8 +23,10 @@ def test_through_confirm_develop_is_the_head_of_the_stage_list() -> None:
     assert tuple(names[: names.index("confirm-develop") + 1]) == THROUGH_CONFIRM_DEVELOP
 
 
-@pytest.mark.parametrize("stage", ["promote", "finalize"])
-def test_promote_and_finalize_need_only_the_stages_through_confirm_develop(stage: str) -> None:
+@pytest.mark.parametrize("stage", ["promote", "cd-publish", "finalize"])
+def test_promote_cd_publish_and_finalize_need_only_the_stages_through_confirm_develop(
+    stage: str,
+) -> None:
     assert holds(stage, _EVERY_FAILURE) == ["confirm-develop"]
     assert holds(stage, ["cd-publish", "package-index", "update-deps"]) == []
 
@@ -42,6 +44,6 @@ def test_records_and_close_need_every_stage_before_them(stage: str) -> None:
     assert holds(stage, []) == []
 
 
-@pytest.mark.parametrize("stage", ["cd-publish", "package-index", "update-deps", "prepare"])
+@pytest.mark.parametrize("stage", ["package-index", "update-deps", "prepare"])
 def test_nothing_holds_the_other_stages_back(stage: str) -> None:
     assert holds(stage, _EVERY_FAILURE) == []
