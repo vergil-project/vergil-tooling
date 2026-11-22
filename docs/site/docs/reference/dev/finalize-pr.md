@@ -57,6 +57,14 @@ which is unsafe when the calling shell's CWD is inside one.
 
 A PR list, `--all` and `--cleanup-only` are mutually exclusive.
 
+`--all` and the interactive form match a worktree's branch only to a
+same-repo PR whose author is trusted (`vrg-trusted-authors`). A fork PR on
+the same branch name, or a PR by an untrusted author, is never a candidate:
+it is reported on stderr with its metadata only (repo, number, login,
+time), never its title. Several open PRs on one branch are an error naming
+them (exit 1), never the first. The branch sweep's merge evidence is
+judged the same way.
+
 ## Usage
 
 ```bash

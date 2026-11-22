@@ -588,16 +588,18 @@ Print the tracking issue number of the PR that produced a commit, read
 from the PR body's `Ref #N` linkage. The PR is found from the commit
 subject (the merge-commit `Merge pull request #N from …` pattern, then the
 squash-merge `… (#N)` pattern), then from the GitHub API's
-commit-to-pulls lookup; `--pr` skips the lookup. Used by the
-`version-bump-pr` composite action in vergil-actions.
+commit-to-pulls lookup, which takes only the commit's merged PR: with
+none merged it is an error naming the PRs found, never the first of them.
+`--pr` skips the lookup. Used by the `version-bump-pr` composite action in
+vergil-actions.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_resolve_tracking_issue` (patterns: `lib/linkage.py`) |
 | Args | `--commit` (default: HEAD), `--pr N` |
 | Preconditions | Git repo; `gh` authenticated for the current repo |
-| Failure mode | `ERROR:` on stderr naming what was tried; a PR with no body or no `Ref #N` linkage is an error |
-| Exit codes | 0 success (issue number on stdout), 1 no PR found or no linkage, 2 git or GitHub API failure |
+| Failure mode | `ERROR:` on stderr naming what was tried; a commit whose PRs include no merged one, or a PR with no body or no `Ref #N` linkage, is an error |
+| Exit codes | 0 success (issue number on stdout), 1 no merged PR found or no linkage, 2 git or GitHub API failure (a malformed response included) |
 | Status | Active |
 
 ### vrg-update-deps
@@ -679,6 +681,10 @@ reused branch name with unmerged commits (issue #1719) — is surfaced
 `--clean-dirty` opt-in clears one whose only dirt is untracked
 build/validation output, after showing the paths and confirming
 (issue #2348).
+A worktree's branch matches only a same-repo PR with a trusted author
+(`vrg-trusted-authors`): a fork PR on the same branch name is reported on
+stderr, metadata only, and never watched or taken as merge evidence, and
+several open PRs on one branch are an error naming them.
 A batch PR (more than one `Closes` line, one commit per issue, epic
 vergil-project/.github#1019) is watched like any other: `vrg-submit-pr`
 turned its auto-merge on with the rebase method, so `develop` gets one
@@ -690,7 +696,7 @@ commit and one changelog entry per issue. See
 | Source | `vergil_tooling.bin.vrg_finalize_pr` |
 | Args | `PR` (a number or URL, or a comma list of them; optional), `--all`, `--cleanup-only`, `--target-branch` (default: develop), `--wait-cd`, `--release`, `--clean-dirty`, `--dry-run`, `--yes`. `--strategy`, `--no-wait-cd`, `--skip-post-checks`, `--install`, `--no-install` and `--allow-provenance-violation` are removed and are an error |
 | Preconditions | Must run from the main worktree, `vrg-container-run` on PATH |
-| Failure mode | An unmerged PR exits 3 and a develop that did not validate exits 4; a watch that cannot read a PR, a failed close of an issue, a failed sync or cleanup, or a dirty working tree exits 1 |
+| Failure mode | An unmerged PR exits 3 and a develop that did not validate exits 4; a watch that cannot read a PR, a failed or ambiguous branch PR lookup, a failed close of an issue, a failed sync or cleanup, or a dirty working tree exits 1 |
 | Exit codes | 0 full success, 1 a tool or usage error, 3 develop healthy but not every PR merged (or one merged with a provenance violation), 4 develop did not validate (with `--wait-cd`, or CD did not succeed), 5 the chained release failed |
 | Status | Active |
 
@@ -1727,8 +1733,10 @@ still listed, with `(branch gone)` after its name. That check queries
 each remote once; if it fails, a note gives the reason.
 
 The worktree sections share one table. PR state is queried from GitHub
-per worktree; a failed lookup shows as `unknown` with the reason rather
-than being silently downgraded. The development summary counts fall
+per worktree, and only a same-repo PR with a trusted author counts: a
+fork PR on the branch name is reported on stderr, metadata only. A failed
+lookup, or several open PRs on one branch, shows as `unknown` with the
+reason rather than being silently downgraded. The development summary counts fall
 into disjoint buckets — **active**, **needs-attention**, **stalled
 (no-pr)**, and **cruft (removable)**. A finished-but-stuck worktree
 (merged/closed but not removable: dirty, or a reused branch name whose
