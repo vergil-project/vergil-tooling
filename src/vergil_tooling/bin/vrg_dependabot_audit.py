@@ -11,9 +11,8 @@ job:
   "Dependabot alerts: Read", no App installation, unknown repo). "Could not
   check" is never a pass, and never the "has alerts" exit 1 either.
 
-A private repo gets the itemized report. A public repo, or one whose
-visibility cannot be resolved, gets counts by severity plus the Security-tab
-link only, so a world-readable log never names a vulnerable package.
+Every repo gets counts by severity plus the Security-tab link only, so a
+world-readable log never names a vulnerable package.
 """
 
 from __future__ import annotations
@@ -55,23 +54,8 @@ def _fail(message: str) -> None:
 
 def _audit(repo: str) -> int:
     alerts = fetch_open_alerts(repo)
-    if not alerts:
-        print(render_report(repo, alerts, public=False))
-        return 0
-    print(render_report(repo, alerts, public=_counts_only(repo)))
-    return 1
-
-
-def _counts_only(repo: str) -> bool:
-    """True unless *repo* is positively known to be private."""
-    try:
-        return github.repo_visibility(repo) != "PRIVATE"
-    except github.GitHubAPIError:
-        _fail(
-            f"warning: could not resolve visibility for {repo}; "
-            "using the public (counts-only) format"
-        )
-        return True
+    print(render_report(repo, alerts))
+    return 1 if alerts else 0
 
 
 def _repo_arg(value: str) -> str:
@@ -88,8 +72,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         description=(
             "Fail when a repository has any open Dependabot alert, at any "
             "severity. Dismissing an alert on GitHub is the only way to clear "
-            "it. Public repositories get counts and a Security-tab link only; "
-            "private repositories get an itemized report."
+            "it. The report gives counts by severity and a Security-tab link "
+            "only, never per-alert detail."
         ),
         epilog="Exit codes: 0 no open alerts, 1 open alerts, 2 could not check.",
     )

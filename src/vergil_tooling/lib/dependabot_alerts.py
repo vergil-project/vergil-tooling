@@ -11,7 +11,7 @@ alert on GitHub is the sole escape hatch.
 :class:`AuditUnavailable`, whose message is the human diagnostic, so the CLI
 can exit 2 instead of a false 0 or 1.
 
-Public repositories get a counts-only report plus a link to the Security tab:
+Every repository gets a counts-only report plus a link to the Security tab:
 package names, manifest paths and GHSA IDs never reach a world-readable log.
 """
 
@@ -28,7 +28,7 @@ SEVERITY_ORDER = ("critical", "high", "medium", "low")
 
 @dataclass(frozen=True)
 class Alert:
-    """One open Dependabot alert, reduced to the fields the report prints."""
+    """One open Dependabot alert; the report counts it by ``severity`` only."""
 
     severity: str
     ecosystem: str
@@ -101,10 +101,6 @@ def fetch_open_alerts(repo: str) -> list[Alert]:
         raise AuditUnavailable(msg) from exc
 
 
-def _severity_rank(severity: str) -> int:
-    return SEVERITY_ORDER.index(severity) if severity in SEVERITY_ORDER else len(SEVERITY_ORDER)
-
-
 def _totals_line(repo: str, alerts: list[Alert]) -> str:
     counts = Counter(alert.severity for alert in alerts)
     parts = [f"{counts[sev]} {sev}" for sev in SEVERITY_ORDER]
@@ -113,16 +109,11 @@ def _totals_line(repo: str, alerts: list[Alert]) -> str:
     return f"{repo}: {len(alerts)} open Dependabot {noun}: {', '.join(parts)}"
 
 
-def render_report(repo: str, alerts: list[Alert], *, public: bool) -> str:
-    """The audit report: totals always, itemized lines only when not *public*."""
+def render_report(repo: str, alerts: list[Alert]) -> str:
+    """The audit report: counts by severity and the Security-tab link, never per-alert detail."""
     if not alerts:
         return f"{repo}: no open Dependabot alerts"
-    lines = [_totals_line(repo, alerts)]
-    if not public:
-        ordered = sorted(alerts, key=lambda a: (_severity_rank(a.severity), a.package))
-        lines.extend(
-            f"  {a.severity} {a.ecosystem} {a.package} {a.manifest_path} {a.ghsa_id} {a.html_url}"
-            for a in ordered
-        )
-    lines.append(f"Review or dismiss at https://github.com/{repo}/security/dependabot")
-    return "\n".join(lines)
+    return (
+        f"{_totals_line(repo, alerts)}\n"
+        f"Review or dismiss at https://github.com/{repo}/security/dependabot"
+    )

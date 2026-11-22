@@ -195,63 +195,29 @@ def test_severity_order() -> None:
 
 
 def test_render_clean() -> None:
-    assert render_report("o/r", [], public=False) == "o/r: no open Dependabot alerts"
-    assert render_report("o/r", [], public=True) == "o/r: no open Dependabot alerts"
-
-
-def test_render_private_itemizes() -> None:
-    low = _alert("low", "urllib3", number=1, ghsa_id="GHSA-low1-low1-low1")
-    critical = _alert("critical", "requests", number=2, ghsa_id="GHSA-crit-crit-crit")
-    out = render_report("o/r", [low, critical], public=False)
-    lines = out.splitlines()
-    assert "2 open Dependabot alerts: 1 critical, 0 high, 0 medium, 1 low" in lines[0]
-    item_lines = [line for line in lines if "GHSA-" in line]
-    assert len(item_lines) == 2
-    assert "requests" in item_lines[0]
-    assert "urllib3" in item_lines[1]
-    for alert, line in zip((critical, low), item_lines, strict=True):
-        assert alert.package in line
-        assert alert.manifest_path in line
-        assert alert.ghsa_id in line
-        assert alert.html_url in line
-
-
-def test_render_private_sorts_by_severity_then_package() -> None:
-    alerts = [
-        _alert("high", "zeta"),
-        _alert("weird", "alpha"),
-        _alert("high", "beta"),
-        _alert("critical", "omega"),
-    ]
-    out = render_report("o/r", alerts, public=False)
-    packages = [
-        word
-        for line in out.splitlines()
-        if "GHSA-" in line
-        for word in ("zeta", "alpha", "beta", "omega")
-        if f" {word} " in line
-    ]
-    assert packages == ["omega", "beta", "zeta", "alpha"]
+    assert render_report("o/r", []) == "o/r: no open Dependabot alerts"
 
 
 def test_render_counts_unknown_severity() -> None:
-    out = render_report("o/r", [_alert("weird", "pkg"), _alert("low", "pkg2")], public=True)
+    out = render_report("o/r", [_alert("weird", "pkg"), _alert("low", "pkg2")])
     assert "2 open Dependabot alerts: 0 critical, 0 high, 0 medium, 1 low, 1 weird" in out
 
 
 def test_render_single_alert_is_singular() -> None:
-    out = render_report("o/r", [_alert("medium", "pkg")], public=True)
+    out = render_report("o/r", [_alert("medium", "pkg")])
     assert "1 open Dependabot alert: 0 critical, 0 high, 1 medium, 0 low" in out
 
 
-def test_audit_public_repo_counts_only() -> None:
+def test_render_counts_only() -> None:
     alerts = [
         _alert("low", "urllib3", number=1, ghsa_id="GHSA-low1-low1-low1"),
         _alert("critical", "requests", number=2, ghsa_id="GHSA-crit-crit-crit"),
     ]
-    out = render_report("o/r", alerts, public=True)
-    assert "2 open Dependabot alerts: 1 critical, 0 high, 0 medium, 1 low" in out
-    assert "https://github.com/o/r/security/dependabot" in out
+    out = render_report("o/r", alerts)
+    assert out == (
+        "o/r: 2 open Dependabot alerts: 1 critical, 0 high, 0 medium, 1 low\n"
+        "Review or dismiss at https://github.com/o/r/security/dependabot"
+    )
     assert "requests" not in out
     assert "urllib3" not in out
     assert "uv.lock" not in out
