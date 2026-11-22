@@ -285,6 +285,7 @@ _BEFORE_DEPS = (
     "back-merge-bump",
     "teardown-worktree",
     "confirm-develop",
+    "cd-publish",
     "package-index",
     "promote",
     "close-finalize",
