@@ -21648,7 +21648,9 @@ it.</p>
 tasks are closed. A no-op for any other issue (a standing epic such as
 <code>ad-hoc</code> never auto-closes, and a
 <a href="../../standards/github-issues/#proxy-epics">proxy epic</a> stays open until its
-primary closes), so it is safe on every issue close. Run by the <code>epic-rollup</code>
+primary closes), so it is safe on every issue close. It acts on a close only
+when its actor is trusted: an untrusted close of the task, or of a task the
+epic's close relies on, is a stop before any write. Run by the <code>epic-rollup</code>
 workflow on <code>issues.closed</code>.</p>
 <table>
 <thead>
@@ -21672,11 +21674,11 @@ workflow on <code>issues.closed</code>.</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Error on stderr</td>
+<td>Error on stderr; an untrusted close is a stop, printed metadata only (under GitHub Actions, counted by cause)</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success or no-op, 1 error</td>
+<td>0 success or no-op, 1 error or stop</td>
 </tr>
 <tr>
 <td>Status</td>
