@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.334] - 2026-11-22
+
+### Bug fixes
+
+- restore the cast import that the merge of #4879 and #4880 dropped (#4883)
+- order open releases by semantic version, not as strings (#4885)
+- refuse a resume whose release branch is missing (#4888)
+- let a resume past merge-release run without the deleted release branch (#4892)
+- record the release's target version bump so a resume never drops it (#4909)
+
+### Features
+
+- keep the release state in the tracking-issue body (#4876)
+- lock the tracking issue and trust only human state changes (#4879)
+- refuse a fresh release while any release is open (#4880)
+- list the issues a release closes (#4881)
+- resume from the first undone stage (#4884)
+- make the index wait and the dependency update resumable (#4890)
+- deliver failed CD publish jobs on resume (#4891)
+- decouple promote and install from packaging and rename the install (#4894)
+- remove vrg-release --no-promote and --no-install (#4895)
+- post a Released: record on every issue a release contains (#4896)
+- remove the submit and finalize opt-outs (#4897)
+- supersede a release that cannot finish (#4898)
+- supersede a release whose tracking issue fails the identity rule (#4910)
+- add vrg-release-record check and use it in the deployment scaffold (#4933)
+
 ## [2.1.333] - 2026-11-21
 
 ### Bug fixes
