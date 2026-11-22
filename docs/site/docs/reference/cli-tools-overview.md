@@ -1532,7 +1532,9 @@ child, orphans, retired kind labels, body-only `Parent:` links, and a
 misplaced archive (one with a parent, one without its `archive` label, or one
 labelled `archive` whose title is not a stamped archive title). It also
 lists open epics with operational tasks still pending, and closed
-operational tasks with no `Outcome: SUCCESS`.
+operational tasks with no `Outcome: SUCCESS` in a trusted comment (its author
+and every editor trusted, judged by the trust layer); any other comment is
+reported on stderr, metadata only, and never counts as the outcome.
 
 A **Proxy link drift** section lists each open proxy epic in the home whose
 `Primary:` line is broken or whose primary carries no matching trusted

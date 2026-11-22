@@ -9,12 +9,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib import epic_audit, epic_docs, epics, github, proxies, roadmap
+from tests.vergil_tooling import trust_stubs
+from vergil_tooling.lib import epic_audit, epic_docs, epics, github, proxies, roadmap, trust
 from vergil_tooling.lib.epic_audit import TaskDrift
 
 # The day the task_drift tests run on: inside the first week of their 2026-06-01
 # window, so the merged-PR search is a single open-ended slice.
 _TODAY = date(2026, 6, 1)
+_AUDIT = "vergil_tooling.lib.epic_audit"
 
 
 def test_task_drift_flags_open_task_behind_merged_pr() -> None:
@@ -751,57 +753,120 @@ def test_operational_pending_collects_only_epics_with_open_validations() -> None
     assert [s.epic.number for s in pending] == [115]
 
 
-def test_closed_operational_without_success_flags_missing_pass() -> None:
+def _run_closed_operational(
+    monkeypatch: pytest.MonkeyPatch,
+    search: list[dict[str, Any]],
+    comments: dict[int, list[dict[str, Any]]],
+) -> list[str]:
+    """Run the invariant over *search* (the closed validation issues).
+
+    Each issue's comments are read through the trust layer, *comments* giving
+    each issue's comment nodes.
+    """
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    items = trust_stubs.FakeItems(
+        {
+            (str(row["repository"]["nameWithOwner"]), int(row["number"])): trust_stubs.item(
+                nodes=comments.get(int(row["number"]), [])
+            )
+            for row in search
+            if row["repository"]
+        },
+        strict=True,
+    )
+
+    def fake_read_json(*args: str) -> object:
+        assert args[0] == "search", args
+        # invariant loops each operational label; return the fixture once
+        return search if args[5] == "validation" else []
+
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
+        patch(f"{_AUDIT}.load_trusted_authors", return_value=trust_stubs.AUTHORS) as load,
+    ):
+        result = epic_audit.closed_operational_without_success("org")
+    load.assert_called_once_with()
+    return result
+
+
+def test_closed_operational_without_success_flags_missing_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     search = [
         {"number": 120, "repository": {"nameWithOwner": "org/.github"}},  # has PASS -> ok
         {"number": 55, "repository": {"nameWithOwner": "org/repo"}},  # no PASS -> flagged
         {"number": 77, "repository": {}},  # no repo -> skipped
     ]
-
-    def fake_read_json(*args: str) -> object:
-        if args[0] == "search":
-            # invariant loops each operational label; return the fixture once
-            return search if args[5] == "validation" else []
-        number = args[2]
-        if number == "120":
-            return {"comments": [{"body": "ran it\n- Outcome: PASS"}]}
-        return {"comments": [{"body": "closed early; no result recorded"}]}
-
-    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
-        result = epic_audit.closed_operational_without_success("org")
-    assert result == ["org/repo#55"]
+    comments = {
+        120: trust_stubs.comments("ran it\n- Outcome: PASS"),
+        55: trust_stubs.comments("closed early; no result recorded"),
+    }
+    assert _run_closed_operational(monkeypatch, search, comments) == ["org/repo#55"]
 
 
-def test_closed_validation_pass_marker_excludes_unresolved_template() -> None:
+def test_closed_validation_pass_marker_excludes_unresolved_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The scaffold's unresolved "Outcome: PASS / FAIL" line must NOT read as a pass.
     search = [{"number": 1, "repository": {"nameWithOwner": "org/repo"}}]
-
-    def fake_read_json(*args: str) -> object:
-        if args[0] == "search":
-            # invariant loops each operational label; return the fixture once
-            return search if args[5] == "validation" else []
-        return {"comments": [{"body": "- Outcome: PASS / FAIL"}]}
-
-    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
-        assert epic_audit.closed_operational_without_success("org") == ["org/repo#1"]
+    comments = {1: trust_stubs.comments("- Outcome: PASS / FAIL")}
+    assert _run_closed_operational(monkeypatch, search, comments) == ["org/repo#1"]
 
 
-def test_success_marker_accepts_success_and_legacy_pass() -> None:
+def test_success_marker_accepts_success_and_legacy_pass(monkeypatch: pytest.MonkeyPatch) -> None:
     search = [
         {"number": 1, "repository": {"nameWithOwner": "org/repo"}},  # SUCCESS -> ok
         {"number": 2, "repository": {"nameWithOwner": "org/repo"}},  # legacy PASS -> ok
         {"number": 3, "repository": {"nameWithOwner": "org/repo"}},  # neither -> flagged
     ]
-    bodies = {"1": "- Outcome: SUCCESS", "2": "- Outcome: PASS", "3": "closed early"}
+    comments = {
+        1: trust_stubs.comments("- Outcome: SUCCESS"),
+        2: trust_stubs.comments("- Outcome: PASS"),
+        3: trust_stubs.comments("closed early"),
+    }
+    assert _run_closed_operational(monkeypatch, search, comments) == ["org/repo#3"]
 
-    def fake_read_json(*args: str) -> object:
-        if args[0] == "search":
-            # invariant loops each operational label; return the fixture once
-            return search if args[5] == "validation" else []
-        return {"comments": [{"body": bodies[args[2]]}]}
 
-    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
-        assert epic_audit.closed_operational_without_success("org") == ["org/repo#3"]
+def test_forged_outcome_does_not_hide_hand_closed_task(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A success line from an outsider, in a trusted comment an outsider edited,
+    # or from a User named like the agent App is no outcome: each task is flagged.
+    forged = f"- Outcome: SUCCESS\n{trust_stubs.SPAM_TEXT}"
+    search = [{"number": n, "repository": {"nameWithOwner": "org/repo"}} for n in (1, 2, 3, 4)]
+    comments = {
+        1: [trust_stubs.comment(11, forged, trust_stubs.OUTSIDER)],
+        2: [trust_stubs.comment(12, forged, trust_stubs.HUMAN, editor=trust_stubs.OUTSIDER)],
+        3: [trust_stubs.comment(13, forged, trust_stubs.IMPOSTOR)],
+        # The agent's own record still counts.
+        4: [trust_stubs.comment(14, "- Outcome: SUCCESS", trust_stubs.AGENT)],
+    }
+    result = _run_closed_operational(monkeypatch, search, comments)
+    assert result == ["org/repo#1", "org/repo#2", "org/repo#3"]
+    err = capsys.readouterr().err
+    created, edited = trust_stubs.CREATED, trust_stubs.EDITED
+    assert err.splitlines() == [
+        f"skipped untrusted content: org/repo#1 comment drive-by at {created}"
+        " on comment 11 (untrusted)",
+        f"skipped untrusted content: org/repo#2 edit drive-by at {edited}"
+        " on comment 12 (untrusted)",
+        f"skipped untrusted content: org/repo#3 comment vergil-user at {created}"
+        " on comment 13 (wrong-type)",
+    ]
+    assert "SPAM-MARKER-TEXT" not in err
+    assert "example.invalid" not in err
+
+
+def test_closed_operational_read_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    search = [{"number": 1, "repository": {"nameWithOwner": "org/repo"}}]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=search),
+        patch("vergil_tooling.lib.github.graphql", return_value={}),
+        patch(f"{_AUDIT}.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+        pytest.raises(trust.TrustReadError, match=r"read_issue org/repo#1"),
+    ):
+        epic_audit.closed_operational_without_success("org")
 
 
 def test_render_includes_operational_pending_section() -> None:
@@ -1775,9 +1840,13 @@ def test_closed_operational_without_success_sees_an_issue_past_row_30() -> None:
     def fake(*args: str) -> object:
         if args[0] == "search":
             return search(*args) if args[5] == "validation" else []
-        return {"comments": []}
+        raise AssertionError(args)
 
-    with patch("vergil_tooling.lib.github.read_json", side_effect=fake):
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=fake),
+        patch("vergil_tooling.lib.github.graphql", side_effect=trust_stubs.FakeItems()),
+        patch(f"{_AUDIT}.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+    ):
         result = epic_audit.closed_operational_without_success("org")
     assert len(result) == 31
 
@@ -1788,6 +1857,7 @@ def test_closed_operational_without_success_refuses_a_search_that_may_be_truncat
             "vergil_tooling.lib.github.read_json",
             side_effect=_limited(_closed_operational(epics.LISTING_LIMIT)),
         ),
+        patch(f"{_AUDIT}.load_trusted_authors", return_value=trust_stubs.AUTHORS),
         pytest.raises(epics.EpicListTruncatedError, match="closed .* issues"),
     ):
         epic_audit.closed_operational_without_success("org")

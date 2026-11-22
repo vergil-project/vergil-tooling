@@ -253,7 +253,8 @@ succeeded:
    `security`-labelled issue in the org whose `Security advisory:` line
    names this GHSA ID (found by REST listing, never by search). Each one
    gets the comment `Security record moved to <refs>` (posted once, even on
-   a re-run). Then this advisory's line is removed, together with the
+   a re-run; only a trusted author's copy of it counts as already posted,
+   and any other is reported on stderr, metadata only). Then this advisory's line is removed, together with the
    `security` label when no other advisory line remains, in one edit. An
    issue that also names other advisories keeps their lines and the
    label. An issue that names only other advisories is never touched.
@@ -465,7 +466,10 @@ each starts only once the one before it succeeded:
      hold: close the issue first (as not planned, for dropped work), or
      retarget the record.
 2. **Comment.** Post `Security record <GHSA-id> closed: <reason>` on each
-   issue, skipping one that already carries that exact comment.
+   issue, skipping one that already carries that exact comment from a
+   trusted author (its author and every editor trusted, judged by the trust
+   layer); any other copy is reported on stderr, metadata only, and the
+   comment is posted.
 3. **Close.** Set the advisory's state to `closed`, unless it already is.
 
 The comments go first, so a closed record always has its audit trail.

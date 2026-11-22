@@ -577,18 +577,6 @@ def test_latest_note_from_trusted_only(capsys: pytest.CaptureFixture[str]) -> No
     assert planning.note == "the trusted note"
 
 
-def test_untrusted_body_not_reported_by_the_comment_read(
-    layer: MagicMock, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # The views take nothing from the body through the layer's read.
-    layer.side_effect = lambda query, **v: trust_stubs.item(
-        author=trust_stubs.OUTSIDER, nodes=trust_stubs.comments("a note")
-    )
-    bodies = queue_view.trusted_comment_bodies(IssueRef("org", "tool", 3), trust_stubs.AUTHORS)
-    assert bodies == ["a note"]
-    assert capsys.readouterr().err == ""
-
-
 def test_comment_read_failure_fails_the_view(layer: MagicMock) -> None:
     layer.side_effect = lambda query, **v: {"repository": None}
     children = [ChildState(IssueRef("org", "tool", 3), "OPEN", "")]
