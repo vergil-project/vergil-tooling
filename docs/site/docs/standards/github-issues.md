@@ -35,7 +35,7 @@ In any repo with a `vergil.toml`, **every issue is either a legitimate top-level
 kind or has an epic parent.** The legitimate top-level kinds are:
 
 - **epics** (`epic` label), including the standing ad-hoc, intake, planning,
-  deferred and hoshin epics, and the [proxy epics](#proxy-epics);
+  deferred, hoshin and operations epics, and the [proxy epics](#proxy-epics);
 - **archives** (`archive` label) — the per-quarter buckets of closed standing-epic
   children;
 - **release tracking issues** (`release: X.Y.Z`), which `vrg-release` creates
@@ -180,7 +180,7 @@ cross-forge fallback.
 
 ### Standing epics
 
-The ad-hoc epic is one of five kinds of **standing epic** — perpetual
+The ad-hoc epic is one of six kinds of **standing epic** — perpetual
 umbrellas that are created and reused idempotently, never auto-close, and never
 gate rollup:
 
@@ -191,8 +191,9 @@ gate rollup:
 | Planning | `Epic (planning): <name>` | `epic` + `planning` | one per queue home | items waiting for or undergoing `epic-create` |
 | Deferred | `Epic (deferred): <name>` | `epic` + `deferred` | one per queue home | evaluated items parked until their revival conditions are met |
 | Hoshin | `Epic (hoshin): <org>` | `epic` + `hoshin` | one per org, always in `<org>/.github` | the `Logbook:` tasks `/vergil:hoshin` files and works |
+| Operations | `Epic (operations): <org>` | `epic` + `operations` | one per org, always in `<org>/.github` | the ops issues of the org's unattended jobs |
 
-An intake, planning, deferred or hoshin epic also gets the display-only
+An intake, planning, deferred, hoshin or operations epic also gets the display-only
 `epic-management` [category label](#epic-categories) when it is created; the
 tools find and test standing epics by the labels in the table alone.
 
@@ -200,7 +201,7 @@ Intake, planning and deferred are the three **queue epics**. Their **queue
 home** follows the [epic-home rule](#epic-home-the-orggithub-rule): every
 repo shares the org's set in `<org>/.github` (`<name>` is the org).
 `vrg-issue-create --epic`
-accepts `adhoc`, `intake`, `planning` and `hoshin` as sentinels that resolve
+accepts `adhoc`, `intake`, `planning`, `hoshin` and `operations` as sentinels that resolve
 (creating if absent) the target repo's standing epic of that kind. It refuses
 `deferred`, as does `vrg-epic-move`: an item enters and leaves the deferred
 queue only through `vrg-intake-route`, which records the deferral (see
@@ -213,6 +214,15 @@ It is homed in `<org>/.github`, like the queues, and named for the org. Only `vr
 one-off into the hoshin epic, by sentinel or by ref. Its closed children
 drain into per-quarter `Archive (hoshin): <org>` archives like the other
 standing kinds.
+
+The **operations epic** is not a queue either: it holds one ops issue per
+failing unattended job, whatever repo the job ran in, and an ops issue is
+closed by hand once the problem is dealt with. It is homed in
+`<org>/.github` and named for the org, like the hoshin epic.
+`vrg-issue-create` and `vrg-epic-move` accept the `operations` sentinel, and
+`vrg-epic-create --standing operations --org <org>` ensures the epic without
+filing a task. Its closed children drain into per-quarter
+`Archive (operations): <org>` archives like the other standing kinds.
 
 ### Proxy epics
 
@@ -264,7 +274,7 @@ label, so one label filter in the GitHub UI shows each category:
 
 | Category | Epics | Category label |
 |---|---|---|
-| Management | the intake, planning, deferred and hoshin epics | `epic-management` |
+| Management | the intake, planning, deferred, hoshin and operations epics | `epic-management` |
 | Ad hoc | each repo's ad-hoc epic | `ad-hoc` |
 | Proxy | each [proxy epic](#proxy-epics) | `proxy` |
 | Development | every other epic: planned with `epic-create`, closed by rollup | `epic-development` |
@@ -279,13 +289,14 @@ missing or stray one changes nothing.
 The tools apply the category label when they create an epic.
 [`vrg-epic-create`](../reference/cli-tools-overview.md#vrg-epic-create)
 derives it from the epic's other labels, adding `epic-development` to a plain
-epic and `epic-management` to an intake, planning, deferred or hoshin one. It
+epic and `epic-management` to an intake, planning, deferred, hoshin or
+operations one. It
 refuses, creating nothing, a caller-given `--label epic-development` or
 `--label epic-management` and labels that mark two categories at once (for
 example `ad-hoc` and `proxy`). Every tool that creates a standing epic on
 demand (for example through the `--epic` sentinels of `vrg-issue-create`)
-adds `epic-management` when the new epic is an intake, planning, deferred or
-hoshin one, and nothing more to a new ad-hoc epic. An
+adds `epic-management` when the new epic is an intake, planning, deferred,
+hoshin or operations one, and nothing more to a new ad-hoc epic. An
 existing standing epic is still found by its kind's own labels, so one without
 `epic-management` is reused, never duplicated. A proxy keeps `epic` + `proxy`.
 
@@ -393,7 +404,7 @@ Two existing call sites keep archives current with no dedicated cron:
   its close-quarter archive.
 - **Backstop + backfill.** The daily `vrg-epic-audit --close` sweep runs the
   org-wide drain for every standing kind (ad-hoc, intake, planning,
-  deferred, hoshin): it
+  deferred, hoshin, operations): it
   distributes any backlog the steady-state path missed and closes past-quarter
   archives. This is the same trusted sweep that closes other
   provably-complete drift, so it is allowed to mutate under the scheduled
@@ -528,7 +539,7 @@ so tools can find and replace it:
 - **One writer:** only [`vrg-epic-docs`](../reference/cli-tools-overview.md#vrg-epic-docs)
   writes the section, never a hand edit, so its format lives in one place.
 - **Scope:** every epic except the standing epics (ad hoc, intake, planning,
-  deferred, hoshin, and the retired `standing` label or `Epic (standing):` title),
+  deferred, hoshin, operations, and the retired `standing` label or `Epic (standing):` title),
   [proxy epics](#proxy-epics) (their primary carries the documents) and
   `[archived]` epics. Task issues have no section.
 
@@ -1001,12 +1012,14 @@ up to date (see
 | `planning` | Marks the standing planning epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `deferred` | Marks the standing deferred epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `hoshin` | Marks the standing hoshin epic (with `epic`) and its archives (with `archive`); never auto-closes |
+| `operations` | Marks the standing operations epic (with `epic`) and its archives (with `archive`); never auto-closes |
+| `ops-report` | Ops issue filed for an unattended job, under the operations epic; never auto-closes |
 | `proxy` | Marks a [proxy epic](#proxy-epics) (with `epic`): a same-org umbrella for another org's epic tasks; open until its primary closes |
 | `epic-development` | Development epic: planned with epic-create, closes when its tasks close (a display-only [category label](#epic-categories)) |
-| `epic-management` | Management epic: the intake, planning, deferred or hoshin epic; never auto-closes (a display-only [category label](#epic-categories)) |
+| `epic-management` | Management epic: the intake, planning, deferred, hoshin or operations epic; never auto-closes (a display-only [category label](#epic-categories)) |
 | `in-progress` | Planning item whose `epic-create` session is underway |
 | `epic-size:S`, `epic-size:M`, `epic-size:L`, `epic-size:XL` | Planning or deferred item's estimated epic size: 1–9, 10–19, 20–39 or 40+ tasks (see [Epic size](#epic-size)) |
-| `archive` | Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred, hoshin); historical record |
+| `archive` | Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred, hoshin, operations); historical record |
 | `hotfix` | Emergency fix that skipped formal planning; flagged for retroactive review |
 | `validation` | Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed |
 | `deployment` | Deployment task: install/sync merged changes so they are usable; never auto-closed |
@@ -1015,7 +1028,7 @@ up to date (see
 | `security-disclosed` | Past issue that disclosed a security problem publicly; fixed, no private record |
 
 The parent epic carries an issue's state, so no label restates it. `intake`,
-`planning`, `deferred` and `hoshin` label only the standing epics (and their
+`planning`, `deferred`, `hoshin` and `operations` label only the standing epics (and their
 archives), the way `ad-hoc`
 does. The per-item queue labels are `in-progress`, used only on planning
 items, and the `epic-size:*` family, used only on planning and deferred items

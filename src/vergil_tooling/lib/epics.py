@@ -480,9 +480,10 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
     ``"intake"``, ``"planning"`` and ``"deferred"`` likewise ensure *repo*'s
     intake, planning or deferred queue epic in its queue home
     (:func:`ensure_intake_epic`, :func:`ensure_planning_epic`,
-    :func:`ensure_deferred_epic`), and ``"hoshin"`` the hoshin epic in *repo*'s
-    org ``.github`` (:func:`ensure_hoshin_epic`); ``vrg-intake-route`` refuses
-    the hoshin sentinel itself. The ``vrg-epic-move`` and ``vrg-issue-create``
+    :func:`ensure_deferred_epic`), ``"hoshin"`` the hoshin epic in *repo*'s
+    org ``.github`` (:func:`ensure_hoshin_epic`), and ``"operations"`` the
+    operations epic there (:func:`ensure_operations_epic`); ``vrg-intake-route``
+    refuses the hoshin sentinel itself. The ``vrg-epic-move`` and ``vrg-issue-create``
     CLIs refuse the deferred epic themselves (:data:`DEFERRED_ROUTE_ONLY`); the
     sentinel resolves here so internal callers can reach it. Any other ref is parsed with
     :func:`qualify_epic_ref` (a bare ``#N`` reads against *repo*'s epic home)
@@ -496,6 +497,7 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
         PLANNING.sentinel: ensure_planning_epic,
         DEFERRED.sentinel: ensure_deferred_epic,
         HOSHIN.sentinel: ensure_hoshin_epic,
+        OPERATIONS.sentinel: ensure_operations_epic,
     }.get(ref)
     if ensure is not None:
         return ensure(repo)
@@ -568,7 +570,7 @@ def require_org_home(org: str) -> str:
 
 @dataclass(frozen=True)
 class StandingKind:
-    """One kind of perpetual standing epic: ad-hoc, intake, planning, deferred or hoshin.
+    """One kind of perpetual standing epic: ad-hoc, the queues, hoshin or operations.
 
     ``key`` is the discriminating label that, alongside ``epic``, marks a live
     standing epic of this kind (and, alongside ``archive``, its per-quarter
@@ -659,7 +661,32 @@ HOSHIN = StandingKind(
     ),
     archive_body="Hoshin logbook tasks for {name} closed in {quarter}. Managed automatically.\n",
 )
-STANDING_KINDS: tuple[StandingKind, ...] = (ADHOC, INTAKE, PLANNING, DEFERRED, HOSHIN)
+# The operations epic: the ops issues of an org's unattended jobs, one epic per
+# org, always in <org>/.github (ensure_operations_epic), whatever repo the job
+# ran in (epic vergil-project/.github#1494). It is not a queue kind: an ops
+# issue is closed by hand once the problem is dealt with, never routed out.
+OPERATIONS = StandingKind(
+    key="operations",
+    sentinel="operations",
+    title_prefix="Epic (operations): ",
+    labels=("epic", "operations"),
+    archive_prefix="Archive (operations): ",
+    archive_labels=("archive", "operations"),
+    body=(
+        "Perpetual operations epic for {name}: one ops issue per failing "
+        "unattended job, filed by vrg-ops-report and closed by hand once the "
+        "problem is dealt with. Created and reused idempotently.\n"
+    ),
+    archive_body="Ops issues for {name} closed in {quarter}. Managed automatically.\n",
+)
+STANDING_KINDS: tuple[StandingKind, ...] = (
+    ADHOC,
+    INTAKE,
+    PLANNING,
+    DEFERRED,
+    HOSHIN,
+    OPERATIONS,
+)
 # The queue kinds: one intake, one planning and one deferred epic per queue home
 # (queue_home). Their items are not PR-workable (queue_item_kind).
 QUEUE_KINDS: tuple[StandingKind, ...] = (INTAKE, PLANNING, DEFERRED)
@@ -670,7 +697,7 @@ DRAINED_STANDING_KINDS: tuple[StandingKind, ...] = tuple(
     kind for kind in STANDING_KINDS if kind is not ADHOC
 )
 # The --epic sentinels resolve_epic_ref accepts: "adhoc", "intake", "planning",
-# "deferred", "hoshin".
+# "deferred", "hoshin", "operations".
 # Each resolves within the target repo's own org (its epic or queue home), so a
 # CLI's pre-network cross-org guard exempts exactly these (#3514).
 EPIC_SENTINELS: tuple[str, ...] = tuple(kind.sentinel for kind in STANDING_KINDS)
@@ -1004,17 +1031,26 @@ def ensure_deferred_epic(target_repo: str) -> IssueRef:
     return ensure_standing_epic(DEFERRED, home, name)
 
 
+def _org_home(target_repo: str, what: str) -> tuple[str, str]:
+    """``(<owner>/.github, <owner>)`` for *target_repo*: the home of an org-only epic.
+
+    Checks that ``.github`` exists (:func:`require_org_home`), so an owner with
+    none is an :class:`EpicHomeError`, never a create in a missing repo. *what*
+    names the epic in the error for a repo with no owner.
+    """
+    if "/" not in target_repo:
+        raise ValueError(f"cannot resolve repo for {what} epic (repo={target_repo!r})")
+    owner = target_repo.split("/", 1)[0]
+    return require_org_home(owner), owner
+
+
 def hoshin_home(target_repo: str) -> tuple[str, str]:
     """The home and name of *target_repo*'s hoshin epic: ``(<owner>/.github, <owner>)``.
 
-    Always the org's ``.github``, like every queue (:func:`queue_home`). Checks
-    that ``.github`` exists (:func:`require_org_home`), so an owner with none is
-    an :class:`EpicHomeError`, never a create in a missing repo.
+    Always the org's ``.github``, like every queue (:func:`queue_home`); see
+    :func:`_org_home`.
     """
-    if "/" not in target_repo:
-        raise ValueError(f"cannot resolve repo for hoshin epic (repo={target_repo!r})")
-    owner = target_repo.split("/", 1)[0]
-    return require_org_home(owner), owner
+    return _org_home(target_repo, "hoshin")
 
 
 def ensure_hoshin_epic(target_repo: str) -> IssueRef:
@@ -1026,6 +1062,26 @@ def ensure_hoshin_epic(target_repo: str) -> IssueRef:
     """
     home, name = hoshin_home(target_repo)
     return ensure_standing_epic(HOSHIN, home, name)
+
+
+def operations_home(target_repo: str) -> tuple[str, str]:
+    """The home and name of *target_repo*'s operations epic: ``(<owner>/.github, <owner>)``.
+
+    Homed like the hoshin epic (:func:`hoshin_home`): one per org, whatever
+    repo the job ran in; see :func:`_org_home`.
+    """
+    return _org_home(target_repo, "operations")
+
+
+def ensure_operations_epic(target_repo: str) -> IssueRef:
+    """Return the operations epic of *target_repo*'s org, creating it if absent.
+
+    ``Epic (operations): <org>`` in ``<org>/.github``
+    (:func:`operations_home`), labelled ``epic`` + ``operations``, created and
+    reused idempotently like :func:`ensure_hoshin_epic`.
+    """
+    home, name = operations_home(target_repo)
+    return ensure_standing_epic(OPERATIONS, home, name)
 
 
 def resolve_orphan_epic(repo: str) -> IssueRef:
@@ -1061,9 +1117,10 @@ def is_proxy(labels: Collection[str]) -> bool:
     return "epic" in labels and PROXY_LABEL in labels
 
 
-# An epic's category (vergil-project/.github#1450): management (a queue or the
-# hoshin epic), ad-hoc, proxy, or development (every other epic). Each has one
-# category label, for display in the GitHub UI only: no code reads
+# An epic's category (vergil-project/.github#1450): management (a queue, the
+# hoshin epic or the operations epic), ad-hoc, proxy, or development (every
+# other epic). Each has one category label, for display in the GitHub UI only:
+# no code reads
 # epic-development or epic-management to decide behaviour or to find an epic.
 EpicCategory = Literal["management", "ad-hoc", "proxy", "development"]
 CATEGORY_LABELS: Mapping[EpicCategory, str] = MappingProxyType(
@@ -1163,7 +1220,8 @@ def queue_or_archive_kind(epic: IssueRef) -> str | None:
 def container_kind(epic: IssueRef) -> str | None:
     """The container kind of a live standing epic, else None.
 
-    ``"ad-hoc"``, ``"intake"``, ``"planning"``, ``"deferred"`` or ``"hoshin"``
+    ``"ad-hoc"``, ``"intake"``, ``"planning"``, ``"deferred"``, ``"hoshin"`` or
+    ``"operations"``
     when *epic* is the live standing epic of that kind; None for a development
     (finite) epic, a proxy epic, an archive, or a non-epic. One label read.
     """
@@ -1636,8 +1694,9 @@ def drain_adhoc_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
 def drain_standing_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
     """Drain every standing epic but ad-hoc (:data:`DRAINED_STANDING_KINDS`) in *org*.
 
-    Covers the queues and the hoshin epic of ``<org>/.github``, their only home
-    (:func:`queue_home`, :func:`hoshin_home`). Each kind is planned and, when
+    Covers the queues and the hoshin and operations epics of ``<org>/.github``,
+    their only home (:func:`queue_home`, :func:`hoshin_home`,
+    :func:`operations_home`). Each kind is planned and, when
     *apply*, executed via :func:`apply_standing_drain`. A corrupted kind (e.g.
     two intake epics sharing a title) is reported on stderr and skipped — never
     aborting the sweep. Returns one plan per live standing epic. Ad-hoc epics
@@ -1669,7 +1728,7 @@ def drain_standing_child(kind: StandingKind, parent: IssueRef, task: IssueRef) -
     - **ad-hoc**: the name is the bare repo in the title (``Epic (ad hoc):
       <bare>``), which must be a real repo; its home is ``<org>/.github``.
       A stamped archive title or a non-repo special epic is left untouched.
-    - **intake / planning / deferred / hoshin**: the epic must be titled for its
+    - **intake / planning / deferred / hoshin / operations**: the epic must be titled for its
       org, whose ``.github`` is its only home. Any other title is reported on
       stderr and skipped (never guessed at).
     """

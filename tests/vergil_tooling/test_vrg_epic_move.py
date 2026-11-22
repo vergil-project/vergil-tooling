@@ -220,7 +220,7 @@ def test_main_reports_missing_installation() -> None:
     assert rc == 1
 
 
-@pytest.mark.parametrize("epic_sentinel", ["adhoc", "intake", "planning"])
+@pytest.mark.parametrize("epic_sentinel", ["adhoc", "intake", "planning", "operations"])
 def test_main_accepts_every_standing_sentinel(epic_sentinel: str) -> None:
     """Every standing sentinel passes the cross-org guard and resolves (#3514)."""
     with (
@@ -270,6 +270,25 @@ def test_epic_help_lists_hoshin(capsys: pytest.CaptureFixture[str]) -> None:
         parse_args(["--help"])
     out = " ".join(capsys.readouterr().out.split())
     assert "'hoshin'" in out
+
+
+def test_epic_operations_sentinel_accepted(capsys: pytest.CaptureFixture[str]) -> None:
+    """--epic operations is listed and resolves the org's operations epic (#1494)."""
+    with pytest.raises(SystemExit):
+        parse_args(["--help"])
+    assert "'operations'" in " ".join(capsys.readouterr().out.split())
+    ops = epics.IssueRef("org", ".github", 31)
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.target_org"),
+        patch("vergil_tooling.lib.epics.ensure_operations_epic", return_value=ops) as mock_ensure,
+        patch(f"{_MOD}.epics.parent_of", return_value=None),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--task", "#42", "--epic", "operations"])
+    assert rc == 0
+    mock_ensure.assert_called_once_with("org/repo")
+    mock_add.assert_called_once_with(ops, TASK)
 
 
 # -- Deferred queue: entered and left only through vrg-intake-route (#3673) ---
