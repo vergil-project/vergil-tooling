@@ -18634,9 +18634,8 @@ every repository.</p>
 <h3 id="one-uniform-evidence-source-always-artifacts">One uniform evidence source — always artifacts<a class="headerlink" href="#one-uniform-evidence-source-always-artifacts" title="Permanent link">&para;</a></h3>
 <p>Every gate — <strong>including the security scanners</strong> — uploads its report(s) as a
 <code>ci-evidence-&lt;gate&gt;</code> artifact <strong>unconditionally</strong>, decoupled from any
-code-scanning upload. Under GitHub Advanced Security, CodeQL still drops its
-SARIF as an artifact alongside its code-scanning upload; Trivy and Semgrep do
-the same regardless of GHAS availability.</p>
+code-scanning upload. CodeQL, Trivy and Semgrep each drop their SARIF as an
+artifact alongside their code-scanning upload.</p>
 <p>The harvester therefore reads <strong>artifacts only</strong> and never touches the
 code-scanning API — one code path, no GHAS branching, one fewer external
 dependency that can fail. Severity metrics come from each gate's <code>evidence.json</code>
@@ -18717,8 +18716,8 @@ evidence, so it does not satisfy the gate.</p>
 <p>The set of gates that MUST emit evidence is <strong>not a hand-maintained list.</strong> It
 is <strong>derived from the same source of truth that drives branch protection</strong>:
 <code>lib/github_config.py:desired_ci_gates_rulesets()</code> computes a repo's required
-status checks from its <code>VergilConfig</code> (language, resolved versions, GHAS
-availability, and whether a <code>[package]</code> section is present). The evidence
+status checks from its <code>VergilConfig</code> (language, resolved versions, and
+whether a <code>[package]</code> section is present). The evidence
 layer consumes that <em>same</em> computation, so the gates that are <strong>enforced to
 merge</strong> and the gates that are <strong>required to have evidence</strong> are provably the
 same set, with no drift.</p>
@@ -18793,8 +18792,9 @@ and at least one report file, or the release fails completeness.
 <code>version/</code> is a sanity check on version state, not substantive evidence, and
 <code>docs</code> is low-signal; the absence of either does not fail the release.</p>
 <h3 id="per-repo-correctness-for-free">Per-repo correctness for free<a class="headerlink" href="#per-repo-correctness-for-free" title="Permanent link">&para;</a></h3>
-<p>Because the set is <em>derived</em>, a repo with a different real profile — no GHAS
-(CodeQL not required), a non-Python stack, or a gate legitimately disabled —
+<p>Because the set is <em>derived</em>, a repo with a different real profile — a
+language CodeQL does not analyze (CodeQL not required), a non-Python stack, or a
+gate legitimately disabled —
 demands evidence for exactly the gates it actually gates on. It cannot
 spuriously fail for a gate it never ran. Adding a future required gate
 automatically pulls it into the evidence set via the shared config; the

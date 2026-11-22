@@ -19027,9 +19027,9 @@ audit does not guess the value. It reports the setting as not checked:</p>
   requirement for any other field, so the line for one of those says
   <code>needs a token GitHub returns the field to</code>. A repo setting of the
   wrong type is an error.</li>
-<li>A setting the desired state leaves unmanaged (secret scanning on a
-  private repo without GHAS) is skipped as before, not listed as not
-  checked.</li>
+<li>A setting the desired state leaves unmanaged (a ruleset's
+  <code>bypass_actors</code> under a token that cannot see them) is skipped as
+  before, not listed as not checked.</li>
 <li>A 403 that names no missing permission (a rate limit, for example) is
   still an error, as is any other unexpected status.</li>
 <li><strong>An empty bypass list under the automation identity is not checked.</strong>
@@ -19381,7 +19381,7 @@ each difference as a <code>security.&lt;field&gt;</code> <code>DiffItem</code>:<
 <tr>
 <td><code>security.vulnerability_alerts</code></td>
 <td><code>true</code></td>
-<td>Dependabot alerts on, for <strong>every</strong> repo, public or private</td>
+<td>Dependabot alerts on, for <strong>every</strong> repo</td>
 </tr>
 <tr>
 <td><code>security.dependabot_security_updates</code></td>
@@ -19391,17 +19391,15 @@ each difference as a <code>security.&lt;field&gt;</code> <code>DiffItem</code>:<
 <tr>
 <td><code>security.secret_scanning</code></td>
 <td><code>enabled</code></td>
-<td>Only when GHAS is available; otherwise unmanaged</td>
+<td>For every repo</td>
 </tr>
 <tr>
 <td><code>security.secret_scanning_push_protection</code></td>
 <td><code>enabled</code></td>
-<td>Only when GHAS is available; otherwise unmanaged</td>
+<td>For every repo</td>
 </tr>
 </tbody>
 </table>
-<p>GHAS is available when <code>[project].ghas</code> in <code>vergil.toml</code> says so, and
-otherwise exactly when the repo is not private.</p>
 <p>The first two rows are the <strong>report-only Dependabot posture</strong> (epic
 <a href="https://github.com/vergil-project/.github/issues/420">vergil-project/.github#420</a>):
 alerts are on so the nightly
