@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.335] - 2026-11-22
+
+### Chores
+
+- uv lock --upgrade
+
 ## [2.1.334] - 2026-11-22
 
 ### Bug fixes
