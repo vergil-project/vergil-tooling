@@ -25,6 +25,13 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from vergil_tooling.lib import github, release, remote_config, retry
 from vergil_tooling.lib.config import CONFIG_FILE
+
+# The listing bound and its truncation refusal live in lib.github, which uses
+# them itself and cannot import this module at load time (it imports
+# lib.github); they are re-exported so every caller keeps reaching them here.
+from vergil_tooling.lib.github import LISTING_LIMIT as LISTING_LIMIT
+from vergil_tooling.lib.github import EpicListTruncatedError as EpicListTruncatedError
+from vergil_tooling.lib.github import refuse_truncated as refuse_truncated
 from vergil_tooling.lib.labels import ensure_labels
 from vergil_tooling.lib.process_errors import error_text
 
@@ -727,16 +734,6 @@ _LEGACY_ADHOC_ARCHIVE_RE = re.compile(
 EPIC_TITLE_LIST_LIMIT = 1000
 
 
-#: Upper bound on the other ``gh issue list`` / ``gh search`` lookups here
-#: (#4038). ``gh search`` returns at most 1000 results however many pages it
-#: follows, so a search can never usefully ask for more.
-LISTING_LIMIT = 1000
-
-
-class EpicListTruncatedError(ValueError):
-    """A listing reached its limit, so a row the caller needs may lie beyond it."""
-
-
 class EpicTitleAmbiguousError(ValueError):
     """More than one open epic carries the title :func:`_find_epic_by_title` looked up.
 
@@ -747,18 +744,6 @@ class EpicTitleAmbiguousError(ValueError):
     def __init__(self, message: str, refs: Sequence[IssueRef]) -> None:
         super().__init__(message)
         self.refs = tuple(refs)
-
-
-def refuse_truncated(rows: object, limit: int, what: str) -> None:
-    """Raise :class:`EpicListTruncatedError` if *rows* is a list *limit* long or more.
-
-    gh stops at ``--limit`` without saying so, so a result that long may be cut
-    off and nothing read from it, absence above all, can be trusted.
-    """
-    if isinstance(rows, list) and len(rows) >= limit:
-        raise EpicListTruncatedError(
-            f"{what} reached its {limit}-row limit; refusing to act on a possibly truncated list"
-        )
 
 
 def _find_epic_by_title(

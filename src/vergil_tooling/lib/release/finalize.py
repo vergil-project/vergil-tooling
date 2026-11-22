@@ -14,6 +14,9 @@ from vergil_tooling.lib.release.tracking import close_tracking_issue
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
 
+# The stage that posts the records close-tracking waits for.
+_RECORDS = "release-records"
+
 _FINALIZE_CMD = (
     "vrg-finalize-pr",
     "--cleanup-only",
@@ -94,15 +97,43 @@ def finalize(ctx: ReleaseContext) -> None:  # noqa: ARG001 - every stage takes t
 
 
 def close_tracking(ctx: ReleaseContext) -> None:
-    """Post the release summary on the tracking issue and close it.
+    """Post the release summary on the tracking issue and close it, once every record is posted.
 
     The release's last tracked stage. The hold rule runs it only once no
     stage before it has failed, so a failed or deferred stage leaves the
     issue open for ``vrg-release --resume`` (spec §4.4 of epic
-    vergil-project/.github#1440).
+    vergil-project/.github#1440). It also refuses, leaving the issue open,
+    unless the state block records ``release-records`` done and a record
+    posted on every issue the release contains (spec §4.9).
     """
+    _require_records(ctx)
     close_tracking_issue(ctx, _build_summary(ctx))
     print("Tracking issue closed.")
+
+
+def _require_records(ctx: ReleaseContext) -> None:
+    """Refuse unless the state block records every issue's ``Released:`` record posted."""
+    current = ctx.state
+    if current is None:
+        raise ReleaseError(
+            phase="close-tracking",
+            command="close-tracking",
+            message=(
+                "the run holds no release state block, so whether every release record "
+                "is posted is unknown; leaving the tracking issue open."
+            ),
+        )
+    missing = [i.ref for i in current.issues if i.ref not in current.records_posted]
+    if _RECORDS not in current.done or missing:
+        what = f"no record on {', '.join(missing)}" if missing else f"{_RECORDS} is not done"
+        raise ReleaseError(
+            phase="close-tracking",
+            command="close-tracking",
+            message=(
+                f"the state block records {what}, so the tracking issue stays open. "
+                f"`vrg-release --resume {ctx.version}` posts the records, then closes it."
+            ),
+        )
 
 
 def _build_summary(ctx: ReleaseContext) -> str:
@@ -125,4 +156,11 @@ def _build_summary(ctx: ReleaseContext) -> str:
         lines.append(f"- CD workflow (main): {ctx.cd_run_url}")
     if ctx.develop_cd_run_url:
         lines.append(f"- Develop CD workflow: {ctx.develop_cd_run_url}")
+    lines.append("")
+    lines.append("### Released: records")
+    posted = ctx.state.records_posted if ctx.state is not None else ()
+    if posted:
+        lines.extend(f"- {ref}" for ref in posted)
+    else:
+        lines.append("- None: the release's PRs close no issues.")
     return "\n".join(lines)

@@ -28,6 +28,7 @@ from vergil_tooling.lib.release.merge import (
 from vergil_tooling.lib.release.package_index import wait_for_index
 from vergil_tooling.lib.release.preflight import preflight, run_audit
 from vergil_tooling.lib.release.prepare import prepare
+from vergil_tooling.lib.release.records import post_records
 from vergil_tooling.lib.release.resume import ALWAYS_RUN
 from vergil_tooling.lib.release.tracking import (
     comment_phase_complete,
@@ -207,6 +208,10 @@ def _record_done(ctx: ReleaseContext, name: str) -> None:
             develop_cd_run=ctx.develop_cd_run_id or current.develop_cd_run,
             # package-index found every package in the index (spec §4.5).
             index_listed=current.index_listed or bool(ctx.package_index_urls),
+            # install ran configured commands, so the records say it ran
+            # (spec §4.9); with none configured it is done but did not run.
+            install_done=current.install_done
+            or (name == "install" and ctx.install_commands is not None),
         ),
     )
 
@@ -275,8 +280,13 @@ def build_stages() -> list[Stage]:
         # (vergil-claude-plugin's marketplace, vrg-tooling-install v<MINOR>)
         # installs the release only once promote has moved it (issue #4739).
         Stage("install", _tracked("install", install), mode="fail_defer"),
-        # Closes the tracking issue only once no stage before it failed, so a
-        # failed or deferred stage leaves it open for --resume.
+        # A Released: record on every issue the release contains, once no
+        # stage before it failed; a resume posts only the missing ones (spec
+        # §4.9 of epic vergil-project/.github#1440).
+        Stage("release-records", _tracked("release-records", post_records), mode="fail_defer"),
+        # Closes the tracking issue only once no stage before it failed and
+        # every record is posted, so a failed or deferred stage leaves it open
+        # for --resume.
         Stage("close-tracking", _tracked("close-tracking", close_tracking), mode="fail_defer"),
         # The terminal exit summary: what is left, and the command that
         # finishes it.
@@ -420,6 +430,18 @@ def _publish_status_stage(state: ReleaseState) -> None:
     mark_warn(message)
 
 
+def _records_details(ctx: ReleaseContext) -> str:
+    """The release-records completion line: what this run posted and found."""
+    issues = len(ctx.state.issues) if ctx.state is not None else 0
+    if not issues:
+        return "No records to post: the release's PRs close no issues."
+    earlier = issues - ctx.records_new - ctx.records_found
+    return (
+        f"Released: records on all {issues} issue(s): {ctx.records_new} posted by this run, "
+        f"{ctx.records_found} found on the issue, {earlier} recorded by an earlier run."
+    )
+
+
 def _phase_details(ctx: ReleaseContext, phase: str) -> str:
     """Build human-readable details from ctx for a completed phase."""
     lines: list[str] = []
@@ -471,6 +493,8 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
         lines.append(f"Promoted v{minor(ctx.version)} -> v{ctx.version}")
     elif phase == "finalize":
         lines.append("Repository finalized.")
+    elif phase == "release-records":
+        lines.append(_records_details(ctx))
     elif phase == "close-tracking":
         lines.append("Tracking issue closed.")
     elif phase == "package-index":
