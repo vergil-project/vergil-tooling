@@ -588,8 +588,8 @@ org's `.github`.
 
 `vrg-epic-audit` reports (read-only) any drift from the model:
 
-- **Epics live in `.github`.** An open `epic`-labelled issue outside `.github` in
-  a *public* repo is a violation (a private repo self-homes legitimately).
+- **Epics live in `.github`.** An open `epic`-labelled issue outside `.github`
+  is a violation.
 - **No stray `.github` issues.** The epic home holds only epics, the
   `archive`-labelled per-quarter buckets, and issues linked under an epic —
   managed tasks and intake/planning/deferred items alike; any other open issue
@@ -604,13 +604,8 @@ org's `.github`.
   each **orphan** — an open issue in a managed repo (non-archived, with a
   `vergil.toml`) that is not a legitimate top-level kind and has no epic parent —
   together with the intake epic it would be attached to. It also lists issues
-  still carrying the retired `triage` / `idea` / `research` labels, issues
-  parented only by a body `Parent:` line, and self-homed queue epics
-  in a repo that has since become public.
-- **No private work under public epics.** An issue in a private repo parented
-  under a public `.github` epic is reported as a likely unsupported
-  public → private flip, for a human to resolve. Tooling never migrates or
-  retracts it.
+  still carrying the retired `triage` / `idea` / `research` labels, and issues
+  parented only by a body `Parent:` line.
 - **An archive stands top-level, labelled `archive`.** An open archive (an
   `archive` label, or a stamped `Archive (<kind>): <name> — <YYYY>-Qn` title)
   with a native parent, one whose stamped title lacks the `archive` label, or
@@ -638,11 +633,7 @@ with an org-wide **orphan pass**, in order:
    consumer reads the same parent.
 2. **Strip** the retired `triage` / `idea` / `research` labels from every open
    issue (its parent is left alone).
-3. **Move** a now-public repo's self-homed intake, planning and deferred items
-   under the
-   `.github` queues, then close the emptied self-homed epics — the only epics
-   the pass ever closes.
-4. **Attach** every orphan to its home's intake epic (creating it if absent).
+3. **Attach** every orphan to its home's intake epic (creating it if absent).
    Placement is intake review's job, not the sweep's.
 
 The pass is idempotent and never closes an item. Before each link it checks the

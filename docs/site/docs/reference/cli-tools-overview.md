@@ -1495,8 +1495,7 @@ an open finite epic whose children are all closed (a standing or
 [proxy epic](../standards/github-issues.md#proxy-epics) never is). The **invariant** checks
 are the [compliance invariants](../standards/github-issues.md#compliance-invariants):
 epics outside `.github`, stray `.github` issues, a closed epic with an open
-child, orphans, retired kind labels, body-only `Parent:` links, self-homed
-queues in a now-public repo, private work under a public epic, and a
+child, orphans, retired kind labels, body-only `Parent:` links, and a
 misplaced archive (one with a parent, one without its `archive` label, or one
 labelled `archive` whose title is not a stamped archive title). It also
 lists open epics with operational tasks still pending, and closed
@@ -1575,9 +1574,8 @@ stderr and no JSON, so the retrospective gate stops on it.
    hoshin epics into per-quarter archives, and close past archives (see
    [Ad-hoc epic archiving](../standards/github-issues.md#ad-hoc-epic-archiving)).
 3. Run the [orphan pass](../standards/github-issues.md#the-orphan-pass-auto-heal):
-   nativize body-only `Parent:` links, strip the retired kind labels, move a
-   now-public repo's queue items under `.github`, and attach every orphan to
-   its home's intake epic.
+   nativize body-only `Parent:` links, strip the retired kind labels, and
+   attach every orphan to its home's intake epic.
 
 `--close` makes no security-advisory call: it neither syncs advisory states
 nor checks advisory/issue pairs. That is `vrg-security-record sync`, run by
