@@ -940,7 +940,9 @@ Close a just-closed task's parent epic when the epic is finite and all its
 tasks are closed. A no-op for any other issue (a standing epic such as
 `ad-hoc` never auto-closes, and a
 [proxy epic](../standards/github-issues.md#proxy-epics) stays open until its
-primary closes), so it is safe on every issue close. Run by the `epic-rollup`
+primary closes), so it is safe on every issue close. It acts on a close only
+when its actor is trusted: an untrusted close of the task, or of a task the
+epic's close relies on, is a stop before any write. Run by the `epic-rollup`
 workflow on `issues.closed`.
 
 | Attribute | Value |
@@ -948,8 +950,8 @@ workflow on `issues.closed`.
 | Source | `vergil_tooling.bin.vrg_epic_rollup` |
 | Args | `--task` (required) |
 | Preconditions | GitHub App credentials for the target org |
-| Failure mode | Error on stderr |
-| Exit codes | 0 success or no-op, 1 error |
+| Failure mode | Error on stderr; an untrusted close is a stop, printed metadata only (under GitHub Actions, counted by cause) |
+| Exit codes | 0 success or no-op, 1 error or stop |
 | Status | Active |
 
 ### vrg-adhoc-epic

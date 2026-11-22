@@ -10,6 +10,13 @@ consumers (the finalize close+rollup, the roadmap generator) speak this module's
 Node-id resolution and issue state use REST (``gh api``); the parent/children
 traversal and the link mutation use GraphQL (``github.graphql``). The unit tests
 mock the ``github`` boundary; real GraphQL/REST correctness is exercised in use.
+
+**Trusted content** (epic vergil-project/.github#1467, spec §5.2). The body
+lines (``Parent:``, ``Blocked-by:``) count only from a body the trust layer
+(:mod:`vergil_tooling.lib.trust`) trusts. An untrusted body is reported on
+stderr, metadata only, and gives no parent and no reflink child; for
+:func:`blockers_of` it is a stop. The rollup acts on a close only when its
+actor is trusted (:func:`rollup`).
 """
 
 from __future__ import annotations
@@ -23,7 +30,7 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
-from vergil_tooling.lib import github, release, remote_config, retry
+from vergil_tooling.lib import github, release, remote_config, retry, trust
 from vergil_tooling.lib.config import CONFIG_FILE
 
 # The listing bound and its truncation refusal live in lib.github, which uses
@@ -97,6 +104,9 @@ _BLOCKED_BY_RE = re.compile(
     r"^\s*Blocked-by:\s*([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)#(\d+)\s*$",
     re.MULTILINE,
 )
+
+# The field the trust layer gives a body's Skipped record.
+_BODY_FIELD = "body"
 
 _REF_RE = re.compile(r"^(?:([A-Za-z0-9._-]+/[A-Za-z0-9._-]+))?#([0-9]+)$")
 
@@ -259,6 +269,25 @@ def _native_child_states(epic: IssueRef) -> list[ChildState]:
     ]
 
 
+def _repo_slug(ref: IssueRef) -> str:
+    return f"{ref.owner}/{ref.repo}"
+
+
+def _trusted_body(ref: IssueRef) -> str | None:
+    """*ref*'s body when the trust layer trusts it; otherwise ``None``, reported.
+
+    The untrusted body is reported on stderr, metadata only. Its comments are
+    not this reader's concern, so their skips are not reported here. A read
+    the layer cannot complete raises
+    :class:`~vergil_tooling.lib.trust.TrustReadError`.
+    """
+    content = trust.read_issue(_repo_slug(ref), ref.number)
+    trust.report_skipped(
+        [item for item in content.skipped if item.field == _BODY_FIELD], stream=sys.stderr
+    )
+    return content.body
+
+
 def _body_declares_parent(body: str, epic: IssueRef) -> bool:
     """True iff *body* carries a ``Parent:`` line naming exactly *epic*."""
     return any(
@@ -278,7 +307,9 @@ def _reflink_child_states(epic: IssueRef) -> list[ChildState]:
     guards keep the fallback sound: scope the search to the epic's org with
     ``--owner``, and verify each candidate's body actually carries a
     ``Parent: <epic slug>`` line (via :func:`_body_declares_parent`) before
-    accepting it.
+    accepting it. That line counts only from a trusted body: each candidate is
+    read again through the trust layer, and one whose body it does not trust
+    is reported and left out (:func:`_trusted_body`).
     """
     results: Any = github.read_json(
         "search",
@@ -300,9 +331,12 @@ def _reflink_child_states(epic: IssueRef) -> list[ChildState]:
         if not _body_declares_parent(str(item.get("body") or ""), epic):
             continue
         owner, name = name_with_owner.split("/", 1)
+        ref = IssueRef(owner=owner, repo=name, number=int(item["number"]))
+        if not _body_declares_parent(_trusted_body(ref) or "", epic):
+            continue
         states.append(
             ChildState(
-                ref=IssueRef(owner=owner, repo=name, number=int(item["number"])),
+                ref=ref,
                 state=str(item["state"]).upper(),
                 title=str(item.get("title") or ""),
                 closed_at=str(item.get("closedAt") or ""),
@@ -346,8 +380,13 @@ def blockers_of(task: IssueRef) -> list[IssueRef]:
     native issue dependencies are REST-only and out of the sanctioned tooling's
     reach. If native dependencies become reachable later, this is the one place
     that would prefer them over the reflink.
+
+    The lines count only from a trusted body: an untrusted one is a stop
+    (:class:`~vergil_tooling.lib.trust.UntrustedContentError`, metadata only),
+    never "no blockers".
     """
-    body = github.read_output("api", _issue_endpoint(task), "--jq", ".body") or ""
+    content = trust.read_issue(_repo_slug(task), task.number, require_body=True)
+    body = content.body or ""
     return [
         IssueRef(owner=match.group(1), repo=match.group(2), number=int(match.group(3)))
         for match in _BLOCKED_BY_RE.finditer(body)
@@ -379,11 +418,15 @@ def native_parent_of(task: IssueRef) -> IssueRef | None:
 
 
 def parent_of(task: IssueRef) -> IssueRef | None:
-    """The epic *task* belongs to: native parent preferred, reflink fallback."""
+    """The epic *task* belongs to: native parent preferred, reflink fallback.
+
+    The fallback reads the ``Parent:`` line of a trusted body only: an
+    untrusted body is reported and gives no parent (:func:`_trusted_body`).
+    """
     native = native_parent_of(task)
     if native is not None:
         return native
-    body = github.read_output("api", _issue_endpoint(task), "--jq", ".body")
+    body = _trusted_body(task)
     match = _PARENT_RE.search(body or "")
     if match:
         return IssueRef(owner=match.group(1), repo=match.group(2), number=int(match.group(3)))
@@ -1953,19 +1996,30 @@ def rollup(task: IssueRef) -> None:
     steady-state event path, :func:`drain_standing_child`). A parent that is
     itself an archive is terminal and left untouched. A proxy epic
     (:func:`is_proxy`) is never rolled up: it stays open until its primary closes.
+
+    A close by an untrusted actor is not a close for the rollup (spec §5.2):
+    before the drain or the epic's close, *task*'s close, and before the
+    epic's close every other child's, must be trusted
+    (:func:`~vergil_tooling.lib.trust.require_trusted_close`). An untrusted
+    one is a stop before any write
+    (:class:`~vergil_tooling.lib.trust.UntrustedContentError`).
     """
     parent = parent_of(task)
     if parent is None or not is_epic(parent):
         return
     labels = _labels(parent)
     kind = standing_kind_of(labels)
-    if kind is not None:
-        drain_standing_child(kind, parent, task)
-        return
-    if is_proxy(labels):
+    if kind is None and is_proxy(labels):
         # A proxy lives as long as its primary: its own org's daily sweep closes
         # it once the primary is closed (vergil-project/.github#1417).
         return
+    trust.require_trusted_close(_repo_slug(task), task.number)
+    if kind is not None:
+        drain_standing_child(kind, parent, task)
+        return
     if all_children_closed(parent):
+        for child in child_states(parent):
+            if child.ref != task:
+                trust.require_trusted_close(_repo_slug(child.ref), child.ref.number)
         print(f"Rolling up epic {parent.slug} — all child tasks closed.")
         github.run("issue", "close", str(parent.number), "--repo", f"{parent.owner}/{parent.repo}")

@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin.vrg_epic_rollup import main, parse_args
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epics, github, trust
 
 _MOD = "vergil_tooling.bin.vrg_epic_rollup"
 
@@ -69,3 +69,44 @@ def test_main_reports_missing_installation() -> None:
     ):
         rc = main(["--task", "#42"])
     assert rc == 1
+
+
+_CLOSE = trust.Skipped(
+    "org/repo", 42, "event", "drive-by", "2026-11-02T10:00:00Z", "close", trust.UNTRUSTED
+)
+
+
+def _stopped(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> str:
+    """Run main on a rollup that stops on an untrusted close; return stderr."""
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(
+            f"{_MOD}.epics.rollup",
+            side_effect=trust.UntrustedContentError(_CLOSE, "the close is untrusted"),
+        ),
+    ):
+        rc = main(["--task", "#42"])
+    assert rc == 1
+    out, err = capsys.readouterr()
+    assert "Epic rollup check complete" not in out
+    return err
+
+
+def test_main_untrusted_close_is_a_stop(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    err = _stopped(monkeypatch, capsys)
+    assert err == (
+        "stopped: org/repo#42 event drive-by at 2026-11-02T10:00:00Z on close (untrusted)\n"
+    )
+
+
+def test_main_untrusted_close_under_actions_prints_counts_only(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Actions logs are public: the outsider's login is not printed.
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    err = _stopped(monkeypatch, capsys)
+    assert err == "stopped 1 item(s) (untrusted: 1)\n"
+    assert "drive-by" not in err

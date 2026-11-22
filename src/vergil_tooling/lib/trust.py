@@ -24,10 +24,10 @@ items and a :class:`Skipped` record for each untrusted one; where the content
 is load-bearing they raise :class:`UntrustedContentError` instead. Reviews and
 inline review comments follow the same rule (:func:`read_reviews`). A close
 or reopen is trusted when its actor is (:func:`read_events`,
-:func:`close_judgement`). A PR found by its branch is same-repo and has a
-trusted author (:func:`prs_for_branch`); a fork PR never matches. A search
-or list result is trusted when its body is, and everyone who renamed it holds
-a role (:func:`search_items`, :func:`list_items`).
+:func:`close_judgement`, :func:`require_trusted_close`). A PR found by its
+branch is same-repo and has a trusted author (:func:`prs_for_branch`); a fork
+PR never matches. A search or list result is trusted when its body is, and
+everyone who renamed it holds a role (:func:`search_items`, :func:`list_items`).
 
 **Failing loudly** (spec §3). An API error, a missing field or a connection
 that is not read in full raises :class:`TrustReadError`, never "trusted",
@@ -832,10 +832,41 @@ def close_judgement(
     """
     if authors is None:
         authors = load_trusted_authors()
+    close = _latest_close(repo, number, "close_judgement")
+    return _accepted(close.actor, org=_split_repo(repo)[0], roles=roles, authors=authors)
+
+
+def require_trusted_close(
+    repo: str,
+    number: int,
+    *,
+    roles: frozenset[Role] = ALL_ROLES,
+    authors: TrustedAuthors | None = None,
+) -> Role:
+    """The role of whoever closed *repo*#*number* last; an untrusted close is a stop.
+
+    For a caller that acts on the close: where :func:`close_judgement` gives no
+    role, this raises :class:`UntrustedContentError` on the close event (kind
+    ``event``, field ``close``), metadata only. An item with no close event
+    raises :class:`TrustReadError`.
+    """
+    if authors is None:
+        authors = load_trusted_authors()
+    close = _latest_close(repo, number, "require_trusted_close")
+    judgement = _accepted(close.actor, org=_split_repo(repo)[0], roles=roles, authors=authors)
+    if judgement.role is None:
+        item = Skipped(
+            repo, number, "event", _bare(close.actor), close.at, "close", str(judgement.cause)
+        )
+        raise UntrustedContentError(item, "the close is untrusted")
+    return judgement.role
+
+
+def _latest_close(repo: str, number: int, caller: str) -> IssueEvent:
     closes = [event for event in read_events(repo, number) if event.kind == "closed"]
     if not closes:
-        raise TrustReadError(f"close_judgement {repo}#{number}", "the item has no close event")
-    return _accepted(closes[-1].actor, org=_split_repo(repo)[0], roles=roles, authors=authors)
+        raise TrustReadError(f"{caller} {repo}#{number}", "the item has no close event")
+    return closes[-1]
 
 
 # --- branch lookups -------------------------------------------------------------
