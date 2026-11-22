@@ -32,6 +32,7 @@ import hashlib
 import json
 import logging
 import shutil
+import sys
 import tarfile
 import tempfile
 import time
@@ -40,8 +41,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, trust
 from vergil_tooling.lib.github_config import (
+    GHAS_INTEGRATION_ID,
+    GITHUB_ACTIONS_INTEGRATION_ID,
     required_evidence_gates,
     resolved_integration_versions,
 )
@@ -50,7 +53,7 @@ from vergil_tooling.lib.remote_config import require_config_at_ref
 from vergil_tooling.lib.retry import compute_delay
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from vergil_tooling.lib.github_config import EvidenceGate
 
@@ -563,43 +566,123 @@ class ReleasePrUnresolvedError(ValueError):
     """
 
 
-def _pr_from_commit_api(repo: str, merge_sha: str) -> int | None:
-    """Return the PR number ``merge_sha`` closed, via ``/commits/{sha}/pulls``.
+def _pr_number(pr: Mapping[str, Any], what: str) -> int:
+    """The ``number`` of the REST PR object *pr*, or a ``ValueError`` naming *what*."""
+    number = pr.get("number")
+    if not isinstance(number, int) or isinstance(number, bool):
+        msg = f"{what} has no usable number ({number!r})"
+        raise ValueError(msg)
+    return number
 
-    Prefers a merged PR; falls back to the first associated PR. Returns None
-    when the API associates no PR with the commit.
+
+def _head_ref(pr: Mapping[str, Any], what: str) -> str:
+    """The head branch name of the REST PR object *pr*, or a ``ValueError``."""
+    head = pr.get("head")
+    ref = head.get("ref") if isinstance(head, dict) else None
+    if not isinstance(ref, str) or not ref:
+        msg = f"{what} has no head branch"
+        raise ValueError(msg)
+    return ref
+
+
+def _merged_prs_from_commit_api(repo: str, merge_sha: str) -> tuple[dict[int, str], list[int]]:
+    """The PRs ``/commits/{sha}/pulls`` associates with ``merge_sha``.
+
+    Returns the merged ones as number → head branch, and the numbers of the
+    rest (open, or closed unmerged). Only a merged PR can have closed the
+    release; the rest are never taken in its place (GHSA-r4j2-cwcp-xg56).
     """
     prs = cast(
         "list[dict[str, Any]]",
         github.read_json_paginated(f"repos/{repo}/commits/{merge_sha}/pulls"),
     )
-    merged = [pr for pr in prs if pr.get("merged_at")]
-    chosen = merged or prs
-    if not chosen:
-        return None
-    return int(chosen[0]["number"])
+    merged: dict[int, str] = {}
+    unmerged: list[int] = []
+    for pr in prs:
+        number = _pr_number(pr, f"a PR of commit {merge_sha}")
+        if pr.get("merged_at"):
+            merged[number] = _head_ref(pr, f"PR #{number}")
+        else:
+            unmerged.append(number)
+    return merged, unmerged
+
+
+def _pr_from_subject(repo: str, merge_sha: str) -> dict[int, str]:
+    """The PR the merge/squash subject of ``merge_sha`` names, as number → head branch.
+
+    Empty when the subject names no PR
+    (:func:`~vergil_tooling.lib.linkage.extract_merge_pr`).
+    """
+    message = github.read_output(
+        "api", f"repos/{repo}/commits/{merge_sha}", "--jq", ".commit.message"
+    )
+    subject = message.splitlines()[0] if message else ""
+    number = extract_merge_pr(subject)
+    if number is None:
+        return {}
+    pr = github.read_json("api", f"repos/{repo}/pulls/{number}")
+    if not isinstance(pr, dict):
+        msg = f"PR #{number} of {repo} is not a JSON object"
+        raise ValueError(msg)
+    return {number: _head_ref(pr, f"PR #{number}")}
+
+
+def _trusted_merged(repo: str, candidates: Mapping[int, str]) -> list[trust.PRRef]:
+    """The *candidates* that are merged same-repo PRs with a trusted author.
+
+    Each candidate's branch is read through :func:`trust.prs_for_branch`, and
+    only a PR with the candidate's own number counts, so a fork PR on the same
+    branch name never stands in for it. The skipped PRs are reported on
+    stderr, metadata only; a read failure raises :class:`trust.TrustReadError`.
+    """
+    found: dict[int, trust.PRRef] = {}
+    skipped: list[trust.Skipped] = []
+    for branch in sorted(set(candidates.values())):
+        prs, branch_skipped = trust.prs_for_branch(repo, branch, state="merged")
+        skipped.extend(branch_skipped)
+        for pr in prs:
+            if candidates.get(pr.number) == branch:
+                found[pr.number] = pr
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return [found[number] for number in sorted(found)]
 
 
 def resolve_release_pr(repo: str, merge_sha: str) -> int:
     """Resolve the release PR a merge commit closed.
 
-    Primary: the ``/commits/{sha}/pulls`` API. Fallback: the merge/squash
-    commit subject (:func:`~vergil_tooling.lib.linkage.extract_merge_pr`) when
-    the API associates no PR. Raises :class:`ReleasePrUnresolvedError` when
-    neither resolves a PR.
+    The candidates come from the ``/commits/{sha}/pulls`` API's merged PRs or,
+    when it associates no PR at all, from the merge/squash commit subject
+    (:func:`~vergil_tooling.lib.linkage.extract_merge_pr`). Only a candidate
+    that is a merged same-repo PR with a trusted author is taken, and it must
+    be the only one: there is no first-PR fallback (GHSA-r4j2-cwcp-xg56,
+    GHSA-q6hx-8c85-9f56). Raises :class:`ReleasePrUnresolvedError` when no
+    PR, or more than one, qualifies.
     """
-    pr = _pr_from_commit_api(repo, merge_sha)
-    if pr is not None:
-        return pr
-    message = github.read_output(
-        "api", f"repos/{repo}/commits/{merge_sha}", "--jq", ".commit.message"
-    )
-    subject = message.splitlines()[0] if message else ""
-    pr = extract_merge_pr(subject)
-    if pr is not None:
-        return pr
-    msg = f"cannot resolve release PR for {merge_sha} in {repo}"
-    raise ReleasePrUnresolvedError(msg)
+    candidates, unmerged = _merged_prs_from_commit_api(repo, merge_sha)
+    if not candidates and not unmerged:
+        candidates = _pr_from_subject(repo, merge_sha)
+    if not candidates:
+        named = f": only unmerged PR(s) {_numbers(unmerged)}" if unmerged else ""
+        msg = f"cannot resolve release PR for {merge_sha} in {repo}{named}"
+        raise ReleasePrUnresolvedError(msg)
+    trusted = _trusted_merged(repo, candidates)
+    if not trusted:
+        msg = (
+            f"cannot resolve release PR for {merge_sha} in {repo}: merged PR(s) "
+            f"{_numbers(candidates)} are not same-repo PRs with a trusted author"
+        )
+        raise ReleasePrUnresolvedError(msg)
+    if len(trusted) > 1:
+        msg = (
+            f"cannot resolve release PR for {merge_sha} in {repo}: "
+            f"several trusted merged PRs {_numbers(pr.number for pr in trusted)}"
+        )
+        raise ReleasePrUnresolvedError(msg)
+    return trusted[0].number
+
+
+def _numbers(numbers: Iterable[int]) -> str:
+    return ", ".join(f"#{n}" for n in sorted(numbers))
 
 
 def _is_qualifying_run(run: Mapping[str, Any], workflow: str) -> bool:
@@ -615,11 +698,27 @@ def _is_qualifying_run(run: Mapping[str, Any], workflow: str) -> bool:
     )
 
 
+def _is_own_run(run: Mapping[str, Any], repo: str) -> bool:
+    """True when *run* was built from *repo* itself, not from a fork.
+
+    A fork's pull-request run lists under the base repo with the same head
+    commit, so the run's ``head_repository`` decides it. A run with no head
+    repository (a fork deleted since, for one) cannot be shown to be the
+    repo's own, so it is not: it is skipped like a fork's, and never stops the
+    selection (GHSA-q6hx-8c85-9f56).
+    """
+    head_repo = run.get("head_repository")
+    full_name = head_repo.get("full_name") if isinstance(head_repo, dict) else None
+    return isinstance(full_name, str) and full_name.lower() == repo.lower()
+
+
 def select_ci_run(repo: str, head_sha: str, *, workflow: str = "CI") -> dict[str, Any]:
     """Return the latest COMPLETED + SUCCESS *workflow* run for ``head_sha``.
 
-    Cancelled and in-progress runs are ignored. Raises
-    :class:`NoQualifyingRunError` when no run qualifies (spec §5.2).
+    Only a run built from *repo* itself counts: a fork's run of the same
+    commit is ignored (:func:`_is_own_run`). Cancelled and in-progress runs
+    are ignored. Raises :class:`NoQualifyingRunError` when no run qualifies
+    (spec §5.2).
     """
     # The query string MUST be in the endpoint path, not a ``-f head_sha=…``
     # field: ``gh api`` switches to POST the moment any ``-f``/``-F`` field is
@@ -630,7 +729,7 @@ def select_ci_run(repo: str, head_sha: str, *, workflow: str = "CI") -> dict[str
     raw = github.read_json_paginated(
         f"repos/{repo}/actions/runs?head_sha={head_sha}", "workflow_runs"
     )
-    runs = cast("list[dict[str, Any]]", raw)
+    runs = [run for run in cast("list[dict[str, Any]]", raw) if _is_own_run(run, repo)]
     qualifying = [run for run in runs if _is_qualifying_run(run, workflow)]
     if not qualifying:
         visible = any(run.get("name") == workflow for run in runs)
@@ -789,18 +888,69 @@ def _extract_zip_safely(archive: Path, dest: Path) -> None:
         zf.extractall(root)  # noqa: S202 — every member validated above
 
 
-def read_gate_conclusions(repo: str, head_sha: str) -> dict[str, str]:
+def _app_id(check_run: Mapping[str, Any]) -> int:
+    """The ID of the App that created *check_run*, or a ``ValueError``."""
+    app = check_run.get("app")
+    app_id = app.get("id") if isinstance(app, dict) else None
+    if not isinstance(app_id, int) or isinstance(app_id, bool):
+        msg = f"check run {check_run.get('id')!r} has no creating app"
+        raise ValueError(msg)
+    return app_id
+
+
+def _suite_id(check_run: Mapping[str, Any]) -> int:
+    """The check suite ID of *check_run*, or a ``ValueError``."""
+    suite = check_run.get("check_suite")
+    suite_id = suite.get("id") if isinstance(suite, dict) else None
+    if not isinstance(suite_id, int) or isinstance(suite_id, bool):
+        msg = f"check run {check_run.get('id')!r} has no check suite"
+        raise ValueError(msg)
+    return suite_id
+
+
+def _is_evidence_check(check_run: Mapping[str, Any], check_suite_id: int) -> bool:
+    """True when *check_run* is one the selected CI run's evidence may count.
+
+    That is a GitHub Actions check run of the selected CI run's own check
+    suite, or one of the scanner checks GitHub Advanced Security registers
+    for that commit (:data:`~vergil_tooling.lib.github.UPLOADED_CHECK_JOBS`).
+    A check run of the same name from any other App or workflow never counts
+    (GHSA-q6hx-8c85-9f56).
+    """
+    app_id = _app_id(check_run)
+    if app_id == GITHUB_ACTIONS_INTEGRATION_ID:
+        return _suite_id(check_run) == check_suite_id
+    return app_id == GHAS_INTEGRATION_ID and check_run.get("name") in github.UPLOADED_CHECK_JOBS
+
+
+def read_gate_conclusions(repo: str, head_sha: str, *, check_suite_id: int) -> dict[str, str]:
     """Return a check-run name → conclusion map for ``head_sha``.
 
-    Feeds both the manifest's ``checks.json`` snapshot and completeness
-    validation. A null conclusion (e.g. a still-neutral check) maps to the
-    empty string.
+    Only the check runs of the selected CI run's check suite
+    (*check_suite_id*, the run's ``check_suite_id``) and the GitHub Advanced
+    Security scanner checks count (:func:`_is_evidence_check`); every other
+    check run on the commit is left out. Feeds both the manifest's
+    ``checks.json`` snapshot and completeness validation. A null conclusion
+    (e.g. a still-neutral check) maps to the empty string.
     """
     # Paginated: a release PR's matrix CI registers more than 30 check runs, and
     # a gate check past the first page would otherwise read as absent (#3160).
     raw = github.read_json_paginated(f"repos/{repo}/commits/{head_sha}/check-runs", "check_runs")
     check_runs = cast("list[dict[str, Any]]", raw)
-    return {str(run["name"]): str(run.get("conclusion") or "") for run in check_runs}
+    return {
+        str(run["name"]): str(run.get("conclusion") or "")
+        for run in check_runs
+        if _is_evidence_check(run, check_suite_id)
+    }
+
+
+def _check_suite_id(run: Mapping[str, Any]) -> int:
+    """The ``check_suite_id`` of the workflow *run*, or a ``ValueError``."""
+    suite_id = run.get("check_suite_id")
+    if not isinstance(suite_id, int) or isinstance(suite_id, bool):
+        msg = f"workflow run {run.get('id')!r} has no check suite"
+        raise ValueError(msg)
+    return suite_id
 
 
 def resolve_required_gates(repo: str, ref: str) -> tuple[EvidenceGate, ...]:
@@ -940,7 +1090,7 @@ def run_harvest(
     # The required set comes from *repo*'s own vergil.toml at the validated
     # head — never the cwd checkout, which may be another repo or none (#3226).
     required = resolve_required_gates(repo, head_sha)
-    conclusions = read_gate_conclusions(repo, head_sha)
+    conclusions = read_gate_conclusions(repo, head_sha, check_suite_id=_check_suite_id(run))
 
     gate_dirs = download_evidence_artifacts(repo, int(run["id"]), gates_dest, required)
     harvested = load_harvested_gates(gate_dirs, required, conclusions)

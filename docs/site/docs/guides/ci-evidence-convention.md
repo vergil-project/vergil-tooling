@@ -321,7 +321,7 @@ self-describing and verifiable:
 v{version}-ci-evidence.tar.gz
 └─ evidence/
    ├─ manifest.json          # top-level machine index (see below)
-   ├─ checks.json            # raw check-runs snapshot (name, conclusion, timing, log URL)
+   ├─ checks.json            # raw check-runs snapshot (name, conclusion)
    ├─ gates/
    │   ├─ security/          # python.sarif, trivy-results.sarif, semgrep-results.sarif, evidence.json
    │   ├─ test/              # coverage-<ver>.xml, junit-<ver>.xml (per Python version), evidence.json
@@ -333,7 +333,11 @@ v{version}-ci-evidence.tar.gz
 
 - `manifest.json` is the curated, per-gate machine index (schema below).
 - `checks.json` is the **raw** check-run snapshot — distinct from the manifest's
-  curated view — capturing every check's name, conclusion, timing, and log URL.
+  curated view — capturing each counted check's name and conclusion. Only the
+  check runs of the selected CI run's own check suite (created by GitHub
+  Actions) and the `CodeQL`, `Semgrep OSS` and `Trivy` checks created by
+  GitHub Advanced Security count; a check run of the same name from another
+  App or workflow is left out.
 - `gates/sbom/` is present only when the release built a package SBOM. The
   assemble step copies the SBOM already built during publish (also a
   standalone Release asset) into the bundle, so the archive stays fully
@@ -423,6 +427,13 @@ run on the **release PR**, whose validated tree is identical to what lands on
 PR head) and harvested at publish time while the PR's runs and artifacts are
 still fresh. `released_commit` records what shipped; `validated_head_sha` records
 what was validated — they name the same tree.
+
+The release PR is the merge commit's one **merged same-repo PR with a trusted
+author**, read through the trust layer: a fork PR, a PR by an author with no
+role, and an unmerged PR never stand in for it, and with none (or several) the
+harvest fails rather than take the first PR of the commit. The CI run is the
+latest green `CI` run built from the repo itself; a fork's run of the same
+commit is ignored.
 
 ## Verification: how a downstream auditor checks the bundle
 

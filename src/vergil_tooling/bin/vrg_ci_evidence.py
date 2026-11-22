@@ -8,7 +8,10 @@ the substantive failures
 :class:`~vergil_tooling.lib.ci_evidence.ReleasePrUnresolvedError`,
 :class:`~vergil_tooling.lib.ci_evidence.HarvestStateError`,
 :class:`~vergil_tooling.lib.ci_evidence.EvidenceArtifactError`,
-:class:`~vergil_tooling.lib.remote_config.RemoteConfigError`) to a single-line
+:class:`~vergil_tooling.lib.remote_config.RemoteConfigError`, and the trust
+layer's :class:`~vergil_tooling.lib.trust.TrustReadError` and
+:class:`~vergil_tooling.lib.trusted_authors.TrustedAuthorsNotConfiguredError`,
+whose messages are metadata only) to a single-line
 error and exit 1 via :func:`~vergil_tooling.lib.output.emit_error` — never a
 traceback.
 
@@ -32,7 +35,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from vergil_tooling.lib import ci_evidence, github
+from vergil_tooling.lib import ci_evidence, github, trust
 from vergil_tooling.lib.ci_evidence import (
     EvidenceArtifactError,
     HarvestStateError,
@@ -43,6 +46,7 @@ from vergil_tooling.lib.ci_evidence import (
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.output import emit_error
 from vergil_tooling.lib.remote_config import RemoteConfigError
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.versions import VersionsError
 
 
@@ -58,7 +62,9 @@ def main(argv: list[str] | None = None) -> int:
         NoQualifyingRunError,
         ReleasePrUnresolvedError,
         RemoteConfigError,
+        TrustedAuthorsNotConfiguredError,
         VersionsError,
+        trust.TrustReadError,
     ) as exc:
         emit_error(str(exc))
         return 1
