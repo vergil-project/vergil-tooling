@@ -20687,7 +20687,8 @@ posted again.</p>
 <h3 id="vrg-release">vrg-release<a class="headerlink" href="#vrg-release" title="Permanent link">&para;</a></h3>
 <p>Run the full release workflow from <code>develop</code> to <code>main</code>: tracking issue,
 changelog, release PR and merge, CD confirmation, back-merge and version
-bump, rolling-tag promotion, cleanup, the <code>update-deps</code> stage, which
+bump, the delivery of failed CD publish jobs (<code>cd-publish</code>, which a
+<code>--resume</code> re-runs), rolling-tag promotion, cleanup, the <code>update-deps</code> stage, which
 runs the dependency update on the new <code>develop</code> version, and finally
 the consumer refresh, which runs the <code>[publish].consumer-refresh</code>
 commands (held while any publish is deferred). On a fresh start, preflight refuses while any

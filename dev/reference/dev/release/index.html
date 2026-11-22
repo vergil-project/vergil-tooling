@@ -18379,6 +18379,14 @@ the PRs, the tag and the CD runs it produced. <code>--resume</code> checks those
 facts against GitHub and git, then runs only the stages not recorded
 done; see
 <a href="../../../guides/releasing/#resuming-a-release">Resuming a release</a>.</p>
+<p>A CD publish job that fails is recorded in the state block, by its run
+and full job name, and the <code>cd-publish</code> stage delivers it on <code>--resume</code>:
+it re-runs <code>main</code>'s failed jobs, and re-runs a <code>develop</code> job only when
+no later <code>develop</code> CD run's same job has succeeded. A failed CD release
+job is recorded too, and the resume's <code>confirm-main</code> re-runs the release
+PR's CI run and then that CD run before judging it again; see
+<a href="../../../guides/releasing/#failed-cd-publish-jobs">Failed CD publish jobs</a>
+and <a href="../../../guides/releasing/#a-failed-release-job">A failed release job</a>.</p>
 <p>Releasing is a human maintainer action. <code>vrg-release</code> refuses to run
 under an agent identity.</p>
 <p><code>vrg-release</code> only releases a repo that declares itself released with

@@ -18159,6 +18159,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#failed-cd-publish-jobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failed CD publish jobs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#a-promote-held-back-by-the-index" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18615,6 +18626,17 @@
   
     <nav class="md-nav" aria-label="The vrg-release pipeline">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#failed-cd-publish-jobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failed CD publish jobs
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#a-promote-held-back-by-the-index" class="md-nav__link">
@@ -19236,7 +19258,7 @@ stages not recorded done.</p>
 <tr>
 <td><code>confirm-main</code></td>
 <td>fail-fast</td>
-<td>Watches CD on <code>main</code>. The release job must succeed; other failed publish jobs are recorded as deferred publish failures (see <a href="#stale-job-records">Stale job records</a>)</td>
+<td>Watches CD on <code>main</code>. The release job must succeed: a failed one is recorded in the state block, and recovered by the resume (see <a href="#a-failed-release-job">A failed release job</a>). Every other failed publish job is recorded in the state block, by its run and full name, and deferred to <code>cd-publish</code> (see <a href="#stale-job-records">Stale job records</a>)</td>
 </tr>
 <tr>
 <td><code>back-merge-bump</code></td>
@@ -19251,7 +19273,12 @@ stages not recorded done.</p>
 <tr>
 <td><code>confirm-develop</code></td>
 <td>deferred</td>
-<td>Watches the CD run on <code>develop</code> for the back-merge's merge commit; a failed docs publish is deferred</td>
+<td>Watches the CD run on <code>develop</code> for the back-merge's merge commit; a failed publish job (the docs publish) is recorded in the state block and deferred to <code>cd-publish</code></td>
+</tr>
+<tr>
+<td><code>cd-publish</code></td>
+<td>deferred</td>
+<td>Delivers the CD publish jobs the confirm stages recorded as failed (see <a href="#failed-cd-publish-jobs">Failed CD publish jobs</a>). Nothing to do when none failed. A fresh run fails it, deferred, naming the jobs; <code>vrg-release --resume</code> re-runs them</td>
 </tr>
 <tr>
 <td><code>package-index</code></td>
@@ -19289,11 +19316,34 @@ stages not recorded done.</p>
 when an earlier stage has failed, so the release can be resumed with
 <code>vrg-release --resume</code>. A deferred publish failure also leaves the
 issue open, with a comment that says how to finish each deferred item:
-re-run the CD publish (or the <code>publish-index</code> workflow, for a
-<code>package-index</code> miss), then run <code>vrg-release --resume</code>, which finishes
-the stages not yet done and closes the issue. For a <code>package-index</code>
-miss the re-run is optional: the resume dispatches the <code>publish-index</code>
-workflow itself.</p>
+fix the cause of the failed CD publish jobs, which the resume re-runs
+(or re-run the <code>publish-index</code> workflow, for a <code>package-index</code> miss),
+then run <code>vrg-release --resume</code>, which finishes the stages not yet done
+and closes the issue. For a <code>package-index</code> miss the re-run is optional:
+the resume dispatches the <code>publish-index</code> workflow itself.</p>
+<h4 id="failed-cd-publish-jobs">Failed CD publish jobs<a class="headerlink" href="#failed-cd-publish-jobs" title="Permanent link">&para;</a></h4>
+<p><code>confirm-main</code> and <code>confirm-develop</code> record each CD publish job that did
+not succeed in the tracking issue's state block, as its branch, its CD
+run and its full job name. A fresh run's <code>cd-publish</code> fails, deferred,
+naming them, and the release carries on. Once the cause is fixed,
+<code>vrg-release --resume</code> delivers them:</p>
+<ul>
+<li><strong>On <code>main</code></strong>, each recorded run is re-run with
+  <code>gh run rerun &lt;run&gt; --failed</code> and watched, and its jobs are judged
+  again as <code>confirm-main</code> judges them: the release job must still have
+  succeeded.</li>
+<li><strong>On <code>develop</code></strong>, a recorded job counts as delivered when a later
+  <code>develop</code> CD run's same job has succeeded, so an older run never
+  overwrites newer docs. Only a job no later run delivered is re-run,
+  by itself (<code>gh run rerun &lt;run&gt; --job &lt;job&gt;</code>). A listing of <code>develop</code>'s
+  newest CD runs that does not reach back to the recorded run stops the
+  stage rather than re-run it on a guess.</li>
+</ul>
+<p>A recorded job whose run has succeeded since, re-run by hand say, is
+delivered without a re-run. Each delivered job leaves the state block
+as soon as its run is judged, so a second resume re-runs only what is
+still recorded. While any job is left, <code>cd-publish</code> fails, the issue
+stays open, and the consumer refresh holds.</p>
 <p><code>confirm-develop</code> checks the CD run for the back-merge's merge commit,
 not for the current tip of <code>develop</code>. On <code>vrg-release --resume</code>, other
 PRs (a dependency update or a feature) may have merged to <code>develop</code>
@@ -19396,26 +19446,23 @@ it by hand, or with the tooling version that started it, then close the
 issue.</p>
 <h3 id="a-failed-release-job">A failed release job<a class="headerlink" href="#a-failed-release-job" title="Permanent link">&para;</a></h3>
 <p>When the CD release job on <code>main</code> does not succeed, <code>confirm-main</code>
-fails, and the release PR is already merged. <code>vrg-release --resume</code>
-alone cannot recover it: it watches the latest attempt of the same CD
-run and judges that same failed release job again. <code>vrg-release</code> does
-not re-run the job itself, since only you can tell that the cause is
-fixed. The <code>confirm-main</code> failure, on the terminal and on the tracking
-issue, lists the recovery steps with the run IDs filled in:</p>
+records the CD run in the state block as the failed release run, then
+fails. The release PR is already merged. Fix the cause, then run
+<code>vrg-release --resume &lt;version&gt;</code>. Its <code>confirm-main</code> recovers the run
+before judging it:</p>
 <ol>
-<li><code>gh run rerun &lt;ci-run&gt; --repo &lt;repo&gt;</code>: re-run the release PR's CI
-   run. The release job's evidence gate harvests that run's artifacts,
-   so a fix that changes what CI writes reaches the gate only through a
-   fresh CI attempt.</li>
-<li><code>gh run watch &lt;ci-run&gt; --repo &lt;repo&gt; --exit-status</code>.</li>
-<li><code>gh run rerun &lt;cd-run&gt; --repo &lt;repo&gt;</code>: re-run the failed CD run on
-   <code>main</code>.</li>
-<li><code>gh run watch &lt;cd-run&gt; --repo &lt;repo&gt; --exit-status</code>.</li>
-<li><code>vrg-release --resume &lt;version&gt;</code>.</li>
+<li>It checks that the recorded run is for <code>main</code>'s tip, the release
+   merge, and refuses to re-run it otherwise.</li>
+<li>It re-runs the release PR's CI run and watches it with
+   <code>--exit-status</code>. The release job's evidence gate harvests that run's
+   artifacts, so a fix that changes what CI writes reaches the gate only
+   through a fresh CI attempt. A CI re-run that fails stops the resume
+   before the CD run is touched.</li>
+<li>It re-runs the failed CD run and watches it.</li>
+<li>It judges the CD run's new attempt through the same release-job gate.
+   A release job that passes clears the recorded run; one that fails
+   again keeps it recorded, and the next resume recovers it again.</li>
 </ol>
-<p>Run them once the fix for the cause is released. Stop at any watch that
-fails. The resume judges the CD run's new attempt through the same
-release-job gate.</p>
 <h3 id="a-failed-back-merge-bump">A failed back-merge-bump<a class="headerlink" href="#a-failed-back-merge-bump" title="Permanent link">&para;</a></h3>
 <p><code>back-merge-bump</code> can fail part-way, after it has created
 <code>release/post-&lt;version&gt;</code>: in its lockfile refresh, say, or before its PR
@@ -19459,12 +19506,13 @@ conclusion to judge:</p>
   warning, <code>stale job record: &lt;job&gt;</code>, and nothing is deferred. No CD
   re-run is needed.</li>
 <li>Under any other run conclusion the job may really have failed, so it is
-  deferred as <code>&lt;job&gt; (never settled)</code>.</li>
+  deferred: recorded as a failed job and shown as
+  <code>&lt;job&gt; (never settled)</code>.</li>
 </ul>
-<p>A failed job in the release job's own family, such as
-<code>release / package-sign</code>, is reported by its full name rather than as
-<code>release</code>, so the message is never mistaken for the release itself
-failing.</p>
+<p>A deferred job is recorded and reported by its full name, such as
+<code>release / package-sign</code> or <code>docs / docs</code>, so <code>cd-publish</code> can find the
+same job again, and a failed job in the release job's own family is
+never mistaken for the release itself failing.</p>
 <h3 id="consumer-steps">Consumer steps<a class="headerlink" href="#consumer-steps" title="Permanent link">&para;</a></h3>
 <p>For most consumers, <strong>no action is required</strong>: the rolling <code>v1.3</code>
 tag they're already pinned to now points at the patch release. They
