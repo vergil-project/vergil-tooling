@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -90,7 +90,9 @@ def _repo(name: str) -> dict[str, object]:
 
 def _published(org: str = ORG) -> list[dict[str, object]]:
     values = expected_values(org, AUTHORS)
-    return [_org_variable(name, value) for name, value in values.items()]
+    # An unrelated org variable is listed too, and ignored.
+    unrelated = _org_variable("EXAMPLE_UNRELATED", "x", "private")
+    return [unrelated, *(_org_variable(name, value) for name, value in values.items())]
 
 
 class FakeGitHub:
@@ -274,6 +276,21 @@ class TestCheck:
             (
                 [
                     _org_variable("VRG_TRUSTED_AUTHORS", render_actions_value(AUTHORS)),
+                    _org_variable("VRG_AUTOMATION_APP", "example-org-automation "),
+                ],
+                "example-org: org variable VRG_AUTOMATION_APP is invalid: it has surrounding"
+                " whitespace",
+            ),
+            (
+                [
+                    _org_variable("VRG_TRUSTED_AUTHORS", render_actions_value(AUTHORS)),
+                    _org_variable("VRG_AUTOMATION_APP", "app/example-org-automation"),
+                ],
+                "example-org: org variable VRG_AUTOMATION_APP is invalid: it has the 'app/' prefix",
+            ),
+            (
+                [
+                    _org_variable("VRG_TRUSTED_AUTHORS", render_actions_value(AUTHORS)),
                     _org_variable("VRG_AUTOMATION_APP", "example-other-automation"),
                 ],
                 "example-org: org variable VRG_AUTOMATION_APP is 'example-other-automation',"
@@ -343,6 +360,18 @@ class TestCheck:
         fake.org_variables = [{"name": "VRG_TRUSTED_AUTHORS"}]
         with pytest.raises(TrustPublishError, match="no string 'value'"):
             check(ORG)
+
+    def test_check_item_not_an_object_raises(self, fake: FakeGitHub) -> None:
+        fake.org_variables = cast("list[dict[str, object]]", ["VRG_TRUSTED_AUTHORS"])
+        with pytest.raises(TrustPublishError, match="an item that is not an object"):
+            check(ORG)
+
+    def test_cli_check_clean_without_values_out(
+        self, fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _set_mode(monkeypatch, IdentityMode.HUMAN)
+        assert vrg_trusted_authors.main(["check", "--org", ORG]) == 0
+        assert capsys.readouterr().out == "trusted-authors variables are clean in example-org\n"
 
     def test_check_writes_values_to_summary(
         self,
