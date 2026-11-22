@@ -1126,8 +1126,12 @@ def test_read_reviews_skips_outsider_review(answer: Any) -> None:
 
 
 def test_read_reviews_skips_edited_by_outsider(answer: Any) -> None:
-    edited = {"editor": OUTSIDER, "edited": True, "edits": _edits([OUTSIDER])}
-    earlier = {"editor": HUMAN, "edited": True, "edits": _edits([HUMAN, OUTSIDER])}
+    edited: dict[str, Any] = {"editor": OUTSIDER, "edited": True, "edits": _edits([OUTSIDER])}
+    earlier: dict[str, Any] = {
+        "editor": HUMAN,
+        "edited": True,
+        "edits": _edits([HUMAN, OUTSIDER]),
+    }
     answer(
         {
             trust._REVIEWS_QUERY: [
