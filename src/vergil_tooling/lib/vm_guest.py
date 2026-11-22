@@ -183,8 +183,9 @@ def inject_trusted_authors(transport: Transport, authors: TrustedAuthors | None)
     Writes ``~/.config/vergil/trusted-authors.toml`` (mode 600), the
     ``[trusted_authors]`` lists with the ``[orgs.<org>]`` tables, when
     *authors* is set. When the host has no ``[trusted_authors]`` stanza
-    (*authors* is ``None``) the VM file is **deleted**, so ``vrg-trusted-authors`` in the VM fails loudly instead of
-    trusting a stale list from an earlier delivery.
+    (*authors* is ``None``) the VM file is **deleted**, so
+    ``vrg-trusted-authors`` in the VM fails loudly instead of trusting a stale
+    list from an earlier delivery.
     """
     if authors is None:
         print("  Removing trusted-authors file (host has no [trusted_authors] stanza)...")
