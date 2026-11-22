@@ -29,12 +29,11 @@ each named on stderr as ``vrg-queue: <ref>: <error>`` after the full listing
 (``--json`` included); **1** when a queue could not be read or the command
 line is invalid (every usage error exits 1, never 2). 1 wins over 2.
 
-A queue that cannot be read (a failed GitHub call, an advisory home that is
-not public, an advisory line naming another org, a malformed response,
-trusted authors not configured or invalid) is named on stderr with the
-reason and the run exits 1. A bare text run still lists the queues it could
-read; a bare ``--json`` run prints nothing on stdout, so a partial object is
-never taken for the whole.
+A queue that cannot be read (a failed GitHub call, an advisory line naming
+another org, a malformed response, trusted authors not configured or invalid)
+is named on stderr with the reason and the run exits 1. A bare text run still
+lists the queues it could read; a bare ``--json`` run prints nothing on
+stdout, so a partial object is never taken for the whole.
 
 The home is always an org's ``.github``, which must exist: by default the
 current org's, and with ``--repo OWNER/REPO`` that repo's org's. Nothing is
@@ -74,7 +73,6 @@ from vergil_tooling.lib import (
     in_flight,
     live_branches,
     queue_view,
-    security_records,
     trusted_authors,
 )
 from vergil_tooling.lib.cli import cli_main
@@ -100,15 +98,13 @@ _VIEWS = {
 }
 
 # What a view can raise reading GitHub, besides a missing queue epic: a failed
-# ``gh`` call, an advisory home that is not public, or a malformed response or
-# an advisory line naming another org (both ``ValueError``s; #3826). A missing
-# token is not among them: it reaches ``cli_main``'s guided message. Each is
-# reported, never shown as an empty queue.
+# ``gh`` call, or a malformed response or an advisory line naming another org
+# (both ``ValueError``s; #3826). A missing token is not among them: it reaches
+# ``cli_main``'s guided message. Each is reported, never shown as an empty queue.
 # Trusted authors that are not configured fail the planning and deferred views
 # (invalid ones are a ``ValueError``), never counting every comment instead.
 _VIEW_ERRORS = (
     github.GitHubAPIError,
-    security_records.PrivateHomeError,
     trusted_authors.TrustedAuthorsNotConfiguredError,
     ValueError,
 )

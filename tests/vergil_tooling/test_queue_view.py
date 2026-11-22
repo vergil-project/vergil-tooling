@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib import epics, github, in_flight, queue_view, security_records
+from vergil_tooling.lib import epics, github, in_flight, queue_view
 from vergil_tooling.lib.epic_size import SizeRecord
 from vergil_tooling.lib.epics import ChildState, IssueRef
 from vergil_tooling.lib.queue_view import AdvisoryHold, Deferral, PlanningMarkers, QueueItem
@@ -744,17 +744,15 @@ def test_advisory_line_org_matches_case_insensitively() -> None:
     home.assert_called_once_with("org")
 
 
-def test_planning_private_advisory_home_is_refused_loudly() -> None:
+def test_planning_unreadable_advisory_home_fails_loudly() -> None:
     children = [ChildState(_PLAN, "OPEN", "")]
+    unreadable = github.GitHubAPIError(1, ["gh", "api"], "", "HTTP 404: Not Found")
     with (
         patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC),
         patch(f"{_MOD}.epics.child_states", return_value=children),
         patch(f"{_MOD}.github.read_json", side_effect=_fake_gh({5: _ready_view()})),
-        patch(
-            f"{_MOD}.security_records.advisory_home",
-            side_effect=security_records.PrivateHomeError("org/.github is not public"),
-        ),
-        pytest.raises(security_records.PrivateHomeError, match="not public"),
+        patch(f"{_MOD}.security_records.list_advisories", side_effect=unreadable),
+        pytest.raises(github.GitHubAPIError, match="HTTP 404"),
     ):
         queue_view.planning_items("org/.github", "org")
 

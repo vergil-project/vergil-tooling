@@ -20,7 +20,7 @@ from vergil_tooling.lib.epic_audit import (
     StandingEpicFull,
 )
 from vergil_tooling.lib.epics import ChildState, IssueRef
-from vergil_tooling.lib.security_records import Advisory, PrivateHomeError, SecurityIssue
+from vergil_tooling.lib.security_records import Advisory, SecurityIssue
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -967,17 +967,6 @@ def test_report_only_mode_fails_loud_when_the_read_fails(
     assert "vrg-epic-audit: security records pass failed" in captured.err
     assert "Resource not accessible" in captured.err
     assert "Security records" not in captured.out
-
-
-def test_report_only_mode_refuses_private_home(capsys: pytest.CaptureFixture[str]) -> None:
-    refusal = PrivateHomeError(
-        "vrg-security-record: org/.github is not public; security records need a "
-        "public org .github (private orgs are unsupported)"
-    )
-    with patch(f"{_SEC}.advisory_home", side_effect=refusal):
-        rc = _run_report(issues=[_security_issue()], advisories=[], write=MagicMock())
-    assert rc == 1
-    assert "org/.github is not public" in capsys.readouterr().err
 
 
 def _no_op_writers() -> dict[str, MagicMock]:

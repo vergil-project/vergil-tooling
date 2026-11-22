@@ -91,10 +91,6 @@ _SECURITY_ISSUES_JQ = (
 _COMPLETED = "completed"
 
 
-class PrivateHomeError(RuntimeError):
-    """The org's ``.github`` repo is not public, so it cannot hold security records."""
-
-
 class RetargetError(RuntimeError):
     """A :func:`retarget` step failed; the message names the GHSA ID and the step."""
 
@@ -206,18 +202,8 @@ def _issue_endpoint(ref: IssueRef) -> str:
 
 
 def advisory_home(org: str) -> str:
-    """Return ``"<org>/.github"``, the advisory home, or raise :class:`PrivateHomeError`.
-
-    Advisories are documented for public repos only; a private home is refused
-    loudly, never worked around by falling back to issue-only records.
-    """
-    home = f"{org}/.github"
-    if github.repo_visibility(home) != "PUBLIC":
-        raise PrivateHomeError(
-            f"vrg-security-record: {home} is not public; security records need a "
-            "public org .github (private orgs are unsupported)"
-        )
-    return home
+    """Return ``"<org>/.github"``, the advisory home."""
+    return f"{org}/.github"
 
 
 def advisory_line(home: str, ghsa_id: str) -> str:
@@ -1347,9 +1333,7 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
     text: every advisory read it makes projects the text away, and
     :class:`Advisory` has no text field. The advisory home is resolved only
     when the org has a ``security`` issue or a ``.github`` repo; with neither
-    there is nothing to check. A private ``.github`` is refused loudly, never
-    skipped: :class:`PrivateHomeError` propagates to the caller, whose message
-    already names the program.
+    there is nothing to check.
 
     The sync close guard (:func:`guard_check`) keeps an advisory ``draft``
     while a queue item or a non-completed close is all that ended it. Each

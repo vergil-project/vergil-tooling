@@ -192,12 +192,7 @@ def _audit(args: argparse.Namespace, org: str) -> int:
     issues = epic_audit.open_issues(org)
     # Read-only preview of the security-records pass (the reads of
     # vrg-security-record sync, no state writes). --close never runs it.
-    try:
-        security_rc = security_records.records_pass(org, apply=False, prog="vrg-epic-audit")
-    except security_records.PrivateHomeError as exc:
-        # The message is already prefixed with the program name.
-        print(str(exc), file=sys.stderr)
-        security_rc = 1
+    security_rc = security_records.records_pass(org, apply=False, prog="vrg-epic-audit")
     print(
         epic_audit.render(
             tasks,

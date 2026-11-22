@@ -98,10 +98,6 @@ def main(argv: list[str] | None = None) -> int:
     except _RefusedError as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
         return 1
-    except security_records.PrivateHomeError as exc:
-        # The message is already prefixed with the program name.
-        print(str(exc), file=sys.stderr)
-        return 1
     except github.NoInstallationError as exc:
         print(f"{_PROG}: {github.no_installation_message(exc)}", file=sys.stderr)
         return 1

@@ -21,7 +21,6 @@ from vergil_tooling.lib.security_records import (
     CloseError,
     GuardResult,
     NoteError,
-    PrivateHomeError,
     RetargetError,
     RetargetRefusedError,
     SecurityIssue,
@@ -94,22 +93,14 @@ def test_security_label_constants_are_in_the_registry() -> None:
     assert security_records.SEVERITIES == ("critical", "high", "medium", "low")
 
 
-def test_advisory_home_returns_public_dotgithub(monkeypatch: pytest.MonkeyPatch) -> None:
-    visibility = MagicMock(return_value="PUBLIC")
-    monkeypatch.setattr(github, "repo_visibility", visibility)
-    assert advisory_home("org") == HOME
-    visibility.assert_called_once_with(HOME)
-
-
-@pytest.mark.parametrize("visibility", ["PRIVATE", "INTERNAL"])
-def test_advisory_home_refuses_private(monkeypatch: pytest.MonkeyPatch, visibility: str) -> None:
-    monkeypatch.setattr(github, "repo_visibility", lambda _repo: visibility)
-    with pytest.raises(PrivateHomeError) as excinfo:
-        advisory_home("org")
-    assert str(excinfo.value) == (
-        "vrg-security-record: org/.github is not public; security records need a "
-        "public org .github (private orgs are unsupported)"
+def test_advisory_home_is_org_dotgithub_without_visibility_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every repo is public (epic vergil-project/.github#1476): no visibility probe.
+    monkeypatch.setattr(
+        github, "repo_visibility", MagicMock(side_effect=AssertionError("no visibility probe"))
     )
+    assert advisory_home("org") == HOME
 
 
 # --- reference lines --------------------------------------------------------
@@ -2154,7 +2145,6 @@ class Move:
 
         monkeypatch.setattr(github, "write_json", write_json)
         monkeypatch.setattr(github, "post_json_once", self.post_json_once)
-        monkeypatch.setattr(github, "repo_visibility", lambda _repo: "PUBLIC")
         monkeypatch.setattr(security_records, "list_advisories", self.list_advisories)
         monkeypatch.setattr(github, "target_org", self.target_org)
 
@@ -2537,15 +2527,6 @@ def test_move_refuses_an_untracked_source(move: Move) -> None:
     move.issues.add(B, "Unrelated.")
     with pytest.raises(RetargetRefusedError, match="is not an issue it tracks"):
         retarget(HOME, GHSA, (FIX, FIX2), source=B)
-    assert move.issues.writes == []
-
-
-def test_move_needs_a_public_fix_home(move: Move, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        github, "repo_visibility", lambda repo: "PRIVATE" if "fix" in repo else "PUBLIC"
-    )
-    with pytest.raises(PrivateHomeError):
-        move.run()
     assert move.issues.writes == []
 
 

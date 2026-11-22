@@ -3,7 +3,7 @@
 A **proxy epic** is a same-org umbrella for the tasks a development epic in
 another org (its **primary**) has in this org. It carries the labels ``epic`` +
 ``proxy`` (:data:`epics.PROXY_LABEL`, :func:`epics.is_proxy`) and always homes
-in a public ``<owner>/.github``.
+in ``<owner>/.github``.
 
 The link runs both ways, each side on a machine-read line alone on its line:
 
@@ -14,14 +14,13 @@ The link runs both ways, each side on a machine-read line alone on its line:
   rewrite an epic's body), carrying ``Proxy: <owner>/.github#<N>``
   (:func:`proxy_line`, read by :func:`proxies_of`). Only comments whose author
   ``vrg-trusted-authors`` lists count (a leading ``app/`` stripped), so a
-  forged comment on the public primary counts for nothing. A proxy is never
+  forged comment on the primary counts for nothing. A proxy is never
   removed from the list: one created by mistake is closed and stays listed.
 
 :func:`create_proxy` (``vrg-epic-create --proxy-for``) is the sanctioned way
 to make a proxy and post its ``Proxy:`` comment. It refuses, with
 :class:`ProxyRefusedError` and before any write, a primary in the target's own
-org, a primary that is not an open development epic, and a private primary,
-target or proxy home: a proxy exists only between public repos.
+org and a primary that is not an open development epic.
 
 Every reader fails loudly: a ``Primary:`` or ``Proxy:`` line that cannot be
 parsed or resolved raises :class:`ProxyLinkError`, a failed GitHub read
@@ -165,7 +164,6 @@ def _label_names(view: dict[str, Any]) -> set[str]:
 
 PROXY_TITLE_PREFIX = "Epic (proxy): "
 _EPIC_TITLE_PREFIX = "Epic: "
-_NOT_ADHOC = "The task must not be filed in an ad-hoc epic instead."
 
 
 @dataclass(frozen=True)
@@ -215,14 +213,6 @@ def proxy_comment(proxy: IssueRef) -> str:
         f"This epic's tasks in {proxy.owner} live under the proxy epic {proxy.slug}.\n\n"
         f"{proxy_line(proxy)}\n"
     )
-
-
-def _refuse_private(repo: str, role: str) -> None:
-    if not github.is_public(repo):
-        raise ProxyRefusedError(
-            f"the {role} {repo} is not public; a proxy exists only between public repos,"
-            f" so cross-org work involving a private repo has no proxy. {_NOT_ADHOC}"
-        )
 
 
 def _require_open_development_epic(primary: IssueRef) -> str:
@@ -340,13 +330,10 @@ def create_proxy(primary: IssueRef, target_repo: str) -> ProxyResult:
             f" file the task under {primary.slug} itself"
         )
     with github.target_org(primary.owner):
-        _refuse_private(f"{primary.owner}/{primary.repo}", "primary epic's repo")
         title = _require_open_development_epic(primary)
         listed = proxies_of(primary)
     home = f"{owner}/{PROXY_HOME_REPO}"
     with github.target_org(owner):
-        _refuse_private(target_repo, "target repo")
-        _refuse_private(home, "proxy home")
         existing = _existing_proxies(primary, home, listed)
         derived = proxy_title(primary, title)
         open_proxies = [found for found in existing if found.is_open]

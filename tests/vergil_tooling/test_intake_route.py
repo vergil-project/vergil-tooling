@@ -71,7 +71,6 @@ class Env:
         self.comments: list[str] = []
         # Closing-PR URL -> state (OPEN, CLOSED, MERGED).
         self.closing_prs: dict[str, str] = {}
-        self.public: dict[str, bool] = {}
         self.native_parent: dict[IssueRef, IssueRef | None] = {}
         # Sub-issue listings GitHub still shows although the child's parent
         # field says otherwise: epic -> stale children (#4004).
@@ -217,8 +216,8 @@ def env() -> Iterator[Env]:
         patch(f"{_MOD}.epics.ensure_intake_epic", state.ensure_intake_epic),
         patch(f"{_MOD}.epics.ensure_deferred_epic", state.ensure_deferred_epic),
         patch(f"{_MOD}.epics.resolve_epic_ref", state.resolve_epic_ref),
-        # The never-creating lookups a one-off re-run uses (#4291): every repo
-        # here is public, so all of them home in org/.github.
+        # The never-creating lookups a one-off re-run uses (#4291): all of them
+        # home in org/.github.
         patch(f"{_MOD}.epics.resolve_epic_home", side_effect=lambda owner, bare: "org/.github"),
         patch(f"{_MOD}.epics.queue_home", side_effect=lambda repo: ("org/.github", "org")),
         patch(f"{_MOD}.epics.find_standing_epic", side_effect=state.find_standing_epic),
@@ -229,7 +228,11 @@ def env() -> Iterator[Env]:
                 default_repo=repo,
             ),
         ),
-        patch(f"{_MOD}.github.is_public", side_effect=lambda r: state.public.get(r, True)),
+        # Every repo is public (epic vergil-project/.github#1476): no visibility probe.
+        patch(
+            "vergil_tooling.lib.github.is_public",
+            side_effect=AssertionError("is_public must not be called"),
+        ),
         patch(f"{_MOD}.github.run", state.run),
         patch(f"{_MOD}.github.read_output", state.read_output),
         patch(f"{_MOD}.github.read_json", state.read_json),
@@ -827,21 +830,10 @@ def test_route_defer_label_failure_after_move_fails_loudly(env: Env) -> None:
     assert "Deferred 2026-10-23: r\nRevisit when: w\nDeferred from: org/.github#8" in message
 
 
-def test_route_defer_refuses_private_item_to_public_deferred_epic(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.public = {"org/secret": False}
-    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
-        route(secret_item, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_not_called()
-    env.add_child.assert_not_called()
-    env.run.assert_not_called()
-
-
 def test_route_defer_uses_items_repo_queue_home(env: Env) -> None:
     secret_item = IssueRef("org", "secret", 5)
     secret_deferred = IssueRef("org", "secret", 3)
     env.ensure_deferred_epic.return_value = secret_deferred
-    env.public = {"org/secret": False}
     route(secret_item, Defer(reason="r", revisit_when="w"), today=TODAY)
     env.ensure_deferred_epic.assert_called_once_with("org/secret")
     env.add_child.assert_called_once_with(secret_deferred, secret_item)
@@ -865,16 +857,6 @@ def test_route_to_intake_refused_from_intake(env: Env) -> None:
         route(ITEM, ToIntake(), today=TODAY)
     env.ensure_intake_epic.assert_not_called()
     env.reparent_child.assert_not_called()
-
-
-def test_route_to_intake_refuses_private_item_to_public_intake_epic(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.parent = DEFERRED
-    env.public = {"org/secret": False}
-    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
-        route(secret_item, ToIntake(), today=TODAY)
-    env.reparent_child.assert_not_called()
-    env.add_child.assert_not_called()
 
 
 def test_route_planning_from_deferred(env: Env) -> None:
@@ -929,18 +911,6 @@ def test_route_planning_from_intake_does_not_read_closing_prs(env: Env) -> None:
     route(ITEM, ToPlanning(), today=TODAY)
     reads = [c.args[-1] for c in env.read_json.call_args_list]
     assert "closedByPullRequestsReferences" not in reads
-
-
-def test_route_planning_from_adhoc_refuses_private_item_to_public_planning_epic(
-    env: Env,
-) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.parent = ADHOC_DOTGITHUB
-    env.native_parent[secret_item] = ADHOC_DOTGITHUB
-    env.public = {"org/secret": False}
-    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
-        route(secret_item, ToPlanning(), today=TODAY)
-    env.reparent_child.assert_not_called()
 
 
 def test_route_defer_adhoc_open_closing_pr_names_deferring(env: Env) -> None:
@@ -1108,7 +1078,6 @@ def test_route_planning_uses_items_repo_queue_home(env: Env) -> None:
     secret_planning = IssueRef("org", "secret", 2)
     env.ensure_planning_epic.return_value = secret_planning
     env.native_parent[secret_item] = IssueRef("org", "secret", 1)
-    env.public = {"org/secret": False}
     route(secret_item, ToPlanning(), today=TODAY)
     env.ensure_planning_epic.assert_called_once_with("org/secret")
     env.reparent_child.assert_called_once_with(secret_planning, secret_item)
@@ -1132,14 +1101,6 @@ def test_route_planning_ensures_in_progress_label_in_items_repo(env: Env) -> Non
         ("org/tool", ("in-progress",)),
     ]
     env.reparent_child.assert_called_once_with(PLANNING, tool_item)
-
-
-def test_route_planning_refuses_private_item_to_public_planning_epic(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.public = {"org/secret": False}
-    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
-        route(secret_item, ToPlanning(), today=TODAY)
-    env.reparent_child.assert_not_called()
 
 
 # -- planning: a follow-on brainstorm out of a development epic (#4296) -------
@@ -1236,20 +1197,6 @@ def test_route_planning_refuses_brainstorm_linked_only_by_body_line(env: Env) ->
     with pytest.raises(RouteRefusedError, match="not a container epic"):
         route(ITEM, ToPlanning(), today=TODAY)
     _assert_untouched(env)
-
-
-def test_route_planning_refuses_private_brainstorm_to_public_planning_epic(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    secret_epic = IssueRef("org", "secret", 40)
-    env.parent = secret_epic
-    env.native_parent[secret_item] = secret_epic
-    env.epic_refs.add(secret_epic)
-    env.issue_view = {**env.issue_view, "title": "Follow-on brainstorm: x", "labels": []}
-    env.public = {"org/secret": False}
-    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
-        route(secret_item, ToPlanning(), today=TODAY)
-    env.reparent_child.assert_not_called()
-    env.run.assert_not_called()
 
 
 def test_route_planning_brainstorm_epic_record_failure_names_both_comments(env: Env) -> None:
@@ -1764,33 +1711,6 @@ def test_route_one_off_unreadable_transfer_output_fails_loudly(env: Env) -> None
     env.add_child.assert_not_called()
 
 
-def test_route_refuses_private_item_to_public_target(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.public = {"org/secret": False, "org/tool": True}
-    with pytest.raises(RouteRefusedError, match="private repo org/secret.*public org/tool"):
-        route(secret_item, OneOff(repo="org/tool"), today=TODAY)
-    env.resolve_epic_ref.assert_not_called()
-    assert _transfer_calls(env) == []
-
-
-def test_route_refuses_private_item_to_public_epic(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.public = {"org/secret": False, "org/vault": False, "org/.github": True}
-    env.resolve_epic_ref.return_value = IssueRef("org", ".github", 60)
-    with pytest.raises(RouteRefusedError, match=r"public org/\.github"):
-        route(secret_item, OneOff(repo="org/vault", epic="org/.github#60"), today=TODAY)
-    assert _transfer_calls(env) == []
-
-
-def test_route_private_item_to_private_target_is_allowed(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.public = {"org/secret": False, "org/vault": False}
-    env.resolve_epic_ref.return_value = IssueRef("org", "vault", 3)
-    env.transfer = "https://github.com/org/vault/issues/77"
-    result = route(secret_item, OneOff(repo="org/vault"), today=TODAY)
-    assert result == RouteResult(final=IssueRef("org", "vault", 77), moved_by="transfer")
-
-
 def test_route_one_off_refuses_cross_org_repo(env: Env) -> None:
     with pytest.raises(RouteRefusedError, match="cross-org"):
         route(ITEM, OneOff(repo="other/tool"), today=TODAY)
@@ -1892,9 +1812,9 @@ def test_split_security_item_retarget_failure_leaves_original_open(env: Env) -> 
     env.run.assert_not_called()
 
 
-def test_split_security_item_private_home_leaves_original_open(env: Env) -> None:
+def test_split_security_item_unreadable_home_leaves_original_open(env: Env) -> None:
     env.make_security_item()
-    env.advisory_home.side_effect = security_records.PrivateHomeError("org/.github is not public")
+    env.tracked_issues.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
     with pytest.raises(RouteRefusedError, match=f"advisory {GHSA} was not retargeted"):
         route(ITEM, Split(into=SPLIT_INTO, reason="two fixes"), today=TODAY)
     env.retarget.assert_not_called()
