@@ -63,7 +63,7 @@ _DEFERRED_ITEM = QueueItem(
 
 
 def _missing(kind: str) -> object:
-    def view(home: str, name: str) -> list[QueueItem]:
+    def view(home: str, name: str, **_k: Any) -> list[QueueItem]:
         msg = f"no open 'Epic ({kind}): {name}' {kind} epic in {home}"
         raise queue_view.QueueNotFoundError(msg)
 
@@ -73,7 +73,7 @@ def _missing(kind: str) -> object:
 def test_vrg_queue_deferred_text_and_json(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch.dict(f"{_MOD}._VIEWS", {"deferred": lambda _h, _n: [_DEFERRED_ITEM]}),
+        patch.dict(f"{_MOD}._VIEWS", {"deferred": lambda _h, _n, **_k: [_DEFERRED_ITEM]}),
     ):
         assert main(["deferred"]) == 0
         lines = capsys.readouterr().out.splitlines()
@@ -113,9 +113,9 @@ def test_vrg_queue_bare_lists_all_three_and_tolerates_missing(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     views = {
-        "intake": lambda _h, _n: [_ITEM],
+        "intake": lambda _h, _n, **_k: [_ITEM],
         "planning": _missing("planning"),
-        "deferred": lambda _h, _n: [_DEFERRED_ITEM],
+        "deferred": lambda _h, _n, **_k: [_DEFERRED_ITEM],
     }
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
@@ -143,7 +143,7 @@ def test_vrg_queue_bare_lists_all_three_and_tolerates_missing(
 
 
 def _failing(exc: Exception) -> object:
-    def view(_home: str, _name: str) -> list[QueueItem]:
+    def view(_home: str, _name: str, **_k: Any) -> list[QueueItem]:
         raise exc
 
     return view
@@ -202,9 +202,9 @@ def test_vrg_queue_bare_text_keeps_other_queues_when_one_fails(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     views = {
-        "intake": lambda _h, _n: [_ITEM],
+        "intake": lambda _h, _n, **_k: [_ITEM],
         "planning": _failing(_BAD_LISTING),
-        "deferred": lambda _h, _n: [_DEFERRED_ITEM],
+        "deferred": lambda _h, _n, **_k: [_DEFERRED_ITEM],
     }
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
@@ -229,7 +229,7 @@ def test_vrg_queue_bare_json_prints_no_partial_object(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     views = {
-        "intake": lambda _h, _n: [_ITEM],
+        "intake": lambda _h, _n, **_k: [_ITEM],
         "planning": _failing(_BAD_LISTING),
         "deferred": _failing(ValueError("bad row")),
     }
@@ -250,7 +250,7 @@ def test_vrg_queue_bare_json_prints_no_partial_object(
 def test_vrg_queue_json_output(capsys: pytest.CaptureFixture[str]) -> None:
     seen: list[tuple[str, str]] = []
 
-    def _planning(home: str, name: str) -> list[QueueItem]:
+    def _planning(home: str, name: str, **_k: Any) -> list[QueueItem]:
         seen.append((home, name))
         return [_ITEM]
 
@@ -279,7 +279,7 @@ def test_vrg_queue_repo_flag_selects_its_org_dotgithub(
 ) -> None:
     seen: list[tuple[str, str, str | None]] = []
 
-    def _intake(home: str, name: str) -> list[QueueItem]:
+    def _intake(home: str, name: str, **_k: Any) -> list[QueueItem]:
         seen.append((home, name, github._target_org.get()))
         return []
 
@@ -299,7 +299,7 @@ def test_vrg_queue_repo_flag_selects_its_org_dotgithub(
 def test_vrg_queue_text_output(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch.dict(f"{_MOD}._VIEWS", {"planning": lambda h, n: [_ITEM]}),
+        patch.dict(f"{_MOD}._VIEWS", {"planning": lambda h, n, **_k: [_ITEM]}),
     ):
         rc = main(["planning"])
     assert rc == 0
@@ -319,7 +319,7 @@ def test_vrg_queue_rejects_bare_repo(
 
 
 def test_vrg_queue_missing_queue_epic_fails_loud(capsys: pytest.CaptureFixture[str]) -> None:
-    def _missing(home: str, name: str) -> list[QueueItem]:
+    def _missing(home: str, name: str, **_k: Any) -> list[QueueItem]:
         msg = f"no open 'Epic (intake): {name}' intake epic in {home}"
         raise queue_view.QueueNotFoundError(msg)
 
@@ -337,13 +337,13 @@ def test_vrg_queue_missing_queue_epic_fails_loud(capsys: pytest.CaptureFixture[s
 def test_vrg_queue_org_wide_probes_dotgithub(dotgithub_exists: MagicMock) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch.dict(f"{_MOD}._VIEWS", {"intake": lambda _h, _n: []}),
+        patch.dict(f"{_MOD}._VIEWS", {"intake": lambda _h, _n, **_k: []}),
     ):
         assert main(["intake"]) == 0
     dotgithub_exists.assert_called_once_with("org", ".github")
 
 
-def _unreachable(home: str, name: str) -> list[QueueItem]:
+def _unreachable(home: str, name: str, **_k: Any) -> list[QueueItem]:
     raise AssertionError(f"the view must not be read ({home}, {name})")
 
 
@@ -431,9 +431,9 @@ def test_vrg_queue_adhoc_text_and_json(
 
 def test_vrg_queue_bare_does_not_list_adhoc_or_hoshin(capsys: pytest.CaptureFixture[str]) -> None:
     views = {
-        "intake": lambda _h, _n: [],
-        "planning": lambda _h, _n: [],
-        "deferred": lambda _h, _n: [],
+        "intake": lambda _h, _n, **_k: [],
+        "planning": lambda _h, _n, **_k: [],
+        "deferred": lambda _h, _n, **_k: [],
     }
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
@@ -683,7 +683,7 @@ def _run(
 
 
 def _planning_view(*items: QueueItem) -> dict[str, Any]:
-    return {"planning": lambda _h, _n: list(items)}
+    return {"planning": lambda _h, _n, **_k: list(items)}
 
 
 def test_exit_2_on_size_error(capsys: pytest.CaptureFixture[str]) -> None:
@@ -704,7 +704,7 @@ def test_exit_2_on_size_error(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_exit_2_on_deferred_size_error(capsys: pytest.CaptureFixture[str]) -> None:
-    rc, out, err = _run(capsys, ["deferred"], {"deferred": lambda _h, _n: [_IN_ERROR]})
+    rc, out, err = _run(capsys, ["deferred"], {"deferred": lambda _h, _n, **_k: [_IN_ERROR]})
     assert rc == 2
     assert "  !  waiting  plan 4" in out
     assert err == f"vrg-queue: org/.github#4: {_ERROR}\n"
@@ -719,9 +719,9 @@ def test_exit_0_when_clean(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_bare_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
     views = {
-        "intake": lambda _h, _n: [_ITEM],
-        "planning": lambda _h, _n: [_IN_ERROR, _S3],
-        "deferred": lambda _h, _n: [],
+        "intake": lambda _h, _n, **_k: [_ITEM],
+        "planning": lambda _h, _n, **_k: [_IN_ERROR, _S3],
+        "deferred": lambda _h, _n, **_k: [],
     }
     rc, out, err = _run(capsys, [], views)
     assert rc == 2
@@ -735,8 +735,8 @@ def test_bare_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_bare_text_failure_beats_size_error(capsys: pytest.CaptureFixture[str]) -> None:
     views = {
-        "intake": lambda _h, _n: [],
-        "planning": lambda _h, _n: [_IN_ERROR],
+        "intake": lambda _h, _n, **_k: [],
+        "planning": lambda _h, _n, **_k: [_IN_ERROR],
         "deferred": _failing(ValueError("bad row")),
     }
     rc, out, err = _run(capsys, [], views)
@@ -748,8 +748,8 @@ def test_bare_text_failure_beats_size_error(capsys: pytest.CaptureFixture[str]) 
 
 def test_bare_json_failure_beats_size_error(capsys: pytest.CaptureFixture[str]) -> None:
     views = {
-        "intake": lambda _h, _n: [],
-        "planning": lambda _h, _n: [_IN_ERROR],
+        "intake": lambda _h, _n, **_k: [],
+        "planning": lambda _h, _n, **_k: [_IN_ERROR],
         "deferred": _failing(ValueError("bad row")),
     }
     rc, out, err = _run(capsys, ["--json"], views)
@@ -863,3 +863,122 @@ def test_trusted_authors_missing_fails_through_the_real_view(
         "vrg-queue: planning queue for org in org/.github could not be read: "
         "trusted authors are not configured\n"
     )
+
+
+# -- per-item stops (spec §5.3 of epic vergil-project/.github#1467; #4966) ---------
+
+_DETAIL = "cannot read who wrote the content (read_issue org/.github#9): the comments is missing"
+_STOP_LINE = f"stopped on a read failure: org/.github#9 on comments: {_DETAIL}"
+_STOPPED_OUT = "org/.github#9  stopped: its comments could not be read (see stderr)"
+
+
+@pytest.fixture
+def local(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Outside GitHub Actions, where the stop summary lists each stop in full."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
+def _stopping(*items: QueueItem) -> Any:
+    """A view listing *items* that stops org/.github#9 on a read failure."""
+
+    def view(_home: str, _name: str, *, stops: trust.BatchStops) -> list[QueueItem]:
+        stop = trust.Skipped("org/.github", 9, "issue", None, "", "comments", trust.READ_FAILURE)
+        stops.add(stop, trust.READ_FAILURE, detail=_DETAIL)
+        return list(items)
+
+    return view
+
+
+def _no_json_line(queue: str) -> str:
+    return (
+        f"vrg-queue: {queue} queue for org in org/.github: 1 item(s) stopped, so no JSON "
+        "is printed (a list without them is not the whole queue)"
+    )
+
+
+@pytest.mark.usefixtures("local")
+def test_named_text_lists_the_rest_and_the_stop(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, out, err = _run(capsys, ["planning"], {"planning": _stopping(_S3)})
+    assert rc == 1
+    lines = out.splitlines()
+    assert lines[0] == "planning queue for org in org/.github: 2 open item(s), 1 stopped"
+    assert "  S/3  waiting  plan 1" in lines[1]
+    assert lines[2] == _STOPPED_OUT
+    assert len(lines) == 3
+    assert err == f"{_STOP_LINE}\n"
+
+
+@pytest.mark.usefixtures("local")
+def test_named_json_with_a_stop_prints_nothing(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, out, err = _run(capsys, ["intake", "--json"], {"intake": _stopping(_ITEM)})
+    assert rc == 1
+    assert out == ""
+    assert err.splitlines() == [_STOP_LINE, _no_json_line("intake")]
+
+
+@pytest.mark.usefixtures("local")
+def test_stop_beats_size_error(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, out, err = _run(capsys, ["deferred"], {"deferred": _stopping(_IN_ERROR)})
+    assert rc == 1
+    assert "  !  waiting  plan 4" in out
+    assert err.splitlines() == [_STOP_LINE, f"vrg-queue: org/.github#4: {_ERROR}"]
+
+
+@pytest.mark.usefixtures("local")
+def test_filtered_header_counts_stops_before_shown(capsys: pytest.CaptureFixture[str]) -> None:
+    views = {"planning": _stopping(_S3, _M14)}
+    rc, out, _err = _run(capsys, ["planning", "--size", "M"], views)
+    assert rc == 1
+    lines = out.splitlines()
+    assert lines[0] == "planning queue for org in org/.github: 3 open item(s), 1 stopped, 1 shown"
+    assert "  M/14  waiting  plan 2" in lines[1]
+    assert lines[2] == _STOPPED_OUT
+
+
+@pytest.mark.usefixtures("local")
+def test_bare_text_lists_every_queue_with_its_stop(capsys: pytest.CaptureFixture[str]) -> None:
+    views = {
+        "intake": lambda _h, _n, **_k: [_ITEM],
+        "planning": _stopping(),
+        "deferred": lambda _h, _n, **_k: [_DEFERRED_ITEM],
+    }
+    rc, out, err = _run(capsys, [], views)
+    assert rc == 1
+    lines = out.splitlines()
+    assert lines[0] == "intake queue for org in org/.github: 1 open item(s)"
+    assert lines[3] == "planning queue for org in org/.github: 1 open item(s), 1 stopped"
+    assert lines[4] == _STOPPED_OUT
+    assert lines[6] == "deferred queue for org in org/.github: 1 open item(s)"
+    assert err == f"{_STOP_LINE}\n"
+
+
+@pytest.mark.usefixtures("local")
+def test_bare_json_with_a_stop_prints_no_partial_object(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    views = {
+        "intake": lambda _h, _n, **_k: [_ITEM],
+        "planning": _failing(ValueError("bad row")),
+        "deferred": _stopping(_DEFERRED_ITEM),
+    }
+    rc, out, err = _run(capsys, ["--json"], views)
+    assert rc == 1
+    assert out == ""
+    assert err.splitlines() == [
+        "vrg-queue: planning queue for org in org/.github could not be read: bad row",
+        _STOP_LINE,
+        _no_json_line("deferred"),
+    ]
+
+
+def test_stops_under_actions_count_and_list_refs(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    rc, out, err = _run(capsys, ["planning"], {"planning": _stopping(_S3)})
+    assert rc == 1
+    assert _STOPPED_OUT in out.splitlines()
+    assert err.splitlines() == [
+        "stopped 1 item(s) (read-failure: 1)",
+        "stopped on a read failure: org/.github#9",
+    ]
