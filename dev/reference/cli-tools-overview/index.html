@@ -22079,6 +22079,26 @@ GitHub Actions job with neither file, <code>$VRG_TRUSTED_AUTHORS</code>. It prin
 <code>org: &lt;org&gt; automation: &lt;slug&gt;</code> for each Vergil org. Skills and doctrine name
 this command, never the logins. See
 <a href="../../guides/account-setup/#trusted-authors">Trusted authors</a>.</p>
+<p>Three subcommands handle the GitHub Actions copies, the org variables
+<code>VRG_TRUSTED_AUTHORS</code> (the <code>--json</code> value) and <code>VRG_AUTOMATION_APP</code> (the
+org's own <code>automation_app</code>). Each takes <code>--org ORG</code>, or without it acts on
+every listed org:</p>
+<ul>
+<li><code>publish</code> writes both variables from the configuration, visibility <code>all</code>.
+  It runs only as the human (a setup step, at org setup and whenever the
+  file changes), and refuses an org where a repository-level variable of
+  either name would shadow the org copy.</li>
+<li><code>check</code> reads them back and prints a <code>FINDING:</code> line for each variable
+  that is missing, invalid or not visible to every repo, for a
+  <code>VRG_AUTOMATION_APP</code> that differs from the org's slug in
+  <code>VRG_TRUSTED_AUTHORS</code>, and for each repository-level variable of either
+  name. It runs as the org's automation App (in the daily config audit) or
+  the human, and refuses the agent modes. <code>--values-out PATH</code> writes the
+  current values as <code>{"&lt;org&gt;": {"&lt;name&gt;": "&lt;value&gt;"}}</code>, even with findings.
+  With <code>--org</code> it needs no configuration.</li>
+<li><code>render</code> prints the values the configuration implies, in that same shape,
+  with no GitHub call, for comparison with the audit's values.</li>
+</ul>
 <table>
 <thead>
 <tr>
@@ -22089,23 +22109,23 @@ this command, never the logins. See
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.vrg_trusted_authors</code> (config: <code>lib/trusted_authors.py</code>)</td>
+<td><code>vergil_tooling.bin.vrg_trusted_authors</code> (config: <code>lib/trusted_authors.py</code>; Actions copies: <code>lib/trust_publish.py</code>)</td>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--json</code> (prints <code>{"human": [...], "agents": [...], "orgs": {"&lt;org&gt;": {"automation_app": "&lt;slug&gt;"}}}</code>)</td>
+<td><code>--json</code> (prints <code>{"human": [...], "agents": [...], "orgs": {"&lt;org&gt;": {"automation_app": "&lt;slug&gt;"}}}</code>); <code>publish [--org ORG]</code>; <code>check [--org ORG] [--values-out PATH]</code>; <code>render [--org ORG]</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>The VM file or the host stanzas exist, or, under GitHub Actions only, <code>$VRG_TRUSTED_AUTHORS</code> is set</td>
+<td>The VM file or the host stanzas exist, or, under GitHub Actions only, <code>$VRG_TRUSTED_AUTHORS</code> is set (not needed by <code>check --org</code>). <code>publish</code>: an org admin's <code>gh</code> credential. <code>check</code>: read-only Variables permission at organization and repository level</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default</td>
+<td>Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default. A GitHub API error stops <code>publish</code> and <code>check</code> with the failing call named</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success, 1 not configured or invalid, 2 bad arguments</td>
+<td>0 success; 1 not configured or invalid, <code>publish</code> refused or failed, or <code>check</code> findings; 2 bad arguments, or <code>check</code> could not run (refused identity, API error, no configuration)</td>
 </tr>
 <tr>
 <td>Status</td>
