@@ -151,7 +151,8 @@ def test_guard_strips_app_prefix_from_humans() -> None:
 def test_guard_breach_names_the_issue_number() -> None:
     breach = TrackingIssueBreach("agent", "edited the body", number=42)
     assert str(breach).startswith("suspected security breach on tracking issue #42: agent")
-    assert "clean it up, then resume" in str(breach)
+    assert "can never pass this check again" in str(breach)
+    assert "vrg-release --supersede <version>" in str(breach)
 
 
 def test_guard_warns_on_foreign_comment_and_crossref() -> None:

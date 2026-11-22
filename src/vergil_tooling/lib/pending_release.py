@@ -777,3 +777,39 @@ def gather_release_contents(
     for warning in warnings:
         print(f"WARNING: {warning}", file=sys.stderr)
     return pending, issues
+
+
+def gather_issue_list(*, base: str, head: str, remote: str = "origin") -> tuple[IssueEntry, ...]:
+    """The issues the ``feature/`` PRs of ``<base>..<head>`` (first parent) close on *remote*.
+
+    The issue list :func:`gather_release_contents` gives, for a range pinned
+    at both ends by full commit SHAs rather than read from a branch tip. It
+    rebuilds a release's issue list from git and GitHub alone: *base* is the
+    ``main`` commit its release PR merged onto, and *head* the release PR's
+    head (spec §4.7 of epic vergil-project/.github#1440). A commit with no
+    merged ``develop`` PR, such as the release branch's own, adds nothing.
+
+    Read-only. Raises :class:`PendingReleaseError` when either end is not a
+    full SHA, the trusted authors cannot be loaded, or any lookup fails or
+    is incomplete.
+    """
+    for what, sha in (("base", base), ("head", head)):
+        if not _SHA_RE.match(sha):
+            raise _error(f"the {what} of the issue-list range is not a full SHA: {sha!r}")
+    trusted = _trusted_logins()
+    try:
+        repo = github.github_remote_repo(git.remote_url(remote))
+        if repo is None:
+            raise _error(f"{remote} is not a github.com remote")
+        commits, _ = _compare(repo, base, head, _RELEASE_INTEGRATION)
+        chain = first_parent_chain(commits, head)
+        shas = [cast("str", commit["sha"]) for commit in chain]
+        prs = _prs_by_sha(repo, shas, _RELEASE_INTEGRATION, closing=True)
+        issues, warnings = _issue_list(repo, prs.values(), trusted)
+    except PendingReleaseError:
+        raise
+    except LOOKUP_ERRORS as exc:
+        raise PendingReleaseError(lookup_failure_reason(exc)) from exc
+    for warning in warnings:
+        print(f"WARNING: {warning}", file=sys.stderr)
+    return issues

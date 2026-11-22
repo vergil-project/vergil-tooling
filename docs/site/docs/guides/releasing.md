@@ -438,7 +438,8 @@ Before anything else, `preflight` reads the superseded
 release's state block under
 [the lock and the identity rule](#the-lock-and-the-identity-rule),
 checks it is eligible, and confirms its facts against GitHub and git as
-a resume does. It also confirms the GitHub Release of a tagged one
+a resume does. A superseded issue that fails the identity rule is not
+read at all: see [A breached tracking issue](#a-breached-tracking-issue). It also confirms the GitHub Release of a tagged one
 exists, and that the tag of an untagged one does not exist on `origin`.
 Then:
 
@@ -472,6 +473,46 @@ without a tag, and stopped before its back-merge:
   release branch, unless a `minor` or `major` bump is given.
 - When its tracking issue is closed, its release worktree and its
   `release/X.Y.Z` branch, local and on `origin`, are removed first.
+
+#### A breached tracking issue
+
+A tracking issue that fails
+[the identity rule](#the-lock-and-the-identity-rule) can never pass it
+again, so its release can never be resumed and its state block is
+never trusted again. `vrg-release --supersede X.Y.Z` still replaces
+it. When the superseded issue fails the rule, `preflight` prints a
+warning naming the identity and what it did, never reads the state
+block, and rebuilds the release from what GitHub and git record about
+it instead:
+
+- **Its release PR,** `release/X.Y.Z` into `main`, must be merged. A
+  release whose release PR never merged left nothing on `main`, so
+  there is nothing to supersede: the run refuses and says to close the
+  release PR and the tracking issue by hand, delete `release/X.Y.Z`
+  locally and on `origin`, and start a fresh release.
+- **Tagged:** when `vX.Y.Z` exists on `origin`, it must be on the
+  release PR's merge commit or on a single-parent freeze commit on it,
+  its GitHub Release must exist, and its back-merge PR,
+  `release/post-X.Y.Z` into `develop`, must be merged.
+- **Untagged:** otherwise, every `main` CD run for the release PR's
+  merge commit must have completed, and none may have a release job
+  that succeeded. That merge commit is the one the main/develop
+  divergence check accepts.
+- **Its issue list** is rebuilt from the `feature/` PRs between the
+  `main` commit its release PR merged onto and the release PR's head,
+  as [the issue list](#the-issue-list) reads them. When the breached
+  release itself superseded a release, the issues it absorbed are read
+  from that release's tracking issue, found by the closing comment a
+  `human` login of `vrg-trusted-authors` posted on it; that issue's
+  state is read under the identity rule, or rebuilt the same way when
+  it fails the rule too.
+
+The superseding release then runs as any other: its fresh-start checks
+judge `develop`'s version, `main` and the open releases, and its
+`prepare` closes the breached issue. Stages that leave nothing on
+GitHub or git to check (`teardown-worktree`, `confirm-develop`,
+`promote` and `finalize`) are not judged: the superseding release
+promotes and cleans up for itself.
 
 ### A failed back-merge-bump
 
@@ -1197,8 +1238,12 @@ against the `human` logins of
   included, stops the run before it writes anything, with an error
   starting `suspected security breach on tracking issue #<N>:` that
   names the identity and what it did. The failure is not commented on
-  the issue. Inspect the issue's edit history and events, clean it up,
-  then run `vrg-release --resume`.
+  the issue. Inspect the issue's edit history and events, but do not
+  try to clean it up: GitHub keeps the editor of a body edit even once
+  its revision is deleted, and keeps the issue's close and reopen
+  events, so the issue can never pass the check again and the release
+  can never be resumed. Replace the release instead, as
+  [A breached tracking issue](#a-breached-tracking-issue) says.
 - **Other traces** cannot change the state: a comment, a
   cross-reference, a mention, a subscription, or a label added or
   removed by another identity. Each is printed as a warning, once per

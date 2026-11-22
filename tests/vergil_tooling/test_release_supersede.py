@@ -272,7 +272,7 @@ def test_load_superseded_tagged_reads_state_under_the_identity_rule(
     current = _simulated_state("package-index")
     loaded["release"].return_value = {"tagName": f"v{_OLD}"}
     found = _load(loaded, current)
-    assert found == Superseded(version=_OLD, number=40, state=current, main_commit=None)
+    assert found == Superseded(version=_OLD, number=40, issues=current.issues, main_commit=None)
     assert not found.untagged
     ctx = loaded["read"].call_args.args[0]
     assert (ctx.repo, ctx.version, ctx.issue_number) == (_REPO, _OLD, 40)
@@ -328,7 +328,10 @@ def _superseded(*, untagged: bool) -> Superseded:
     fail = ("confirm-main", _failed_release) if untagged else ("cd-publish", None)
     current = _simulated_state(*fail)
     return Superseded(
-        version=_OLD, number=40, state=current, main_commit=_MAIN_COMMIT if untagged else None
+        version=_OLD,
+        number=40,
+        issues=current.issues,
+        main_commit=_MAIN_COMMIT if untagged else None,
     )
 
 
@@ -451,10 +454,7 @@ def test_supersede_main_ahead_check_still_refuses_other_commits() -> None:
 
 
 def test_absorb_keeps_old_issues_first_and_merges_a_shared_one() -> None:
-    old = replace(
-        _superseded(untagged=False).state,
-        issues=(IssueEntry(f"{_REPO}#10", (7,)), IssueEntry(f"{_REPO}#11", (8,))),
-    )
+    old = (IssueEntry(f"{_REPO}#10", (7,)), IssueEntry(f"{_REPO}#11", (8,)))
     new = (IssueEntry(f"{_REPO}#11", (9,)), IssueEntry(f"{_REPO}#12", (9,)))
     assert absorb(old, new) == (
         IssueEntry(f"{_REPO}#10", (7,)),

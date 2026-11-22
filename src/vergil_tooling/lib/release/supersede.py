@@ -13,7 +13,11 @@ release and either:
 
 The superseded release's state is read under the identity rule
 (:func:`tracking.read_state`) and its facts are checked against GitHub and
-git (:func:`resume.verify_facts`) before anything relies on it. The new
+git (:func:`resume.verify_facts`) before anything relies on it. A tracking
+issue that fails the identity rule can never pass it again, so its release
+can never be resumed: its state block is then never read, and the release
+is rebuilt from GitHub and git facts alone (:func:`rebuild.rebuild_breached`,
+vergil-project/vergil-tooling#4878). The new
 release absorbs its issue list (:func:`absorb`), and once the new tracking
 issue exists, :func:`close_superseded` closes the old one with a comment
 naming the new release. The superseded release posts no records.
@@ -35,15 +39,17 @@ from vergil_tooling.lib import git, github
 from vergil_tooling.lib.managed_worktree import remove_worktree, worktree_path
 from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+from vergil_tooling.lib.release.guard import TrackingIssueBreach
+from vergil_tooling.lib.release.rebuild import absorb as absorb
+from vergil_tooling.lib.release.rebuild import rebuild_breached
 from vergil_tooling.lib.release.resume import _found_state, _open_release_issues, verify_facts
-from vergil_tooling.lib.release.state import IssueEntry
 from vergil_tooling.lib.release.tracking import read_state
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from vergil_tooling.lib.release.state import StateBlock
+    from vergil_tooling.lib.release.state import IssueEntry, StateBlock
 
 _PHASE = "preflight"
 
@@ -74,14 +80,16 @@ _CONFIRM_MAIN = "confirm-main"
 class Superseded:
     """The open release a ``--supersede`` run takes the place of.
 
-    *state* is its state block, read under the identity rule and checked.
+    *issues* is its issue list, which the new release absorbs: read from
+    its state block under the identity rule, or, when its tracking issue
+    fails that rule, rebuilt from GitHub and git facts.
     *main_commit* is the untagged release commit it left on ``main`` (its
     release PR's merge commit), or ``None`` when it is tagged.
     """
 
     version: str
     number: int
-    state: StateBlock
+    issues: tuple[IssueEntry, ...]
     main_commit: str | None
 
     @property
@@ -142,19 +150,6 @@ def check_eligible(state: StateBlock) -> None:
         )
 
 
-def absorb(old: StateBlock, new_issues: Sequence[IssueEntry]) -> tuple[IssueEntry, ...]:
-    """The superseding release's issue list: *old*'s issues, then *new_issues*'.
-
-    An issue in both lists appears once, at its place in *old*'s list, with
-    *old*'s closing PRs followed by the new ones it lacks.
-    """
-    merged: dict[str, list[int]] = {}
-    for issue in (*old.issues, *new_issues):
-        prs = merged.setdefault(issue.ref, [])
-        prs.extend(pr for pr in issue.prs if pr not in prs)
-    return tuple(IssueEntry(ref=ref, prs=tuple(prs)) for ref, prs in merged.items())
-
-
 def load_superseded(repo: str, repo_root: Path, version: str, stages: Sequence[str]) -> Superseded:
     """The open release *version* a ``--supersede`` run takes the place of, checked.
 
@@ -163,6 +158,11 @@ def load_superseded(repo: str, repo_root: Path, version: str, stages: Sequence[s
     must be eligible (:func:`check_eligible`); its recorded facts are then
     checked against GitHub and git. A tagged release's GitHub Release must
     exist; an untagged one's tag must not exist on origin.
+
+    When the tracking issue fails the identity rule, its state block is not
+    read or trusted at all: the release is rebuilt from GitHub and git facts
+    (:func:`rebuild.rebuild_breached`), and a tagged one's GitHub Release
+    must still exist.
     """
     issues = [issue for issue in _open_release_issues(repo, phase=_PHASE) if issue[0] == version]
     if not issues:
@@ -175,7 +175,6 @@ def load_superseded(repo: str, repo_root: Path, version: str, stages: Sequence[s
             f"({numbers}); close all but the release's own.",
         )
     _, number, body = issues[0]
-    _found_state(version, number, body, stages)
     old = ReleaseContext(
         repo=repo,
         version=version,
@@ -185,17 +184,32 @@ def load_superseded(repo: str, repo_root: Path, version: str, stages: Sequence[s
         issue_number=number,
         issue_url=f"https://github.com/{repo}/issues/{number}",
     )
-    current = read_state(old)
+    try:
+        current = read_state(old)
+    except TrackingIssueBreach as exc:
+        rebuilt = rebuild_breached(repo, repo_root, version, number, exc)
+        if rebuilt.tag is not None:
+            _check_release_exists(repo, version, rebuilt.tag)
+        return Superseded(
+            version=version,
+            number=number,
+            issues=rebuilt.issues,
+            main_commit=rebuilt.main_commit,
+        )
+    _found_state(version, number, body, stages)
     check_eligible(current)
     verify_facts(old, current)
     if current.tag is not None:
         _check_release_exists(repo, version, current.tag)
-        return Superseded(version=version, number=number, state=current, main_commit=None)
+        return Superseded(version=version, number=number, issues=current.issues, main_commit=None)
     _check_untagged(version)
     if old.release_merge_sha is None:
         raise _refuse(version, "its release PR's merge commit could not be confirmed.")
     return Superseded(
-        version=version, number=number, state=current, main_commit=old.release_merge_sha
+        version=version,
+        number=number,
+        issues=current.issues,
+        main_commit=old.release_merge_sha,
     )
 
 
