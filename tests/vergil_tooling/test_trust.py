@@ -653,3 +653,590 @@ def test_batch_summary_lists_read_failures_under_actions(monkeypatch: pytest.Mon
 
 def test_all_roles() -> None:
     assert {Role.HUMAN, Role.AGENTS, Role.AUTOMATION} == ALL_ROLES
+
+
+# --- events, branch lookups and reviews: fixtures -----------------------------------
+
+
+class Answers:
+    """A fake ``github.graphql`` answering each query from its own queue."""
+
+    def __init__(self, answers: dict[str, list[dict[str, Any]]]) -> None:
+        self.answers = answers
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def __call__(self, query: str, **variables: object) -> dict[str, Any]:
+        self.calls.append((query, variables))
+        return self.answers[query].pop(0)
+
+
+@pytest.fixture
+def answer(monkeypatch: pytest.MonkeyPatch) -> Any:
+    def install(answers: dict[str, list[dict[str, Any]]]) -> Answers:
+        fake = Answers(answers)
+        monkeypatch.setattr(vergil_tooling.lib.github, "graphql", fake)
+        return fake
+
+    return install
+
+
+def _page(nodes: list[Any], cursor: str | None = None) -> dict[str, Any]:
+    return {"pageInfo": {"hasNextPage": cursor is not None, "endCursor": cursor}, "nodes": nodes}
+
+
+# Timeline items as GraphQL returns them: ``__typename``, the actor (``null`` for
+# a deleted account) and the time.
+def _event(typename: str, actor: Any = HUMAN, at: str = CREATED) -> dict[str, Any]:
+    return {"__typename": typename, "actor": actor, "createdAt": at}
+
+
+def _timeline(
+    events: list[Any], cursor: str | None = None, typename: str = "Issue"
+) -> dict[str, Any]:
+    return {
+        "repository": {
+            "issueOrPullRequest": {"__typename": typename, "timelineItems": _page(events, cursor)}
+        }
+    }
+
+
+# A PR node as ``pullRequests(headRefName:)`` returns it. A fork's head
+# repository is the fork's; GraphQL flags it with isCrossRepository.
+def _pr(
+    number: int,
+    author: Any = AGENT,
+    *,
+    branch: str = "release/1.2.3",
+    fork: bool = False,
+    title: str = "release 1.2.3",
+    state: str = "OPEN",
+) -> dict[str, Any]:
+    return {
+        "number": number,
+        "url": f"https://github.com/{REPO}/pull/{number}",
+        "title": title,
+        "headRefName": branch,
+        "headRefOid": f"{number:040x}",
+        "state": state,
+        "createdAt": CREATED,
+        "author": author,
+        "isCrossRepository": fork,
+        "headRepositoryOwner": {"login": "mallory" if fork else ORG},
+        "headRepository": {"name": "widgets"},
+    }
+
+
+def _prs(nodes: list[Any], cursor: str | None = None) -> dict[str, Any]:
+    return {"repository": {"pullRequests": _page(nodes, cursor)}}
+
+
+def _review(
+    db_id: str,
+    author: Any = HUMAN,
+    body: str = "a trusted review",
+    *,
+    comments: list[Any] | None = None,
+    comments_cursor: str | None = None,
+    **content: Any,
+) -> dict[str, Any]:
+    review = _comment(db_id, author, body, **content)
+    review["id"] = f"PRR_{db_id}"
+    review["comments"] = _page(comments or [], comments_cursor)
+    return review
+
+
+def _review_comment(db_id: str, author: Any = HUMAN, body: str = "a nit", **content: Any) -> Any:
+    review_comment = _comment(db_id, author, body, **content)
+    review_comment["id"] = f"PRRC_{db_id}"
+    return review_comment
+
+
+def _reviews(nodes: list[Any], cursor: str | None = None) -> dict[str, Any]:
+    return {"repository": {"pullRequest": {"reviews": _page(nodes, cursor)}}}
+
+
+# --- read_events and close_judgement ---------------------------------------------------
+
+
+def test_read_events_reads_every_kind_in_order(answer: Any) -> None:
+    kinds = [
+        ("ClosedEvent", "closed"),
+        ("ReopenedEvent", "reopened"),
+        ("LabeledEvent", "labeled"),
+        ("UnlabeledEvent", "unlabeled"),
+        ("MentionedEvent", "mentioned"),
+        ("CrossReferencedEvent", "cross-referenced"),
+        ("SubscribedEvent", "subscribed"),
+    ]
+    calls = answer(
+        {trust._EVENTS_QUERY: [_timeline([_event(t, OUTSIDER) for t, _ in kinds])]}
+    ).calls
+    events = trust.read_events(REPO, 7)
+    assert [e.kind for e in events] == [kind for _, kind in kinds]
+    assert events[0] == trust.IssueEvent("closed", Identity("drive-by", "User"), CREATED)
+    assert calls == [(trust._EVENTS_QUERY, {"owner": ORG, "name": "widgets", "number": 7})]
+    assert "itemTypes: [CLOSED_EVENT, REOPENED_EVENT," in calls[0][0]
+
+
+def test_read_events_deleted_actor(answer: Any) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("ClosedEvent", DELETED)])]})
+    assert trust.read_events(REPO, 7)[0].actor == Identity(None, None)
+
+
+def test_read_events_reads_pr(answer: Any) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("ClosedEvent")], typename="PullRequest")]})
+    assert [e.kind for e in trust.read_events(REPO, 7)] == ["closed"]
+
+
+def test_read_events_pages(answer: Any) -> None:
+    calls = answer(
+        {
+            trust._EVENTS_QUERY: [
+                _timeline([_event("ClosedEvent", OUTSIDER)], cursor="t1"),
+                _timeline([_event("ReopenedEvent")]),
+            ]
+        }
+    ).calls
+    assert [e.kind for e in trust.read_events(REPO, 7)] == ["closed", "reopened"]
+    assert calls[1][1]["after"] == "t1"
+
+
+def test_read_events_truncated_raises(answer: Any) -> None:
+    page = _timeline([_event("ClosedEvent")])
+    page["repository"]["issueOrPullRequest"]["timelineItems"]["pageInfo"] = {
+        "hasNextPage": True,
+        "endCursor": None,
+    }
+    answer({trust._EVENTS_QUERY: [page]})
+    with pytest.raises(TrustReadError, match="the timeline has a next page but no cursor"):
+        trust.read_events(REPO, 7)
+
+
+@pytest.mark.parametrize(
+    ("event", "match"),
+    [
+        pytest.param(_event("IssueComment"), "not asked for", id="unasked-type"),
+        pytest.param({"actor": HUMAN, "createdAt": CREATED}, "has no __typename", id="no-type"),
+        pytest.param(
+            {"__typename": "ClosedEvent", "createdAt": CREATED}, "no actor", id="no-actor"
+        ),
+        pytest.param(_event("ClosedEvent", {"login": "x"}), "has no __typename", id="untyped"),
+        pytest.param(_event("ClosedEvent", at=""), "no usable createdAt", id="no-time"),
+        pytest.param("x", "not an object", id="not-object"),
+    ],
+)
+def test_read_events_malformed_raises(answer: Any, event: Any, match: str) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([event])]})
+    with pytest.raises(TrustReadError, match=match) as info:
+        trust.read_events(REPO, 7)
+    assert info.value.call == f"read_events {REPO}#7"
+
+
+def test_read_events_not_an_item_raises(answer: Any) -> None:
+    answer({trust._EVENTS_QUERY: [{"repository": {"issueOrPullRequest": {"__typename": "X"}}}]})
+    with pytest.raises(TrustReadError, match="neither an issue nor a pull request"):
+        trust.read_events(REPO, 7)
+
+
+def _close(**kwargs: Any) -> Judgement:
+    return trust.close_judgement(REPO, 7, authors=AUTHORS, **kwargs)
+
+
+def test_close_judgement_human(answer: Any) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("LabeledEvent"), _event("ClosedEvent")])]})
+    assert _close() == Judgement(Role.HUMAN, None)
+
+
+def test_close_judgement_outsider_has_no_role(answer: Any) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("ClosedEvent", OUTSIDER)])]})
+    assert _close() == Judgement(None, trust.UNTRUSTED)
+
+
+def test_close_judgement_deleted_account_has_no_role(answer: Any) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("ClosedEvent", DELETED)])]})
+    assert _close() == Judgement(None, trust.DELETED)
+
+
+def test_close_judgement_user_named_like_app_is_wrong_type(answer: Any) -> None:
+    impostor = {"__typename": "User", "login": "the-agent"}
+    answer({trust._EVENTS_QUERY: [_timeline([_event("ClosedEvent", impostor)])]})
+    assert _close() == Judgement(None, trust.WRONG_TYPE)
+
+
+def test_close_judgement_latest_close_counts(answer: Any) -> None:
+    answer(
+        {
+            trust._EVENTS_QUERY: [
+                _timeline(
+                    [
+                        _event("ClosedEvent", HUMAN),
+                        _event("ReopenedEvent", OUTSIDER),
+                        _event("ClosedEvent", OUTSIDER),
+                    ]
+                ),
+                _timeline(
+                    [
+                        _event("ClosedEvent", OUTSIDER),
+                        _event("ReopenedEvent", HUMAN),
+                        _event("ClosedEvent", AGENT),
+                    ]
+                ),
+            ]
+        }
+    )
+    assert _close() == Judgement(None, trust.UNTRUSTED)
+    assert _close() == Judgement(Role.AGENTS, None)
+
+
+def test_close_judgement_roles_parameter_narrows(answer: Any) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("ClosedEvent", AGENT)])]})
+    assert _close(roles=frozenset({Role.HUMAN})) == Judgement(None, trust.NOT_ACCEPTED)
+
+
+def test_close_judgement_no_close_raises(answer: Any) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("LabeledEvent")])]})
+    with pytest.raises(TrustReadError, match="has no close event") as info:
+        _close()
+    assert info.value.call == f"close_judgement {REPO}#7"
+
+
+def test_close_judgement_loads_configured_authors(
+    answer: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("ClosedEvent")])]})
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    assert trust.close_judgement(REPO, 7).role is Role.HUMAN
+
+
+# --- is_same_repo and prs_for_branch --------------------------------------------------
+
+
+def test_is_same_repo_checks_head_repository() -> None:
+    assert trust.is_same_repo(REPO, _pr(1))
+    assert trust.is_same_repo(REPO.upper(), _pr(1))
+    assert not trust.is_same_repo(REPO, _pr(2, fork=True))
+    # A fork whose head repository is gone reads as cross-repository, no head.
+    assert not trust.is_same_repo(REPO, {**_pr(3, fork=True), "headRepository": None})
+    contradicting = {**_pr(4), "headRepositoryOwner": {"login": "mallory"}}
+    with pytest.raises(TrustReadError, match="PR 4 is not cross-repository, but its head is"):
+        trust.is_same_repo(REPO, contradicting)
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        ({"isCrossRepository": None}, "PR 1 has no isCrossRepository flag"),
+        ({"headRepository": None}, "PR 1 has no head repository"),
+        ({"headRepositoryOwner": {}}, "PR 1 has no head repository"),
+        ({"number": True, "headRepository": None}, "a PR has no head repository"),
+    ],
+)
+def test_is_same_repo_malformed_raises(change: dict[str, Any], match: str) -> None:
+    with pytest.raises(TrustReadError, match=match) as info:
+        trust.is_same_repo(REPO, {**_pr(1), **change})
+    assert info.value.call == f"is_same_repo {REPO}"
+
+
+def _branch(**kwargs: Any) -> tuple[list[trust.PRRef], list[Skipped]]:
+    kwargs.setdefault("state", "open")
+    return trust.prs_for_branch(REPO, "release/1.2.3", authors=AUTHORS, **kwargs)
+
+
+def test_prs_for_branch_returns_trusted_same_repo_pr(answer: Any) -> None:
+    query = trust._BRANCH_QUERIES["open"]
+    calls = answer({query: [_prs([_pr(5)])]}).calls
+    found, skipped = _branch()
+    assert found == [
+        trust.PRRef(
+            number=5,
+            url=f"https://github.com/{REPO}/pull/5",
+            title="release 1.2.3",
+            head="release/1.2.3",
+            head_oid=f"{5:040x}",
+            author_role=Role.AGENTS,
+            state="OPEN",
+        )
+    ]
+    assert skipped == []
+    assert calls == [(query, {"owner": ORG, "name": "widgets", "branch": "release/1.2.3"})]
+
+
+def test_prs_for_branch_skips_fork_and_reports(answer: Any) -> None:
+    fork = _pr(6, {"__typename": "User", "login": SPAM_LOGIN}, fork=True, title=SPAM)
+    answer({trust._BRANCH_QUERIES["open"]: [_prs([fork, _pr(5)])]})
+    found, skipped = _branch()
+    assert [pr.number for pr in found] == [5]
+    assert skipped == [Skipped(REPO, 6, "pr", SPAM_LOGIN, CREATED, "head", trust.CROSS_REPOSITORY)]
+    report_skipped(skipped, stream=(stream := io.StringIO()))
+    out = stream.getvalue()
+    assert out == (
+        f"skipped untrusted content: {REPO}#6 pr {SPAM_LOGIN} at {CREATED} on head"
+        " (cross-repository)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in out
+
+
+def test_prs_for_branch_only_fork_returns_empty_and_reports(answer: Any) -> None:
+    # A fork PR whose author is even a trusted login never matches a branch.
+    answer({trust._BRANCH_QUERIES["open"]: [_prs([_pr(6, HUMAN, fork=True, title=SPAM)])]})
+    found, skipped = _branch()
+    assert found == []
+    assert [(s.number, s.cause) for s in skipped] == [(6, trust.CROSS_REPOSITORY)]
+
+
+def test_prs_for_branch_untrusted_author_skipped(answer: Any) -> None:
+    impostor = {"__typename": "User", "login": "the-agent"}
+    answer(
+        {
+            trust._BRANCH_QUERIES["open"]: [
+                _prs([_pr(5, OUTSIDER, title=SPAM), _pr(6, impostor), _pr(7, DELETED), _pr(8)])
+            ]
+        }
+    )
+    found, skipped = _branch()
+    assert [pr.number for pr in found] == [8]
+    assert [(s.number, s.kind, s.login, s.field, s.cause) for s in skipped] == [
+        (5, "pr", "drive-by", "author", trust.UNTRUSTED),
+        (6, "pr", "the-agent", "author", trust.WRONG_TYPE),
+        (7, "pr", None, "author", trust.DELETED),
+    ]
+
+
+def test_prs_for_branch_roles_parameter_narrows(answer: Any) -> None:
+    answer({trust._BRANCH_QUERIES["open"]: [_prs([_pr(5, AGENT), _pr(6, HUMAN)])]})
+    found, skipped = _branch(roles=frozenset({Role.HUMAN}))
+    assert [(pr.number, pr.author_role) for pr in found] == [(6, Role.HUMAN)]
+    assert [(s.number, s.cause) for s in skipped] == [(5, trust.NOT_ACCEPTED)]
+
+
+@pytest.mark.parametrize(
+    ("state", "states"),
+    [("open", "states: [OPEN], "), ("merged", "states: [MERGED], "), ("all", "")],
+)
+def test_prs_for_branch_state_filter(answer: Any, state: str, states: str) -> None:
+    query = trust._BRANCH_QUERIES[state]
+    answer({query: [_prs([_pr(5, state="MERGED")])]})
+    found, _ = _branch(state=state)
+    assert found[0].state == "MERGED"
+    assert f"pullRequests(headRefName: $branch, {states}first: 100" in query
+
+
+def test_prs_for_branch_pages(answer: Any) -> None:
+    query = trust._BRANCH_QUERIES["all"]
+    calls = answer({query: [_prs([_pr(5)], cursor="p1"), _prs([_pr(6, fork=True)])]}).calls
+    found, skipped = _branch(state="all")
+    assert [pr.number for pr in found] == [5]
+    assert [s.number for s in skipped] == [6]
+    assert calls[1][1]["after"] == "p1"
+
+
+def test_prs_for_branch_loads_configured_authors(
+    answer: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answer({trust._BRANCH_QUERIES["open"]: [_prs([_pr(5)])]})
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    assert trust.prs_for_branch(REPO, "release/1.2.3", state="open")[0][0].number == 5
+
+
+@pytest.mark.parametrize(
+    ("page", "match"),
+    [
+        pytest.param({"repository": None}, "the repository is missing", id="no-repository"),
+        pytest.param({"repository": {}}, "has no pullRequests", id="no-connection"),
+        pytest.param(_prs([{**_pr(5), "number": True}]), "no usable number", id="number-bool"),
+        pytest.param(_prs([_pr(5, branch="other")]), "not on the branch", id="other-branch"),
+        pytest.param(
+            _prs([{**_pr(5), "isCrossRepository": None}]),
+            "PR 5 has no isCrossRepository flag",
+            id="no-flag",
+        ),
+        pytest.param(
+            _prs([{**_pr(5), "headRepositoryOwner": {"login": "mallory"}}]),
+            "PR 5 is not cross-repository",
+            id="contradicting-head",
+        ),
+        pytest.param(_prs([{**_pr(5), "headRefOid": ""}]), "no usable headRefOid", id="no-oid"),
+        pytest.param(_prs(["x"]), "not an object", id="not-object"),
+    ],
+)
+def test_prs_for_branch_malformed_raises(answer: Any, page: Any, match: str) -> None:
+    answer({trust._BRANCH_QUERIES["open"]: [page]})
+    with pytest.raises(TrustReadError, match=match) as info:
+        _branch()
+    assert info.value.call == f"prs_for_branch {REPO} release/1.2.3"
+
+
+# --- read_reviews -------------------------------------------------------------------
+
+
+def _reviews_of(**kwargs: Any) -> trust.PRReviewContent:
+    return trust.read_reviews(REPO, 7, authors=AUTHORS, **kwargs)
+
+
+def test_read_reviews_trusted(answer: Any) -> None:
+    calls = answer(
+        {
+            trust._REVIEWS_QUERY: [
+                _reviews(
+                    [
+                        _review("1", HUMAN, comments=[_review_comment("11", HUMAN)]),
+                        _review("2", AGENT, body=""),
+                    ]
+                )
+            ]
+        }
+    ).calls
+    content = _reviews_of()
+    assert [(r.id, r.body, r.role) for r in content.reviews] == [
+        ("1", "a trusted review", Role.HUMAN),
+        ("2", "", Role.AGENTS),
+    ]
+    assert [(c.id, c.role, c.at) for c in content.review_comments] == [("11", Role.HUMAN, CREATED)]
+    assert content.skipped == ()
+    assert calls == [(trust._REVIEWS_QUERY, {"owner": ORG, "name": "widgets", "number": 7})]
+
+
+def test_read_reviews_skips_outsider_review(answer: Any) -> None:
+    spam = {"__typename": "User", "login": SPAM_LOGIN}
+    answer(
+        {
+            trust._REVIEWS_QUERY: [
+                _reviews(
+                    [
+                        _review("1", spam, SPAM, comments=[_review_comment("11", spam, SPAM)]),
+                        _review("2", HUMAN, comments=[_review_comment("21", DELETED, SPAM)]),
+                    ]
+                )
+            ]
+        }
+    )
+    content = _reviews_of()
+    assert [r.id for r in content.reviews] == ["2"]
+    assert content.review_comments == ()
+    assert [(s.kind, s.login, s.field, s.cause) for s in content.skipped] == [
+        ("review", SPAM_LOGIN, "review 1", trust.UNTRUSTED),
+        ("review-comment", SPAM_LOGIN, "review comment 11", trust.UNTRUSTED),
+        ("review-comment", None, "review comment 21", trust.DELETED),
+    ]
+    report_skipped(content.skipped, stream=(stream := io.StringIO()))
+    out = stream.getvalue()
+    assert f"{REPO}#7 review {SPAM_LOGIN} at {CREATED} on review 1 (untrusted)" in out
+    assert "SPAM-MARKER-TEXT" not in out
+    assert "example.invalid" not in out
+
+
+def test_read_reviews_skips_edited_by_outsider(answer: Any) -> None:
+    edited = {"editor": OUTSIDER, "edited": True, "edits": _edits([OUTSIDER])}
+    earlier = {"editor": HUMAN, "edited": True, "edits": _edits([HUMAN, OUTSIDER])}
+    answer(
+        {
+            trust._REVIEWS_QUERY: [
+                _reviews(
+                    [
+                        _review("1", comments=[_review_comment("11", **edited)], **edited),
+                        _review("2", **earlier),
+                    ]
+                )
+            ]
+            * 2
+        }
+    )
+    content = _reviews_of()
+    assert content.reviews == ()
+    assert content.review_comments == ()
+    assert [(s.kind, s.login, s.field) for s in content.skipped] == [
+        ("edit", "drive-by", "review 1"),
+        ("edit", "drive-by", "review 2"),
+        ("edit", "drive-by", "review comment 11"),
+    ]
+    # Under the last-editor rule, only review 2 (last edited by the human) passes.
+    assert [r.id for r in _reviews_of(editors="last").reviews] == ["2"]
+
+
+def test_read_reviews_roles_parameter_narrows(answer: Any) -> None:
+    answer({trust._REVIEWS_QUERY: [_reviews([_review("1", AGENT), _review("2", HUMAN)])]})
+    content = _reviews_of(roles=frozenset({Role.HUMAN}))
+    assert [r.id for r in content.reviews] == ["2"]
+    assert [s.cause for s in content.skipped] == [trust.NOT_ACCEPTED]
+
+
+def test_read_reviews_pages_reviews_comments_and_edits(answer: Any) -> None:
+    review = _review(
+        "1",
+        edits=_edits([HUMAN], cursor="re1"),
+        comments=[_review_comment("11", edits=_edits([HUMAN], cursor="ce1"))],
+        comments_cursor="rc1",
+    )
+    calls = answer(
+        {
+            trust._REVIEWS_QUERY: [_reviews([review], cursor="r1"), _reviews([_review("2")])],
+            trust._REVIEW_COMMENTS_QUERY: [
+                {"node": {"comments": _page([_review_comment("12", OUTSIDER)])}}
+            ],
+            trust._REVIEW_EDITS_QUERY: [{"node": {"userContentEdits": _edits([OUTSIDER])}}],
+            trust._REVIEW_COMMENT_EDITS_QUERY: [{"node": {"userContentEdits": _edits([OUTSIDER])}}],
+        }
+    ).calls
+    content = _reviews_of()
+    assert [r.id for r in content.reviews] == ["2"]
+    assert content.review_comments == ()
+    assert [(s.kind, s.field) for s in content.skipped] == [
+        ("edit", "review 1"),
+        ("edit", "review comment 11"),
+        ("review-comment", "review comment 12"),
+    ]
+    assert [(query, variables) for query, variables in calls[1:]] == [
+        (trust._REVIEW_COMMENTS_QUERY, {"id": "PRR_1", "after": "rc1"}),
+        (trust._REVIEWS_QUERY, {"owner": ORG, "name": "widgets", "number": 7, "after": "r1"}),
+        (trust._REVIEW_EDITS_QUERY, {"id": "PRR_1", "after": "re1"}),
+        (trust._REVIEW_COMMENT_EDITS_QUERY, {"id": "PRRC_11", "after": "ce1"}),
+    ]
+
+
+def test_read_reviews_loads_configured_authors(
+    answer: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answer({trust._REVIEWS_QUERY: [_reviews([_review("1")])]})
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    assert [r.id for r in trust.read_reviews(REPO, 7).reviews] == ["1"]
+
+
+@pytest.mark.parametrize(
+    ("page", "match"),
+    [
+        pytest.param({"repository": {}}, "the pull request is missing", id="no-pr"),
+        pytest.param({"repository": {"pullRequest": {}}}, "has no reviews", id="no-reviews"),
+        pytest.param(
+            _reviews([{**_review("1"), "author": {"login": "x"}}]),
+            "has no __typename",
+            id="untyped",
+        ),
+        pytest.param(
+            _reviews([{k: v for k, v in _review("1").items() if k != "comments"}]),
+            "review 1 has no comments",
+            id="no-comments",
+        ),
+        pytest.param(
+            _reviews([_review("1", comments=[{"fullDatabaseId": "11"}])]),
+            "review comment 11 has no",
+            id="comment-incomplete",
+        ),
+    ],
+)
+def test_read_reviews_malformed_raises(answer: Any, page: Any, match: str) -> None:
+    answer({trust._REVIEWS_QUERY: [page]})
+    with pytest.raises(TrustReadError, match=match) as info:
+        _reviews_of()
+    assert info.value.call == f"read_reviews {REPO}#7"
+    assert "SPAM-MARKER-TEXT" not in str(info.value)
+
+
+def test_read_reviews_malformed_comments_page_raises(answer: Any) -> None:
+    answer(
+        {
+            trust._REVIEWS_QUERY: [_reviews([_review("1", comments_cursor="rc1")])],
+            trust._REVIEW_COMMENTS_QUERY: [{"node": None}],
+        }
+    )
+    with pytest.raises(TrustReadError, match="review 1 is missing"):
+        _reviews_of()

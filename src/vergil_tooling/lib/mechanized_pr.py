@@ -76,7 +76,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
-from vergil_tooling.lib import auto_merge, git, github, pr_create, pr_merge
+from vergil_tooling.lib import auto_merge, git, github, pr_create, pr_merge, trust
 from vergil_tooling.lib.develop_clone import DEVELOP_BRANCH
 from vergil_tooling.lib.process_errors import error_text
 
@@ -210,34 +210,12 @@ def _job_branches(repo: str, prefix: str) -> list[str]:
     return branches
 
 
-def _same_repo(repo: str, item: dict[str, object]) -> bool:
-    """True when the PR *item*'s head is in *repo* itself, not a fork.
-
-    ``isCrossRepository`` decides it; a same-repo answer is cross-checked
-    against the head repository's full name, and a disagreement raises rather
-    than guess.
-    """
-    cross = item.get("isCrossRepository")
-    if not isinstance(cross, bool):
-        msg = f"PR list entry has no isCrossRepository flag: {item!r}"
-        raise MechanizedPRError(msg)
-    if cross:
-        return False
-    owner = item.get("headRepositoryOwner")
-    head_repo = item.get("headRepository")
-    login = owner.get("login") if isinstance(owner, dict) else None
-    name = head_repo.get("name") if isinstance(head_repo, dict) else None
-    if not isinstance(login, str) or not isinstance(name, str):
-        msg = f"PR list entry has no head repository: {item!r}"
-        raise MechanizedPRError(msg)
-    if f"{login}/{name}".lower() != repo.lower():
-        msg = f"PR {item.get('url')!r} is not cross-repository, but its head is {login}/{name}"
-        raise MechanizedPRError(msg)
-    return True
-
-
 def _open_prs_for(repo: str, branch: str) -> list[_OpenPR]:
-    """The open PRs in *repo* whose head is *branch* in *repo* itself."""
+    """The open PRs in *repo* whose head is *branch* in *repo* itself.
+
+    :func:`trust.is_same_repo` decides which head is in *repo*; a fork's PR on
+    the branch is left alone.
+    """
     fields = "number,url,isCrossRepository,headRepository,headRepositoryOwner"
     result = github.read_json(
         "pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", fields
@@ -250,7 +228,12 @@ def _open_prs_for(repo: str, branch: str) -> list[_OpenPR]:
         if not isinstance(item, dict):
             msg = f"gh pr list for {branch} returned an entry that is not an object: {item!r}"
             raise MechanizedPRError(msg)
-        if not _same_repo(repo, item):
+        try:
+            same_repo = trust.is_same_repo(repo, item)
+        except trust.TrustReadError as exc:
+            msg = f"gh pr list for {branch}: {exc.detail}"
+            raise MechanizedPRError(msg) from exc
+        if not same_repo:
             continue
         number = item.get("number")
         url = item.get("url")

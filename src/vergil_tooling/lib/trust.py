@@ -21,7 +21,11 @@ untrusted (cause ``deleted``), never a read failure.
 its editors (every editor, or the last one, by the reader's
 :data:`EditorRule`) hold a role the reader accepts. Readers return the trusted
 items and a :class:`Skipped` record for each untrusted one; where the content
-is load-bearing they raise :class:`UntrustedContentError` instead.
+is load-bearing they raise :class:`UntrustedContentError` instead. Reviews and
+inline review comments follow the same rule (:func:`read_reviews`). A close
+or reopen is trusted when its actor is (:func:`read_events`,
+:func:`close_judgement`). A PR found by its branch is same-repo and has a
+trusted author (:func:`prs_for_branch`); a fork PR never matches.
 
 **Failing loudly** (spec §3). An API error, a missing field or a connection
 that is not read in full raises :class:`TrustReadError`, never "trusted",
@@ -72,6 +76,8 @@ DELETED = "deleted"
 WRONG_TYPE = "wrong-type"
 NOT_ACCEPTED = "not-accepted"
 READ_FAILURE = "read-failure"
+# A PR whose head is in a fork: it never matches a branch lookup (spec §5.2).
+CROSS_REPOSITORY = "cross-repository"
 
 # The login GitHub shows for an account that no longer exists.
 GHOST = "ghost"
@@ -145,13 +151,121 @@ query($owner: String!, $name: String!, $number: Int!, $after: String!) {{
 }}
 """
 
-_COMMENT_EDITS_QUERY = f"""
+
+def _node_query(typename: str, selection: str) -> str:
+    """A query for one more page of a connection on the node ``$id``, a *typename*."""
+    return f"""
 query($id: ID!, $after: String!) {{
   node(id: $id) {{
-    ... on IssueComment {{ {_edits_selection(", after: $after")} }}
+    ... on {typename} {{ {selection} }}
   }}
 }}
 """
+
+
+_COMMENT_EDITS_QUERY = _node_query("IssueComment", _edits_selection(", after: $after"))
+
+# --- events, branch lookups and reviews: the selections ------------------------
+
+# The timeline events the layer reads, by GraphQL type, and the kind each
+# becomes: a close or reopen changes an item's state; the rest are the traces
+# the release guard warns on.
+_EVENT_KINDS = {
+    "ClosedEvent": "closed",
+    "ReopenedEvent": "reopened",
+    "LabeledEvent": "labeled",
+    "UnlabeledEvent": "unlabeled",
+    "MentionedEvent": "mentioned",
+    "CrossReferencedEvent": "cross-referenced",
+    "SubscribedEvent": "subscribed",
+}
+_EVENT_TYPES = ", ".join(
+    (
+        "CLOSED_EVENT",
+        "REOPENED_EVENT",
+        "LABELED_EVENT",
+        "UNLABELED_EVENT",
+        "MENTIONED_EVENT",
+        "CROSS_REFERENCED_EVENT",
+        "SUBSCRIBED_EVENT",
+    )
+)
+_EVENT_FRAGMENTS = " ".join(
+    f"... on {typename} {{ actor {_ACTOR} createdAt }}" for typename in _EVENT_KINDS
+)
+
+
+def _timeline_selection() -> str:
+    return (
+        f"timelineItems(first: {_PAGE}, after: $after, itemTypes: [{_EVENT_TYPES}])"
+        f" {{ {_PAGE_INFO} nodes {{ __typename {_EVENT_FRAGMENTS} }} }}"
+    )
+
+
+_EVENTS_QUERY = f"""
+query($owner: String!, $name: String!, $number: Int!, $after: String) {{
+  repository(owner: $owner, name: $name) {{
+    issueOrPullRequest(number: $number) {{
+      __typename
+      {_on_issue_and_pr(_timeline_selection())}
+    }}
+  }}
+}}
+"""
+
+# What :func:`is_same_repo` reads on a PR: the same names in GraphQL and in
+# ``gh pr list --json``.
+SAME_REPO_FIELDS = "isCrossRepository headRepositoryOwner { login } headRepository { name }"
+"""The GraphQL selection on a ``PullRequest`` that :func:`is_same_repo` needs."""
+
+_PR_STATES = {"open": "states: [OPEN], ", "merged": "states: [MERGED], ", "all": ""}
+
+
+def _branch_query(state: str) -> str:
+    return f"""
+query($owner: String!, $name: String!, $branch: String!, $after: String) {{
+  repository(owner: $owner, name: $name) {{
+    pullRequests(headRefName: $branch, {_PR_STATES[state]}first: {_PAGE}, after: $after) {{
+      {_PAGE_INFO}
+      nodes {{
+        number url title headRefName headRefOid state createdAt author {_ACTOR}
+        {SAME_REPO_FIELDS}
+      }}
+    }}
+  }}
+}}
+"""
+
+
+_BRANCH_QUERIES = {state: _branch_query(state) for state in _PR_STATES}
+
+
+def _review_comments_selection(after: str = "") -> str:
+    return f"comments(first: {_PAGE}{after}) {{ {_PAGE_INFO} nodes {{ {COMMENT_FIELDS} }} }}"
+
+
+def _reviews_selection() -> str:
+    return (
+        f"reviews(first: {_PAGE}, after: $after) {{ {_PAGE_INFO}"
+        f" nodes {{ {COMMENT_FIELDS} {_review_comments_selection()} }} }}"
+    )
+
+
+_REVIEWS_QUERY = f"""
+query($owner: String!, $name: String!, $number: Int!, $after: String) {{
+  repository(owner: $owner, name: $name) {{
+    pullRequest(number: $number) {{ {_reviews_selection()} }}
+  }}
+}}
+"""
+
+_REVIEW_EDITS_QUERY = _node_query("PullRequestReview", _edits_selection(", after: $after"))
+_REVIEW_COMMENTS_QUERY = _node_query(
+    "PullRequestReview", _review_comments_selection(", after: $after")
+)
+_REVIEW_COMMENT_EDITS_QUERY = _node_query(
+    "PullRequestReviewComment", _edits_selection(", after: $after")
+)
 
 
 @dataclass(frozen=True)
@@ -177,7 +291,8 @@ class Skipped:
     *kind* is ``issue``, ``pr``, ``comment``, ``review``, ``review-comment``,
     ``edit`` or ``event``: who did the untrusted thing (the body's author, a
     comment's author, an editor). *field* names the content concerned
-    (``body``, ``comment <id>``). *login* is bare, ``None`` for a deleted
+    (``body``, ``comment <id>``, ``review <id>``, ``review comment <id>``, or a
+    branch-lookup PR's ``author`` or fork ``head``). *login* is bare, ``None`` for a deleted
     account. *cause* is one of the module's causes.
     """
 
@@ -241,6 +356,41 @@ class IssueContent:
     skipped: tuple[Skipped, ...]
 
 
+@dataclass(frozen=True)
+class IssueEvent:
+    """One timeline event: its kind (``closed``, ``labeled``…), its actor and its time."""
+
+    kind: str
+    actor: Identity
+    at: str
+
+
+@dataclass(frozen=True)
+class PRRef:
+    """A same-repo PR with a trusted author, found by its branch.
+
+    *head* is the branch name and *head_oid* the head commit; *state* is
+    GraphQL's ``OPEN``, ``CLOSED`` or ``MERGED``.
+    """
+
+    number: int
+    url: str
+    title: str
+    head: str
+    head_oid: str
+    author_role: Role
+    state: str
+
+
+@dataclass(frozen=True)
+class PRReviewContent:
+    """What :func:`read_reviews` trusts on a PR: its reviews and inline review comments."""
+
+    reviews: tuple[TrustedComment, ...]
+    review_comments: tuple[TrustedComment, ...]
+    skipped: tuple[Skipped, ...]
+
+
 def normalise_login(login: str) -> str:
     """*login* with a leading ``app/`` and a trailing ``[bot]`` stripped."""
     return login.removeprefix(_APP_PREFIX).removesuffix(_BOT_SUFFIX)
@@ -267,6 +417,16 @@ def role_of(identity: Identity, *, org: str, authors: TrustedAuthors) -> Judgeme
     if identity.typename != wanted:
         return Judgement(None, WRONG_TYPE)
     return Judgement(role, None)
+
+
+def _accepted(
+    identity: Identity, *, org: str, roles: frozenset[Role], authors: TrustedAuthors
+) -> Judgement:
+    """:func:`role_of`, a role outside *roles* judged :data:`NOT_ACCEPTED`."""
+    judgement = role_of(identity, org=org, authors=authors)
+    if judgement.role is not None and judgement.role not in roles:
+        return Judgement(None, NOT_ACCEPTED)
+    return judgement
 
 
 # --- reading -----------------------------------------------------------------
@@ -387,10 +547,11 @@ class _Comment:
     content: _Content
 
 
-def _comment(node: object, call: str) -> _Comment:
-    comment = _obj(node, call, "a comment")
-    database_id = _text(comment, "fullDatabaseId", call, "a comment")
-    what = f"comment {database_id}"
+def _comment(node: object, call: str, label: str = "comment") -> _Comment:
+    """A comment, a review or an inline review comment: *label* names which."""
+    comment = _obj(node, call, f"a {label}")
+    database_id = _text(comment, "fullDatabaseId", call, f"a {label}")
+    what = f"{label} {database_id}"
     return _Comment(
         node_id=_text(comment, "id", call, what),
         database_id=database_id,
@@ -413,12 +574,8 @@ def _judge(
     org = repo.partition("/")[0]
 
     def cause_of(identity: Identity) -> tuple[Role | None, str | None]:
-        judgement = role_of(identity, org=org, authors=authors)
-        if judgement.role is None:
-            return None, judgement.cause
-        if judgement.role not in roles:
-            return None, NOT_ACCEPTED
-        return judgement.role, None
+        judgement = _accepted(identity, org=org, roles=roles, authors=authors)
+        return judgement.role, judgement.cause
 
     author_role, cause = cause_of(content.author)
     if cause is not None:
@@ -448,6 +605,8 @@ def _judge_parsed(
     roles: frozenset[Role],
     editors: EditorRule,
     authors: TrustedAuthors,
+    kind: str = "comment",
+    label: str = "comment",
 ) -> tuple[list[TrustedComment], list[Skipped]]:
     trusted: list[TrustedComment] = []
     skipped: list[Skipped] = []
@@ -456,8 +615,8 @@ def _judge_parsed(
             comment.content,
             repo=repo,
             number=number,
-            kind="comment",
-            field=f"comment {comment.database_id}",
+            kind=kind,
+            field=f"{label} {comment.database_id}",
             roles=roles,
             editors=editors,
             authors=authors,
@@ -516,6 +675,31 @@ def _item(data: Mapping[str, Any], call: str) -> dict[str, Any]:
     return _obj(repository.get("issueOrPullRequest"), call, "the issue or pull request")
 
 
+def _kind_of(item: Mapping[str, Any], call: str) -> str:
+    """``issue`` or ``pr``, by the item's ``__typename``."""
+    typename = item.get("__typename")
+    if typename not in ("Issue", "PullRequest"):
+        raise TrustReadError(call, "the item is neither an issue nor a pull request")
+    return "issue" if typename == "Issue" else "pr"
+
+
+def _node_page(call: str, query: str, node_id: str, cursor: str, what: str) -> dict[str, Any]:
+    """The node *node_id* from one more page of *query*, at *cursor*."""
+    return _obj(_graphql(call, query, id=node_id, after=cursor).get("node"), call, what)
+
+
+def _read_all_edits(comment: _Comment, call: str, query: str, label: str = "comment") -> None:
+    """Follow every further page of *comment*'s edit history, through *query*."""
+    content = comment.content
+    what = f"{label} {comment.database_id}"
+    while content.edits_cursor is not None:
+        node = _node_page(call, query, comment.node_id, content.edits_cursor, what)
+        nodes, content.edits_cursor = _connection(
+            _get(node, "userContentEdits", call, what), call, f"the edits of {what}"
+        )
+        content.edits += [_edit(edit, call, what) for edit in nodes]
+
+
 def read_issue(
     repo: str,
     number: int,
@@ -540,10 +724,7 @@ def read_issue(
     call = f"read_issue {repo}#{number}"
     where = {"owner": owner, "name": name, "number": number}
     item = _item(_graphql(call, _ITEM_QUERY, **where), call)
-    typename = item.get("__typename")
-    if typename not in ("Issue", "PullRequest"):
-        raise TrustReadError(call, "the item is neither an issue nor a pull request")
-    kind = "issue" if typename == "Issue" else "pr"
+    kind = _kind_of(item, call)
     body = _content(item, call, f"the {kind} body")
     while body.edits_cursor is not None:
         page = _item(_graphql(call, _BODY_EDITS_QUERY, **where, after=body.edits_cursor), call)
@@ -561,17 +742,7 @@ def read_issue(
         )
         comments += [_comment(node, call) for node in nodes]
     for comment in comments:
-        content = comment.content
-        what = f"comment {comment.database_id}"
-        while content.edits_cursor is not None:
-            data = _graphql(
-                call, _COMMENT_EDITS_QUERY, id=comment.node_id, after=content.edits_cursor
-            )
-            node = _obj(data.get("node"), call, what)
-            nodes, content.edits_cursor = _connection(
-                _get(node, "userContentEdits", call, what), call, f"the edits of {what}"
-            )
-            content.edits += [_edit(edit, call, what) for edit in nodes]
+        _read_all_edits(comment, call, _COMMENT_EDITS_QUERY)
 
     body_role, author_role, body_skip = _judge(
         body,
@@ -594,6 +765,276 @@ def read_issue(
         author_role=author_role,
         comments=tuple(trusted),
         skipped=tuple(([] if body_skip is None else [body_skip]) + skipped),
+    )
+
+
+# --- events -------------------------------------------------------------------
+
+
+def _event(node: object, call: str) -> IssueEvent:
+    event = _obj(node, call, "a timeline event")
+    typename = _get(event, "__typename", call, "a timeline event")
+    kind = _EVENT_KINDS.get(typename) if isinstance(typename, str) else None
+    if kind is None:
+        raise TrustReadError(call, "a timeline event is of a type that was not asked for")
+    what = f"a {kind} event"
+    return IssueEvent(
+        kind, _actor(event, "actor", call, what), _text(event, "createdAt", call, what)
+    )
+
+
+def read_events(repo: str, number: int) -> tuple[IssueEvent, ...]:
+    """The close, reopen and trace events of *repo*#*number*, oldest first.
+
+    A GraphQL read of the issue's or PR's ``timelineItems``, type-filtered to
+    the kinds :class:`IssueEvent` names, followed page by page until
+    ``hasNextPage`` is false. A failed call, a malformed page or a next page
+    with no cursor raises :class:`TrustReadError`.
+    """
+    owner, name = _split_repo(repo)
+    call = f"read_events {repo}#{number}"
+    events: list[IssueEvent] = []
+    cursor: str | None = None
+    while True:
+        variables: dict[str, object] = {"owner": owner, "name": name, "number": number}
+        if cursor is not None:
+            variables["after"] = cursor
+        item = _item(_graphql(call, _EVENTS_QUERY, **variables), call)
+        _kind_of(item, call)
+        nodes, cursor = _connection(
+            _get(item, "timelineItems", call, "the item"), call, "the timeline"
+        )
+        events += [_event(node, call) for node in nodes]
+        if cursor is None:
+            return tuple(events)
+
+
+def close_judgement(
+    repo: str,
+    number: int,
+    *,
+    roles: frozenset[Role] = ALL_ROLES,
+    authors: TrustedAuthors | None = None,
+) -> Judgement:
+    """The role of whoever closed *repo*#*number* last, or why it holds none.
+
+    A close by an untrusted actor is not a close for any decision the
+    automation makes (spec §5.2): a caller that acts on the close raises
+    :class:`UntrustedContentError` when the judgement's ``role`` is ``None``.
+    An item with no close event raises :class:`TrustReadError`: the close
+    the caller asks about cannot be read.
+    """
+    if authors is None:
+        authors = load_trusted_authors()
+    closes = [event for event in read_events(repo, number) if event.kind == "closed"]
+    if not closes:
+        raise TrustReadError(f"close_judgement {repo}#{number}", "the item has no close event")
+    return _accepted(closes[-1].actor, org=_split_repo(repo)[0], roles=roles, authors=authors)
+
+
+# --- branch lookups -------------------------------------------------------------
+
+
+def is_same_repo(repo: str, item: Mapping[str, object]) -> bool:
+    """True when the PR *item*'s head is in *repo* itself, not a fork.
+
+    *item* carries :data:`SAME_REPO_FIELDS` (a GraphQL node, or a
+    ``gh pr list --json`` entry: the names are the same). ``isCrossRepository``
+    decides it; a same-repo answer is cross-checked against the head
+    repository's owner and name, and a disagreement raises
+    :class:`TrustReadError` rather than guess.
+    """
+    number = item.get("number")
+    what = f"PR {number}" if isinstance(number, int) and not isinstance(number, bool) else "a PR"
+    call = f"is_same_repo {repo}"
+    cross = item.get("isCrossRepository")
+    if not isinstance(cross, bool):
+        raise TrustReadError(call, f"{what} has no isCrossRepository flag")
+    if cross:
+        return False
+    owner = item.get("headRepositoryOwner")
+    head_repo = item.get("headRepository")
+    login = owner.get("login") if isinstance(owner, dict) else None
+    name = head_repo.get("name") if isinstance(head_repo, dict) else None
+    if not isinstance(login, str) or not isinstance(name, str):
+        raise TrustReadError(call, f"{what} has no head repository")
+    if f"{login}/{name}".lower() != repo.lower():
+        raise TrustReadError(
+            call, f"{what} is not cross-repository, but its head is {login}/{name}"
+        )
+    return True
+
+
+def _branch_pr(
+    node: object,
+    *,
+    repo: str,
+    branch: str,
+    call: str,
+    roles: frozenset[Role],
+    authors: TrustedAuthors,
+) -> PRRef | Skipped:
+    pr = _obj(node, call, "a pull request")
+    number = _get(pr, "number", call, "a pull request")
+    if not isinstance(number, int) or isinstance(number, bool):
+        raise TrustReadError(call, "a pull request has no usable number")
+    what = f"PR {number}"
+    head = _text(pr, "headRefName", call, what)
+    if head != branch:
+        raise TrustReadError(call, f"{what} is not on the branch asked for")
+    author = _actor(pr, "author", call, what)
+    at = _text(pr, "createdAt", call, what)
+    try:
+        same = is_same_repo(repo, pr)
+    except TrustReadError as exc:
+        raise TrustReadError(call, exc.detail) from None
+    if not same:
+        return Skipped(repo, number, "pr", _bare(author), at, "head", CROSS_REPOSITORY)
+    judgement = _accepted(author, org=_split_repo(repo)[0], roles=roles, authors=authors)
+    if judgement.role is None:
+        return Skipped(
+            repo, number, "pr", _bare(author), at, "author", cast("str", judgement.cause)
+        )
+    return PRRef(
+        number=number,
+        url=_text(pr, "url", call, what),
+        title=_text(pr, "title", call, what, empty=True),
+        head=head,
+        head_oid=_text(pr, "headRefOid", call, what),
+        author_role=judgement.role,
+        state=_text(pr, "state", call, what),
+    )
+
+
+def prs_for_branch(
+    repo: str,
+    branch: str,
+    *,
+    state: Literal["open", "merged", "all"],
+    roles: frozenset[Role] = ALL_ROLES,
+    authors: TrustedAuthors | None = None,
+) -> tuple[list[PRRef], list[Skipped]]:
+    """The same-repo PRs in *repo* from *branch*, with a trusted author (spec §5.2).
+
+    A GraphQL read of ``pullRequests(headRefName:)`` in *state*, every page.
+    A fork PR on the branch is skipped (cause :data:`CROSS_REPOSITORY`), and
+    so is a PR whose author holds no role in *roles*; both are returned as
+    :class:`Skipped` for the caller to report. A fork never matches.
+    """
+    if authors is None:
+        authors = load_trusted_authors()
+    owner, name = _split_repo(repo)
+    call = f"prs_for_branch {repo} {branch}"
+    found: list[PRRef] = []
+    skipped: list[Skipped] = []
+    cursor: str | None = None
+    while True:
+        variables: dict[str, object] = {"owner": owner, "name": name, "branch": branch}
+        if cursor is not None:
+            variables["after"] = cursor
+        data = _graphql(call, _BRANCH_QUERIES[state], **variables)
+        repository = _obj(data.get("repository"), call, "the repository")
+        nodes, cursor = _connection(
+            _get(repository, "pullRequests", call, "the repository"), call, "the pull requests"
+        )
+        for node in nodes:
+            result = _branch_pr(
+                node, repo=repo, branch=branch, call=call, roles=roles, authors=authors
+            )
+            if isinstance(result, Skipped):
+                skipped.append(result)
+            else:
+                found.append(result)
+        if cursor is None:
+            return found, skipped
+
+
+# --- reviews --------------------------------------------------------------------
+
+
+def _review_comments(node: object, review: _Comment, call: str) -> list[_Comment]:
+    """Every inline comment of *review*: the first page from *node*, then the rest."""
+    what = f"review {review.database_id}"
+    conn = _get(_obj(node, call, what), "comments", call, what)
+    nodes, cursor = _connection(conn, call, f"the comments of {what}")
+    comments = [_comment(comment, call, "review comment") for comment in nodes]
+    while cursor is not None:
+        page = _node_page(call, _REVIEW_COMMENTS_QUERY, review.node_id, cursor, what)
+        nodes, cursor = _connection(
+            _get(page, "comments", call, what), call, f"the comments of {what}"
+        )
+        comments += [_comment(comment, call, "review comment") for comment in nodes]
+    return comments
+
+
+def read_reviews(
+    repo: str,
+    pr: int,
+    *,
+    roles: frozenset[Role] = ALL_ROLES,
+    editors: EditorRule = "every",
+    authors: TrustedAuthors | None = None,
+) -> PRReviewContent:
+    """Read *repo*#*pr*'s reviews and inline review comments, and judge each.
+
+    A paged GraphQL read of the PR's reviews, each review's inline comments,
+    and every edit history among them. A review or comment is trusted when
+    its author and its editors (by *editors*) hold a role in *roles*; each
+    untrusted one is returned as :class:`Skipped` (kind ``review`` or
+    ``review-comment``, or ``edit`` for an untrusted editor).
+    """
+    if authors is None:
+        authors = load_trusted_authors()
+    owner, name = _split_repo(repo)
+    call = f"read_reviews {repo}#{pr}"
+    reviews: list[_Comment] = []
+    inline: list[_Comment] = []
+    cursor: str | None = None
+    while True:
+        variables: dict[str, object] = {"owner": owner, "name": name, "number": pr}
+        if cursor is not None:
+            variables["after"] = cursor
+        data = _graphql(call, _REVIEWS_QUERY, **variables)
+        repository = _obj(data.get("repository"), call, "the repository")
+        pull = _obj(repository.get("pullRequest"), call, "the pull request")
+        nodes, cursor = _connection(
+            _get(pull, "reviews", call, "the pull request"), call, "the reviews"
+        )
+        for node in nodes:
+            review = _comment(node, call, "review")
+            reviews.append(review)
+            inline += _review_comments(node, review, call)
+        if cursor is None:
+            break
+    for review in reviews:
+        _read_all_edits(review, call, _REVIEW_EDITS_QUERY, "review")
+    for comment in inline:
+        _read_all_edits(comment, call, _REVIEW_COMMENT_EDITS_QUERY, "review comment")
+
+    trusted_reviews, skipped = _judge_parsed(
+        reviews,
+        repo=repo,
+        number=pr,
+        roles=roles,
+        editors=editors,
+        authors=authors,
+        kind="review",
+        label="review",
+    )
+    trusted_inline, skipped_inline = _judge_parsed(
+        inline,
+        repo=repo,
+        number=pr,
+        roles=roles,
+        editors=editors,
+        authors=authors,
+        kind="review-comment",
+        label="review comment",
+    )
+    return PRReviewContent(
+        reviews=tuple(trusted_reviews),
+        review_comments=tuple(trusted_inline),
+        skipped=tuple(skipped + skipped_inline),
     )
 
 
