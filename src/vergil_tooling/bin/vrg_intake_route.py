@@ -48,7 +48,7 @@ import argparse
 import sys
 from datetime import date
 
-from vergil_tooling.lib import epics, github, intake_route
+from vergil_tooling.lib import epics, github, intake_route, trust, trusted_authors
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.epic_size import CONFIDENCES, Sizing
 
@@ -67,9 +67,14 @@ def main(argv: list[str] | None = None) -> int:
         ValueError,
         intake_route.RouteHalfAppliedError,
         epics.StandingEpicNotVisibleError,
+        trust.TrustReadError,
+        trusted_authors.TrustedAuthorsNotConfiguredError,
     ) as exc:
         # A half-applied route already names the item's state and the fix; a
-        # queue epic created but not confirmed names the new epic to check.
+        # queue epic created but not confirmed names the new epic to check. A
+        # planning item's comments read through the trust layer fail before
+        # any write when they cannot be read in full or no trusted authors
+        # are configured; the message is metadata only.
         print(f"{_PROG}: {exc}", file=sys.stderr)
         return 1
     except github.NoInstallationError as exc:

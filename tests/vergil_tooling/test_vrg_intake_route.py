@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_intake_route import main, parse_args
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epics, github, trust, trusted_authors
 from vergil_tooling.lib.epic_size import Sizing
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.intake_route import (
@@ -181,6 +181,20 @@ def test_main_refusal_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
         rc = main(["org/.github#352", "drop", "--reason", "x"])
     assert rc == 1
     assert capsys.readouterr().err == "vrg-intake-route: org/.github#352 has no parent\n"
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        trust.TrustReadError("read_issue org/.github#352", "the comments is missing"),
+        trusted_authors.TrustedAuthorsNotConfiguredError("trusted authors are not configured"),
+    ],
+)
+def test_main_trust_failure_exits_1(capsys: pytest.CaptureFixture[str], exc: Exception) -> None:
+    with patch(f"{_MOD}.intake_route.route", side_effect=exc):
+        rc = main(["org/.github#352", "drop", "--reason", "x"])
+    assert rc == 1
+    assert capsys.readouterr().err == f"vrg-intake-route: {exc}\n"
 
 
 def test_main_half_applied_route_exits_1_without_routed(

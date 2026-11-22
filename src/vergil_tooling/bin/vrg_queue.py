@@ -73,6 +73,7 @@ from vergil_tooling.lib import (
     in_flight,
     live_branches,
     queue_view,
+    trust,
     trusted_authors,
 )
 from vergil_tooling.lib.cli import cli_main
@@ -101,10 +102,12 @@ _VIEWS = {
 # ``gh`` call, or a malformed response or an advisory line naming another org
 # (both ``ValueError``s; #3826). A missing token is not among them: it reaches
 # ``cli_main``'s guided message. Each is reported, never shown as an empty queue.
-# Trusted authors that are not configured fail the planning and deferred views
-# (invalid ones are a ``ValueError``), never counting every comment instead.
+# Trusted authors that are not configured fail the intake, planning and deferred views
+# (invalid ones are a ``ValueError``), never counting every comment instead,
+# and so does a comment read the trust layer cannot complete.
 _VIEW_ERRORS = (
     github.GitHubAPIError,
+    trust.TrustReadError,
     trusted_authors.TrustedAuthorsNotConfiguredError,
     ValueError,
 )

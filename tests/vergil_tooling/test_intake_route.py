@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
 from vergil_tooling.lib import epics, github, intake_route, security_records
 from vergil_tooling.lib.epic_size import Sizing
 from vergil_tooling.lib.epics import IssueRef
@@ -69,6 +70,9 @@ class Env:
         self.epic_refs: set[IssueRef] = {INTAKE, PLANNING, DEFERRED, ADHOC_DOTGITHUB, DEV_EPIC}
         self.labels: list[str] = []
         self.comments: list[str] = []
+        # The item's comment nodes as the trust layer reads them; by default
+        # one per entry of *comments*, by a trusted human.
+        self.comment_nodes: list[dict[str, Any]] | None = None
         # Closing-PR URL -> state (OPEN, CLOSED, MERGED).
         self.closing_prs: dict[str, str] = {}
         self.native_parent: dict[IssueRef, IssueRef | None] = {}
@@ -171,7 +175,7 @@ class Env:
         if fields == "labels,comments":
             return {
                 "labels": [{"name": name} for name in self.labels],
-                "comments": [{"body": body} for body in self.comments],
+                "comments": [{"body": body} for body in self._comment_bodies()],
             }
         if fields == "closedByPullRequestsReferences":
             return {
@@ -180,6 +184,22 @@ class Env:
                 ]
             }
         return self.issue_view
+
+    def _comment_bodies(self) -> list[str]:
+        """Every comment's body, trusted or not, as ``gh issue view`` gives it."""
+        if self.comment_nodes is None:
+            return list(self.comments)
+        return [str(node["body"]) for node in self.comment_nodes]
+
+    def graphql(self, query: str, **variables: Any) -> dict[str, Any]:
+        """The trust layer's item read: the item's comments, any other issue's none."""
+        nodes = self.comment_nodes
+        if nodes is None:
+            nodes = trust_stubs.comments(*self.comments)
+        fake = trust_stubs.FakeItems(
+            {(f"{ITEM.owner}/{ITEM.repo}", ITEM.number): trust_stubs.item(nodes=nodes)}
+        )
+        return fake(query, **variables)
 
     def _read_output(self, *args: str) -> str:
         if args[:2] == ("issue", "transfer"):
@@ -228,6 +248,8 @@ def env() -> Iterator[Env]:
                 default_repo=repo,
             ),
         ),
+        patch("vergil_tooling.lib.github.graphql", state.graphql),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
         patch(f"{_MOD}.github.run", state.run),
         patch(f"{_MOD}.github.read_output", state.read_output),
         patch(f"{_MOD}.github.read_json", state.read_json),
@@ -409,6 +431,39 @@ def test_route_drop_planning_refuses_open_marker_epic(env: Env) -> None:
     ):
         route(ITEM, Drop(reason="no longer needed"), today=TODAY)
     _assert_untouched(env)
+
+
+def test_forged_epic_marker_does_not_block_drop(
+    env: Env, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An outsider's comment, a trusted one an outsider edited and a User named
+    # like the agent App each name an open epic: none is a marker, so the drop
+    # goes ahead and each is reported, metadata only.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    _planning_item(env)
+    forged = f"Epic: org/.github#600\n{trust_stubs.SPAM_TEXT}"
+    env.comment_nodes = [
+        trust_stubs.comment(11, forged, trust_stubs.OUTSIDER),
+        trust_stubs.comment(12, forged, trust_stubs.HUMAN, editor=trust_stubs.OUTSIDER),
+        trust_stubs.comment(13, forged, trust_stubs.IMPOSTOR),
+    ]
+    env.api_states = {"repos/org/.github/issues/600": "open"}
+    result = route(ITEM, Drop(reason="no longer needed"), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    assert env.run.call_args.args[:3] == ("issue", "close", "352")
+    # The named epic's state is never read: no trusted marker names it.
+    assert not [c for c in env.read_output.call_args_list if c.args[0] == "api"]
+    err = capsys.readouterr().err
+    assert err.splitlines() == [
+        f"skipped untrusted content: org/.github#352 comment drive-by at "
+        f"{trust_stubs.CREATED} on comment 11 (untrusted)",
+        f"skipped untrusted content: org/.github#352 edit drive-by at "
+        f"{trust_stubs.EDITED} on comment 12 (untrusted)",
+        f"skipped untrusted content: org/.github#352 comment vergil-user at "
+        f"{trust_stubs.CREATED} on comment 13 (wrong-type)",
+    ]
+    assert "SPAM-MARKER-TEXT" not in err
+    assert "example.invalid" not in err
 
 
 def test_route_drop_planning_refuses_open_epic_found_by_planning_line(env: Env) -> None:
