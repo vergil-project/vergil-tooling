@@ -398,6 +398,69 @@ before judging it:
    A release job that passes clears the recorded run; one that fails
    again keeps it recorded, and the next resume recovers it again.
 
+When the defect is in the release commit itself, so no re-run can pass,
+supersede the release instead (see
+[Superseding a release](#superseding-a-release)).
+
+### Superseding a release
+
+A release that `--resume` cannot finish, because the defect is in its
+tagged commit, is replaced by a new one with
+`vrg-release --supersede X.Y.Z`. It is eligible only when `X.Y.Z` is
+the open release and either:
+
+- **Tagged:** its tag and GitHub Release exist, and its only stages left
+  before `release-records` are among `cd-publish`, `package-index`,
+  `update-deps` and `install`; or
+- **Untagged:** it halted at `confirm-main` with no tag because its CD
+  release job failed, as its state block records (the
+  [failed release run](#a-failed-release-job)).
+
+Otherwise the run refuses, naming what is open, and says to finish the
+release with `vrg-release --resume X.Y.Z`. A bare `vrg-release` never
+supersedes: it refuses while the release is open
+([one release at a time](#one-release-at-a-time)).
+
+The superseding release is a fresh release, with every fresh-start
+check. It combines with a `minor` or `major` bump, and cannot be
+combined with `--resume`: passing both is a usage error (exit 2).
+Before anything else, `preflight` reads the superseded
+release's state block under
+[the lock and the identity rule](#the-lock-and-the-identity-rule),
+checks it is eligible, and confirms its facts against GitHub and git as
+a resume does. It also confirms the GitHub Release of a tagged one
+exists, and that the tag of an untagged one does not exist on `origin`.
+Then:
+
+- The [open-release check](#one-release-at-a-time) passes over the
+  superseded release's tracking issue, and only it.
+- The new release **absorbs** the superseded release's issue list,
+  read from its state block, into its own. An issue on both lists
+  appears once, with the PRs from both. The tracking issue's Contents
+  section names the superseded release under `### Supersedes` and marks
+  each absorbed issue, and the state block records the superseded
+  version and the absorbed issues.
+- Once the new tracking issue exists, `prepare` closes the superseded
+  one, with a comment naming the release that superseded it. The
+  superseded release posts no records. A resume of the new release
+  closes it if a stopped run did not.
+- The new release's [records](#released-records) name the new version.
+  On each absorbed issue the record also says
+  `- Supersedes: vX.Y.Z`.
+
+An **untagged** superseded release left its release commit on `main`
+without a tag, and stopped before its back-merge:
+
+- The [main/develop divergence check](#the-maindevelop-divergence-check)
+  accepts that commit and its ancestors on `main`, the superseded
+  release PR's merge commit, and refuses any other commit `main` has
+  that `develop` lacks. The new release's back-merge reconciles it.
+- `develop`'s VERSION was never bumped, so it must still be `X.Y.Z`,
+  and the new release takes the next patch, `X.Y.(Z+1)`, bumped on its
+  release branch, unless a `minor` or `major` bump is given.
+- When its tracking issue is closed, its release worktree and its
+  `release/X.Y.Z` branch, local and on `origin`, are removed first.
+
 ### A failed back-merge-bump
 
 `back-merge-bump` can fail part-way, after it has created
@@ -866,6 +929,10 @@ any other fresh-start check, when `origin/main` has commits not on
   with a merge commit. A squash merge leaves `main`'s commits off
   `develop`, and the check keeps refusing. Then re-run `vrg-release`.
 
+A release that supersedes an untagged one (see
+[Superseding a release](#superseding-a-release)) passes when `main` is
+ahead only by the superseded release's commit and its ancestors.
+
 If preflight cannot fetch `main` or compare the branches, it refuses
 rather than skipping.
 
@@ -883,6 +950,10 @@ its recovery:
 - An issue with no state block was opened by older `vrg-release`
   tooling, which `--resume` cannot finish. Finish that release by hand,
   then close the issue.
+
+The one exception is `vrg-release --supersede X.Y.Z`, whose check
+passes over release `X.Y.Z`'s own tracking issue, and only it (see
+[Superseding a release](#superseding-a-release)).
 
 `--resume X.Y.Z` still takes a version, for a repo that older tooling
 left with several releases open. If preflight cannot list the open
@@ -982,7 +1053,9 @@ three parts in its body:
   `vrg-repo-status` shows it), read in `preflight` pinned to the
   `develop` commit the release branch is cut from, and under it the
   issues the release contains with their closing PRs (see
-  [The issue list](#the-issue-list));
+  [The issue list](#the-issue-list)); a release that supersedes another
+  also names it, and marks the issues it absorbed from it (see
+  [Superseding a release](#superseding-a-release));
 - the stage checklist (see
   [An interrupted release](#an-interrupted-release));
 - the **state block**, a fenced `json` document between
@@ -1077,6 +1150,9 @@ Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
   done.
 - Every issue in the list gets its record, whatever its state: closed as
   completed, reopened, or closed another way.
+- A release that supersedes another adds a `- Supersedes: vX.Y.Z` line
+  to the record on each issue it absorbed from it (see
+  [Superseding a release](#superseding-a-release)).
 - A record counts only when its comment's author and last editor are
   both `human` logins of `vrg-trusted-authors`. A record marker in a
   comment by any other identity, or last edited by one, never counts:

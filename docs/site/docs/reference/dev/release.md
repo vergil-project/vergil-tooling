@@ -75,6 +75,7 @@ changes nothing. `vrg-finalize-pr` and `vrg-submit-pr` refuse
 
 ```bash
 vrg-release [minor|major] [options]
+vrg-release [minor|major] --supersede X.Y.Z [options]
 ```
 
 ## Arguments
@@ -85,6 +86,7 @@ vrg-release [minor|major] [options]
 | `--without-deps` | No | Skip the `update-deps` stage. Recorded in the tracking issue's state block, so every later `--resume` skips it too. Allowed with `--resume`, where it skips an update that failed, so the release finishes without it |
 | `--allow-pending-deps` | No | Release even though an open `dependency-update` PR blocks it. For urgent fixes only; the bypassed PRs are listed on the tracking issue |
 | `--resume [X.Y.Z]` | No | Resume an interrupted release from its open tracking issue. Name the version when more than one release is in flight. Cannot be combined with `minor`/`major` |
+| `--supersede X.Y.Z` | No | Start a fresh release that supersedes open release `X.Y.Z`, which `--resume` cannot finish: one tagged with only `cd-publish`, `package-index`, `update-deps` or `install` left, or one halted at `confirm-main` with no tag after its CD release job failed. It absorbs `X.Y.Z`'s issues and closes its tracking issue. Combines with `minor`/`major`; passing it with `--resume` is a usage error (exit 2). See [Superseding a release](../../guides/releasing.md#superseding-a-release) |
 | `--skip-audit` | No | Skip the `audit` stage |
 | `--output-window N` | No | Rolling output window for the terminal renderer (`0` streams everything) |
 | `--output-format` | No | Force the renderer: `rich`, `gha` or `plain` |
@@ -119,6 +121,16 @@ version. The refusal names each open issue and the
 state block (left by older tooling), says to finish that release by
 hand and then close the issue. Lookup failures refuse the release. See
 [One release at a time](../../guides/releasing.md#one-release-at-a-time).
+
+`--supersede X.Y.Z` is the one exception: its check passes over release
+`X.Y.Z`'s own tracking issue, which it reads under the identity rule
+and closes once its own exists. A release it supersedes posts no
+records; the new release absorbs its issues, and their records name the
+new version and say `- Supersedes: vX.Y.Z`. When `X.Y.Z` is untagged,
+the main-ahead check accepts its release commit on `main`, the new
+release takes `X.Y.(Z+1)` unless `minor` or `major` is given, and
+`X.Y.Z`'s release worktree and branch are removed. See
+[Superseding a release](../../guides/releasing.md#superseding-a-release).
 
 ## The dependency-update gate
 

@@ -204,6 +204,46 @@ def test_main_resume_with_bump_errors(capsys: pytest.CaptureFixture[str]) -> Non
     assert "cannot be combined" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "argv", [["--resume", "--supersede", "2.1.0"], ["--supersede", "2.1.0", "--resume", "2.1.0"]]
+)
+def test_supersede_with_resume_is_usage_error(
+    argv: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        patch(_MOD + ".git") as m_git,
+        patch(_MOD + ".progress.run_pipeline") as m_pipeline,
+        pytest.raises(SystemExit) as info,
+    ):
+        main(argv)
+    assert info.value.code == 2
+    m_pipeline.assert_not_called()
+    assert m_git.mock_calls == []
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+def test_supersede_needs_a_release_version(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as info:
+        parse_args(["--supersede", "v2.1.0"])
+    assert info.value.code == 2
+    assert "is not a release version X.Y.Z" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argv", [["--supersede", "2.1.0"], ["minor", "--supersede", "2.1.0"]])
+def test_main_supersede_runs_a_fresh_pipeline(argv: list[str]) -> None:
+    with (
+        patch(_MOD + ".git"),
+        patch(_MOD + ".find_resume_target") as m_resume,
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main([*argv, "--output-format", "plain"]) == 0
+    m_resume.assert_not_called()
+    state = m_pipeline.call_args.args[0]
+    assert state.supersede == "2.1.0"
+    assert state.resume is False
+    assert state.version_override == ("minor" if "minor" in argv else None)
+
+
 def test_main_resume_finds_target_and_runs_pipeline() -> None:
     with (
         patch(_MOD + ".git"),

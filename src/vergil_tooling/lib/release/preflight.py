@@ -40,6 +40,7 @@ from vergil_tooling.lib.release.resume import (
     restore_context,
     verify_facts,
 )
+from vergil_tooling.lib.release.supersede import absorb, load_superseded
 from vergil_tooling.lib.release.tracking import read_state, render_contents
 from vergil_tooling.lib.self_repo import is_self_repo
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
@@ -49,8 +50,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from vergil_tooling.lib.release.state import IssueEntry
+    from vergil_tooling.lib.release.supersede import Superseded
 
 _VERSION_OVERRIDE_FIELDS = ("minor", "major")
+# The bump a release superseding an untagged one takes by default (spec §4.7).
+_PATCH = "patch"
 
 # The "Fix task: <url>" line vrg-update-deps writes into a failed PR's body.
 _FIX_TASK_RE = re.compile(rf"^{re.escape(FIX_TASK_PREFIX)}(\S+)\s*$", re.MULTILINE)
@@ -96,6 +100,7 @@ def preflight(
     resume_issue_number: int | None = None,
     allow_pending_deps: bool = False,
     stages: Sequence[str] = (),
+    supersede: str | None = None,
 ) -> ReleaseContext:
     """Run all preflight checks and return an initialized ReleaseContext.
 
@@ -125,6 +130,14 @@ def preflight(
     releases (:func:`check_develop_cd`, spec §6.6 of epic
     vergil-project/.github#1218). It runs after every other check, since it
     may wait on a CD run in progress.
+
+    With *supersede* (``X.Y.Z``), the fresh start takes the place of that
+    open release (spec §4.7 of epic vergil-project/.github#1440): its state is
+    read under the identity rule and checked (:func:`supersede.load_superseded`),
+    the open-release check exempts it, and its issues are absorbed into this
+    release's list. When it is untagged, the main-ahead check accepts the
+    release commit it left on ``main``, and the release takes its next patch,
+    ``X.Y.(Z+1)``, unless *version_override* bumps ``minor`` or ``major``.
     """
     _check_host_prerequisites()
     repo = check_gh_auth()
@@ -149,14 +162,16 @@ def preflight(
             message=str(exc),
         ) from exc
 
-    if version_override in _VERSION_OVERRIDE_FIELDS:
-        release_version = _compute_release_version(current_version, version_override)
+    superseded = None if supersede is None else load_superseded(repo, repo_root, supersede, stages)
+    bump = _release_bump(current_version, version_override, superseded)
+    if bump is not None:
+        release_version = _compute_release_version(current_version, bump)
     else:
         release_version = current_version
 
-    _check_main_not_ahead_of_develop()
+    _check_main_not_ahead_of_develop(accept=None if superseded is None else superseded.main_commit)
     _check_version_not_tagged(release_version)
-    _check_no_open_release(repo)
+    _check_no_open_release(repo, exempt=None if superseded is None else superseded.number)
     _check_packages_unpublished(repo, repo_root, release_version)
     deps_gate = _check_pending_deps(repo, allow=allow_pending_deps)
     _develop_cd_gate(repo)
@@ -164,14 +179,14 @@ def preflight(
     branch = f"release/{release_version}"
     worktree = _acquire_release_worktree(repo_root, branch, resume=False)
     os.chdir(worktree)
-    cut, pending, issues = _release_contents(worktree)
+    cut, pending, issues = _release_contents(worktree, superseded)
 
     print(f"Preflight passed: {repo} v{release_version} — worktree {worktree}")
     ctx = ReleaseContext(
         repo=repo,
         version=release_version,
         repo_root=repo_root,
-        version_override=version_override,
+        version_override=bump,
         release_branch=branch,
         cut=cut,
         pending_release=pending,
@@ -180,8 +195,37 @@ def preflight(
         bypassed_deps_prs=deps_gate.bypassed,
         cleared_deps_prs=deps_gate.cleared,
         undeleted_deps_branches=deps_gate.undeleted,
+        superseded=superseded,
     )
     return ctx
+
+
+def _release_bump(
+    current: str, version_override: str | None, superseded: Superseded | None
+) -> str | None:
+    """The version bump a fresh start applies on its release branch, or None for none.
+
+    *version_override* (``minor`` or ``major``) when given. A release that
+    supersedes an untagged one otherwise takes its next patch: that release
+    never reached ``back-merge-bump``, so ``develop``'s VERSION is still
+    its version, which must be so (spec §4.7 of epic vergil-project/.github#1440).
+    ``develop``'s VERSION is otherwise released as it is.
+    """
+    if superseded is not None and superseded.untagged and current != superseded.version:
+        raise ReleaseError(
+            phase="preflight",
+            command="version.show",
+            message=(
+                f"develop's VERSION is {current}, but superseded release "
+                f"{superseded.version} halted before its back-merge, so it should still be "
+                f"{superseded.version}. Find out what changed it before superseding."
+            ),
+        )
+    if version_override in _VERSION_OVERRIDE_FIELDS:
+        return version_override
+    if superseded is not None and superseded.untagged:
+        return _PATCH
+    return None
 
 
 def _resume_context(
@@ -503,7 +547,9 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
     )
 
 
-def _release_contents(worktree: Path) -> tuple[str, PendingRelease, tuple[IssueEntry, ...]]:
+def _release_contents(
+    worktree: Path, superseded: Superseded | None = None
+) -> tuple[str, PendingRelease, tuple[IssueEntry, ...]]:
     """The commit a fresh release branch is cut from, what ``main..<cut>`` holds, and its issues.
 
     The new branch's worktree is at the ``develop`` commit preflight synced
@@ -511,7 +557,8 @@ def _release_contents(worktree: Path) -> tuple[str, PendingRelease, tuple[IssueE
     are read pinned to it, never to whatever ``origin/develop`` holds by
     then, and printed as the tracking issue's Contents section will show
     them, before the tracking issue is created. An incomplete lookup refuses
-    the release (spec §4.1 of epic vergil-project/.github#1440).
+    the release (spec §4.1 of epic vergil-project/.github#1440). A release
+    that supersedes another absorbs its issues (spec §4.7).
     """
     cut = git.read_output("-C", str(worktree), "rev-parse", "HEAD")
     try:
@@ -522,7 +569,12 @@ def _release_contents(worktree: Path) -> tuple[str, PendingRelease, tuple[IssueE
             command=f"gather pending release main..{cut[:7]}",
             message=f"Could not read what the release contains: {exc}",
         ) from exc
-    print(render_contents(pending, issues))
+    if superseded is None:
+        print(render_contents(pending, issues))
+        return cut, pending, issues
+    absorbed = tuple(issue.ref for issue in superseded.state.issues)
+    issues = absorb(superseded.state, issues)
+    print(render_contents(pending, issues, supersedes=superseded.version, absorbed=absorbed))
     return cut, pending, issues
 
 
@@ -762,6 +814,8 @@ def _check_leftover_worktree(path: Path, branch: str) -> None:
 def _compute_release_version(current: str, override: str) -> str:
     """Compute the target release version without modifying any files."""
     parts = current.split(".")
+    if override == _PATCH:
+        return f"{parts[0]}.{parts[1]}.{int(parts[2]) + 1}"
     if override == "minor":
         return f"{parts[0]}.{int(parts[1]) + 1}.0"
     return f"{int(parts[0]) + 1}.0.0"
@@ -944,7 +998,7 @@ def audit_repo_config(repo: str, *, in_tree_templates: bool = False) -> None:
     )
 
 
-def _check_main_not_ahead_of_develop() -> None:
+def _check_main_not_ahead_of_develop(*, accept: str | None = None) -> None:
     """Refuse a fresh release while ``origin/main`` has commits develop lacks (#3527).
 
     A completed release leaves main contained in develop: back-merge-bump
@@ -955,11 +1009,26 @@ def _check_main_not_ahead_of_develop() -> None:
     late, at merge-release; here nothing is cut yet. Develop being ahead of
     main is normal and never refuses. A failed fetch or compare refuses too —
     an unknown answer never reads as "not diverged".
+
+    *accept* is the release commit an untagged release that this one
+    supersedes left on main (spec §4.7 of epic vergil-project/.github#1440):
+    main may be ahead by that commit and its ancestors, and by nothing else.
+    The superseding release's back-merge reconciles it.
     """
     command = "git log origin/develop..origin/main"
     try:
         git.run("fetch", "origin", "main")
         ahead = git.read_output("log", "--format=%h %s", "origin/develop..origin/main")
+        if ahead and accept is not None:
+            ahead = git.read_output(
+                "log", "--format=%h %s", "origin/develop..origin/main", f"^{accept}"
+            )
+            if not ahead:
+                print(
+                    f"Main/develop check passed: origin/main is ahead only by the superseded "
+                    f"release commit {accept[:12]}, which this release's back-merge reconciles"
+                )
+                return
     except subprocess.CalledProcessError as exc:
         raise ReleaseError(
             phase="preflight",
@@ -1056,17 +1125,23 @@ def _open_release_recovery(repo: str, ver: str, number: int, body: str) -> str:
     return f"release {ver} ({url}) is open. Finish it with `vrg-release --resume {ver}`."
 
 
-def _check_no_open_release(repo: str) -> None:
+def _check_no_open_release(repo: str, *, exempt: int | None = None) -> None:
     """Refuse a fresh start while any ``release: X.Y.Z`` tracking issue is open.
+
+    *exempt* is the tracking issue a ``--supersede`` run takes the place of
+    (spec §4.7 of epic vergil-project/.github#1440); only it may stay open.
 
     One release runs at a time (spec §4.7 of epic vergil-project/.github#1440),
     whatever its version. Each open release is named with its recovery: the
     ``vrg-release --resume`` that finishes it, or, for an issue with no state
     block (left by older tooling), finishing it by hand and closing the issue.
     """
-    issues = _open_release_issues(repo, phase="preflight")
+    issues = [i for i in _open_release_issues(repo, phase="preflight") if i[1] != exempt]
     if not issues:
-        print("Open-release check passed: no release is in flight")
+        if exempt is None:
+            print("Open-release check passed: no release is in flight")
+        else:
+            print(f"Open-release check passed: only the superseded release #{exempt} is open")
         return
     # Versions order as semantic versions (2.0.9 before 2.0.10), never as
     # strings (#4877); the issue number breaks a tie.

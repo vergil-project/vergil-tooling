@@ -47,6 +47,7 @@ def _full_state() -> StateBlock:
         install_done=True,
         records_posted=("owner/repo#12",),
         supersedes="2.1.339",
+        absorbed=("owner/repo#12",),
         superseded_main_commit="e" * 40,
         failed_release_run="333",
     )

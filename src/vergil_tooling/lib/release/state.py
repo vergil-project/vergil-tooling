@@ -75,16 +75,33 @@ class StateBlock:
     done: tuple[str, ...]
     install_done: bool
     records_posted: tuple[str, ...]
+    # The X.Y.Z of the release this one supersedes (spec §4.7), and the refs
+    # of the issues absorbed from it, whose records say so (spec §4.9).
     supersedes: str | None
+    absorbed: tuple[str, ...]
+    # The untagged release commit a superseded release left on main, which
+    # this release's fresh-start main-ahead check accepted.
     superseded_main_commit: str | None
     # The CD release run confirm-main saw fail.
     failed_release_run: str | None
 
 
-def initial_state(
-    *, version: str, cut: str, issues: tuple[IssueEntry, ...], without_deps: bool
+def initial_state(  # noqa: PLR0913 - the state's creation fields, each named
+    *,
+    version: str,
+    cut: str,
+    issues: tuple[IssueEntry, ...],
+    without_deps: bool,
+    supersedes: str | None = None,
+    absorbed: tuple[str, ...] = (),
+    superseded_main_commit: str | None = None,
 ) -> StateBlock:
-    """The state a tracking issue is created with: nothing done yet."""
+    """The state a tracking issue is created with: nothing done yet.
+
+    A superseding release (spec §4.7) also records the release it
+    supersedes, the refs of the issues it absorbed from it, and, when that
+    release was untagged, the release commit it left on ``main``.
+    """
     return StateBlock(
         version=version,
         cut=cut,
@@ -101,8 +118,9 @@ def initial_state(
         done=(),
         install_done=False,
         records_posted=(),
-        supersedes=None,
-        superseded_main_commit=None,
+        supersedes=supersedes,
+        absorbed=absorbed,
+        superseded_main_commit=superseded_main_commit,
         failed_release_run=None,
     )
 
@@ -267,6 +285,7 @@ def parse_state(body: str) -> StateBlock:
         install_done=_boolean("install_done", data["install_done"]),
         records_posted=_strings("records_posted", data["records_posted"]),
         supersedes=_optional_string("supersedes", data["supersedes"]),
+        absorbed=_strings("absorbed", data["absorbed"]),
         superseded_main_commit=_optional_string(
             "superseded_main_commit", data["superseded_main_commit"]
         ),

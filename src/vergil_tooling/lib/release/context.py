@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
     from vergil_tooling.lib.pending_release import PendingRelease
     from vergil_tooling.lib.release.state import IssueEntry, StateBlock
+    from vergil_tooling.lib.release.supersede import Superseded
 
 # The package-index stage's name, by which a deferred index miss is listed.
 INDEX_STAGE = "package-index"
@@ -44,8 +45,14 @@ class ReleaseContext:
     # Unset on a resume, whose cut is in the state block.
     cut: str | None = None
     pending_release: PendingRelease | None = None
-    # The issues the release contains, from its PRs' closing references.
+    # The issues the release contains, from its PRs' closing references, and
+    # on vrg-release --supersede those absorbed from the superseded release.
     issues: tuple[IssueEntry, ...] = ()
+    # The open release a fresh vrg-release --supersede takes the place of,
+    # read and checked by preflight (spec §4.7 of epic
+    # vergil-project/.github#1440). Unset on a resume, whose state block
+    # records the superseded version.
+    superseded: Superseded | None = None
     # The tracking issue's state block as last read or written by this run.
     state: StateBlock | None = None
     # The identity-rule warnings (foreign traces on the tracking issue) this

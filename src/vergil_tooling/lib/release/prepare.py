@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import changelog, git, github, pr_create, version
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.merge import known_pr_state
+from vergil_tooling.lib.release.supersede import close_superseded, superseded_issue
 from vergil_tooling.lib.release.tracking import create_tracking_issue
 
 if TYPE_CHECKING:
@@ -26,10 +27,15 @@ def prepare(ctx: ReleaseContext) -> None:
     if not already adopted; if the release PR already exists the rest is
     skipped and ``release_pr_url`` hydrated; the changelog commit is skipped if
     it is already on the branch; the push is naturally idempotent.
+
+    A release that supersedes another closes the superseded tracking issue
+    once its own exists (:func:`_close_superseded`), on a resume too while
+    that issue is still open.
     """
     if ctx.issue_number is None:
         create_tracking_issue(ctx)
         print(f"Tracking issue created: {ctx.issue_url}")
+    _close_superseded(ctx)
 
     branch = ctx.release_branch
     if branch is None:
@@ -72,6 +78,32 @@ def prepare(ctx: ReleaseContext) -> None:
 
     ctx.release_pr_url = _create_pr(ctx, branch)
     print(f"Release PR created: {ctx.release_pr_url}")
+
+
+def _close_superseded(ctx: ReleaseContext) -> None:
+    """Close the tracking issue of the release this one supersedes, if it does (spec §4.7).
+
+    The state block names the superseded version, and records its release
+    commit on main when it was untagged, whose release branch and worktree
+    are then removed. A fresh run knows the issue from preflight; a resume
+    finds it among the open release issues, and finds none once it is closed.
+    """
+    current = ctx.state
+    if current is None or current.supersedes is None:
+        return
+    old = current.supersedes
+    number = (
+        ctx.superseded.number if ctx.superseded is not None else superseded_issue(ctx.repo, old)
+    )
+    close_superseded(
+        ctx.repo,
+        number,
+        ctx.version,
+        superseded_version=old,
+        new_issue_url=str(ctx.issue_url),
+        untagged=current.superseded_main_commit is not None,
+        repo_root=ctx.repo_root,
+    )
 
 
 def _adopt_merged_pr(ctx: ReleaseContext, branch: str, merged: dict[str, str]) -> None:

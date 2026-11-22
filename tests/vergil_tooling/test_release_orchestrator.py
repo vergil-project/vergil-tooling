@@ -172,6 +172,7 @@ def test_preflight_stage_populates_ctx() -> None:
         resume_issue_number=None,
         allow_pending_deps=False,
         stages=[stage.name for stage in build_stages()],
+        supersede=None,
     )
     assert state.ctx is ctx
 
@@ -200,6 +201,17 @@ def test_preflight_stage_passes_allow_pending_deps() -> None:
     with patch(_MOD + ".preflight", return_value=_ctx()) as m_preflight:
         _preflight_stage(state)
     assert m_preflight.call_args.kwargs["allow_pending_deps"] is True
+
+
+def test_preflight_stage_passes_supersede() -> None:
+    state = ReleaseState(
+        version_override=None,
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        supersede="2.1.0",
+    )
+    with patch(_MOD + ".preflight", return_value=_ctx()) as m_preflight:
+        _preflight_stage(state)
+    assert m_preflight.call_args.kwargs["supersede"] == "2.1.0"
 
 
 def test_audit_stage_runs_audit() -> None:
