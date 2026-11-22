@@ -301,25 +301,24 @@ and `publish-status` run on every run and are never recorded done.
   PR's; and the tag still peels to the recorded commit, which is the
   release PR's merge commit or a single-parent freeze commit on top of it.
   A mismatch stops the run, naming the fact.
-- **The worktree.** Where the resume runs depends on its first undone
-  stage:
-    - **`prepare` or `merge-release`:** it adopts the release worktree on
-      `release/<version>`, creating the local branch from `origin` if
-      needed. If the branch is missing both locally and on `origin`, the
-      resume stops, naming it, and never cuts a new one from `develop`.
-    - **`confirm-main`, `back-merge-bump` or `teardown-worktree`:** the
-      release PR has merged, and GitHub deletes `release/<version>` on
-      merge, so the resume never needs the branch. It reuses the release
-      worktree if it is still there, whatever branch it is on, and stops
-      if that path is not a git worktree. With no worktree there, and
-      `back-merge-bump` still to run, it creates one detached at
-      `develop`, in which `back-merge-bump` cuts its post branch from
-      `main`. Otherwise it runs from the root checkout, and
-      `teardown-worktree` finds nothing to remove, does nothing and is
-      recorded done.
-    - **Any later stage:** it runs from the root checkout, and never
-      needs the release branches, which `close-finalize` may already have
-      pruned.
+- **The worktree before the merge.** When the first undone stage is
+  `prepare` or `merge-release`, the resume adopts the release worktree on
+  `release/<version>`, creating the local branch from `origin` if needed.
+  If the branch is missing both locally and on `origin`, the resume stops,
+  naming it, and never cuts a new one from `develop`.
+- **The worktree after the merge.** When the first undone stage is
+  `confirm-main`, `back-merge-bump` or `teardown-worktree`, the release PR
+  has merged and GitHub has deleted `release/<version>`, so the resume
+  never needs the branch. It reuses the release worktree if it is still
+  there, whatever branch it is on, and stops if that path is not a git
+  worktree. With no worktree there and `back-merge-bump` still to run, it
+  creates one detached at `develop`, in which `back-merge-bump` cuts its
+  post branch from `main`. Otherwise it runs from the root checkout, and
+  `teardown-worktree` finds nothing to remove, does nothing and is
+  recorded done.
+- **The root checkout.** For any later first undone stage, the resume
+  runs from the root checkout, and never needs the release branches,
+  which `close-finalize` may already have pruned.
 - **A stage that did not do its work** is not recorded done, so a resume
   runs it again: a `promote` that left `vX.Y` behind (`--no-promote`, or
   a deferred `package-index`), a `close-finalize` that left the issue

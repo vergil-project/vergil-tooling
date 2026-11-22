@@ -2437,9 +2437,7 @@ def test_post_merge_worktree_needs_none_once_back_merge_bump_is_done() -> None:
 
 
 @pytest.mark.parametrize("needed", [True, False])
-def test_post_merge_worktree_reuses_a_worktree_still_there(
-    tmp_path: Path, *, needed: bool
-) -> None:
+def test_post_merge_worktree_reuses_a_worktree_still_there(tmp_path: Path, *, needed: bool) -> None:
     from vergil_tooling.lib.release.preflight import _post_merge_worktree
 
     path = tmp_path / ".worktrees" / "release-2.3.0"
