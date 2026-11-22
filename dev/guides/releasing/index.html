@@ -18524,6 +18524,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#released-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Released: records
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-lock-and-the-identity-rule" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19004,6 +19015,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#released-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Released: records
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-lock-and-the-identity-rule" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19235,10 +19257,13 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
    <code>[publish].consumer-refresh</code>, the key's old name, is still
    read, with a deprecation warning, for one minor version; setting both
    is an error.
-5. Last, <code>close-tracking</code> closes the tracking issue with a summary, but
-   only once no stage before it has failed: any failure, a deferred
+5. Then <code>release-records</code> posts a <a href="#released-records"><code>Released:</code> record</a>
+   on every issue in the <a href="#the-issue-list">issue list</a>, and last
+   <code>close-tracking</code> closes the tracking issue with a summary. Both run
+   only once no stage before them has failed: any failure, a deferred
    publish or a failed <code>update-deps</code> included, leaves the issue open for
-   <code>vrg-release --resume</code>. A clean run names the released tag in its
+   <code>vrg-release --resume</code>, and <code>close-tracking</code> also waits until every
+   record is posted. A clean run names the released tag in its
    completion line (<code>✓  vrg-release v1.3.1 complete</code>).
 6. Check the end of the run for the <code>update-deps</code> result. A failed
    dependency update does not undo the release, but it leaves an open
@@ -19334,9 +19359,14 @@ stages not recorded done.</p>
 <td>Runs the <code>[publish].install</code> commands once <code>promote</code> is done and <code>vX.Y</code> names the release. <code>none configured</code> when the repo has none. Success is one check line; a failure prints the full output below the summary</td>
 </tr>
 <tr>
+<td><code>release-records</code></td>
+<td>deferred</td>
+<td>Posts a <a href="#released-records"><code>Released:</code> record</a> on every issue in the <a href="#the-issue-list">issue list</a> that has none yet, once no stage before it has failed. It fails naming each issue whose record it could not post; a resume posts only the missing ones</td>
+</tr>
+<tr>
 <td><code>close-tracking</code></td>
 <td>deferred</td>
-<td>Closes the tracking issue with a summary, once no stage before it has failed</td>
+<td>Closes the tracking issue with a summary, once no stage before it has failed and the state block records a record posted on every issue</td>
 </tr>
 <tr>
 <td><code>publish-status</code></td>
@@ -19353,7 +19383,7 @@ optional:</p>
   <code>confirm-develop</code>. <code>cd-publish</code> delivers the jobs the confirm stages
   record, so it waits for <code>confirm-develop</code> to succeed and record its own.</li>
 <li><code>install</code> needs those and <code>promote</code>.</li>
-<li><code>close-tracking</code> needs every stage before it.</li>
+<li><code>release-records</code> and <code>close-tracking</code> need every stage before them.</li>
 <li>Nothing holds back <code>package-index</code> or <code>update-deps</code>, and the failure of
   <code>cd-publish</code>, <code>package-index</code> or <code>update-deps</code> holds back none of
   <code>promote</code>, <code>finalize</code> and <code>install</code>.</li>
@@ -20079,9 +20109,11 @@ a comment when it completes or fails:</p>
   instead.</li>
 </ul>
 <p>The <code>close-tracking</code> stage closes the issue with a summary, after every
-other tracked stage. It stays open when any earlier stage failed, a
-deferred publish or a failed dependency update included, so the
-release can be resumed. <code>vrg-release
+other tracked stage, once the state block records a
+<a href="#released-records"><code>Released:</code> record</a> posted on every issue the
+release contains. It stays open when any earlier stage failed, a
+deferred publish, a failed dependency update or a record that could not
+be posted included, so the release can be resumed. <code>vrg-release
 --resume</code> finds the open tracking issue and runs only the stages its
 state block does not record as done (see
 <a href="#resuming-a-release">Resuming a release</a>).</p>
@@ -20111,6 +20143,41 @@ whose PRs close no issues has an empty list, which is valid. The
 trusted authors failing to load, or any of the reads failing or coming
 back truncated, refuses the release like any other incomplete
 contents lookup.</p>
+<h3 id="released-records"><code>Released:</code> records<a class="headerlink" href="#released-records" title="Permanent link">&para;</a></h3>
+<p>The <code>release-records</code> stage posts one comment, as the human running
+<code>vrg-release</code>, on each issue in the issue list:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>&lt;!-- vrg-release:released:vergil-project/vergil-tooling:v2.1.340 --&gt;
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>- Release: https://github.com/vergil-project/vergil-tooling/releases/tag/v2.1.340
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>- Closed by: #4840 (merge commit 1a2b3c4)
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>- Install: ran (`[publish].install`)
+</code></pre></div>
+<ul>
+<li>The date is the day the GitHub Release was published, and each closing
+  PR is named with the commit it merged as.</li>
+<li>The install line reads <code>ran</code> when the repo configures
+  <code>[publish].install</code> and <code>none configured</code> when it does not; a record
+  in a repo with no install attests the release and its publish only.
+  The stage refuses while the state block does not record <code>install</code>
+  done.</li>
+<li>Every issue in the list gets its record, whatever its state: closed as
+  completed, reopened, or closed another way.</li>
+<li>A record counts only when its comment's author and last editor are
+  both <code>human</code> logins of <code>vrg-trusted-authors</code>. A record marker in a
+  comment by any other identity, or last edited by one, never counts:
+  the stage names it in a <code>warning:</code> line and ignores it.</li>
+<li>Before posting on an issue, the stage reads all its comments, every
+  page, for a counting record, and records the issue as posted in the
+  state block once it has found or posted one. A run interrupted partway
+  therefore posts only the rest, and no issue gets two. Each post is
+  made once and never retried, so a post whose failure hid a landed
+  comment is found by the next run's read instead of repeated.</li>
+<li>A read or post that fails fails that issue, and the stage carries on
+  to the rest, then fails naming each. <code>close-tracking</code> does not run,
+  and <code>vrg-release --resume</code> posts the missing records, then closes the
+  issue.</li>
+</ul>
 <h3 id="the-lock-and-the-identity-rule">The lock and the identity rule<a class="headerlink" href="#the-lock-and-the-identity-rule" title="Permanent link">&para;</a></h3>
 <p>The state block is trusted only while the tracking issue is the human's.
 Every time <code>vrg-release</code> reads the state block, and again in the read
