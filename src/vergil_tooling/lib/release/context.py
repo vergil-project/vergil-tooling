@@ -21,6 +21,11 @@ class ReleaseContext:
     repo_root: Path
     version_override: str | None
 
+    # True on vrg-release --resume: package-index then dispatches the index
+    # workflow itself before it waits (spec §4.5 of epic
+    # vergil-project/.github#1440).
+    resume: bool = False
+
     issue_number: int | None = None
     issue_url: str | None = None
     # The stage checklist block the tracking issue is created with, rendered
@@ -106,8 +111,9 @@ class ReleaseContext:
     promote: bool = True
 
     # update-deps stage (epic vergil-project/.github#381, spec §5.1). Skipped
-    # with --without-deps. deps_failure is the human summary when the update
-    # did not land; publish-status repeats it.
+    # with --without-deps, given on the run or recorded in the state block by
+    # an earlier one. deps_failure is the human summary when the update did
+    # not land; publish-status repeats it.
     without_deps: bool = False
     deps_report: str | None = None
     deps_pr_url: str | None = None

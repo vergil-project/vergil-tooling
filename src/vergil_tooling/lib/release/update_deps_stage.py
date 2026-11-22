@@ -3,6 +3,13 @@
 Runs after close-finalize, once the release is tagged, promoted and published,
 so nothing about the release depends on it (mode fail_defer). Develop is already
 on the next patch version, so the update is the first change on it.
+
+A failed update is deferred, not halted: the stage is not recorded done in the
+state block, so ``vrg-release --resume`` runs it again. ``--without-deps``,
+given on the first run or on a resume, is recorded in the state block's
+``without_deps`` and skips the stage on that run and every later resume, which
+records the skip as the stage done (spec §4.5 of epic
+vergil-project/.github#1440).
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ def update_deps(ctx: ReleaseContext) -> None:
     issue gets the failure comment and publish-status repeats it.
     """
     if ctx.without_deps:
+        # Given on this run or recorded in the state block by an earlier one.
         print("Skipping dependency update (--without-deps).")
         ctx.deps_report = "Skipped (--without-deps)."
         return

@@ -7,6 +7,7 @@ import io
 import json
 import subprocess
 import urllib.error
+from datetime import UTC, datetime
 from email.message import Message
 from typing import TYPE_CHECKING, NoReturn
 from unittest.mock import MagicMock, patch
@@ -962,3 +963,165 @@ def test_fetch_other_http_error_propagates() -> None:
         pytest.raises(urllib.error.HTTPError),
     ):
         package_index._fetch("https://b/x")
+
+
+# -- a resume dispatches the index workflow itself (spec §4.5 of epic 1440) ---
+
+_DISPATCHED_AT = datetime(2026, 10, 25, 8, 0, tzinfo=UTC)
+_OLD_RUN = _run(2, "09:33:00", "failure")
+
+
+def _new_run(run_id: int, created: str) -> dict[str, object]:
+    run = _run(run_id, created)
+    run["createdAt"] = f"2026-10-25T{created}Z"
+    return run
+
+
+def _resume_wait(
+    ctx: ReleaseContext,
+    gh: Callable[..., str],
+    fetch: Fetch,
+    *,
+    dispatch: Callable[..., None] | None = None,
+    sleep: Callable[[float], None] = lambda _s: None,
+) -> tuple[list[str], list[tuple[str, ...]]]:
+    """Run the stage as a resume; return the run IDs followed and every gh call, in order."""
+    ctx.resume = True
+    # The CD run a fresh start recorded: a resume must not follow from it.
+    ctx.cd_run_id = "111"
+    calls: list[tuple[str, ...]] = []
+    followed: list[str] = []
+
+    def reading(*args: str) -> str:
+        calls.append(args)
+        if args[:2] == ("run", "view") and args[3] == _PACKAGES_REPO and args[4] not in followed:
+            followed.append(args[4])
+        return gh(*args)
+
+    def running(*args: str) -> None:
+        calls.append(args)
+        if dispatch is not None:
+            dispatch(*args)
+
+    with (
+        patch.object(package_index.github, "read_output", side_effect=reading),
+        patch.object(package_index.github, "run", side_effect=running),
+    ):
+        package_index.wait_for_index(
+            ctx, fetch=fetch, sleep=sleep, now=_clock(), clock=lambda: _DISPATCHED_AT
+        )
+    return followed, calls
+
+
+def test_package_index_resume_dispatches_then_waits(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The resume dispatches publish-index, then follows the run it started.
+
+    The failed run of the fresh start is excluded, so it neither fails the
+    stage fast nor stands in for the dispatched run.
+    """
+    before = json.dumps([_OLD_RUN])
+    after = json.dumps([_new_run(5, "08:00:03"), _OLD_RUN])
+    gh = _FakeGh(lists=[before, after], conclusions={"5": "success"})
+    fetch = _answers(b"", b"", _PACKAGES.encode())
+    followed, calls = _resume_wait(release_ctx_with_package, gh, fetch)
+    assert followed == ["5"]
+    dispatch = ("workflow", "run", "publish-index.yml", "--repo", _PACKAGES_REPO)
+    assert dispatch in calls
+    # Listed before the dispatch, so the runs that already existed are known.
+    assert calls.index(dispatch) == 1
+    assert calls[0][:2] == ("run", "list")
+    # The CD run's release job is never read on a resume.
+    assert not any(c[-1] == "jobs" for c in calls)
+    assert release_ctx_with_package.package_index_urls == (_NOBLE_AMD64,)
+    assert release_ctx_with_package.deferred_publish_failures == []
+    out = capsys.readouterr().out
+    assert f"Resuming: dispatching publish-index.yml in {_PACKAGES_REPO}." in out
+    assert "Publish-index run finished (success); checking the index." in out
+
+
+def test_package_index_resume_waits_for_the_dispatched_run_to_appear(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Until the dispatched run is listed, the stage polls with a heartbeat."""
+    before = json.dumps([_OLD_RUN])
+    after = json.dumps([_new_run(5, "08:00:03"), _OLD_RUN])
+    gh = _FakeGh(lists=[before, before, after], conclusions={"5": "success"})
+    sleeps: list[float] = []
+    fetch = _answers(b"", b"", b"", _PACKAGES.encode())
+    followed, _calls = _resume_wait(release_ctx_with_package, gh, fetch, sleep=sleeps.append)
+    assert followed == ["5"]
+    assert sleeps == [30]
+    assert "not in the index yet (" in capsys.readouterr().out
+
+
+def test_package_index_resume_failed_dispatched_run_fails_fast(
+    release_ctx_with_package: ReleaseContext,
+) -> None:
+    before = json.dumps([_OLD_RUN])
+    after = json.dumps([_new_run(5, "08:00:03"), _OLD_RUN])
+    gh = _FakeGh(lists=[before, after], conclusions={"5": "failure"})
+    with pytest.raises(ReleaseError, match="runs/5 finished 'failure'"):
+        _resume_wait(release_ctx_with_package, gh, _answers(b"", b"", b""))
+    assert release_ctx_with_package.deferred_publish_failures == [package_index.PHASE]
+
+
+def test_package_index_resume_already_listed_does_not_dispatch(
+    release_ctx_with_package: ReleaseContext,
+) -> None:
+    gh = _FakeGh()
+    followed, calls = _resume_wait(release_ctx_with_package, gh, _answers(_PACKAGES.encode()))
+    assert followed == []
+    assert calls == []
+    assert release_ctx_with_package.package_index_urls == (_NOBLE_AMD64,)
+
+
+def test_package_index_resume_dispatch_failure_defers(
+    release_ctx_with_package: ReleaseContext,
+) -> None:
+    """A dispatch that fails fails the stage loudly; it never waits blind."""
+
+    def refuse(*args: str) -> None:
+        raise subprocess.CalledProcessError(1, ["gh", *args], stderr="HTTP 403")
+
+    gh = _FakeGh(lists=[json.dumps([_OLD_RUN])])
+    with pytest.raises(subprocess.CalledProcessError):
+        _resume_wait(release_ctx_with_package, gh, _answers(b""), dispatch=refuse)
+    assert release_ctx_with_package.deferred_publish_failures == [package_index.PHASE]
+    assert release_ctx_with_package.package_index_urls == ()
+
+
+def test_package_index_resume_list_failure_still_dispatches_and_polls(
+    release_ctx_with_package: ReleaseContext, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def gh(*args: str) -> str:
+        raise subprocess.CalledProcessError(1, ["gh", *args], stderr="HTTP 502")
+
+    fetch = _answers(b"", b"", _PACKAGES.encode())
+    followed, calls = _resume_wait(release_ctx_with_package, gh, fetch)
+    assert followed == []
+    assert ("workflow", "run", "publish-index.yml", "--repo", _PACKAGES_REPO) in calls
+    # Polling only: no run is listed again after the failed listing.
+    assert sum(c[:2] == ("run", "list") for c in calls) == 1
+    assert release_ctx_with_package.package_index_urls == (_NOBLE_AMD64,)
+    assert "Could not list the publish-index runs" in capsys.readouterr().out
+
+
+def test_package_index_resume_follows_from_before_the_dispatch(
+    release_ctx_with_package: ReleaseContext,
+) -> None:
+    """A run stamped up to the skew before the dispatch time still counts as new."""
+    before = json.dumps([_OLD_RUN])
+    after = json.dumps([_new_run(5, "07:55:00"), _OLD_RUN])
+    gh = _FakeGh(lists=[before, after], conclusions={"5": "success"})
+    fetch = _answers(b"", b"", _PACKAGES.encode())
+    followed, _calls = _resume_wait(release_ctx_with_package, gh, fetch)
+    assert followed == ["5"]
+
+
+def test_fresh_run_never_dispatches(release_ctx_with_package: ReleaseContext) -> None:
+    gh = _FakeGh(lists=[json.dumps([_run(2, "09:33:00")])], conclusions={"2": "success"})
+    with patch.object(package_index.github, "run", side_effect=_boom) as m_run:
+        _follow(release_ctx_with_package, gh, _answers(b"", _PACKAGES.encode()), _boom)
+    m_run.assert_not_called()
