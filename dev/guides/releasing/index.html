@@ -14916,6 +14916,8 @@
       
         
       
+        
+      
     
     
     
@@ -15032,6 +15034,34 @@
     
   
     vrg-release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/release-record/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-release-record
   
 
     
@@ -20355,6 +20385,10 @@ contents lookup.</p>
   to the rest, then fails naming each. <code>close-tracking</code> does not run,
   and <code>vrg-release --resume</code> posts the missing records, then closes the
   issue.</li>
+<li>A record is release evidence for the issue:
+  <a href="../../reference/dev/release-record/"><code>vrg-release-record check</code></a> reads
+  it, confirms it against git and prints a verdict, which is how a
+  deployment task confirms that a blocked-by task is released.</li>
 </ul>
 <h3 id="the-lock-and-the-identity-rule">The lock and the identity rule<a class="headerlink" href="#the-lock-and-the-identity-rule" title="Permanent link">&para;</a></h3>
 <p>The state block is trusted only while the tracking issue is the human's.

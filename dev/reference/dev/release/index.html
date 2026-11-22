@@ -14,7 +14,7 @@
         <link rel="prev" href="../submit-pr/">
       
       
-        <link rel="next" href="../update-deps/">
+        <link rel="next" href="../release-record/">
       
       
         
@@ -14931,6 +14931,8 @@
       
         
       
+        
+      
     
     
     
@@ -15193,6 +15195,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release-record/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-release-record
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -18398,7 +18428,9 @@ when its comment's author and last editor are <code>human</code> logins of
 <code>vrg-trusted-authors</code>; a resume posts only the missing ones, and
 <code>close-tracking</code> closes the tracking issue only once every record is
 posted; see
-<a href="../../../guides/releasing/#released-records"><code>Released:</code> records</a>.</p>
+<a href="../../../guides/releasing/#released-records"><code>Released:</code> records</a>.
+<a href="../release-record/"><code>vrg-release-record check</code></a> reads a task's record as
+release evidence.</p>
 <p>A CD publish job that fails is recorded in the state block, by its run
 and full job name, and the <code>cd-publish</code> stage delivers it on <code>--resume</code>:
 it re-runs <code>main</code>'s failed jobs, and re-runs a <code>develop</code> job only when

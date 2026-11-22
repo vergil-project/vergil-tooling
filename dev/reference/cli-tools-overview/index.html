@@ -14598,6 +14598,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-release-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-release-record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-promote" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15919,6 +15930,8 @@
       
         
       
+        
+      
     
     
     
@@ -16038,6 +16051,34 @@
     
   
     vrg-release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/release-record/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-release-record
   
 
     
@@ -19231,6 +19272,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-release-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-release-record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-promote" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -20733,6 +20785,54 @@ and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 any failure or refusal, 130 interrupted</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-release-record">vrg-release-record<a class="headerlink" href="#vrg-release-record" title="Permanent link">&para;</a></h3>
+<p>Read a task's <code>Released:</code> record, which <code>vrg-release</code> posts, as release
+evidence. <code>check</code> reads every comment on the task and uses the newest record
+that counts (its comment's author and last editor are <code>human</code> logins of
+<code>vrg-trusted-authors</code>); every other record is a warning. It then checks that
+the merge commit of each closing PR of the task whose closing reference
+passes the release's trust rule, read from GitHub and never from the record,
+is an ancestor of the record's tag, in a temporary bare fetch of the task's
+repo. A record that ancestry does not confirm is a failed verdict, never a
+pass. It prints one JSON object: <code>task</code>, <code>verdict</code> (<code>pass</code>, <code>fail</code> or
+<code>none</code>), <code>record</code> (<code>version</code>, <code>tag</code> and the Release <code>url</code>, or <code>null</code>),
+<code>ancestry</code> (<code>pass</code>, <code>fail</code> or <code>null</code>) and <code>warnings</code>. A deployment task
+confirms a blocked-by task's release with it. See the
+<a href="../dev/release-record/">vrg-release-record reference</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_release_record</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>check OWNER/REPO#N</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td><code>gh</code> authenticated; the trusted-authors configuration; read access to the task's repo for <code>git ls-remote</code> and <code>git fetch</code></td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A failed or incomplete GitHub or git read is an error on stderr, never "no record"</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 <code>pass</code>, 3 <code>fail</code>, 4 <code>none</code> (no counting record), 1 an error, 2 a usage error</td>
 </tr>
 <tr>
 <td>Status</td>
