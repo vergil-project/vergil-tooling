@@ -264,10 +264,10 @@ naming them, and the release carries on. Once the cause is fixed,
   by itself (`gh run rerun <run> --job <job>`). A listing of `develop`'s
   newest CD runs that does not reach back to the recorded run stops the
   stage rather than re-run it on a guess: so many later runs have
-  started that the stage cannot tell whether one delivered the job. This
-  edge case is the one refusal that names a step to run by hand: run
-  `develop`'s CD again by hand, then resume, and the new run's job, once
-  it succeeds, counts as the delivery.
+  started that the stage cannot tell whether one delivered the job. Here
+  the stage names a step to run by hand: run `develop`'s CD again, then
+  resume, and the new run's job, once it succeeds, counts as the
+  delivery.
 
 A recorded job whose run has succeeded since, re-run by hand say, is
 delivered without a re-run. Each delivered job leaves the state block
