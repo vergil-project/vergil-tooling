@@ -30,6 +30,7 @@ the dev-tree override venv.
 | [vrg-await](cli-tools-overview.md#vrg-await) | Block until a `.vergil/` channel file appears or changes |
 | [vrg-audit-approve](cli-tools-overview.md#vrg-audit-approve) | Post the `vergil-audit/approved` check-run on a PR's head commit |
 | [vrg-release](dev/release.md) | Run the full release workflow, ending with the dependency update |
+| [vrg-release-record](dev/release-record.md) | Check a task's `Released:` record against git and print a verdict |
 | [vrg-promote](cli-tools-overview.md#vrg-promote) | Move the rolling `vX.Y` tag to a release (human-only) |
 | [vrg-version](cli-tools-overview.md#vrg-version) | Print or bump the repo's version |
 | [vrg-update-deps](dev/update-deps.md) | Update dependencies within their declared bounds and merge the result |

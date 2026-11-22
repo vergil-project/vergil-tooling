@@ -268,6 +268,30 @@ def test_kind_deployment_applies_label_and_scaffold() -> None:
     assert kwargs["body_file"] is None
 
 
+def test_deployment_scaffold_names_check_command() -> None:
+    """A blocked-by task's release is confirmed by its record (spec §4.10, epic .github#1440)."""
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(
+            ["--epic", "adhoc", "--kind", "deployment", "--title", "Deploy it"]
+            + ["--blocked-by", "org/repo#5"]
+        )
+    assert rc == 0
+    preconditions = mock_create.call_args.kwargs["body"].split("## Preconditions", 1)[1]
+    prose = " ".join(preconditions.split("## Deploy steps", 1)[0].split())
+    assert (
+        "depends on a blocked-by development task having been released, confirm that"
+        " release with `vrg-release-record check <owner>/<repo>#<N>`: exit 0 (`pass`)"
+        " confirms it, and exit 3 (`fail`) is an unmet precondition."
+    ) in prose
+    assert "Exit 4 (`none`) means the task carries no release record" in prose
+    assert "Every other precondition is checked as before." in prose
+
+
 def test_kind_retrospective_applies_label_and_scaffold() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),

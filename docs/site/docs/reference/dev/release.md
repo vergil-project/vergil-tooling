@@ -52,6 +52,8 @@ when its comment's author and last editor are `human` logins of
 `close-tracking` closes the tracking issue only once every record is
 posted; see
 [`Released:` records](../../guides/releasing.md#released-records).
+[`vrg-release-record check`](release-record.md) reads a task's record as
+release evidence.
 
 A CD publish job that fails is recorded in the state block, by its run
 and full job name, and the `cd-publish` stage delivers it on `--resume`:

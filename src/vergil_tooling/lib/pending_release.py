@@ -365,8 +365,10 @@ def _compare(
 # An issue on either side of a ConnectedEvent; a PR on a side reads as ``{}``.
 _LINKED_ISSUE = "... on Issue { number repository { nameWithOwner } }"
 
-# What the issue list reads of each PR, besides the pending-release fields.
-_CLOSING_FIELDS = f"""
+# What the issue list reads of each PR, besides the pending-release fields: the
+# fields :func:`trusted_closing_refs` reads of a PR node, which
+# ``vrg-release-record check`` asks for too.
+CLOSING_FIELDS = f"""
           repository {{ nameWithOwner }}
           body
           author {{ login }}
@@ -386,7 +388,7 @@ _CLOSING_FIELDS = f"""
 
 
 def _pr_fields(*, closing: bool) -> str:
-    extra = _CLOSING_FIELDS if closing else ""
+    extra = CLOSING_FIELDS if closing else ""
     return f"""associatedPullRequests(first: {_PR_LIMIT}) {{
         totalCount
         nodes {{
@@ -572,7 +574,7 @@ def trusted_closing_refs(
 ) -> tuple[tuple[int, ...], list[str]]:
     """The issue numbers PR node *pr* closes by a trusted reference, and a warning for each other.
 
-    *pr* is a PR's GraphQL node with the fields of ``_CLOSING_FIELDS``;
+    *pr* is a PR's GraphQL node with the fields of ``CLOSING_FIELDS``;
     *trusted* holds bare logins. A closing reference counts only when it is
     in the PR's own repo and either a sanctioned closing line in the body
     names it (:data:`~vergil_tooling.lib.linkage.LINKAGE_RE`'s close family)
