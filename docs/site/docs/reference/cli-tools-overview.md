@@ -739,6 +739,54 @@ fails after creation, the created issue's URL is reported for recovery with
 | Exit codes | 0 created and linked, 1 error |
 | Status | Active |
 
+### vrg-issue-read
+
+The trusted read command for skills: it prints only the content the trust
+layer (`lib/trust.py`) trusts, so skills use it instead of raw `vrg-gh` body,
+comment, review, search and list reads. Every untrusted item is reported on
+stderr as metadata only (repo, number, kind, login, time and field), never
+its text.
+
+**One item:** `vrg-issue-read OWNER/REPO#N`. It prints the trusted body, then
+each trusted comment and, with `--pr`, each trusted review and inline review
+comment, each under a header naming its ID, its author's role and its time.
+`--json` prints `{"repo", "number", "issue", "reviews"}`, with the layer's
+`IssueContent` and `PRReviewContent` (`null` without `--pr`). A body is
+trusted when its author and every editor hold a trusted role; when it is not
+(an outsider-opened item, or a body an untrusted identity edited), the
+command prints the stop error and exits 3 before printing anything.
+`--allow-untrusted-body` is only for listing or display reads: the body is
+then left out and reported.
+
+**A search or a list:** `vrg-issue-read --repo OWNER/REPO` or
+`--owner ORG`, with `--search QUERY` (GitHub search syntax, for example
+`"Fixture run" in:title`). It prints only the results whose body and title
+are trusted: the body by the rule above, and the title when everyone who
+renamed the item holds a trusted role. Each other result is reported, never
+dropped. A `--repo` read without `--search` lists the repository's issues
+(or, with `--pr`, its pull requests) newest first, read from the repository
+itself; with `--search` or `--owner` it runs GitHub's search, scoped by the
+flag, and a query may not add its own `repo:`, `org:`, `user:` or `owner:`
+qualifier. `--state` is `open` (the default), `closed` (for pull requests,
+merged ones included, in both modes), `merged` (pull
+requests only) or `all`. Text output is one line per result,
+`<repo>#<n> [<state>] <title> (<labels>) <url>`, with a count of trusted and
+skipped results on stderr. `--json` prints an array of `{"repo", "number",
+"kind", "title", "url", "state", "labels", "author_role"}`; a pull request
+also carries `linked_issues`, the issues its trusted body links by a `Ref`
+or `Closes` line (`{"repo", "number", "keyword"}`).
+
+`--roles human,agents,automation` narrows the roles trusted, in both modes.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_issue_read` |
+| Args | `OWNER/REPO#N`, or `--repo OWNER/REPO` / `--owner ORG` with `--search QUERY` and `--state {open,closed,merged,all}`; `--pr`, `--allow-untrusted-body` (one item only), `--roles`, `--json` |
+| Preconditions | GitHub App credentials for the target org; the trusted-authors configuration (`vrg-trusted-authors`) |
+| Failure mode | A read failure (an API error, a missing field, a page not read in full, or a search matching more than the 1,000 results GitHub's search returns) prints `ERROR:` on stderr and nothing on stdout |
+| Exit codes | 0 success, 1 read failure or no trusted-authors configuration, 2 bad arguments, 3 untrusted body |
+| Status | Active |
+
 ### vrg-epic-create
 
 Create a top-level epic (labelled `epic`, no parent) in its home repo, the
