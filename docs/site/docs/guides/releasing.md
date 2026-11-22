@@ -178,10 +178,13 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
    `[publish].consumer-refresh`, the key's old name, is still
    read, with a deprecation warning, for one minor version; setting both
    is an error.
-5. Last, `close-tracking` closes the tracking issue with a summary, but
-   only once no stage before it has failed: any failure, a deferred
+5. Then `release-records` posts a [`Released:` record](#released-records)
+   on every issue in the [issue list](#the-issue-list), and last
+   `close-tracking` closes the tracking issue with a summary. Both run
+   only once no stage before them has failed: any failure, a deferred
    publish or a failed `update-deps` included, leaves the issue open for
-   `vrg-release --resume`. A clean run names the released tag in its
+   `vrg-release --resume`, and `close-tracking` also waits until every
+   record is posted. A clean run names the released tag in its
    completion line (`✓  vrg-release v1.3.1 complete`).
 6. Check the end of the run for the `update-deps` result. A failed
    dependency update does not undo the release, but it leaves an open
@@ -216,7 +219,8 @@ stages not recorded done.
 | `finalize` | deferred | Runs `vrg-finalize-pr --cleanup-only`, which prunes the release branches. The tracking issue stays open until `close-tracking` |
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
 | `install` | deferred | Runs the `[publish].install` commands once `promote` is done and `vX.Y` names the release. `none configured` when the repo has none. Success is one check line; a failure prints the full output below the summary |
-| `close-tracking` | deferred | Closes the tracking issue with a summary, once no stage before it has failed |
+| `release-records` | deferred | Posts a [`Released:` record](#released-records) on every issue in the [issue list](#the-issue-list) that has none yet, once no stage before it has failed. It fails naming each issue whose record it could not post; a resume posts only the missing ones |
+| `close-tracking` | deferred | Closes the tracking issue with a summary, once no stage before it has failed and the state block records a record posted on every issue |
 | `publish-status` | deferred | When a stage failed, names what is left of the release, any deferred publish and any dependency-update failure, and the one command that finishes it: `vrg-release --resume`, or, for a release that cannot finish, `vrg-release --supersede X.Y.Z`. It warns, never failing a second time |
 
 #### The hold rule
@@ -228,7 +232,7 @@ optional:
   `confirm-develop`. `cd-publish` delivers the jobs the confirm stages
   record, so it waits for `confirm-develop` to succeed and record its own.
 - `install` needs those and `promote`.
-- `close-tracking` needs every stage before it.
+- `release-records` and `close-tracking` need every stage before them.
 - Nothing holds back `package-index` or `update-deps`, and the failure of
   `cd-publish`, `package-index` or `update-deps` holds back none of
   `promote`, `finalize` and `install`.
@@ -1011,9 +1015,11 @@ a comment when it completes or fails:
   instead.
 
 The `close-tracking` stage closes the issue with a summary, after every
-other tracked stage. It stays open when any earlier stage failed, a
-deferred publish or a failed dependency update included, so the
-release can be resumed. `vrg-release
+other tracked stage, once the state block records a
+[`Released:` record](#released-records) posted on every issue the
+release contains. It stays open when any earlier stage failed, a
+deferred publish, a failed dependency update or a record that could not
+be posted included, so the release can be resumed. `vrg-release
 --resume` finds the open tracking issue and runs only the stages its
 state block does not record as done (see
 [Resuming a release](#resuming-a-release)).
@@ -1047,6 +1053,44 @@ whose PRs close no issues has an empty list, which is valid. The
 trusted authors failing to load, or any of the reads failing or coming
 back truncated, refuses the release like any other incomplete
 contents lookup.
+
+### `Released:` records
+
+The `release-records` stage posts one comment, as the human running
+`vrg-release`, on each issue in the issue list:
+
+```text
+<!-- vrg-release:released:vergil-project/vergil-tooling:v2.1.340 -->
+Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
+
+- Release: https://github.com/vergil-project/vergil-tooling/releases/tag/v2.1.340
+- Closed by: #4840 (merge commit 1a2b3c4)
+- Install: ran (`[publish].install`)
+```
+
+- The date is the day the GitHub Release was published, and each closing
+  PR is named with the commit it merged as.
+- The install line reads `ran` when the repo configures
+  `[publish].install` and `none configured` when it does not; a record
+  in a repo with no install attests the release and its publish only.
+  The stage refuses while the state block does not record `install`
+  done.
+- Every issue in the list gets its record, whatever its state: closed as
+  completed, reopened, or closed another way.
+- A record counts only when its comment's author and last editor are
+  both `human` logins of `vrg-trusted-authors`. A record marker in a
+  comment by any other identity, or last edited by one, never counts:
+  the stage names it in a `warning:` line and ignores it.
+- Before posting on an issue, the stage reads all its comments, every
+  page, for a counting record, and records the issue as posted in the
+  state block once it has found or posted one. A run interrupted partway
+  therefore posts only the rest, and no issue gets two. Each post is
+  made once and never retried, so a post whose failure hid a landed
+  comment is found by the next run's read instead of repeated.
+- A read or post that fails fails that issue, and the stage carries on
+  to the rest, then fails naming each. `close-tracking` does not run,
+  and `vrg-release --resume` posts the missing records, then closes the
+  issue.
 
 ### The lock and the identity rule
 

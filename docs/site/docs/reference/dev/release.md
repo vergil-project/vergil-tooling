@@ -8,7 +8,8 @@
 Runs the whole release workflow from `develop` to `main`: preflight,
 tracking issue, changelog, release PR, merge, CD confirmation,
 back-merge and version bump, rolling-tag promotion, publish delivery,
-cleanup, the post-release dependency update, the install, and last the
+cleanup, the post-release dependency update, the install, a
+`Released:` record on every issue the release contains, and last the
 close of the tracking issue. The stages and what
 they leave behind are described in the
 [Releasing guide](../../guides/releasing.md#the-vrg-release-pipeline).
@@ -42,6 +43,15 @@ the PRs, the tag and the CD runs it produced. `--resume` checks those
 facts against GitHub and git, then runs only the stages not recorded
 done; see
 [Resuming a release](../../guides/releasing.md#resuming-a-release).
+
+Once every earlier stage has succeeded, `release-records` posts a
+`Released:` record, as the human running the release, on each issue in
+the issue list that has no counting record yet. A record counts only
+when its comment's author and last editor are `human` logins of
+`vrg-trusted-authors`; a resume posts only the missing ones, and
+`close-tracking` closes the tracking issue only once every record is
+posted; see
+[`Released:` records](../../guides/releasing.md#released-records).
 
 A CD publish job that fails is recorded in the state block, by its run
 and full job name, and the `cd-publish` stage delivers it on `--resume`:

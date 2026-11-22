@@ -414,8 +414,9 @@ bump, rolling-tag promotion, the delivery of failed CD publish jobs
 (`cd-publish`, which a `--resume` re-runs), the package-index wait,
 cleanup, the `update-deps` stage, which runs the dependency update on the
 new `develop` version, the install, which runs the `[publish].install`
-commands once `promote` has moved `vX.Y` to the release, and finally the
-close of the tracking issue, which any failed stage holds back, so a
+commands once `promote` has moved `vX.Y` to the release, a `Released:`
+record on every issue the release contains, and finally the
+close of the tracking issue, which any failed stage or missing record holds back, so a
 `--resume` can finish the release. On a fresh start, preflight refuses while any
 `release: X.Y.Z` tracking issue is open, naming its recovery, and while an open PR
 carries the `dependency-update` label, after first closing any whose fix

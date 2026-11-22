@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +14,7 @@ from vergil_tooling.lib.release.finalize import (
     finalize,
     teardown_worktree,
 )
+from vergil_tooling.lib.release.state import initial_state
 
 _MOD = "vergil_tooling.lib.release.finalize"
 
@@ -100,6 +102,10 @@ def test_finalize_fails_on_finalize_error() -> None:
 
 def test_close_tracking_posts_the_summary_and_closes() -> None:
     ctx = _ctx()
+    ctx.state = replace(
+        initial_state(version="2.1.0", cut="c" * 40, issues=(), without_deps=False),
+        done=("release-records",),
+    )
     with (
         patch(_MOD + ".close_tracking_issue") as mock_close,
         patch(_MOD + ".progress.run") as run,
@@ -107,6 +113,18 @@ def test_close_tracking_posts_the_summary_and_closes() -> None:
         close_tracking(ctx)
     mock_close.assert_called_once_with(ctx, _build_summary(ctx))
     run.assert_not_called()
+    summary = mock_close.call_args.args[1]
+    assert "### Released: records\n- None: the release's PRs close no issues." in summary
+
+
+def test_close_tracking_refuses_without_a_state_block() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".close_tracking_issue") as mock_close,
+        pytest.raises(ReleaseError, match="no release state block"),
+    ):
+        close_tracking(ctx)
+    mock_close.assert_not_called()
 
 
 def test_build_summary_omits_none_fields() -> None:

@@ -66,8 +66,7 @@ def _ctx() -> ReleaseContext:
 
 
 def test_stage_order_matches_spec() -> None:
-    """The stage order of spec §4.4 of epic vergil-project/.github#1440, but
-    release-records, which Task 10 adds before close-tracking."""
+    """The stage order of spec §4.4 of epic vergil-project/.github#1440."""
     stages = build_stages()
     assert [s.name for s in stages] == [
         "audit",
@@ -84,6 +83,7 @@ def test_stage_order_matches_spec() -> None:
         "finalize",
         "update-deps",
         "install",
+        "release-records",
         "close-tracking",
         "publish-status",
     ]
@@ -384,6 +384,10 @@ def test_promote_held_by_failed_confirm_develop(write_state: MagicMock) -> None:
         ("close-tracking", ["update-deps"], False),
         ("close-tracking", ["package-index"], False),
         ("close-tracking", [], True),
+        ("release-records", ["update-deps"], False),
+        ("release-records", ["cd-publish"], False),
+        ("release-records", [], True),
+        ("close-tracking", ["release-records"], False),
     ],
 )
 def test_tracked_stage_applies_the_hold_rule(
@@ -568,7 +572,9 @@ def test_stage_order_puts_install_after_finalize_and_update_deps() -> None:
     names = [s.name for s in build_stages()]
     for earlier in ("promote", "finalize", "update-deps"):
         assert names.index(earlier) < names.index("install")
-    assert names.index("install") < names.index("close-tracking") < names.index("publish-status")
+    assert names.index("install") < names.index("release-records")
+    assert names.index("release-records") < names.index("close-tracking")
+    assert names.index("close-tracking") < names.index("publish-status")
     assert names[-1] == "publish-status"
 
 
@@ -655,6 +661,7 @@ _FULL_TAIL = (
     "finalize",
     "update-deps",
     "install",
+    "release-records",
     "close-tracking",
     "publish-status",
 )
@@ -1197,7 +1204,14 @@ def test_publish_status_is_the_last_stage_and_fail_defer() -> None:
 def test_update_deps_stage_between_finalize_and_install() -> None:
     stages = build_stages()
     names = [s.name for s in stages]
-    assert names[-5:] == ["finalize", "update-deps", "install", "close-tracking", "publish-status"]
+    assert names[-6:] == [
+        "finalize",
+        "update-deps",
+        "install",
+        "release-records",
+        "close-tracking",
+        "publish-status",
+    ]
     assert stages[names.index("update-deps")].mode == "fail_defer"
 
 

@@ -94,6 +94,12 @@ class ReleaseContext:
     # (issue #1643). None when no install is configured.
     install_commands: str | None = None
 
+    # What this run's release-records stage did: the records it posted, and
+    # the issues it found already holding a counting record (spec §4.9 of
+    # epic vergil-project/.github#1440).
+    records_new: int = 0
+    records_found: int = 0
+
     # Names of the stages that failed in this run, deferred publishes
     # included, in pipeline order. The hold rule (release.handoff.holds)
     # reads it: a later stage that needs a failed one does not run, so the
