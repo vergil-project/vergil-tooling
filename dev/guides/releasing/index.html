@@ -19418,10 +19418,24 @@ and <code>publish-status</code> run on every run and are never recorded done.</p
   PR's; and the tag still peels to the recorded commit, which is the
   release PR's merge commit or a single-parent freeze commit on top of it.
   A mismatch stops the run, naming the fact.</li>
-<li><strong>The worktree.</strong> The resume adopts the release worktree only when the
-  first undone stage is at or before <code>teardown-worktree</code>. Otherwise it
-  runs from the root checkout, and never needs the release branch, which
-  <code>close-finalize</code> may already have pruned.</li>
+<li><strong>The worktree before the merge.</strong> When the first undone stage is
+  <code>prepare</code> or <code>merge-release</code>, the resume adopts the release worktree on
+  <code>release/&lt;version&gt;</code>, creating the local branch from <code>origin</code> if needed.
+  If the branch is missing both locally and on <code>origin</code>, the resume stops,
+  naming it, and never cuts a new one from <code>develop</code>.</li>
+<li><strong>The worktree after the merge.</strong> When the first undone stage is
+  <code>confirm-main</code>, <code>back-merge-bump</code> or <code>teardown-worktree</code>, the release PR
+  has merged and GitHub has deleted <code>release/&lt;version&gt;</code>, so the resume
+  never needs the branch. It reuses the release worktree if it is still
+  there, whatever branch it is on, and stops if that path is not a git
+  worktree. With no worktree there and <code>back-merge-bump</code> still to run, it
+  creates one detached at <code>develop</code>, in which <code>back-merge-bump</code> cuts its
+  post branch from <code>main</code>. Otherwise it runs from the root checkout, and
+  <code>teardown-worktree</code> finds nothing to remove, does nothing and is
+  recorded done.</li>
+<li><strong>The root checkout.</strong> For any later first undone stage, the resume
+  runs from the root checkout, and never needs the release branches,
+  which <code>close-finalize</code> may already have pruned.</li>
 <li><strong>A stage that did not do its work</strong> is not recorded done, so a resume
   runs it again: a <code>promote</code> that left <code>vX.Y</code> behind (<code>--no-promote</code>, or
   a deferred <code>package-index</code>), a <code>close-finalize</code> that left the issue
