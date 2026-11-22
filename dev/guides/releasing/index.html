@@ -19514,6 +19514,16 @@ and <code>publish-status</code> run on every run and are never recorded done.</p
   <code>release/&lt;version&gt;</code>, creating the local branch from <code>origin</code> if needed.
   If the branch is missing both locally and on <code>origin</code>, the resume stops,
   naming it, and never cuts a new one from <code>develop</code>.</li>
+<li><strong>The version before the merge.</strong> A fresh start records the release's
+  target version in the state block, with the <code>patch</code>, <code>minor</code> or
+  <code>major</code> bump that produces it from <code>develop</code>'s VERSION, before any
+  branch work. On a resume whose first undone stage is <code>prepare</code> or
+  <code>merge-release</code>, the release branch's committed VERSION must be that
+  target. If <code>prepare</code> stopped before committing the bump, so the branch
+  still holds the VERSION the bump starts from, <code>prepare</code> completes the
+  bump. Any other VERSION, or a VERSION change left uncommitted in the
+  worktree, stops the run, naming both versions: a resume never
+  continues at a version other than the target.</li>
 <li><strong>The worktree after the merge.</strong> When the first undone stage is
   <code>confirm-main</code>, <code>back-merge-bump</code> or <code>teardown-worktree</code>, the release PR
   has merged and GitHub has deleted <code>release/&lt;version&gt;</code>, so the resume
