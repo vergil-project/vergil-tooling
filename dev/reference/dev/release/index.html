@@ -18546,7 +18546,10 @@ part of every release</code>.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Run from the root checkout, on <code>develop</code>, with a clean working tree
-  that matches <code>origin/develop</code>.</li>
+  that has not diverged from <code>origin/develop</code>: one that is only behind
+  is fast-forwarded (see
+  <a href="../../../guides/releasing/#the-develop-sync">The develop sync</a>). A
+  <code>--resume</code> runs only the host, <code>gh</code> auth and config checks.</li>
 <li>A reachable container runtime (docker or nerdctl) and an authenticated
   <code>gh</code>. <code>git-cliff</code> runs in the dev container through <code>vrg-container-run</code>,
   so it is not needed on the host.</li>

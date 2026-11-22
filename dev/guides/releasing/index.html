@@ -19382,8 +19382,9 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
    record is posted. A clean run names the released tag in its
    completion line (<code>✓  vrg-release v1.3.1 complete</code>).
 6. Check the end of the run for the <code>update-deps</code> result. A failed
-   dependency update does not undo the release, but it leaves an open
-   PR that blocks the next one, and the tracking issue open; see
+   dependency update does not undo the release, but it leaves the
+   tracking issue open, and can leave an open PR that blocks the next
+   release; see
    <a href="#dependency-updates">Dependency updates</a>.</p>
 <h3 id="the-vrg-release-pipeline">The <code>vrg-release</code> pipeline<a class="headerlink" href="#the-vrg-release-pipeline" title="Permanent link">&para;</a></h3>
 <p><code>vrg-release</code> runs these stages in order. A <em>fail-fast</em> stage stops the
@@ -19527,7 +19528,11 @@ naming them, and the release carries on. Once the cause is fixed,
   overwrites newer docs. Only a job no later run delivered is re-run,
   by itself (<code>gh run rerun &lt;run&gt; --job &lt;job&gt;</code>). A listing of <code>develop</code>'s
   newest CD runs that does not reach back to the recorded run stops the
-  stage rather than re-run it on a guess.</li>
+  stage rather than re-run it on a guess: so many later runs have
+  started that the stage cannot tell whether one delivered the job. Here
+  the stage names a step to run by hand: run <code>develop</code>'s CD again, then
+  resume, and the new run's job, once it succeeds, counts as the
+  delivery.</li>
 </ul>
 <p>A recorded job whose run has succeeded since, re-run by hand say, is
 delivered without a re-run. Each delivered job leaves the state block
@@ -19877,7 +19882,7 @@ only handles patches within a minor.</p>
 <tbody>
 <tr>
 <td>Developer host</td>
-<td>Nothing to change: the host installs an exact tag, never a line. The release's <code>install</code> stage installs <code>v1.4.0</code> on the Mac that ran it; any other host runs <a href="#deployment-targets"><code>vrg-tooling-install v1.4.0</code></a></td>
+<td>Nothing to change: the host keeps no pin. The release's <code>install</code> stage installs <code>v1.4.0</code> on the Mac that ran it, through the new line (<code>vrg-tooling-install v1.4</code>, <code>&lt;MINOR&gt;</code> expanded to the release's line); any other host runs <a href="#deployment-targets"><code>vrg-tooling-install v1.4</code></a> or <code>v1.4.0</code></td>
 </tr>
 <tr>
 <td>Python repo <code>.venv</code></td>
@@ -20036,8 +20041,8 @@ running moves <code>v2.1</code> forward when it reaches <code>promote</code>. So
 Before you roll back, let a running release finish, and resume every open
 tracking issue to its end.</p>
 <h2 id="dependency-updates">Dependency updates<a class="headerlink" href="#dependency-updates" title="Permanent link">&para;</a></h2>
-<p>Every release ends by updating the repo's dependencies to the newest
-versions their declared bounds allow. This is the <code>update-deps</code> stage,
+<p>Every release updates the repo's dependencies to the newest versions
+their declared bounds allow. This is the <code>update-deps</code> stage,
 and it is the first change on the new <code>develop</code> version. It runs after
 <code>finalize</code>, once the release is tagged and published, so it can
 never affect the release itself, and its failure holds back none of
@@ -20077,8 +20082,9 @@ release is outside the bounds the repo declares. These are reported,
 never bumped. A dependency on that list moves only when someone widens
 its bound deliberately.</p>
 <h3 id="when-the-dependency-update-fails">When the dependency update fails<a class="headerlink" href="#when-the-dependency-update-fails" title="Permanent link">&para;</a></h3>
-<p>A failed dependency update never fails the release, but it cannot be
-ignored. What it leaves behind depends on where it failed:</p>
+<p>A failed dependency update never undoes the release, but it cannot be
+ignored: the release does not finish until the update succeeds or is
+skipped. What it leaves behind depends on where it failed:</p>
 <ul>
 <li><strong>An updater or the repo hook failed</strong> (<code>update</code>), for example a
   lookup error, a non-zero hook exit, or a hook that committed: this
@@ -20088,7 +20094,9 @@ ignored. What it leaves behind depends on where it failed:</p>
   failing updater, carries the error and the command to reproduce it on
   <code>develop</code>, and is linked from the failure on the tracking issue and in
   the run summary. The worktree is removed. With no labelled PR, it does
-  not gate the next release.</li>
+  not trip the <a href="#the-dependency-update-gate">dependency-update gate</a>,
+  though the open tracking issue still holds back the next release until
+  this one is finished.</li>
 <li><strong>Validation failed</strong> (<code>validation</code>), or <strong>the PR's checks or merge
   failed</strong> (<code>merge</code>): the PR stays open with its <code>dependency-update</code>
   label, and a task titled "Fix failed dependency update for
@@ -20099,8 +20107,8 @@ ignored. What it leaves behind depends on where it failed:</p>
   raw output. It ends with the command to reproduce the failure.</li>
 </ul>
 <p>If a fix task for the same version and failure kind is already open,
-for example after <code>vrg-release --resume</code> re-runs an update that failed
-on a transient error, no second task is filed: the new failure is added
+for example after <code>vrg-release --resume</code> re-runs an update whose
+updater failed on a transient error, no second task is filed: the new failure is added
 as a comment on the open task, which is linked as above.</p>
 <p>Either way <code>vrg-release</code> exits 1, and the failure counts once in its
 summary: the <code>update-deps</code> stage fails, and <code>publish-status</code> repeats it
@@ -20109,6 +20117,15 @@ but <code>close-tracking</code> holds, so the tracking issue stays open:
 <code>vrg-release --resume</code> runs the update again once its cause is fixed,
 and <code>vrg-release --resume --without-deps</code> finishes the release without
 it, leaving the update to its fix task.</p>
+<p>A <code>validation</code> or <code>merge</code> failure leaves its PR open, and while it is
+open the resumed update refuses to start: the update for that version
+is still in flight (see
+<a href="../../reference/dev/update-deps/#an-existing-update-branch">An existing update branch</a>).
+So once the cause is fixed, either finish the release with
+<code>vrg-release --resume --without-deps</code>, which leaves the PR to the next
+release's <a href="#the-dependency-update-gate">dependency-update gate</a>, or
+close the PR deliberately: <code>vrg-release --resume</code> then deletes its
+stale branch and runs the update afresh on the fixed <code>develop</code>.</p>
 <p>To fix a failed update, work the fix task like any other task, but cut
 its branch from the failed update so it starts from those commits:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-git<span class="w"> </span>fetch<span class="w"> </span>origin
@@ -20116,12 +20133,13 @@ its branch from the failed update so it starts from those commits:</p>
 <a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>.worktrees/issue-&lt;fix-issue&gt;-dep-update<span class="w"> </span>origin/deps/update-&lt;version&gt;
 </code></pre></div>
 <p>Fix the cause, then hand off and merge as usual. When the fix PR merges
-and closes the fix task as completed, the next <code>vrg-release</code> closes the
-dependency-update PR for you.</p>
+and closes the fix task as completed, finish the open release as above;
+the next fresh <code>vrg-release</code> then closes the dependency-update PR for
+you, if it is still open.</p>
 <p>An <code>update</code> failure pushed no <code>deps/update-&lt;version&gt;</code> branch, so cut
 that fix task's branch from <code>origin/develop</code> instead. Once the fix
-merges, the next <code>vrg-update-deps</code> run, or the next <code>vrg-release</code>,
-applies the update.</p>
+merges, <code>vrg-release --resume</code> applies the update and finishes the
+release.</p>
 <h3 id="the-dependency-update-gate">The dependency-update gate<a class="headerlink" href="#the-dependency-update-gate" title="Permanent link">&para;</a></h3>
 <p>On a fresh start (not <code>--resume</code>), <code>preflight</code> lists the open PRs
 labelled <code>dependency-update</code>. For each one:</p>

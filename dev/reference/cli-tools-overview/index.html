@@ -20802,19 +20802,19 @@ and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>minor</code>/<code>major</code> (optional positional), <code>--without-deps</code>, <code>--allow-pending-deps</code>, <code>--resume [X.Y.Z]</code>, <code>--skip-audit</code>, <code>--output-window</code>, <code>--output-format</code>. <code>--no-promote</code>, <code>--no-install</code> and <code>--install</code> are removed and are an error</td>
+<td><code>minor</code>/<code>major</code> (optional positional), <code>--without-deps</code>, <code>--allow-pending-deps</code>, <code>--resume [X.Y.Z]</code>, <code>--supersede X.Y.Z</code> (not with <code>--resume</code>), <code>--skip-audit</code>, <code>--output-window</code>, <code>--output-format</code>. <code>--no-promote</code>, <code>--no-install</code> and <code>--install</code> are removed and are an error</td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Human identity; on <code>develop</code>, clean working tree, local develop matches <code>origin/develop</code>; <code>gh</code> authenticated and a reachable container runtime (docker or nerdctl) for <code>vrg-container-run</code>, which runs <code>git-cliff</code></td>
+<td>Human identity; <code>gh</code> authenticated and a reachable container runtime (docker or nerdctl) for <code>vrg-container-run</code>, which runs <code>git-cliff</code>. A fresh start also needs the root checkout on a clean <code>develop</code> that has not diverged from <code>origin/develop</code> (one that is only behind is fast-forwarded); a <code>--resume</code> runs only the host, auth and config checks</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Fail-fast stages stop the run; deferred stages (including <code>update-deps</code>) record the failure, let later stages run, and are summarized at the end</td>
+<td>Fail-fast stages stop the run; deferred stages (including <code>update-deps</code>) record the failure, let later stages run except those the hold rule holds back, and are summarized at the end, with the tracking issue left open for <code>--resume</code></td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success, 1 any failure or refusal, 130 interrupted</td>
+<td>0 success, 1 any failure or refusal, 2 usage error (such as <code>--supersede</code> with <code>--resume</code>), 130 interrupted</td>
 </tr>
 <tr>
 <td>Status</td>

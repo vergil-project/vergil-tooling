@@ -19326,8 +19326,9 @@ root:
 <h3 id="propagation-the-rolling-vxy-pin">Propagation — the rolling <code>vX.Y</code> pin<a class="headerlink" href="#propagation-the-rolling-vxy-pin" title="Permanent link">&para;</a></h3>
 <p>Every managed repo pins <code>vergil-tooling</code> to the <strong>rolling major-minor
 tag</strong> <code>vX.Y</code>, never a specific patch. The nightly <code>ops.yml</code> job installs
-<code>vergil-tooling@vX.Y</code>, which always resolves to the latest patch under
-that line — including its fragment set. So:</p>
+<code>vergil-tooling@vX.Y</code>, which resolves to the release the rolling tag
+names, the latest patch under that line unless a rollback moved it
+back — including its fragment set. So:</p>
 <blockquote>
 <p>change a fragment → release a <code>vergil-tooling</code> patch under <code>vX.Y</code> →
 <strong>every repo's nightly <code>update</code> finds the fence drifted</strong> and opens a

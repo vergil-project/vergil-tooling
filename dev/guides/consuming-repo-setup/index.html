@@ -19418,7 +19418,8 @@ never produces.</p>
    indexes each released package.</li>
 </ol>
 <h3 id="optional-dependency-update-hook">Optional: dependency-update hook<a class="headerlink" href="#optional-dependency-update-hook" title="Permanent link">&para;</a></h3>
-<p>Every <code>vrg-release</code> ends by updating the repo's dependencies (see
+<p>Every <code>vrg-release</code> updates the repo's dependencies once the release is
+tagged and published (see
 <a href="../releasing/#dependency-updates">Dependency updates</a>). The built-in
 updaters cover Python (<code>uv.lock</code>), Rust (<code>Cargo.lock</code>), TypeScript
 (<code>package-lock.json</code>), vergil ecosystem refs, the packaged

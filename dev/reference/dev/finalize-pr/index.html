@@ -19262,7 +19262,9 @@ lock, fast-forwards <code>develop</code> itself and cuts from the new head, even
 another PR merged in between (see
 <a href="../../../guides/releasing/#the-develop-sync">The develop sync</a>). Short of
 full success, the release is skipped and the run says why. A failed
-release never un-merges a PR: re-run <code>vrg-release</code> alone.</p>
+release never un-merges a PR: finish it with <code>vrg-release --resume</code>
+once it has opened its tracking issue, or re-run <code>vrg-release</code> alone if
+it stopped before that.</p>
 <h2 id="batch-prs-one-pr-closing-several-issues">Batch PRs (one PR closing several issues)<a class="headerlink" href="#batch-prs-one-pr-closing-several-issues" title="Permanent link">&para;</a></h2>
 <p>A PR whose body has more than one <code>Closes</code> line is a <strong>batch PR</strong>: 2 to
 8 issues of one epic on one branch, exactly one commit per issue, each
