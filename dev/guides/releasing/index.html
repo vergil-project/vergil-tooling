@@ -19210,17 +19210,17 @@ old <code>standard-tooling</code>/<code>st-*</code> naming):</p>
 </table>
 <p>The host install is
 <a href="../../reference/cli-tools-overview/#vrg-tooling-install"><code>vrg-tooling-install</code></a>.
-<code>vergil.toml</code>'s <code>[publish].install</code> (still under its deprecated name,
-<code>consumer-refresh</code>, in vergil-tooling's own <code>vergil.toml</code>) runs the
-installed one on the
-Mac with the just-released version (<code>vrg-tooling-install v&lt;VERSION&gt;</code>,
-followed by <code>vrg-vm update --all</code>), so the release installs itself on the
-host. It fetches the exact tag (which cannot move, under tag protection, so
-it needs no <code>git ls-remote</code>), installs the commit that tag names with that
-commit's <code>uv.lock</code> as constraints, and runs on uv's managed 3.15. Given a
-line, <code>vrg-tooling-install vX.Y</code> first reads the rolling tag <code>vX.Y</code> with one
-<code>git ls-remote</code>, takes the one <code>vX.Y.Z</code> tag on the commit it names, and then
-installs and reports that exact release.</p>
+vergil-tooling's own <code>vergil.toml</code> has a <code>[publish].install</code> that runs the
+installed one on the Mac through the release's line
+(<code>vrg-tooling-install v&lt;MINOR&gt;</code>, followed by <code>vrg-vm update --all</code>), so the
+release installs itself on the host once <code>promote</code> has moved <code>vX.Y</code> to it.
+Given a line, <code>vrg-tooling-install vX.Y</code> first reads the rolling tag <code>vX.Y</code>
+with one <code>git ls-remote</code>, takes the one <code>vX.Y.Z</code> tag on the commit it names,
+and then installs and reports that exact release. Given an exact tag
+<code>vX.Y.Z</code> (which cannot move, under tag protection, so it needs no
+<code>git ls-remote</code>), it fetches that tag. Either way it installs the commit the
+release's tag names with that commit's <code>uv.lock</code> as constraints, and runs on
+uv's managed 3.15.</p>
 <p>A fresh host has no <code>vrg-tooling-install</code> yet, and an installed one that
 fails cannot fix itself. Both install by hand (see
 <a href="../../getting-started/">Getting Started</a>), with <code>VERSION</code> set to the
