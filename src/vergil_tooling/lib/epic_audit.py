@@ -392,9 +392,8 @@ def stray_dotgithub_issue(org: str, *, home: str | None = None) -> list[str]:
     queue item is parented under its queue epic, so no kind-label exemption is needed). An
     open issue that is none of these — an unlinked, non-epic, non-archive issue —
     is a stray; returns their
-    slugs. *home* defaults to ``<org>/.github``; a ``--repo``-targeted audit passes
-    the repo's resolved home. When a candidate's parent cannot be confirmed as an
-    epic it is reported (fail-loud, the human decides).
+    slugs. *home* defaults to ``<org>/.github``, the home of every epic. When a
+    candidate's parent cannot be confirmed as an epic it is reported (fail-loud, the human decides).
     """
     if home is None:
         home = f"{org}/.github"
@@ -787,8 +786,7 @@ def orphan_drift(org: str, *, issues: list[OpenIssue] | None = None) -> list[Orp
     attached), issues with a native parent, and issues whose body ``Parent:``
     line names an epic (those count as parented; :func:`nativize_parents`
     converts them). Each orphan targets the intake epic of its queue home
-    (:func:`epics.queue_home`): ``<org>/.github`` for a public repo, the repo
-    itself for a private one.
+    (:func:`epics.queue_home`), ``<org>/.github``.
     """
     if issues is None:
         issues = open_issues(org)
