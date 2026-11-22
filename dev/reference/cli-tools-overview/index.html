@@ -14757,6 +14757,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-issue-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-issue-read
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-create" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19401,6 +19412,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-issue-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-issue-read
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-create" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -21313,6 +21335,74 @@ fails after creation, the created issue's URL is reported for recovery with
 <tr>
 <td>Exit codes</td>
 <td>0 created and linked, 1 error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-issue-read">vrg-issue-read<a class="headerlink" href="#vrg-issue-read" title="Permanent link">&para;</a></h3>
+<p>The trusted read command for skills: it prints only the content the trust
+layer (<code>lib/trust.py</code>) trusts, so skills use it instead of raw <code>vrg-gh</code> body,
+comment, review, search and list reads. Every untrusted item is reported on
+stderr as metadata only (repo, number, kind, login, time and field), never
+its text.</p>
+<p><strong>One item:</strong> <code>vrg-issue-read OWNER/REPO#N</code>. It prints the trusted body, then
+each trusted comment and, with <code>--pr</code>, each trusted review and inline review
+comment, each under a header naming its ID, its author's role and its time.
+<code>--json</code> prints <code>{"repo", "number", "issue", "reviews"}</code>, with the layer's
+<code>IssueContent</code> and <code>PRReviewContent</code> (<code>null</code> without <code>--pr</code>). A body is
+trusted when its author and every editor hold a trusted role; when it is not
+(an outsider-opened item, or a body an untrusted identity edited), the
+command prints the stop error and exits 3 before printing anything.
+<code>--allow-untrusted-body</code> is only for listing or display reads: the body is
+then left out and reported.</p>
+<p><strong>A search or a list:</strong> <code>vrg-issue-read --repo OWNER/REPO</code> or
+<code>--owner ORG</code>, with <code>--search QUERY</code> (GitHub search syntax, for example
+<code>"Fixture run" in:title</code>). It prints only the results whose body and title
+are trusted: the body by the rule above, and the title when everyone who
+renamed the item holds a trusted role. Each other result is reported, never
+dropped. A <code>--repo</code> read without <code>--search</code> lists the repository's issues
+(or, with <code>--pr</code>, its pull requests) newest first, read from the repository
+itself; with <code>--search</code> or <code>--owner</code> it runs GitHub's search, scoped by the
+flag, and a query may not add its own <code>repo:</code>, <code>org:</code>, <code>user:</code> or <code>owner:</code>
+qualifier. <code>--state</code> is <code>open</code> (the default), <code>closed</code> (for pull requests,
+merged ones included, in both modes), <code>merged</code> (pull
+requests only) or <code>all</code>. Text output is one line per result,
+<code>&lt;repo&gt;#&lt;n&gt; [&lt;state&gt;] &lt;title&gt; (&lt;labels&gt;) &lt;url&gt;</code>, with a count of trusted and
+skipped results on stderr. <code>--json</code> prints an array of <code>{"repo", "number",
+"kind", "title", "url", "state", "labels", "author_role"}</code>; a pull request
+also carries <code>linked_issues</code>, the issues its trusted body links by a <code>Ref</code>
+or <code>Closes</code> line (<code>{"repo", "number", "keyword"}</code>).</p>
+<p><code>--roles human,agents,automation</code> narrows the roles trusted, in both modes.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_issue_read</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>OWNER/REPO#N</code>, or <code>--repo OWNER/REPO</code> / <code>--owner ORG</code> with <code>--search QUERY</code> and <code>--state {open,closed,merged,all}</code>; <code>--pr</code>, <code>--allow-untrusted-body</code> (one item only), <code>--roles</code>, <code>--json</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>GitHub App credentials for the target org; the trusted-authors configuration (<code>vrg-trusted-authors</code>)</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A read failure (an API error, a missing field, a page not read in full, or a search matching more than the 1,000 results GitHub's search returns) prints <code>ERROR:</code> on stderr and nothing on stdout</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success, 1 read failure or no trusted-authors configuration, 2 bad arguments, 3 untrusted body</td>
 </tr>
 <tr>
 <td>Status</td>
