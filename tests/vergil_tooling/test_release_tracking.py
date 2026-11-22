@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.release_stubs import defer_publish
 from vergil_tooling.lib.pending_release import (
     ChangeKind,
     PendingChange,
@@ -698,7 +699,7 @@ def test_comment_publish_deferred_names_jobs_and_warns_resume() -> None:
     assert "docker-publish" in body and "docs" in body
     assert "--resume" in body  # explicitly steers away from it
     assert "https://run/55" in body
-    assert "gh workflow run cd.yml" in body
+    assert "`vrg-release --resume` re-runs them" in body
     assert "publish-index" not in body  # no packages advice for CD jobs alone
 
 
@@ -744,7 +745,7 @@ def test_comment_publish_deferred_names_the_pending_promote() -> None:
 
     ctx = _ctx()
     ctx.tag = "v2.1.0"
-    ctx.deferred_publish_failures = ["package-index"]
+    defer_publish(ctx, "package-index")
     with (
         patch(_MOD + "._comment") as comment,
         patch(_MOD + ".config.read_config", return_value=_vendor_config()),
@@ -763,7 +764,7 @@ def test_comment_publish_deferred_no_pending_promote_with_no_promote() -> None:
 
     ctx = _ctx()
     ctx.promote = False
-    ctx.deferred_publish_failures = ["package-index"]
+    defer_publish(ctx, "package-index")
     with (
         patch(_MOD + "._comment") as comment,
         patch(_MOD + ".config.read_config", return_value=_vendor_config()),
@@ -776,7 +777,7 @@ def test_comment_publish_deferred_cd_only_names_no_promote() -> None:
     from vergil_tooling.lib.release.tracking import comment_publish_deferred
 
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["docker-publish"]
+    defer_publish(ctx, "docker-publish")
     with patch(_MOD + "._comment") as comment:
         comment_publish_deferred(ctx, ["docker-publish"])
     assert "vrg-promote" not in comment.call_args[0][1]
@@ -786,12 +787,13 @@ def test_publish_deferred_remedy_ends_with_the_resume() -> None:
     from vergil_tooling.lib.release.tracking import promote_pending, publish_deferred_remedy
 
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["docs", "package-index"]
+    defer_publish(ctx, "docs", "package-index")
     assert promote_pending(ctx)
     with patch(_MOD + ".config.read_config", return_value=_vendor_config()):
         remedy = publish_deferred_remedy(ctx, ctx.deferred_publish_failures)
     assert remedy == (
-        "re-run the CD publish to deliver the artifacts; re-run (or wait for) the "
+        "fix the cause of the failed CD publish jobs (the resume re-runs them); "
+        "re-run (or wait for) the "
         "publish-index workflow in vergil-project/packages and confirm the "
         "release's packages appear in the index, then finish the release with vrg-release --resume"
     )
@@ -802,9 +804,9 @@ def test_promote_pending_needs_promote_and_an_index_deferral() -> None:
 
     ctx = _ctx()
     assert not promote_pending(ctx)
-    ctx.deferred_publish_failures = ["docs"]
+    defer_publish(ctx, "docs")
     assert not promote_pending(ctx)
-    ctx.deferred_publish_failures = ["package-index"]
+    defer_publish(ctx, "package-index")
     assert promote_pending(ctx)
     ctx.promote = False
     assert not promote_pending(ctx)
@@ -822,7 +824,7 @@ def test_comment_publish_deferred_mixed_gives_both_advices() -> None:
         comment_publish_deferred(ctx, ["docker-publish", "package-index"])
     body = comment.call_args[0][1]
     assert "CD publish jobs did not succeed: **docker-publish** (the CD run)" in body
-    assert "gh workflow run cd.yml" in body
+    assert "`vrg-release --resume` re-runs them" in body
     assert "`publish-index` workflow in `vergil-project/packages`" in body
     assert "vrg-release --resume" in body
 
@@ -845,7 +847,10 @@ _RESUME = ", then finish the release with vrg-release --resume"
 @pytest.mark.parametrize(
     ("jobs", "expected"),
     [
-        (["docs"], "re-run the CD publish to deliver the artifacts" + _RESUME),
+        (
+            ["docs"],
+            "fix the cause of the failed CD publish jobs (the resume re-runs them)" + _RESUME,
+        ),
         (
             ["package-index"],
             "re-run (or wait for) the publish-index workflow in vergil-project/packages "
@@ -853,7 +858,8 @@ _RESUME = ", then finish the release with vrg-release --resume"
         ),
         (
             ["docs", "package-index"],
-            "re-run the CD publish to deliver the artifacts; re-run (or wait for) the "
+            "fix the cause of the failed CD publish jobs (the resume re-runs them); "
+            "re-run (or wait for) the "
             "publish-index workflow in vergil-project/packages and confirm the "
             "release's packages appear in the index" + _RESUME,
         ),

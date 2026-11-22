@@ -34,6 +34,15 @@ facts against GitHub and git, then runs only the stages not recorded
 done; see
 [Resuming a release](../../guides/releasing.md#resuming-a-release).
 
+A CD publish job that fails is recorded in the state block, by its run
+and full job name, and the `cd-publish` stage delivers it on `--resume`:
+it re-runs `main`'s failed jobs, and re-runs a `develop` job only when
+no later `develop` CD run's same job has succeeded. A failed CD release
+job is recorded too, and the resume's `confirm-main` re-runs the release
+PR's CI run and then that CD run before judging it again; see
+[Failed CD publish jobs](../../guides/releasing.md#failed-cd-publish-jobs)
+and [A failed release job](../../guides/releasing.md#a-failed-release-job).
+
 Releasing is a human maintainer action. `vrg-release` refuses to run
 under an agent identity.
 

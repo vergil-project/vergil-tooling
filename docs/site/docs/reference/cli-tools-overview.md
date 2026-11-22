@@ -410,7 +410,8 @@ posted again.
 
 Run the full release workflow from `develop` to `main`: tracking issue,
 changelog, release PR and merge, CD confirmation, back-merge and version
-bump, rolling-tag promotion, cleanup, the `update-deps` stage, which
+bump, the delivery of failed CD publish jobs (`cd-publish`, which a
+`--resume` re-runs), rolling-tag promotion, cleanup, the `update-deps` stage, which
 runs the dependency update on the new `develop` version, and finally
 the consumer refresh, which runs the `[publish].consumer-refresh`
 commands (held while any publish is deferred). On a fresh start, preflight refuses while any

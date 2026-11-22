@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.release_stubs import defer_publish
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
@@ -121,7 +122,7 @@ def test_consumer_refresh_none_configured_is_not_an_error(template: MagicMock) -
 def test_consumer_refresh_holds_when_publish_deferred(template: MagicMock) -> None:
     _set(template, "uv tool install pkg@v<VERSION>")
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["docker-publish"]
+    defer_publish(ctx, "docker-publish")
     with patch(_MOD + ".run_consumer_refresh") as m_run:
         consumer_refresh(ctx)
     m_run.assert_not_called()
@@ -130,14 +131,14 @@ def test_consumer_refresh_holds_when_publish_deferred(template: MagicMock) -> No
     message = ctx.consumer_refresh_message or ""
     assert "held" in message.lower()
     assert "2.1.0" in message  # version named
-    assert "re-run the CD publish" in message
+    assert "the resume re-runs them" in message
 
 
 def test_consumer_refresh_hold_gives_per_kind_advice_for_an_index_deferral(
     template: MagicMock,
 ) -> None:
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["package-index"]
+    defer_publish(ctx, "package-index")
     with (
         patch(_MOD + ".publish_deferred_remedy", return_value="re-run publish-index") as remedy,
         patch(_MOD + ".run_consumer_refresh") as m_run,

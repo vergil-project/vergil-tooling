@@ -219,15 +219,17 @@ def promote_pending(ctx: ReleaseContext) -> bool:
 def publish_deferred_remedy(ctx: ReleaseContext, jobs: list[str]) -> str:
     """One-line remediation for deferred publishes, per kind of deferred item.
 
-    CD publish jobs are re-run through CD; a deferred ``package-index`` is
-    finished in the org's packages repo instead (#3543). Either way
+    Failed CD publish jobs are re-run by ``vrg-release --resume`` itself
+    (``cd-publish``), once their cause is fixed; a deferred ``package-index``
+    is finished in the org's packages repo instead (#3543). Either way
     ``vrg-release --resume`` then finishes the release, running only the
     stages not yet done: the promote a deferred index held back (#4293), the
-    close and the consumer refresh (spec §4.3 of epic vergil-project/.github#1440).
+    close and the consumer refresh (spec §4.3-§4.5 of epic
+    vergil-project/.github#1440).
     """
     remedies = []
     if any(job != package_index.PHASE for job in jobs):
-        remedies.append("re-run the CD publish to deliver the artifacts")
+        remedies.append("fix the cause of the failed CD publish jobs (the resume re-runs them)")
     if package_index.PHASE in jobs:
         remedy = (
             f"re-run (or wait for) the publish-index workflow in {_packages_repo(ctx)} "
@@ -260,9 +262,8 @@ def comment_publish_deferred(ctx: ReleaseContext, jobs: list[str]) -> None:
             f"The release tag `{ctx.tag}` and the GitHub Release are published, but "
             f"these CD publish jobs did not succeed: **{', '.join(cd_jobs)}** ({run}).",
             "",
-            "**To finish delivery** once the blocker is cleared: re-run the CD publish "
-            "— `gh workflow run cd.yml` (Actions → CD → Run workflow), or the nightly "
-            "`no-cache` ops rebuild.",
+            "**To finish delivery**: fix the cause of the failed jobs. They are recorded "
+            "in this issue's state block, and `vrg-release --resume` re-runs them.",
             "",
         ]
     if package_index.PHASE in jobs:

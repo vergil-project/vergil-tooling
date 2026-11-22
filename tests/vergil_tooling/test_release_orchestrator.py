@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.release_stubs import defer_publish
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.release import state as release_state
@@ -76,6 +77,7 @@ def test_build_stages_order_and_modes() -> None:
         "back-merge-bump",
         "teardown-worktree",
         "confirm-develop",
+        "cd-publish",
         "package-index",
         "promote",
         "close-finalize",
@@ -317,7 +319,7 @@ def test_tracked_stage_publish_deferral_is_not_a_halted_stage() -> None:
     ctx = state.ctx = _ctx()
 
     def _defer(_ctx: ReleaseContext) -> None:
-        ctx.deferred_publish_failures.append("package-index")
+        defer_publish(ctx, "package-index")
         raise ReleaseError(phase="package-index", command="poll", message="timed out")
 
     with (
@@ -334,7 +336,7 @@ def test_tracked_stage_wrapped_publish_deferral_is_not_a_halted_stage() -> None:
     ctx = state.ctx = _ctx()
 
     def _defer(_ctx: ReleaseContext) -> None:
-        ctx.deferred_publish_failures.append("package-index")
+        defer_publish(ctx, "package-index")
         raise RuntimeError("boom")
 
     with (
@@ -343,6 +345,39 @@ def test_tracked_stage_wrapped_publish_deferral_is_not_a_halted_stage() -> None:
     ):
         _tracked("package-index", _defer)(state)
     assert ctx.deferred_failures == []
+
+
+def test_cd_publish_failure_with_recorded_jobs_is_not_a_halted_stage() -> None:
+    """cd-publish failing while the state still records failed CD jobs is a
+    deferred publish, so close-finalize still finalizes (spec §4.5)."""
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    ctx = state.ctx = _ctx()
+    defer_publish(ctx, "pypi / publish")
+
+    def _fail(_ctx: ReleaseContext) -> None:
+        raise ReleaseError(phase="cd-publish", command="cd-publish", message="still failing")
+
+    with (
+        patch(_MOD + ".comment_phase_failed"),
+        pytest.raises(ReleaseError, match="still failing"),
+    ):
+        _tracked("cd-publish", _fail)(state)
+    assert ctx.deferred_failures == []
+
+
+def test_cd_publish_failure_with_nothing_recorded_is_a_halted_stage() -> None:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    ctx = state.ctx = _ctx()
+
+    def _fail(_ctx: ReleaseContext) -> None:
+        raise ReleaseError(phase="cd-publish", command="cd-publish", message="broken")
+
+    with (
+        patch(_MOD + ".comment_phase_failed"),
+        pytest.raises(ReleaseError, match="broken"),
+    ):
+        _tracked("cd-publish", _fail)(state)
+    assert ctx.deferred_failures == ["cd-publish"]
 
 
 def test_promote_phase_calls_promote_when_enabled() -> None:
@@ -467,10 +502,14 @@ def test_phase_details_promote_skipped() -> None:
     assert "skipped" in details.lower()
 
 
+def test_phase_details_cd_publish_says_nothing_is_left() -> None:
+    assert _phase_details(_ctx(), "cd-publish") == "No failed CD publish job is left to deliver."
+
+
 def test_phase_details_promote_held_back_by_index_deferral() -> None:
     """A deferred package-index skips promote; the comment names the pending step (#4293)."""
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["package-index"]
+    defer_publish(ctx, "package-index")
     details = _phase_details(ctx, "promote")
     assert "Promoted" not in details
     assert "**Promote skipped**: package-index deferred" in details
@@ -481,13 +520,13 @@ def test_phase_details_promote_held_back_by_index_deferral() -> None:
 def test_phase_details_promote_cd_deferral_still_promotes() -> None:
     """Only a package-index deferral holds promote back; a CD publish miss does not."""
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["publish-pypi"]
+    defer_publish(ctx, "publish-pypi")
     assert _phase_details(ctx, "promote") == "Promoted v2.1 -> v2.1.0"
 
 
 def test_phase_details_promote_no_promote_wins_over_index_deferral() -> None:
     ctx = _ctx(promote=False)
-    ctx.deferred_publish_failures = ["package-index"]
+    defer_publish(ctx, "package-index")
     assert _phase_details(ctx, "promote") == "Promote skipped (--no-promote)."
 
 
@@ -513,7 +552,7 @@ def test_promote_stage_moves_the_tag() -> None:
 def test_promote_stage_skips_on_index_deferral(capsys: pytest.CaptureFixture[str]) -> None:
     """vX.Y stays on the previous release while the index lacks the release (#4293)."""
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["package-index"]
+    defer_publish(ctx, "package-index")
     _run_promote_stage(ctx).assert_not_called()
     out = capsys.readouterr().out
     assert "Skipping promote" in out
@@ -537,7 +576,7 @@ def test_phase_details_close_finalize() -> None:
 def test_phase_details_close_finalize_cd_deferral_leaves_issue_open() -> None:
     """A CD publish deferral leaves the issue open; the comment says so (#3593)."""
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["publish-pypi", "publish-docs"]
+    defer_publish(ctx, "publish-pypi", "publish-docs")
     details = _phase_details(ctx, "close-finalize")
     assert "closed" not in details.lower()
     assert "left open" in details
@@ -549,7 +588,7 @@ def test_phase_details_close_finalize_cd_deferral_leaves_issue_open() -> None:
 def test_phase_details_close_finalize_package_index_deferral_leaves_issue_open() -> None:
     """A package-index deferral leaves the issue open; the comment names it (#3593)."""
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["package-index"]
+    defer_publish(ctx, "package-index")
     details = _phase_details(ctx, "close-finalize")
     assert "closed" not in details.lower()
     assert "left open" in details
@@ -564,7 +603,7 @@ def test_phase_details_close_finalize_package_index_deferral_leaves_issue_open()
 def test_phase_details_close_finalize_index_deferral_with_no_promote() -> None:
     """With --no-promote nothing was held back, so no promote is pending."""
     ctx = _ctx(promote=False)
-    ctx.deferred_publish_failures = ["package-index"]
+    defer_publish(ctx, "package-index")
     details = _phase_details(ctx, "close-finalize")
     assert "left open" in details
     assert "Promote pending" not in details
@@ -573,13 +612,13 @@ def test_phase_details_close_finalize_index_deferral_with_no_promote() -> None:
 
 def test_phase_details_close_finalize_cd_deferral_names_no_pending_promote() -> None:
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["publish-pypi"]
+    defer_publish(ctx, "publish-pypi")
     assert "Promote pending" not in _phase_details(ctx, "close-finalize")
 
 
 def test_phase_details_close_finalize_both_deferral_kinds() -> None:
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["publish-pypi", "package-index"]
+    defer_publish(ctx, "publish-pypi", "package-index")
     details = _phase_details(ctx, "close-finalize")
     assert "CD publish (publish-pypi)" in details
     assert "package index (package-index)" in details
@@ -589,7 +628,7 @@ def test_phase_details_close_finalize_halted_stages_skip_close_and_cleanup() -> 
     """Earlier failed stages leave the issue open and skip cleanup entirely."""
     ctx = _ctx()
     ctx.deferred_failures = ["promote"]
-    ctx.deferred_publish_failures = ["package-index"]
+    defer_publish(ctx, "package-index")
     details = _phase_details(ctx, "close-finalize")
     assert "closed" not in details.lower()
     assert "finalized" not in details.lower()
@@ -618,7 +657,7 @@ def test_phase_details_consumer_refresh_none_configured() -> None:
 
 def test_phase_details_consumer_refresh_held_by_a_deferred_publish() -> None:
     ctx = _ctx()
-    ctx.deferred_publish_failures = ["package-index"]
+    defer_publish(ctx, "package-index")
     details = _phase_details(ctx, "consumer-refresh")
     assert "held" in details
     assert "package-index" in details
@@ -1095,7 +1134,7 @@ def _state() -> ReleaseState:
 def test_publish_status_raises_when_deferred() -> None:
     state = _state()
     assert state.ctx is not None
-    state.ctx.deferred_publish_failures = ["docker-publish"]
+    defer_publish(state.ctx, "docker-publish")
     with pytest.raises(ReleaseError, match="docker-publish"):
         _publish_status_stage(state)
 
@@ -1103,7 +1142,7 @@ def test_publish_status_raises_when_deferred() -> None:
 def test_publish_status_gives_per_kind_advice_for_an_index_deferral() -> None:
     state = _state()
     assert state.ctx is not None
-    state.ctx.deferred_publish_failures = ["package-index"]
+    defer_publish(state.ctx, "package-index")
     with (
         patch(_TRACKING + "._packages_repo", return_value="o/packages"),
         pytest.raises(ReleaseError) as info,
@@ -1240,13 +1279,13 @@ def test_release_summary_counts_a_deps_only_failure_once(
 def test_publish_status_reports_both_failures() -> None:
     state = _state()
     assert state.ctx is not None
-    state.ctx.deferred_publish_failures = ["docs"]
+    defer_publish(state.ctx, "docs")
     state.ctx.deps_failure = "Dependency update for 2.1.243 failed (merge)"
     with pytest.raises(ReleaseError) as info:
         _publish_status_stage(state)
     msg = str(info.value)
     assert "artifact publish was deferred (docs)" in msg
-    assert "re-run the CD publish to deliver the artifacts" in msg
+    assert "fix the cause of the failed CD publish jobs (the resume re-runs them)" in msg
     assert "2.1.243 failed" in msg
 
 
@@ -1339,7 +1378,7 @@ def _run_tail(
     assert ctx is not None
     ctx.issue_number = 42
     ctx.tag = "v2.1.2"
-    ctx.deferred_publish_failures = list(cd_deferred)
+    defer_publish(ctx, *cd_deferred)
     timeout = ReleaseError(phase="package-index", command="poll package index", message="slow")
     args = argparse.Namespace(output_format="plain", output_window=None)
     with (
@@ -1449,7 +1488,7 @@ def test_cd_only_deferral_leaves_issue_open_with_cd_advice(
     m_close.assert_not_called()
     m_finalize.assert_called_once()
     message = _publish_status(capsys.readouterr().out)
-    assert "re-run the CD publish" in message
+    assert "the resume re-runs them" in message
     assert "publish-index" not in message
     assert "held" in (ctx.consumer_refresh_message or "")
 
@@ -1464,7 +1503,7 @@ def test_cd_and_index_deferral_together_give_both_remedies(
     m_comment.assert_called_once_with(ctx, ["docker-publish", "package-index"])
     m_close.assert_not_called()
     message = _publish_status(capsys.readouterr().out)
-    assert "re-run the CD publish" in message
+    assert "the resume re-runs them" in message
     assert "publish-index workflow in o/packages" in message
 
 
@@ -1477,6 +1516,7 @@ _DONE_THROUGH_FINALIZE = (
     "back-merge-bump",
     "teardown-worktree",
     "confirm-develop",
+    "cd-publish",
     "package-index",
     "promote",
     "close-finalize",
@@ -1515,6 +1555,7 @@ def test_tracked_stage_records_done_with_its_facts(write_state: MagicMock) -> No
     assert ctx.state.tag_commit == "t" * 40
     assert ctx.state.main_cd_run == "555"
     assert ctx.state.bump_pr is None
+    assert ctx.state.index_listed is False
 
 
 def test_tracked_stage_skips_a_done_stage(
@@ -1554,10 +1595,10 @@ def test_tracked_stage_failure_is_not_recorded_done(write_state: MagicMock) -> N
     ("name", "setup"),
     [
         ("promote", lambda c: setattr(c, "promote", False)),
-        ("promote", lambda c: c.deferred_publish_failures.append("package-index")),
+        ("promote", lambda c: defer_publish(c, "package-index")),
         ("close-finalize", lambda c: c.deferred_failures.append("confirm-develop")),
-        ("close-finalize", lambda c: c.deferred_publish_failures.append("docs")),
-        ("consumer-refresh", lambda c: c.deferred_publish_failures.append("docs")),
+        ("close-finalize", lambda c: defer_publish(c, "docs")),
+        ("consumer-refresh", lambda c: defer_publish(c, "docs")),
         ("consumer-refresh", lambda c: setattr(c, "install", False)),
         ("consumer-refresh", lambda c: c.deferred_failures.append("promote")),
     ],

@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import config, github, retry
 from vergil_tooling.lib.package import matrix, naming, orgs
-from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release.context import INDEX_STAGE, ReleaseError
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.config import PackageConfig
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 
 Fetch = Callable[[str], bytes]
 
-PHASE = "package-index"
+PHASE = INDEX_STAGE
 
 # The org packages repo's index workflow, dispatched by cd-release's release job.
 _INDEX_WORKFLOW = "publish-index.yml"
@@ -580,9 +580,10 @@ def wait_for_index(
     No-op without ``[package]``. Any failure (a timeout, a followed
     publish-index run that failed with no newer run to follow (#4121), a
     followed run still not completed after ``follow_timeout``, or an error
-    while polling) records ``package-index`` in
-    ``ctx.deferred_publish_failures`` before propagating, so ``promote``
-    holds ``vX.Y`` back and the consumer refresh holds.
+    while polling) sets ``ctx.index_missed`` before propagating, so
+    ``package-index`` is listed in ``ctx.deferred_publish_failures``,
+    ``promote`` holds ``vX.Y`` back and the consumer refresh holds. Success
+    is recorded in the state block (``index_listed``) with the stage.
     """
     try:
         _wait(
@@ -596,6 +597,5 @@ def wait_for_index(
             interval=interval,
         )
     except Exception:
-        if PHASE not in ctx.deferred_publish_failures:
-            ctx.deferred_publish_failures.append(PHASE)
+        ctx.index_missed = True
         raise
