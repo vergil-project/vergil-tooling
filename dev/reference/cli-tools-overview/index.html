@@ -20664,7 +20664,11 @@ reasons are:</p>
 bodies and conversation comments, and <code>vrg-gh</code> refuses <code>gh api</code> for the user
 identity, so this is the user agent's way to read them. It is strictly
 read-only and widens no <code>vrg-gh</code> allowlist. The plugin's
-<code>epic-retrospective</code> sweep consumes it.</p>
+<code>epic-retrospective</code> sweep consumes it. Only trusted comments are
+printed: the trust layer also reads the PR's review comments, and a
+comment is kept only when its author and every editor hold a role, with
+the body the layer read. Every other comment is left out and reported on
+stderr, metadata only.</p>
 <p>Without <code>--json</code> it prints one block per comment (<code>&lt;path&gt;:&lt;line&gt; by
 &lt;author&gt; at &lt;created_at&gt; (comment &lt;id&gt;, review &lt;id&gt;, reply to &lt;id&gt;)</code>, the
 comment URL, then the body indented; <code>:&lt;line&gt;</code> is left out when <code>line</code> is
@@ -20694,11 +20698,11 @@ has), <code>author</code> is <code>null</code> for a deleted account,
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>GitHub App credentials for the <code>--repo</code> owner</td>
+<td>GitHub App credentials for the <code>--repo</code> owner; the trusted-authors configuration</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A GitHub API failure, or a response that is not a list of well-formed comments, prints <code>ERROR:</code> on stderr and exits 1; it never prints a partial or empty list in its place</td>
+<td>A GitHub API failure, a response that is not a list of well-formed comments, or a trust-layer read that cannot complete prints <code>ERROR:</code> on stderr and exits 1; it never prints a partial or empty list in its place</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -21052,8 +21056,10 @@ to <code>0.2.0</code> under <code>^0.1.3</code>).</p>
 from the PR body's <code>Ref #N</code> linkage. The PR is found from the commit
 subject (the merge-commit <code>Merge pull request #N from …</code> pattern, then the
 squash-merge <code>… (#N)</code> pattern), then from the GitHub API's
-commit-to-pulls lookup; <code>--pr</code> skips the lookup. Used by the
-<code>version-bump-pr</code> composite action in vergil-actions.</p>
+commit-to-pulls lookup, which takes only the commit's merged PR: with
+none merged it is an error naming the PRs found, never the first of them.
+<code>--pr</code> skips the lookup. Used by the <code>version-bump-pr</code> composite action in
+vergil-actions.</p>
 <table>
 <thead>
 <tr>
@@ -21076,11 +21082,11 @@ commit-to-pulls lookup; <code>--pr</code> skips the lookup. Used by the
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>ERROR:</code> on stderr naming what was tried; a PR with no body or no <code>Ref #N</code> linkage is an error</td>
+<td><code>ERROR:</code> on stderr naming what was tried; a commit whose PRs include no merged one, or a PR with no body or no <code>Ref #N</code> linkage, is an error</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success (issue number on stdout), 1 no PR found or no linkage, 2 git or GitHub API failure</td>
+<td>0 success (issue number on stdout), 1 no merged PR found or no linkage, 2 git or GitHub API failure (a malformed response included)</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -21212,6 +21218,10 @@ reused branch name with unmerged commits (issue #1719) — is surfaced
 <code>--clean-dirty</code> opt-in clears one whose only dirt is untracked
 build/validation output, after showing the paths and confirming
 (issue #2348).
+A worktree's branch matches only a same-repo PR with a trusted author
+(<code>vrg-trusted-authors</code>): a fork PR on the same branch name is reported on
+stderr, metadata only, and never watched or taken as merge evidence, and
+several open PRs on one branch are an error naming them.
 A batch PR (more than one <code>Closes</code> line, one commit per issue, epic
 vergil-project/.github#1019) is watched like any other: <code>vrg-submit-pr</code>
 turned its auto-merge on with the rebase method, so <code>develop</code> gets one
@@ -21239,7 +21249,7 @@ commit and one changelog entry per issue. See
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>An unmerged PR exits 3 and a develop that did not validate exits 4; a watch that cannot read a PR, a failed close of an issue, a failed sync or cleanup, or a dirty working tree exits 1</td>
+<td>An unmerged PR exits 3 and a develop that did not validate exits 4; a watch that cannot read a PR, a failed or ambiguous branch PR lookup, a failed close of an issue, a failed sync or cleanup, or a dirty working tree exits 1</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -22794,8 +22804,10 @@ worktree section, including the empty ones. A branch that was deleted on its rem
 still listed, with <code>(branch gone)</code> after its name. That check queries
 each remote once; if it fails, a note gives the reason.</p>
 <p>The worktree sections share one table. PR state is queried from GitHub
-per worktree; a failed lookup shows as <code>unknown</code> with the reason rather
-than being silently downgraded. The development summary counts fall
+per worktree, and only a same-repo PR with a trusted author counts: a
+fork PR on the branch name is reported on stderr, metadata only. A failed
+lookup, or several open PRs on one branch, shows as <code>unknown</code> with the
+reason rather than being silently downgraded. The development summary counts fall
 into disjoint buckets — <strong>active</strong>, <strong>needs-attention</strong>, <strong>stalled
 (no-pr)</strong>, and <strong>cruft (removable)</strong>. A finished-but-stuck worktree
 (merged/closed but not removable: dirty, or a reused branch name whose
@@ -24491,7 +24503,10 @@ references to the release tag.</p>
 <h3 id="vrg-ci-evidence">vrg-ci-evidence<a class="headerlink" href="#vrg-ci-evidence" title="Permanent link">&para;</a></h3>
 <p>Harvest and bundle a release's CI evidence. <code>harvest</code> finds the CI run for
 the release merge commit, downloads and validates its evidence into a
-staging directory; <code>assemble</code> builds the manifest and tarball from that
+staging directory. The release PR must be the commit's one merged same-repo
+PR with a trusted author, with no first-PR fallback; the CI run must be built
+from the repo itself, and only its own check suite's check runs and GitHub
+Advanced Security's scanner checks count; <code>assemble</code> builds the manifest and tarball from that
 staging directory with no network access; <code>bundle</code> does both. Used by the
 release workflow.</p>
 <table>
@@ -24512,7 +24527,7 @@ release workflow.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>GitHub App credentials for the target org (<code>harvest</code>, <code>bundle</code>)</td>
+<td>GitHub App credentials for the target org and the trusted-authors configuration (<code>harvest</code>, <code>bundle</code>)</td>
 </tr>
 <tr>
 <td>Failure mode</td>
