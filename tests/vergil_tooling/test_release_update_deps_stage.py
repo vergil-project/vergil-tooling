@@ -430,9 +430,7 @@ def test_fresh_start_takes_without_deps_from_the_flag(
 ) -> None:
     """A fresh start has no state block yet: prepare creates it from the flag."""
     ctx = _rctx()
-    state = ReleaseState(
-        version_override=None, repo_root=Path("/r"), without_deps=True
-    )
+    state = ReleaseState(version_override=None, repo_root=Path("/r"), without_deps=True)
     monkeypatch.setattr(_ORCH + ".preflight", lambda **_kw: ctx)
     _preflight_stage(state)
     assert ctx.without_deps is True

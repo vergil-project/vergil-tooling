@@ -20,11 +20,6 @@ from vergil_tooling.lib.release.resume import find_resume_target
 REMOVED_FLAGS = ("--no-promote", "--no-install", "--install")
 
 
-def removed_message(flag: str) -> str:
-    """The error *flag*, a removed flag, exits with."""
-    return f"vrg-release: {flag} was removed; promote and install are part of every release"
-
-
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
@@ -116,6 +111,11 @@ def main(argv: list[str] | None = None) -> int:
         print()
         print(state.ctx.install_message)
     return rc
+
+
+def removed_message(flag: str) -> str:
+    """The error *flag*, a removed flag, exits with."""
+    return f"vrg-release: {flag} was removed; promote and install are part of every release"
 
 
 def _dest(flag: str) -> str:
