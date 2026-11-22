@@ -28,11 +28,11 @@ from vergil_tooling.lib.config import (
 )
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
-    _GITHUB_ACTIONS_INTEGRATION_ID,
     _PRODUCIBLE_GATE_CATALOG,
     CI_GATES_DEVELOP,
     CI_GATES_MAIN,
     CI_GATES_RULESET_NAMES,
+    GITHUB_ACTIONS_INTEGRATION_ID,
     LEGACY_CI_GATES_RULESET_NAME,
     MERGE_SETTINGS_READ,
     SETTING_RETURNED,
@@ -296,7 +296,7 @@ def test_tag_protection_bypass_never_includes_github_actions() -> None:
     # workflow's GITHUB_TOKEN create a release tag.
     actors = desired_tag_protection_ruleset(app_id=123).bypass_actors
     assert actors is not None
-    assert _GITHUB_ACTIONS_INTEGRATION_ID not in {a["actor_id"] for a in actors}
+    assert GITHUB_ACTIONS_INTEGRATION_ID not in {a["actor_id"] for a in actors}
 
 
 def test_tag_protection_without_app_id_is_skipped() -> None:

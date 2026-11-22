@@ -2745,7 +2745,10 @@ references to the release tag.
 
 Harvest and bundle a release's CI evidence. `harvest` finds the CI run for
 the release merge commit, downloads and validates its evidence into a
-staging directory; `assemble` builds the manifest and tarball from that
+staging directory. The release PR must be the commit's one merged same-repo
+PR with a trusted author, with no first-PR fallback; the CI run must be built
+from the repo itself, and only its own check suite's check runs and GitHub
+Advanced Security's scanner checks count; `assemble` builds the manifest and tarball from that
 staging directory with no network access; `bundle` does both. Used by the
 release workflow.
 
@@ -2753,7 +2756,7 @@ release workflow.
 |---|---|
 | Source | `vergil_tooling.bin.vrg_ci_evidence` |
 | Args | `harvest --repo --merge-sha --out-dir [--run-grace-secs]`; `assemble --staging --version --generated-at --out-dir [--sbom-file]`; `bundle --repo --version --merge-sha --out-dir [--sbom-file]` |
-| Preconditions | GitHub App credentials for the target org (`harvest`, `bundle`) |
+| Preconditions | GitHub App credentials for the target org and the trusted-authors configuration (`harvest`, `bundle`) |
 | Failure mode | A single-line error on stderr, never a traceback |
 | Exit codes | 0 success, 1 error |
 | Status | Active |

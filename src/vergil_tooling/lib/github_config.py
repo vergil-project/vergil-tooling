@@ -334,8 +334,12 @@ def desired_automation_branch_ruleset(app_id: int | None) -> DesiredRuleset:
 # CI gates ruleset derivation
 # ---------------------------------------------------------------------------
 
-_GITHUB_ACTIONS_INTEGRATION_ID = 15368
-_GHAS_INTEGRATION_ID = 57789
+# The GitHub App IDs that create the fleet's required check runs: GitHub
+# Actions for every workflow job, GitHub Advanced Security for the scanner
+# checks a SARIF upload registers. The CI-evidence harvest matches check runs
+# by these IDs too, never by name alone (GHSA-q6hx-8c85-9f56).
+GITHUB_ACTIONS_INTEGRATION_ID = 15368
+GHAS_INTEGRATION_ID = 57789
 
 # The primary languages CodeQL analyzes: the single definition behind both the
 # CI-gates ruleset (``security / codeql`` and the GHAS ``CodeQL`` check are
@@ -356,14 +360,14 @@ CODEQL_LANGUAGES = frozenset({"python", "go", "rust", "cpp", "typescript"})
 def _make_check(context: str) -> dict[str, object]:
     return {
         "context": context,
-        "integration_id": _GITHUB_ACTIONS_INTEGRATION_ID,
+        "integration_id": GITHUB_ACTIONS_INTEGRATION_ID,
     }
 
 
 def _make_ghas_check(context: str) -> dict[str, object]:
     return {
         "context": context,
-        "integration_id": _GHAS_INTEGRATION_ID,
+        "integration_id": GHAS_INTEGRATION_ID,
     }
 
 

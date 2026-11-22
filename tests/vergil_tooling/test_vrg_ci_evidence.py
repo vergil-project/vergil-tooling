@@ -21,10 +21,11 @@ import pytest
 
 from vergil_tooling.bin import vrg_ci_evidence
 from vergil_tooling.bin.vrg_ci_evidence import main
-from vergil_tooling.lib import ci_evidence, git, github
+from vergil_tooling.lib import ci_evidence, git, github, trust
 from vergil_tooling.lib.ci_evidence import NoQualifyingRunError
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import EvidenceGate
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.versions import ResolutionError
 
 if TYPE_CHECKING:
@@ -50,10 +51,18 @@ def _wire_github_stages(
     monkeypatch.setattr(
         ci_evidence,
         "select_ci_run",
-        lambda _repo, _sha: {"id": 123, "html_url": "https://github.com/o/r/actions/runs/123"},
+        lambda _repo, _sha: {
+            "id": 123,
+            "html_url": "https://github.com/o/r/actions/runs/123",
+            "check_suite_id": 501,
+        },
     )
     monkeypatch.setattr(ci_evidence, "resolve_required_gates", lambda _repo, _ref: required)
-    monkeypatch.setattr(ci_evidence, "read_gate_conclusions", lambda _repo, _sha: conclusions)
+    monkeypatch.setattr(
+        ci_evidence,
+        "read_gate_conclusions",
+        lambda _repo, _sha, *, check_suite_id: conclusions if check_suite_id == 501 else {},
+    )
     monkeypatch.setattr(ci_evidence, "download_evidence_artifacts", download)
 
 
@@ -574,6 +583,38 @@ def test_harvest_unresolvable_release_pr_errors(
     assert rc == 1
     err = capsys.readouterr().err
     assert err == "ERROR: cannot resolve release PR for deadbeef in o/r\n"
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (
+            trust.TrustReadError("prs_for_branch o/r release/1.2.3", "a malformed page"),
+            "cannot read who wrote the content (prs_for_branch o/r release/1.2.3):"
+            " a malformed page",
+        ),
+        (TrustedAuthorsNotConfiguredError("no trusted authors"), "no trusted authors"),
+    ],
+)
+def test_harvest_trust_failure_is_one_line_exit_one(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    error: Exception,
+    message: str,
+) -> None:
+    """A trust-layer read or configuration failure is a single-line error, never a traceback."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+    def fail(*_a: object, **_k: object) -> int:
+        raise error
+
+    monkeypatch.setattr(ci_evidence, "resolve_release_pr", fail)
+
+    rc = main(_harvest_argv(tmp_path / "staging"))
+
+    assert rc == 1
+    assert capsys.readouterr().err == f"ERROR: {message}\n"
 
 
 def test_harvest_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
