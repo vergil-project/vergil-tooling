@@ -628,9 +628,7 @@ def test_acquire_release_worktree_refuses_a_resume_whose_branch_is_missing() -> 
         patch(_MOD + ".git.run") as m_run,
         patch(_MOD + ".adopt_worktree") as m_adopt,
         patch(_MOD + ".create_worktree") as m_create,
-        pytest.raises(
-            ReleaseError, match="'release/2.1.0' is missing both locally and on origin"
-        ),
+        pytest.raises(ReleaseError, match="'release/2.1.0' is missing both locally and on origin"),
     ):
         _acquire_release_worktree(Path("/tmp/repo"), "release/2.1.0", resume=True)  # noqa: S108
     checked = [c.args[0] for c in m_exists.call_args_list]
