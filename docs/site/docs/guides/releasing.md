@@ -440,8 +440,10 @@ Then:
   section names the superseded release under `### Supersedes` and marks
   each absorbed issue, and the state block records the superseded
   version and the absorbed issues.
-- Once the new tracking issue exists, `prepare` closes the superseded
-  one, with a comment naming the release that superseded it. The
+- Once the new tracking issue and its release PR exist, `prepare`
+  closes the superseded one, with a comment naming the release that
+  superseded it. Closing it last means a failure there leaves the
+  release branch's version bump pushed, for the resume to adopt. The
   superseded release posts no records. A resume of the new release
   closes it if a stopped run did not.
 - The new release's [records](#released-records) name the new version.
