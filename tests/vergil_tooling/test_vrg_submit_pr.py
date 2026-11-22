@@ -13,6 +13,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_submit_pr import (
+    NO_FINALIZE_REMOVED,
+    NO_INSTALL_REMOVED,
     SubmitSummary,
     _create_pr,
     _local_worktree_with_state,
@@ -514,25 +516,6 @@ def test_main_submits_pr_with_notes(tmp_path: Path) -> None:
     assert result == 0
 
 
-def test_main_prints_pr_watch_oneliner_on_success(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    with (
-        patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_submit_pr.git.current_branch", return_value="feature/x"),
-        patch("vergil_tooling.bin.vrg_submit_pr.git.run"),
-        patch(
-            "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
-            return_value="https://github.com/pr/1",
-        ),
-    ):
-        result = main(
-            ["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug", "--no-finalize"]
-        )
-    assert result == 0
-    assert "/vergil:pr-watch https://github.com/pr/1" in capsys.readouterr().out
-
-
 def test_main_dry_run_omits_pr_watch_oneliner(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -593,7 +576,7 @@ class TestIdentityGate:
         assert exc.value.code == 0
         out = capsys.readouterr().out
         assert "usage:" in out
-        assert "--no-finalize" in out
+        assert "--release" in out
         assert "human-only" in out
         assert "vrg-pr-workflow report-ready" in out
 
@@ -606,7 +589,7 @@ class TestIdentityGate:
             main(["--help"])
         out = capsys.readouterr().out
         assert "usage:" in out
-        assert "--no-finalize" in out
+        assert "--release" in out
 
     def test_human_mode_allowed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
@@ -792,7 +775,7 @@ class TestTemplateMode:
             ) as mock_pr,
             patch("builtins.input", side_effect=AssertionError("stdin read")) as mock_input,
         ):
-            result = main(["--no-finalize"])
+            result = main([])
         assert result == 0
         mock_pr.assert_called_once()
         mock_input.assert_not_called()
@@ -810,26 +793,6 @@ class TestTemplateMode:
             assert main([flag]) == 1
         run.assert_not_called()
         assert "--yes was removed" in capsys.readouterr().err
-
-    def test_template_prints_pr_watch_oneliner(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        _write_workflow_state(tmp_path, title="fix", summary="Fix")
-        with (
-            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
-            patch(
-                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
-                return_value="feature/x",
-            ),
-            patch("vergil_tooling.bin.vrg_submit_pr.git.run"),
-            patch(
-                "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
-                return_value="https://github.com/pr/7",
-            ),
-        ):
-            result = main(["--no-finalize"])
-        assert result == 0
-        assert "/vergil:pr-watch https://github.com/pr/7" in capsys.readouterr().out
 
     def test_template_rejects_forbidden_linkage(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1146,7 +1109,7 @@ class TestUnreleasedRepoRefusal:
         "argv",
         [
             ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"],
-            ["--all", "--release", "--no-install"],
+            ["--all", "--release"],
             ["feature/a", "--release"],
             ["feature/a", "--release", "--dry-run"],
         ],
@@ -1188,7 +1151,7 @@ class TestUnreleasedRepoRefusal:
         m_gate.assert_not_called()
 
 
-# -- finalize by default; --no-finalize opts out (epic .github#1218, spec §6.2) --
+# -- finalize always (epic .github#1218, spec §6.2; --no-finalize removed, .github#1440) --
 
 
 _CLI = ["--issue", "42", "--summary", "Fix", "--title", "fix: bug"]
@@ -1246,7 +1209,6 @@ class TestFinalizeByDefault:
         ("argv", "flags"),
         [
             (["--release"], ["--release"]),
-            (["--release", "--no-install"], ["--release", "--no-install"]),
             (["--output-format", "plain"], ["--output-format", "plain"]),
             (["--output-window", "0"], ["--output-window", "0"]),
             (
@@ -1277,7 +1239,7 @@ class TestFinalizeByDefault:
         """A failed submit drops --release from finalize and says so; exit at least 3."""
         a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
         with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
-            rc, calls = _run_batch([a, b], ["--release", "--no-install"], urls=[_URL1, _URL2])
+            rc, calls = _run_batch([a, b], ["--release"], urls=[_URL1, _URL2])
         assert rc == 3
         assert calls == [("vrg-finalize-pr", _URL2)]
         err = capsys.readouterr().err
@@ -1297,54 +1259,6 @@ class TestFinalizeByDefault:
             _run_batch([a, b], [], urls=[_URL1, _URL2], run=finalize)
         err = capsys.readouterr().err
         assert err.index("FINALIZE REPORT") < err.index("Failed to submit:")
-
-    def test_no_finalize_prints_command(self, capsys: pytest.CaptureFixture[str]) -> None:
-        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
-        rc, calls = _run_batch([a, b], ["--no-finalize"], urls=[_URL1, _URL2])
-        assert rc == 0
-        assert calls == []
-        out = capsys.readouterr().out
-        assert f"Not watching. To finalize these PRs: vrg-finalize-pr {_URL1},{_URL2}\n" in out
-        assert f"/vergil:pr-watch {_URL1}" in out
-
-    def test_no_finalize_command_carries_progress_flags(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
-        argv = ["--no-finalize", "--output-format", "plain", "--output-window", "0"]
-        rc, calls = _run_batch([a, b], argv, urls=[_URL1, _URL2])
-        assert rc == 0
-        assert calls == []
-        out = capsys.readouterr().out
-        assert (
-            "Not watching. To finalize these PRs: vrg-finalize-pr "
-            f"{_URL1},{_URL2} --output-format plain --output-window 0\n"
-        ) in out
-        assert f"/vergil:pr-watch {_URL2}" in out
-
-    def test_no_finalize_failed_submit_exits_3(self, capsys: pytest.CaptureFixture[str]) -> None:
-        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
-        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
-            rc, calls = _run_batch([a, b], ["--no-finalize"], urls=[_URL1, _URL2])
-        assert rc == 3
-        assert calls == []
-        captured = capsys.readouterr()
-        assert f"To finalize these PRs: vrg-finalize-pr {_URL2}\n" in captured.out
-        assert f"{_URL1} — refused" in captured.err
-
-    def test_no_finalize_nothing_opened_prints_no_command(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        with patch(
-            _MOD + ".auto_merge.enable_auto_merge",
-            side_effect=auto_merge.AutoMergeError("refused"),
-        ):
-            rc, calls = _run_batch([_batch_wt("issue-1-a")], ["--no-finalize"], urls=[_URL1])
-        assert rc == 3
-        assert calls == []
-        captured = capsys.readouterr()
-        assert "Not watching" not in captured.out
-        assert f"{_URL1} — refused" in captured.err
 
     def test_exit_precedence_tool_error_wins(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Finalize's 1 plus a failed submit is 1, with the rerun command named."""
@@ -1427,27 +1341,22 @@ class TestFinalizeByDefault:
         assert "VRG_FINALIZE_DEADLINE must be a positive whole number" in err
         assert "no PR was opened" in err
 
-    def test_deadline_not_checked_with_no_finalize(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("VRG_FINALIZE_DEADLINE", "soon")
-        rc, run = _cli_main(["--no-finalize"])
-        assert rc == 0
-        run.assert_not_called()
-
     @pytest.mark.parametrize(
         ("argv", "message"),
         [
             (["--finalize"], "--finalize was removed; finalizing is now the default"),
-            (["--install"], "--install was removed; --release now installs by default"),
+            (["--no-finalize"], NO_FINALIZE_REMOVED.removeprefix("vrg-submit-pr: ")),
+            (["--release", "--no-finalize"], "--no-finalize was removed"),
+            (["--install"], "--install was removed; install is part of every release"),
             (["--release", "--install"], "--install was removed"),
+            (["--no-install"], NO_INSTALL_REMOVED.removeprefix("vrg-submit-pr: ")),
+            (["--release", "--no-install"], "--no-install was removed"),
             (
                 ["--allow-provenance-violation"],
                 "--allow-provenance-violation was removed; a provenance violation always "
                 "fails. Fix its cause, or fix the classifier",
             ),
             (["--release", "--allow-provenance-violation"], "--allow-provenance-violation was"),
-            (["--release", "--no-finalize"], "--release cannot be combined with --no-finalize"),
-            (["--no-install"], "--no-install requires --release"),
-            (["--no-finalize", "--no-install"], "--no-install requires --release"),
         ],
     )
     def test_removed_and_invalid_flag_combinations_fatal(
@@ -1471,34 +1380,60 @@ class TestFinalizeByDefault:
         with pytest.raises(SystemExit):
             main(["--help"])
         out = capsys.readouterr().out
-        assert "--no-finalize" in out
-        assert "--finalize " not in out
-        assert "  --install" not in out
+        for flag in ("--finalize", "--no-finalize", "--install", "--no-install"):
+            assert flag not in out
         assert "--allow-provenance-violation" not in out
+
+    def _assert_removed(
+        self, capsys: pytest.CaptureFixture[str], argv: list[str], message: str
+    ) -> None:
+        """*argv* exits 1 with *message* before any side effect."""
+        with (
+            patch(_MOD + ".git.repo_root") as repo_root,
+            patch(_MOD + ".git.run") as git_run,
+            patch(_MOD + "._push_branch") as push,
+            patch(_MOD + ".github.create_pr") as create,
+            patch(_MOD + "._chain_finalize") as chain,
+            patch(_MOD + ".subprocess.run") as run,
+        ):
+            assert main(argv) == 1
+        for mock in (repo_root, git_run, push, create, chain, run):
+            mock.assert_not_called()
+        assert capsys.readouterr().err == f"{message}\n"
+
+    def test_no_finalize_removed_message(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """--no-finalize is refused: submit returns once each PR has merged or cannot merge."""
+        self._assert_removed(
+            capsys,
+            [*_CLI, "--no-finalize"],
+            "vrg-submit-pr: --no-finalize was removed; "
+            "vrg-submit-pr returns once each PR has merged or cannot merge",
+        )
+
+    def test_no_install_removed_message(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """--no-install is refused, with or without --release: install is part of every release."""
+        for argv in ([*_CLI, "--no-install"], [*_CLI, "--release", "--no-install"]):
+            self._assert_removed(
+                capsys,
+                argv,
+                "vrg-submit-pr: --no-install was removed; install is part of every release",
+            )
 
     def test_dry_run_plans_without_side_effects(self, capsys: pytest.CaptureFixture[str]) -> None:
         """A dry run previews every PR and names the finalize run, opening nothing."""
         with patch(_MOD + "._submit_all") as submit_all:
             rc, calls = _run_batch(
                 [_batch_wt("issue-1-a"), _batch_wt("issue-2-b")],
-                ["--dry-run", "--release", "--no-install"],
+                ["--dry-run", "--release"],
                 urls=[],
             )
-            assert rc == 0
-            out = capsys.readouterr().out
-            assert (
-                "[dry-run] would finalize every opened PR in one run: "
-                "vrg-finalize-pr <pr>,… --release --no-install"
-            ) in out
-            rc, calls_nf = _run_batch(
-                [_batch_wt("issue-1-a")], ["--dry-run", "--no-finalize"], urls=[]
-            )
         assert rc == 0
-        assert calls == calls_nf == []
+        assert calls == []
         submit_all.assert_not_called()
-        assert "--no-finalize: the PRs would be opened with auto-merge on, not watched" in (
-            capsys.readouterr().out
-        )
+        assert (
+            "[dry-run] would finalize every opened PR in one run: "
+            "vrg-finalize-pr <pr>,… --release\n"
+        ) in capsys.readouterr().out
 
     @pytest.mark.parametrize("count", [1, 3])
     def test_selection_table_and_no_prompt(
@@ -1514,7 +1449,7 @@ class TestFinalizeByDefault:
             patch(_MOD + ".submission.record_submission"),
             patch("builtins.input") as typed,
         ):
-            assert _run_submit_batch(wts, parse_args(["--all", "--no-finalize"])) == 0
+            assert _run_submit_batch(wts, parse_args(["--all"])) == 0
         typed.assert_not_called()
         out = capsys.readouterr().out
         noun = "PR" if count == 1 else "PRs"
@@ -2901,7 +2836,7 @@ class TestRelayBranchPath:
         monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
         monkeypatch.delenv("VRG_APP_ID", raising=False)
 
-    def test_relay_opens_pr_without_pushing(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_relay_opens_pr_without_pushing(self) -> None:
         state = _ready_state(branch="feature/x", head_sha="abc123")
         transport = MagicMock()
         transport.read.return_value = state
@@ -2914,12 +2849,11 @@ class TestRelayBranchPath:
             patch(_MOD + ".git.run") as git_run,
             patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5") as create,
         ):
-            rc = main(["feature/x", "--no-finalize"])
+            rc = main(["feature/x"])
         assert rc == 0
         push.assert_not_called()
         assert not any(c.args and c.args[0] == "push" for c in git_run.call_args_list)
         assert create.call_args.kwargs["head"] == "feature/x"
-        assert "/vergil:pr-watch https://github.com/pr/5" in capsys.readouterr().out
 
     def test_relay_prefers_local_file_over_ref(self) -> None:
         wt = Worktree(path=Path("/repo/.worktrees/issue-42-x"), branch="feature/x")
@@ -3085,24 +3019,6 @@ class TestRelayBranchPath:
             pytest.raises(SystemExit, match="no ready-state for branch"),
         ):
             main(["feature/x"])
-
-    def test_relay_skips_already_submitted_branch(self, capsys: pytest.CaptureFixture[str]) -> None:
-        state = _ready_state(
-            branch="feature/x",
-            submitted={"pr_url": "https://github.com/o/r/pull/12", "pr_number": "12"},
-        )
-        transport = MagicMock()
-        transport.read.return_value = state
-        with (
-            patch(_MOD + ".git.repo_root", return_value="/repo"),
-            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
-            patch(_MOD + ".GitHubTransport", return_value=transport),
-            patch(_MOD + ".github.create_pr") as create,
-        ):
-            rc = main(["feature/x", "--no-finalize"])
-        assert rc == 0
-        create.assert_not_called()
-        assert "already has a submitted PR" in capsys.readouterr().out
 
     def test_relay_batches_two_branches(self) -> None:
         states = {

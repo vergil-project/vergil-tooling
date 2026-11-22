@@ -5,7 +5,7 @@
 **Source:** `src/vergil_tooling/bin/vrg_submit_pr.py`
 
 Opens standards-compliant pull requests against `develop` with GitHub
-auto-merge on, then, by default, runs one
+auto-merge on, then always runs one
 [`vrg-finalize-pr`](finalize-pr.md) over them, which watches them merge
 and settles `develop` once (epic vergil-project/.github#1218). Submitting
 a PR is the human's decision to merge it: GitHub merges it once its
@@ -144,7 +144,7 @@ and relay ref that disagree are refused, and origin's tip is checked
 against the recorded head again right before `gh pr create`. Auto-merge
 is pinned to that same head.
 
-## Finalize by default
+## Submit always finishes
 
 Once every PR in the selection has been tried, submit runs **one**
 `vrg-finalize-pr <pr>,<pr>,…` over the PRs whose submit succeeded, from
@@ -155,18 +155,14 @@ report. When no PR opened, finalize is not run at all.
 `$VRG_FINALIZE_DEADLINE` is checked before any PR opens, so a malformed
 value refuses the run with nothing done.
 
+Submit returns only once each PR has merged or cannot merge; there is
+no way to open the PRs and return without watching them.
+
 - **`--release`** is passed to finalize, which chains into `vrg-release`
   only on full success. It is dropped when any PR failed to submit, and
-  the summary says the release was skipped. `vrg-release` installs by
-  default; `--no-install` (which requires `--release`) passes through to
-  skip the install. `--release` is refused on a repo that is not
-  released, before any push, PR or merge.
-- **`--no-finalize`** opens the PRs with auto-merge on and returns
-  without watching them. It prints each PR's URL, the
-  `/vergil:pr-watch <PR_URL>` line that starts the agent's monitoring,
-  and the `vrg-finalize-pr` command that would have watched them. The PRs
-  still merge on their own; run that command later to settle `develop`.
-  It cannot be combined with `--release`.
+  the summary says the release was skipped. Install is part of every
+  release. `--release` is refused on a repo that is not released, before
+  any push, PR or merge.
 
 A finalize that exits with a tool error leaves the PRs open with
 auto-merge on, and submit prints the command to re-run the finalize
@@ -227,12 +223,11 @@ branch (for example a workflow-file change the agent's token could not
 push), it is pushed with the human's credentials and opened locally
 instead (issue #2794).
 
-The PRs then follow the one submit path and the default finalize like
+The PRs then follow the one submit path and the same finalize as
 any other mode: finalizing, releasing and installing act on the PRs and
 the remote, so the branches need no local checkout. A branch that
 already carries a submitted PR is refused, naming the
-`vrg-finalize-pr <url>` command to watch it instead; with
-`--no-finalize` it is reported and skipped.
+`vrg-finalize-pr <url>` command to watch it instead.
 
 !!! warning "The relay ref is world-readable"
     On a public repo, anyone can read `refs/vergil/pr-workflow/<branch>`.
@@ -256,9 +251,7 @@ orphaned relay ref whose branch no longer exists.
 | `--base` | No | Target branch. Only `develop`, the default, is accepted; any other branch is refused |
 | `--all` | No | From the repo root: select every ready worktree |
 | `--select` | No | From the repo root: a comma-separated list of ready worktrees, by issue number or worktree directory name |
-| `--no-finalize` | No | Open the PRs with auto-merge on and return without watching them |
-| `--release` | No | Pass `--release` to `vrg-finalize-pr`, which chains into `vrg-release` (installing by default) on full success. Not allowed with `--no-finalize` |
-| `--no-install` | No | With `--release`, run `vrg-release --no-install` |
+| `--release` | No | Pass `--release` to `vrg-finalize-pr`, which chains into `vrg-release` (install is part of every release) on full success |
 | `--dry-run` | No | Print what would be done without executing |
 | `--output-window N` | No | Rolling output window for the terminal renderer of the submit rollup (`0` streams everything); passed on to the chained `vrg-finalize-pr` |
 | `--output-format` | No | Force the submit rollup's renderer: `rich`, `gha` or `plain`; passed on to the chained `vrg-finalize-pr` |
@@ -266,12 +259,13 @@ orphaned relay ref whose branch no longer exists.
 ### Removed flags
 
 Each removed flag is refused by name before any side effect, exits 1 and
-names the new default:
+says why it is gone:
 
 | Flag | Why it is gone |
 | ---- | -------------- |
-| `--finalize` | Finalizing is the default; `--no-finalize` opts out |
-| `--install` | `--release` installs by default; `--no-install` opts out |
+| `--finalize` | Finalizing is the default |
+| `--no-finalize` | `vrg-submit-pr` returns once each PR has merged or cannot merge |
+| `--install`, `--no-install` | Install is part of every release |
 | `--allow-provenance-violation` | A provenance violation always fails: fix its cause, or fix the classifier if the violation is a false one |
 | `--yes` / `-y` | There is no confirmation left to answer: drop the flag |
 
@@ -291,11 +285,8 @@ vrg-submit-pr
 # Every ready worktree, one table, one finalize
 vrg-submit-pr --all
 
-# Merge, then release (installing by default)
+# Merge, then release (install is part of every release)
 vrg-submit-pr --release
-
-# Open with auto-merge on and return; watch later with vrg-finalize-pr
-vrg-submit-pr --no-finalize
 
 # Relay branch mode: open PRs for cloud-implemented branches, worktree-free
 vrg-submit-pr feature/123-x feature/124-y
@@ -376,8 +367,8 @@ failed to submit it returns at least 3, and a tool error from finalize
 
 | Code | Meaning |
 | ---- | ------- |
-| 0 | Every PR opened and finalize reached full success (with `--no-finalize`: every PR opened with auto-merge on). Also a worktree whose PR is already submitted |
-| 1 | A usage error or a refusal before anything opened (a removed or contradictory flag, an agent identity, no submittable worktree, a malformed `$VRG_FINALIZE_DEADLINE`, `--release` on a repo that is not released), or a tool error from finalize |
-| 3 | Not every PR merged: a submit failed, or finalize reported a PR not merged. With `--no-finalize`, or when no PR opened, a failed submit exits 3 |
+| 0 | Every PR opened and finalize reached full success. Also a worktree whose PR is already submitted |
+| 1 | A usage error or a refusal before anything opened (a removed flag, an agent identity, no submittable worktree, a malformed `$VRG_FINALIZE_DEADLINE`, `--release` on a repo that is not released), or a tool error from finalize |
+| 3 | Not every PR merged: a submit failed, or finalize reported a PR not merged. When no PR opened, a failed submit exits 3 |
 | 4 | Develop did not validate after the merges (finalize's 4) |
 | 5 | Every PR merged and develop validated, but the chained release failed |
