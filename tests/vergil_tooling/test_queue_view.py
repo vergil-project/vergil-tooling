@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -222,7 +223,7 @@ def test_intake_items_oldest_first() -> None:
         patch(f"{_MOD}.epics.child_states", return_value=children),
         patch(f"{_MOD}.github.read_json", side_effect=gh),
     ):
-        items = queue_view.intake_items("org/.github", "org")
+        items = queue_view.intake_items("org/.github", "org", stops=trust.BatchStops())
     find.assert_called_once_with(epics.INTAKE, "org/.github", "org")
     assert [i.ref.number for i in items] == [4, 3]
     assert all(i.state == "waiting" and i.epic is None for i in items)
@@ -247,7 +248,7 @@ def test_intake_note_empty_when_latest_comment_is_blank() -> None:
         patch(f"{_MOD}.epics.child_states", return_value=children),
         patch(f"{_MOD}.github.read_json", side_effect=_fake_gh(views)),
     ):
-        [item] = queue_view.intake_items("org/.github", "org")
+        [item] = queue_view.intake_items("org/.github", "org", stops=trust.BatchStops())
     assert item.note == ""
 
 
@@ -256,7 +257,7 @@ def test_intake_items_missing_queue_epic_raises() -> None:
         patch(f"{_MOD}.epics.find_standing_epic", return_value=None),
         pytest.raises(queue_view.QueueNotFoundError, match=r"Epic \(intake\): org.*org/\.github"),
     ):
-        queue_view.intake_items("org/.github", "org")
+        queue_view.intake_items("org/.github", "org", stops=trust.BatchStops())
 
 
 def test_items_never_mutate() -> None:
@@ -269,9 +270,9 @@ def test_items_never_mutate() -> None:
         patch(f"{_MOD}.github.create_issue") as create,
         patch(f"{_MOD}.github.run") as run,
     ):
-        assert queue_view.intake_items("org/.github", "org") == []
-        assert queue_view.planning_items("org/.github", "org") == []
-        assert queue_view.deferred_items("org/.github", "org") == []
+        assert queue_view.intake_items("org/.github", "org", stops=trust.BatchStops()) == []
+        assert queue_view.planning_items("org/.github", "org", stops=trust.BatchStops()) == []
+        assert queue_view.deferred_items("org/.github", "org", stops=trust.BatchStops()) == []
     ensure.assert_not_called()
     create.assert_not_called()
     run.assert_not_called()
@@ -295,7 +296,7 @@ def _planning(
         patch(f"{_MOD}.github.read_json", side_effect=gh),
         patch(f"{_MOD}.github.repo_exists", return_value=dotgithub),
     ):
-        items = queue_view.planning_items("org/.github", "org")
+        items = queue_view.planning_items("org/.github", "org", stops=trust.BatchStops())
     find.assert_called_once_with(epics.PLANNING, "org/.github", "org")
     return items
 
@@ -366,7 +367,7 @@ def test_planning_items_oldest_first_and_comments_fetched_once() -> None:
         patch(f"{_MOD}.github.read_json", side_effect=gh),
         patch(f"{_MOD}.github.repo_exists", return_value=False),
     ):
-        items = queue_view.planning_items("org/.github", "org")
+        items = queue_view.planning_items("org/.github", "org", stops=trust.BatchStops())
     assert [i.title for i in items] == ["old", "new"]
     assert sorted(int(c[2]) for c in gh.calls) == [6, 7]
 
@@ -376,7 +377,7 @@ def test_planning_items_missing_queue_epic_raises() -> None:
         patch(f"{_MOD}.epics.find_standing_epic", return_value=None),
         pytest.raises(queue_view.QueueNotFoundError, match=r"Epic \(planning\): org"),
     ):
-        queue_view.planning_items("org/.github", "org")
+        queue_view.planning_items("org/.github", "org", stops=trust.BatchStops())
 
 
 def test_issue_view_rejects_non_object_response() -> None:
@@ -387,7 +388,7 @@ def test_issue_view_rejects_non_object_response() -> None:
         patch(f"{_MOD}.github.read_json", return_value=[]),
         pytest.raises(ValueError, match=r"org/\.github#5"),
     ):
-        queue_view.intake_items("org/.github", "org")
+        queue_view.intake_items("org/.github", "org", stops=trust.BatchStops())
 
 
 def test_docs_task_state_rejects_non_object_response() -> None:
@@ -402,7 +403,7 @@ def test_docs_task_state_rejects_non_object_response() -> None:
         patch(f"{_MOD}.github.repo_exists", return_value=False),
         pytest.raises(ValueError, match=r"org/\.github#51"),
     ):
-        queue_view.planning_items("org/.github", "org")
+        queue_view.planning_items("org/.github", "org", stops=trust.BatchStops())
 
 
 # -- parse_latest_deferral / deferred_items --------------------------------------
@@ -442,7 +443,7 @@ def _deferred(views: dict[int, dict[str, Any]]) -> list[QueueItem]:
         patch(f"{_MOD}.epics.child_states", return_value=children),
         patch(f"{_MOD}.github.read_json", side_effect=gh),
     ):
-        items = queue_view.deferred_items("org/.github", "org")
+        items = queue_view.deferred_items("org/.github", "org", stops=trust.BatchStops())
     find.assert_called_once_with(epics.DEFERRED, "org/.github", "org")
     # Closed children are never fetched; each open child is fetched once.
     assert sorted(int(c[2]) for c in gh.calls) == sorted(views)
@@ -499,7 +500,7 @@ def test_deferred_items_missing_queue_epic_raises() -> None:
         patch(f"{_MOD}.epics.find_standing_epic", return_value=None),
         pytest.raises(queue_view.QueueNotFoundError, match=r"Epic \(deferred\): org.*org/\.github"),
     ):
-        queue_view.deferred_items("org/.github", "org")
+        queue_view.deferred_items("org/.github", "org", stops=trust.BatchStops())
 
 
 # -- trusted comments only (epic vergil-project/.github#1467) -----------------------
@@ -566,7 +567,7 @@ def test_latest_note_from_trusted_only(capsys: pytest.CaptureFixture[str]) -> No
         patch(f"{_MOD}.epics.child_states", return_value=children),
         patch(f"{_MOD}.github.read_json", side_effect=_fake_gh(views)),
     ):
-        [item] = queue_view.intake_items("org/.github", "org")
+        [item] = queue_view.intake_items("org/.github", "org", stops=trust.BatchStops())
     assert item.note == "the trusted note"
     _assert_reported(
         capsys.readouterr().err,
@@ -577,17 +578,56 @@ def test_latest_note_from_trusted_only(capsys: pytest.CaptureFixture[str]) -> No
     assert planning.note == "the trusted note"
 
 
-def test_comment_read_failure_fails_the_view(layer: MagicMock) -> None:
-    layer.side_effect = lambda query, **v: {"repository": None}
-    children = [ChildState(IssueRef("org", "tool", 3), "OPEN", "")]
-    views = {3: _view("t", "2026-10-20T00:00:00Z")}
+@pytest.mark.parametrize(
+    "view_fn",
+    [queue_view.intake_items, queue_view.planning_items, queue_view.deferred_items],
+)
+def test_comment_read_failure_stops_only_its_item(
+    layer: MagicMock, capsys: pytest.CaptureFixture[str], view_fn: Any
+) -> None:
+    # Spec §5.3 of epic vergil-project/.github#1467: a batch run stops the item, not the run.
+    readable = trust_stubs.item(nodes=[trust_stubs.comment(1, "the trusted note")])
+
+    def graphql(query: str, **variables: Any) -> dict[str, Any]:
+        return {"repository": None} if variables["number"] == 3 else readable
+
+    layer.side_effect = graphql
+    children = [ChildState(IssueRef("org", ".github", n), "OPEN", "") for n in (3, 4, 5)]
+    views = {n: _view(f"t{n}", f"2026-10-2{n}T00:00:00Z") for n in (3, 4, 5)}
+    stops = trust.BatchStops()
     with (
         patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC),
         patch(f"{_MOD}.epics.child_states", return_value=children),
         patch(f"{_MOD}.github.read_json", side_effect=_fake_gh(views)),
-        pytest.raises(trust.TrustReadError, match="read_issue org/tool#3"),
+        patch(f"{_MOD}.github.repo_exists", return_value=False),
     ):
-        queue_view.intake_items("org/.github", "org")
+        items = view_fn("org/.github", "org", stops=stops)
+    assert [item.ref.number for item in items] == [4, 5]
+    assert stops.stopped == (
+        trust.Skipped("org/.github", 3, "issue", None, "", "comments", trust.READ_FAILURE),
+    )
+    assert stops.exit_code() == 1
+    stops.print_summary(stream := io.StringIO())
+    assert stream.getvalue().startswith(
+        "stopped on a read failure: org/.github#3 on comments: "
+        "cannot read who wrote the content (read_issue org/.github#3)"
+    )
+    # The view itself prints no stop: the caller reports them after its listing.
+    assert "stopped" not in capsys.readouterr().err
+
+
+def test_no_read_failure_no_stop() -> None:
+    stops = trust.BatchStops()
+    children = [ChildState(IssueRef("org", ".github", 4), "OPEN", "")]
+    views = {4: _view("t", "2026-10-20T00:00:00Z", comments=("a note",))}
+    with (
+        patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC),
+        patch(f"{_MOD}.epics.child_states", return_value=children),
+        patch(f"{_MOD}.github.read_json", side_effect=_fake_gh(views)),
+    ):
+        [item] = queue_view.intake_items("org/.github", "org", stops=stops)
+    assert item.note == "a note"
+    assert stops.stopped == ()
 
 
 # -- planning: the security-advisory hold ------------------------------------------
@@ -892,7 +932,7 @@ def test_planning_unreadable_advisory_home_fails_loudly() -> None:
         patch(f"{_MOD}.security_records.list_advisories", side_effect=unreadable),
         pytest.raises(github.GitHubAPIError, match="HTTP 404"),
     ):
-        queue_view.planning_items("org/.github", "org")
+        queue_view.planning_items("org/.github", "org", stops=trust.BatchStops())
 
 
 # -- rendering -------------------------------------------------------------------
@@ -978,7 +1018,7 @@ def test_view_field_lists() -> None:
             patch(f"{_MOD}.github.read_json", side_effect=gh),
             patch(f"{_MOD}.github.repo_exists", return_value=False),
         ):
-            reader("org/.github", "org")
+            reader("org/.github", "org", stops=trust.BatchStops())
         find.assert_called_once_with(kind, "org/.github", "org")
         [fields] = _fields(gh)
         assert {"labels", "comments"} <= set(fields.split(",")), (kind, fields)
@@ -1056,7 +1096,7 @@ def test_intake_item_has_no_size(trusted: MagicMock) -> None:
         patch(f"{_MOD}.epics.child_states", return_value=children),
         patch(f"{_MOD}.github.read_json", side_effect=_fake_gh(views)),
     ):
-        [item] = queue_view.intake_items("org/.github", "org")
+        [item] = queue_view.intake_items("org/.github", "org", stops=trust.BatchStops())
     assert item.size is None
     trusted.assert_not_called()
 
@@ -1068,7 +1108,7 @@ def test_trusted_authors_error_propagates(trusted: MagicMock) -> None:
         patch(f"{_MOD}.epics.child_states", return_value=[]),
         pytest.raises(ValueError, match="'human' is empty"),
     ):
-        queue_view.deferred_items("org/.github", "org")
+        queue_view.deferred_items("org/.github", "org", stops=trust.BatchStops())
 
 
 def _sized(number: int, created_at: str, size: SizeRecord | None) -> QueueItem:

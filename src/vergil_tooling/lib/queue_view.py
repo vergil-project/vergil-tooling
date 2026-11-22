@@ -71,7 +71,11 @@ through :func:`vergil_tooling.lib.trusted_comments.bodies`, loading the trusted
 authors once per view, so a comment the layer does not trust (an outsider's,
 or one an outsider edited) never sets a planning marker, a deferral note or
 the latest note. Each skipped comment is reported on stderr, metadata only,
-and the view carries on; a read the layer cannot complete fails the view.
+and the view carries on. A comment read the layer cannot complete stops that
+item only (spec §5.3, batch runs; #4966): the item is left out of the view and
+recorded as a read-failure stop in the caller's
+:class:`~vergil_tooling.lib.trust.BatchStops`, and the view carries on with the
+rest. Any other read failure still fails the whole view.
 
 Planning and deferred items carry an **epic size**
 (:mod:`vergil_tooling.lib.epic_size`): each view reads the item's labels and
@@ -103,6 +107,7 @@ from vergil_tooling.lib import (
     in_flight,
     live_branches,
     security_records,
+    trust,
     trusted_comments,
 )
 from vergil_tooling.lib.epics import IssueRef
@@ -115,6 +120,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.epic_size import SizeRecord
     from vergil_tooling.lib.in_flight import Disposition
     from vergil_tooling.lib.security_records import Advisory
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 # Progress-marker line prefixes. ``epic-create`` writes the first three as lines
 # in planning-issue comments and the last in the new epic's body; the skill
@@ -324,19 +330,54 @@ def _oldest_first(items: list[QueueItem]) -> list[QueueItem]:
     return sorted(items, key=lambda i: (i.created_at, i.ref.slug))
 
 
-def intake_items(home: str, name: str) -> list[QueueItem]:
-    """The open intake items under *home*'s intake epic for *name*, oldest first."""
+# The field a queue item's read-failure stop names: the view stops on its comments.
+STOP_FIELD = "comments"
+
+
+def _trusted_bodies(
+    ref: IssueRef, authors: TrustedAuthors, stops: trust.BatchStops
+) -> list[str] | None:
+    """*ref*'s trusted comment bodies, or ``None`` when the layer cannot read them.
+
+    A read failure is a stop on this item only (spec §5.3): it is added to
+    *stops* with its :class:`~vergil_tooling.lib.trust.TrustReadError` message,
+    and the caller leaves the item out and carries on.
+    """
+    try:
+        return trusted_comments.bodies(ref, authors)
+    except trust.TrustReadError as exc:
+        item = trust.Skipped(
+            repo=f"{ref.owner}/{ref.repo}",
+            number=ref.number,
+            kind="issue",
+            login=None,
+            at="",
+            field=STOP_FIELD,
+            cause=trust.READ_FAILURE,
+        )
+        stops.add(item, trust.READ_FAILURE, detail=str(exc))
+        return None
+
+
+def intake_items(home: str, name: str, *, stops: trust.BatchStops) -> list[QueueItem]:
+    """The open intake items under *home*'s intake epic for *name*, oldest first.
+
+    An item whose comments cannot be read is left out and added to *stops*.
+    """
     authors = load_trusted_authors()
     items: list[QueueItem] = []
     for ref in _open_children(epics.INTAKE, home, name):
         view = _view(ref, "title,createdAt")
+        comments = _trusted_bodies(ref, authors, stops)
+        if comments is None:
+            continue
         items.append(
             QueueItem(
                 ref=ref,
                 title=str(view.get("title") or ""),
                 created_at=str(view.get("createdAt") or ""),
                 state="waiting",
-                note=_latest_note(trusted_comments.bodies(ref, authors)),
+                note=_latest_note(comments),
                 epic=None,
             )
         )
@@ -501,13 +542,14 @@ def _holds(views: Sequence[tuple[IssueRef, dict[str, Any]]]) -> dict[IssueRef, A
     }
 
 
-def planning_items(home: str, name: str) -> list[QueueItem]:
+def planning_items(home: str, name: str, *, stops: trust.BatchStops) -> list[QueueItem]:
     """The open planning items under *home*'s planning epic for *name*, oldest first.
 
     An item is held back from ``ready-to-close`` while :func:`advisory_hold`
     holds it (spec 4.4b of epic vergil-project/.github#517, spec 4.2 of #573,
     spec 6.3 of #1331; #3826, #3996). A broken pair replaces the item's
-    latest-comment note but does not hold it.
+    latest-comment note but does not hold it. An item whose comments cannot be
+    read is left out and added to *stops*.
     """
     trusted = epic_size.trusted_logins()
     authors = load_trusted_authors()
@@ -518,7 +560,9 @@ def planning_items(home: str, name: str) -> list[QueueItem]:
     holds = _holds(views)
     items: list[QueueItem] = []
     for ref, view in views:
-        comments = trusted_comments.bodies(ref, authors)
+        comments = _trusted_bodies(ref, authors, stops)
+        if comments is None:
+            continue
         markers = parse_planning_markers(comments)
         hold = holds[ref]
         state, demoted = _planning_state(_labels(view), markers, advisory_held=hold.held)
@@ -543,11 +587,12 @@ def planning_items(home: str, name: str) -> list[QueueItem]:
     return _oldest_first(items)
 
 
-def deferred_items(home: str, name: str) -> list[QueueItem]:
+def deferred_items(home: str, name: str, *, stops: trust.BatchStops) -> list[QueueItem]:
     """The open deferred items under *home*'s deferred epic for *name*.
 
     Least recently deferred first; an item with no deferral comment sorts first,
-    with an empty note.
+    with an empty note. An item whose comments cannot be read is left out and
+    added to *stops*.
     """
     trusted = epic_size.trusted_logins()
     authors = load_trusted_authors()
@@ -555,7 +600,10 @@ def deferred_items(home: str, name: str) -> list[QueueItem]:
     for ref in _open_children(epics.DEFERRED, home, name):
         view = _view(ref, "title,createdAt,labels,comments")
         size = _size_record(view, trusted)
-        deferral = parse_latest_deferral(trusted_comments.bodies(ref, authors))
+        comments = _trusted_bodies(ref, authors, stops)
+        if comments is None:
+            continue
+        deferral = parse_latest_deferral(comments)
         note = (
             f"Deferred {deferral.day}: {deferral.reason} | Revisit when: {deferral.revisit_when}"
             if deferral is not None

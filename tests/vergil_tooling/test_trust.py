@@ -628,8 +628,37 @@ def test_batch_summary_lists_stops_outside_actions() -> None:
     _stops().print_summary(stream := io.StringIO())
     assert stream.getvalue() == (
         f"stopped: {REPO}#7 issue {SPAM_LOGIN} at {CREATED} on body (untrusted)\n"
-        f"stopped: {REPO}#9 issue a deleted account at  on body (read-failure)\n"
+        f"stopped on a read failure: {REPO}#9 on body\n"
     )
+
+
+_READ_FAILURE = Skipped(REPO, 9, "issue", None, "", "comments", trust.READ_FAILURE)
+
+
+def test_batch_summary_read_failure_detail_outside_actions() -> None:
+    stops = BatchStops()
+    stops.add(_READ_FAILURE, trust.READ_FAILURE, detail="cannot read who wrote the content (x)")
+    stops.print_summary(stream := io.StringIO())
+    assert stream.getvalue() == (
+        f"stopped on a read failure: {REPO}#9 on comments: cannot read who wrote the content (x)\n"
+    )
+
+
+def test_batch_summary_read_failure_detail_not_printed_under_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    stops = BatchStops()
+    stops.add(_READ_FAILURE, trust.READ_FAILURE, detail="the detail")
+    stops.print_summary(stream := io.StringIO())
+    assert stream.getvalue() == (
+        f"stopped 1 item(s) (read-failure: 1)\nstopped on a read failure: {REPO}#9\n"
+    )
+
+
+def test_batch_stopped_lists_items_in_order() -> None:
+    assert BatchStops().stopped == ()
+    assert [item.number for item in _stops().stopped] == [7, 9]
 
 
 def test_batch_summary_empty_prints_nothing() -> None:

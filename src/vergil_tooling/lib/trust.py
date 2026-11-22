@@ -1402,25 +1402,42 @@ class BatchStops:
     """The items a batch run stopped: it carries on, and exits non-zero at the end."""
 
     def __init__(self) -> None:
-        self._stops: list[tuple[Skipped, str]] = []
+        self._stops: list[tuple[Skipped, str, str | None]] = []
 
-    def add(self, item: Skipped, cause: str) -> None:
-        """Record a stop on *item*; *cause* is a role_of cause or :data:`READ_FAILURE`."""
-        self._stops.append((item, cause))
+    def add(self, item: Skipped, cause: str, *, detail: str | None = None) -> None:
+        """Record a stop on *item*; *cause* is a role_of cause or :data:`READ_FAILURE`.
+
+        *detail* is a read failure's :class:`TrustReadError` message, metadata
+        only; it is printed outside GitHub Actions.
+        """
+        self._stops.append((item, cause, detail))
+
+    @property
+    def stopped(self) -> tuple[Skipped, ...]:
+        """The stopped items, in the order they were added."""
+        return tuple(item for item, _, _ in self._stops)
 
     def exit_code(self) -> int:
         return 1 if self._stops else 0
 
     def print_summary(self, stream: TextIO) -> None:
-        """Every stop, metadata only; under Actions, counts by cause and read failures."""
+        """Every stop, metadata only; under Actions, counts by cause and read failures.
+
+        A read failure has no author or time to show: it is named by repo,
+        number and field, with its detail when there is one.
+        """
         if not self._stops:
             return
         if _under_actions():
-            causes = [cause for _, cause in self._stops]
+            causes = [cause for _, cause, _ in self._stops]
             print(f"stopped {len(self._stops)} item(s) ({_counts(causes)})", file=stream)
-            for item, cause in self._stops:
+            for item, cause, _ in self._stops:
                 if cause == READ_FAILURE:
                     print(f"stopped on a read failure: {item.repo}#{item.number}", file=stream)
             return
-        for item, cause in self._stops:
-            print(f"stopped: {item.describe()} ({cause})", file=stream)
+        for item, cause, detail in self._stops:
+            if cause != READ_FAILURE:
+                print(f"stopped: {item.describe()} ({cause})", file=stream)
+                continue
+            line = f"stopped on a read failure: {item.repo}#{item.number} on {item.field}"
+            print(line if detail is None else f"{line}: {detail}", file=stream)

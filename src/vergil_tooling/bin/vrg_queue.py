@@ -23,17 +23,32 @@ queue and ``--size S,M`` (``unsized`` for the unsized) filters it; an item in
 error is always listed, and a filtered header adds ``<M> shown``. Either flag
 with any other view, or a bare run, is refused.
 
-Exit status: **0** when every queue was read and no item's sizing is in
-error; **2** when every queue was read and one or more items are in error,
-each named on stderr as ``vrg-queue: <ref>: <error>`` after the full listing
-(``--json`` included); **1** when a queue could not be read or the command
-line is invalid (every usage error exits 1, never 2). 1 wins over 2.
+Exit status: **0** when every queue was read in full and no item's sizing is
+in error; **2** when every queue was read in full and one or more items are in
+error, each named on stderr as ``vrg-queue: <ref>: <error>`` after the full
+listing (``--json`` included); **1** when a queue could not be read, an item
+was stopped, or the command line is invalid (every usage error exits 1, never
+2). 1 wins over 2: 2 always means a complete listing.
 
 A queue that cannot be read (a failed GitHub call, an advisory line naming
 another org, a malformed response, trusted authors not configured or invalid)
 is named on stderr with the reason and the run exits 1. A bare text run still
 lists the queues it could read; a bare ``--json`` run prints nothing on
 stdout, so a partial object is never taken for the whole.
+
+An item whose comments the trust layer cannot read in full is **stopped**,
+not the queue (spec §5.3 of epic vergil-project/.github#1467: batch runs stop
+the item, not the run). A text run lists the rest of the queue; its header
+counts the stopped items (``<N> open item(s), <K> stopped``, ``<N>`` counting
+them), and each is shown after the listed items as
+``<ref>  stopped: its comments could not be read (see stderr)``. After every
+listing, each stop is named on stderr by the trust layer's
+:class:`~vergil_tooling.lib.trust.BatchStops` (``stopped on a read failure:
+<ref> on comments: <reason>``; under GitHub Actions, a count and the refs),
+and the run exits 1. A ``--json`` run, named queue or bare, with any stopped
+item prints nothing on stdout, as for a queue that cannot be read: a list
+without its stopped items must not be taken for the whole queue. It still
+reads every queue and names every stop on stderr, then exits 1.
 
 The home is always an org's ``.github``, which must exist: by default the
 current org's, and with ``--repo OWNER/REPO`` that repo's org's. Nothing is
@@ -103,8 +118,9 @@ _VIEWS = {
 # (both ``ValueError``s; #3826). A missing token is not among them: it reaches
 # ``cli_main``'s guided message. Each is reported, never shown as an empty queue.
 # Trusted authors that are not configured fail the intake, planning and deferred views
-# (invalid ones are a ``ValueError``), never counting every comment instead,
-# and so does a comment read the trust layer cannot complete.
+# (invalid ones are a ``ValueError``), never counting every comment instead.
+# An item's comment read the trust layer cannot complete stops that item only
+# (the view's ``stops``); any other ``TrustReadError`` still fails the view.
 _VIEW_ERRORS = (
     github.GitHubAPIError,
     trust.TrustReadError,
@@ -148,13 +164,15 @@ def main(argv: list[str] | None = None) -> int:
     results: dict[str, list[QueueItem] | None] = {}
     # Bare mode: the queues that could not be read, and why.
     failures: dict[str, Exception] = {}
+    # Each queue's stopped items (spec §5.3: a batch run stops the item, not the run).
+    stops = {queue: trust.BatchStops() for queue in _VIEWS}
     # Scope the App token to the target's owner, not the cwd org (#3409).
     with github.target_org(owner):
         # The queues live in <owner>/.github, which must exist (#3613).
         home, name = epics.require_org_home(owner), owner
         if args.queue is not None:
             try:
-                items = _VIEWS[args.queue](home, name)
+                items = _VIEWS[args.queue](home, name, stops=stops[args.queue])
             except queue_view.QueueNotFoundError as exc:
                 print(f"vrg-queue: {exc}", file=sys.stderr)
                 return 1
@@ -166,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             for queue, view in _VIEWS.items():
                 try:
-                    results[queue] = view(home, name)
+                    results[queue] = view(home, name, stops=stops[queue])
                 except queue_view.QueueNotFoundError:
                     results[queue] = None
                 except github.MissingGitHubTokenError:
@@ -174,22 +192,33 @@ def main(argv: list[str] | None = None) -> int:
                 except _VIEW_ERRORS as exc:
                     failures[queue] = exc
     if args.queue is not None:
-        total = len(items)
+        queue_stops = stops[args.queue]
+        total = len(items) + len(queue_stops.stopped)
         if args.queue == _PLANNING:
             items = queue_view.sort_planning(items, args.sort or "age")
             if sizes is not None:
                 items = queue_view.filter_planning(items, sizes)
         if args.json:
+            if queue_stops.stopped:
+                _report_stops(args.queue, home, name, queue_stops, as_json=True)
+                return 1
             print(json.dumps(queue_view.to_json(items), indent=2))
         else:
             shown = len(items) if sizes is not None else None
-            _print_queue(args.queue, home, name, items, total=total, shown=shown)
-        return _report_size_errors(items)
+            _print_queue(args.queue, home, name, items, total=total, shown=shown, stops=queue_stops)
+            _report_stops(args.queue, home, name, queue_stops, as_json=False)
+        status = _report_size_errors(items)
+        # A stopped item (exit 1) wins over items in error (exit 2).
+        return queue_stops.exit_code() or status
+    stopped = [queue for queue, found in stops.items() if found.stopped]
     if args.json:
-        if failures:
-            # Never a partial object: a failed queue must not read as present or as null.
+        if failures or stopped:
+            # Never a partial object: a failed queue must not read as present or as
+            # null, and a queue without its stopped items must not read as whole.
             for queue, failure in failures.items():
                 _report_failure(queue, home, name, failure)
+            for queue in stopped:
+                _report_stops(queue, home, name, stops[queue], as_json=True)
             return 1
         payload = {q: None if v is None else queue_view.to_json(v) for q, v in results.items()}
         print(json.dumps(payload, indent=2))
@@ -203,10 +232,29 @@ def main(argv: list[str] | None = None) -> int:
         elif (found := results[queue]) is None:
             print(f"{queue} queue for {name} in {home}: no queue yet")
         else:
-            _print_queue(queue, home, name, found, total=len(found), shown=None)
+            total = len(found) + len(stops[queue].stopped)
+            _print_queue(queue, home, name, found, total=total, shown=None, stops=stops[queue])
+    for queue in stopped:
+        _report_stops(queue, home, name, stops[queue], as_json=False)
     status = _report_size_errors(v for found in results.values() if found for v in found)
-    # A queue that could not be read (exit 1) wins over items in error (exit 2).
-    return 1 if failures else status
+    # A queue that could not be read or a stopped item (exit 1) wins over items in
+    # error (exit 2).
+    return 1 if failures or stopped else status
+
+
+def _report_stops(
+    queue: str, home: str, name: str, stops: trust.BatchStops, *, as_json: bool
+) -> None:
+    """Name *queue*'s stopped items on stderr; with *as_json*, say why no JSON was printed."""
+    if not stops.stopped:
+        return
+    stops.print_summary(sys.stderr)
+    if as_json:
+        print(
+            f"vrg-queue: {queue} queue for {name} in {home}: {len(stops.stopped)} item(s) "
+            "stopped, so no JSON is printed (a list without them is not the whole queue)",
+            file=sys.stderr,
+        )
 
 
 def _report_size_errors(items: Iterable[QueueItem]) -> int:
@@ -256,15 +304,30 @@ def _report_failure(queue: str, home: str, name: str, exc: Exception) -> None:
 
 
 def _print_queue(
-    queue: str, home: str, name: str, items: list[QueueItem], *, total: int, shown: int | None
+    queue: str,
+    home: str,
+    name: str,
+    items: list[QueueItem],
+    *,
+    total: int,
+    shown: int | None,
+    stops: trust.BatchStops,
 ) -> None:
-    """The queue's header and lines; *shown* (a filtered count) adds ``, <M> shown``."""
+    """The queue's header and lines, then a line per stopped item.
+
+    *total* counts the stopped items too; *stops* adds ``, <K> stopped`` and
+    *shown* (a filtered count) adds ``, <M> shown``.
+    """
     header = f"{queue} queue for {name} in {home}: {total} open item(s)"
+    if stops.stopped:
+        header += f", {len(stops.stopped)} stopped"
     if shown is not None:
         header += f", {shown} shown"
     print(header)
     if items:
         print(queue_view.render_text(items, now=datetime.now(UTC)))
+    for item in stops.stopped:
+        print(f"{item.repo}#{item.number}  stopped: its comments could not be read (see stderr)")
 
 
 class _Parser(argparse.ArgumentParser):
@@ -341,7 +404,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help=(
             "Emit a JSON list of queue items; with no queue named, an object "
-            "keyed by queue (null for a queue that does not exist yet)"
+            "keyed by queue (null for a queue that does not exist yet). Nothing is "
+            "printed when a queue cannot be read or an item is stopped"
         ),
     )
     return parser.parse_args(argv)
