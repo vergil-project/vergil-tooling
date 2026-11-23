@@ -356,13 +356,74 @@ def test_non_required_failure_keeps_waiting(fake: FakeGitHub) -> None:
     assert wait_for_merge(PR).merged
 
 
-def test_conflict(fake: FakeGitHub) -> None:
+def test_conflict_once_it_settles(fake: FakeGitHub, capsys: pytest.CaptureFixture[str]) -> None:
     fake.script(pr_state(), pr_state(mergeStateStatus="DIRTY"))
 
     result = wait_for_merge(PR)
 
     assert result.reason == "conflict"
     assert result.merge_state_status == "DIRTY"
+    assert result.detail == (
+        "the PR has a merge conflict with its base (reported at its head for 2m00s)"
+    )
+    # First read DIRTY at 15s; it settles CONFLICT_SETTLE_SECS (120s) later.
+    assert finalize_watch.CONFLICT_SETTLE_SECS == 120
+    assert fake.clock == 135
+    err = capsys.readouterr().err
+    assert err.count("GitHub reports a merge conflict") == 1  # announced once, not per poll
+    assert f"at {HEAD_A[:12]}" in err
+    assert "re-checking for up to 2m00s" in err
+
+
+def test_a_conflict_that_clears_before_it_settles_keeps_waiting(fake: FakeGitHub) -> None:
+    """Just after pr-watch pushes a fix GitHub may still report the conflict the
+    push resolved; a status that clears within the settle time never ends the
+    wait (#5036)."""
+    dirty = pr_state(mergeStateStatus="DIRTY")
+    fake.script(dirty, dirty, pr_state(mergeStateStatus="CLEAN"), merged())
+
+    result = wait_for_merge(PR, conflict_settle=60)
+
+    assert result.merged
+    assert fake.sleeps == [15, 15, 15]
+
+
+def test_a_cleared_conflict_settles_afresh_when_it_returns(fake: FakeGitHub) -> None:
+    dirty = pr_state(mergeStateStatus="DIRTY")
+    fake.script(dirty, dirty, pr_state(), dirty)
+
+    result = wait_for_merge(PR, conflict_settle=30)
+
+    assert result.reason == "conflict"
+    # Cleared at 30s and back at 45s, so it settles at 75s, not 30s.
+    assert fake.clock == 75
+
+
+def test_a_new_head_starts_the_conflict_settle_again(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dirty_a = pr_state(mergeStateStatus="DIRTY")
+    dirty_b = pr_state(mergeStateStatus="DIRTY", headRefOid=HEAD_B)
+    fake.script(dirty_a, dirty_a, dirty_b)
+
+    result = wait_for_merge(PR, conflict_settle=30)
+
+    assert result.reason == "conflict"
+    assert result.head_sha == HEAD_B
+    # HEAD_B is first read at 30s, so the conflict settles at 60s, not 30s.
+    assert fake.sleeps == [15, 15, 15, 15]
+    err = capsys.readouterr().err
+    assert f"at {HEAD_A[:12]}" in err
+    assert f"at {HEAD_B[:12]}" in err
+
+
+def test_the_conflict_settle_is_finalize_watchs_rule() -> None:
+    """vrg-pr-await shares vrg-finalize-pr's settle rule rather than a copy of it."""
+    source = inspect.getsource(pr_await)
+    assert "finalize_watch.ConflictSettle(" in source
+    assert "class ConflictSettle" not in source
+    default = inspect.signature(wait_for_merge).parameters["conflict_settle"].default
+    assert default == finalize_watch.CONFLICT_SETTLE_SECS
 
 
 def test_deadline_passes_with_pr_pending(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:

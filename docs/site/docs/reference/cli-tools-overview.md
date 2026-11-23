@@ -349,7 +349,12 @@ reasons are:
 - `check_cancelled`: a required check was cancelled, and no newer run of its
   workflow replaced the cancelled run within two minutes; `failed_checks`
   names it.
-- `conflict`: the PR has a merge conflict with its base.
+- `conflict`: the PR has a merge conflict with its base, reported at the
+  same head for two minutes. After a push, GitHub takes a while to
+  recompute whether the PR can merge, and meanwhile it may still report
+  the conflict the push resolved, so the wait goes on first and says so on
+  stderr. A new head starts the two minutes again, and any other merge
+  state clears the conflict. It is the rule `vrg-finalize-pr` applies.
 - `auto_merge_off`: auto-merge is off, at the start or after a push.
 - `closed`: the PR was closed without merging.
 - `orphaned_check`: every pending check is stuck after its workflow run

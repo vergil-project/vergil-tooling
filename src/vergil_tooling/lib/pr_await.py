@@ -25,7 +25,15 @@ order:
    replaced, for :data:`finalize_watch.CANCEL_GRACE_SECS` on end: reason
    ``check_cancelled``, naming the checks in ``failed_checks``. Until then
    the wait goes on, since a re-run may still start.
-6. **Conflict** (``mergeStateStatus`` ``DIRTY``): reason ``conflict``.
+6. **Conflict** (``mergeStateStatus`` ``DIRTY``) reported at the same head
+   for :data:`finalize_watch.CONFLICT_SETTLE_SECS` on end: reason
+   ``conflict``. Until then the wait goes on: GitHub recomputes a PR's
+   mergeable status after a push, and may report the old conflict
+   meanwhile, so a conflict read just after pr-watch pushes a fix is not
+   yet one (vergil-tooling#5036). A new head starts the count again, and
+   any other merge state clears it. The rule is
+   :class:`finalize_watch.ConflictSettle`, the one ``vrg-finalize-pr``
+   applies (vergil-tooling#4998).
 7. **Orphaned check:** reason ``orphaned_check``. The PR is ``BLOCKED`` and
    every pending check is stuck non-terminal after its backing workflow run
    completed (``github.orphaned_check_names``). Such a check emits no further
@@ -135,12 +143,15 @@ def judge(
     required: frozenset[str] | None,
     cancel: finalize_watch.CancelGrace | None = None,
     now: float = 0.0,
+    conflict: finalize_watch.ConflictSettle | None = None,
 ) -> AwaitResult | None:
     """*snap*'s terminal result, steps 1-6 of the module docstring, or ``None``.
 
     *required* ``None`` counts every check as required. *cancel* tracks the
     cancelled checks' grace period at *now*; with none, as for one read, a
-    cancelled check is reported at once.
+    cancelled check is reported at once. *conflict* tracks how long a
+    conflict has been reported at one head, at *now*; with none, as for one
+    read, a conflict is reported at once.
     """
     if snap.state == "MERGED":
         if not snap.merge_commit:
@@ -170,8 +181,16 @@ def judge(
         else:
             detail += f"started within {github.format_wait(cancel.grace)}"
         return _cannot_merge(snap, "check_cancelled", detail, failed=checks.cancelled)
-    if snap.merge_state == "DIRTY":
-        return _cannot_merge(snap, "conflict", "the PR has a merge conflict with its base")
+    conflicted = snap.merge_state == "DIRTY"
+    if conflict is None:
+        if conflicted:
+            return _cannot_merge(snap, "conflict", "the PR has a merge conflict with its base")
+    elif conflict.settled(conflicted=conflicted, head=snap.head, now=now):
+        detail = (
+            "the PR has a merge conflict with its base (reported at its head for "
+            f"{github.format_wait(conflict.settle)})"
+        )
+        return _cannot_merge(snap, "conflict", detail)
     return None
 
 
@@ -224,7 +243,8 @@ def standing_block(pr: str) -> AwaitResult | None:
       failed, so a pending or green PR costs no extra call.
     - An orphaned or a cancelled check is reported from this one read, with
       no grace period: a single read cannot wait one out, so the detail says
-      that GitHub may only be delayed, or that a re-run may still start.
+      that GitHub may only be delayed, or that a re-run may still start. A
+      conflict is reported from this one read too, with no settle time.
 
     Every failure to read the PR raises, as in :func:`wait_for_merge`.
     """
@@ -250,11 +270,14 @@ def wait_for_merge(
     poll_interval: float = _POLL_INTERVAL,
     orphan_grace: float | None = None,
     cancel_grace: float = finalize_watch.CANCEL_GRACE_SECS,
+    conflict_settle: float = finalize_watch.CONFLICT_SETTLE_SECS,
 ) -> AwaitResult:
     """Block until *pr* merges or cannot merge; see the module docstring.
 
-    The deadline, the grace period and *poll_interval* are checked before the
-    PR is read: a malformed value raises :class:`ValueError`.
+    *conflict_settle* is how long a conflict must be reported at one head
+    before the wait ends with reason ``conflict``. The deadline, the grace
+    period and *poll_interval* are checked before the PR is read: a
+    malformed value raises :class:`ValueError`.
     """
     deadline = finalize_watch.deadline_secs()
     grace = github.orphan_grace_secs() if orphan_grace is None else orphan_grace
@@ -267,11 +290,22 @@ def wait_for_merge(
     suspected: list[str] = []
     suspected_since = 0.0
     cancel = finalize_watch.CancelGrace(cancel_grace)
+    conflict = finalize_watch.ConflictSettle(conflict_settle)
+    announced: str | None = None
     while True:
-        result = judge(snap, required, cancel, time.monotonic())
+        result = judge(snap, required, cancel, time.monotonic(), conflict)
         if result is not None:
             return result
         now = time.monotonic()
+        if conflict.head != announced:
+            announced = conflict.head
+            if announced is not None:
+                print(
+                    f"GitHub reports a merge conflict at {announced[:12]}, which may be "
+                    "the status from before a push; re-checking for up to "
+                    f"{github.format_wait(conflict.settle)} before reporting it.",
+                    file=sys.stderr,
+                )
         orphaned = orphaned_block(snap)
         if not orphaned:
             suspected = []
