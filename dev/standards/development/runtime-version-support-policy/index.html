@@ -18653,6 +18653,14 @@ language it reads upstream release and EOL data, applies that language's
 policy and computes the target window. For a language whose automation is
 <code>pr</code> it opens the pull request that changes the manifest; for one whose
 automation is <code>report</code> it reports the gap in an issue until a human acts.</p>
+<div class="admonition note">
+<p class="admonition-title">The lifecycle job is turned off</p>
+<p>The job is disabled in vergil-containers' nightly <code>ops.yml</code> until
+<a href="https://github.com/vergil-project/.github/issues/1128">vergil-project/.github#1128</a>
+restores it. Until then nothing opens the add or drop PRs or the gap
+issues, so the window does not move by itself, and an empty queue of
+lifecycle PRs and issues no longer means the window is in sync.</p>
+</div>
 <p>Repos do not edit anything when the window moves, and there are no per-repo
 tiers, preview periods or job labels to maintain.</p>
 <h2 id="which-versions-a-repo-builds">Which versions a repo builds<a class="headerlink" href="#which-versions-a-repo-builds" title="Permanent link">&para;</a></h2>

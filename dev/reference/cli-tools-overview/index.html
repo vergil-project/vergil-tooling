@@ -20462,7 +20462,9 @@ unknown-flag error. The version is read with <code>gh --version</code> once per 
 binary and cached in <code>$XDG_CACHE_HOME/vergil/gh-version.json</code> (default
 <code>~/.cache</code>), keyed on the binary's path, size and modification time, so an
 upgrade of gh is seen at once. <code>vrg-host status</code> reports a gh below the
-minimum as an ERROR (see <a href="../dev/host/#minimum-versions">Minimum versions</a>).</p>
+minimum as an ERROR (see <a href="../dev/host/#minimum-versions">Minimum versions</a>).
+Every other <code>vrg-*</code> tool that runs gh makes the same check before its first
+gh call, so an old gh is refused the same way there too.</p>
 <table>
 <thead>
 <tr>
@@ -20749,7 +20751,12 @@ reasons are:</p>
 <li><code>check_cancelled</code>: a required check was cancelled, and no newer run of its
   workflow replaced the cancelled run within two minutes; <code>failed_checks</code>
   names it.</li>
-<li><code>conflict</code>: the PR has a merge conflict with its base.</li>
+<li><code>conflict</code>: the PR has a merge conflict with its base, reported at the
+  same head for two minutes. After a push, GitHub takes a while to
+  recompute whether the PR can merge, and meanwhile it may still report
+  the conflict the push resolved, so the wait goes on first and says so on
+  stderr. A new head starts the two minutes again, and any other merge
+  state clears the conflict. It is the rule <code>vrg-finalize-pr</code> applies.</li>
 <li><code>auto_merge_off</code>: auto-merge is off, at the start or after a push.</li>
 <li><code>closed</code>: the PR was closed without merging.</li>
 <li><code>orphaned_check</code>: every pending check is stuck after its workflow run
@@ -20842,7 +20849,7 @@ has), <code>author</code> is <code>null</code> for a deleted account,
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success, 1 GitHub API failure or malformed response, 2 bad arguments</td>
+<td>0 success, 1 GitHub API failure, malformed response or trust-layer read failure, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -21201,8 +21208,9 @@ subject (the merge-commit <code>Merge pull request #N from …</code> pattern, t
 squash-merge <code>… (#N)</code> pattern), then from the GitHub API's
 commit-to-pulls lookup, which takes only the commit's merged PR: with
 none merged it is an error naming the PRs found, never the first of them.
-<code>--pr</code> skips the lookup. Used by the <code>version-bump-pr</code> composite action in
-vergil-actions.</p>
+<code>--pr</code> skips the lookup. No workflow calls it: vergil-actions' former
+caller, the <code>version-bump-pr</code> composite action, has been removed, so it is
+a manual tool.</p>
 <table>
 <thead>
 <tr>
@@ -23355,6 +23363,18 @@ JSON on stdin and prints a deny decision when a command invokes <code>git</code>
 <code>gh</code> at command position. Quoted spans are stripped before matching, and
 the quoted argument of <code>bash -c</code> / <code>sh -c</code> is checked too. It is a no-op
 outside a repo with a <code>vergil.toml</code>.</p>
+<p>In an agent identity it also refuses the raw <code>vrg-gh</code> reads of issue and
+PR content and names <a href="#vrg-issue-read"><code>vrg-issue-read</code></a>, the trusted read
+command, in their place: <code>--comments</code> on an <code>issue</code> or <code>pr</code> command, a
+<code>--json</code> that selects <code>body</code>, <code>comments</code>, <code>reviews</code>, <code>latestReviews</code> or
+<code>closingIssuesReferences</code>, an <code>issue view</code> or <code>pr view</code> with no <code>--json</code>,
+an <code>api</code> path with a <code>comments</code> or <code>reviews</code> segment, and an issue or PR
+list or search whose query matches text. A list or search made only of
+qualifiers that requests no content field, and other metadata reads such
+as <code>issue view --json labels,parent,state</code>, stay allowed. This blocklist
+guards against accidents; it is not a security boundary. Human mode is
+unchanged. See
+<a href="../hooks/pre-commit/#raw-content-reads">Raw content reads</a>.</p>
 <p>Two layers call it: each repo's <code>.claude/settings.json</code> wires
 <code>.claude/hooks/guard.sh</code>, a shim that runs <code>vrg-hook-guard</code> when
 vergil-tooling is installed and otherwise falls back to a <code>jq</code>-based hard
@@ -23385,7 +23405,7 @@ parse or check is refused (see
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A deny decision as JSON on stdout for raw <code>git</code>/<code>gh</code>; in a managed repository, malformed input is refused with a message on stderr; anything else allows the command</td>
+<td>A deny decision as JSON on stdout for raw <code>git</code>/<code>gh</code>, and, in an agent identity, for a raw <code>vrg-gh</code> content read; in a managed repository, malformed input is refused with a message on stderr; anything else allows the command</td>
 </tr>
 <tr>
 <td>Exit codes</td>

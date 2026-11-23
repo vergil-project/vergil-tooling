@@ -18990,7 +18990,9 @@ today.</p>
 repository that has a <code>vergil.toml</code>.</p>
 <p><code>.claude/hooks/guard.sh</code>, wired in <code>.claude/settings.json</code>, calls
 <code>vrg-hook-guard</code>. It blocks raw <code>git</code> and <code>gh</code> commands and lets
-<code>vrg-git</code>, <code>vrg-gh</code> and the other <code>vrg-*</code> tools through. See the
+<code>vrg-git</code>, <code>vrg-gh</code> and the other <code>vrg-*</code> tools through, but refuses an
+agent's raw <code>vrg-gh</code> read of issue or PR content, naming <code>vrg-issue-read</code>.
+See the
 <a href="../../reference/hooks/pre-commit/">Claude Code Hook Guard reference</a>.</p>
 <h3 id="vrg-git">vrg-git<a class="headerlink" href="#vrg-git" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> every <code>vrg-git</code> command.</p>

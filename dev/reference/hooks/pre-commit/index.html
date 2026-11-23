@@ -14956,6 +14956,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#raw-content-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raw content reads
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#malformed-input-fails-closed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18412,6 +18423,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#raw-content-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raw content reads
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#malformed-input-fails-closed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18538,7 +18560,36 @@
 <p>The hook guard is a Claude Code <code>PreToolUse</code> hook that blocks raw
 <code>git</code> and <code>gh</code> commands in agent sessions. It delegates to
 <code>vrg-hook-guard</code> (when vergil-tooling is installed) or falls back
-to a <code>jq</code>-based hard deny.</p>
+to a <code>jq</code>-based hard deny. In an agent identity, <code>vrg-hook-guard</code> also
+refuses raw reads of issue and PR content (see
+<a href="#raw-content-reads">Raw content reads</a>).</p>
+<h2 id="raw-content-reads">Raw content reads<a class="headerlink" href="#raw-content-reads" title="Permanent link">&para;</a></h2>
+<p>For an agent identity, <code>vrg-hook-guard</code> refuses the obvious raw
+<code>vrg-gh</code> reads of issue and PR content, with a deny decision that names
+<a href="../../cli-tools-overview/#vrg-issue-read"><code>vrg-issue-read</code></a>, the trusted
+read command that keeps only content the trust layer trusts:</p>
+<ul>
+<li><code>--comments</code> on any <code>issue</code> or <code>pr</code> command;</li>
+<li>a <code>--json</code> that selects <code>body</code>, <code>comments</code>, <code>reviews</code>, <code>latestReviews</code>
+  or <code>closingIssuesReferences</code> on an <code>issue</code>, <code>pr</code> or
+  <code>search issues|prs</code> command;</li>
+<li>an <code>issue view</code> or <code>pr view</code> with no <code>--json</code>, whose default output
+  prints the body;</li>
+<li>an <code>api</code> path with a <code>comments</code> or <code>reviews</code> segment;</li>
+<li>an <code>issue list</code>, <code>pr list</code>, <code>search issues</code> or <code>search prs</code> whose query
+  matches text: a free-text term or an <code>in:</code> qualifier, in a list's
+  <code>--search</code> or a search's query, or a search's <code>--match</code>.</li>
+</ul>
+<p>A list or search made only of qualifiers (labels, states, dates,
+authors, <code>reason:</code>, <code>is:</code>) that requests no content field is a metadata
+read and stays allowed, as do reads such as
+<code>vrg-gh issue view &lt;N&gt; --json labels,parent,state</code> and run and release
+listings. Human mode is unchanged: the check applies only when an agent
+identity signal is present.</p>
+<p>The list is a guard against accidents, not a security boundary: what
+keeps untrusted content from driving behaviour is the trust layer
+itself. The shim's <code>jq</code> fallback, used only when vergil-tooling is not
+installed, does not apply this check.</p>
 <h2 id="malformed-input-fails-closed">Malformed input fails closed<a class="headerlink" href="#malformed-input-fails-closed" title="Permanent link">&para;</a></h2>
 <p>Inside a repository with a <code>vergil.toml</code>, the guard refuses any tool
 call it cannot check instead of letting it through. That covers

@@ -18666,8 +18666,12 @@ the <code>[package.python]</code> keys.</p>
 <h2 id="how-versions-change">How versions change<a class="headerlink" href="#how-versions-change" title="Permanent link">&para;</a></h2>
 <p>The lifecycle job in vergil-containers adds and drops Python versions. When a
 new minor is GA it opens the pull request that adds it to the manifest; when a
-minor reaches end of life it opens the one that drops it. Once the change is
-in the published window:</p>
+minor reaches end of life it opens the one that drops it (the job is turned
+off until
+<a href="https://github.com/vergil-project/.github/issues/1128">vergil-project/.github#1128</a>
+restores it; see
+<a href="../../runtime-version-support-policy/#the-lifecycle-job">The lifecycle job</a>).
+Once the change is in the published window:</p>
 <ul>
 <li>an unpinned library gains or loses a CI leg on its next build;</li>
 <li>an unpinned app moves to the newest version on its next build (a packaged

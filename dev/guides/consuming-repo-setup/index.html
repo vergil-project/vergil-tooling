@@ -19255,7 +19255,10 @@ the first of its common checks. See the
 <h2 id="step-5-claude-code-hook-guard-and-settings">Step 5: Claude Code hook guard and settings<a class="headerlink" href="#step-5-claude-code-hook-guard-and-settings" title="Permanent link">&para;</a></h2>
 <h3 id="hook-guard">Hook guard<a class="headerlink" href="#hook-guard" title="Permanent link">&para;</a></h3>
 <p><code>.claude/hooks/guard.sh</code> blocks raw <code>git</code> and <code>gh</code> commands in Claude
-Code agent sessions. It delegates to <code>vrg-hook-guard</code> when
+Code agent sessions, and agents' raw <code>vrg-gh</code> reads of issue and PR
+content (see
+<a href="../../reference/hooks/pre-commit/#raw-content-reads">Raw content reads</a>).
+It delegates to <code>vrg-hook-guard</code> when
 vergil-tooling is installed and otherwise falls back to a <code>jq</code>-based
 hard deny. <code>vrg-github-repo-init</code> writes it, executable, from the
 packaged template

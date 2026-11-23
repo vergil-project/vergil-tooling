@@ -17939,6 +17939,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#4-anyone-can-write-content-that-agents-and-automation-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Anyone can write content that agents and automation read
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18457,6 +18468,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#4-anyone-can-write-content-that-agents-and-automation-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Anyone can write content that agents and automation read
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18619,6 +18641,37 @@ call.</p>
   <a href="https://github.com/vergil-project/vergil-claude-plugin/issues/694">vergil-claude-plugin#694</a>
   (fixed by
   <a href="https://github.com/vergil-project/vergil-claude-plugin/pull/719">vergil-claude-plugin#719</a>).</li>
+</ul>
+<h3 id="4-anyone-can-write-content-that-agents-and-automation-read">4. Anyone can write content that agents and automation read<a class="headerlink" href="#4-anyone-can-write-content-that-agents-and-automation-read" title="Permanent link">&para;</a></h3>
+<p>On a public repository any GitHub account can open an issue, comment,
+edit its own text or open a pull request from a fork. Agents and
+automation read issues, comments, reviews and PRs to decide what to do,
+so that content is input to them. This is documented GitHub behaviour.</p>
+<ul>
+<li><strong>Seam:</strong> GitHub's open contribution model and Vergil's tools and
+  skills, which act on what they read.</li>
+<li><strong>Risk:</strong> content written by an identity with no role steers an
+  agent or a mechanized workflow.</li>
+<li><strong>Current mitigation:</strong> the trust rule. Content counts only when an
+  identity with a role wrote it and every editor holds one (the human,
+  the agent Apps, and each org's automation App in its own org; see
+  <a href="../account-setup/#trusted-authors">Trusted authors</a>). Every
+  behaviour-driving read goes through the trust layer, which reports
+  the rest as metadata only, or stops where the content is
+  load-bearing; a guard test fails on any read outside it (see
+  <a href="../../reference/package-architecture/#shared-libraries">Package Architecture</a>).
+  Skills read through <code>vrg-issue-read</code>, the hook guard refuses agents'
+  raw content reads as a guard against accidents, and the morning
+  review lists untrusted activity from the outsider report
+  (<code>vrg-epic-audit --untrusted</code>).</li>
+<li><strong>Desired fix:</strong> none beyond the trust rule: the repositories stay
+  public with issues on, so outside content keeps arriving, and the
+  rule is what keeps it from steering anything.</li>
+<li><strong>Comparison criterion:</strong> can an alternative restrict who may write
+  issues and comments on a public project?</li>
+<li><strong>Status:</strong> open, while the epic's live validation is outstanding.</li>
+<li><strong>Tracking:</strong>
+  <a href="https://github.com/vergil-project/.github/issues/1467">vergil-project/.github#1467</a>.</li>
 </ul>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>

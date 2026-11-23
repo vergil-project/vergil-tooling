@@ -20216,7 +20216,10 @@ skipped. What it leaves behind depends on where it failed:</p>
 <p>If a fix task for the same version and failure kind is already open,
 for example after <code>vrg-release --resume</code> re-runs an update whose
 updater failed on a transient error, no second task is filed: the new failure is added
-as a comment on the open task, which is linked as above.</p>
+as a comment on the open task, which is linked as above. Only an open
+task whose body the trust layer trusts is reused: a look-alike task
+opened or edited by an identity with no trusted role is reported on
+stderr, metadata only, and never adopted.</p>
 <p>Either way <code>vrg-release</code> exits 1, and the failure counts once in its
 summary: the <code>update-deps</code> stage fails, and <code>publish-status</code> repeats it
 as a warning, alongside any other failure. The install has still run,
@@ -20268,6 +20271,12 @@ labelled <code>dependency-update</code>. For each one:</p>
   closed without being completed means the update did not land; whether
   to close the PR or fix it is a human decision.</li>
 </ul>
+<p>Only trusted content counts toward the gate. The <code>Fix task:</code> link is
+read only from a PR body the trust layer trusts, so a PR whose body an
+untrusted identity wrote or edited has no fix task and blocks. A
+completed close clears the gate only when a trusted identity closed the
+fix task: a close by anyone else stops the release before any PR is
+touched, naming who closed it, and the human decides.</p>
 <p>Clear a blocking PR by landing its fix task, merging the PR, or closing
 it deliberately. For an urgent release, <code>--allow-pending-deps</code> lets the
 release go ahead anyway. The bypass is not silent: it prints a warning
@@ -20348,6 +20357,9 @@ its recovery:</p>
   tooling, which <code>--resume</code> cannot finish. Finish that release by hand,
   then close the issue.</li>
 </ul>
+<p>Only an issue whose body the trust layer trusts counts: a
+<code>release: X.Y.Z</code> issue opened or edited by an identity with no trusted
+role is reported on stderr, metadata only, and never blocks the start.</p>
 <p>The one exception is <code>vrg-release --supersede X.Y.Z</code>, whose check
 passes over release <code>X.Y.Z</code>'s own tracking issue, and only it (see
 <a href="#superseding-a-release">Superseding a release</a>).</p>
@@ -20533,7 +20545,7 @@ contents lookup.</p>
   prints, the <code>install</code> stage records that release and commit in the
   state block (<code>install_version</code> and <code>install_commit</code>), and the line
   names them: <code>ran — installed v2.1.340 (commit fab2581)</code>. An install
-  that reports neither keeps the plain <code>ran (</code>[publish].install<code>)</code>.
+  that reports neither keeps the plain <code>ran (`[publish].install`)</code>.
   The stage refuses while the state block does not record <code>install</code>
   done.</li>
 <li>Every issue in the list gets its record, whatever its state: closed as

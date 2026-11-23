@@ -19076,6 +19076,15 @@ non-zero <a href="#update-exit-codes">exit code</a> and <strong>turns the schedu
 red</strong>, so a non-conforming repo cannot silently persist.</p>
 <p><code>vrg-release</code> also runs <code>audit</code> before it releases, so a repo whose
 configuration has drifted cannot release until it is reconciled.</p>
+<p>In the org's own <code>.github</code> repository only, the same workflow's
+<code>trusted-authors-check</code> job runs
+<a href="../cli-tools-overview/#vrg-trusted-authors"><code>vrg-trusted-authors check</code></a>
+for the whole org, as the automation App: a missing, invalid or not
+<code>all</code>-visible <code>VRG_TRUSTED_AUTHORS</code> or <code>VRG_AUTOMATION_APP</code>, or a
+repository-level variable of either name, turns that run red. It uploads
+the values it read as the <code>trusted-authors-values</code> artifact, which the
+morning review compares with <code>vrg-trusted-authors render</code> (see
+<a href="../../guides/account-setup/#trusted-authors">Trusted authors</a>).</p>
 <h3 id="settings-the-identity-cannot-read">Settings the identity cannot read<a class="headerlink" href="#settings-the-identity-cannot-read" title="Permanent link">&para;</a></h3>
 <p>Several GitHub reads need the <code>administration=read</code> repository
 permission: <code>vulnerability-alerts</code>, the three <code>actions/permissions</code>
