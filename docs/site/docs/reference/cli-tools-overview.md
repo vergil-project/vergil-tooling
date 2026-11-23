@@ -737,6 +737,39 @@ the trust layer; any other is reported on stderr by metadata only. See [vrg-bran
 | Exit codes | 0 success, 1 any branch error, listing failure or auth failure, 2 bad arguments |
 | Status | Active |
 
+### vrg-ops-report
+
+Report an unattended job's result on its ops issue (epic
+vergil-project/.github#1494), once at the end of the job's run. The report
+key is the repo and a stable job name, never the workflow file: the ops
+issue is the open issue in `--repo` titled `ops: <repo> / <job> failing`,
+labelled `ops-report` and opened by the org's automation App. `--results`
+combines the GitHub job results of every job that makes up the named job:
+any `failure` wins, then `cancelled`, then `success`; all `skipped` reports
+nothing. A failure or cancel opens the issue under the org's operations
+epic (`Epic (operations): <org>`, in `<org>/.github`), naming the job, run,
+step, date and the most recent closed ops issue with the same title
+(`previous occurrence: #N`), or comments on the open one. A success
+comments `ops-report: recovered` only on the first green run after a
+failure or cancel, and otherwise does nothing. Two open ops issues for one
+key get the report on the oldest, naming the others. An issue found or
+created that is not linked under the operations epic is linked. After a
+create it waits until the lookup lists the new issue, so the next run finds
+it. It **never closes an issue**. Every read goes through the trust layer:
+only issues, and report comments, written by the automation App count, so
+an outsider's issue with the same title or an outsider's
+`ops-report: recovered` comment is ignored. Issue text carries the run link,
+job, step, date and issue numbers only, never log text.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_ops_report` (library: `lib/ops_report.py`) |
+| Args | `--repo OWNER/NAME`, `--job NAME`, `--results R[,R…]` (each `success`, `failure`, `cancelled` or `skipped`), `--run-url URL`, `--step NAME` (optional) |
+| Preconditions | The automation identity: `VRG_AUTOMATION_APP` set and the token verified as that App's (every other identity is refused before any read); the trusted-authors configuration (`VRG_TRUSTED_AUTHORS` under Actions) |
+| Failure mode | A refused identity, a trust-layer read failure, a failed create, comment, label or link, or a created issue never listed exits 1 with the error on stderr, naming any issue it created |
+| Exit codes | 0 on every outcome (`created`, `commented`, `recovered`, `nothing`), 1 any read, write or identity error, 2 bad arguments (a missing flag, or an invalid `--repo`, `--job`, `--results`, `--run-url` or `--step` value), before any identity check or read |
+| Status | Active |
+
 ### vrg-issue-create
 
 Create an issue and link it under an epic (a native sub-issue) in one step.
