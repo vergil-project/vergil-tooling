@@ -2703,10 +2703,19 @@ writes `.vergil/vrg-validate-last.json`: the commit at the start, the exit
 code, whether the run was full (no `--check`) and the tree clean at the
 start, and each stage's status. `vrg-merge-review-request` reads it.
 
+`--markdown FILE...` is the ad-hoc markdown lint: it runs no stage and
+writes no run record, and markdownlints only the given files exactly as
+the common stage would, against the bundled config. A file the common
+stage does not lint (outside its scope, under a `[markdownlint].ignore`
+path, or gitignored) is named and skipped, so the result never disagrees
+with the gate. `--fix` lets markdownlint fix what it can. A bare
+`markdownlint <file>` uses markdownlint's defaults instead, line length
+included, so it flags lines the gate passes.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_validate` |
-| Args | `--check {common,lint,typecheck,build,test,audit,semgrep,trivy,docs,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
+| Args | `--check {common,lint,typecheck,build,test,audit,semgrep,trivy,docs,custom}`, `--all-versions` (Python only; alone or with `--check test`), `--markdown [--fix] FILE...` (alone) |
 | Preconditions | Inside a dev container (run it as `vrg-container-run -- vrg-validate`) |
 | Failure mode | Runs every stage after install and reports all failures in one run; install fails fast |
 | Exit codes | 0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example `--check custom --all-versions`) |

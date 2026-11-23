@@ -117,6 +117,51 @@ def test_rejects_host_execution() -> None:
         assert main([]) == 1
 
 
+# -- --markdown (issue #4589) --------------------------------------------------
+
+
+@pytest.mark.parametrize(("fix_args", "fix"), [([], False), (["--fix"], True)])
+def test_markdown_runs_only_the_single_file_lint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fix_args: list[str], *, fix: bool
+) -> None:
+    """--markdown hands the files to lint_markdown, runs no stage and writes
+    no run record."""
+    monkeypatch.chdir(tmp_path)
+    with (
+        patch("vergil_tooling.bin.validate_common.lint_markdown", return_value=3) as m_lint,
+        patch(_MOD + "._build_stages") as m_stages,
+    ):
+        assert main(["--markdown", *fix_args, "a.md", "b.md"]) == 3
+    m_lint.assert_called_once_with(["a.md", "b.md"], fix=fix)
+    m_stages.assert_not_called()
+    assert not (tmp_path / RECORD_PATH).exists()
+
+
+def test_markdown_still_needs_the_dev_container() -> None:
+    with (
+        patch(_MOD + "._in_dev_container", return_value=False),
+        patch("vergil_tooling.bin.validate_common.lint_markdown") as m_lint,
+    ):
+        assert main(["--markdown", "a.md"]) == 1
+    m_lint.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--markdown"],
+        ["--markdown", "--check", "common", "a.md"],
+        ["--markdown", "--all-versions", "a.md"],
+        ["--fix"],
+        ["a.md"],
+    ],
+)
+def test_markdown_usage_errors(argv: list[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(argv)
+    assert exc.value.code == 2
+
+
 # -- Stage construction --------------------------------------------------------
 
 

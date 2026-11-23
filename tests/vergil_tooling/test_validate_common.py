@@ -24,6 +24,7 @@ from vergil_tooling.bin.validate_common import (
     _find_yaml_files,
     _has_ansible_content,
     _own_docs_site,
+    lint_markdown,
     main,
 )
 from vergil_tooling.lib import dependabot
@@ -671,6 +672,164 @@ def test_main_long_line_passes_with_md013_off(tmp_path: Path, scope: str) -> Non
         ),
     ):
         assert main() == 0
+
+
+# -- lint_markdown (vrg-validate --markdown, issue #4589) ---------------------
+
+
+def _lint_markdown(
+    tmp_path: Path, paths: list[str], *, fix: bool = False, returncode: int = 0
+) -> tuple[int, list[list[str]]]:
+    """Run lint_markdown in *tmp_path* with markdownlint mocked; return the exit
+    code and every command it ran."""
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=returncode),
+        ) as mock_run,
+    ):
+        rc = lint_markdown(paths, fix=fix)
+    return rc, [call.args[0] for call in mock_run.call_args_list]
+
+
+def test_lint_markdown_uses_the_gates_config(tmp_path: Path) -> None:
+    """A file in scope is linted with the same command the gate runs."""
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    site = tmp_path / "docs" / "site"
+    site.mkdir(parents=True)
+    page = site / "index.md"
+    page.write_text("# Hello\n")
+
+    rc, calls = _lint_markdown(tmp_path, [str(page)])
+    assert rc == 0
+    assert len(calls) == 1
+    assert calls[0][:2] == ["markdownlint", "--config"]
+    assert calls[0][2].endswith("markdownlint.yaml")
+    assert "vergil_tooling" in calls[0][2]
+    assert calls[0][3:] == [str(page)]
+
+
+def test_lint_markdown_fix_passes_fix(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    readme = tmp_path / "README.md"
+    readme.write_text("# Hello\n")
+
+    rc, calls = _lint_markdown(tmp_path, [str(readme)], fix=True)
+    assert rc == 0
+    assert calls[0][3:] == ["--fix", str(readme)]
+
+
+def test_lint_markdown_returns_markdownlint_failure(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    readme = tmp_path / "README.md"
+    readme.write_text("# Hello\n")
+
+    rc, _calls = _lint_markdown(tmp_path, [str(readme)], returncode=1)
+    assert rc == 1
+
+
+def test_lint_markdown_skips_files_the_gate_does_not_lint(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A file outside the scope, or under an ignore path, is named and skipped,
+    and the rest are still linted."""
+    toml = _MINIMAL_TOML + '\n[markdownlint]\nignore = ["docs/site/docs/research"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    research = tmp_path / "docs" / "site" / "docs" / "research"
+    research.mkdir(parents=True)
+    ignored = research / "report.md"
+    ignored.write_text("# Report\n")
+    outside = tmp_path / "CHANGELOG.md"
+    outside.write_text("# Changelog\n")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Hello\n")
+
+    rc, calls = _lint_markdown(tmp_path, [str(ignored), str(outside), str(readme)])
+    assert rc == 0
+    assert calls[0][3:] == [str(readme)]
+    out = capsys.readouterr().out
+    assert f"{ignored} is not linted by vrg-validate" in out
+    assert f"{outside} is not linted by vrg-validate" in out
+
+
+def test_lint_markdown_only_skipped_files_runs_nothing(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    outside = tmp_path / "notes.md"
+    outside.write_text("# Notes\n")
+
+    rc, calls = _lint_markdown(tmp_path, [str(outside)])
+    assert rc == 0
+    assert calls == []
+
+
+def test_lint_markdown_relative_path_matches_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A path given relative to the working directory is matched to the scope."""
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    epic = tmp_path / "epics" / "1-x"
+    epic.mkdir(parents=True)
+    (epic / "spec.md").write_text("# Spec\n")
+    monkeypatch.chdir(tmp_path)
+
+    rc, calls = _lint_markdown(tmp_path, ["epics/1-x/spec.md"])
+    assert rc == 0
+    assert calls[0][3:] == ["epics/1-x/spec.md"]
+
+
+def test_lint_markdown_missing_file_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    missing = tmp_path / "README.md"
+
+    rc, calls = _lint_markdown(tmp_path, [str(missing)])
+    assert rc == 1
+    assert calls == []
+    assert f"{missing}: no such file" in capsys.readouterr().err
+
+
+def test_lint_markdown_without_vergil_toml_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    readme = tmp_path / "README.md"
+    readme.write_text("# Hello\n")
+
+    rc, calls = _lint_markdown(tmp_path, [str(readme)])
+    assert rc == 1
+    assert calls == []
+    assert "vergil.toml not found" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(
+    shutil.which("markdownlint") is None,
+    reason="markdownlint binary not on PATH (only present in the dev container)",
+)
+def test_lint_markdown_long_line_passes_as_in_the_gate(tmp_path: Path) -> None:
+    """The ad-hoc lint passes a >100-column line the gate passes (MD013 off),
+    which a bare markdownlint run would flag, against the real binary."""
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    site = tmp_path / "docs" / "site"
+    site.mkdir(parents=True)
+    page = site / "long.md"
+    page.write_text(_LONG_DOC)
+
+    bare = subprocess.run(  # noqa: S603
+        ["markdownlint", str(page)],  # noqa: S607
+        check=False,
+        capture_output=True,
+        cwd=tmp_path,
+    )
+    assert bare.returncode != 0
+    with patch(
+        "vergil_tooling.bin.validate_common.git.repo_root",
+        return_value=tmp_path,
+    ):
+        assert lint_markdown([str(page)]) == 0
 
 
 def test_main_shellcheck_runs(tmp_path: Path) -> None:

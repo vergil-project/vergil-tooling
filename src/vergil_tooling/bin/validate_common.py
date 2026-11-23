@@ -3,7 +3,9 @@
 Runs inside the dev container via ``vrg-container-run``:
   1. Repository profile validation (includes README structural checks)
   2. markdownlint on docs/site/, README.md and epics/, in one pass against
-     the bundled config, which disables MD013 line-length (issue #4103)
+     the bundled config, which disables MD013 line-length (issue #4103);
+     :func:`lint_markdown` lints given files the same way, for
+     ``vrg-validate --markdown`` (issue #4589)
   3. docs-links: links to a mike-versioned Vergil docs site carry a version
      segment (``latest``, ``dev`` or a version number), over the same
      markdown scope less ``epics/archive/`` (issue #3831)
@@ -31,12 +33,16 @@ import subprocess
 import sys
 from importlib.resources import files
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
 from vergil_tooling.bin import repo_profile
 from vergil_tooling.lib import dependabot, doc_links, git, github
-from vergil_tooling.lib.config import read_config
+from vergil_tooling.lib.config import ConfigError, read_config
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
@@ -57,16 +63,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     # "(N files)" as "N markdown files I changed" and reporting a phantom
     # off-by-one when a changed file fell outside the scope (issue #2601).
     if markdown_files:
-        print(
-            f"Running: markdownlint ({len(markdown_files)} files in docs/site/, README.md, epics/)"
-        )
-        markdownlint_config = files("vergil_tooling.configs") / "markdownlint.yaml"
-        result = subprocess.run(  # noqa: S603
-            ["markdownlint", "--config", str(markdownlint_config), *markdown_files],  # noqa: S607
-            check=False,
-        )
-        if result.returncode != 0:
-            return result.returncode
+        print(f"Running: markdownlint ({len(markdown_files)} files in {_MARKDOWN_SCOPE})")
+        rc = _run_markdownlint(markdown_files)
+        if rc != 0:
+            return rc
 
     own_site = _own_docs_site(repo_root, publishes_docs=cfg.publish.docs)
     rc = _check_docs_links(repo_root, own_site=own_site)
@@ -401,6 +401,65 @@ def _find_repo_sh_files(repo_root: Path) -> list[str]:
         if path.is_file():
             found.append(str(path))
     return found
+
+
+_MARKDOWN_SCOPE = "docs/site/, README.md, epics/"
+
+
+def _run_markdownlint(markdown_files: Sequence[str], *, fix: bool = False) -> int:
+    """Run markdownlint over *markdown_files* against the bundled config, the
+    one config every file in the gate's scope is linted with (issue #4103)."""
+    markdownlint_config = files("vergil_tooling.configs") / "markdownlint.yaml"
+    fix_args = ["--fix"] if fix else []
+    result = subprocess.run(  # noqa: S603
+        ["markdownlint", "--config", str(markdownlint_config), *fix_args, *markdown_files],  # noqa: S607
+        check=False,
+    )
+    return result.returncode
+
+
+def lint_markdown(paths: Sequence[str], *, fix: bool = False) -> int:
+    """Lint the given markdown files exactly as the gate's markdownlint step
+    does (issue #4589): ``vrg-validate --markdown <file>...``.
+
+    A bare ``markdownlint <file>`` uses markdownlint's defaults, MD013 on, so
+    it flags lines the gate passes. Here a path is linted against the bundled
+    config only when the gate lints it: it is in the gate's scope
+    (:func:`_find_markdown_files`, less the ``[markdownlint].ignore`` paths)
+    and not gitignored. A path the gate does not lint is named and skipped,
+    so the ad-hoc result never disagrees with the gate. A path that is not a
+    file is an error. *fix* passes ``--fix`` to markdownlint.
+    """
+    missing = [path for path in paths if not Path(path).is_file()]
+    if missing:
+        for path in missing:
+            print(f"ERROR: {path}: no such file", file=sys.stderr)
+        return 1
+    repo_root = git.repo_root()
+    try:
+        cfg = read_config(repo_root)
+    except (FileNotFoundError, ConfigError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    scope = {
+        Path(path).resolve()
+        for path in _drop_gitignored(
+            repo_root, _find_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
+        )
+    }
+    linted: list[str] = []
+    for path in paths:
+        if Path(path).resolve() in scope:
+            linted.append(path)
+        else:
+            print(
+                f"markdownlint: {path} is not linted by vrg-validate "
+                f"(outside {_MARKDOWN_SCOPE}, ignored or gitignored); skipped"
+            )
+    if not linted:
+        return 0
+    print(f"Running: markdownlint ({len(linted)} of {len(paths)} files given)")
+    return _run_markdownlint(linted, fix=fix)
 
 
 def _find_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> list[str]:
