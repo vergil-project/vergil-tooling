@@ -240,9 +240,10 @@ repos. The link runs both ways, each side on a line alone on its line:
   editor trusted): an untrusted body gives no link, and every tool that reads
   it stops on that proxy;
 - the primary records each proxy in a comment, never its body, carrying
-  `Proxy: <owner>/.github#<N>`. Only comments by a login that
-  `vrg-trusted-authors` lists count (a leading `app/` stripped), so a forged
-  comment on the public primary counts for nothing. A proxy is never removed
+  `Proxy: <owner>/.github#<N>`. Only comments the trust layer trusts count
+  (an author and every editor that hold a role of the right account type),
+  so a forged or outsider-edited comment on the public primary counts for
+  nothing. A proxy is never removed
   from the list: one created by mistake is closed and stays listed.
 
 A missing, duplicated or malformed `Primary:` line, one naming an issue that
@@ -964,8 +965,9 @@ vrg-intake-route <ref> size --tasks N [--confidence high|med|low] --reason TEXT
 
 `size` is allowed from planning and deferred only, and neither moves nor
 closes the item; the planning route takes the same options to size an item on
-its way in. Only sizing comments by
-[trusted authors](../guides/account-setup.md#trusted-authors) count. When the
+its way in. Only sizing comments the trust layer trusts, by
+[trusted authors](../guides/account-setup.md#trusted-authors) with the right
+account type and edited only by trusted authors, count. When the
 label and the latest sizing comment disagree, one is missing, the item has
 several size labels, its label names an unknown size (such as
 `epic-size:XXL`), or the comment is malformed, the item's sizing is in

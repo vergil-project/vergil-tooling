@@ -7,7 +7,6 @@ from typing import cast
 
 import pytest
 
-from vergil_tooling.lib import epic_size
 from vergil_tooling.lib.epic_size import (
     LABEL_PREFIX,
     SIZES,
@@ -20,12 +19,9 @@ from vergil_tooling.lib.epic_size import (
     render_sizing_comment,
     size_for_tasks,
     size_record,
-    trusted_logins,
 )
-from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 
 DAY = date(2026, 11, 16)
-TRUSTED = frozenset({"vergil-user", "human"})
 
 M14 = (
     "Sized 2026-11-16: epic-size M, about 14 tasks.\n"
@@ -106,52 +102,52 @@ def test_sizing_rejects() -> None:
 
 
 def test_record_unsized() -> None:
-    record = size_record([], [], TRUSTED)
+    record = size_record([], [])
     assert record == SizeRecord(None, None, None, None)
     assert record.display == "?"
     # Other labels and other comments leave it unsized.
-    assert size_record(["feature"], [("vergil-user", "hello")], TRUSTED).display == "?"
+    assert size_record(["feature"], ["hello"]).display == "?"
 
 
 def test_record_sized() -> None:
-    record = size_record(["planning", "epic-size:M"], [("app/vergil-user", M14)], TRUSTED)
+    record = size_record(["planning", "epic-size:M"], [M14])
     assert record == SizeRecord("M", 14, "med", None)
     assert record.display == "M/14"
 
 
 def test_record_latest_trusted_wins() -> None:
-    comments = [("vergil-user", S5), ("human", M14)]
-    assert size_record(["epic-size:M"], comments, TRUSTED) == SizeRecord("M", 14, "med", None)
+    comments = [S5, M14]
+    assert size_record(["epic-size:M"], comments) == SizeRecord("M", 14, "med", None)
 
 
 def test_record_comment_without_label() -> None:
-    record = size_record([], [("vergil-user", M14)], TRUSTED)
+    record = size_record([], [M14])
     _assert_error(record)
     assert "without label" in (record.error or "")
 
 
 def test_record_label_without_comment() -> None:
-    record = size_record(["epic-size:M"], [], TRUSTED)
+    record = size_record(["epic-size:M"], [])
     _assert_error(record)
     assert "without" in (record.error or "")
     assert "comment" in (record.error or "")
 
 
 def test_record_disagreement() -> None:
-    record = size_record(["epic-size:L"], [("vergil-user", M14)], TRUSTED)
+    record = size_record(["epic-size:L"], [M14])
     _assert_error(record)
     assert "epic-size:L" in (record.error or "")
     assert "M" in (record.error or "")
 
 
 def test_record_several_labels() -> None:
-    record = size_record(["epic-size:M", "epic-size:S"], [("vergil-user", M14)], TRUSTED)
+    record = size_record(["epic-size:M", "epic-size:S"], [M14])
     _assert_error(record)
     assert "several" in (record.error or "")
 
 
 def test_record_unknown_size_label() -> None:
-    record = size_record(["epic-size:XXL"], [("vergil-user", M14)], TRUSTED)
+    record = size_record(["epic-size:XXL"], [M14])
     _assert_error(record)
     assert "epic-size:XXL" in (record.error or "")
 
@@ -170,7 +166,7 @@ def test_record_unknown_size_label() -> None:
     ],
 )
 def test_record_malformed(body: str, fragment: str) -> None:
-    record = size_record(["epic-size:M"], [("vergil-user", body)], TRUSTED)
+    record = size_record(["epic-size:M"], [body])
     _assert_error(record)
     assert "malformed" in (record.error or "")
     assert fragment in (record.error or "")
@@ -178,56 +174,29 @@ def test_record_malformed(body: str, fragment: str) -> None:
 
 def test_record_malformed_key_must_start_the_line() -> None:
     body = M14.replace("Reason: One sentence.", "  Reason: One sentence.")
-    _assert_error(size_record(["epic-size:M"], [("vergil-user", body)], TRUSTED))
+    _assert_error(size_record(["epic-size:M"], [body]))
 
 
 def test_latest_malformed_is_not_skipped() -> None:
     malformed = M14.replace("Confidence: med", "Confidence: medium")
-    comments = [("vergil-user", M14), ("vergil-user", malformed)]
-    record = size_record(["epic-size:M"], comments, TRUSTED)
+    comments = [M14, malformed]
+    record = size_record(["epic-size:M"], comments)
     _assert_error(record)
     assert "malformed" in (record.error or "")
 
 
-def test_untrusted_sizing_ignored() -> None:
-    comments = [("vergil-user", M14), ("mallory", XL50), ("app/mallory", XL50)]
-    assert size_record(["epic-size:M"], comments, TRUSTED) == SizeRecord("M", 14, "med", None)
-    # An untrusted malformed comment is ignored too, and alone it sizes nothing.
-    malformed = M14.replace("Confidence: med", "Confidence: medium")
-    assert size_record([], [("mallory", malformed)], TRUSTED).display == "?"
-
-
 def test_cleared_marker_resets() -> None:
-    cleared = [("vergil-user", M14), ("human", CLEARED)]
-    assert size_record([], cleared, TRUSTED) == SizeRecord(None, None, None, None)
-    resized = [*cleared, ("vergil-user", S5)]
-    assert size_record(["epic-size:S"], resized, TRUSTED) == SizeRecord("S", 5, "high", None)
+    cleared = [M14, CLEARED]
+    assert size_record([], cleared) == SizeRecord(None, None, None, None)
+    resized = [*cleared, S5]
+    assert size_record(["epic-size:S"], resized) == SizeRecord("S", 5, "high", None)
     # A label left behind after a clear is a label without a comment.
-    _assert_error(size_record(["epic-size:M"], cleared, TRUSTED))
-    # An untrusted cleared marker is ignored.
-    forged = [("vergil-user", M14), ("mallory", CLEARED)]
-    assert size_record(["epic-size:M"], forged, TRUSTED) == SizeRecord("M", 14, "med", None)
+    _assert_error(size_record(["epic-size:M"], cleared))
 
 
 def test_has_size() -> None:
     assert has_size(["epic-size:M"], [])
     assert has_size([], ["note", M14])
-    assert has_size([], [XL50])  # any author: the bodies carry none
+    assert has_size([], [XL50])
     assert not has_size(["feature"], ["note", CLEARED, "  "])
     assert not has_size([], [])
-
-
-def test_trusted_logins(monkeypatch: pytest.MonkeyPatch) -> None:
-    authors = TrustedAuthors(human=("human",), agents=("vergil-user", "vergil-audit"))
-    monkeypatch.setattr(epic_size, "load_trusted_authors", lambda: authors)
-    assert trusted_logins() == frozenset({"human", "vergil-user", "vergil-audit"})
-
-
-def test_trusted_logins_unconfigured_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
-    def unconfigured() -> TrustedAuthors:
-        msg = "not configured"
-        raise TrustedAuthorsNotConfiguredError(msg)
-
-    monkeypatch.setattr(epic_size, "load_trusted_authors", unconfigured)
-    with pytest.raises(TrustedAuthorsNotConfiguredError):
-        trusted_logins()

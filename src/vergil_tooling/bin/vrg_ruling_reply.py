@@ -41,7 +41,7 @@ import argparse
 import sys
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import confirm, github, identity_mode
+from vergil_tooling.lib import confirm, github, identity_mode, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.rulings import RulingError, comments, draft_ref, human_post
 from vergil_tooling.lib.rulings.exchange import FatalCheck, open_request, read_reply
@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     except FatalCheck as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
         return EXIT_FATAL
-    except (RulingError, TrustedAuthorsNotConfiguredError) as exc:
+    except (RulingError, TrustedAuthorsNotConfiguredError, trust.TrustReadError) as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
         return EXIT_ERROR
     except github.MissingGitHubTokenError:
@@ -133,8 +133,8 @@ class _Issue:
 
     def fetch(self) -> tuple[list[comments.IssueComment], frozenset[int]]:
         """The issue's trusted comment stream and every comment ID on it."""
-        every = comments.fetch_comments(self.repo, self.issue)
-        return comments.trusted(every, self.authors), frozenset(c.id for c in every)
+        stream = comments.read_stream(self.repo, self.issue, self.authors)
+        return stream.comments, stream.all_ids
 
     def check_turn(self, stream: list[comments.IssueComment], all_ids: frozenset[int]) -> None:
         """Refuse unless the request is open and waiting for this reply.
@@ -216,7 +216,7 @@ def _reply(
     ctx.check_turn(stream, all_ids)
 
     try:
-        comment_id = post_comment_once(repo, issue, reply, author=human)
+        comment_id = post_comment_once(repo, issue, reply, author=human, authors=authors)
     except PostNotLanded as exc:
         msg = f"{exc}. Re-running {_PROG} is safe"
         raise RulingError(msg) from exc

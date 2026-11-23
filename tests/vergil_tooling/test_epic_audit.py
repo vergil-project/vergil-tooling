@@ -2760,7 +2760,6 @@ def test_render_closed_reports_proxy_pass() -> None:
 # --- misplaced ad-hoc tasks (epic .github#1417, spec §4.8) ------------------------
 
 _LIVE_ADHOC_REF = epics.IssueRef("vergil-project", ".github", 50)
-_TRUSTED = frozenset({"wphillipmoore", "wphillipmoore-vergil-user"})
 
 
 def _adhoc_child(
@@ -2805,16 +2804,21 @@ def _misplaced(
             raise github.GitHubAPIError(1, "gh", "", "Could not resolve to an issue")
         return epics_by_slug.get(ref.slug, False)
 
-    def read_json(*args: str) -> object:
-        assert args[:2] == ("issue", "view")
-        return {"comments": comments.get(int(args[2]), [])}
-
-    trusted = MagicMock(return_value=_TRUSTED)
+    # Each task's comments, read through the real trust layer.
+    layer = trust_stubs.FakeItems(
+        {
+            ("vergil-project/vergil-tooling", number): trust_stubs.item(nodes=nodes)
+            for number, nodes in comments.items()
+        }
+    )
+    trusted = MagicMock(return_value=trust_stubs.AUTHORS)
     run = MagicMock()
     with (
         patch("vergil_tooling.lib.epics.is_epic", side_effect=is_epic),
-        patch("vergil_tooling.lib.github.read_json", side_effect=read_json),
-        patch("vergil_tooling.lib.epic_size.trusted_logins", trusted),
+        patch("vergil_tooling.lib.github.read_json", side_effect=AssertionError("no gh read")),
+        patch("vergil_tooling.lib.github.graphql", side_effect=layer),
+        patch(f"{_AUDIT}.load_trusted_authors", trusted),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", side_effect=AssertionError),
         patch("vergil_tooling.lib.github.run", run),
     ):
         found = epic_audit.misplaced_adhoc("vergil-project", issues=[_LIVE_ADHOC, *issues])
@@ -2878,28 +2882,74 @@ def test_misplaced_only_under_a_live_adhoc_epic() -> None:
     assert found == []
 
 
-def test_standalone_confirmed_suppresses() -> None:
-    comments = {
-        7: [
-            {
-                "author": {"login": "app/wphillipmoore-vergil-user"},
-                "body": "Ruled:\nStandalone-confirmed\n",
-            }
-        ]
-    }
+@pytest.mark.parametrize("login", ["vergil-user", "app/vergil-user", "vergil-user[bot]"])
+def test_standalone_confirmed_suppresses(login: str) -> None:
+    agent = {"__typename": "Bot", "login": login}
+    comments = {7: [trust_stubs.comment(1, "Ruled:\n  Standalone-confirmed  \n", agent)]}
     found, _, _ = _misplaced([_adhoc_child(7, title="Logbook: x")], comments=comments)
     assert found == []
 
 
-def test_standalone_confirmed_untrusted_ignored() -> None:
+def test_standalone_confirmed_untrusted_ignored(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     comments = {
         8: [
-            {"author": {"login": "mallory"}, "body": "Standalone-confirmed"},
-            {"author": {"login": "wphillipmoore"}, "body": "not Standalone-confirmed here"},
+            trust_stubs.comment(1, "Standalone-confirmed", trust_stubs.OUTSIDER),
+            trust_stubs.comment(2, "not Standalone-confirmed here", trust_stubs.HUMAN),
         ]
     }
     found, _, _ = _misplaced([_adhoc_child(8, title="Logbook: x")], comments=comments)
     assert len(found) == 1
+    assert "on comment 1 (untrusted)" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "kind", "login", "at", "cause"),
+    [
+        (trust_stubs.IMPOSTOR, None, "comment", "vergil-user", trust_stubs.CREATED, "wrong-type"),
+        (
+            trust_stubs.AGENT,
+            trust_stubs.OUTSIDER,
+            "edit",
+            "drive-by",
+            trust_stubs.EDITED,
+            "untrusted",
+        ),
+    ],
+    ids=["user-named-like-app", "edited-by-outsider"],
+)
+def test_standalone_confirmed_from_impostor_does_not_drop_the_task(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    author: Any,
+    editor: Any,
+    kind: str,
+    login: str,
+    at: str,
+    cause: str,
+) -> None:
+    # A Standalone-confirmed line counts only from a comment the layer trusts:
+    # a User account named like the agent App (or an outsider's edit of a
+    # trusted comment) leaves the misplaced task reported, metadata only.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    forged = f"{trust_stubs.SPAM_TEXT}\nStandalone-confirmed\n"
+    comments = {14: [trust_stubs.comment(41, forged, author, editor=editor)]}
+    found, _, _ = _misplaced([_adhoc_child(14, title="Logbook: x")], comments=comments)
+    assert found == [
+        epic_audit.MisplacedTask(
+            epics.IssueRef("vergil-project", "vergil-tooling", 14),
+            "titled `Logbook:`; it belongs under the hoshin epic",
+        )
+    ]
+    out, err = capsys.readouterr()
+    assert err == (
+        f"skipped untrusted content: vergil-project/vergil-tooling#14 {kind} {login} at {at}"
+        f" on comment 41 ({cause})\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in out + err
+    assert "Standalone-confirmed" not in out + err
 
 
 def test_misplaced_report_never_writes() -> None:
@@ -2928,10 +2978,10 @@ def test_misplaced_reads_each_cross_org_ref_once_and_enumerates_when_not_given()
 
 def test_standalone_confirmed_bad_response_raises() -> None:
     with (
-        patch("vergil_tooling.lib.github.read_json", return_value=[]),
-        pytest.raises(RuntimeError, match="unexpected 'gh issue view' response"),
+        patch("vergil_tooling.lib.github.graphql", return_value={"repository": None}),
+        pytest.raises(trust.TrustReadError, match="read_issue o/r#1"),
     ):
-        epic_audit._standalone_confirmed(epics.IssueRef("o", "r", 1), _TRUSTED)
+        epic_audit._standalone_confirmed(epics.IssueRef("o", "r", 1), trust_stubs.AUTHORS)
 
 
 def test_render_reports_misplaced_adhoc() -> None:

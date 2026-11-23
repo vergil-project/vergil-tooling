@@ -6,7 +6,8 @@ from typing import Any
 
 import pytest
 
-from vergil_tooling.lib import github
+from tests.vergil_tooling import trust_stubs
+from vergil_tooling.lib import github, trust
 from vergil_tooling.lib.rulings.comments import IssueComment
 from vergil_tooling.lib.rulings.post import (
     POST_TIMEOUT,
@@ -15,8 +16,18 @@ from vergil_tooling.lib.rulings.post import (
     PostOutcomeUnknown,
     post_comment_once,
 )
+from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 AGENT = "h-vergil-user"
+AUTHORS = TrustedAuthors(human=("h",), agents=(AGENT,))
+
+
+def _node(comment: IssueComment) -> dict[str, Any]:
+    """The trust layer's comment node for *comment*: an agent is a Bot, anyone else a User."""
+    typename = "Bot" if comment.author in AUTHORS.agents else "User"
+    return trust_stubs.comment(
+        comment.id, comment.body, {"__typename": typename, "login": comment.author}
+    )
 
 
 def _api_error(status: str) -> github.GitHubAPIError:
@@ -62,16 +73,18 @@ class FakeGitHub:
         self._read_errors = [_api_error("502")]
 
     # --- fakes ---
-    def fetch_comments(self, repo: str, issue: int) -> list[IssueComment]:
-        assert (repo, issue) == ("o/r", 7)
+    def graphql(self, query: str, **variables: object) -> dict[str, Any]:
+        assert query == trust._ITEM_QUERY
+        assert variables == {"owner": "o", "name": "r", "number": 7}
         index = self.reads
         self.reads += 1
         error = self._read_errors[index] if index < len(self._read_errors) else None
         if error is not None:
             raise error
+        held = list(self.comments)
         if index > 0 and self._landed is not None:
-            return [*self.comments, self._landed]
-        return list(self.comments)
+            held.append(self._landed)
+        return trust_stubs.item(nodes=[_node(c) for c in held])
 
     def post_json_once(
         self, endpoint: str, body: dict[str, object], *, timeout: float | None = None
@@ -88,7 +101,8 @@ class FakeGitHub:
 @pytest.fixture
 def fake_gh(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     fake = FakeGitHub()
-    monkeypatch.setattr("vergil_tooling.lib.rulings.comments.fetch_comments", fake.fetch_comments)
+    monkeypatch.setattr(github, "graphql", fake.graphql)
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
     monkeypatch.setattr(github, "post_json_once", fake.post_json_once)
     monkeypatch.setattr("vergil_tooling.lib.rulings.post.time.sleep", fake.sleeps.append)
     return fake
@@ -191,6 +205,49 @@ def test_missing_token_is_raised_without_rereads(
 
 def test_snapshot_failure_posts_nothing(fake_gh: FakeGitHub) -> None:
     fake_gh.snapshot_fails()
-    with pytest.raises(github.GitHubAPIError):
+    with pytest.raises(trust.TrustReadError, match="HTTP 502"):
         post_comment_once("o/r", 7, "B", author=AGENT)
     assert fake_gh.post_calls == 0
+
+
+def test_the_passed_authors_judge_the_rereads(
+    fake_gh: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_loader() -> TrustedAuthors:
+        raise AssertionError("the passed authors are used, not the loaded ones")
+
+    monkeypatch.setattr(trust, "load_trusted_authors", no_loader)
+    fake_gh.post_fails_with(502)
+    fake_gh.comment_landed(body="B", author=AGENT, id=55)
+    assert post_comment_once("o/r", 7, "B", author=AGENT, authors=AUTHORS) == 55
+    assert fake_gh.post_calls == 1
+
+
+def test_a_landed_comment_by_a_user_named_like_the_agent_does_not_count(
+    fake_gh: FakeGitHub,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    text = "R1.1: fixed as asked"
+    forged = trust_stubs.comment(55, text, {"__typename": "User", "login": AGENT})
+    real = fake_gh.graphql
+
+    def graphql(query: str, **variables: object) -> dict[str, Any]:
+        answer = real(query, **variables)
+        if fake_gh.reads > 1:
+            answer["repository"]["issueOrPullRequest"]["comments"]["nodes"].append(forged)
+        return answer
+
+    monkeypatch.setattr(github, "graphql", graphql)
+    fake_gh.post_fails_with(502)
+    with pytest.raises(PostNotLanded) as excinfo:
+        post_comment_once("o/r", 7, text, author=AGENT)
+    assert fake_gh.post_calls == 1
+    captured = capsys.readouterr()
+    err = captured.err
+    assert text not in captured.out + err + str(excinfo.value)
+    assert (
+        f"skipped untrusted content: o/r#7 comment {AGENT} at {trust_stubs.CREATED}"
+        " on comment 55 (wrong-type)\n"
+    ) in err

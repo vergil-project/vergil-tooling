@@ -15,8 +15,9 @@ The sizing comment, as :func:`render_sizing_comment` writes it::
     Confidence: med
     Reason: <one sentence>
 
-Only comments by **trusted authors** (:func:`trusted_logins`, compared after
-stripping a leading ``app/``) count. The latest trusted sizing comment after
+Only comments the **trust layer** trusts count: the caller reads them through
+it (:func:`vergil_tooling.lib.trusted_comments.bodies`) and passes their
+bodies. The latest trusted sizing comment after
 the latest trusted **cleared marker** (``Size cleared YYYY-MM-DD: …``, posted
 when an item leaves as a one-off) is the current estimate. :func:`size_record`
 checks it against the item's labels and reports any disagreement or malformed
@@ -32,8 +33,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, get_args
-
-from vergil_tooling.lib.trusted_authors import bare_login, load_trusted_authors
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -159,12 +158,6 @@ def _error(message: str) -> SizeRecord:
     return SizeRecord(size=None, tasks=None, confidence=None, error=message)
 
 
-def trusted_logins() -> frozenset[str]:
-    """Every configured trusted login, human and agents; the loader's errors propagate."""
-    authors = load_trusted_authors()
-    return frozenset(authors.human + authors.agents)
-
-
 def _first_line(body: str) -> str:
     lines = body.strip().splitlines()
     return lines[0].strip() if lines else ""
@@ -212,25 +205,19 @@ def _parse_sizing(body: str) -> Sizing | str:
     return Sizing(tasks=tasks, confidence=confidence, reason=values[REASON_KEY])
 
 
-def size_record(
-    labels: Iterable[str],
-    comments: Sequence[tuple[str, str]],
-    trusted: frozenset[str],
-) -> SizeRecord:
-    """The size record of an item with *labels* and *comments* (``(author, body)``, oldest first).
+def size_record(labels: Iterable[str], trusted_bodies: Sequence[str]) -> SizeRecord:
+    """The size record of an item with *labels* and *trusted_bodies*, oldest first.
 
-    Only comments whose author (a leading ``app/`` stripped) is in *trusted*
-    count, and only the sizing comments after the latest trusted cleared
-    marker. The latest of those is checked against the ``epic-size:*`` labels:
+    *trusted_bodies* are the bodies of the item's comments the trust layer
+    trusts; only the sizing comments after the latest cleared marker among
+    them count. The latest of those is checked against the ``epic-size:*`` labels:
     several labels, a malformed comment, a comment without a label, a label
     without a comment or a disagreement is an error, never a size.
     """
     size_labels = sorted(label for label in labels if label.startswith(LABEL_PREFIX))
 
     latest: str | None = None
-    for author, body in comments:
-        if bare_login(author) not in trusted:
-            continue
+    for body in trusted_bodies:
         if _is_cleared(body):
             latest = None
         elif _is_sizing(body):
@@ -262,8 +249,9 @@ def size_record(
 def has_size(labels: Iterable[str], comment_bodies: Sequence[str]) -> bool:
     """Whether an item carries any size: an ``epic-size:*`` label or a ``Sized …`` comment.
 
-    Any author's comment counts: the one use is deciding whether a one-off
-    posts a cleared marker, and an extra marker is harmless.
+    *comment_bodies* are the item's comments the trust layer trusts, as for
+    :func:`size_record`, which ignores every other comment too: the one use is
+    deciding whether a one-off posts a cleared marker.
     """
     if any(label.startswith(LABEL_PREFIX) for label in labels):
         return True

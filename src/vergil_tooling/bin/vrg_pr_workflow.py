@@ -72,7 +72,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import epics, git, github, local_settings, planning_close
+from vergil_tooling.lib import epics, git, github, local_settings, planning_close, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.linkage import (
     find_linkage_keyword,
@@ -327,6 +327,8 @@ def _planning_close_preview(issue_ref: str) -> dict[str, str] | None:
         RuntimeError,
         ValueError,
         TrustedAuthorsNotConfiguredError,
+        trust.UntrustedContentError,
+        trust.TrustReadError,
     ) as exc:
         return {
             "unknown": (

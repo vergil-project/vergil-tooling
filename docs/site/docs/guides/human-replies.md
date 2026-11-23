@@ -30,9 +30,14 @@ decided.
 
 - **Trusted authors.** Both tools read identity only from the trusted-authors
   configuration ([Trusted authors](account-setup.md#trusted-authors),
-  `vrg-trusted-authors`): its `human` login and its `agents` logins. A leading
-  `app/` is stripped from every comment author before comparing. Comments by
-  any other login are ignored by every check.
+  `vrg-trusted-authors`): its `human` login and its `agents` logins. Every
+  comment is read through the trust layer: it counts only when its author
+  and every editor are the human (a GitHub user account) or an agent (an
+  App), so a user account named like an agent, the automation App, a
+  deleted account and any other login are ignored by every check, and so is
+  a trusted comment that an outsider has edited. Each comment left out is
+  reported on stderr, metadata only, and a comment list the layer cannot
+  read in full is an error, never a shorter stream.
 - **One human.** The `human` entry must hold exactly one login, the
   **human login**. Both tools refuse when it holds none or several.
 - **The agent login** is derived, never asked of GitHub: `<the human

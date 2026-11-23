@@ -614,7 +614,7 @@ def _defer(ref: IssueRef, action: Defer, kind: str | None, parent: IssueRef, day
     if kind == epics.DEFERRED.key:
         _comment(ref, record)
         return
-    view = _view(ref, "labels,comments")
+    view = _view(ref, "labels")
     if kind == epics.PLANNING.key:
         _guard_open_planning_epics(ref, "deferring")
     if kind == epics.ADHOC.key:
@@ -711,18 +711,18 @@ def _one_off(
 
     A planning item is guarded first, before anything that can create the
     target's ad-hoc epic. Whether the item carries a size is read before the
-    move, from any container (:func:`has_size`, which needs no trusted
-    authors). Both labels come off the item's final issue: a recreate never
+    move, from any container (:func:`has_size`, over the comments the trust
+    layer trusts). Both labels come off the item's final issue: a recreate never
     carries them, and a transfer keeps one only when the target repo has it,
     so each is read rather than assumed. Every step is tried, and those that
     fail are reported together in one :class:`RouteHalfAppliedError`.
     """
-    view = _view(ref, "labels,comments")
+    view = _view(ref, "labels")
     if kind == epics.PLANNING.key:
         _guard_open_planning_epics(ref, "routing one-off")
     labels = _label_names(view)
     labelled = kind == epics.PLANNING.key and epics.PLANNING_IN_PROGRESS_LABEL in labels
-    sized = has_size(labels, [str(c.get("body") or "") for c in view.get("comments") or []])
+    sized = has_size(labels, trusted_comments.bodies(ref))
     result = _move_one_off(ref, action, old_parent)
     failures: list[RuntimeError] = []
     if labelled:

@@ -69,7 +69,9 @@ class Env:
         }
         # The issues carrying the 'epic' label (epics.is_epic).
         self.epic_refs: set[IssueRef] = {INTAKE, PLANNING, DEFERRED, ADHOC_DOTGITHUB, DEV_EPIC}
-        self.labels: list[str] = []
+        # The item's own labels, as a 'labels' read of it gives them; None is
+        # the labels of *issue_view*, which every other issue's read gives.
+        self.labels: list[str] | None = None
         self.comments: list[str] = []
         # The item's comment nodes as the trust layer reads them; by default
         # one per entry of *comments*, by a trusted human.
@@ -176,11 +178,8 @@ class Env:
             if isinstance(self.search_results, BaseException):
                 raise self.search_results
             return self.search_results
-        if fields == "labels,comments":
-            return {
-                "labels": [{"name": name} for name in self.labels],
-                "comments": [{"body": body} for body in self._comment_bodies()],
-            }
+        if fields == "labels" and int(args[2]) == ITEM.number and self.labels is not None:
+            return {"labels": [{"name": name} for name in self.labels]}
         if fields == "closedByPullRequestsReferences":
             return {
                 "closedByPullRequestsReferences": [
@@ -188,12 +187,6 @@ class Env:
                 ]
             }
         return self.issue_view
-
-    def _comment_bodies(self) -> list[str]:
-        """Every comment's body, trusted or not, as ``gh issue view`` gives it."""
-        if self.comment_nodes is None:
-            return list(self.comments)
-        return [str(node["body"]) for node in self.comment_nodes]
 
     def graphql(self, query: str, **variables: Any) -> dict[str, Any]:
         """The trust layer's item read: the item's body and comments, any other issue's none."""
@@ -2031,8 +2024,9 @@ def test_recreate_copies_the_trusted_body_read_before_the_move(env: Env) -> None
     env.issue_view = {**env.issue_view, "body": "changed since the read"}
     with patch("vergil_tooling.lib.github.graphql", side_effect=graphql):
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
-    # Both reads come before the move: the outsider-opened check, then the body.
-    assert reads == 2
+    # Every read comes before the move: the outsider-opened check, the trusted
+    # comments the size is read from, then the body.
+    assert reads == 3
     body = env.create_issue.call_args.kwargs["body"]
     assert body.startswith(f"{trusted_body}\n\n")
     assert "changed since the read" not in body
@@ -2109,9 +2103,10 @@ def test_transfer_security_item_retargets_to_final(env: Env) -> None:
     # The settle wait and its confirming wait both come before the retarget.
     assert order == ["settle", "settle", "retarget"]
     # The item was read before the move, while it still had its labels: once
-    # for its size (and in-progress), once for its advisories.
+    # for its size (and in-progress), once for its advisories. Its comments
+    # come from the trust layer, never from gh.
     assert env.read_json.call_args_list == [
-        call("issue", "view", "352", "--repo", "org/.github", "--json", "labels,comments"),
+        call("issue", "view", "352", "--repo", "org/.github", "--json", "labels"),
         call("issue", "view", "352", "--repo", "org/.github", "--json", "labels"),
     ]
 
@@ -3298,13 +3293,43 @@ def test_one_off_from_deferred_clears_size(env: Env) -> None:
     assert _sizing_calls(env) == _cleared_calls("352", "org/.github")
 
 
-def test_one_off_needs_no_trusted_authors(env: Env) -> None:
+def test_one_off_trusted_authors_error_propagates_before_the_move(env: Env) -> None:
+    # The size is read from the comments the trust layer trusts, so a one-off
+    # needs the trusted authors; without them nothing moves.
     _sized_item(env)
     unconfigured = RuntimeError("trusted authors are not configured")
     with (
-        patch("vergil_tooling.lib.epic_size.load_trusted_authors", side_effect=unconfigured),
-        patch("vergil_tooling.lib.trusted_authors.load_trusted_authors", side_effect=unconfigured),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", side_effect=unconfigured),
+        pytest.raises(RuntimeError, match="trusted authors are not configured"),
     ):
-        result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert _transfer_calls(env) == []
+    env.run.assert_not_called()
+    env.reparent_child.assert_not_called()
+
+
+def test_one_off_outsider_sizing_comment_posts_no_cleared_marker(
+    env: Env, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The skip report lists each skipped comment only outside GitHub Actions.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    env.parent = PLANNING
+    env.native_parent[ITEM] = PLANNING
+    env.labels = ["idea"]
+    _sized_labels(env, "bug")
+    forged = SIZING_BODY.replace("Reason: ", f"Reason: {trust_stubs.SPAM_TEXT} ", 1)
+    assert forged != SIZING_BODY
+    env.comment_nodes = [trust_stubs.comment(11, forged, trust_stubs.OUTSIDER)]
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=MOVED, moved_by="transfer")
-    assert _sizing_calls(env) == _cleared_calls("900", "org/tool")
+    # Unsized: no label edit and no cleared marker.
+    env.run.assert_not_called()
+    captured = capsys.readouterr()
+    assert (
+        "skipped untrusted content: org/.github#352 comment drive-by at "
+        f"{trust_stubs.CREATED} on comment 11 (untrusted)"
+    ) in captured.err.splitlines()
+    for text in (captured.out, captured.err):
+        assert "SPAM-MARKER-TEXT" not in text
+        assert "example.invalid" not in text
+        assert "Sized " not in text

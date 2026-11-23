@@ -23,7 +23,9 @@ its editors (every editor, or the last one, by the reader's
 items and a :class:`Skipped` record for each untrusted one; where the content
 is load-bearing they raise :class:`UntrustedContentError` instead; for a
 report, :func:`read_issue_edits` also lists every untrusted edit of trusted
-content, and ``read_events(renames=True)`` every rename. Reviews and
+content, and ``read_events(renames=True)`` every rename;
+:func:`read_comment_stream` keeps each trusted comment's author login and
+whether it was edited, for the ruling turn checks. Reviews and
 inline review comments follow the same rule (:func:`read_reviews`), and
 :func:`read_review_edits` lists every untrusted edit of trusted ones. A close
 or reopen is trusted when its actor is (:func:`read_events`,
@@ -389,6 +391,37 @@ class IssueContent:
     body_role: Role | None
     author_role: Role | None
     comments: tuple[TrustedComment, ...]
+    skipped: tuple[Skipped, ...]
+
+
+@dataclass(frozen=True)
+class StreamComment:
+    """A trusted comment for a reader that checks turns: who posted it, and whether it changed.
+
+    *login* is the author's bare login (:func:`normalise_login`); *edited* is
+    whether the comment was edited at all, by anyone.
+    """
+
+    id: str
+    login: str
+    body: str
+    role: Role
+    at: str
+    edited: bool
+
+
+@dataclass(frozen=True)
+class CommentStream:
+    """What :func:`read_comment_stream` trusts on an issue or PR.
+
+    *comments* are the trusted comments, oldest first; *ids* holds every
+    comment's ``fullDatabaseId``, trusted or not, so a caller can tell an
+    untrusted comment from one that is gone; *skipped* has a record for each
+    untrusted comment.
+    """
+
+    comments: tuple[StreamComment, ...]
+    ids: frozenset[str]
     skipped: tuple[Skipped, ...]
 
 
@@ -889,6 +922,42 @@ def _untrusted_edits(
             if cause is not None:
                 edits[Skipped(repo, number, "edit", _bare(identity), at, field, cause)] = None
     return tuple(edits)
+
+
+def read_comment_stream(
+    repo: str,
+    number: int,
+    *,
+    roles: frozenset[Role] = ALL_ROLES,
+    authors: TrustedAuthors | None = None,
+) -> CommentStream:
+    """Read *repo*#*number*'s comments and judge each, keeping who posted it.
+
+    The read :func:`read_issue` makes, every page of the comments and of each
+    comment's edit history included. A comment is trusted when its author and
+    every editor hold a role in *roles*. The body is not judged: a caller of
+    this takes nothing from it. *authors* defaults to the loaded
+    configuration.
+    """
+    if authors is None:
+        authors = load_trusted_authors()
+    _kind, _body, comments = _read_item(repo, number)
+    trusted, skipped = _judge_parsed(
+        comments, repo=repo, number=number, roles=roles, editors="every", authors=authors
+    )
+    by_id = {comment.database_id: comment.content for comment in comments}
+    stream = tuple(
+        StreamComment(
+            id=kept.id,
+            login=cast("str", _bare(by_id[kept.id].author)),
+            body=kept.body,
+            role=kept.role,
+            at=kept.at,
+            edited=by_id[kept.id].last_edit is not None,
+        )
+        for kept in trusted
+    )
+    return CommentStream(comments=stream, ids=frozenset(by_id), skipped=tuple(skipped))
 
 
 def _read_item(repo: str, number: int) -> tuple[str, _Content, list[_Comment]]:

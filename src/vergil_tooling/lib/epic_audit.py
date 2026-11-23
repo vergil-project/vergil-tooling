@@ -40,7 +40,6 @@ from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import (
     epic_docs,
-    epic_size,
     epics,
     github,
     linkage,
@@ -52,7 +51,7 @@ from vergil_tooling.lib import (
     trusted_comments,
 )
 from vergil_tooling.lib.labels import RETIRED_LABELS
-from vergil_tooling.lib.trusted_authors import load_trusted_authors, trusted_comment_lines
+from vergil_tooling.lib.trusted_authors import load_trusted_authors
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.trusted_authors import TrustedAuthors
@@ -1196,18 +1195,18 @@ def _cross_org_refs(body: str, org: str) -> list[epics.IssueRef]:
     return list(found.values())
 
 
-def _standalone_confirmed(task: epics.IssueRef, trusted: frozenset[str]) -> bool:
-    """True iff a trusted comment on *task* carries ``Standalone-confirmed`` alone on its line."""
+def _standalone_confirmed(task: epics.IssueRef, authors: TrustedAuthors) -> bool:
+    """True iff a trusted comment on *task* carries ``Standalone-confirmed`` alone on its line.
+
+    The comments are read through the trust layer
+    (:func:`~vergil_tooling.lib.trusted_comments.bodies`): each one it leaves
+    out is reported on stderr, metadata only.
+    """
     with github.target_org(task.owner):
-        raw = github.read_json(
-            "issue", "view", str(task.number), "--repo", f"{task.owner}/{task.repo}",
-            "--json", "comments",
-        )  # fmt: skip
-    if not isinstance(raw, dict):
-        raise RuntimeError(f"unexpected 'gh issue view' response for {task.slug}: {raw!r}")
-    comments: Any = raw.get("comments") or []
-    lines = trusted_comment_lines(comments, trusted)
-    return STANDALONE_CONFIRMED in lines
+        bodies = trusted_comments.bodies(task, authors)
+    return any(
+        line.strip() == STANDALONE_CONFIRMED for body in bodies for line in body.splitlines()
+    )
 
 
 def misplaced_adhoc(org: str, *, issues: list[OpenIssue] | None = None) -> list[MisplacedTask]:
@@ -1230,7 +1229,7 @@ def misplaced_adhoc(org: str, *, issues: list[OpenIssue] | None = None) -> list[
         issue.ref for issue in issues if epics.standing_kind_of(set(issue.labels)) is epics.ADHOC
     }
     epic_label: dict[str, bool | None] = {}  # cross-org ref -> is an epic; None if unreadable
-    trusted: frozenset[str] | None = None
+    authors: TrustedAuthors | None = None
     found: list[MisplacedTask] = []
     for issue in sorted(issues, key=lambda i: (i.ref.owner, i.ref.repo, i.ref.number)):
         if issue.native_parent not in live_adhoc:
@@ -1252,9 +1251,9 @@ def misplaced_adhoc(org: str, *, issues: list[OpenIssue] | None = None) -> list[
                 reasons.append(f"names {ref.slug}, an epic in another org")
         if not reasons:
             continue
-        if trusted is None:
-            trusted = epic_size.trusted_logins()
-        if _standalone_confirmed(issue.ref, trusted):
+        if authors is None:
+            authors = load_trusted_authors()
+        if _standalone_confirmed(issue.ref, authors):
             continue
         found += [MisplacedTask(task=issue.ref, reason=reason) for reason in reasons]
     return found

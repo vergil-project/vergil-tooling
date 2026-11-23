@@ -9,8 +9,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin import vrg_ruling
-from vergil_tooling.lib import github, identity_mode
+from vergil_tooling.lib import github, identity_mode, trust
 from vergil_tooling.lib.identity_mode import IdentityMode
 from vergil_tooling.lib.rulings.comments import IssueComment
 from vergil_tooling.lib.rulings.items import SECURITY_REQUEST_TEXT
@@ -45,11 +46,21 @@ def response_comment(cid: int, request_id: int, reply_id: int) -> IssueComment:
     return IssueComment(cid, AGENT, f"R1.1: fixed\n\n{marker}", False)
 
 
+def actor(login: str) -> dict[str, str] | None:
+    """The GraphQL actor of *login*: an agent login is a Bot, any other a User; empty is deleted."""
+    if not login:
+        return None
+    return {"__typename": "Bot" if login in AUTHORS.agents else "User", "login": login}
+
+
 class FakeIssue:
     """``o/r#7``: its comments, its POST, and how often each was called."""
 
     def __init__(self) -> None:
         self.comments: list[IssueComment] = []
+        # Per comment ID, an author or editor other than the one the login implies.
+        self.authors: dict[int, dict[str, str] | None] = {}
+        self.editors: dict[int, dict[str, str]] = {}
         self.posted: list[str] = []
         self.reads = 0
         self.post_error: Exception | None = None
@@ -73,12 +84,19 @@ class FakeIssue:
         assert remote == "origin"
         self.drafts[f"refs/vergil/scope-draft/{issue}"] = text
 
-    def fetch_comments(self, repo: str, issue: int) -> list[IssueComment]:
-        assert (repo, issue) == ("o/r", 7)
+    def node(self, comment: IssueComment) -> dict[str, Any]:
+        author = self.authors.get(comment.id, actor(comment.author))
+        editor = self.editors.get(comment.id, author if comment.edited else None)
+        return trust_stubs.comment(comment.id, comment.body, author, editor=editor)
+
+    def graphql(self, query: str, **variables: object) -> dict[str, Any]:
+        """The trust layer's item query for ``o/r#7``: its comments, one page."""
+        assert query == trust._ITEM_QUERY
+        assert variables == {"owner": "o", "name": "r", "number": 7}
         self.reads += 1
         if self.posted and self.read_error_after_post is not None:
             raise self.read_error_after_post
-        return list(self.comments)
+        return trust_stubs.item(nodes=[self.node(c) for c in self.comments])
 
     def post_json_once(
         self, endpoint: str, body: dict[str, object], *, timeout: float | None = None
@@ -126,8 +144,9 @@ class OrgSpy:
 
 @pytest.fixture
 def issue(monkeypatch: pytest.MonkeyPatch) -> FakeIssue:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     fake = FakeIssue()
-    monkeypatch.setattr("vergil_tooling.lib.rulings.comments.fetch_comments", fake.fetch_comments)
+    monkeypatch.setattr(github, "graphql", fake.graphql)
     monkeypatch.setattr(github, "post_json_once", fake.post_json_once)
     monkeypatch.setattr(github, "delete_if_exists", fake.delete_if_exists)
     monkeypatch.setattr("vergil_tooling.lib.rulings.draft_ref.push_draft", fake.push_draft)
@@ -317,6 +336,25 @@ def test_read_untrusted_request_is_request_author(cli: Cli, issue: FakeIssue) ->
     issue.comments = [IssueComment(41, "stranger", REQUEST_MARKER, False)]
     assert cli("read", "--issue", "o/r#7", "--request", "41") == 4
     assert "fatal check 'request-author' on comment 41" in cli.stderr
+
+
+def test_read_ignores_a_comment_from_a_user_named_like_the_agent(
+    cli: Cli, issue: FakeIssue
+) -> None:
+    # Counted as the agent's, a comment between the request and the reply would
+    # break the turn; from a User account it is an impostor's and counts for nothing.
+    forged = f"{trust_stubs.SPAM_TEXT}\n\n{render_marker(Marker('response', 41, 41))}"
+    issue.comments = [request_comment(41), IssueComment(42, AGENT, forged, False)]
+    issue.authors[42] = {"__typename": "User", "login": AGENT}
+    assert cli("read", "--issue", "o/r#7", "--request", "41") == 3
+    assert "no reply yet to request 41" in cli.stderr
+    assert "fatal check" not in cli.stderr
+    assert (
+        f"skipped untrusted content: o/r#7 comment {AGENT} at {trust_stubs.CREATED}"
+        " on comment 42 (wrong-type)\n"
+    ) in cli.stderr
+    assert "SPAM-MARKER-TEXT" not in cli.stdout + cli.stderr
+    assert "kind=response" not in cli.stdout + cli.stderr
 
 
 def test_read_json_valid_reply(cli: Cli, issue: FakeIssue) -> None:
@@ -563,13 +601,13 @@ def test_uses_issue_owner_org(
 ) -> None:
     monkeypatch.setattr(github, "detect_org", lambda **_k: "other")
     seen: list[list[str | None]] = []
-    real_fetch = issue.fetch_comments
+    real_graphql = issue.graphql
 
-    def fetch(repo: str, number: int) -> list[IssueComment]:
+    def graphql(query: str, **variables: object) -> dict[str, Any]:
         seen.append(list(target_org_spy.active))
-        return real_fetch(repo, number)
+        return real_graphql(query, **variables)
 
-    monkeypatch.setattr("vergil_tooling.lib.rulings.comments.fetch_comments", fetch)
+    monkeypatch.setattr(github, "graphql", graphql)
     issue.comments = [request_comment(41)]
     cli("read", "--issue", "o/r#7", "--request", "41")
     assert target_org_spy.orgs == {"o"}
@@ -598,12 +636,30 @@ def test_post_runs_inside_the_issue_owner_org(
 def test_github_failure_reading_exits_1(
     cli: Cli, issue: FakeIssue, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fail(_repo: str, _issue: int) -> list[IssueComment]:
+    def fail(_query: str, **_variables: object) -> dict[str, Any]:
         raise github.GitHubAPIError(1, ("gh",), None, "HTTP 500")
 
-    monkeypatch.setattr("vergil_tooling.lib.rulings.comments.fetch_comments", fail)
+    monkeypatch.setattr(github, "graphql", fail)
     assert cli("read", "--issue", "o/r#7", "--request", "41") == 1
     assert "HTTP 500" in cli.stderr
+
+
+@pytest.mark.parametrize("subcommand", ["request", "respond"])
+def test_trust_read_error_is_one_line_and_posts_nothing(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, subcommand: str
+) -> None:
+    issue.comments = [request_comment(41), reply_comment(42)]
+    # An actor without __typename: the layer never guesses its type.
+    issue.authors[42] = {"login": HUMAN}
+    if subcommand == "request":
+        argv = ("request", "--issue", "o/r#7", "--items", write_items(tmp_path, REQUEST_ITEMS))
+    else:
+        argv = (*RESPOND, write_items(tmp_path, RESPONSE_ITEMS))
+    assert cli(*argv) == 1
+    assert cli.stderr.startswith("vrg-ruling: cannot read who wrote the content (read_issue o/r#7)")
+    assert cli.stderr.count("\n") == 1
+    assert cli.stdout == ""
+    assert issue.posted == []
 
 
 def test_request_not_landed_exits_1(
@@ -626,10 +682,10 @@ def test_request_not_landed_exits_1(
 def test_missing_token_reaches_the_cli_boundary(
     cli: Cli, issue: FakeIssue, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def no_token(_repo: str, _issue: int) -> list[IssueComment]:
+    def no_token(_query: str, **_variables: object) -> dict[str, Any]:
         raise github.MissingGitHubTokenError(4, ("gh",), None, "no token")
 
-    monkeypatch.setattr("vergil_tooling.lib.rulings.comments.fetch_comments", no_token)
+    monkeypatch.setattr(github, "graphql", no_token)
     assert cli("read", "--issue", "o/r#7", "--request", "41") == 1
     assert "GH_TOKEN" in cli.stderr or "token" in cli.stderr.lower()
     assert issue.posted == []
@@ -880,12 +936,12 @@ def test_draft_scope_refuses_outside_user_mode(
 def test_draft_scope_refuses_a_missing_issue(
     cli: Cli, issue: FakeIssue, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def not_found(_repo: str, _issue: int) -> list[IssueComment]:
-        raise vrg_ruling.RulingError("o/r#7: issue not found")
+    def not_found(_query: str, **_variables: object) -> dict[str, Any]:
+        return {"repository": {"issueOrPullRequest": None}}
 
-    monkeypatch.setattr("vergil_tooling.lib.rulings.comments.fetch_comments", not_found)
+    monkeypatch.setattr(github, "graphql", not_found)
     assert cli(*scope_argv(tmp_path, "x\n")) == 1
-    assert "issue not found" in cli.stderr
+    assert "the issue or pull request is missing" in cli.stderr
     assert issue.drafts == {}
 
 

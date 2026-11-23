@@ -10,7 +10,13 @@ to its issue (``docs/specs/merge-review-protocol.md``, "A batch PR").
 
 The issues come from the PR's body, never from the agent: a PR whose body
 has more than one ``Closes`` line is a batch PR, as ``vrg-pr-workflow
-batch-check --pr`` and the ``merge-review`` skill read it. Every refusal is the builder's
+batch-check --pr`` and the ``merge-review`` skill read it. The PR is found
+through the trust layer (epic vergil-project/.github#1467, spec §5.2): it must
+be a same-repo PR from the current branch with a trusted author
+(:func:`~vergil_tooling.lib.trust.prs_for_branch`), and its body counts only
+when the layer trusts it (:func:`~vergil_tooling.lib.trust.read_issue` with
+``require_body=True``), so a linkage line an outsider wrote or edited in never
+names an issue. Every refusal is the builder's
 :class:`~vergil_tooling.lib.merge_review.request.RequestError`.
 """
 
@@ -19,12 +25,14 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from typing import TYPE_CHECKING, Any
+import sys
+from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import git, github, linkage
+from vergil_tooling.lib import git, github, linkage, trust
 from vergil_tooling.lib.epics import IssueRef, parse_issue_ref
 from vergil_tooling.lib.merge_review.request import refuse, request_file
 from vergil_tooling.lib.merge_review.schema import earlier_steps
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -43,18 +51,6 @@ _SUBJECT_REF_RE = re.compile(r" \(#([0-9]+)\)$")
 #: One rev-list record: SHA, parent SHAs, subject, split by a unit separator.
 _FIELD_SEP = "\x1f"
 _RECORD_FIELDS = 3
-
-_PR_QUERY = """
-query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      state
-      headRefName
-      body
-    }
-  }
-}
-"""
 
 
 def parse_pr(raw: str, issue: IssueRef) -> int:
@@ -77,24 +73,20 @@ def parse_pr(raw: str, issue: IssueRef) -> int:
 def batch_issues(number: int, issue: IssueRef, branch: str) -> list[IssueRef]:
     """Every issue the open PR *number* closes when it is a batch PR; ``[]`` otherwise.
 
-    The PR is read from *issue*'s repository and must be open, with *branch*
-    (the current branch) as its head. A batch PR's issues are its body's
+    The PR is read from *issue*'s repository and must be open, a same-repo PR
+    with a trusted author and *branch* (the current branch) as its head, and
+    its body must be trusted. A batch PR's issues are its body's
     ``Closes`` refs, in body order: each in the PR's repository, listed once,
     *issue* among them. A PR with one ``Closes`` line or none is a
     single-issue PR and must link *issue* (``Ref`` or ``Closes``); the
     request then carries nothing more.
     """
     pr = f"{issue.owner}/{issue.repo}#{number}"
-    node = _read_pr(issue, number, pr)
-    state, head, body = node.get("state"), node.get("headRefName"), node.get("body")
-    if not isinstance(state, str) or not isinstance(head, str) or not isinstance(body, str):
-        refuse(f"cannot read PR {pr}: it has no state, head branch or body")
+    state, body = _read_pr(issue, number, branch, pr)
     if state.upper() != "OPEN":
         refuse(
             f"PR {pr} is {state.lower()}, not open: a fix is reviewed this way only on an open PR"
         )
-    if head != branch:
-        refuse(f"PR {pr} is the head of branch {head!r}, not of the current branch {branch!r}")
     refs = linkage.extract_tracking_refs(body)
     closes = [ref for keyword, ref in refs if keyword == "Closes"]
     if len(closes) <= 1:
@@ -114,20 +106,37 @@ def batch_issues(number: int, issue: IssueRef, branch: str) -> list[IssueRef]:
     return issues
 
 
-def _read_pr(issue: IssueRef, number: int, pr: str) -> dict[str, Any]:
-    """The PR's ``state``, ``headRefName`` and ``body``, refusing a failed read."""
+def _read_pr(issue: IssueRef, number: int, branch: str, pr: str) -> tuple[str, str]:
+    """The PR's GraphQL ``state`` and trusted body, refusing a failed or untrusted read.
+
+    The PR must be among *branch*'s same-repo PRs with a trusted author; each
+    PR the branch lookup skips (a fork, an untrusted author) is reported on
+    stderr, metadata only. An untrusted body is a refusal naming only its
+    metadata.
+    """
+    repo = f"{issue.owner}/{issue.repo}"
     try:
         with github.target_org(issue.owner):
-            data = github.graphql(_PR_QUERY, owner=issue.owner, name=issue.repo, number=number)
+            prs, skipped = trust.prs_for_branch(repo, branch, state="all")
+            trust.report_skipped(skipped, stream=sys.stderr)
+            found = [ref for ref in prs if ref.number == number]
+            if not found:
+                refuse(
+                    f"PR {pr} is not a same-repo PR with a trusted author whose head is"
+                    f" the current branch {branch!r}"
+                )
+            content = trust.read_issue(repo, number, require_body=True)
     except github.MissingGitHubTokenError:
         raise
-    except (github.GitHubAPIError, RuntimeError) as exc:  # RuntimeError: a GraphQL error
+    except (
+        TrustedAuthorsNotConfiguredError,
+        github.GitHubAPIError,
+        RuntimeError,  # a GraphQL error
+        trust.UntrustedContentError,
+        trust.TrustReadError,
+    ) as exc:
         refuse(f"cannot read PR {pr}: {exc}")
-    repository = data.get("repository") if isinstance(data, dict) else None
-    node = repository.get("pullRequest") if isinstance(repository, dict) else None
-    if not isinstance(node, dict):
-        refuse(f"cannot read PR {pr}: no such pull request")
-    return node
+    return found[0].state, content.body or ""
 
 
 def _resolve(raw: str, issue: IssueRef) -> IssueRef:

@@ -321,11 +321,6 @@ def _trusted_authors() -> trusted_authors.TrustedAuthors:
         ) from exc
 
 
-def _human_logins() -> tuple[str, ...]:
-    """The ``human`` logins of ``vrg-trusted-authors``; a failed load is an error, never ``()``."""
-    return _trusted_authors().human
-
-
 def _guard(ctx: ReleaseContext) -> None:
     """Lock the tracking issue if it is not, then apply the identity rule to it.
 

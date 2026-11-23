@@ -7,11 +7,13 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from vergil_tooling.lib import planning_close, queue_view
+from tests.vergil_tooling import trust_stubs
+from vergil_tooling.lib import planning_close, queue_view, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.planning_close import PlanningClose
 from vergil_tooling.lib.queue_view import AdvisoryHold
 from vergil_tooling.lib.security_records import Advisory
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -20,42 +22,78 @@ TASK = IssueRef("acme", ".github", 20)
 EPIC = IssueRef("acme", ".github", 19)
 PLANNING = IssueRef("acme", ".github", 7)
 QUEUE = IssueRef("acme", ".github", 1)
-TRUSTED = frozenset({"human", "agent-user"})
 
 
-def _comment(body: str, login: str = "agent-user") -> dict[str, Any]:
-    return {"author": {"login": login}, "body": body}
+def _comment(body: str, author: Any = trust_stubs.AGENT, *, editor: Any = None) -> dict[str, Any]:
+    """An ``IssueComment`` node by *author*; *editor* makes it edited once, by that editor."""
+    return trust_stubs.comment(1, body, author, editor=editor)
 
 
-def _docs_marker(task: IssueRef = TASK, login: str = "agent-user") -> dict[str, Any]:
+def _docs_marker(
+    task: IssueRef = TASK, author: Any = trust_stubs.AGENT, *, editor: Any = None
+) -> dict[str, Any]:
     return _comment(
-        f"Epic created; next: the spec.\n\nEpic: {EPIC.slug}\nDocs task: {task.slug}\n", login
+        f"Epic created; next: the spec.\n\nEpic: {EPIC.slug}\nDocs task: {task.slug}\n",
+        author,
+        editor=editor,
     )
 
 
+def _numbered(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """*nodes* renumbered from 1, as GitHub gives each comment its own id."""
+    return [
+        {**node, "id": f"IC_{i}", "fullDatabaseId": str(i)} for i, node in enumerate(nodes, start=1)
+    ]
+
+
 class _GitHub:
-    """A fake GitHub holding the epic body and each planning issue's view."""
+    """A fake GitHub holding the epic body and each planning issue.
+
+    Each planning issue's *views* entry holds its ``state`` and ``labels``
+    (what ``gh issue view`` reads), and what the trust layer reads: its
+    ``body`` (empty unless given), the body's ``author`` and ``editor`` (the
+    trusted human, unedited, unless given) and its ``comments`` (comment
+    nodes). The epic body is written by *epic_author*.
+    """
 
     def __init__(
         self,
         *,
         epic_body: str = f"Planning: {PLANNING.slug}\n\nThe epic.",
+        epic_author: Any = trust_stubs.HUMAN,
         views: dict[int, dict[str, Any]] | None = None,
     ) -> None:
         self.epic_body = epic_body
+        self.epic_author = epic_author
         self.views = (
             views
             if views is not None
             else {PLANNING.number: {"state": "OPEN", "comments": [_docs_marker()]}}
         )
 
-    def read_output(self, *args: str) -> str:
-        assert args == ("api", f"repos/acme/.github/issues/{EPIC.number}", "--jq", ".body")
-        return self.epic_body
-
     def read_json(self, *args: str) -> dict[str, Any]:
         assert args[:2] == ("issue", "view")
-        return self.views[int(args[2])]
+        assert args[-2:] == ("--json", "state,labels"), "content is read through the trust layer"
+        view = self.views[int(args[2])]
+        return {"state": view.get("state"), "labels": view.get("labels") or []}
+
+    def graphql(self, query: str, **variables: Any) -> dict[str, Any]:
+        assert query == trust._ITEM_QUERY, "only the item read is faked"
+        assert (variables["owner"], variables["name"]) == ("acme", ".github")
+        number = int(variables["number"])
+        if number == EPIC.number:
+            return trust_stubs.item(body=self.epic_body, author=self.epic_author)
+        view = self.views[number]
+        return trust_stubs.item(
+            body=view.get("body", ""),
+            author=view.get("author", trust_stubs.HUMAN),
+            editor=view.get("editor"),
+            nodes=_numbered(view.get("comments") or []),
+        )
+
+
+def _no_read(*args: str) -> str:
+    raise AssertionError(f"the epic body is read through the trust layer, not {args!r}")
 
 
 @pytest.fixture()
@@ -64,16 +102,18 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> Callable[..., _GitHub]:
 
     def install(**kwargs: Any) -> _GitHub:
         gh = _GitHub(**kwargs)
-        monkeypatch.setattr(planning_close.github, "read_output", gh.read_output)
+        monkeypatch.setattr(planning_close.github, "read_output", _no_read)
         monkeypatch.setattr(planning_close.github, "read_json", gh.read_json)
+        monkeypatch.setattr(planning_close.github, "graphql", gh.graphql)
         return gh
 
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(planning_close.epics, "parent_of", lambda _task: EPIC)
     monkeypatch.setattr(planning_close.epics, "native_parent_of", lambda _ref: QUEUE)
     monkeypatch.setattr(
         planning_close.epics, "queue_kind", lambda ref: "planning" if ref == QUEUE else None
     )
-    monkeypatch.setattr(planning_close.epic_size, "trusted_logins", lambda: TRUSTED)
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
     monkeypatch.setattr(
         planning_close.queue_view, "read_advisory_hold", lambda *_args: AdvisoryHold()
     )
@@ -85,8 +125,10 @@ def test_docs_task_closes_its_planning_issue(fake: Callable[..., _GitHub]) -> No
     assert planning_close.find(TASK) == PlanningClose(TASK, PLANNING, None)
 
 
-def test_app_prefixed_author_is_trusted(fake: Callable[..., _GitHub]) -> None:
-    fake(views={7: {"state": "OPEN", "comments": [_docs_marker(login="app/agent-user")]}})
+@pytest.mark.parametrize("login", ["app/vergil-user", "vergil-user[bot]"])
+def test_app_prefixed_author_is_trusted(fake: Callable[..., _GitHub], login: str) -> None:
+    agent = {"__typename": "Bot", "login": login}
+    fake(views={7: {"state": "OPEN", "comments": [_docs_marker(author=agent)]}})
     result = planning_close.find(TASK)
     assert result is not None
     assert result.closes
@@ -110,9 +152,115 @@ def test_other_task_of_a_planned_epic_is_not_the_docs_task(fake: Callable[..., _
     assert planning_close.find(TASK) is None
 
 
-def test_untrusted_docs_marker_is_ignored(fake: Callable[..., _GitHub]) -> None:
-    fake(views={7: {"state": "OPEN", "comments": [_docs_marker(login="stranger")]}})
+@pytest.mark.parametrize(
+    ("author", "login", "cause"),
+    [
+        (trust_stubs.OUTSIDER, "drive-by", "untrusted"),
+        (trust_stubs.IMPOSTOR, "vergil-user", "wrong-type"),
+    ],
+    ids=["outsider", "user-named-like-app"],
+)
+def test_untrusted_docs_marker_is_ignored(
+    fake: Callable[..., _GitHub],
+    capsys: pytest.CaptureFixture[str],
+    author: Any,
+    login: str,
+    cause: str,
+) -> None:
+    fake(views={7: {"state": "OPEN", "comments": [_docs_marker(author=author)]}})
     assert planning_close.find(TASK) is None
+    out, err = capsys.readouterr()
+    assert err == (
+        f"skipped untrusted content: acme/.github#7 comment {login} at {trust_stubs.CREATED}"
+        f" on comment 1 ({cause})\n"
+    )
+    assert "Docs task:" not in out + err
+
+
+def test_planning_close_marker_edited_by_outsider(
+    fake: Callable[..., _GitHub], capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A trusted Docs task: marker an outsider has edited no longer counts: the
+    # task is not the docs task, and the edit is reported, metadata only.
+    edited = _docs_marker(editor=trust_stubs.OUTSIDER)
+    edited["body"] += f"{trust_stubs.SPAM_TEXT}\n"
+    fake(views={7: {"state": "OPEN", "comments": [edited]}})
+    assert planning_close.find(TASK) is None
+    out, err = capsys.readouterr()
+    assert err == (
+        f"skipped untrusted content: acme/.github#7 edit drive-by at {trust_stubs.EDITED}"
+        " on comment 1 (untrusted)\n"
+    )
+    assert "Docs task:" not in out + err
+    assert "SPAM-MARKER-TEXT" not in out + err
+
+
+@pytest.mark.parametrize(
+    ("author", "cause"),
+    [(trust_stubs.OUTSIDER, "untrusted"), (trust_stubs.IMPOSTOR, "wrong-type")],
+    ids=["outsider", "user-named-like-app"],
+)
+def test_untrusted_epic_body_is_a_stop(
+    fake: Callable[..., _GitHub], capsys: pytest.CaptureFixture[str], author: Any, cause: str
+) -> None:
+    # The Planning: line counts only from a trusted epic body: an untrusted
+    # one is a stop, metadata only, never "not a documentation task".
+    fake(epic_body=f"{trust_stubs.SPAM_TEXT}\nPlanning: {PLANNING.slug}\n", epic_author=author)
+    with pytest.raises(trust.UntrustedContentError) as excinfo:
+        planning_close.find(TASK)
+    assert excinfo.value.item.number == EPIC.number
+    assert excinfo.value.item.field == "body"
+    assert excinfo.value.item.cause == cause
+    out, err = capsys.readouterr()
+    text = str(excinfo.value) + out + err
+    assert "SPAM-MARKER-TEXT" not in text
+    assert "Planning:" not in text
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "cause"),
+    [
+        (trust_stubs.OUTSIDER, None, "untrusted"),
+        (trust_stubs.IMPOSTOR, None, "wrong-type"),
+        (trust_stubs.HUMAN, trust_stubs.OUTSIDER, "untrusted"),
+    ],
+    ids=["outsider", "user-named-like-app", "edited-by-outsider"],
+)
+def test_untrusted_planning_body_closes_nothing(
+    fake: Callable[..., _GitHub],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    author: Any,
+    editor: Any,
+    cause: str,
+) -> None:
+    # The advisory hold is read from the planning body only when it is trusted:
+    # an untrusted body closes nothing, and the hold rule never sees it.
+    body = f"{trust_stubs.SPAM_TEXT}\n\nSecurity advisory: acme/.github GHSA-aaaa-aaaa-aaaa"
+    view = {
+        "state": "OPEN",
+        "body": body,
+        "author": author,
+        "editor": editor,
+        "comments": [_docs_marker()],
+    }
+    fake(views={7: view})
+
+    def hold(*_args: object) -> AdvisoryHold:
+        raise AssertionError("an untrusted body's hold is never read")
+
+    monkeypatch.setattr(planning_close.queue_view, "read_advisory_hold", hold)
+    result = planning_close.find(TASK)
+    assert result == PlanningClose(
+        TASK,
+        PLANNING,
+        f"its body is untrusted ({cause}), so its advisory hold cannot be read; check it"
+        " and close the planning issue by hand",
+    )
+    assert not result.closes
+    out, err = capsys.readouterr()
+    assert "SPAM-MARKER-TEXT" not in out + err
+    assert "GHSA-aaaa" not in out + err
 
 
 def test_latest_trusted_docs_marker_wins(fake: Callable[..., _GitHub]) -> None:
@@ -282,11 +430,37 @@ def test_failed_read_propagates(
 ) -> None:
     fake()
 
-    def boom(*_args: str) -> str:
+    def boom(*_args: str) -> dict[str, Any]:
         raise subprocess.CalledProcessError(1, ["gh"])
 
-    monkeypatch.setattr(planning_close.github, "read_output", boom)
+    monkeypatch.setattr(planning_close.github, "read_json", boom)
     with pytest.raises(subprocess.CalledProcessError):
+        planning_close.find(TASK)
+
+
+def test_failed_layer_read_propagates(
+    fake: Callable[..., _GitHub], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake()
+
+    def boom(*_args: str, **_variables: Any) -> dict[str, Any]:
+        raise RuntimeError("gh failed")
+
+    monkeypatch.setattr(planning_close.github, "graphql", boom)
+    with pytest.raises(trust.TrustReadError, match=r"read_issue acme/\.github#19"):
+        planning_close.find(TASK)
+
+
+def test_failed_trusted_author_load_propagates(
+    fake: Callable[..., _GitHub], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake()
+
+    def boom() -> None:
+        raise TrustedAuthorsNotConfiguredError("not configured")
+
+    monkeypatch.setattr(trust, "load_trusted_authors", boom)
+    with pytest.raises(TrustedAuthorsNotConfiguredError):
         planning_close.find(TASK)
 
 

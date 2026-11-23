@@ -443,6 +443,83 @@ def test_read_issue_pages_all_edits(fake: Any) -> None:
     assert [v.get("after") for q, v in calls if q == trust._BODY_EDITS_QUERY] == ["b1"]
 
 
+def test_read_comment_stream_keeps_login_and_edited(fake: Any) -> None:
+    fake(
+        _item(
+            author=OUTSIDER,
+            body=SPAM,
+            comments=[
+                _comment("1", {"__typename": "User", "login": "app/the-human"}),
+                _comment(
+                    "2", {"__typename": "Bot", "login": "the-agent[bot]"}, editor=HUMAN, edited=True
+                ),
+            ],
+        )
+    )
+    stream = trust.read_comment_stream(REPO, 7, authors=AUTHORS)
+    assert stream.comments == (
+        trust.StreamComment(
+            "1", "the-human", "a trusted comment", Role.HUMAN, CREATED, edited=False
+        ),
+        trust.StreamComment(
+            "2", "the-agent", "a trusted comment", Role.AGENTS, CREATED, edited=True
+        ),
+    )
+    # The body is not judged: an outsider's body is neither returned nor reported.
+    assert stream.skipped == ()
+    assert stream.ids == frozenset({"1", "2"})
+
+
+def test_read_comment_stream_skips_untrusted_and_keeps_every_id(fake: Any) -> None:
+    impostor = {"__typename": "User", "login": "the-agent"}
+    fake(
+        _item(
+            comments=[
+                _comment("1", impostor, SPAM),
+                _comment("2", editor=OUTSIDER, edited=True, edits=_edits([OUTSIDER])),
+                _comment("3", AUTOMATION),
+                _comment("4", DELETED),
+                _comment("5", AGENT),
+            ]
+        )
+    )
+    stream = trust.read_comment_stream(
+        REPO, 7, roles=frozenset({Role.HUMAN, Role.AGENTS}), authors=AUTHORS
+    )
+    assert [c.id for c in stream.comments] == ["5"]
+    assert [(s.kind, s.login, s.field, s.cause) for s in stream.skipped] == [
+        ("comment", "the-agent", "comment 1", trust.WRONG_TYPE),
+        ("edit", "drive-by", "comment 2", trust.UNTRUSTED),
+        ("comment", "acme-automation", "comment 3", trust.NOT_ACCEPTED),
+        ("comment", None, "comment 4", trust.DELETED),
+    ]
+    assert stream.ids == frozenset({"1", "2", "3", "4", "5"})
+
+
+def test_read_comment_stream_pages_all_comments(fake: Any) -> None:
+    second = _item(comments=[_comment("2", AGENT)])
+    calls = fake(_item(comments=[_comment("1")], comments_cursor="c1"), comments=[second]).calls
+    stream = trust.read_comment_stream(REPO, 7, authors=AUTHORS)
+    assert [c.id for c in stream.comments] == ["1", "2"]
+    assert [v.get("after") for q, v in calls if q == trust._COMMENTS_QUERY] == ["c1"]
+
+
+def test_read_comment_stream_malformed_page_raises(fake: Any) -> None:
+    item = _item(comments=[_comment("1")])
+    del item["repository"]["issueOrPullRequest"]["comments"]["pageInfo"]
+    fake(item)
+    with pytest.raises(TrustReadError, match="read_issue acme/widgets#7"):
+        trust.read_comment_stream(REPO, 7, authors=AUTHORS)
+
+
+def test_read_comment_stream_loads_configured_authors(
+    fake: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake(_item(comments=[_comment("1")]))
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    assert [c.login for c in trust.read_comment_stream(REPO, 7).comments] == ["the-human"]
+
+
 def test_read_issue_body_edited_by_deleted_account_is_untrusted(fake: Any) -> None:
     fake(_item(editor=DELETED, edited=True, edits=_edits([DELETED])))
     content = _read()

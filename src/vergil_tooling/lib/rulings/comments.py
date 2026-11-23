@@ -1,48 +1,48 @@
-"""Reading an issue's comments: every page, oldest first, with 64-bit IDs.
+"""Reading an issue's trusted comment stream for the turn checks, through the trust layer.
+
+Every comment is read and judged by
+:func:`vergil_tooling.lib.trust.read_comment_stream` (epic
+vergil-project/.github#1467, spec §5.2): a comment counts only when its
+author and every editor are the human (a GraphQL ``User``) or an agent (a
+``Bot``). A login named like a trusted one but of the wrong account type, an
+outsider, a deleted account, the automation App, or an outsider's edit of a
+trusted comment leaves the comment out of the stream; each one left out is
+reported on stderr, metadata only. A read the layer cannot complete raises
+:class:`~vergil_tooling.lib.trust.TrustReadError`, so the turn checks never
+see a truncated stream.
 
 Each comment's ID is GraphQL's ``fullDatabaseId`` (a ``BigInt``, returned as a
 string), which equals the REST ``id``; never ``databaseId``, a 32-bit ``Int``
-that current comment IDs overflow. A leading ``app/`` is stripped from every
-author, and a comment whose author is gone (a deleted account) is kept with
-author ``""``, so it is never trusted.
+that current comment IDs overflow.
 """
 
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import trust
 from vergil_tooling.lib.rulings import RulingError
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
-_APP_PREFIX = "app/"
 _ISSUE_REF_RE = re.compile(r"^([\w.-]+/[\w.-]+)#([1-9][0-9]*)$")
 _ID_RE = re.compile(r"^[1-9][0-9]*$")
 
-_COMMENTS_QUERY = """
-query($owner: String!, $name: String!, $number: Int!, $after: String) {
-  repository(owner: $owner, name: $name) {
-    issue(number: $number) {
-      comments(first: 100, after: $after) {
-        pageInfo { hasNextPage endCursor }
-        nodes { fullDatabaseId author { login } body createdAt lastEditedAt }
-      }
-    }
-  }
-}
-"""
+#: The roles whose comments make up the stream: the human and the agents.
+STREAM_ROLES = frozenset({trust.Role.HUMAN, trust.Role.AGENTS})
 
 
 @dataclass(frozen=True)
 class IssueComment:
-    """One issue comment as the turn checks see it.
+    """One trusted issue comment as the turn checks see it.
 
+    ``author`` is the bare login of an author the trust layer trusts.
     ``created_at`` is GitHub's ``createdAt``, an ISO 8601 timestamp; it is
-    always set on a fetched comment, and empty only on one built by hand.
+    always set on a read comment, and empty only on one built by hand.
     """
 
     id: int
@@ -50,6 +50,14 @@ class IssueComment:
     body: str
     edited: bool
     created_at: str = ""
+
+
+@dataclass(frozen=True)
+class Stream:
+    """An issue's trusted comments, oldest first, and every comment ID on it, trusted or not."""
+
+    comments: list[IssueComment]
+    all_ids: frozenset[int]
 
 
 def parse_issue_ref(ref: str) -> tuple[str, int]:
@@ -61,78 +69,37 @@ def parse_issue_ref(ref: str) -> tuple[str, int]:
     return match.group(1), int(match.group(2))
 
 
-def _comment_from_node(node: Any, where: str) -> IssueComment:
-    if not isinstance(node, dict):
-        msg = f"{where}: a comment node is not an object: {node!r}"
+def _comment_id(raw: str, where: str) -> int:
+    if _ID_RE.fullmatch(raw) is None:
+        msg = f"{where}: a comment has no usable fullDatabaseId"
         raise RulingError(msg)
-    raw_id = node.get("fullDatabaseId")
-    if not isinstance(raw_id, str) or _ID_RE.fullmatch(raw_id) is None:
-        msg = f"{where}: a comment has no usable fullDatabaseId: {raw_id!r}"
-        raise RulingError(msg)
-    comment_id = int(raw_id)
-    body = node.get("body")
-    if not isinstance(body, str):
-        msg = f"{where}: comment {comment_id} has no body string"
-        raise RulingError(msg)
-    created_at = node.get("createdAt")
-    if not isinstance(created_at, str) or not created_at:
-        msg = f"{where}: comment {comment_id} has no createdAt string"
-        raise RulingError(msg)
-    author_node = node.get("author")
-    login = ""
-    if author_node is not None:
-        raw_login = author_node.get("login") if isinstance(author_node, dict) else None
-        if not isinstance(raw_login, str) or not raw_login:
-            msg = f"{where}: comment {comment_id} has an author with no login"
-            raise RulingError(msg)
-        login = raw_login.removeprefix(_APP_PREFIX)
-    return IssueComment(
-        id=comment_id,
-        author=login,
-        body=body,
-        edited=node.get("lastEditedAt") is not None,
-        created_at=created_at,
-    )
+    return int(raw)
 
 
-def fetch_comments(repo: str, issue: int) -> list[IssueComment]:
-    """Every comment on ``repo#issue``, oldest first, reading every page.
+def read_stream(repo: str, issue: int, authors: TrustedAuthors | None = None) -> Stream:
+    """Every comment on ``repo#issue`` the layer trusts, oldest first, and every comment ID.
 
-    Raises :class:`RulingError` when the issue cannot be found or a page is not
-    shaped as expected, so the turn checks never see a truncated stream.
+    *authors* defaults to the loaded configuration. Each untrusted comment
+    is reported on stderr, metadata only, and its ID is still in
+    ``all_ids``, so a request that exists but is untrusted is told apart
+    from one that is gone. Raises
+    :class:`~vergil_tooling.lib.trust.TrustReadError` when the comments
+    cannot be read in full, and :class:`RulingError` on a comment ID that is
+    not a positive integer.
     """
-    owner, _, name = repo.partition("/")
     where = f"{repo}#{issue}"
-    found: list[IssueComment] = []
-    after: str | None = None
-    while True:
-        variables: dict[str, object] = {"owner": owner, "name": name, "number": issue}
-        if after is not None:
-            variables["after"] = after
-        data: Any = github.graphql(_COMMENTS_QUERY, **variables)
-        issue_node = ((data or {}).get("repository") or {}).get("issue")
-        if not isinstance(issue_node, dict):
-            msg = f"{where}: issue not found"
-            raise RulingError(msg)
-        page = issue_node.get("comments")
-        if not isinstance(page, dict) or not isinstance(page.get("nodes"), list):
-            msg = f"{where}: the comments page is not shaped as expected"
-            raise RulingError(msg)
-        found.extend(_comment_from_node(node, where) for node in page["nodes"])
-        info = page.get("pageInfo")
-        if not isinstance(info, dict):
-            msg = f"{where}: the comments page has no pageInfo"
-            raise RulingError(msg)
-        if not info.get("hasNextPage"):
-            return found
-        cursor = info.get("endCursor")
-        if not isinstance(cursor, str) or not cursor:
-            msg = f"{where}: the comments page says there is more but gives no cursor"
-            raise RulingError(msg)
-        after = cursor
-
-
-def trusted(comments: list[IssueComment], authors: TrustedAuthors) -> list[IssueComment]:
-    """The comments by a trusted login (human or agent), in their original order."""
-    logins = set(authors.human) | set(authors.agents)
-    return [c for c in comments if c.author and c.author in logins]
+    read = trust.read_comment_stream(repo, issue, roles=STREAM_ROLES, authors=authors)
+    trust.report_skipped(read.skipped, stream=sys.stderr)
+    return Stream(
+        comments=[
+            IssueComment(
+                id=_comment_id(comment.id, where),
+                author=comment.login,
+                body=comment.body,
+                edited=comment.edited,
+                created_at=comment.at,
+            )
+            for comment in read.comments
+        ],
+        all_ids=frozenset(_comment_id(raw, where) for raw in read.ids),
+    )
