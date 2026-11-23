@@ -19176,7 +19176,12 @@ of them until the plan exists.</p>
   - <strong>A <code>Security advisory:</code> line on an issue without the <code>security</code>
     label</strong>, with no advisory tracking the issue, is a broken pair. The
     queue reports it in the item's note (<code>broken pair: …</code>, saying to
-    have the human check the pair) and does not hold the item.</p>
+    have the human check the pair) and does not hold the item.
+  - <strong><code>Security advisory:</code> lines count only from a trusted body</strong>: one
+    whose author and every editor the trust layer trusts. <code>vrg-queue
+    planning</code> stops an item whose body it does not trust and leaves it
+    out of the listing, and the docs PR's close leaves such a planning
+    issue open for the human to check.</p>
 <p><code>vrg-queue planning</code> never shows a held planning issue as
   <code>ready-to-close</code>. It shows it as <code>in-progress</code> with a note that names
   the advisories by GHSA ID only, and ends with the command that hands
