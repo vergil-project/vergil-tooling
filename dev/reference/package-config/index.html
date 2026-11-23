@@ -19507,8 +19507,10 @@ fatal before tagging. The caller has two requirements:</p>
 <li><strong><code>secrets: inherit</code></strong> on the <code>cd-release</code> caller. Environment secrets reach
   a job in a cross-repo reusable workflow only with <code>inherit</code>; an explicit
   secrets map leaves <code>package-sign</code> with an empty key (proven by
-  vergil-project/packages#6). Semgrep flags <code>secrets: inherit</code>, so suppress it
-  inline with a justification:</li>
+  vergil-project/packages#6). <code>vrg-github-repo-init</code> generates it for every
+  repo, since the App keys reach <code>cd-release</code> the same way, and
+  <code>vrg-validate</code>'s <code>secrets-inherit</code> check allows it for <code>cd-release.yml</code>
+  (see <a href="../../guides/ci-architecture/#cd-and-ops-reusable-workflow-secrets">CD and ops: reusable-workflow secrets</a>):</li>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="w">  </span><span class="nt">release</span><span class="p">:</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">github.ref == 'refs/heads/main' &amp;&amp; !github.event.created</span>
@@ -19517,7 +19519,7 @@ fatal before tagging. The caller has two requirements:</p>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">language</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python</span>
 <a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="c1"># `inherit` is required: environment secrets reach a job in a cross-repo</span>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="c1"># reusable workflow only with `secrets: inherit`. The callee is first-party.</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="nt">secrets</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">inherit</span><span class="w">  </span><span class="c1"># nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="nt">secrets</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">inherit</span>
 </code></pre></div>
 <p>After the release is tagged, <code>cd-release</code> dispatches to the org's <code>packages</code>
 repository with the org's GitHub App token (<code>APP_CLIENT_ID</code> /

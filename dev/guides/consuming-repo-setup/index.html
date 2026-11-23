@@ -19502,9 +19502,10 @@ never produces.</p>
    <a href="../../reference/package-config/">Package configuration</a>).</li>
 <li>Re-run <code>vrg-github-repo-init --adopt</code> from the repo root. It keeps
    <code>[package]</code> (and any other hand-written table) and regenerates the
-   workflows: <code>ci.yml</code> gains a <code>package</code> job calling <code>ci-package.yml</code>, and the
-   <code>cd.yml</code> <code>release</code> job switches to <code>secrets: inherit</code>. The GitHub config
-   step then makes <code>package / evidence</code> a required check.</li>
+   workflows: <code>ci.yml</code> gains a <code>package</code> job calling <code>ci-package.yml</code>. The
+   <code>cd.yml</code> <code>release</code> job already passes <code>secrets: inherit</code>, which carries the
+   signing secrets. The GitHub config step then makes <code>package / evidence</code> a
+   required check.</li>
 <li>Create a <code>package-signing</code> environment, restricted to <code>main</code>, holding
    <code>PACKAGE_SIGNING_KEY</code> and <code>PACKAGE_SIGNING_PASSPHRASE</code>.</li>
 <li>Make sure the org's GitHub App can dispatch to <code>&lt;org&gt;/packages</code>, which
