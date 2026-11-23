@@ -840,7 +840,8 @@ one that is behind when the release runs it. The pipeline:
    already exists, its PR decides what happens; see
    [An existing update branch](../reference/dev/update-deps.md#an-existing-update-branch).
    On `--resume`, if the update for this version already merged, the
-   stage succeeds and its tracking-issue comment links the merged PR.
+   stage deletes the branch it left, on origin and locally, then
+   succeeds, and its tracking-issue comment links the merged PR.
 2. Run each applicable updater, committing each one's changes
    separately. The built-in updaters and the per-repo hook are described
    in the [dependency-update reference](../reference/dependency-update-config.md).
@@ -848,8 +849,13 @@ one that is behind when the release runs it. The pipeline:
    The tracking-issue comment says "No dependency changes; no PR opened."
 4. Otherwise run `vrg-container-run -- vrg-validate` once, push the
    branch, and open a PR to `develop` labelled `dependency-update`.
-5. If validation passed, wait for the PR's checks, merge it, and
-   delete its branch on origin.
+5. If validation passed, wait for the PR's checks and merge it. Once
+   the PR is confirmed merged, remove the worktree and delete the
+   `deps/update-<version>` branch on origin and locally. If the PR did
+   not merge, the branch stays on origin, as the open PR's head, for a
+   resume. A failed deletion fails the stage, with the branch to delete
+   by hand: it is not recorded done, and `vrg-release --resume`, finding
+   the PR merged, tries the deletion again.
 
 The stage's comment on the tracking issue always carries a
 **Held back by declared bounds** table: the dependencies whose newest
