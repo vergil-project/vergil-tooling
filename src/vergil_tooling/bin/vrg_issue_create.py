@@ -5,13 +5,13 @@ only sanctioned issue-creation path: ``vrg-gh`` denies raw ``gh issue create``
 and redirects here. ``--epic`` is required — pass ``--epic adhoc`` to target the
 target repo's ad-hoc epic, ``--epic intake`` / ``--epic planning`` for its intake
 or planning queue epic, ``--epic hoshin`` for its org's hoshin epic (the hoshin
-review's logbook tasks, always in ``<org>/.github``), or an explicit
-``owner/repo#N`` / ``#N`` epic ref.
+review's logbook tasks, always in ``<org>/.github``), ``--epic operations`` for
+its org's operations epic (the ops issues of unattended jobs, also always in
+``<org>/.github``), or an explicit ``owner/repo#N`` / ``#N`` epic ref.
 
 The target repo is ``--repo`` (default: the current repo). The sentinels and a
 bare ``#N`` are all read against it, never the cwd repo: ``#N`` is issue N in the
-target repo's epic home (``<org>/.github`` for a public repo, the repo itself
-for a self-homed private one). A fully qualified ``owner/repo#N`` is taken as
+target repo's epic home, ``<org>/.github``. A fully qualified ``owner/repo#N`` is taken as
 written (#3409, #3411).
 
 If the issue is created but the link fails, the created issue's URL is reported
@@ -49,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     # Pre-network cross-org guard: the issue and its epic must share an owner so
     # one App-installation token reaches both (#2070). The standing sentinels
-    # (adhoc/intake/planning/hoshin) and a bare '#N' all resolve within *repo*'s epic
+    # (adhoc/intake/planning/hoshin/operations) and a bare '#N' all resolve within *repo*'s epic
     # or queue home (in *repo*'s org), so only a qualified epic ref can diverge
     # (#3514).
     if args.epic not in epics.EPIC_SENTINELS:
@@ -212,10 +212,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--epic",
         required=True,
         help="Epic ref: 'adhoc' (the target repo's ad-hoc epic), 'intake' or "
-        "'planning' (the target repo's intake or planning queue epic), 'hoshin' (the "
-        "target org's hoshin epic, in <org>/.github), #N (issue N in the "
-        "target repo's epic home: <org>/.github for a public repo, the repo itself "
-        "for a self-homed private one), or owner/repo#N (taken as written)",
+        "'planning' (the target repo's intake or planning queue epic), 'hoshin' or "
+        "'operations' (the target org's hoshin or operations epic, in <org>/.github), "
+        "#N (issue N in the "
+        "target repo's epic home, <org>/.github), or owner/repo#N (taken as written)",
     )
     parser.add_argument("--title", required=True, help="Issue title")
     parser.add_argument("--body", default="", help="Issue body text")

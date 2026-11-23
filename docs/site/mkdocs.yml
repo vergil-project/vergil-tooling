@@ -164,7 +164,6 @@ nav:
       - Agent VM Claude Share Set: guides/agent-vm-claude-share-set.md
   - Guides:
       - Git Workflow: guides/git-workflow.md
-      - Epic Home Visibility Flips: guides/epic-home-visibility-flip.md
       - Security Records: guides/security-records.md
       - Human Replies: guides/human-replies.md
       - Merge Review: guides/merge-review.md

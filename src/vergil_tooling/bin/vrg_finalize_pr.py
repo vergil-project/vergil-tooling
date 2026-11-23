@@ -109,6 +109,7 @@ from vergil_tooling.lib import (
     github,
     progress,
     text_table,
+    trust,
     worktrees,
 )
 from vergil_tooling.lib.cache_prune import clean_branch_images, prune_orphan_branch_images
@@ -139,6 +140,7 @@ from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.progress import Stage, StageResult, StageStatus
 from vergil_tooling.lib.release import gate
 from vergil_tooling.lib.repo_init import prompt_choice
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.versions import VersionsError
 
 if TYPE_CHECKING:
@@ -243,7 +245,15 @@ def main(argv: list[str] | None = None) -> int:
         return _run_settle_only(args, root)
 
     if args.all_prs:
-        prs = _resolve_open_prs(root)
+        try:
+            prs = _resolve_open_prs(root)
+        except (
+            trust.TrustReadError,
+            TrustedAuthorsNotConfiguredError,
+            worktrees.BranchPRError,
+        ) as exc:
+            print(f"vrg-finalize-pr --all: {exc}", file=sys.stderr)
+            return EXIT_ERROR
         if not prs:
             print("vrg-finalize-pr --all: no open PRs found in worktrees.")
             return EXIT_OK
@@ -259,6 +269,13 @@ def main(argv: list[str] | None = None) -> int:
             if exc.code == 0:
                 return EXIT_OK
             raise
+        except (
+            trust.TrustReadError,
+            TrustedAuthorsNotConfiguredError,
+            worktrees.BranchPRError,
+        ) as exc:
+            print(f"vrg-finalize-pr: {exc}", file=sys.stderr)
+            return EXIT_ERROR
         if picked is None:
             return _run_settle_only(args, root)
         prs = [picked]
@@ -358,15 +375,17 @@ def _resolve_open_prs(root: Path) -> list[str]:
     """Return the URLs of every open PR in canonical worktrees, branch-sorted.
 
     Deterministic order (by branch name) so a batch is reproducible. Skips
-    worktrees with no open PR, printing why — no silent exclusions.
+    worktrees with no open PR, printing why — no silent exclusions. Only a
+    same-repo PR with a trusted author counts (``worktrees.open_pr_for_branch``):
+    a fork PR on the same branch name is reported, never adopted.
     """
     urls: list[str] = []
     for wt in sorted(worktrees.list_worktrees(root), key=lambda w: w.branch):
-        pr = github.pr_for_branch(wt.branch)
+        pr = worktrees.open_pr_for_branch(wt.branch)
         if pr is None:
             print(f"  {wt.path.name}: no open PR for {wt.branch} — skipping")
             continue
-        urls.append(pr["url"])
+        urls.append(pr.url)
     return urls
 
 
@@ -387,7 +406,13 @@ def _run_watched(args: argparse.Namespace, root: Path, prs: list[str]) -> int:
                 log=log,
                 describe=_describe_watch,
             )
-        except (finalize_watch.FinalizeWatchError, ValueError) as exc:
+        except (
+            finalize_watch.FinalizeWatchError,
+            TrustedAuthorsNotConfiguredError,
+            ValueError,
+        ) as exc:
+            # A provenance check with no trusted-authors configuration stops
+            # the watch like any other failed read: one line, never a traceback.
             print(f"vrg-finalize-pr: the watch stopped: {exc}", file=sys.stderr)
             return EXIT_ERROR
         merged = [r.pr for r in results if r.outcome == "merged"]
@@ -1020,9 +1045,9 @@ def _infer_pr(root: Path, target_branch: str, *, assume_yes: bool = False) -> st
     a disambiguation, not a yes/no, so it is still presented even under
     ``--yes`` — there is no single obvious answer to skip to.
     """
-    pairs: list[tuple[worktrees.Worktree, dict[str, str]]] = []
+    pairs: list[tuple[worktrees.Worktree, trust.PRRef]] = []
     for wt in worktrees.list_worktrees(root):
-        pr = github.pr_for_branch(wt.branch)
+        pr = worktrees.open_pr_for_branch(wt.branch)
         if pr is None:
             # No silent exclusions: every skipped worktree says why.
             print(f"  {wt.path.name}: no open PR for {wt.branch} — not a candidate")
@@ -1051,18 +1076,18 @@ def _infer_pr(root: Path, target_branch: str, *, assume_yes: bool = False) -> st
     if len(pairs) == 1:
         wt, pr = pairs[0]
     else:
-        labels = [f"PR #{p['number']} ({w.branch}): {p['title']}" for w, p in pairs]
+        labels = [f"PR #{p.number} ({w.branch}): {p.title}" for w, p in pairs]
         chosen = prompt_choice("Multiple PRs ready to finalize", labels)
         wt, pr = pairs[labels.index(chosen)]
 
     if not confirm(
-        f"Finalize PR #{pr['number']} ({pr['title']})?",
+        f"Finalize PR #{pr.number} ({pr.title})?",
         assume_yes=assume_yes,
         default=False,
     ):
         print("Aborted.")
         raise SystemExit(0)
-    return pr["url"]
+    return pr.url
 
 
 NO_CD_WORKFLOW_LINE = "  CD: no CD workflow in this repo"
@@ -1367,8 +1392,27 @@ def _head_of(branch: str) -> str:
         raise FinalizeError(msg) from exc
 
 
+def _confirmed_merged_branch(repo: str, number: int, branch: str) -> bool:
+    """True when *repo*#*number* is a merged same-repo PR with a trusted author on *branch*.
+
+    The branch read from the PR is only a candidate: it is looked up through
+    :func:`trust.prs_for_branch`, and only a merged PR with *number* itself
+    counts, so a fork PR from a branch of the same name never names a local
+    branch to delete. The skipped PRs are reported on stderr, metadata only;
+    a read the layer cannot complete raises :class:`trust.TrustReadError`.
+    """
+    prs, skipped = trust.prs_for_branch(repo, branch, state="merged")
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return any(pr.number == number for pr in prs)
+
+
 def _merged_branches(ctx: FinalizeContext) -> list[str]:
-    """The head branch names of the PRs the watch saw merge; a failed read fails the stage."""
+    """The head branch names of the PRs the watch saw merge; a failed read fails the stage.
+
+    A branch is named only once the trust layer confirms its PR
+    (:func:`_confirmed_merged_branch`); a PR it does not confirm is reported
+    and its branch is left alone.
+    """
     if ctx.args.dry_run:
         if ctx.merged_prs:
             print("  [dry-run] delete each merged PR's local branch and worktree")
@@ -1376,11 +1420,26 @@ def _merged_branches(ctx: FinalizeContext) -> list[str]:
     branches: list[str] = []
     for pr in ctx.merged_prs:
         try:
-            branches.append(github.head_ref(pr).strip())
+            repo, number = github.pr_repo_and_number(pr, "the merged-branch cleanup")
+            branch = github.head_ref(pr).strip()
         except subprocess.CalledProcessError as exc:
             msg = f"could not read the head branch of merged PR {pr}: {error_text(exc)}"
             raise FinalizeError(msg) from exc
-    return [b for b in branches if b]
+        if not branch:
+            continue
+        try:
+            confirmed = _confirmed_merged_branch(repo, number, branch)
+        except (trust.TrustReadError, TrustedAuthorsNotConfiguredError) as exc:
+            msg = f"could not confirm merged PR {pr} through the trust layer: {exc}"
+            raise FinalizeError(msg) from exc
+        if not confirmed:
+            print(
+                f"  Merged PR {pr} is not a same-repo PR with a trusted author on its "
+                "branch; its local branch and worktree are kept."
+            )
+            continue
+        branches.append(branch)
+    return branches
 
 
 def _stage_lock(ctx: FinalizeContext) -> None:
@@ -1509,8 +1568,9 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
         # distinguish a merged branch from one created off an older
         # target tip; only sweep branches whose head has a closed or
         # merged PR. The just-merged PR branch is handled by the
-        # explicit-target step above, which keeps its own behavior.
-        if github.closed_pr_for_branch(branch) is None:
+        # explicit-target step above, which keeps its own behavior. A fork
+        # PR closed on the same branch name is no evidence.
+        if worktrees.closed_pr_for_branch(branch) is None:
             print(f"  Skipping {branch}: no closed or merged PR for this branch")
             continue
         if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
@@ -1953,8 +2013,9 @@ def _chain_release(root: Path, cmd: tuple[str, ...]) -> int:
     the cascade outcome.
 
     A failure here never un-merges a PR — they were already merged and
-    develop settled — so report it clearly and let the human re-run
-    vrg-release alone.
+    develop settled — so report it clearly and let the human finish it with
+    ``vrg-release --resume``, or re-run vrg-release alone if it stopped
+    before opening its tracking issue.
     """
     print()
     print(f"--release: handing off to {shlex.join(cmd)}")
@@ -1967,7 +2028,8 @@ def _chain_release(root: Path, cmd: tuple[str, ...]) -> int:
         print(
             f"vrg-finalize-pr: release failed (exit {result.returncode}); "
             "the merged PRs and the settled develop are unaffected.\n"
-            f"  Re-run the release alone with: {shlex.join(cmd)}",
+            "  Once it has opened its tracking issue, finish it with: vrg-release --resume\n"
+            f"  If it stopped before that, re-run the release alone with: {shlex.join(cmd)}",
             file=sys.stderr,
         )
     return result.returncode

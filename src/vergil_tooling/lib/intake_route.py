@@ -91,17 +91,26 @@ issue it tracks, so a route never stops tracking another issue; a one-off
 reads those issues before it moves anything. A split
 of an item naming several advisories is refused before any change, since which
 advisory goes to which task cannot be inferred. The planning route leaves the
-advisories alone.
+advisories alone. The advisory lines a split or a move reads come only from a
+body the trust layer trusts: an untrusted body is a stop before any write
+(:class:`~vergil_tooling.lib.trust.UntrustedContentError`), and a recreate
+copies that same trusted body, read before the move.
 
 A task in a development epic, an epic, and an unparented issue are refused
 (``planning`` alone accepts an unparented issue, the ``epic-create`` free-text
 path, and a follow-on brainstorm under a development epic), the refusal naming
 the parent. A planning item refuses drop, defer and
-one-off while any of its development epics is open (one an ``Epic:`` marker names, or
+one-off while any of its development epics is open (one an ``Epic:`` marker in a
+trusted comment names, as the trust layer judges it, or
 one whose body carries a ``Planning:`` line for it; #4001, #4170). An
-ad-hoc item refuses defer and planning while an open PR would close it. A private repo's item
-is never routed to a public repo or epic. The whole route runs under the item
-owner's App token (:func:`github.target_org`).
+ad-hoc item refuses defer and planning while an open PR would close it. The whole route runs
+under the item owner's App token (:func:`github.target_org`).
+
+An item opened by an outsider (its author holds no role, as the trust layer
+judges it) is never routed or sized: every route on it is a stop before
+anything resolves or is written
+(:class:`~vergil_tooling.lib.trust.UntrustedContentError`, metadata only;
+spec §5.3 of epic vergil-project/.github#1467). The human decides next.
 """
 
 from __future__ import annotations
@@ -116,7 +125,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from vergil_tooling.lib import epics, github, security_records
+from vergil_tooling.lib import epics, github, security_records, trust, trusted_comments
 from vergil_tooling.lib.epic_size import (
     LABEL_PREFIX,
     Sizing,
@@ -176,7 +185,7 @@ _ISSUE_URL_RE = re.compile(r"https?://[^/\s]+/([^/\s]+)/([^/\s]+)/issues/([0-9]+
 
 
 class RouteRefusedError(ValueError):
-    """A route that must not run: wrong container, cross-org, or private → public."""
+    """A route that must not run: wrong container, cross-org, or a refused target."""
 
 
 class RouteHalfAppliedError(RuntimeError):
@@ -276,6 +285,7 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         # Refused by name before anything resolves: resolving the sentinel
         # would create the hoshin epic.
         raise RouteRefusedError(HOSHIN_REFUSAL.format(epic=f"--epic {action.epic}"))
+    _refuse_outsider_opened(ref)
     parent = epics.parent_of(ref)
     try:
         kind = _check_eligible(ref, action, parent)
@@ -291,7 +301,7 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         raise
     if isinstance(action, Drop):
         if kind == epics.PLANNING.key:
-            _guard_open_planning_epics(ref, _view(ref, "labels,comments"), "dropping")
+            _guard_open_planning_epics(ref, "dropping")
         _close(ref, DROP_COMMENT.format(queue=kind, reason=action.reason), reason="not planned")
         return RouteResult(final=ref, moved_by="none")
     if isinstance(action, Defer):
@@ -329,7 +339,6 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         if kind == epics.ADHOC.key:
             _guard_open_closing_pr(ref, "routing to planning")
         planning = epics.ensure_planning_epic(_repo_of(ref))
-        _guard_visibility(ref, _repo_of(planning))
         _link(planning, ref)
         if kind == _DEVELOPMENT:
             # _check_eligible only returns it for a parented item.
@@ -346,10 +355,21 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         return RouteResult(final=ref, moved_by="none")
     if isinstance(action, ToIntake):
         intake = epics.ensure_intake_epic(_repo_of(ref))
-        _guard_visibility(ref, _repo_of(intake))
         _link(intake, ref)
         return RouteResult(final=ref, moved_by="none")
     return _one_off(ref, action, parent, kind, today)
+
+
+def _refuse_outsider_opened(ref: IssueRef) -> None:
+    """Stop when an outsider opened *ref*: a tool pointed at it acts on nothing.
+
+    Only the author decides it: a trusted item with untrusted comments, or
+    with a body an outsider edited, is routed (its body is judged where a
+    route reads it, :func:`_trusted_body`).
+    """
+    opened = trust.outsider_opened(trust.read_issue(_repo_of(ref), ref.number))
+    if opened is not None:
+        raise trust.UntrustedContentError(opened, "the item was opened by an untrusted author")
 
 
 def _check_eligible(ref: IssueRef, action: RouteAction, parent: IssueRef | None) -> str | None:
@@ -503,20 +523,36 @@ def _label_names(view: dict[str, Any]) -> set[str]:
     return {str(label.get("name", "")) for label in view.get("labels") or []}
 
 
-def _planning_epic_states(ref: IssueRef, view: dict[str, Any]) -> dict[IssueRef, str]:
+def _trusted_planning_body(epic: IssueRef) -> str | None:
+    """*epic*'s body when the trust layer trusts it; otherwise ``None``, reported.
+
+    The untrusted body is reported on stderr, metadata only; the comments'
+    skips are not this reader's concern. A read the layer cannot complete
+    raises :class:`~vergil_tooling.lib.trust.TrustReadError`.
+    """
+    content = trust.read_issue(_repo_of(epic), epic.number)
+    trust.report_skipped(
+        [item for item in content.skipped if item.field == "body"], stream=sys.stderr
+    )
+    return content.body
+
+
+def _planning_epic_states(ref: IssueRef) -> dict[IssueRef, str]:
     """Each development epic of the planning item *ref* and its state, OPEN or CLOSED.
 
-    The epics are those an ``Epic:`` marker in *view*'s comments names, plus
-    every ``epic`` issue in *ref*'s org whose body carries a ``Planning: <ref>``
-    line (``epic-create`` writes that line into each epic it creates, while the
-    marker names only one). The search is full text, so each hit's body is
-    checked for the exact line. A search that reaches its limit, a state that
-    is neither OPEN nor CLOSED, or a failed read raises: nothing is assumed
-    closed.
+    The epics are those an ``Epic:`` marker in *ref*'s trusted comments names
+    (read through the trust layer; each skipped comment is reported on stderr),
+    plus every ``epic`` issue in *ref*'s org whose body carries a
+    ``Planning: <ref>`` line (``epic-create`` writes that line into each epic it
+    creates, while the marker names only one). The search is full text, so each
+    hit's body is checked for the exact line, and the line counts only in a body
+    the trust layer trusts: each hit that carries it is read again through the
+    layer (:func:`_trusted_planning_body`). A search that reaches its limit, a
+    state that is neither OPEN nor CLOSED, or a failed read raises: nothing is
+    assumed closed.
     """
-    comments = [str(c.get("body") or "") for c in view.get("comments") or []]
     states: dict[IssueRef, str] = {}
-    for epic in parse_epic_markers(comments):
+    for epic in parse_epic_markers(trusted_comments.bodies(ref)):
         states[epic] = github.read_output(
             "api", f"repos/{_repo_of(epic)}/issues/{epic.number}", "--jq", ".state"
         ).upper()
@@ -542,23 +578,28 @@ def _planning_epic_states(ref: IssueRef, view: dict[str, Any]) -> dict[IssueRef,
             continue
         name_with_owner = str((item.get("repository") or {}).get("nameWithOwner") or "")
         if name_with_owner.count("/") != 1:
-            raise RuntimeError(f"search hit for {ref.slug} has no repository: {item!r}")
+            raise RuntimeError(
+                f"search hit {item.get('number')!r} for {ref.slug} has no repository"
+            )
         owner, repo = name_with_owner.split("/")
-        states.setdefault(IssueRef(owner, repo, int(item["number"])), str(item["state"]).upper())
+        epic = IssueRef(owner, repo, int(item["number"]))
+        if epic in states or not line.search(_trusted_planning_body(epic) or ""):
+            continue
+        states[epic] = str(item["state"]).upper()
     for epic, state in states.items():
         if state not in ("OPEN", "CLOSED"):
             raise RuntimeError(f"unexpected state {state!r} for {epic.slug}")
     return states
 
 
-def _guard_open_planning_epics(ref: IssueRef, view: dict[str, Any], doing: str) -> None:
+def _guard_open_planning_epics(ref: IssueRef, doing: str) -> None:
     """Refuse *doing* a planning item while an epic of it is open.
 
     *doing* is the route: dropping, deferring or routing one-off. Once every
     development epic is closed nothing is left to orphan (#4170).
     """
     open_epics = [
-        epic.slug for epic, state in _planning_epic_states(ref, view).items() if state == "OPEN"
+        epic.slug for epic, state in _planning_epic_states(ref).items() if state == "OPEN"
     ]
     if open_epics:
         raise RouteRefusedError(
@@ -594,13 +635,12 @@ def _defer(ref: IssueRef, action: Defer, kind: str | None, parent: IssueRef, day
     if kind == epics.DEFERRED.key:
         _comment(ref, record)
         return
-    view = _view(ref, "labels,comments")
+    view = _view(ref, "labels")
     if kind == epics.PLANNING.key:
-        _guard_open_planning_epics(ref, view, "deferring")
+        _guard_open_planning_epics(ref, "deferring")
     if kind == epics.ADHOC.key:
         _guard_open_closing_pr(ref, "deferring")
     deferred = epics.ensure_deferred_epic(_repo_of(ref))
-    _guard_visibility(ref, _repo_of(deferred))
     body = f"{record}\n{DEFERRED_FROM_LINE.format(epic=parent.slug)}"
     _link(deferred, ref)
     stranded = f"{ref.slug} is under the deferred epic {deferred.slug} without a deferral record"
@@ -685,20 +725,6 @@ def _clear_size(final: IssueRef, day: date) -> None:
         ) from exc
 
 
-def _guard_visibility(ref: IssueRef, *targets: str) -> None:
-    """Refuse routing a private repo's item into any public *targets* repo."""
-    source = _repo_of(ref)
-    others = [target for target in dict.fromkeys(targets) if target != source]
-    if not others or github.is_public(source):
-        return
-    public = [target for target in others if github.is_public(target)]
-    if public:
-        raise RouteRefusedError(
-            f"{ref.slug} is in private repo {source}; refusing to route it to public "
-            f"{', '.join(public)}"
-        )
-
-
 def _one_off(
     ref: IssueRef, action: OneOff, old_parent: IssueRef | None, kind: str | None, today: date
 ) -> RouteResult:
@@ -706,18 +732,18 @@ def _one_off(
 
     A planning item is guarded first, before anything that can create the
     target's ad-hoc epic. Whether the item carries a size is read before the
-    move, from any container (:func:`has_size`, which needs no trusted
-    authors). Both labels come off the item's final issue: a recreate never
+    move, from any container (:func:`has_size`, over the comments the trust
+    layer trusts). Both labels come off the item's final issue: a recreate never
     carries them, and a transfer keeps one only when the target repo has it,
     so each is read rather than assumed. Every step is tried, and those that
     fail are reported together in one :class:`RouteHalfAppliedError`.
     """
-    view = _view(ref, "labels,comments")
+    view = _view(ref, "labels")
     if kind == epics.PLANNING.key:
-        _guard_open_planning_epics(ref, view, "routing one-off")
+        _guard_open_planning_epics(ref, "routing one-off")
     labels = _label_names(view)
     labelled = kind == epics.PLANNING.key and epics.PLANNING_IN_PROGRESS_LABEL in labels
-    sized = has_size(labels, [str(c.get("body") or "") for c in view.get("comments") or []])
+    sized = has_size(labels, trusted_comments.bodies(ref))
     result = _move_one_off(ref, action, old_parent)
     failures: list[RuntimeError] = []
     if labelled:
@@ -775,11 +801,7 @@ def _move_one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) ->
             raise RouteRefusedError(
                 f"cross-org operation is out of scope: {ref.slug} -> epic {action.epic}"
             )
-    # Check the target repo before resolving the epic: resolving 'adhoc' may
-    # create the target's ad-hoc epic, which must not happen for a refused route.
-    _guard_visibility(ref, dest)
     epic = epics.resolve_epic_ref(action.epic, repo=dest)
-    _guard_visibility(ref, _repo_of(epic))
     if epics.queue_kind(epic) is not None:
         raise RouteRefusedError(
             f"{epic.slug} is a queue epic; a one-off goes under an ad-hoc or finite epic "
@@ -790,8 +812,9 @@ def _move_one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) ->
     if dest == source:
         _link_and_check(ref, epic, ref, old_parent)
         return RouteResult(final=ref, moved_by="none")
-    # Read before the move: a transfer drops labels the target repo lacks.
-    ghsas = _item_advisories(ref)
+    # Read before the move: a transfer drops labels the target repo lacks, and
+    # a recreate copies this trusted body.
+    body, ghsas = _item_security(ref)
     tracked = _tracked_before_move(ref, ghsas)
     unlinked = _unlink_before_transfer(ref, old_parent)
     try:
@@ -801,7 +824,7 @@ def _move_one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) ->
     except subprocess.CalledProcessError as exc:
         if unlinked is not None:
             _relink_after_failed_transfer(ref, unlinked, dest, exc)
-        new = _recreate(ref, dest, exc, tracked)
+        new = _recreate(ref, dest, exc, tracked, body)
         # A recreated issue has no parent to carry over: link it, then check.
         _link_and_check(ref, epic, new, None)
         return RouteResult(final=new, moved_by="recreate")
@@ -918,10 +941,9 @@ def _transfer_recovery(
 
 
 # The failures that leave an advisory not retargeted: the retarget itself, or
-# resolving the org's advisory home (a private or unreadable ``.github``).
+# reading the org's advisory home (an unreadable ``.github``).
 _RETARGET_ERRORS = (
     security_records.RetargetError,
-    security_records.PrivateHomeError,
     github.GitHubAPIError,
 )
 
@@ -952,13 +974,32 @@ def _security_ghsas(ref: IssueRef, labels: set[str], body: str) -> tuple[str, ..
     return ()
 
 
-def _item_advisories(ref: IssueRef) -> tuple[str, ...]:
-    """Read *ref*'s labels and body; return every advisory it tracks, in body order."""
+def _trusted_body(ref: IssueRef) -> str:
+    """*ref*'s body, read through the trust layer; an untrusted body is a stop.
+
+    The routed item's body is load-bearing: its ``Security advisory:`` lines
+    pick the advisories a route retargets, and a recreate copies it. So a body
+    whose author or an editor holds no role raises
+    :class:`~vergil_tooling.lib.trust.UntrustedContentError` (metadata only),
+    before any write, and nothing falls back to an untrusted copy.
+    """
+    content = trust.read_issue(_repo_of(ref), ref.number, require_body=True)
+    return cast("str", content.body)
+
+
+def _item_security(ref: IssueRef) -> tuple[str, tuple[str, ...]]:
+    """*ref*'s trusted body and every advisory it tracks, in body order."""
     raw: Any = github.read_json(
-        "issue", "view", str(ref.number), "--repo", _repo_of(ref), "--json", "labels,body"
+        "issue", "view", str(ref.number), "--repo", _repo_of(ref), "--json", "labels"
     )
     names = {str(label.get("name", "")) for label in raw.get("labels") or []}
-    return _security_ghsas(ref, names, str(raw.get("body") or ""))
+    body = _trusted_body(ref)
+    return body, _security_ghsas(ref, names, body)
+
+
+def _item_advisories(ref: IssueRef) -> tuple[str, ...]:
+    """Every advisory *ref* tracks, in body order, from its labels and trusted body."""
+    return _item_security(ref)[1]
 
 
 @dataclass(frozen=True)
@@ -1361,10 +1402,16 @@ def _retarget_to_copy(ref: IssueRef, new: IssueRef, tracked: _Tracked) -> None:
 
 
 def _recreate(
-    ref: IssueRef, dest: str, exc: subprocess.CalledProcessError, tracked: _Tracked | None
+    ref: IssueRef,
+    dest: str,
+    exc: subprocess.CalledProcessError,
+    tracked: _Tracked | None,
+    body: str,
 ) -> IssueRef:
     """Copy *ref* into *dest* with a link back, then close the original with a pointer.
 
+    The copy's body is *body*, the trusted body read before the move
+    (:func:`_trusted_body`), never one read again from the original.
     Every advisory a security item names (*tracked*, in body order) is
     retargeted from *ref* to the copy, keeping every other issue it tracks,
     before the original closes; if any retarget fails the original stays open
@@ -1372,7 +1419,7 @@ def _recreate(
     """
     source = _repo_of(ref)
     raw: Any = github.read_json(
-        "issue", "view", str(ref.number), "--repo", source, "--json", "title,body,labels,url"
+        "issue", "view", str(ref.number), "--repo", source, "--json", "title,labels,url"
     )
     names = [str(label.get("name", "")) for label in raw.get("labels") or []]
     registry = {entry["name"] for entry in load_labels()["labels"]}
@@ -1386,7 +1433,7 @@ def _recreate(
         ensure_labels(dest, carried)
     original_url = str(raw["url"])
     moved_from = MOVED_FROM_LINE.format(url=original_url)
-    body = (raw.get("body") or "").rstrip()
+    body = body.rstrip()
     new_url = github.create_issue(
         repo=dest,
         title=str(raw["title"]),

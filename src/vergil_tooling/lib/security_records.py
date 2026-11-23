@@ -42,9 +42,10 @@ import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from vergil_tooling.lib import epics, github, labels
+from vergil_tooling.lib import epics, github, labels, trusted_comments
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.shell_ref import quoted_slug
+from vergil_tooling.lib.trusted_authors import load_trusted_authors
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
@@ -89,10 +90,6 @@ _SECURITY_ISSUES_JQ = (
 )
 # The one close reason that lets the sync close an advisory (spec 6.2).
 _COMPLETED = "completed"
-
-
-class PrivateHomeError(RuntimeError):
-    """The org's ``.github`` repo is not public, so it cannot hold security records."""
 
 
 class RetargetError(RuntimeError):
@@ -206,18 +203,8 @@ def _issue_endpoint(ref: IssueRef) -> str:
 
 
 def advisory_home(org: str) -> str:
-    """Return ``"<org>/.github"``, the advisory home, or raise :class:`PrivateHomeError`.
-
-    Advisories are documented for public repos only; a private home is refused
-    loudly, never worked around by falling back to issue-only records.
-    """
-    home = f"{org}/.github"
-    if github.repo_visibility(home) != "PUBLIC":
-        raise PrivateHomeError(
-            f"vrg-security-record: {home} is not public; security records need a "
-            "public org .github (private orgs are unsupported)"
-        )
-    return home
+    """Return ``"<org>/.github"``, the advisory home."""
+    return f"{org}/.github"
 
 
 def advisory_line(home: str, ghsa_id: str) -> str:
@@ -446,7 +433,9 @@ def unmark_issue(ref: IssueRef, ghsa_id: str, moved_to: Sequence[IssueRef]) -> s
     either still carries both (and :func:`security_issues` still finds it
     naming this advisory, so a re-run of :func:`retarget` finishes it) or
     neither. That makes it idempotent: once the PATCH has landed the line is
-    gone and a re-run does nothing, so the comment is never posted twice.
+    gone and a re-run does nothing, so the comment is never posted twice. The
+    comment counts as posted only when a trusted author's copy of it is on the
+    issue (:func:`trusted_comments.bodies`): an outsider's never stops it.
 
     A *ref* that was **transferred** (its read leads to an issue under another
     ref) is never written at its old number. If the issue it moved to is in
@@ -482,7 +471,7 @@ def _unmark_current(
         return False
     endpoint = _issue_endpoint(ref)
     comment = _moved_comment(moved_to)
-    existing = github.read_json_paginated(f"{endpoint}/comments", jq="[.[] | .body]")
+    existing = trusted_comments.bodies(ref)
     if comment not in existing:
         github.write_json("POST", f"{endpoint}/comments", {"body": comment})
     this_line = re.compile(
@@ -567,17 +556,16 @@ def _source_tied_to_move(source: IssueRef, ghsa_id: str, wanted: Sequence[IssueR
 
     Either its body still names *ghsa_id* (a run interrupted before its
     unmark finished) or it carries the comment :func:`unmark_issue` posts,
-    naming exactly *wanted* (a run that finished). It is read at its current
-    ref, so a transferred source is judged where it now is.
+    naming exactly *wanted* (a run that finished), from a trusted author
+    (:func:`trusted_comments.bodies`): an outsider's copy of that comment
+    never ties a source to a move. It is read at its current ref, so a
+    transferred source is judged where it now is.
     """
     current, _present, body = _issue_state(source)
     if ghsa_id in parse_advisory_refs(body):
         return True
-    comments = github.read_json_paginated(
-        f"{_issue_endpoint(current)}/comments", jq="[.[] | .body]"
-    )
     names = {ref.slug for ref in wanted}
-    return names in _moved_targets([str(comment) for comment in comments])
+    return names in _moved_targets(trusted_comments.bodies(current))
 
 
 def _check_source(
@@ -1347,9 +1335,7 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
     text: every advisory read it makes projects the text away, and
     :class:`Advisory` has no text field. The advisory home is resolved only
     when the org has a ``security`` issue or a ``.github`` repo; with neither
-    there is nothing to check. A private ``.github`` is refused loudly, never
-    skipped: :class:`PrivateHomeError` propagates to the caller, whose message
-    already names the program.
+    there is nothing to check.
 
     The sync close guard (:func:`guard_check`) keeps an advisory ``draft``
     while a queue item or a non-completed close is all that ended it. Each
@@ -1453,7 +1439,9 @@ def close_record(home: str, ghsa_id: str, reason: str) -> CloseResult:
        sets an advisory back to draft while any issue it tracks is open, so
        the close would not hold.
     2. **Comment.** Post :func:`close_comment` on each issue, skipping one
-       that already carries that exact comment.
+       that already carries that exact comment from a trusted author
+       (:func:`trusted_comments.bodies`): an outsider's copy of it is no
+       audit trail, so it never stops the post.
     3. **Close.** Set the advisory's state to ``closed``, unless it already is.
 
     The comments go first, so a closed advisory always has its audit trail,
@@ -1505,10 +1493,12 @@ def close_record(home: str, ghsa_id: str, reason: str) -> CloseResult:
             "sync sets an advisory back to draft while any issue it tracks is open"
         )
     comment = close_comment(ghsa_id, text)
+    with _step(ghsa_id, "reading the trusted authors", CloseError):
+        authors = load_trusted_authors()
     for ref in current:
         endpoint = _issue_endpoint(ref)
         with _step(ghsa_id, f"commenting on {ref.slug}", CloseError):
-            existing = github.read_json_paginated(f"{endpoint}/comments", jq="[.[] | .body]")
+            existing = trusted_comments.bodies(ref, authors)
             if comment not in existing:
                 github.write_json("POST", f"{endpoint}/comments", {"body": comment})
     closing = advisory.state != "closed"

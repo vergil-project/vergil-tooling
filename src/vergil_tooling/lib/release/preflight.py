@@ -13,7 +13,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import cd_runs, config, git, github, host_versions, progress, version
+from vergil_tooling.lib import (
+    cd_runs,
+    config,
+    git,
+    github,
+    host_versions,
+    progress,
+    trust,
+    version,
+)
 from vergil_tooling.lib.checkout_lock import checkout_lock
 from vergil_tooling.lib.managed_worktree import (
     ManagedWorktreeError,
@@ -44,6 +53,7 @@ from vergil_tooling.lib.release.resume import (
 from vergil_tooling.lib.release.supersede import absorb, load_superseded
 from vergil_tooling.lib.release.tracking import read_state, render_contents
 from vergil_tooling.lib.self_repo import is_self_repo
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
 from vergil_tooling.lib.update_deps.pr import FIX_TASK_PREFIX
 
@@ -68,6 +78,8 @@ _RUNTIME_PROBE_TIMEOUT = 15
 # A fix task is an issue URL; it may live in another repo, so the repo comes
 # from the URL rather than from the release's own repo (#3286).
 _ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/issues/(\d+)/?$")
+# A dependency-update PR's number, from the URL ``gh pr list`` gives for it.
+_PR_NUMBER_RE = re.compile(r"/pull/(\d+)/?$")
 
 
 @dataclass(frozen=True)
@@ -298,11 +310,58 @@ def _resume_context(
     return ctx
 
 
+def _trusted_read(repo: str, number: int) -> trust.IssueContent:
+    """:func:`trust.read_issue` of *repo*#*number*, its skips reported on stderr.
+
+    A read that cannot complete raises :class:`ReleaseError`: who wrote the
+    content is never guessed.
+    """
+    try:
+        content = trust.read_issue(repo, number)
+    except (trust.TrustReadError, TrustedAuthorsNotConfiguredError) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"read_issue {repo}#{number}",
+            message=f"Could not read who wrote {repo}#{number}; refusing to release blind.",
+            detail=str(exc),
+        ) from exc
+    trust.report_skipped(content.skipped, stream=sys.stderr)
+    return content
+
+
+def _deps_pr_number(url: str) -> int:
+    """The number of deps PR *url*, from the URL ``gh pr list`` gave for it."""
+    match = _PR_NUMBER_RE.search(url)
+    if match is None:
+        raise ReleaseError(
+            phase="preflight",
+            command=_PENDING_DEPS_COMMAND,
+            message=f"gh pr list returned a PR url with no number: {url!r}",
+        )
+    return int(match.group(1))
+
+
+def _trusted_fix_task(repo: str, url: str) -> str | None:
+    """The ``Fix task:`` link in the trusted body of deps PR *url*, else ``None``.
+
+    The body is read through :func:`trust.read_issue`, never from the PR
+    listing, so a link an untrusted author or editor wrote is never followed
+    (GHSA-777j-j57r-92ff); the untrusted body is reported on stderr.
+    """
+    body = _trusted_read(repo, _deps_pr_number(url)).body
+    if body is None:
+        return None
+    link = _FIX_TASK_RE.search(body)
+    return link.group(1) if link else None
+
+
 def pending_deps_prs(repo: str) -> list[PendingDepsPr]:
     """Open PRs labelled ``dependency-update`` in *repo*, with their fix task if linked.
 
-    A lookup that cannot complete raises :class:`ReleaseError` — an unknown
-    answer must never read as "no pending PRs" and let the release through.
+    The fix task counts only when its link is in a trusted body
+    (:func:`_trusted_fix_task`). A lookup that cannot complete raises
+    :class:`ReleaseError` — an unknown answer must never read as "no pending
+    PRs" and let the release through.
     """
     try:
         raw = github.read_json(
@@ -315,7 +374,7 @@ def pending_deps_prs(repo: str) -> list[PendingDepsPr]:
             "--label",
             DEPS_LABEL,
             "--json",
-            "url,body,headRefName",
+            "url,headRefName",
             "--limit",
             str(_PENDING_DEPS_LIMIT),
         )
@@ -358,9 +417,7 @@ def pending_deps_prs(repo: str) -> list[PendingDepsPr]:
                 command=_PENDING_DEPS_COMMAND,
                 message=f"gh pr list returned an entry without a head branch: {item!r}",
             )
-        body = entry.get("body")
-        match = _FIX_TASK_RE.search(body if isinstance(body, str) else "")
-        found.append(PendingDepsPr(head=head, url=url, fix_task=match.group(1) if match else None))
+        found.append(PendingDepsPr(head=head, url=url, fix_task=_trusted_fix_task(repo, url)))
     return found
 
 
@@ -369,13 +426,8 @@ def _gh_error_detail(exc: Exception) -> str:
     return error_text(exc)
 
 
-def fix_task_status(url: str) -> tuple[str, str | None]:
-    """The fix task issue's ``(state, stateReason)``; the reason is None when unset.
-
-    The issue may live in any repo, so *url* must be a full GitHub issue URL.
-    An unparseable URL or a lookup that cannot complete raises
-    :class:`ReleaseError` — an unknown fix task never clears a PR.
-    """
+def _fix_task_ref(url: str) -> tuple[str, str]:
+    """The ``(owner/repo, number)`` of fix task *url*, or a :class:`ReleaseError`."""
     match = _ISSUE_URL_RE.match(url)
     if match is None:
         raise ReleaseError(
@@ -387,6 +439,55 @@ def fix_task_status(url: str) -> tuple[str, str | None]:
             ),
         )
     issue_repo, number = match.groups()
+    return issue_repo, number
+
+
+def _require_trusted_close(url: str) -> None:
+    """Refuse unless the last close of fix task *url* was by a trusted actor.
+
+    A close by an identity with no role is not a close for the gate (spec
+    §5.2): the release stops before any write, naming who closed it and when,
+    and the human decides (GHSA-777j-j57r-92ff). A read failure is a
+    :class:`ReleaseError` too.
+    """
+    issue_repo, number = _fix_task_ref(url)
+    command = f"close_judgement {issue_repo}#{number}"
+    try:
+        judgement = trust.close_judgement(issue_repo, int(number))
+        if judgement.role is not None:
+            return
+        closes = [e for e in trust.read_events(issue_repo, int(number)) if e.kind == "closed"]
+        if not closes:
+            raise trust.TrustReadError(command, "the fix task has no close event")  # noqa: TRY301
+    except (trust.TrustReadError, TrustedAuthorsNotConfiguredError) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=command,
+            message=f"Could not read who closed fix task {url}; refusing to release blind.",
+            detail=str(exc),
+        ) from exc
+    login = closes[-1].actor.login
+    item = trust.Skipped(
+        issue_repo,
+        int(number),
+        "event",
+        None if login is None else trust.normalise_login(login),
+        closes[-1].at,
+        "close",
+        str(judgement.cause),
+    )
+    error = trust.UntrustedContentError(item, "the fix task's close is untrusted")
+    raise ReleaseError(phase="preflight", command=command, message=str(error)) from error
+
+
+def fix_task_status(url: str) -> tuple[str, str | None]:
+    """The fix task issue's ``(state, stateReason)``; the reason is None when unset.
+
+    The issue may live in any repo, so *url* must be a full GitHub issue URL.
+    An unparseable URL or a lookup that cannot complete raises
+    :class:`ReleaseError` — an unknown fix task never clears a PR.
+    """
+    issue_repo, number = _fix_task_ref(url)
     command = f"gh issue view {number} --repo {issue_repo} --json state,stateReason"
     try:
         raw = github.read_json(
@@ -451,6 +552,34 @@ def _close_landed_deps_pr(pr: PendingDepsPr) -> None:
         ) from exc
 
 
+def _owns_its_branch(repo: str, pr: PendingDepsPr) -> bool:
+    """True when deps PR *pr* is a same-repo PR with a trusted author on its head branch.
+
+    The gate deletes ``refs/heads/<head>`` in *repo* by the PR's branch name,
+    so it first finds the PR among the trust layer's same-repo trusted PRs on
+    that branch (:func:`trust.prs_for_branch`, GHSA-r4j2-cwcp-xg56). A fork
+    PR's head is in the fork: the branch of that name in *repo* is not its own
+    and is never deleted for it. Each PR skipped is reported on stderr,
+    metadata only; a read failure raises :class:`ReleaseError`.
+    """
+    command = f"prs_for_branch {repo} {pr.head}"
+    try:
+        prs, skipped = trust.prs_for_branch(repo, pr.head, state="open")
+    except (trust.TrustReadError, TrustedAuthorsNotConfiguredError) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=command,
+            message=(
+                f"Could not read the PRs on branch {pr.head} of dependency-update PR "
+                f"{pr.url}; refusing to release blind."
+            ),
+            detail=str(exc),
+        ) from exc
+    trust.report_skipped(skipped, stream=sys.stderr)
+    number = _deps_pr_number(pr.url)
+    return any(found.number == number for found in prs)
+
+
 def _delete_deps_branch(repo: str, pr: PendingDepsPr) -> bool:
     """Delete a closed deps PR's head branch on origin; False if that failed (#3332).
 
@@ -479,13 +608,17 @@ def _delete_deps_branch(repo: str, pr: PendingDepsPr) -> bool:
 def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
     """Clear landed deps PRs, then refuse on what still blocks unless *allow*.
 
-    A PR whose fix task closed as completed is closed (#3286) and its head
-    branch deleted (#3332); a failed delete is recorded, not fatal. Every fix task
-    is looked up before any PR is closed, so a lookup failure leaves nothing
-    changed. What remains open blocks (spec §5.3) unless *allow* bypasses it.
+    A PR whose fix task closed as completed, by a trusted actor, is closed
+    (#3286) and its head branch deleted (#3332); a failed delete is recorded,
+    not fatal. The branch is deleted only for a same-repo PR with a trusted
+    author (:func:`_owns_its_branch`). A completed close by an untrusted actor
+    stops the release (:func:`_require_trusted_close`). Every fix task and
+    branch is looked up before any PR is closed, so a lookup failure or a stop
+    leaves nothing changed. What remains open blocks (spec §5.3) unless
+    *allow* bypasses it.
     """
     pending = pending_deps_prs(repo)
-    landed: list[PendingDepsPr] = []
+    landed: list[tuple[PendingDepsPr, bool]] = []
     blocking: list[tuple[PendingDepsPr, str]] = []
     for pr in pending:
         if pr.fix_task is None:
@@ -500,7 +633,8 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
             continue
         state, reason = fix_task_status(pr.fix_task)
         if state == "CLOSED" and reason == "COMPLETED":
-            landed.append(pr)
+            _require_trusted_close(pr.fix_task)
+            landed.append((pr, _owns_its_branch(repo, pr)))
         elif state == "CLOSED":
             blocking.append(
                 (
@@ -523,13 +657,19 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
 
     cleared: list[str] = []
     undeleted: list[str] = []
-    for pr in landed:
+    for pr, owns_branch in landed:
         _close_landed_deps_pr(pr)
         print(
             f"Closed dependency-update PR {pr.url}: fix task {pr.fix_task} closed as "
             "completed, so the update landed."
         )
         cleared.append(pr.url)
+        if not owns_branch:
+            print(
+                f"Not deleting branch {pr.head}: {pr.url} is not a same-repo PR with a "
+                "trusted author, so the branch of that name here is not its head."
+            )
+            continue
         if not _delete_deps_branch(repo, pr):
             undeleted.append(pr.head)
 
@@ -1132,6 +1272,23 @@ def _open_release_recovery(repo: str, ver: str, number: int, body: str) -> str:
     return f"release {ver} ({url}) is open. Finish it with `vrg-release --resume {ver}`."
 
 
+def _trusted_release_issues(
+    issues: Sequence[tuple[str, int, str]], repo: str
+) -> list[tuple[str, int, str]]:
+    """The *issues* whose body is trusted, each with that trusted body.
+
+    A ``release:`` issue with an untrusted body (an outsider's, or one an
+    untrusted identity edited) is no release in flight: it is reported on
+    stderr, metadata only, and never blocks the start (GHSA-777j-j57r-92ff).
+    """
+    trusted: list[tuple[str, int, str]] = []
+    for ver, number, _listed_body in issues:
+        body = _trusted_read(repo, number).body
+        if body is not None:
+            trusted.append((ver, number, body))
+    return trusted
+
+
 def _check_no_open_release(repo: str, *, exempt: int | None = None) -> None:
     """Refuse a fresh start while any ``release: X.Y.Z`` tracking issue is open.
 
@@ -1139,11 +1296,14 @@ def _check_no_open_release(repo: str, *, exempt: int | None = None) -> None:
     (spec §4.7 of epic vergil-project/.github#1440); only it may stay open.
 
     One release runs at a time (spec §4.7 of epic vergil-project/.github#1440),
-    whatever its version. Each open release is named with its recovery: the
+    whatever its version. Only a release issue with a trusted body counts
+    (:func:`_trusted_release_issues`). Each open release is named with its recovery: the
     ``vrg-release --resume`` that finishes it, or, for an issue with no state
     block (left by older tooling), finishing it by hand and closing the issue.
     """
-    issues = [i for i in _open_release_issues(repo, phase="preflight") if i[1] != exempt]
+    issues = _trusted_release_issues(
+        [i for i in _open_release_issues(repo, phase="preflight") if i[1] != exempt], repo
+    )
     if not issues:
         if exempt is None:
             print("Open-release check passed: no release is in flight")

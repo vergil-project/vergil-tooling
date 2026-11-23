@@ -1,9 +1,12 @@
 """Generate the project activity log — recently closed work across the org.
 
 The backward-looking companion to the roadmap ("where we've been"). ``gather``
-queries closed issues across the org via ``gh search``; ``render`` groups them by
-close-date, most recent first. This is best-effort reporting (search-based) — a
-roughly-right ledger is the goal, unlike the exact epic rollup.
+reads closed issues across the org through the trust layer's windowed search
+(:func:`vergil_tooling.lib.trust.search_window`), which judges each result's
+author, editors, renames and latest close in the same paged calls: an issue an
+outsider opened or closed is left out and reported on stderr, metadata only.
+``render`` groups the rest by close-date, most recent first. This is
+search-based reporting, unlike the exact epic rollup.
 
 ``render_pages`` is the multi-page form for the org docs site: an ``index.md``
 summary table (one row per day, one column per repo, each cell that repo's count
@@ -15,13 +18,9 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from typing import Any
 
-from vergil_tooling.lib import github, release
+from vergil_tooling.lib import github, release, trust
 from vergil_tooling.lib.markdown_escape import escape_inline
-
-# gh search returns at most 1000 results, however many pages it follows.
-_SEARCH_LIMIT = 1000
 
 # Subdirectories of the multi-page output; render_pages owns their contents.
 DAYS_DIR = "days"
@@ -40,55 +39,41 @@ class ActivityItem:
 
 
 def gather(since: str, *, org: str | None = None, repo: str | None = None) -> list[ActivityItem]:
-    """Closed issues across *org* with ``closedAt`` on or after *since* (YYYY-MM-DD).
+    """Closed issues across *org* closed on or after *since* (YYYY-MM-DD).
 
     *org* defaults to the owner of the current repo's git remote. *repo* (a bare
-    name, or ``owner/name``) narrows the search to that one repo.
+    name, or ``owner/name``) narrows the search to that one repo. An issue
+    opened, retitled or last closed by an identity outside the trusted roles
+    (or whose body one edited) is left out and reported on stderr, metadata
+    only (counts by cause under GitHub Actions). A read failure, or a single
+    day with more closures than GitHub's search returns, raises
+    :class:`~vergil_tooling.lib.trust.TrustReadError`.
     """
     if org is None:
         org = github.current_org()
-    scope = ["--owner", org]
+    scope = f"user:{org}"
     if repo is not None:
-        scope = ["--repo", repo if "/" in repo else f"{org}/{repo}"]
-    raw: Any = github.read_json(
-        "search",
-        "issues",
-        *scope,
-        "--state",
-        "closed",
-        "--closed",
-        f">={since}",
-        "--limit",
-        str(_SEARCH_LIMIT),
-        "--json",
-        "number,title,repository,url,closedAt,body",
+        scope = f"repo:{repo if '/' in repo else f'{org}/{repo}'}"
+    hits, skipped = trust.search_window(
+        f"{scope} is:closed", kind="issue", field="closed", since=since, judge_close=True
     )
-    if isinstance(raw, list) and len(raw) >= _SEARCH_LIMIT:
-        # gh stopped at its cap, so the oldest closures in the window are missing.
-        print(
-            f"vrg-activity-log: warning: the search hit its {_SEARCH_LIMIT}-result cap; "
-            "the oldest days in the window are incomplete.",
-            file=sys.stderr,
-        )
+    trust.report_skipped(skipped, stream=sys.stderr)
     items: list[ActivityItem] = []
-    for entry in raw if isinstance(raw, list) else []:
-        repo_name = str((entry.get("repository") or {}).get("nameWithOwner", ""))
-        closed = str(entry.get("closedAt") or "")
-        if not repo_name or not closed:
-            continue
+    for hit in hits:
         # Release tracking issues (release: X.Y.Z) are vrg-release bookkeeping,
         # not epic/task work — keep them out of the ledger. See issue #1984.
-        if release.is_release_tracking_issue(
-            title=str(entry.get("title") or ""), body=str(entry.get("body") or "")
-        ):
+        if release.is_release_tracking_issue(hit.repo, hit.number, title=hit.title, body=hit.body):
             continue
+        if hit.closed_at is None:
+            # judge_close always sets it; never date an issue by a guess.
+            raise trust.TrustReadError("activity_log.gather", f"{hit.url} has no close time")
         items.append(
             ActivityItem(
-                repo=repo_name,
-                number=int(entry["number"]),
-                title=str(entry["title"]),
-                url=str(entry["url"]),
-                closed_date=closed[:10],
+                repo=hit.repo,
+                number=hit.number,
+                title=hit.title,
+                url=hit.url,
+                closed_date=hit.closed_at[:10],
             )
         )
     return items

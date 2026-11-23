@@ -33,7 +33,6 @@ class DesiredRepoSettings:
     has_issues: bool
     has_projects: bool
     has_wiki: bool
-    allow_forking: bool | None
     allow_update_branch: bool
     has_downloads: bool
     merge_commit_title: str
@@ -133,8 +132,6 @@ class BypassUnreadable(NotChecked):
 @dataclass
 class FetchResult:
     state: DesiredState
-    visibility: str
-    owner_type: str
     # Settings the token could not read. Their values in *state* are
     # placeholders that compute_diff must never compare (#3816).
     not_checked: list[NotChecked] = field(default_factory=list)
@@ -152,7 +149,7 @@ _LANGUAGE_ACTION_PATTERNS: dict[str, list[str]] = {
 }
 
 
-def desired_repo_settings(*, is_org: bool, visibility: str) -> DesiredRepoSettings:
+def desired_repo_settings() -> DesiredRepoSettings:
     return DesiredRepoSettings(
         default_branch="develop",
         # Mechanized sync PRs on automation branches merge through GitHub
@@ -168,15 +165,6 @@ def desired_repo_settings(*, is_org: bool, visibility: str) -> DesiredRepoSettin
         has_issues=True,
         has_projects=True,
         has_wiki=True,
-        # GitHub only accepts the ``allow_forking`` field on org-owned *private*
-        # repos; PATCHing it on a public repo returns 422 (vergil-tooling#1584),
-        # and it is moot there since public repos are forkable per org policy.
-        # Private org repos additionally depend on the org-level
-        # ``members_can_fork_private_repositories`` flag, which the tool cannot
-        # yet manage (vergil-tooling#1268). User-owned repos are left unmanaged
-        # (vergil-tooling#666). Anything other than a private org repo is left
-        # unmanaged (``None`` → omitted from the PATCH body).
-        allow_forking=True if (is_org and visibility == "private") else None,
         allow_update_branch=True,
         has_downloads=False,
         merge_commit_title="MERGE_MESSAGE",
@@ -187,21 +175,10 @@ def desired_repo_settings(*, is_org: bool, visibility: str) -> DesiredRepoSettin
     )
 
 
-def ghas_available(config: VergilConfig, *, visibility: str) -> bool:
-    """Resolve the GHAS posture for a repo.
-
-    A declared ``[project].ghas`` in ``vergil.toml`` wins; otherwise
-    GHAS is inferred as available exactly when the repo is not private.
-    """
-    if config.project.ghas is not None:
-        return config.project.ghas
-    return visibility != "private"
-
-
-def desired_security_settings(*, ghas: bool) -> DesiredSecuritySettings:
+def desired_security_settings() -> DesiredSecuritySettings:
     return DesiredSecuritySettings(
-        secret_scanning="enabled" if ghas else None,  # noqa: S106
-        secret_scanning_push_protection="enabled" if ghas else None,  # noqa: S106
+        secret_scanning="enabled",  # noqa: S106
+        secret_scanning_push_protection="enabled",  # noqa: S106
         # Report-only Dependabot (epic vergil-project/.github#420): alerts
         # are on for every repo, public or private, so the nightly
         # vrg-dependabot-audit has something to read; security-update PRs
@@ -357,8 +334,12 @@ def desired_automation_branch_ruleset(app_id: int | None) -> DesiredRuleset:
 # CI gates ruleset derivation
 # ---------------------------------------------------------------------------
 
-_GITHUB_ACTIONS_INTEGRATION_ID = 15368
-_GHAS_INTEGRATION_ID = 57789
+# The GitHub App IDs that create the fleet's required check runs: GitHub
+# Actions for every workflow job, GitHub Advanced Security for the scanner
+# checks a SARIF upload registers. The CI-evidence harvest matches check runs
+# by these IDs too, never by name alone (GHSA-q6hx-8c85-9f56).
+GITHUB_ACTIONS_INTEGRATION_ID = 15368
+GHAS_INTEGRATION_ID = 57789
 
 # The primary languages CodeQL analyzes: the single definition behind both the
 # CI-gates ruleset (``security / codeql`` and the GHAS ``CodeQL`` check are
@@ -379,14 +360,14 @@ CODEQL_LANGUAGES = frozenset({"python", "go", "rust", "cpp", "typescript"})
 def _make_check(context: str) -> dict[str, object]:
     return {
         "context": context,
-        "integration_id": _GITHUB_ACTIONS_INTEGRATION_ID,
+        "integration_id": GITHUB_ACTIONS_INTEGRATION_ID,
     }
 
 
 def _make_ghas_check(context: str) -> dict[str, object]:
     return {
         "context": context,
-        "integration_id": _GHAS_INTEGRATION_ID,
+        "integration_id": GHAS_INTEGRATION_ID,
     }
 
 
@@ -425,7 +406,6 @@ def desired_ci_gates_rulesets(
     project: ProjectConfig,
     ci: CiConfig,
     *,
-    ghas: bool,
     docs: bool = True,
     package: bool = False,
     integration_versions: Sequence[str] = (),
@@ -440,7 +420,6 @@ def desired_ci_gates_rulesets(
     checks = _ci_gate_checks(
         project,
         ci,
-        ghas=ghas,
         docs=docs,
         package=package,
         integration_versions=integration_versions,
@@ -479,7 +458,6 @@ def _ci_gate_checks(
     project: ProjectConfig,
     ci: CiConfig,
     *,
-    ghas: bool,
     docs: bool,
     package: bool,
     integration_versions: Sequence[str],
@@ -526,16 +504,14 @@ def _ci_gate_checks(
 
     # GHAS check runs — created by GitHub Advanced Security (app 57789)
     # when workflows upload SARIF via codeql-action/upload-sarif.  These
-    # gate on whether the PR introduces new alerts in changed lines.
-    # Without GHAS the check runs can never materialize, so requiring
-    # them would block merges forever; the trivy/semgrep jobs still gate
-    # on findings via scanner exit codes.
-    if ghas:
-        checks.append(_make_ghas_check("Trivy"))
-        checks.append(_make_ghas_check("Semgrep OSS"))
+    # gate on whether the PR introduces new alerts in changed lines. Every
+    # repo is public, so GHAS code scanning is always available (epic
+    # vergil-project/.github#1476).
+    checks.append(_make_ghas_check("Trivy"))
+    checks.append(_make_ghas_check("Semgrep OSS"))
 
-    # CodeQL for supported languages — requires GHAS-backed code scanning
-    if ghas and lang in CODEQL_LANGUAGES:
+    # CodeQL for supported languages, backed by GHAS code scanning
+    if lang in CODEQL_LANGUAGES:
         checks.append(_make_check("security / codeql"))
         checks.append(_make_ghas_check("CodeQL"))
 
@@ -639,9 +615,7 @@ def _ci_caller_jobs(ci_workflow_yaml: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def _reusable_pr_contexts(
-    reusable_file: str, caller_job: str, *, ghas: bool
-) -> tuple[set[str], set[str]]:
+def _reusable_pr_contexts(reusable_file: str, caller_job: str) -> tuple[set[str], set[str]]:
     """Contexts a reusable CI workflow emits on ``pull_request`` under ``caller_job``.
 
     Returns ``(exact, prefixes)``: a required context is producible when it
@@ -673,13 +647,13 @@ def _reusable_pr_contexts(
     if reusable_file == "ci-images.yml":
         return ({f"{j} / evidence"}, set())
     if reusable_file == "ci-security.yml":
-        exact = {f"{j} / trivy", f"{j} / semgrep", f"{j} / codeql"}
-        if ghas:
-            # GHAS-app check runs carry no ``<job> /`` prefix (created by the
-            # GitHub Advanced Security app, not the workflow) but do report on a
-            # PR when the security job uploads SARIF.
-            exact |= {"Trivy", "Semgrep OSS", "CodeQL"}
-        return (exact, set())
+        # The GHAS-app check runs carry no ``<job> /`` prefix (created by the
+        # GitHub Advanced Security app, not the workflow) but do report on a PR,
+        # since the security job always uploads SARIF.
+        return (
+            {f"{j} / trivy", f"{j} / semgrep", f"{j} / codeql", "Trivy", "Semgrep OSS", "CodeQL"},
+            set(),
+        )
     if reusable_file == "ci-version-bump.yml":
         return ({f"{j} / version-bump"}, set())
     return (set(), set())
@@ -692,7 +666,7 @@ def required_status_contexts(ruleset: DesiredRuleset) -> list[str]:
 
 
 def unproducible_ci_yaml_contexts(
-    ci_workflow_yaml: str, required_contexts: Iterable[str], *, ghas: bool
+    ci_workflow_yaml: str, required_contexts: Iterable[str]
 ) -> list[str]:
     """Required status-check contexts the generated ci.yml cannot emit on a PR.
 
@@ -704,7 +678,7 @@ def unproducible_ci_yaml_contexts(
     exact: set[str] = set()
     prefixes: set[str] = set()
     for caller_job, reusable_file in _ci_caller_jobs(ci_workflow_yaml):
-        e, p = _reusable_pr_contexts(reusable_file, caller_job, ghas=ghas)
+        e, p = _reusable_pr_contexts(reusable_file, caller_job)
         exact |= e
         prefixes |= p
 
@@ -737,7 +711,7 @@ INTEGRATION_TESTS_UNSUPPORTED = (
 
 
 def assert_ci_gates_producible(
-    desired: DesiredState, ci_workflow_yaml: str, *, ghas: bool, source: str
+    desired: DesiredState, ci_workflow_yaml: str, *, source: str
 ) -> None:
     """Refuse a CI-gates ruleset that requires a check ci.yml never emits on a PR.
 
@@ -769,7 +743,7 @@ def assert_ci_gates_producible(
     required: list[str] = []
     for rs in gates:
         required.extend(c for c in required_status_contexts(rs) if c not in required)
-    unproducible = unproducible_ci_yaml_contexts(ci_workflow_yaml, required, ghas=ghas)
+    unproducible = unproducible_ci_yaml_contexts(ci_workflow_yaml, required)
     if not unproducible:
         return
     integration = [c for c in unproducible if c.startswith(_INTEGRATION_CONTEXT_PREFIX)]
@@ -932,7 +906,6 @@ def required_evidence_gates(
     project: ProjectConfig,
     ci: CiConfig,
     *,
-    ghas: bool,
     docs: bool = True,
     package: bool = False,
     integration_versions: Sequence[str] = (),
@@ -947,7 +920,6 @@ def required_evidence_gates(
     checks = _ci_gate_checks(
         project,
         ci,
-        ghas=ghas,
         docs=docs,
         package=package,
         integration_versions=integration_versions,
@@ -971,8 +943,6 @@ def required_evidence_gates(
 def compute_desired_state(
     config: VergilConfig,
     *,
-    visibility: str,
-    is_org: bool,
     skip_bypass: bool,
     automation_app_id: int | None,
 ) -> DesiredState:
@@ -993,7 +963,6 @@ def compute_desired_state(
             "automation-branch rulesets' bypass actors unless bypass_actors are skipped"
         )
         raise ValueError(msg)
-    ghas = ghas_available(config, visibility=visibility)
     rulesets: list[DesiredRuleset] = []
 
     rulesets.append(desired_branch_protection_ruleset())
@@ -1004,7 +973,6 @@ def compute_desired_state(
         desired_ci_gates_rulesets(
             config.project,
             config.ci,
-            ghas=ghas,
             docs=config.publish.docs,
             package=bool(config.packages),
             integration_versions=resolved_integration_versions(config),
@@ -1021,8 +989,8 @@ def compute_desired_state(
     )
 
     return DesiredState(
-        repo_settings=desired_repo_settings(is_org=is_org, visibility=visibility),
-        security=desired_security_settings(ghas=ghas),
+        repo_settings=desired_repo_settings(),
+        security=desired_security_settings(),
         actions_permissions=desired_actions_permissions(
             config.project.primary_language, config.actions.extra_allowed_patterns
         ),
@@ -1480,7 +1448,6 @@ def _read_repo_settings(
         has_issues=r.flag("has_issues"),
         has_projects=r.flag("has_projects"),
         has_wiki=r.flag("has_wiki"),
-        allow_forking=r.flag("allow_forking"),
         allow_update_branch=r.flag("allow_update_branch"),
         has_downloads=r.flag("has_downloads"),
         merge_commit_title=r.text("merge_commit_title"),
@@ -1494,16 +1461,6 @@ def _read_repo_settings(
 def fetch_actual_state(repo: str) -> FetchResult:
     """Fetch the current GitHub configuration for a repo via gh api."""
     repo_data = github.read_json("api", f"repos/{repo}")
-
-    visibility = (
-        str(repo_data.get("visibility", "private")) if isinstance(repo_data, dict) else "private"
-    )
-
-    owner_raw = repo_data.get("owner") if isinstance(repo_data, dict) else None
-    owner: dict[str, object] = (
-        cast("dict[str, object]", owner_raw) if isinstance(owner_raw, dict) else {}
-    )
-    owner_type = str(owner.get("type", "User"))
 
     not_checked: list[NotChecked] = []
 
@@ -1649,8 +1606,6 @@ def fetch_actual_state(repo: str) -> FetchResult:
             publish=DesiredPublishConfig(release=False, docs=False),
             classic_develop_strict=classic.develop_strict,
         ),
-        visibility=visibility,
-        owner_type=owner_type,
         not_checked=not_checked,
     )
 
@@ -2079,28 +2034,6 @@ def _compute_checked_diff(*, desired: DesiredState, actual: DesiredState) -> Con
 # ---------------------------------------------------------------------------
 
 
-_PRIVATE_FORKING_DENIED = "does not allow private repository forking"
-
-_PRIVATE_FORKING_HELP = (
-    "{repo}: cannot apply repository settings because the organization disallows "
-    "forking private repositories. The tooling requires repos to be forkable. "
-    "Enable the org-level setting 'members_can_fork_private_repositories' "
-    "(Settings > Member privileges > Repository forking), then re-run. Org-level "
-    "enforcement is tracked in vergil-tooling#1268."
-)
-
-
-def _is_private_forking_error(exc: github.GitHubAPIError) -> bool:
-    """True when a settings PATCH was rejected for the org-level fork policy.
-
-    GitHub returns 422 with this message when ``allow_forking`` is included in a
-    private repo's settings PATCH while the org disallows private forking — even
-    when the value is ``False``.
-    """
-    blob = f"{exc.stderr or ''}\n{exc.stdout or ''}"
-    return _PRIVATE_FORKING_DENIED in blob
-
-
 def _apply_repo_settings(repo: str, settings: DesiredRepoSettings) -> None:
     body: dict[str, object] = {
         "default_branch": settings.default_branch,
@@ -2120,14 +2053,7 @@ def _apply_repo_settings(repo: str, settings: DesiredRepoSettings) -> None:
         "squash_merge_commit_message": settings.squash_merge_commit_message,
         "web_commit_signoff_required": settings.web_commit_signoff_required,
     }
-    if settings.allow_forking is not None:
-        body["allow_forking"] = settings.allow_forking
-    try:
-        github.write_json("PATCH", f"repos/{repo}", body)
-    except github.GitHubAPIError as exc:
-        if "allow_forking" in body and _is_private_forking_error(exc):
-            raise RuntimeError(_PRIVATE_FORKING_HELP.format(repo=repo)) from exc
-        raise
+    github.write_json("PATCH", f"repos/{repo}", body)
 
 
 def _apply_security_settings(repo: str, security: DesiredSecuritySettings) -> None:

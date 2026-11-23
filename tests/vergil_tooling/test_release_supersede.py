@@ -13,7 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib import progress
+from tests.vergil_tooling.release_stubs import branch_lookup, branch_pr
+from vergil_tooling.lib import progress, trust
 from vergil_tooling.lib.pending_release import PendingRelease, ReleaseTags
 from vergil_tooling.lib.release import checklist, confirm, records, state, supersede
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
@@ -35,9 +36,10 @@ from vergil_tooling.lib.release.supersede import (
     load_superseded,
 )
 from vergil_tooling.lib.release.tracking import create_tracking_issue
+from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator, Iterator
 
 _ORCH = "vergil_tooling.lib.release.orchestrator"
 _PREFLIGHT = "vergil_tooling.lib.release.preflight"
@@ -202,6 +204,27 @@ def _release_issue(ver: str, number: int, body: str) -> dict[str, object]:
     return {"number": number, "title": f"release: {ver}", "body": body}
 
 
+@contextlib.contextmanager
+def _open_releases(issues: list[dict[str, object]]) -> Generator[None]:
+    """The open-release search lists *issues*; the trust layer reads each body as trusted."""
+    bodies = {int(str(issue["number"])): str(issue["body"]) for issue in issues}
+
+    def _read_issue(_repo: str, number: int) -> trust.IssueContent:
+        return trust.IssueContent(
+            body=bodies[number],
+            body_role=trust.Role.AGENTS,
+            author_role=trust.Role.AGENTS,
+            comments=(),
+            skipped=(),
+        )
+
+    with (
+        patch(_RESUME_READ, return_value=issues),
+        patch(_PREFLIGHT + ".trust.read_issue", side_effect=_read_issue),
+    ):
+        yield
+
+
 def _body(current: StateBlock) -> str:
     return f"## Release\n\n{state.render_state(current)}\n"
 
@@ -211,7 +234,7 @@ def test_supersede_refuses_bare_release() -> None:
     check_eligible(eligible)
     open_issues = [_release_issue(_OLD, 40, _body(eligible))]
     with (
-        patch(_RESUME_READ, return_value=open_issues),
+        _open_releases(open_issues),
         pytest.raises(ReleaseError, match="One release runs at a time") as info,
     ):
         _check_no_open_release(_REPO)
@@ -222,12 +245,12 @@ def test_open_release_check_exempts_only_the_superseded_issue(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     eligible = _body(_simulated_state("cd-publish"))
-    with patch(_RESUME_READ, return_value=[_release_issue(_OLD, 40, eligible)]):
+    with _open_releases([_release_issue(_OLD, 40, eligible)]):
         _check_no_open_release(_REPO, exempt=40)
     assert "only the superseded release #40 is open" in capsys.readouterr().out
     other = _release_issue("2.1.6", 41, eligible.replace(_OLD, "2.1.6"))
     with (
-        patch(_RESUME_READ, return_value=[_release_issue(_OLD, 40, eligible), other]),
+        _open_releases([_release_issue(_OLD, 40, eligible), other]),
         pytest.raises(ReleaseError, match="release 2.1.6"),
     ):
         _check_no_open_release(_REPO, exempt=40)
@@ -517,10 +540,10 @@ def test_supersede_absorbs_issues_and_records_supersedes() -> None:
         c.state = new
 
     with (
-        patch(_RECORDS + ".read_comments", return_value=[]),
+        patch(_RECORDS + ".record_comments", return_value=()),
         patch(_RECORDS + "._merge_commit", return_value="a" * 40),
         patch(_RECORDS + "._release_date", return_value="2026-11-22"),
-        patch(_RECORDS + "._humans", return_value=("human",)),
+        patch(_RECORDS + "._authors", return_value=TrustedAuthors(("human",), ())),
         patch(_RECORDS + "._post", side_effect=lambda ref, body: posted.__setitem__(ref, body)),
         patch(_RECORDS + ".write_state", side_effect=write),
     ):
@@ -648,7 +671,7 @@ def _superseding_state(*, untagged: bool) -> StateBlock:
 @pytest.fixture
 def adopted_pr() -> Iterator[None]:
     """The release PR already exists, so prepare stops right after the tracking issues."""
-    with patch(_PREPARE + ".github.pr_for_branch", return_value={"url": "pr"}):
+    with branch_lookup(branch_pr(100, "OPEN")):
         yield
 
 
@@ -772,8 +795,7 @@ def test_prepare_closes_the_superseded_issue_only_after_the_bump_and_the_pr() ->
     calls: list[str] = []
     failure = ReleaseError(phase="prepare", command="gh issue close", message="closed?")
     with (
-        patch(_PREPARE + ".github.pr_for_branch", return_value=None),
-        patch(_PREPARE + ".github.closed_pr_for_branch", return_value=None),
+        branch_lookup(),
         patch(_PREPARE + ".version.show", return_value="2.1.5"),
         patch(_PREPARE + ".version.bump", side_effect=lambda *a: calls.append("bump")),
         patch(_PREPARE + ".git.run", side_effect=lambda *a: calls.append(" ".join(a[:2]))),

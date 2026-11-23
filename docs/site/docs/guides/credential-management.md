@@ -124,8 +124,8 @@ to ambient `gh`/`git` auth:
   configured ... but no target org could be determined` and exits
   non-zero. Run it inside a repo whose `origin` is on GitHub, or name
   the target explicitly.
-- **More than one target org.** One installation token reaches one
-  org's private repos, so a `vrg-gh` command naming two owners (for
+- **More than one target org.** One installation token acts for one
+  org only, so a `vrg-gh` command naming two owners (for
   example, `search prs --owner a --owner b`) stops with `this command
   targets more than one owner`. Run it once per owner. `vrg-gh api
   graphql` is refused in App mode for the same reason: a GraphQL call
@@ -142,8 +142,9 @@ qualifier, and an `api repos|orgs|users/<owner>/...` endpoint, given as
 a path or a full URL. Only a
 command that names no owner falls back to the current repo's `origin`.
 This matters across orgs: a token for the current repo's org can still
-read other orgs' public repos, so a wrong-org token would not fail. It
-would just leave the target org's private repos out.
+read other orgs' repos, so a wrong-org read would not fail. Its writes
+would, and it would run without the permissions granted on the target
+org.
 
 Ambient auth may be a human's `gh` login. Falling back to it would
 let an agent act under a different identity without any sign.
@@ -325,7 +326,7 @@ permissions, as listed in [Account Setup](account-setup.md):
 
 | | `<username>-vergil-user` key | `<username>-vergil-audit` key |
 |---|---|---|
-| Contents | **Read and write.** Can push branches and read all code in covered repos, private repos included. | **Read-only.** Can read all code in covered repos, private repos included. |
+| Contents | **Read and write.** Can push branches and read all code in covered repos. | **Read-only.** Can read all code in covered repos. |
 | Issues | **Read and write.** Can create, edit, and comment on issues. | Read-only |
 | Pull requests | Read-only | **Read and write.** Can write PR reviews and comments. |
 | Repository security advisories | **Read and write.** Can read, create and edit the draft advisories in each covered org's `.github`, which hold security findings. | No access |
@@ -334,9 +335,8 @@ permissions, as listed in [Account Setup](account-setup.md):
 
 Branch protection still limits a leaked user-App key. It cannot push
 directly to a protected branch or merge without review. It can still
-push malicious content to feature branches, and it can read every
-private repo its installations cover. Because both Apps can read code,
-treat a leak of either key as exposure of that code.
+push malicious content to feature branches, and it can read and edit
+the draft security advisories in each covered org's `.github`.
 
 **Contain.**
 
@@ -408,7 +408,7 @@ rulesets, including the bypass lists. With Contents, Pull requests and
 Workflows: Read and write, it can push branches (workflow files
 included), open PRs and merge any whose required checks pass, and it is a bypass actor of every
 repo's `Automation branches` ruleset. With Dependabot alerts: Read, it
-can read a repo's open alerts, including on a private repo. The App
+can read every covered repo's open alerts. The App
 holds no Repository security advisories permission, so it cannot read
 the draft advisories in the org's `.github` (see
 [Security Records](security-records.md)).

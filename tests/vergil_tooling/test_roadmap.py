@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
 from vergil_tooling.lib import epics, roadmap
 from vergil_tooling.lib.roadmap import EpicSummary
 
@@ -164,12 +165,23 @@ def test_gather_skips_release_tracking_issue() -> None:
             "body": "<!-- vrg-release:progress -->\n- [x] tag\n",
         },
     ]
+    layer = trust_stubs.FakeItems(
+        {
+            ("vergil-project/.github", 373): trust_stubs.item(
+                body="<!-- vrg-release:progress -->\n- [x] tag\n"
+            )
+        },
+        strict=True,
+    )
     with (
         patch("vergil_tooling.lib.github.read_json", return_value=epic_list),
         patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+        patch("vergil_tooling.lib.github.graphql", side_effect=layer),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
     ):
         result = roadmap.gather("vergil-project")
     assert [e.number for e in result] == [40]
+    assert layer.reads == [("vergil-project/.github", 373)]
 
 
 def test_gather_returns_empty_on_non_list() -> None:
@@ -245,38 +257,6 @@ def test_render_without_org_uses_generic_source() -> None:
     summaries = [EpicSummary(7, "Orphan", "2026-02-02", None, (), 0, 0, "u7")]
     out = roadmap.render(summaries)
     assert "open epics in the org .github repo" in out
-
-
-def test_gather_reads_from_explicit_private_home() -> None:
-    # A private repo self-homes its epics; gather scopes to that home, not .github.
-    epic_list = [
-        {
-            "number": 2,
-            "title": "Lab epic",
-            "createdAt": "2026-07-09T00:00:00Z",
-            "milestone": None,
-            "labels": [{"name": "epic"}],
-            "url": "u2",
-        }
-    ]
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value=epic_list) as mock_read,
-        patch("vergil_tooling.lib.epics.child_states", return_value=[]) as mock_children,
-    ):
-        result = roadmap.gather("org", home="org/lab")
-    assert result[0].number == 2
-    # The private home drives both the epic query and the child rollup.
-    assert "org/lab" in mock_read.call_args.args
-    assert (mock_children.call_args.args[0].owner, mock_children.call_args.args[0].repo) == (
-        "org",
-        "lab",
-    )
-
-
-def test_render_uses_explicit_home_source() -> None:
-    summaries = [EpicSummary(2, "Lab", "2026-07-09", None, (), 0, 0, "u2")]
-    out = roadmap.render(summaries, "org", home="org/lab")
-    assert "open epics in org/lab" in out
 
 
 def test_gather_defaults_org_to_current_repo_owner() -> None:

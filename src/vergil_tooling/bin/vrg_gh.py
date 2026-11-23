@@ -673,9 +673,9 @@ def _exec_gh(argv: list[str]) -> int:
     whatever form it names it (see :func:`_target_owners`), and falls back to
     cwd remote detection only when the command names no owner. A targeted
     owner with no installation fails loudly: a token minted for a different
-    installation cannot reach that owner's private repos, it only sees their
-    public ones (#1413, #4762). In App mode, a command that names more than
-    one owner is refused, since no single installation token reaches them all,
+    installation cannot write to that owner's repos or use the permissions
+    granted there (#1413, #4762). In App mode, a command that names more than
+    one owner is refused, since no single installation token acts for them all,
     and so is ``api graphql``, which names its owner inside the query.
     """
     if _is_graphql(argv) and github.is_app_mode():
@@ -691,8 +691,8 @@ def _exec_gh(argv: list[str]) -> int:
     if len(owners) > 1 and github.is_app_mode():
         print(
             f"vrg-gh: this command targets more than one owner ({', '.join(owners)}); "
-            "one GitHub App installation token cannot reach all of them, and the "
-            "others' private repos would be silently missed. Run it once per owner.",
+            "one GitHub App installation token cannot act for all of them, so "
+            "writes to the others would fail. Run it once per owner.",
             file=sys.stderr,
         )
         return 1

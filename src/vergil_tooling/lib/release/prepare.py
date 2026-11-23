@@ -7,13 +7,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import changelog, git, github, pr_create, version
+from vergil_tooling.lib.release.branch_pr import branch_prs
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.merge import known_pr_state
 from vergil_tooling.lib.release.supersede import close_superseded, superseded_issue
 from vergil_tooling.lib.release.tracking import create_tracking_issue
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
+    from vergil_tooling.lib.trust import PRRef
 
 
 def prepare(ctx: ReleaseContext) -> None:
@@ -57,25 +58,26 @@ def _prepare_branch(ctx: ReleaseContext) -> None:
             message="No release branch on context — preflight did not run.",
         )
 
-    existing = github.pr_for_branch(branch)
-    if existing is not None:
-        _refuse_pending_bump(ctx, branch, str(existing["url"]))
-        ctx.release_pr_url = str(existing["url"])
+    # Only a same-repo PR with a trusted author is adopted (GHSA-r4j2-cwcp-xg56):
+    # a fork PR on the release branch's name is skipped and reported.
+    prs = branch_prs(ctx.repo, branch, phase="prepare")
+    if prs.open_pr is not None:
+        _refuse_pending_bump(ctx, branch, prs.open_pr.url)
+        ctx.release_pr_url = prs.open_pr.url
         print(f"Release PR already exists: {ctx.release_pr_url}")
         return
 
-    # Resume-safe against an already-merged release PR (#2998). `pr_for_branch`
-    # returns open PRs only, so a failure at/after merge-release (e.g. a
-    # confirm-main failure) leaves the merged release PR invisible to the check
-    # above — without this, prepare would re-push and `gh pr create` would fail
+    # Resume-safe against an already-merged release PR (#2998). A failure
+    # at/after merge-release (e.g. a confirm-main failure) leaves no open PR,
+    # and without this prepare would re-push and `gh pr create` would fail
     # ("No commits between main and <branch>"). Adopt the merged PR so
     # `merge_release`'s MERGED-skip carries the pipeline forward. A merged PR
     # for the branch name means the release branch's work is done: prepare
     # never pushes or re-creates the branch in that case (#3172) — it either
-    # adopts the PR or fails loud.
-    merged = github.closed_pr_for_branch(branch)
-    if merged is not None and known_pr_state(str(merged["url"])) == "MERGED":
-        _refuse_pending_bump(ctx, branch, str(merged["url"]))
+    # adopts the PR or fails loud. A closed, unmerged PR is not adopted.
+    merged = prs.latest_closed
+    if merged is not None and merged.state == "MERGED":
+        _refuse_pending_bump(ctx, branch, merged.url)
         _adopt_merged_pr(ctx, branch, merged)
         return
 
@@ -161,7 +163,7 @@ def _close_superseded(ctx: ReleaseContext) -> None:
     )
 
 
-def _adopt_merged_pr(ctx: ReleaseContext, branch: str, merged: dict[str, str]) -> None:
+def _adopt_merged_pr(ctx: ReleaseContext, branch: str, merged: PRRef) -> None:
     """Adopt an already-merged release PR, reconciling the local branch tip.
 
     * PR head == local tip: adopt as-is.
@@ -169,25 +171,17 @@ def _adopt_merged_pr(ctx: ReleaseContext, branch: str, merged: dict[str, str]) -
       BEHIND PR on GitHub (a server-side update-branch merge), so the local
       branch is stale. Fetch the PR head and fast-forward the local branch to
       it so later stages see the real tip, then adopt (#3172).
-    * Otherwise (no head, or an unrelated tip — the #1719 reused-branch-name
-      straggler): fail loud. Never fall through to a push, which would
-      re-create the deleted remote release branch at a stale tip.
+    * Otherwise (an unrelated tip — the #1719 reused-branch-name straggler):
+      fail loud. Never fall through to a push, which would re-create the
+      deleted remote release branch at a stale tip.
+
+    The trust layer never returns a PR without its head commit.
     """
-    url = str(merged["url"])
-    head = str(merged.get("headRefOid") or "")
+    url = merged.url
+    head = merged.head_oid
     local = git.read_output("rev-parse", branch)
-    if not head:
-        raise ReleaseError(
-            phase="prepare",
-            command=f"gh pr list --head {branch} --state closed",
-            message=(
-                f"Release PR {url} for '{branch}' is already merged, but GitHub "
-                f"reported no head commit for it, so the local tip ({local}) "
-                f"cannot be reconciled. Refusing to push or re-create the branch."
-            ),
-        )
     if head != local:
-        git.run("fetch", "origin", f"pull/{merged['number']}/head")
+        git.run("fetch", "origin", f"pull/{merged.number}/head")
         if not git.is_ancestor(local, head):
             raise ReleaseError(
                 phase="prepare",

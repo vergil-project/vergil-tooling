@@ -17,7 +17,10 @@ neutral ``security``-labelled intake issue carrying only a pointer to it.
   GitHub call, with ``--resume`` too: only a move writes those lines.
 - ``list`` names advisories by GHSA ID, state, affected repo and tracked
   issues; ``--details`` adds each summary and is refused under the sweep.
-- ``show`` prints one pair with its details, to the terminal only.
+- ``show`` prints one pair with its details, to the terminal only. Given an
+  issue, it shows only the advisories its ``Security advisory:`` lines name
+  that also track it (their ``Tracking issue:`` lines name it); any other is
+  named on stderr and not shown.
 - ``retarget`` moves an advisory's tracking from ``--from``, an issue it
   tracks, to new issues. It refuses an untracked source, and stopping
   tracking an open issue that no ``--drop`` names, before any write. When
@@ -58,7 +61,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import epics, github, security_records
+from vergil_tooling.lib import epics, github, security_records, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.labels import ensure_labels_or_report
@@ -97,10 +100,6 @@ def main(argv: list[str] | None = None) -> int:
         return _retarget(args)
     except _RefusedError as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
-        return 1
-    except security_records.PrivateHomeError as exc:
-        # The message is already prefixed with the program name.
-        print(str(exc), file=sys.stderr)
         return 1
     except github.NoInstallationError as exc:
         print(f"{_PROG}: {github.no_installation_message(exc)}", file=sys.stderr)
@@ -217,11 +216,18 @@ def _read_file(path: str, flag: str) -> str:
         raise _RefusedError(f"cannot read {flag} {path}: {exc.strerror or exc}") from None
 
 
+def _names_line(body: str, line: str) -> bool:
+    return line in (candidate.rstrip() for candidate in body.splitlines())
+
+
 def _find_resumed_issue(intake: IssueRef, home: str, ghsa_id: str) -> IssueRef | None:
-    """The intake child whose ``Security advisory:`` line names *ghsa_id*, or None.
+    """The intake child whose trusted ``Security advisory:`` line names *ghsa_id*, or None.
 
     Reads the intake epic's sub-issues through REST, never through search,
-    whose index can lag.
+    whose index can lag. A child whose listed body has the line is then read
+    through the trust layer, and counts only when its body is trusted and
+    still has the line: a body the layer does not trust (its author or an
+    editor holds no role) is skipped and reported on stderr, metadata only.
     """
     rows = github.read_json_paginated(
         f"repos/{intake.owner}/{intake.repo}/issues/{intake.number}/sub_issues",
@@ -230,10 +236,18 @@ def _find_resumed_issue(intake: IssueRef, home: str, ghsa_id: str) -> IssueRef |
     line = security_records.advisory_line(home, ghsa_id)
     for row in rows:
         item: Any = row
-        body = str(item.get("body") or "")
-        if line in (candidate.rstrip() for candidate in body.splitlines()):
-            owner, repo = str(item["repository_url"]).rstrip("/").split("/")[-2:]
-            return IssueRef(owner=owner, repo=repo, number=int(item["number"]))
+        if not _names_line(str(item.get("body") or ""), line):
+            continue
+        owner, repo = str(item["repository_url"]).rstrip("/").split("/")[-2:]
+        ref = IssueRef(owner=owner, repo=repo, number=int(item["number"]))
+        content = trust.read_issue(f"{owner}/{repo}", ref.number)
+        if content.body is None:
+            trust.report_skipped(
+                [skip for skip in content.skipped if skip.field == "body"], stream=sys.stderr
+            )
+            continue
+        if _names_line(content.body, line):
+            return ref
     return None
 
 
@@ -408,6 +422,28 @@ def _record_line(advisory: security_records.Advisory) -> str:
     return f"{advisory.ghsa_id}  {advisory.state}  {affected}  tracks: {tracking}{origin}"
 
 
+def _tracking_only(
+    ref: IssueRef, named: tuple[str, ...], by_id: dict[str, security_records.Advisory]
+) -> tuple[str, ...]:
+    """The advisories of *named* whose ``Tracking issue:`` lines name *ref*.
+
+    An issue's body line alone never shows a pair: anyone can write one. Each
+    named advisory that does not track *ref* is left out and named on stderr
+    by GHSA ID; none left is a refusal.
+    """
+    untracked = [g for g in named if ref not in by_id[g].tracking]
+    if untracked:
+        noun, verb = ("advisory", "does") if len(untracked) == 1 else ("advisories", "do")
+        print(
+            f"{_PROG}: not shown: {noun} {', '.join(untracked)} {verb} not track {ref.slug}",
+            file=sys.stderr,
+        )
+    shown = tuple(g for g in named if g not in untracked)
+    if not shown:
+        raise _RefusedError(f"no advisory {ref.slug} names tracks it")
+    return shown
+
+
 def _show(args: argparse.Namespace) -> int:
     target: str = args.target
     if _GHSA_RE.match(target):
@@ -441,6 +477,8 @@ def _show(args: argparse.Namespace) -> int:
         if missing:
             noun, verb = ("advisory", "does") if len(missing) == 1 else ("advisories", "do")
             raise _RefusedError(f"{noun} {', '.join(missing)} {verb} not exist in {home}")
+        if not ghsa_id:
+            wanted = _tracking_only(ref, wanted, by_id)
         pairs = [(by_id[g], *security_records.read_text(home, g)) for g in wanted]
     for index, (advisory, summary, description) in enumerate(pairs):
         if index:

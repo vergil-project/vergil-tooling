@@ -29,7 +29,7 @@ import subprocess
 from functools import partial
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import epics, git, github, linkage
+from vergil_tooling.lib import epics, git, github, linkage, trust
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.trusted_authors import (
@@ -44,12 +44,16 @@ if TYPE_CHECKING:
 MIN_BATCH = 2
 MAX_BATCH = 8
 
-_APP_PREFIX = "app/"
+# The roles that may open a batch's issues: the human and the agents.
+_AUTHOR_ROLES = frozenset({trust.Role.HUMAN, trust.Role.AGENTS})
 
 # The errors a GitHub or configuration read can end in. Each is a refusal,
 # never a pass: a GitHubAPIError is a CalledProcessError, GraphQL errors are
 # RuntimeError, a malformed response or configuration is ValueError (JSON
 # decoding included), and a malformed GraphQL node is KeyError or TypeError.
+# A parent or blocker read goes through the trust layer, which ends a failed
+# read in TrustReadError and an untrusted body in UntrustedContentError; both
+# messages are metadata only, so they are safe to show.
 _READ_ERRORS: tuple[type[Exception], ...] = (
     subprocess.CalledProcessError,
     OSError,
@@ -58,6 +62,8 @@ _READ_ERRORS: tuple[type[Exception], ...] = (
     KeyError,
     TypeError,
     TrustedAuthorsNotConfiguredError,
+    trust.TrustReadError,
+    trust.UntrustedContentError,
 )
 
 # A commit subject's trailing issue ref: " (#N)" at the very end.
@@ -151,6 +157,18 @@ def _check_count_and_duplicates(issues: list[str], parsed: list[epics.IssueRef])
         seen[key] = ref
 
 
+def _outsider(issue: epics.IssueRef, authors: TrustedAuthors) -> trust.Skipped | None:
+    """The author's skip record when *issue* was not opened by the human or an agent.
+
+    The author is judged by the trust layer, account type included, so a User
+    account named like an agent App is not trusted.
+    """
+    content = trust.read_issue(
+        f"{issue.owner}/{issue.repo}", issue.number, roles=_AUTHOR_ROLES, authors=authors
+    )
+    return trust.outsider_opened(content)
+
+
 def _check_task(ref: str, issue: epics.IssueRef, repo: str, authors: TrustedAuthors) -> None:
     """The per-issue refusals: a task, not queued, trusted author, not operational."""
     kind = _read(f"the labels of {ref}", "task", lambda: epics.non_task_kind(issue))
@@ -165,12 +183,11 @@ def _check_task(ref: str, issue: epics.IssueRef, repo: str, authors: TrustedAuth
     if queue is not None:
         raise BatchRuleError("not queued", epics.queue_refusal_message(ref, queue))
 
-    login = _read(f"the author of {ref}", "trusted author", lambda: epics.issue_author(issue))
-    bare = login.removeprefix(_APP_PREFIX)
-    if bare not in authors.human and bare not in authors.agents:
+    opened = _read(f"the author of {ref}", "trusted author", lambda: _outsider(issue, authors))
+    if opened is not None:
         raise BatchRuleError(
             "trusted author",
-            f"{ref} was opened by {login}, who is not listed by vrg-trusted-authors",
+            f"{ref} was not opened by a trusted author: {opened.describe()} ({opened.cause})",
         )
 
     operational = _read(

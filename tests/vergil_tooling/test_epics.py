@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import subprocess
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import epic_docs, epics, github
+from tests.vergil_tooling import trust_stubs
+from vergil_tooling.lib import epic_docs, epics, github, trust
 from vergil_tooling.lib.epics import _SUBISSUES_QUERY, ChildState, IssueRef
 from vergil_tooling.lib.labels import load_labels
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from tests.vergil_tooling.trust_stubs import FakeItems
 
 EPIC = IssueRef("org", ".github", 40)
 TASK = IssueRef("org", "repo-a", 101)
@@ -18,6 +25,41 @@ TASK = IssueRef("org", "repo-a", 101)
 
 def _repo_node(login: str, name: str) -> dict[str, object]:
     return {"name": name, "owner": {"login": login}}
+
+
+@pytest.fixture(autouse=True)
+def layer(monkeypatch: pytest.MonkeyPatch) -> FakeItems:
+    """The trust layer's reads: trusted bodies and closes unless a test says otherwise.
+
+    A test that patches ``github.graphql`` itself routes the layer's queries
+    here with :func:`_with_layer`.
+    """
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+    fake = trust_stubs.FakeItems()
+    monkeypatch.setattr(github, "graphql", fake)
+    return fake
+
+
+def _with_layer(layer: FakeItems, answer: object) -> Callable[..., object]:
+    """A ``github.graphql`` that gives the layer's queries to *layer* and *answer* to the rest."""
+
+    def graphql(query: str, **variables: Any) -> object:
+        if query in (trust._ITEM_QUERY, trust._EVENTS_QUERY):
+            return layer(query, **variables)
+        return answer
+
+    return graphql
+
+
+def _mirror(layer: FakeItems, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Give *layer* each search row's body as a trusted body, and return *rows*."""
+    for row in rows:
+        name_with_owner = (row.get("repository") or {}).get("nameWithOwner")
+        if name_with_owner:
+            body = str(row.get("body") or "")
+            layer.items[(name_with_owner, int(row["number"]))] = trust_stubs.item(body=body)
+    return rows
 
 
 # -- single_target_org (issue #2070) -----------------------------------------
@@ -98,7 +140,7 @@ def test_native_children_has_no_reflink_fallback() -> None:
     mock_search.assert_not_called()
 
 
-def test_child_states_reflink_fallback_when_native_empty() -> None:
+def test_child_states_reflink_fallback_when_native_empty(layer: FakeItems) -> None:
     empty = {"node": {"subIssues": {"nodes": []}}}
     search = [
         {
@@ -110,8 +152,10 @@ def test_child_states_reflink_fallback_when_native_empty() -> None:
     ]
     with (
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
-        patch("vergil_tooling.lib.github.graphql", return_value=empty),
-        patch("vergil_tooling.lib.github.read_json", return_value=search) as mock_search,
+        patch("vergil_tooling.lib.github.graphql", side_effect=_with_layer(layer, empty)),
+        patch(
+            "vergil_tooling.lib.github.read_json", return_value=_mirror(layer, search)
+        ) as mock_search,
     ):
         result = epics.child_states(EPIC)
     assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN")]
@@ -156,7 +200,7 @@ def test_child_states_native_carries_title() -> None:
     assert "title" in _SUBISSUES_QUERY
 
 
-def test_child_states_reflink_carries_title() -> None:
+def test_child_states_reflink_carries_title(layer: FakeItems) -> None:
     # The portable Parent: reflink fallback also requests and propagates title.
     empty = {"node": {"subIssues": {"nodes": []}}}
     search = [
@@ -170,8 +214,10 @@ def test_child_states_reflink_carries_title() -> None:
     ]
     with (
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
-        patch("vergil_tooling.lib.github.graphql", return_value=empty),
-        patch("vergil_tooling.lib.github.read_json", return_value=search) as mock_search,
+        patch("vergil_tooling.lib.github.graphql", side_effect=_with_layer(layer, empty)),
+        patch(
+            "vergil_tooling.lib.github.read_json", return_value=_mirror(layer, search)
+        ) as mock_search,
     ):
         result = epics.child_states(EPIC)
     assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN", "Fallback task")]
@@ -215,7 +261,7 @@ def test_child_states_native_includes_closed_at() -> None:
     assert "closedAt" in _SUBISSUES_QUERY
 
 
-def test_child_states_reflink_includes_closed_at() -> None:
+def test_child_states_reflink_includes_closed_at(layer: FakeItems) -> None:
     # The portable Parent: reflink fallback also propagates closedAt.
     empty = {"node": {"subIssues": {"nodes": []}}}
     search = [
@@ -230,8 +276,8 @@ def test_child_states_reflink_includes_closed_at() -> None:
     ]
     with (
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
-        patch("vergil_tooling.lib.github.graphql", return_value=empty),
-        patch("vergil_tooling.lib.github.read_json", return_value=search),
+        patch("vergil_tooling.lib.github.graphql", side_effect=_with_layer(layer, empty)),
+        patch("vergil_tooling.lib.github.read_json", return_value=_mirror(layer, search)),
     ):
         result = epics.child_states(EPIC)
     assert result[0].closed_at == "2026-05-10T00:00:00Z"
@@ -276,25 +322,61 @@ def test_parent_of_native() -> None:
         assert epics.parent_of(TASK) == IssueRef("org", ".github", 40)
 
 
-def test_parent_of_reflink_fallback_parses_body() -> None:
-    no_parent = {"node": {"parent": None}}
-    body = "Some description.\n\nParent: org/.github#40\n"
-    with (
-        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
-        patch("vergil_tooling.lib.github.graphql", return_value=no_parent),
-        patch("vergil_tooling.lib.github.read_output", return_value=body),
-    ):
-        assert epics.parent_of(TASK) == IssueRef("org", ".github", 40)
-
-
-def test_parent_of_none_when_unlinked() -> None:
+def _unlinked_parent_of(layer: FakeItems, task: IssueRef = TASK) -> IssueRef | None:
+    """:func:`epics.parent_of` for a *task* with no native parent."""
     no_parent = {"node": {"parent": None}}
     with (
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
-        patch("vergil_tooling.lib.github.graphql", return_value=no_parent),
-        patch("vergil_tooling.lib.github.read_output", return_value="no marker here"),
+        patch("vergil_tooling.lib.github.graphql", side_effect=_with_layer(layer, no_parent)),
     ):
-        assert epics.parent_of(TASK) is None
+        return epics.parent_of(task)
+
+
+def test_parent_of_reflink_fallback_parses_body(layer: FakeItems) -> None:
+    layer.items[("org/repo-a", 101)] = trust_stubs.item(
+        body="Some description.\n\nParent: org/.github#40\n"
+    )
+    assert _unlinked_parent_of(layer) == IssueRef("org", ".github", 40)
+    assert layer.reads == [("org/repo-a", 101)]
+
+
+def test_parent_of_none_when_unlinked(layer: FakeItems) -> None:
+    layer.items[("org/repo-a", 101)] = trust_stubs.item(body="no marker here")
+    assert _unlinked_parent_of(layer) is None
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "login", "cause"),
+    [
+        (trust_stubs.OUTSIDER, None, "drive-by", "untrusted"),
+        (trust_stubs.HUMAN, trust_stubs.OUTSIDER, "drive-by", "untrusted"),
+        (trust_stubs.IMPOSTOR, None, "vergil-user", "wrong-type"),
+    ],
+)
+def test_parent_of_ignores_untrusted_body_line(
+    layer: FakeItems,
+    capsys: pytest.CaptureFixture[str],
+    author: dict[str, str],
+    editor: dict[str, str] | None,
+    login: str,
+    cause: str,
+) -> None:
+    # A forged Parent: line in a body an outsider wrote or edited names no parent.
+    layer.items[("org/repo-a", 101)] = trust_stubs.item(
+        body=f"{trust_stubs.SPAM_TEXT}\nParent: org/.github#40\n",
+        author=author,
+        editor=editor,
+        nodes=[trust_stubs.comment(9, trust_stubs.SPAM_TEXT, trust_stubs.OUTSIDER)],
+    )
+    assert _unlinked_parent_of(layer) is None
+    err = capsys.readouterr().err
+    kind = "edit" if editor is not None else "issue"
+    at = trust_stubs.EDITED if editor is not None else trust_stubs.CREATED
+    # Only the body is reported, metadata only: the comment is not this reader's.
+    assert err == (
+        f"skipped untrusted content: org/repo-a#101 {kind} {login} at {at} on body ({cause})\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
 
 
 # -- add_child (reopen-on-late-child) ----------------------------------------
@@ -378,7 +460,7 @@ def test_issue_closed_at_reads_via_rest() -> None:
     assert m.call_args.args == ("api", "repos/org/repo-a/issues/101", "--jq", '.closed_at // ""')
 
 
-def test_reflink_skips_results_without_repo() -> None:
+def test_reflink_skips_results_without_repo(layer: FakeItems) -> None:
     search = [
         {
             "number": 41,
@@ -392,15 +474,15 @@ def test_reflink_skips_results_without_repo() -> None:
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
         patch(
             "vergil_tooling.lib.github.graphql",
-            return_value={"node": {"subIssues": {"nodes": []}}},
+            side_effect=_with_layer(layer, {"node": {"subIssues": {"nodes": []}}}),
         ),
-        patch("vergil_tooling.lib.github.read_json", return_value=search),
+        patch("vergil_tooling.lib.github.read_json", return_value=_mirror(layer, search)),
     ):
         result = epics.child_states(EPIC)
     assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN")]
 
 
-def test_reflink_rejects_full_text_false_positive() -> None:
+def test_reflink_rejects_full_text_false_positive(layer: FakeItems) -> None:
     # gh search issues is punctuation-blind full-text search: a foreign issue can
     # match on words alone. Without a real ``Parent: <epic slug>`` line in its
     # body it must not be treated as a child (issue #2259, Fix D).
@@ -428,12 +510,75 @@ def test_reflink_rejects_full_text_false_positive() -> None:
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
         patch(
             "vergil_tooling.lib.github.graphql",
-            return_value={"node": {"subIssues": {"nodes": []}}},
+            side_effect=_with_layer(layer, {"node": {"subIssues": {"nodes": []}}}),
+        ),
+        patch("vergil_tooling.lib.github.read_json", return_value=_mirror(layer, search)),
+    ):
+        result = epics.child_states(EPIC)
+    assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN")]
+
+
+def test_child_states_search_ignores_untrusted_bodies(
+    layer: FakeItems, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A forged Parent: line in an outsider's body makes no reflink child, even
+    # when the search row's body carries it; the trusted child stays.
+    forged = f"{trust_stubs.SPAM_TEXT}\nParent: org/.github#40"
+    search = [
+        {
+            "number": 41,
+            "state": "OPEN",
+            "repository": {"nameWithOwner": "org/.github"},
+            "body": "Parent: org/.github#40",
+        },
+        {
+            "number": 66,
+            "state": "OPEN",
+            "repository": {"nameWithOwner": "org/repo-a"},
+            "body": forged,
+        },
+    ]
+    _mirror(layer, search)
+    layer.items[("org/repo-a", 66)] = trust_stubs.item(body=forged, author=trust_stubs.OUTSIDER)
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch(
+            "vergil_tooling.lib.github.graphql",
+            side_effect=_with_layer(layer, {"node": {"subIssues": {"nodes": []}}}),
         ),
         patch("vergil_tooling.lib.github.read_json", return_value=search),
     ):
         result = epics.child_states(EPIC)
     assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN")]
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: org/repo-a#66 issue drive-by at {trust_stubs.CREATED}"
+        " on body (untrusted)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+def test_child_states_search_uses_the_trusted_body_not_the_search_row(layer: FakeItems) -> None:
+    # The search row's body is only a candidate filter: the Parent: line must be
+    # on the body the layer read and trusts.
+    search = [
+        {
+            "number": 41,
+            "state": "OPEN",
+            "repository": {"nameWithOwner": "org/.github"},
+            "body": "Parent: org/.github#40",
+        },
+    ]
+    layer.items[("org/.github", 41)] = trust_stubs.item(body="Parent: org/.github#99")
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch(
+            "vergil_tooling.lib.github.graphql",
+            side_effect=_with_layer(layer, {"node": {"subIssues": {"nodes": []}}}),
+        ),
+        patch("vergil_tooling.lib.github.read_json", return_value=search),
+    ):
+        assert epics.child_states(EPIC) == []
 
 
 # -- is_epic / rollup --------------------------------------------------------
@@ -575,11 +720,33 @@ def test_render_blocked_by_empty_is_empty_string() -> None:
     assert epics.render_blocked_by([]) == ""
 
 
-def test_blockers_of_parses_reflink_body() -> None:
+def test_blockers_of_parses_reflink_body(layer: FakeItems) -> None:
     body = "Do the thing.\nBlocked-by: o/r#5\nBlocked-by: o/r#8\n"
-    with patch("vergil_tooling.lib.github.read_output", return_value=body):
-        refs = epics.blockers_of(IssueRef("o", "r", 42))
+    layer.items[("o/r", 42)] = trust_stubs.item(body=body, author=trust_stubs.AGENT)
+    refs = epics.blockers_of(IssueRef("o", "r", 42))
     assert refs == [IssueRef("o", "r", 5), IssueRef("o", "r", 8)]
+    assert layer.reads == [("o/r", 42)]
+
+
+@pytest.mark.parametrize(
+    ("author", "editor"),
+    [(trust_stubs.OUTSIDER, None), (trust_stubs.AGENT, trust_stubs.OUTSIDER)],
+)
+def test_blockers_of_untrusted_body_raises(
+    layer: FakeItems, author: dict[str, str], editor: dict[str, str] | None
+) -> None:
+    # Load-bearing: a forged (or forged-away) Blocked-by: line is a stop, never
+    # "no blockers".
+    layer.items[("o/r", 42)] = trust_stubs.item(
+        body=f"{trust_stubs.SPAM_TEXT}\nBlocked-by: o/r#5\n", author=author, editor=editor
+    )
+    with pytest.raises(trust.UntrustedContentError) as excinfo:
+        epics.blockers_of(IssueRef("o", "r", 42))
+    assert excinfo.value.item.repo == "o/r"
+    assert excinfo.value.item.number == 42
+    assert excinfo.value.item.field == "body"
+    assert excinfo.value.item.login == "drive-by"
+    assert "SPAM-MARKER-TEXT" not in str(excinfo.value)
 
 
 def test_issue_state_reads_the_rest_state_upper_cased() -> None:
@@ -588,64 +755,108 @@ def test_issue_state_reads_the_rest_state_upper_cased() -> None:
     mock.assert_called_once_with("api", "repos/o/r/issues/42", "--jq", ".state")
 
 
-def test_issue_author_reads_the_login_gh_reports() -> None:
-    with patch("vergil_tooling.lib.github.read_output", return_value="app/bot") as mock:
-        assert epics.issue_author(IssueRef("o", "r", 42)) == "app/bot"
-    mock.assert_called_once_with(
-        "issue", "view", "42", "--repo", "o/r", "--json", "author", "--jq", '.author.login // ""'
-    )
-
-
-def test_issue_author_refuses_an_empty_login() -> None:
-    with (
-        patch("vergil_tooling.lib.github.read_output", return_value=""),
-        pytest.raises(ValueError, match="o/r#42 has no author login"),
-    ):
-        epics.issue_author(IssueRef("o", "r", 42))
-
-
-def test_blockers_of_empty_when_no_reflinks() -> None:
-    with patch("vergil_tooling.lib.github.read_output", return_value="no dependencies here"):
-        assert epics.blockers_of(IssueRef("o", "r", 42)) == []
+def test_blockers_of_empty_when_no_reflinks(layer: FakeItems) -> None:
+    layer.items[("o/r", 42)] = trust_stubs.item(body="no dependencies here")
+    assert epics.blockers_of(IssueRef("o", "r", 42)) == []
 
 
 def test_all_blockers_closed_true_when_all_closed() -> None:
-    with (
-        patch("vergil_tooling.lib.epics.blockers_of", return_value=[IssueRef("o", "r", 5)]),
-        patch("vergil_tooling.lib.epics._issue_state", return_value="CLOSED"),
-    ):
-        assert epics.all_blockers_closed(IssueRef("o", "r", 42)) is True
+    with patch("vergil_tooling.lib.epics._issue_state", return_value="CLOSED"):
+        assert epics.all_blockers_closed([IssueRef("o", "r", 5)]) is True
 
 
 def test_all_blockers_closed_false_when_any_open() -> None:
-    with (
-        patch(
-            "vergil_tooling.lib.epics.blockers_of",
-            return_value=[IssueRef("o", "r", 5), IssueRef("o", "r", 8)],
-        ),
-        patch("vergil_tooling.lib.epics._issue_state", side_effect=["CLOSED", "OPEN"]),
-    ):
-        assert epics.all_blockers_closed(IssueRef("o", "r", 42)) is False
+    with patch("vergil_tooling.lib.epics._issue_state", side_effect=["CLOSED", "OPEN"]):
+        assert epics.all_blockers_closed([IssueRef("o", "r", 5), IssueRef("o", "r", 8)]) is False
 
 
 def test_all_blockers_closed_true_when_no_blockers() -> None:
     # No blockers -> nothing holds it -> runnable (vacuously all-closed).
-    with patch("vergil_tooling.lib.epics.blockers_of", return_value=[]):
-        assert epics.all_blockers_closed(IssueRef("o", "r", 42)) is True
+    with patch("vergil_tooling.lib.epics._issue_state") as state:
+        assert epics.all_blockers_closed([]) is True
+    state.assert_not_called()
 
 
-def test_rollup_closes_finite_epic_when_all_children_closed() -> None:
+SIBLING = IssueRef("org", "repo-b", 102)
+
+
+def _finite_rollup(layer: FakeItems) -> Any:
+    """Run :func:`epics.rollup` on TASK under a finite EPIC whose children are all closed.
+
+    Returns the ``github.run`` mock.
+    """
+    children = [ChildState(TASK, "CLOSED"), ChildState(SIBLING, "CLOSED")]
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
         patch("vergil_tooling.lib.epics.is_epic", return_value=True),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic"}),
         patch("vergil_tooling.lib.epics.all_children_closed", return_value=True),
+        patch("vergil_tooling.lib.epics.child_states", return_value=children),
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         epics.rollup(TASK)
+    return mock_run
+
+
+def test_rollup_closes_finite_epic_when_all_children_closed(layer: FakeItems) -> None:
+    mock_run = _finite_rollup(layer)
     mock_run.assert_called_once()
     assert mock_run.call_args.args[:2] == ("issue", "close")
     assert "40" in mock_run.call_args.args
+    # Every child's close was judged: the task's and its sibling's, once each.
+    assert sorted(layer.event_reads) == [("org/repo-a", 101), ("org/repo-b", 102)]
+
+
+@pytest.mark.parametrize("closed", [TASK, SIBLING])
+@pytest.mark.parametrize(
+    ("actor", "login", "cause"),
+    [
+        (trust_stubs.OUTSIDER, "drive-by", "untrusted"),
+        (None, None, "deleted"),
+        (trust_stubs.IMPOSTOR, "vergil-user", "wrong-type"),
+    ],
+)
+def test_rollup_stops_on_outsider_close(
+    layer: FakeItems, closed: IssueRef, actor: Any, login: str | None, cause: str
+) -> None:
+    # A close by an untrusted actor is not a close: the rollup stops before any
+    # write, whether it is the task's own close or a sibling's.
+    layer.closers[(f"{closed.owner}/{closed.repo}", closed.number)] = actor
+    with pytest.raises(trust.UntrustedContentError) as excinfo:
+        _finite_rollup(layer)
+    item = excinfo.value.item
+    assert (item.repo, item.number) == (f"{closed.owner}/{closed.repo}", closed.number)
+    assert (item.kind, item.field, item.login, item.cause) == ("event", "close", login, cause)
+    assert item.at == trust_stubs.EDITED
+
+
+def test_rollup_stops_on_outsider_close_before_the_drain(layer: FakeItems) -> None:
+    # A standing epic's drain acts on the task's close too: an untrusted close
+    # moves nothing.
+    layer.closers[("org/.github", 101)] = trust_stubs.OUTSIDER
+    task = IssueRef("org", ".github", 101)
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=IssueRef("org", ".github", 40)),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "intake"}),
+        patch("vergil_tooling.lib.epics.drain_standing_child") as mock_drain,
+        pytest.raises(trust.UntrustedContentError),
+    ):
+        epics.rollup(task)
+    mock_drain.assert_not_called()
+
+
+def test_rollup_proxy_reads_no_close(layer: FakeItems) -> None:
+    # A proxy is never rolled up, so its child's close is not read.
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "proxy"}),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.rollup(TASK)
+    mock_run.assert_not_called()
+    assert layer.event_reads == []
 
 
 def test_rollup_holds_epic_open_while_validation_child_open() -> None:
@@ -663,8 +874,8 @@ def test_rollup_holds_epic_open_while_validation_child_open() -> None:
     mock_run.assert_not_called()  # epic stays open — a validation child is still open
 
 
-def test_rollup_public_repo_epic_archives_into_own_bucket() -> None:
-    # A public repo's ad-hoc epic lives in <org>/.github (so parent.repo is
+def test_rollup_repo_epic_archives_into_own_bucket() -> None:
+    # A repo's ad-hoc epic lives in <org>/.github (so parent.repo is
     # ".github"), but the archive target must come from the epic TITLE's bare
     # name — the child is filed into <org>/some-repo, NOT the ".github" bucket
     # (#2709). ``some-repo`` is a real repo, so the drain proceeds.
@@ -916,21 +1127,6 @@ def test_ensure_adhoc_epic_zero_creates_in_dotgithub() -> None:
     assert mock_create.call_args.kwargs["title"] == "Epic (ad hoc): tooling"
 
 
-def test_ensure_adhoc_epic_private_repo_homes_in_self() -> None:
-    # A private target homes its ad-hoc epic in the repo itself, not .github.
-    created = "https://github.com/org/lab/issues/3"
-    with (
-        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/lab"),
-        patch("vergil_tooling.lib.github.read_json", side_effect=[[], [_adhoc_row(3, "lab")]]),
-        patch("vergil_tooling.lib.epics.ensure_labels"),
-        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
-    ):
-        result = epics.ensure_adhoc_epic("org/lab")
-    assert result == IssueRef("org", "lab", 3)
-    assert mock_create.call_args.kwargs["repo"] == "org/lab"
-    assert mock_create.call_args.kwargs["title"] == "Epic (ad hoc): lab"
-
-
 def test_ensure_adhoc_epic_for_dotgithub_itself() -> None:
     created = "https://github.com/org/.github/issues/5"
     with (
@@ -996,19 +1192,11 @@ def test_resolve_epic_ref_explicit_non_epic_raises() -> None:
         epics.resolve_epic_ref("org/.github#123", repo="org/repo")
 
 
-def _visibility(public: set[str]) -> object:
-    """An is_public fake: True only for the repos in *public*."""
-    return lambda nwo: nwo in public
-
-
-def test_resolve_epic_ref_bare_ref_public_task_homes_in_dotgithub() -> None:
+def test_resolve_epic_ref_bare_ref_homes_in_dotgithub() -> None:
     # A bare '#N' is read against the *task repo's* epic home, never the repo
-    # itself: a public task's epics live in <org>/.github (#3411).
+    # itself: every task's epics live in <org>/.github (#3411).
     with (
-        patch(
-            "vergil_tooling.lib.github.is_public",
-            side_effect=_visibility({"org/tooling", "org/.github"}),
-        ),
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
         patch("vergil_tooling.lib.epics.is_epic", return_value=True) as mock_is_epic,
     ):
         epic = epics.resolve_epic_ref("#407", repo="org/tooling")
@@ -1016,33 +1204,23 @@ def test_resolve_epic_ref_bare_ref_public_task_homes_in_dotgithub() -> None:
     mock_is_epic.assert_called_once_with(IssueRef("org", ".github", 407))
 
 
-def test_resolve_epic_ref_bare_ref_private_task_homes_in_itself() -> None:
-    # A private task with a public .github self-homes its epics, so a bare
-    # '#N' resolves to the repo itself (#3411).
-    with (
-        patch("vergil_tooling.lib.github.is_public", side_effect=_visibility({"org/.github"})),
-        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
-    ):
-        assert epics.resolve_epic_ref("#12", repo="org/lab") == IssueRef("org", "lab", 12)
-
-
 def test_resolve_epic_ref_qualified_ref_skips_home_resolution() -> None:
-    # A fully qualified ref is taken as written: no visibility probe at all.
+    # A fully qualified ref is taken as written: no home check at all.
     with (
-        patch("vergil_tooling.lib.github.is_public") as mock_public,
+        patch("vergil_tooling.lib.github.repo_exists") as mock_exists,
         patch("vergil_tooling.lib.epics.is_epic", return_value=True),
     ):
         assert epics.resolve_epic_ref("org/tooling#9", repo="org/lab") == IssueRef(
             "org", "tooling", 9
         )
-    mock_public.assert_not_called()
+    mock_exists.assert_not_called()
 
 
-def test_qualify_epic_ref_visibility_error_propagates() -> None:
-    # Fail loud: an unreadable visibility never falls back to a guessed home.
+def test_qualify_epic_ref_home_check_error_propagates() -> None:
+    # Fail loud: a failed home check never falls back to a guessed home.
     err = github.GitHubAPIError(1, "gh repo view", "boom")
     with (
-        patch("vergil_tooling.lib.github.is_public", side_effect=err),
+        patch("vergil_tooling.lib.github._repo_probe", side_effect=err),
         pytest.raises(epics.EpicHomeError) as excinfo,
     ):
         epics.qualify_epic_ref("#12", repo="org/lab")
@@ -1305,8 +1483,8 @@ def _reflink_hits(count: int) -> list[dict]:
     ]
 
 
-def test_reflink_child_states_sees_a_child_past_hit_30() -> None:
-    fake_search = _fake_issue_list(_reflink_hits(31))
+def test_reflink_child_states_sees_a_child_past_hit_30(layer: FakeItems) -> None:
+    fake_search = _fake_issue_list(_mirror(layer, _reflink_hits(31)))
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_search):
         states = epics._reflink_child_states(EPIC)
     assert sorted(s.ref.number for s in states) == list(range(1, 32))
@@ -1467,42 +1645,25 @@ def test_ensure_adhoc_archive_heals_legacy_in_place() -> None:
 # -- archive rename: org-wide normalize sweep (Task 5) ------------------------
 
 
-def test_plan_normalize_dedupes_homes_and_finds_legacy_all_states() -> None:
-    # Two public repos share the .github home; one private repo self-homes.
-    def fake_home(org, bare):
-        return "org/.github" if bare in {"tooling", "actions"} else f"org/{bare}"
-
-    def fake_list(*args, **kwargs):
-        home = args[args.index("--repo") + 1]
-        if home == "org/.github":
-            return [
-                # legacy archive (closed) -> converts
-                {"number": 88, "title": "Epic (ad hoc): tooling — 2026-Q2", "state": "CLOSED"},
-                # live epic (unstamped) -> never matches
-                {"number": 90, "title": "Epic (ad hoc): tooling", "state": "OPEN"},
-                # already migrated (new form) -> skipped
-                {"number": 91, "title": "Archive (ad hoc): actions — 2026-Q3", "state": "OPEN"},
-            ]
-        if home == "org/private":
-            return [
-                {"number": 5, "title": "Epic (ad hoc): private — 2026-Q1", "state": "CLOSED"},
-            ]
-        return []
-
-    repos = ["tooling", "actions", "private"]
-    with (
-        patch("vergil_tooling.lib.github.list_org_repos", return_value=repos),
-        patch("vergil_tooling.lib.epics.resolve_epic_home", side_effect=fake_home),
-        patch("vergil_tooling.lib.github.read_json", side_effect=fake_list),
-    ):
+def test_plan_normalize_scans_dotgithub_and_finds_legacy_all_states() -> None:
+    # Every repo's ad-hoc archives live in <org>/.github: one listing, all states.
+    rows = [
+        # legacy archive (closed) -> converts
+        {"number": 88, "title": "Epic (ad hoc): tooling — 2026-Q2", "state": "CLOSED"},
+        # live epic (unstamped) -> never matches
+        {"number": 90, "title": "Epic (ad hoc): tooling", "state": "OPEN"},
+        # already migrated (new form) -> skipped
+        {"number": 91, "title": "Archive (ad hoc): actions — 2026-Q3", "state": "OPEN"},
+    ]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows) as mock_list:
         plan = epics.plan_normalize_adhoc("org")
-    refs = {(c.ref.repo, c.ref.number): c for c in plan}
-    # Legacy archives (public-homed + private self-homed) are converted; the live
-    # epic and the already-migrated archive are not.
-    assert (".github", 88) in refs and ("private", 5) in refs
-    assert refs[(".github", 88)].new_title == "Archive (ad hoc): tooling — 2026-Q2"
-    assert (".github", 90) not in refs and (".github", 91) not in refs
-    assert len(plan) == 2
+    args = mock_list.call_args.args
+    assert args[args.index("--repo") + 1] == "org/.github"
+    assert args[args.index("--state") + 1] == "all"
+    mock_list.assert_called_once()
+    assert [(c.ref, c.new_title) for c in plan] == [
+        (IssueRef("org", ".github", 88), "Archive (ad hoc): tooling — 2026-Q2")
+    ]
 
 
 def test_apply_normalize_calls_in_place_for_each() -> None:
@@ -1540,126 +1701,81 @@ def test_normalize_adhoc_archives_apply_executes_conversions() -> None:
     mock_apply.assert_called_once_with(conv)
 
 
-def test_plan_normalize_tolerates_non_list_and_non_dict_rows() -> None:
-    # A non-dict row is skipped; a home whose listing is not a list yields nothing.
-    def fake_home(org, bare):
-        return "org/.github" if bare == "tooling" else f"org/{bare}"
-
-    def fake_list(*args, **kwargs):
-        home = args[args.index("--repo") + 1]
-        if home == "org/.github":
-            return [None, {"number": 88, "title": "Epic (ad hoc): tooling — 2026-Q2"}]
-        return {}  # non-list result for the private home
-
-    with (
-        patch("vergil_tooling.lib.github.list_org_repos", return_value=["tooling", "private"]),
-        patch("vergil_tooling.lib.epics.resolve_epic_home", side_effect=fake_home),
-        patch("vergil_tooling.lib.github.read_json", side_effect=fake_list),
-    ):
+def test_plan_normalize_skips_non_dict_rows() -> None:
+    # A non-dict row is skipped.
+    rows = [None, {"number": 88, "title": "Epic (ad hoc): tooling — 2026-Q2"}]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows):
         plan = epics.plan_normalize_adhoc("org")
     assert [(c.ref.repo, c.ref.number) for c in plan] == [(".github", 88)]
 
 
-# -- resolve_epic_home (epic #130) -------------------------------------------
+def test_plan_normalize_non_list_listing_yields_nothing() -> None:
+    # A listing that is not a list yields nothing.
+    with patch("vergil_tooling.lib.github.read_json", return_value={}):
+        assert epics.plan_normalize_adhoc("org") == []
+
+
+# -- resolve_epic_home (epic #130; every home is <org>/.github, epic .github#1476) --
 def test_resolve_epic_home_dotgithub_short_circuits() -> None:
-    # A ".github" target never probes visibility.
-    with patch("vergil_tooling.lib.epics.github.is_public") as pub:
+    # A ".github" target is its own home: nothing is probed.
+    with patch("vergil_tooling.lib.epics.github.repo_exists") as exists:
         assert epics.resolve_epic_home("org", ".github") == "org/.github"
-        pub.assert_not_called()
+        exists.assert_not_called()
 
 
-def test_resolve_epic_home_private_target_public_dotgithub_is_self() -> None:
-    def pub(nwo: str) -> bool:
-        return {"org/lab": False, "org/.github": True}[nwo]
-
-    with patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub):
-        assert epics.resolve_epic_home("org", "lab") == "org/lab"
-
-
-def test_resolve_epic_home_private_org_is_central() -> None:
-    def pub(nwo: str) -> bool:
-        return {"org/lab": False, "org/.github": False}[nwo]
-
-    with patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub):
-        assert epics.resolve_epic_home("org", "lab") == "org/.github"
-
-
-def test_resolve_epic_home_fails_loud() -> None:
-    # A failed probe of the target is a clear EpicHomeError, never a traceback.
-    with (
-        patch(
-            "vergil_tooling.lib.epics.github.is_public",
-            side_effect=github.GitHubAPIError(1, "cmd", "", "HTTP 502: boom"),
-        ),
-        pytest.raises(epics.EpicHomeError, match=r"(?s)org/missing:.*HTTP 502: boom"),
-    ):
-        epics.resolve_epic_home("org", "missing")
+def test_resolve_epic_home_probes_only_org_dotgithub() -> None:
+    # The home never depends on the repo itself: only <org>/.github is probed.
+    with patch("vergil_tooling.lib.epics.github.repo_exists", return_value=True) as exists:
+        assert epics.resolve_epic_home("o", "r") == "o/.github"
+    exists.assert_called_once_with("o", ".github")
 
 
 _NO_REPO = "GraphQL: Could not resolve to a Repository with the name 'owner/.github'."
 
 
-def test_resolve_epic_home_missing_dotgithub_self_homes() -> None:
-    # A personal account with no <owner>/.github has no central home, so a
-    # private repo self-homes its epics (#3603).
-    def pub(nwo: str) -> bool:
-        if nwo == "owner/.github":
-            raise github.GitHubAPIError(1, "cmd", "", _NO_REPO)
-        return False
-
-    with patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub):
-        assert epics.resolve_epic_home("owner", "notes") == "owner/notes"
-
-
-def test_resolve_epic_home_public_target_with_dotgithub_probes_it() -> None:
-    # A public target homes centrally only once <org>/.github is confirmed (#3643).
-    with patch("vergil_tooling.lib.epics.github.is_public", return_value=True) as pub:
-        assert epics.resolve_epic_home("org", "tooling") == "org/.github"
-    assert [c.args[0] for c in pub.call_args_list] == ["org/tooling", "org/.github"]
-
-
-def test_resolve_epic_home_public_target_missing_dotgithub_is_refused() -> None:
-    # A public repo whose owner has no .github is refused up front, naming the
-    # repo to create, instead of failing later on GitHub "not found" (#3643).
-    def pub(nwo: str) -> bool:
-        if nwo == "owner/.github":
-            raise github.GitHubAPIError(1, "cmd", "", _NO_REPO)
-        return True
-
+def test_resolve_epic_home_missing_dotgithub_keeps_3643_message() -> None:
+    # An owner with no .github is refused up front, naming the repo to create,
+    # never with a visibility error or a silent self-home (#3643).
     with (
-        patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub),
+        patch(
+            "vergil_tooling.lib.github._repo_probe",
+            side_effect=github.GitHubAPIError(1, "cmd", "", _NO_REPO),
+        ),
         pytest.raises(epics.EpicHomeError) as excinfo,
     ):
-        epics.resolve_epic_home("owner", "site")
+        epics.resolve_epic_home("o", "r")
     assert str(excinfo.value) == (
-        "owner/site is public, so its epics and queues live in owner/.github, "
-        "which does not exist; create the owner/.github repository and try again"
+        "the epics and queues of o/r live in o/.github, which does not exist; "
+        "create the o/.github repository and try again"
     )
 
 
-def test_resolve_epic_home_dotgithub_probe_error_fails_loud() -> None:
-    # Only "does not exist" self-homes; any other .github probe failure is a
-    # clear EpicHomeError naming the repo it could not resolve (#3603).
-    def pub(nwo: str) -> bool:
-        if nwo == "owner/.github":
-            raise github.GitHubAPIError(1, "cmd", "", "HTTP 401: Bad credentials")
-        return False
-
+def test_resolve_epic_home_fails_loud() -> None:
+    # Any other failed check is a clear EpicHomeError, never a traceback.
+    err = github.GitHubAPIError(1, "cmd", "", "HTTP 502: boom")
     with (
-        patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub),
-        pytest.raises(epics.EpicHomeError, match=r"(?s)owner/notes:.*Bad credentials"),
+        patch("vergil_tooling.lib.github._repo_probe", side_effect=err),
+        pytest.raises(epics.EpicHomeError, match=r"(?s)org/tooling:.*HTTP 502: boom") as excinfo,
     ):
-        epics.resolve_epic_home("owner", "notes")
+        epics.resolve_epic_home("org", "tooling")
+    assert excinfo.value.__cause__ is err
 
 
 def test_resolve_epic_home_missing_token_is_not_rewrapped() -> None:
     # A missing token keeps its own error so cli_main prints the token fix.
     missing = github.MissingGitHubTokenError(4, "cmd", "", "set GH_TOKEN")
     with (
-        patch("vergil_tooling.lib.epics.github.is_public", side_effect=missing),
+        patch("vergil_tooling.lib.github._repo_probe", side_effect=missing),
         pytest.raises(github.MissingGitHubTokenError),
     ):
         epics.resolve_epic_home("owner", "notes")
+
+
+def test_queue_home_is_org_dotgithub() -> None:
+    # Every repo shares its org's queues, in <org>/.github, named for the org.
+    with patch("vergil_tooling.lib.epics.github.repo_exists", return_value=True):
+        assert epics.queue_home("org/lab") == ("org/.github", "org")
+        assert epics.queue_home("org/.github") == ("org/.github", "org")
 
 
 def test_require_org_home_returns_existing_dotgithub() -> None:
@@ -1669,11 +1785,11 @@ def test_require_org_home_returns_existing_dotgithub() -> None:
 
 
 def test_require_org_home_missing_dotgithub_is_clear() -> None:
-    # An owner with no .github has no org-wide home; the message says so and
-    # points at --repo for a self-homed repo (#3613).
+    # An owner with no .github has no queue or epic home; the message says so
+    # and names the repo to create (#3613).
     with (
         patch(
-            "vergil_tooling.lib.epics.github.repo_visibility",
+            "vergil_tooling.lib.epics.github._repo_probe",
             side_effect=github.GitHubAPIError(1, "cmd", "", _NO_REPO),
         ),
         pytest.raises(epics.EpicHomeError) as excinfo,
@@ -1681,8 +1797,7 @@ def test_require_org_home_missing_dotgithub_is_clear() -> None:
         epics.require_org_home("owner")
     assert str(excinfo.value) == (
         "owner has no .github repository, so there is no org-wide queue or epic "
-        "home; create the owner/.github repository to give it one, or pass --repo "
-        "owner/<repo> to reach a private, self-homed repo's own queues and epics"
+        "home; create the owner/.github repository to give it one"
     )
 
 
@@ -1691,7 +1806,7 @@ def test_require_org_home_other_probe_error_fails_loud() -> None:
     # clear EpicHomeError carrying the API error.
     with (
         patch(
-            "vergil_tooling.lib.epics.github.repo_visibility",
+            "vergil_tooling.lib.epics.github._repo_probe",
             side_effect=github.GitHubAPIError(1, "cmd", "", "HTTP 502: boom"),
         ),
         pytest.raises(epics.EpicHomeError, match=r"(?s)cannot check for org/\.github,.*HTTP 502"),
@@ -1702,7 +1817,7 @@ def test_require_org_home_other_probe_error_fails_loud() -> None:
 def test_require_org_home_missing_token_is_not_rewrapped() -> None:
     missing = github.MissingGitHubTokenError(4, "cmd", "", "set GH_TOKEN")
     with (
-        patch("vergil_tooling.lib.epics.github.repo_visibility", side_effect=missing),
+        patch("vergil_tooling.lib.epics.github._repo_probe", side_effect=missing),
         pytest.raises(github.MissingGitHubTokenError),
     ):
         epics.require_org_home("org")
@@ -2051,10 +2166,10 @@ def test_drain_adhoc_repo_none_plan_never_applies() -> None:
     mock_apply.assert_not_called()
 
 
-# --- Task 5: org-wide drain (visibility-aware) ---
+# --- Task 5: org-wide drain ---
 
 
-def test_drain_adhoc_org_iterates_repos_visibility_aware() -> None:
+def test_drain_adhoc_org_iterates_every_repo() -> None:
     seen: list[tuple[str, bool]] = []
 
     def fake_repo(target_repo: str, *, apply: bool, now: datetime) -> None:
@@ -2062,11 +2177,11 @@ def test_drain_adhoc_org_iterates_repos_visibility_aware() -> None:
         return None
 
     with (
-        patch("vergil_tooling.lib.github.list_org_repos", return_value=["tooling", "priv"]),
+        patch("vergil_tooling.lib.github.list_org_repos", return_value=["tooling", "docs"]),
         patch("vergil_tooling.lib.epics.drain_adhoc_repo", side_effect=fake_repo),
     ):
         epics.drain_adhoc_org("org", apply=True, now=NOW)
-    assert ("org/tooling", True) in seen and ("org/priv", True) in seen
+    assert ("org/tooling", True) in seen and ("org/docs", True) in seen
 
 
 def test_drain_adhoc_org_skips_repo_that_raises() -> None:
@@ -2213,6 +2328,7 @@ def test_standing_kinds_table() -> None:
         epics.PLANNING,
         epics.DEFERRED,
         epics.HOSHIN,
+        epics.OPERATIONS,
     )
     assert epics.ADHOC.title_prefix == "Epic (ad hoc): "
     assert epics.ADHOC.labels == ("epic", "ad-hoc")
@@ -2232,6 +2348,7 @@ def test_standing_kinds_table() -> None:
         "planning",
         "deferred",
         "hoshin",
+        "operations",
     ]
 
 
@@ -2249,11 +2366,6 @@ def test_standing_kind_labels_are_in_registry() -> None:
 def test_queue_home_public_repo_uses_org_dotgithub(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(epics, "resolve_epic_home", lambda org, bare: "org/.github")
     assert epics.queue_home("org/tool") == ("org/.github", "org")
-
-
-def test_queue_home_private_repo_self_homes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(epics, "resolve_epic_home", lambda org, bare: "org/secret")
-    assert epics.queue_home("org/secret") == ("org/secret", "secret")
 
 
 def test_queue_home_dotgithub_itself_names_org(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2289,26 +2401,6 @@ def test_ensure_intake_epic_reuses_by_title_and_labels(monkeypatch: pytest.Monke
         "title": "Epic (intake): org",
         "labels": ("epic", "intake"),
     }
-
-
-def test_ensure_intake_epic_private_repo_creates_in_self() -> None:
-    created = "https://github.com/org/secret/issues/4"
-    with (
-        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/secret"),
-        patch(
-            "vergil_tooling.lib.github.read_json",
-            side_effect=[[], [{"number": 4, "title": "Epic (intake): secret"}]],
-        ),
-        patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
-        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
-    ):
-        assert epics.ensure_intake_epic("org/secret") == IssueRef("org", "secret", 4)
-    mock_ensure.assert_called_once_with("org/secret", ["epic", "intake", "epic-management"])
-    kwargs = mock_create.call_args.kwargs
-    assert kwargs["repo"] == "org/secret"
-    assert kwargs["title"] == "Epic (intake): secret"
-    assert kwargs["labels"] == ["epic", "intake", "epic-management"]
-    assert kwargs["body"].startswith("Perpetual intake queue for secret:")
 
 
 def test_ensure_planning_epic_creates_when_absent() -> None:
@@ -2370,16 +2462,15 @@ def test_ensure_planning_epic_ensures_in_progress_label_in_item_repo() -> None:
     assert ("org/tool", ("in-progress",)) in ensured
 
 
-def test_ensure_planning_epic_self_homed_ensures_label_once() -> None:
-    # A self-homed repo is both the home and the item's repo: one ensure, not two.
-    rows = [{"number": 3, "title": "Epic (planning): secret"}]
+def test_ensure_planning_epic_dotgithub_item_ensures_label_once() -> None:
+    # An item in .github is in the home itself: one ensure, not two.
+    rows = [{"number": 3, "title": "Epic (planning): org"}]
     with (
-        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/secret"),
         patch("vergil_tooling.lib.github.read_json", return_value=rows),
         patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
     ):
-        assert epics.ensure_planning_epic("org/secret") == IssueRef("org", "secret", 3)
-    mock_ensure.assert_called_once_with("org/secret", ("in-progress",))
+        assert epics.ensure_planning_epic("org/.github") == IssueRef("org", ".github", 3)
+    mock_ensure.assert_called_once_with("org/.github", ("in-progress",))
 
 
 def test_ensure_standing_epic_duplicate_title_raises_naming_kind() -> None:
@@ -2667,16 +2758,33 @@ def test_standing_kind_of() -> None:
     assert epics.standing_kind_of({"archive", "planning"}) is None
 
 
-def test_is_legitimate_top_level() -> None:
-    assert epics.is_legitimate_top_level({"epic"}, "x", "")
+def test_is_legitimate_top_level(layer: FakeItems) -> None:
+    marker = "<!-- vrg-release:progress -->"
+    layer.items[("org/repo-a", 101)] = trust_stubs.item(body=marker)
+    assert epics.is_legitimate_top_level(TASK, {"epic"}, "x", "")
     archive_title = "Archive (ad hoc): t — 2026-Q4"
-    assert epics.is_legitimate_top_level({"archive", "ad-hoc"}, archive_title, "")
-    assert epics.is_legitimate_top_level(set(), "release: 2.1.258", "")
-    assert epics.is_legitimate_top_level(set(), "anything", "<!-- vrg-release:progress -->")
-    assert not epics.is_legitimate_top_level({"bug"}, "fix: thing", "")
-    assert not epics.is_legitimate_top_level(set(), "fix: thing", "plain body")
+    assert epics.is_legitimate_top_level(TASK, {"archive", "ad-hoc"}, archive_title, "")
+    assert epics.is_legitimate_top_level(TASK, set(), "release: 2.1.258", "")
+    assert epics.is_legitimate_top_level(TASK, set(), "anything", marker)
+    assert not epics.is_legitimate_top_level(TASK, {"bug"}, "fix: thing", "")
+    assert not epics.is_legitimate_top_level(TASK, set(), "fix: thing", "plain body")
     # An archive that lost its label is still an archive, never an orphan (#3817).
-    assert epics.is_legitimate_top_level({"ad-hoc"}, archive_title, "")
+    assert epics.is_legitimate_top_level(TASK, {"ad-hoc"}, archive_title, "")
+
+
+def test_untrusted_release_issue_is_not_legitimate_top_level(
+    layer: FakeItems, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A forged release title or marker in an outsider's body does not let it stand alone.
+    body = f"{trust_stubs.SPAM_TEXT}\n<!-- vrg-release:progress -->\n"
+    layer.items[("org/repo-a", 101)] = trust_stubs.item(body=body, author=trust_stubs.OUTSIDER)
+    assert not epics.is_legitimate_top_level(TASK, set(), "release: 2.1.258", body)
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: org/repo-a#101 issue drive-by at {trust_stubs.CREATED} "
+        "on body (untrusted)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
 
 
 @pytest.mark.parametrize(
@@ -3076,27 +3184,6 @@ def test_rollup_drains_closed_intake_child_into_quarter_archive() -> None:
     mock_home.assert_not_called()  # a queue archive is the sibling of its queue epic
 
 
-def test_rollup_drains_closed_planning_child_in_private_self_home() -> None:
-    # A private repo's self-homed planning epic is named for the bare repo and its
-    # archive lands beside it, in that repo — never in .github.
-    parent = IssueRef("org", "secret", 5)
-    task = IssueRef("org", "secret", 6)
-    arch = IssueRef("org", "secret", 77)
-    with (
-        patch("vergil_tooling.lib.epics.parent_of", return_value=parent),
-        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "planning"}),
-        patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (planning): secret"),
-        patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-08-01T00:00:00Z"),
-        patch(
-            "vergil_tooling.lib.epics.ensure_writable_standing_archive", return_value=arch
-        ) as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
-    ):
-        epics.rollup(task)
-    mock_ens.assert_called_once_with(epics.PLANNING, "org/secret", "secret", "2026-Q3")
-    mock_reparent.assert_called_once_with(arch, task)
-
-
 def test_rollup_skips_noncanonical_intake_epic_loudly(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=_INTAKE_PARENT),
@@ -3186,9 +3273,8 @@ def test_apply_standing_drain_intake_fills_then_rolls() -> None:
     assert mock_run.call_args.args == ("issue", "close", "400", "--repo", "org/.github")
 
 
-def test_drain_standing_org_covers_dotgithub_and_private_self_homes() -> None:
-    # list_org_repos -> [".github", "tool", "secret"]; secret is private while
-    # .github is public, so it self-homes its own intake/planning pair.
+def test_drain_standing_org_covers_only_dotgithub() -> None:
+    # Every queue and the hoshin epic live in <org>/.github: no repo is listed.
     seen: list[tuple[str, str, str]] = []
 
     def fake_plan(
@@ -3198,35 +3284,27 @@ def test_drain_standing_org_covers_dotgithub_and_private_self_homes() -> None:
         owner, repo = home.split("/", 1)
         return epics.DrainPlan(IssueRef(owner, repo, 1), moves=[], close=[])
 
-    repos = [".github", "tool", "secret"]
     with (
-        patch("vergil_tooling.lib.github.list_org_repos", return_value=repos),
-        patch(
-            "vergil_tooling.lib.github.is_public",
-            side_effect=_visibility({"org/.github", "org/tool"}),
-        ),
+        patch("vergil_tooling.lib.github.list_org_repos") as mock_repos,
         patch("vergil_tooling.lib.epics.plan_standing_drain", side_effect=fake_plan),
         patch("vergil_tooling.lib.epics.apply_standing_drain") as mock_apply,
     ):
         plans = epics.drain_standing_org("org", apply=True, now=Q4_NOW)
+    mock_repos.assert_not_called()
     assert seen == [
         ("intake", "org/.github", "org"),
         ("planning", "org/.github", "org"),
         ("deferred", "org/.github", "org"),
         ("hoshin", "org/.github", "org"),
-        ("intake", "org/secret", "secret"),
-        ("planning", "org/secret", "secret"),
-        ("deferred", "org/secret", "secret"),
+        ("operations", "org/.github", "org"),
     ]
-    assert len(plans) == 7
+    assert len(plans) == 5
     assert [c.args[:3] for c in mock_apply.call_args_list] == [
         (epics.INTAKE, "org/.github", "org"),
         (epics.PLANNING, "org/.github", "org"),
         (epics.DEFERRED, "org/.github", "org"),
         (epics.HOSHIN, "org/.github", "org"),
-        (epics.INTAKE, "org/secret", "secret"),
-        (epics.PLANNING, "org/secret", "secret"),
-        (epics.DEFERRED, "org/secret", "secret"),
+        (epics.OPERATIONS, "org/.github", "org"),
     ]
 
 
@@ -3234,8 +3312,6 @@ def test_drain_standing_org_dry_run_never_applies_and_drops_absent_epics() -> No
     live = IssueRef("org", ".github", 9)
     plan = epics.DrainPlan(live, moves=[], close=[])
     with (
-        patch("vergil_tooling.lib.github.list_org_repos", return_value=["tool"]),
-        patch("vergil_tooling.lib.github.is_public", return_value=True),
         patch(
             "vergil_tooling.lib.epics.plan_standing_drain",
             side_effect=lambda kind, *_a, **_k: plan if kind is epics.INTAKE else None,
@@ -3258,16 +3334,16 @@ def test_drain_standing_org_skips_home_that_raises(capsys: pytest.CaptureFixture
         return good
 
     with (
-        patch("vergil_tooling.lib.github.list_org_repos", return_value=[]),
         patch("vergil_tooling.lib.epics.plan_standing_drain", side_effect=fake_plan),
         patch("vergil_tooling.lib.epics.apply_standing_drain") as mock_apply,
     ):
         plans = epics.drain_standing_org("org", apply=True, now=Q4_NOW)  # must NOT raise
-    assert plans == [good, good, good]
+    assert plans == [good, good, good, good]
     assert [c.args for c in mock_apply.call_args_list] == [
         (epics.PLANNING, "org/.github", "org", good),
         (epics.DEFERRED, "org/.github", "org", good),
         (epics.HOSHIN, "org/.github", "org", good),
+        (epics.OPERATIONS, "org/.github", "org", good),
     ]
     assert "skipped intake drain in org/.github: multiple intake epics" in capsys.readouterr().err
 
@@ -3276,7 +3352,14 @@ def test_drain_standing_org_skips_home_that_raises(capsys: pytest.CaptureFixture
 
 
 def test_epic_sentinels_are_the_standing_kinds_sentinels() -> None:
-    assert epics.EPIC_SENTINELS == ("adhoc", "intake", "planning", "deferred", "hoshin")
+    assert epics.EPIC_SENTINELS == (
+        "adhoc",
+        "intake",
+        "planning",
+        "deferred",
+        "hoshin",
+        "operations",
+    )
     assert tuple(k.sentinel for k in epics.STANDING_KINDS) == epics.EPIC_SENTINELS
 
 
@@ -3288,6 +3371,7 @@ def test_epic_sentinels_are_the_standing_kinds_sentinels() -> None:
         ("planning", "ensure_planning_epic"),
         ("deferred", "ensure_deferred_epic"),
         ("hoshin", "ensure_hoshin_epic"),
+        ("operations", "ensure_operations_epic"),
     ],
 )
 def test_resolve_epic_ref_handles_every_sentinel(epic_sentinel: str, ensure: str) -> None:
@@ -3384,14 +3468,6 @@ def test_ensure_deferred_epic_uses_queue_home() -> None:
         assert epics.ensure_deferred_epic("org/tool") == epic
     mock_ens.assert_called_once_with(epics.DEFERRED, "org/.github", "org")
 
-    private = IssueRef("org", "secret", 3)
-    with (
-        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/secret"),
-        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=private) as mock_ens,
-    ):
-        assert epics.ensure_deferred_epic("org/secret") == private
-    mock_ens.assert_called_once_with(epics.DEFERRED, "org/secret", "secret")
-
 
 def test_ensure_deferred_epic_creates_with_kind_labels() -> None:
     # ensure_standing_epic ensures the kind's labels at the point of use (#3378).
@@ -3452,12 +3528,9 @@ def test_drain_standing_org_covers_deferred() -> None:
         seen.append(kind)
         return None
 
-    with (
-        patch("vergil_tooling.lib.github.list_org_repos", return_value=[]),
-        patch("vergil_tooling.lib.epics.plan_standing_drain", side_effect=fake_plan),
-    ):
+    with patch("vergil_tooling.lib.epics.plan_standing_drain", side_effect=fake_plan):
         epics.drain_standing_org("org", apply=False, now=Q4_NOW)
-    assert seen == [epics.INTAKE, epics.PLANNING, epics.DEFERRED, epics.HOSHIN]
+    assert seen == [epics.INTAKE, epics.PLANNING, epics.DEFERRED, epics.HOSHIN, epics.OPERATIONS]
 
 
 # -- HOSHIN standing kind (epic vergil-project/.github#1417) -------------------
@@ -3473,6 +3546,7 @@ def test_hoshin_is_standing_not_queue() -> None:
         epics.PLANNING,
         epics.DEFERRED,
         epics.HOSHIN,
+        epics.OPERATIONS,
     )
     assert (kind.key, kind.sentinel) == ("hoshin", "hoshin")
     assert kind.title_prefix == "Epic (hoshin): "
@@ -3504,7 +3578,6 @@ def test_resolve_epic_ref_hoshin() -> None:
     created = "https://github.com/vergil-project/.github/issues/77"
     with (
         patch("vergil_tooling.lib.github.repo_exists", return_value=True) as mock_exists,
-        patch("vergil_tooling.lib.github.is_public") as mock_public,
         patch(
             "vergil_tooling.lib.github.read_json",
             side_effect=[[], [{"number": 77, "title": "Epic (hoshin): vergil-project"}]],
@@ -3516,7 +3589,6 @@ def test_resolve_epic_ref_hoshin() -> None:
         got = epics.resolve_epic_ref("hoshin", repo="vergil-project/docs")
     assert got == IssueRef("vergil-project", ".github", 77)
     mock_exists.assert_called_once_with("vergil-project", ".github")
-    mock_public.assert_not_called()  # the hoshin home never depends on visibility
     mock_is_epic.assert_not_called()
     mock_ensure.assert_called_once_with(
         "vergil-project/.github", ["epic", "hoshin", "epic-management"]
@@ -3543,14 +3615,12 @@ def test_ensure_hoshin_epic_reuses_existing() -> None:
 
 
 def test_hoshin_home_is_org_dotgithub() -> None:
-    # A private target still resolves to the org's .github, never a self-home.
     with (
         patch("vergil_tooling.lib.github.repo_exists", return_value=True),
-        patch("vergil_tooling.lib.github.is_public", return_value=False),
         patch("vergil_tooling.lib.epics.ensure_standing_epic") as mock_ens,
     ):
-        epics.ensure_hoshin_epic("org/secret")
-        assert epics.hoshin_home("org/secret") == ("org/.github", "org")
+        epics.ensure_hoshin_epic("org/docs")
+        assert epics.hoshin_home("org/docs") == ("org/.github", "org")
     mock_ens.assert_called_once_with(epics.HOSHIN, "org/.github", "org")
 
 
@@ -3604,7 +3674,7 @@ def test_archive_title_hoshin() -> None:
 
 def test_drain_standing_org_covers_hoshin() -> None:
     # The sweep's plan includes the hoshin epic's closed children, read in
-    # <org>/.github only: a private repo's self-home has no hoshin epic.
+    # <org>/.github.
     seen: list[tuple[str, str, str]] = []
     hoshin_plan = epics.DrainPlan(
         IssueRef("org", ".github", 77),
@@ -3619,11 +3689,6 @@ def test_drain_standing_org_covers_hoshin() -> None:
         return hoshin_plan if kind is epics.HOSHIN else None
 
     with (
-        patch("vergil_tooling.lib.github.list_org_repos", return_value=["docs", "secret"]),
-        patch(
-            "vergil_tooling.lib.github.is_public",
-            side_effect=_visibility({"org/.github", "org/docs"}),
-        ),
         patch("vergil_tooling.lib.epics.plan_standing_drain", side_effect=fake_plan),
         patch("vergil_tooling.lib.epics.apply_standing_drain") as mock_apply,
     ):
@@ -3636,6 +3701,127 @@ def test_drain_standing_org_covers_hoshin() -> None:
 
 def test_hoshin_epic_docs_skipped() -> None:
     assert epic_docs.is_skipped("Epic (hoshin): vergil-project", {"epic", "hoshin"})
+
+
+# -- OPERATIONS standing kind (epic vergil-project/.github#1494) ---------------
+
+
+def test_operations_kind_is_standing_not_queue() -> None:
+    kind = epics.OPERATIONS
+    assert kind in epics.STANDING_KINDS
+    assert epics.STANDING_KINDS.index(kind) == epics.STANDING_KINDS.index(epics.HOSHIN) + 1
+    assert kind not in epics.QUEUE_KINDS
+    assert "operations" not in epics.QUEUE_KIND_BY_KEY
+    assert (kind.key, kind.sentinel) == ("operations", "operations")
+    assert kind.title_prefix == "Epic (operations): "
+    assert kind.labels == ("epic", "operations")
+    assert kind.archive_prefix == "Archive (operations): "
+    assert kind.archive_labels == ("archive", "operations")
+    assert "operations" in epics.EPIC_SENTINELS
+    assert epics.standing_kind_of({"epic", "operations"}) is kind
+    assert epics.standing_kind_of({"archive", "operations"}) is None
+    with patch("vergil_tooling.lib.epics._labels", return_value={"epic", "operations"}):
+        assert epics.queue_kind(EPIC) is None
+        assert epics.container_kind(EPIC) == "operations"
+
+
+def test_operations_home_is_org_github() -> None:
+    with patch("vergil_tooling.lib.github.repo_exists", return_value=True) as mock_exists:
+        assert epics.operations_home("acme/widget") == ("acme/.github", "acme")
+    mock_exists.assert_called_once_with("acme", ".github")
+
+
+def test_operations_home_without_dotgithub_raises() -> None:
+    with (
+        patch("vergil_tooling.lib.github.repo_exists", return_value=False),
+        patch("vergil_tooling.lib.epics.ensure_standing_epic") as mock_ens,
+        pytest.raises(epics.EpicHomeError, match=r"has no \.github repository"),
+    ):
+        epics.ensure_operations_epic("someone/widget")
+    mock_ens.assert_not_called()
+
+
+def test_operations_home_repo_without_owner_raises() -> None:
+    with pytest.raises(ValueError, match="cannot resolve repo for operations epic"):
+        epics.operations_home("widget")
+
+
+def test_resolve_operations_sentinel_calls_ensure() -> None:
+    epic = IssueRef("acme", ".github", 31)
+    with (
+        patch("vergil_tooling.lib.epics.ensure_operations_epic", return_value=epic) as mock_ensure,
+        patch("vergil_tooling.lib.epics.qualify_epic_ref") as mock_qualify,
+    ):
+        assert epics.resolve_epic_ref("operations", repo="acme/widget") == epic
+    mock_ensure.assert_called_once_with("acme/widget")
+    mock_qualify.assert_not_called()
+
+
+def test_ensure_operations_epic_creates_in_org_github() -> None:
+    created = "https://github.com/acme/.github/issues/31"
+    with (
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=[[], [{"number": 31, "title": "Epic (operations): acme"}]],
+        ),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_labels,
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
+    ):
+        got = epics.ensure_operations_epic("acme/widget")
+    assert got == IssueRef("acme", ".github", 31)
+    mock_labels.assert_called_once_with("acme/.github", ["epic", "operations", "epic-management"])
+    kwargs = mock_create.call_args.kwargs
+    assert kwargs["repo"] == "acme/.github"
+    assert kwargs["title"] == "Epic (operations): acme"
+    assert kwargs["labels"] == ["epic", "operations", "epic-management"]
+    assert kwargs["body"].startswith("Perpetual operations epic for acme:")
+
+
+def test_ensure_operations_epic_reuses_existing() -> None:
+    existing = IssueRef("acme", ".github", 12)
+    with (
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
+        patch("vergil_tooling.lib.epics._find_epic_by_title", return_value=existing) as mock_find,
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+    ):
+        assert epics.ensure_operations_epic("acme/widget") == existing
+    mock_find.assert_called_once_with(
+        "acme/.github", "Epic (operations): acme", labels=("epic", "operations")
+    )
+    mock_create.assert_not_called()
+
+
+def test_operations_epic_gets_epic_management() -> None:
+    title = "Epic (operations): acme"
+    labels = epics.category_labels(epics.OPERATIONS.labels, title)
+    assert labels == ["epic", "operations", "epic-management"]
+
+
+def test_drain_standing_org_includes_operations() -> None:
+    assert epics.OPERATIONS in epics.DRAINED_STANDING_KINDS
+    seen: list[epics.StandingKind] = []
+
+    def fake_plan(
+        kind: epics.StandingKind, home: str, name: str, *, now: datetime
+    ) -> epics.DrainPlan | None:
+        seen.append(kind)
+        return None
+
+    with patch("vergil_tooling.lib.epics.plan_standing_drain", side_effect=fake_plan):
+        epics.drain_standing_org("acme", apply=False, now=Q4_NOW)
+    assert epics.OPERATIONS in seen
+
+
+def test_archive_title_operations() -> None:
+    title = epics.archive_title(epics.OPERATIONS, "acme", "2026-Q4")
+    assert title == "Archive (operations): acme — 2026-Q4"
+    assert epics.archive_re(epics.OPERATIONS).match(title)
+    assert epics.is_stamped_archive_title(title)
+
+
+def test_operations_epic_docs_skipped() -> None:
+    assert epic_docs.is_skipped("Epic (operations): acme", {"epic", "operations"})
 
 
 def test_rollup_skips_proxy() -> None:
@@ -3676,7 +3862,7 @@ def test_epic_category_plain_epic_is_development() -> None:
     assert epics.epic_category({"epic"}, "Epic: X") == "development"
 
 
-@pytest.mark.parametrize("kind", ["intake", "planning", "deferred", "hoshin"])
+@pytest.mark.parametrize("kind", ["intake", "planning", "deferred", "hoshin", "operations"])
 def test_epic_category_each_management_kind(kind: str) -> None:
     assert epics.epic_category({"epic", kind}, f"Epic ({kind}): org") == "management"
 
@@ -3738,13 +3924,20 @@ def test_category_labels_are_in_registry() -> None:
         "Development epic: planned with epic-create, closes when its tasks close"
     )
     assert specs["epic-management"]["description"] == (
-        "Management epic: the intake, planning, deferred or hoshin epic; never auto-closes"
+        "Management epic: the intake, planning, deferred, hoshin or operations epic;"
+        " never auto-closes"
     )
     colours = {specs[name]["color"] for name in ("epic-development", "epic-management")}
     assert len(colours | {specs["ad-hoc"]["color"], specs["proxy"]["color"]}) == 4
 
 
-_MANAGEMENT_KINDS = {epics.INTAKE, epics.PLANNING, epics.DEFERRED, epics.HOSHIN}
+_MANAGEMENT_KINDS = {
+    epics.INTAKE,
+    epics.PLANNING,
+    epics.DEFERRED,
+    epics.HOSHIN,
+    epics.OPERATIONS,
+}
 
 
 @pytest.mark.parametrize("kind", epics.STANDING_KINDS, ids=lambda kind: kind.key)

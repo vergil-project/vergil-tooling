@@ -49,15 +49,10 @@ advisory.
 - The advisory is always created in `<org>/.github`, where `<org>` is the
   owner of `--repo` (or of the `--from` and `--drop` refs for `retarget`, whose
   `--to` refs in another org move it there: see
-  [The cross-org move](#the-cross-org-move)). The command
-  checks that `<org>/.github` is public and otherwise refuses with:
+  [The cross-org move](#the-cross-org-move)).
 
-  ```text
-  vrg-security-record: <org>/.github is not public; security records need a public org .github (private orgs are unsupported)
-  ```
-
-- The issue is created in the affected repo's queue home (`<org>/.github`
-  for a public repo, the repo itself for a private one) and linked under
+- The issue is created in the affected repo's queue home, `<org>/.github`,
+  and linked under
   that home's intake epic, which is created if absent.
 
 Every run scopes its GitHub App token to `<org>`. In human mode the
@@ -129,8 +124,10 @@ completes whatever steps are missing:
   line;
 - without `--issue`, it looks among the intake epic's sub-issues for one
   whose body has the advisory's `Security advisory:` line (it never uses
-  search, whose index can lag). If none is found it creates the issue and
-  links it. Then it writes the tracking line.
+  search, whose index can lag). A match counts only when the trust layer
+  trusts that body (its author and every editor trusted); any other is
+  skipped and reported on stderr, metadata only. If none is found it
+  creates the issue and links it. Then it writes the tracking line.
 
 Every step is idempotent, so running a resume command twice is safe.
 
@@ -185,6 +182,17 @@ refusal names every missing advisory:
 ```text
 vrg-security-record: advisory GHSA-xxxx-xxxx-xxxx does not exist in vergil-project/.github
 vrg-security-record: advisories GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy do not exist in vergil-project/.github
+```
+
+Given an issue, `show` prints only the advisories that **track** it, whose
+`Tracking issue:` lines name it: a body line alone, which anyone who can
+write the body can add, never shows a pair. Each named advisory that does
+not track the issue is named on stderr and not shown, and an issue none of
+whose advisories track it is refused:
+
+```text
+vrg-security-record: not shown: advisory GHSA-xxxx-xxxx-xxxx does not track vergil-project/tool#12
+vrg-security-record: no advisory vergil-project/tool#12 names tracks it
 ```
 
 ## retarget
@@ -258,7 +266,8 @@ succeeded:
    `security`-labelled issue in the org whose `Security advisory:` line
    names this GHSA ID (found by REST listing, never by search). Each one
    gets the comment `Security record moved to <refs>` (posted once, even on
-   a re-run). Then this advisory's line is removed, together with the
+   a re-run; only a trusted author's copy of it counts as already posted,
+   and any other is reported on stderr, metadata only). Then this advisory's line is removed, together with the
    `security` label when no other advisory line remains, in one edit. An
    issue that also names other advisories keeps their lines and the
    label. An issue that names only other advisories is never touched.
@@ -330,9 +339,9 @@ Every check runs before the first write, and each refusal exits 1:
   vrg-security-record: advisory <GHSA-id>: this would stop tracking the open issue <ref>; a move to <org>/.github closes this advisory, so it cannot keep tracking an issue in <org>. Close or retarget that work first, then run: vrg-security-record retarget <GHSA-id> --from '<ref>' --to '<ref>' …. Leaving an open issue untracked is the human's decision
   ```
 
-- The fix org's `.github` must be public. Its advisories are listed, and
-  each one with a `Moved from: <GHSA-id>` line naming this advisory alone
-  on its line is a candidate. One candidate is reused only when it is a
+- The fix org's `.github` advisories are listed, and each one with a
+  `Moved from: <GHSA-id>` line naming this advisory alone on its line is a
+  candidate. One candidate is reused only when it is a
   `draft` and not an external report; more than one candidate, or any
   that is an external report or in another state, refuses the move,
   naming each, and nothing is created. A reused copy must also be the one
@@ -419,8 +428,7 @@ Its summary line is `Security records: <n> advisory states synced, <m>
 broken pairs, <h> held, <e> errors.` Each noun agrees with its count, so a
 count of 1 reads `1 advisory state synced`, `1 broken pair` or `1 error`.
 It exits 1 when any pair is broken or any parent read failed (after
-syncing the rest), or when the pass fails, including when the org's
-`.github` is private. An org with no `security` issues and no `.github`
+syncing the rest), or when the pass fails. An org with no `security` issues and no `.github`
 repo prints `Security records: none.`
 
 | Flag | Meaning |
@@ -471,7 +479,10 @@ each starts only once the one before it succeeded:
      hold: close the issue first (as not planned, for dropped work), or
      retarget the record.
 2. **Comment.** Post `Security record <GHSA-id> closed: <reason>` on each
-   issue, skipping one that already carries that exact comment.
+   issue, skipping one that already carries that exact comment from a
+   trusted author (its author and every editor trusted, judged by the trust
+   layer); any other copy is reported on stderr, metadata only, and the
+   comment is posted.
 3. **Close.** Set the advisory's state to `closed`, unless it already is.
 
 The comments go first, so a closed record always has its audit trail.
@@ -577,9 +588,9 @@ These commands read or move records as part of their own work:
   (`broken pair: …`) and the item is not held. The docs PR's planning
   close applies the same rule and gives the same reason.
 
-  It lists each org's advisories once per view, and skips an org whose
-  `.github` is absent or not public unless one of its items has an
-  advisory line (then the private home is refused). An advisory line
+  It lists each org's advisories once per view, and skips an org with no
+  `.github` unless one of its items has an advisory line (then the home
+  is read anyway, and a failed read fails the view). An advisory line
   naming an org other than the issue's own is refused, not ignored.
 
 ## Exit codes
@@ -587,5 +598,5 @@ These commands read or move records as part of their own work:
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Refused (a private `.github`, a duplicate, bad refs, an unreadable file, `--details` under the sweep, a `retarget`, `close` or `note` the checks refuse, a `create` onto an advisory already paired), a partial pair, a failed retarget, close or note, a broken pair or a failed parent read found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
+| 1 | Refused (a duplicate, bad refs, an unreadable file, `--details` under the sweep, a `retarget`, `close` or `note` the checks refuse, a `create` onto an advisory already paired), a partial pair, a failed retarget, close or note, a broken pair or a failed parent read found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
 | 2 | Invalid arguments |

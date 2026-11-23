@@ -17,12 +17,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from vergil_tooling.lib import epic_audit, epics, github, proxies
+from vergil_tooling.lib import epic_audit, epics, github, proxies, trust
 from vergil_tooling.lib.epics import parse_issue_ref
 from vergil_tooling.lib.merge_review.result import ResultError, parse_result
 from vergil_tooling.lib.merge_review.schema import REQUEST_SCHEMA, earlier_steps
 from vergil_tooling.lib.rulings import RulingError
-from vergil_tooling.lib.rulings.comments import fetch_comments
+from vergil_tooling.lib.rulings.comments import read_stream
 from vergil_tooling.lib.rulings.draft_ref import require_remote_is
 from vergil_tooling.lib.rulings.identity import human_login
 from vergil_tooling.lib.trusted_authors import (
@@ -172,6 +172,10 @@ def fetch_task_context(issue: IssueRef, batch: Sequence[IssueRef] = ()) -> TaskC
         TrustedAuthorsNotConfiguredError,
         github.GitHubAPIError,
         RuntimeError,  # a GraphQL error, or a broken proxy link (ProxyLinkError)
+        # A proxy body the trust layer does not trust gives no Primary: link,
+        # or one it cannot read in full (spec §5.2 of epic .github#1467).
+        trust.UntrustedContentError,
+        trust.TrustReadError,
     ) as exc:
         _unreadable(str(exc))
     return TaskContext(issue_body=body, epic_open_tasks=tasks)
@@ -208,7 +212,13 @@ def fetch_issue_body(issue: IssueRef) -> str:
             body, _parent, _is_proxy = _fetch_task(issue)
     except github.MissingGitHubTokenError:
         raise
-    except (github.GitHubAPIError, RuntimeError) as exc:  # RuntimeError: a GraphQL error
+    except (
+        TrustedAuthorsNotConfiguredError,
+        github.GitHubAPIError,
+        RuntimeError,  # a GraphQL error
+        trust.UntrustedContentError,
+        trust.TrustReadError,
+    ) as exc:
         _unreadable(str(exc))
     return body
 
@@ -217,7 +227,6 @@ _TASK_QUERY = """
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
-      body
       parent {
         number
         repository { nameWithOwner }
@@ -263,13 +272,18 @@ def _ref_of(number: object, repository: object, where: str) -> IssueRef:
 
 
 def _fetch_task(issue: IssueRef) -> tuple[str, IssueRef | None, bool]:
-    """*issue*'s body and, when it is under an epic, that epic's ref and whether it is a proxy."""
+    """*issue*'s body and, when it is under an epic, that epic's ref and whether it is a proxy.
+
+    The body comes through the trust layer and must be trusted
+    (``require_body=True``): an untrusted body raises
+    :class:`~vergil_tooling.lib.trust.UntrustedContentError`, metadata only,
+    and is never handed to the reviewer as the task's scope.
+    """
     where = issue.slug
+    content = trust.read_issue(f"{issue.owner}/{issue.repo}", issue.number, require_body=True)
+    body = content.body or ""
     data = github.graphql(_TASK_QUERY, owner=issue.owner, name=issue.repo, number=issue.number)
     node = _issue_node(data, where)
-    body = node.get("body")
-    if not isinstance(body, str):
-        _unreadable(f"{where}: the issue has no body string")
     parent = node.get("parent")
     if parent is None:
         return body, None, False
@@ -372,20 +386,24 @@ def fetch_human_comments(issue: IssueRef) -> HumanComments:
 
     The human login comes from the trusted-authors configuration, which must
     list exactly one; the comments come from
-    :func:`vergil_tooling.lib.rulings.comments.fetch_comments`, the reader
-    ``vrg-ruling`` uses. A configuration or read failure is a refusal, but
+    :func:`vergil_tooling.lib.rulings.comments.read_stream`, the trust-layer
+    reader ``vrg-ruling`` uses, so a comment by a User account named like a
+    trusted one, or one an outsider edited, is never kept. A configuration or
+    read failure is a refusal, but
     a missing GitHub token propagates to the CLI's auth-error boundary. An
     invalid configuration's ``ValueError`` propagates too; the CLI reports it.
     """
     try:
-        human = human_login(load_trusted_authors())
+        authors = load_trusted_authors()
+        human = human_login(authors)
         with github.target_org(issue.owner):
-            fetched = fetch_comments(f"{issue.owner}/{issue.repo}", issue.number)
+            fetched = read_stream(f"{issue.owner}/{issue.repo}", issue.number, authors).comments
     except github.MissingGitHubTokenError:
         raise
     except (
         RulingError,
         TrustedAuthorsNotConfiguredError,
+        trust.TrustReadError,
         github.GitHubAPIError,
         RuntimeError,  # a GraphQL error response
     ) as exc:

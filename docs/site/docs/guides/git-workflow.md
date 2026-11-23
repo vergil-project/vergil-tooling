@@ -73,8 +73,11 @@ not checked.
 
 At creation, `vrg-git` also reads issue `<N>` from the current repo. It
 refuses the branch when the issue is closed, or is an epic or archive
-(an umbrella is never closed by a PR). It also refuses when the issue
-cannot be read, so check `vrg-gh issue view <N>` works and retry.
+(an umbrella is never closed by a PR), or was not opened by a trusted
+author (the trust layer's check; the refusal names the author's login
+and when the issue was opened, never its text). It also refuses when the
+issue or its author cannot be read, or no trusted-authors configuration
+is present, so check `vrg-gh issue view <N>` works and retry.
 
 The `release/*` and `promotion/*` prefixes are created by automated
 workflows and are exempt from the issue-number rule.
@@ -416,12 +419,16 @@ High-level summary:
 2. Run `vrg-release` from the root checkout. It creates the tracking
    issue and the `release/<version>` branch, generates the changelog,
    merges the release PR to `main`, waits for CD to tag and publish,
-   merges the version bump back to `develop`, and cleans up.
-3. As its last step, `vrg-release` runs the dependency update on the
-   new `develop` version and opens a `dependency-update` PR when
-   anything changed. If its validation or merge fails, the PR stays open
-with a fix task, and the next
-   release refuses to start until it is dealt with.
+   merges the version bump back to `develop`, moves the rolling `vX.Y`
+   tag, and cleans up.
+3. It then runs the dependency update on the new `develop` version,
+   opening a `dependency-update` PR when anything changed, and the
+   repo's install. If the update's validation or merge fails, the PR
+   stays open with a fix task, and the next release refuses to start
+   until it is dealt with.
+4. Last, it posts a `Released:` record on every issue the release
+   closes and closes the tracking issue. Any failed stage leaves the
+   issue open, and `vrg-release --resume` finishes the release.
 
 ## Adoption for a new repo
 

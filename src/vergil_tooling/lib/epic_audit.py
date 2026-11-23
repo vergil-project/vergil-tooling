@@ -9,14 +9,24 @@ by the caller.
 The orphan pass (epic vergil-project/.github#176) enforces *every issue is a
 legitimate top-level kind or has an epic parent*: it nativizes body-only
 ``Parent:`` links, strips the retired ``triage``/``idea``/``research`` labels,
-moves a now-public repo's self-homed queue items under ``.github``, attaches
-every orphan to its home's intake epic, and reports private-repo work under
-public ``.github`` epics.
+and attaches every orphan to its home's intake epic.
 
 The proxy checks (epic vergil-project/.github#1417): :func:`epic_children` lists
 an epic's children with every proxy's beside them, :func:`proxy_link_problems`
 checks one epic's ``Primary:``/``Proxy:`` pair, and :func:`proxy_link_drift`
 checks every open proxy of a home.
+
+**Trusted content** (epic vergil-project/.github#1467, spec §5.2 and §5.3).
+The sweep acts only on trusted content: a merged PR's linkage lines count
+only from a body the trust layer trusts (:func:`task_drift`), a body-only
+``Parent:`` line only from a trusted body (:func:`body_only_parents`), a
+child's close only when its actor is trusted (:func:`epic_drift`), a child's
+reopen likewise (:func:`closed_epic_open_child`), and a proxy's ``Primary:``
+line and its primary's close the same way (:func:`proxy_closures`). Untrusted
+content a pass merely skips is reported on stderr, metadata only; an
+untrusted close or reopen a pass would act on, or a read the layer cannot
+complete, stops that item alone: it is added to the run's
+:class:`~vergil_tooling.lib.trust.BatchStops`, and the run carries on.
 """
 
 from __future__ import annotations
@@ -26,21 +36,25 @@ import re
 import sys
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import (
     epic_docs,
-    epic_size,
     epics,
     github,
     linkage,
+    pending_release,
     proxies,
     release,
-    remote_config,
     roadmap,
+    trust,
+    trusted_comments,
 )
 from vergil_tooling.lib.labels import RETIRED_LABELS
-from vergil_tooling.lib.trusted_authors import trusted_comment_lines
+from vergil_tooling.lib.trusted_authors import load_trusted_authors
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 # A closed-epic-with-open-child violation (issue #2259): the closed epic paired
 # with the tuple of its still-open children.
@@ -115,20 +129,24 @@ def _refs_to_check(body: str) -> list[str]:
     return [ref for keyword, ref in refs if keyword == "Closes"]
 
 
-def _open_task_drift(entry: Any, pr_repo: str, ref: str) -> TaskDrift | None:
-    """The drift record for *ref*, linked by merged PR *entry*, or None if it is not drift."""
+def _task_of(ref: str, pr_repo: str) -> tuple[str, int]:
+    """The ``(owner/repo, number)`` of linkage *ref* in a body of a PR in *pr_repo*."""
     # ``ref`` is ``"#N"`` (same-repo) or ``"owner/repo#N"`` (cross-repo).
     # Resolve the repo the task actually lives in — honor a cross-repo ref
     # instead of assuming the PR's own repo (issue #2111).
     repo_part, _, num = ref.rpartition("#")
-    task = int(num)
-    task_repo = repo_part or pr_repo
+    return repo_part or pr_repo, int(num)
+
+
+def _open_task_drift(entry: Any, pr_repo: str, ref: str) -> TaskDrift | None:
+    """The drift record for *ref*, linked by merged PR *entry*, or None if it is not drift."""
+    task_repo, task = _task_of(ref, pr_repo)
     try:
         issue: Any = github.read_json(
             "issue", "view", str(task), "--repo", task_repo, "--json", "state,title,body,labels"
         )
     except github.GitHubAPIError:
-        # The task is in a repo this run can't see (cross-org, private, or
+        # The task is in a repo this run can't see (cross-org or
         # deleted). Not this org's drift to close — warn and skip rather than
         # abort the whole sweep.
         print(
@@ -159,7 +177,7 @@ def _open_task_drift(entry: Any, pr_repo: str, ref: str) -> TaskDrift | None:
     # open as vrg-release bookkeeping — not drift. Skip it so the audit does
     # not flag release issues as slipped tasks. See issue #1984.
     if release.is_release_tracking_issue(
-        title=str(issue.get("title") or ""), body=str(issue.get("body") or "")
+        task_repo, task, title=str(issue.get("title") or ""), body=str(issue.get("body") or "")
     ):
         return None
     # A queue (intake/planning/deferred) item is never a PR-tracked task: its parent
@@ -173,12 +191,28 @@ def _open_task_drift(entry: Any, pr_repo: str, ref: str) -> TaskDrift | None:
     )
 
 
-def task_drift(since: str, *, org: str, today: date | None = None) -> list[TaskDrift]:
+def task_drift(
+    since: str,
+    *,
+    org: str,
+    stops: trust.BatchStops,
+    authors: TrustedAuthors,
+    today: date | None = None,
+) -> list[TaskDrift]:
     """Merged PRs (since *since*) whose linked task is still open.
 
     Every task a PR links is checked, one per ``Closes`` line of a batch PR
     (see :func:`_refs_to_check`). *today* (default: the current UTC date)
     only sets where the week-long search slices end.
+
+    A linkage line counts only from a PR body the trust layer trusts, by the
+    closing-reference roles (:data:`pending_release.CLOSING_ROLES`): its author
+    and every editor, so an outsider's edit made after the merge makes it
+    untrusted too. The search's copy of the body only picks the candidates;
+    each PR with an open task is read again through the layer, and only the
+    tasks its trusted body links are drift. An untrusted body is reported on
+    stderr, metadata only, and yields no drift; a body the layer cannot read
+    in full is a stop on that PR alone, added to *stops*.
     """
     if today is None:
         today = datetime.now(UTC).date()
@@ -187,45 +221,137 @@ def task_drift(since: str, *, org: str, today: date | None = None) -> list[TaskD
         pr_repo = str((entry.get("repository") or {}).get("nameWithOwner", ""))
         if not pr_repo:
             continue
-        for ref in _refs_to_check(str(entry.get("body") or "")):
-            found = _open_task_drift(entry, pr_repo, ref)
-            if found is not None:
-                drift.append(found)
+        found = [
+            record
+            for ref in _refs_to_check(str(entry.get("body") or ""))
+            if (record := _open_task_drift(entry, pr_repo, ref)) is not None
+        ]
+        if found:
+            drift += _trusted_task_drift(found, pr_repo, stops=stops, authors=authors)
     return drift
 
 
-def epic_drift(org: str | None = None, *, home: str | None = None) -> list[roadmap.EpicSummary]:
+def _trusted_task_drift(
+    found: list[TaskDrift], pr_repo: str, *, stops: trust.BatchStops, authors: TrustedAuthors
+) -> list[TaskDrift]:
+    """The records of *found*, one PR's, whose task the PR's trusted body links."""
+    number = found[0].pr_number
+    try:
+        content = trust.read_issue(
+            pr_repo, number, roles=pending_release.CLOSING_ROLES, authors=authors
+        )
+    except trust.TrustReadError as exc:
+        _read_failure(stops, pr_repo, number, "pr", exc)
+        return []
+    trust.report_skipped(
+        [item for item in content.skipped if item.field == _BODY_FIELD], stream=sys.stderr
+    )
+    if content.body is None:
+        return []
+    linked = {
+        (repo.lower(), task)
+        for repo, task in (_task_of(ref, pr_repo) for ref in _refs_to_check(content.body))
+    }
+    return [record for record in found if (record.repo.lower(), record.task) in linked]
+
+
+#: The field of a stop or skip on an issue's or PR's body.
+_BODY_FIELD = "body"
+
+
+def _read_failure(  # noqa: PLR0913 - the Skipped record's fields
+    stops: trust.BatchStops,
+    repo: str,
+    number: int,
+    kind: str,
+    exc: trust.TrustReadError,
+    field: str = _BODY_FIELD,
+) -> None:
+    """Add a read failure on *repo*#*number*'s *field* to *stops*, *exc* as its detail."""
+    item = trust.Skipped(repo, number, kind, None, "", field, trust.READ_FAILURE)
+    stops.add(item, trust.READ_FAILURE, detail=str(exc))
+
+
+def _stop(stops: trust.BatchStops, exc: trust.UntrustedContentError) -> None:
+    """Add the untrusted item *exc* stopped on to *stops*, with its own cause."""
+    stops.add(exc.item, exc.item.cause)
+
+
+def _slug(ref: epics.IssueRef) -> str:
+    return f"{ref.owner}/{ref.repo}"
+
+
+def _closes_trusted(
+    children: list[epics.ChildState], *, stops: trust.BatchStops, authors: TrustedAuthors
+) -> bool:
+    """True iff the close of every closed child of an epic was made by a trusted actor.
+
+    A close by an untrusted actor is not a close (spec §5.2): it is a stop on
+    the epic, added to *stops* and naming the child's close, as is a close
+    that cannot be read. A child open again since the roadmap counted it
+    makes the epic no drift, with no stop.
+    """
+    for child in children:
+        if child.state != "CLOSED":
+            return False
+        try:
+            with github.target_org(child.ref.owner):
+                trust.require_trusted_close(_slug(child.ref), child.ref.number, authors=authors)
+        except trust.UntrustedContentError as exc:
+            _stop(stops, exc)
+            return False
+        except trust.TrustReadError as exc:
+            _read_failure(stops, _slug(child.ref), child.ref.number, "event", exc, "close")
+            return False
+    return True
+
+
+def epic_drift(
+    org: str, *, stops: trust.BatchStops, authors: TrustedAuthors
+) -> list[roadmap.EpicSummary]:
     """Open, non-perpetual epics whose children are all closed (should roll up).
 
     A proxy epic is excluded with the standing epics (``roadmap.gather``): it
     lives as long as its primary, so an all-closed proxy is not drift.
 
-    Scoped to the resolved epic *home* (default: the org's ``.github``), so a
-    ``--repo``-targeted audit sees only that repo's epics.
+    A child's close counts only when its actor is trusted (spec §5.2): an
+    epic with a child closed by an untrusted actor, or whose close cannot be
+    read, is a stop on that epic alone, added to *stops*, and is not drift.
+
+    Scoped to the org's ``.github``, the home of every epic.
     """
-    return [
-        epic
-        for epic in roadmap.gather(org, home=home)
-        if epic.total > 0 and epic.closed == epic.total
-    ]
+    drift: list[roadmap.EpicSummary] = []
+    for epic in roadmap.gather(org):
+        if epic.total == 0 or epic.closed != epic.total:
+            continue
+        ref = epics.IssueRef(org, ".github", epic.number)
+        if _closes_trusted(epics.child_states(ref), stops=stops, authors=authors):
+            drift.append(epic)
+    return drift
 
 
 @dataclass(frozen=True)
 class OperationalStatus:
-    """An epic's outstanding (open) operational children, split runnable vs blocked."""
+    """An epic's outstanding (open) operational children, split runnable vs blocked.
+
+    ``stopped`` holds the open operational children whose body the trust layer
+    does not trust or cannot read in full, so neither runnable nor blocked can
+    be said of them (spec §5.3 of epic vergil-project/.github#1467; #4971).
+    """
 
     epic: epics.IssueRef
     runnable: tuple[epics.IssueRef, ...]  # open operational children, all blockers closed
     blocked: tuple[epics.IssueRef, ...]  # open operational children, a blocker still open
     by_kind: dict[epics.IssueRef, str]  # each pending child -> its kind (validation/deployment)
+    stopped: tuple[epics.IssueRef, ...] = ()  # open operational children, body not trusted
 
     @property
     def pending(self) -> tuple[epics.IssueRef, ...]:
-        """All outstanding operational children (runnable + blocked)."""
-        return self.runnable + self.blocked
+        """All outstanding operational children (runnable + blocked + stopped)."""
+        return self.runnable + self.blocked + self.stopped
 
 
-def operational_status(epic: epics.IssueRef) -> OperationalStatus:
+def operational_status(epic: epics.IssueRef, *, stops: trust.BatchStops) -> OperationalStatus:
     """Classify *epic*'s open operational children as runnable vs blocked, by kind.
 
     An operational child (validation, deployment, …) is runnable when every task
@@ -233,9 +359,15 @@ def operational_status(epic: epics.IssueRef) -> OperationalStatus:
     runnable-vs-blocked split, tagged by kind, is the honest "what still has to
     run" signal — and the seed of a future automator that runs operational tasks
     as their dependencies land.
+
+    A child whose body is untrusted, or cannot be read in full, is a stop on
+    that child only (:func:`epics.blockers_or_stop`): it is added to *stops*,
+    listed as ``stopped`` (still pending, with its kind), and the rest are
+    classified.
     """
     runnable: list[epics.IssueRef] = []
     blocked: list[epics.IssueRef] = []
+    stopped: list[epics.IssueRef] = []
     by_kind: dict[epics.IssueRef, str] = {}
     for child in epics.child_states(epic):
         if child.state != "OPEN":
@@ -244,57 +376,77 @@ def operational_status(epic: epics.IssueRef) -> OperationalStatus:
         if kind is None:
             continue
         by_kind[child.ref] = kind
-        target = runnable if epics.all_blockers_closed(child.ref) else blocked
+        blockers = epics.blockers_or_stop(child.ref, stops)
+        if blockers is None:
+            stopped.append(child.ref)
+            continue
+        target = runnable if epics.all_blockers_closed(blockers) else blocked
         target.append(child.ref)
     return OperationalStatus(
-        epic=epic, runnable=tuple(runnable), blocked=tuple(blocked), by_kind=by_kind
+        epic=epic,
+        runnable=tuple(runnable),
+        blocked=tuple(blocked),
+        by_kind=by_kind,
+        stopped=tuple(stopped),
     )
 
 
 @dataclass(frozen=True)
 class ChildStatus:
-    """An epic's open children, split runnable vs blocked by their Blocked-by deps."""
+    """An epic's open children, split runnable vs blocked by their Blocked-by deps.
+
+    ``stopped`` holds the open children whose body is untrusted or cannot be
+    read in full, so their dependencies are unknown (#4971).
+    """
 
     epic: epics.IssueRef
     runnable: tuple[epics.IssueRef, ...]  # open children, all blockers closed
     blocked: tuple[epics.IssueRef, ...]  # open children, a blocker still open
+    stopped: tuple[epics.IssueRef, ...] = ()  # open children, body not trusted
 
 
-def child_status(epic: epics.IssueRef) -> ChildStatus:
+def child_status(epic: epics.IssueRef, *, stops: trust.BatchStops) -> ChildStatus:
     """Classify *every* open child of *epic* as runnable vs blocked.
 
     Where :func:`operational_status` is scoped to operational children (its
     runnable/blocked split feeds the "operation-pending" report), this classifies
-    *all* open children — plain tasks included — through the already-generic
-    :func:`epics.all_blockers_closed`. It makes an epic driver's plain-task
-    frontier (the open tasks whose every ``Blocked-by`` dependency is closed)
-    machine-derivable instead of inferred from plan prose (#2269).
+    *all* open children — plain tasks included — by their ``Blocked-by:``
+    lines. It makes an epic driver's plain-task frontier (the open tasks whose
+    every ``Blocked-by`` dependency is closed) machine-derivable instead of
+    inferred from plan prose (#2269). A child whose body is untrusted, or
+    cannot be read in full, is added to *stops* and listed as ``stopped``,
+    never as runnable; the rest are classified.
     """
     runnable: list[epics.IssueRef] = []
     blocked: list[epics.IssueRef] = []
+    stopped: list[epics.IssueRef] = []
     for child in epics.child_states(epic):
         if child.state != "OPEN":
             continue
-        target = runnable if epics.all_blockers_closed(child.ref) else blocked
+        blockers = epics.blockers_or_stop(child.ref, stops)
+        if blockers is None:
+            stopped.append(child.ref)
+            continue
+        target = runnable if epics.all_blockers_closed(blockers) else blocked
         target.append(child.ref)
-    return ChildStatus(epic=epic, runnable=tuple(runnable), blocked=tuple(blocked))
+    return ChildStatus(
+        epic=epic, runnable=tuple(runnable), blocked=tuple(blocked), stopped=tuple(stopped)
+    )
 
 
-def operational_pending(org: str, *, home: str | None = None) -> list[OperationalStatus]:
+def operational_pending(org: str, *, stops: trust.BatchStops) -> list[OperationalStatus]:
     """Open finite epics with outstanding operational children.
 
     Reports the "code-complete, operation-pending" state that keeps an epic
     honestly not-done: its code tasks may all be merged, but until its
     operational tasks (validations, deployments, …) run the epic is not finished.
-    Only epics with at least one open operational child appear. Scoped to the
-    resolved epic *home* (default ``<org>/.github``).
+    Only epics with at least one open operational child appear, a stopped one
+    included; each stop is added to *stops*. Scoped to ``<org>/.github``, the
+    home of every epic.
     """
-    if home is None:
-        home = f"{org}/.github"
-    home_owner, home_repo = home.split("/", 1)
     pending: list[OperationalStatus] = []
-    for summary in roadmap.gather(org, home=home):
-        status = operational_status(epics.IssueRef(home_owner, home_repo, summary.number))
+    for summary in roadmap.gather(org):
+        status = operational_status(epics.IssueRef(org, ".github", summary.number), stops=stops)
         if status.pending:
             pending.append(status)
     return pending
@@ -314,11 +466,16 @@ def closed_operational_without_success(org: str) -> list[str]:
     """Closed operational tasks with no recorded success comment (invariant).
 
     An operational task must close only after it runs and *succeeds*, recorded as
-    a comment. A closed operational-labelled issue whose comments carry no success
-    ``Outcome:`` line is drift — most likely closed by hand — and is flagged.
-    Searches every operational label. Report-only: like the other invariants, this
-    is never auto-acted.
+    a comment. A closed operational-labelled issue whose **trusted** comments carry
+    no success ``Outcome:`` line is drift — most likely closed by hand — and is
+    flagged. The comments are read through the trust layer
+    (:func:`trusted_comments.bodies`, the trusted authors loaded once), so an
+    outsider's ``Outcome: SUCCESS`` never hides a hand-closed task; each skipped
+    comment is reported on stderr, metadata only, and a read the layer cannot
+    complete raises. Searches every operational label. Report-only: like the
+    other invariants, this is never auto-acted.
     """
+    authors = load_trusted_authors()
     violations: list[str] = []
     for label in sorted(epics.operational_labels()):
         raw: Any = github.read_json(
@@ -343,11 +500,9 @@ def closed_operational_without_success(org: str) -> list[str]:
             if "/" not in name_with_owner:
                 continue
             number = int(item["number"])
-            detail: Any = github.read_json(
-                "issue", "view", str(number), "--repo", name_with_owner, "--json", "comments"
-            )
-            comments = (detail.get("comments") or []) if isinstance(detail, dict) else []
-            bodies = "\n".join(str((c or {}).get("body", "")) for c in comments)
+            owner, repo = name_with_owner.split("/", 1)
+            ref = epics.IssueRef(owner, repo, number)
+            bodies = "\n".join(trusted_comments.bodies(ref, authors))
             if not _OPERATIONAL_SUCCESS_RE.search(bodies):
                 violations.append(f"{name_with_owner}#{number}")
     return violations
@@ -356,13 +511,9 @@ def closed_operational_without_success(org: str) -> list[str]:
 def epic_outside_dotgithub(org: str) -> list[str]:
     """Open ``epic``-labelled issues wrongly outside ``<org>/.github`` (invariant 1).
 
-    Invariant 1 (epic #85, generalized for visibility-based homes in epic #130):
-    a **public** repo's epics live centrally in the org's ``.github``; a
-    **private** repo legitimately homes its own epics in itself. So an open
-    epic-labelled issue outside ``.github`` is a violation only when its repo is
-    public. Visibility is probed per repo (memoized); a probe error is fail-loud
-    — a genuine leaked-out public epic must never be masked by a silent skip.
-    Returns the ``owner/repo#n`` slugs of violations.
+    Invariant 1 (epic #85): every epic lives in the org's ``.github``, so every
+    open epic-labelled issue outside it is a violation. Returns the
+    ``owner/repo#n`` slugs of violations.
     """
     raw: Any = github.read_json(
         "search",
@@ -385,14 +536,12 @@ def epic_outside_dotgithub(org: str) -> list[str]:
         name_with_owner = str((item.get("repository") or {}).get("nameWithOwner", ""))
         if not name_with_owner or name_with_owner == dotgithub:
             continue
-        if not github.is_public(name_with_owner):
-            continue  # private repo legitimately self-homes its epics (fail-loud on probe error)
         violations.append(f"{name_with_owner}#{item['number']}")
     return violations
 
 
-def stray_dotgithub_issue(org: str, *, home: str | None = None) -> list[str]:
-    """Open issues in the epic *home* that violate invariant 2 (epic #85).
+def stray_dotgithub_issue(org: str) -> list[str]:
+    """Open issues in ``<org>/.github`` that violate invariant 2 (epic #85).
 
     The home holds only epics, the ``archive``-labelled per-quarter buckets (a
     legitimate top-level home issue, skipped like epics), and issues linked under
@@ -400,13 +549,10 @@ def stray_dotgithub_issue(org: str, *, home: str | None = None) -> list[str]:
     queue item is parented under its queue epic, so no kind-label exemption is needed). An
     open issue that is none of these — an unlinked, non-epic, non-archive issue —
     is a stray; returns their
-    slugs. *home* defaults to ``<org>/.github``; a ``--repo``-targeted audit passes
-    the repo's resolved home. When a candidate's parent cannot be confirmed as an
-    epic it is reported (fail-loud, the human decides).
+    slugs. When a candidate's parent cannot be confirmed as an epic it is
+    reported (fail-loud, the human decides).
     """
-    if home is None:
-        home = f"{org}/.github"
-    home_owner, home_repo = home.split("/", 1)
+    home = f"{org}/.github"
     raw: Any = github.read_json(
         "issue",
         "list",
@@ -426,7 +572,7 @@ def stray_dotgithub_issue(org: str, *, home: str | None = None) -> list[str]:
         if "epic" in labels or "archive" in labels:
             continue
         number = int(item["number"])
-        parent = epics.parent_of(epics.IssueRef(home_owner, home_repo, number))
+        parent = epics.parent_of(epics.IssueRef(org, ".github", number))
         if parent is not None and epics.is_epic(parent):
             continue
         strays.append(f"{home}#{number}")
@@ -436,6 +582,8 @@ def stray_dotgithub_issue(org: str, *, home: str | None = None) -> list[str]:
 def closed_epic_open_child(
     org: str,
     *,
+    stops: trust.BatchStops,
+    authors: TrustedAuthors,
     home: str | None = None,
     listing: list[epic_docs.EpicRecord] | None = None,
 ) -> list[EpicOpenChildViolation]:
@@ -454,6 +602,12 @@ def closed_epic_open_child(
     *listing* is the home's :func:`list_home_epics`, shared with
     :func:`epic_documents` so the audit lists the epics once; it is read here
     when not given. Only its closed epics are checked.
+
+    A child is open for this check only when it was never reopened or its
+    latest reopen was made by a trusted actor (spec §5.2): a child reopened by
+    an untrusted actor, or one whose events cannot be read, is a stop on its
+    epic alone, added to *stops*, and the epic is not a violation, so it is
+    never reopened on that child's account.
     """
     if home is None:
         home = f"{org}/.github"
@@ -468,9 +622,26 @@ def closed_epic_open_child(
             continue  # standing epics never roll up; closed-with-open-child doesn't apply
         epic = epics.IssueRef(home_owner, home_repo, record["number"])
         open_kids = tuple(cs.ref for cs in epics.child_states(epic) if cs.state == "OPEN")
-        if open_kids:
+        if open_kids and _opens_trusted(open_kids, stops=stops, authors=authors):
             violations.append((epic, open_kids))
     return violations
+
+
+def _opens_trusted(
+    children: tuple[epics.IssueRef, ...], *, stops: trust.BatchStops, authors: TrustedAuthors
+) -> bool:
+    """True iff no child of *children* is open by an untrusted reopen; a stop otherwise."""
+    for child in children:
+        try:
+            with github.target_org(child.owner):
+                trust.require_trusted_reopen(_slug(child), child.number, authors=authors)
+        except trust.UntrustedContentError as exc:
+            _stop(stops, exc)
+            return False
+        except trust.TrustReadError as exc:
+            _read_failure(stops, _slug(child), child.number, "event", exc, "reopen")
+            return False
+    return True
 
 
 def list_home_epics(home: str) -> list[epic_docs.EpicRecord]:
@@ -600,13 +771,12 @@ def _link_problems(
     return problems
 
 
-# -- orphan pass, label retirement, queue visibility (epic .github#176) --------
+# -- orphan pass and label retirement (epic .github#176) -----------------------
 #
 # Invariant: every open issue in a managed repo is a legitimate top-level kind
 # (epic, archive, release tracking issue) or has an epic parent. The checks below
 # share one org-wide enumeration (:func:`open_issues`); the ``--close`` sweep
-# applies them in the order nativize -> strip labels -> move public queues ->
-# attach orphans.
+# applies them in the order nativize -> strip labels -> attach orphans.
 
 _OPEN_ISSUES_QUERY = """
 query($owner: String!, $name: String!, $after: String) {
@@ -635,18 +805,27 @@ class OpenIssue:
     body: str
     labels: frozenset[str]
     native_parent: epics.IssueRef | None  # the native sub-issue parent only
-    public: bool  # the issue's repo is PUBLIC
 
     @property
     def body_parent(self) -> epics.IssueRef | None:
-        """The parent a body ``Parent:`` line declares, or None."""
-        match = epics._PARENT_RE.search(self.body)
-        if match is None:
-            return None
-        return epics.IssueRef(match.group(1), match.group(2), int(match.group(3)))
+        """The parent a body ``Parent:`` line declares, or None.
+
+        Read from the listing's copy of the body, which the trust layer has not
+        judged: it only picks the candidates :func:`body_only_parents` reads
+        again through the layer.
+        """
+        return _declared_parent(self.body)
 
 
-def _repo_open_issues(owner: str, bare: str, *, public: bool) -> list[OpenIssue]:
+def _declared_parent(body: str) -> epics.IssueRef | None:
+    """The parent *body*'s first ``Parent:`` line declares, or None."""
+    match = epics._PARENT_RE.search(body)
+    if match is None:
+        return None
+    return epics.IssueRef(match.group(1), match.group(2), int(match.group(3)))
+
+
+def _repo_open_issues(owner: str, bare: str) -> list[OpenIssue]:
     """Every open issue in ``owner/bare`` via paginated GraphQL (PRs excluded)."""
     found: list[OpenIssue] = []
     after: str | None = None
@@ -675,7 +854,6 @@ def _repo_open_issues(owner: str, bare: str, *, public: bool) -> list[OpenIssue]
                     body=str(node.get("body") or ""),
                     labels=names,
                     native_parent=epics._ref_from_node(parent) if parent else None,
-                    public=public,
                 )
             )
         info = page.get("pageInfo") or {}
@@ -691,87 +869,30 @@ def open_issues(org: str) -> list[OpenIssue]:
     unmanaged repos are never read, so never written to. Enumerated per repo with
     paginated GraphQL rather than ``gh search issues``: search caps at 1000
     results and does not return the native parent, which every check here needs.
-    Visibility is probed once per repo (memoized by :func:`github.is_public`).
     """
     issues: list[OpenIssue] = []
     for bare in github.list_org_repos(org):
-        repo = f"{org}/{bare}"
-        if not epics.is_managed_repo(repo):
+        if not epics.is_managed_repo(f"{org}/{bare}"):
             continue
-        issues += _repo_open_issues(org, bare, public=github.is_public(repo))
+        issues += _repo_open_issues(org, bare)
     return issues
 
 
-# GitHub's 403 for /installation/repositories under a token that is not an App
-# installation token (a human's own gh login).
-_NOT_AN_INSTALLATION_403 = "installation access token"
+@dataclass(frozen=True)
+class BodyParents:
+    """The open issues' body-only ``Parent:`` links, as the trust layer judges them.
 
-
-def coverage_gap(org: str) -> str | None:
-    """Why the active token may not see every repo in *org*, or None when it sees them all.
-
-    The org-wide passes enumerate *org* through :func:`github.list_org_repos`,
-    which silently lists only the repos the token can see (#3513). An App
-    installation token covers all of *org* only when it is installed on *org*
-    with ``repository_selection`` ``all``; a human's own login covers it when
-    it owns *org* (or *org* is that login's own account). Anything else is a
-    gap the caller must report, never a clean result. Any other API error
-    propagates.
-
-    The installation probe asks for one row on purpose: only the account
-    that row belongs to and the installation's ``repository_selection`` are
-    read, never the repo list, so no listing can be cut short.
+    *pairs* are the ``(task, epic)`` links of a trusted body naming an epic,
+    which ``--close`` links natively; *held* are the issues whose body could
+    not be read in full (each a stop), which no pass nativizes or attaches.
     """
-    try:
-        data: Any = github.read_json("api", "installation/repositories?per_page=1")
-    except github.GitHubAPIError as exc:
-        if _NOT_AN_INSTALLATION_403 not in (exc.stderr or "") + (exc.stdout or ""):
-            raise
-        return _login_coverage_gap(org)
-    if not isinstance(data, dict):
-        raise RuntimeError("unexpected /installation/repositories response")
-    rows = data.get("repositories") or []
-    account = str(((rows[0] or {}).get("owner") or {}).get("login") or "") if rows else ""
-    if account.lower() != org.lower():
-        return f"the GitHub App token in use is not installed on {org}"
-    selection = data.get("repository_selection")
-    if selection != "all":
-        return (
-            f"the GitHub App installation on {org} covers only selected repositories "
-            f"(repository_selection: {selection})"
-        )
-    return None
 
+    pairs: tuple[tuple[epics.IssueRef, epics.IssueRef], ...] = ()
+    held: frozenset[epics.IssueRef] = frozenset()
 
-def _login_coverage_gap(org: str) -> str | None:
-    """:func:`coverage_gap` for a human's own gh login (not an App token)."""
-    try:
-        membership: Any = github.read_json("api", f"user/memberships/orgs/{org}")
-    except github.GitHubAPIError as exc:
-        if not remote_config.is_not_found(exc):
-            raise
-        user: Any = github.read_json("api", "user")
-        login = str((user or {}).get("login") or "") if isinstance(user, dict) else ""
-        if login and login.lower() == org.lower():
-            return None
-        return f"the GitHub login in use is not a member of {org}"
-    if (
-        isinstance(membership, dict)
-        and membership.get("state") == "active"
-        and membership.get("role") == "admin"
-    ):
-        return None
-    return f"the GitHub login in use is not an owner of {org}, so it may not see every repo"
-
-
-def _epic_body_parent(issue: OpenIssue) -> epics.IssueRef | None:
-    """The epic a body-only ``Parent:`` line names (no native parent), else None."""
-    if issue.native_parent is not None:
-        return None
-    declared = issue.body_parent
-    if declared is not None and epics.is_epic(declared):
-        return declared
-    return None
+    def parented(self) -> frozenset[epics.IssueRef]:
+        """The issues the orphan attach leaves alone: linked by a trusted line, or held."""
+        return frozenset(task for task, _ in self.pairs) | self.held
 
 
 @dataclass(frozen=True)
@@ -787,90 +908,92 @@ class Orphan:
     name: str  # the <name> in "Epic (intake): <name>"
 
 
-def orphan_drift(org: str, *, issues: list[OpenIssue] | None = None) -> list[Orphan]:
+def orphan_drift(
+    org: str, *, parents: BodyParents, issues: list[OpenIssue] | None = None
+) -> list[Orphan]:
     """Open issues in managed repos that are neither legitimate top-level nor parented.
 
     Excludes legitimate top-level kinds (:func:`epics.is_legitimate_top_level`:
     epics, archives, release tracking issues — so a release in flight is never
-    attached), issues with a native parent, and issues whose body ``Parent:``
-    line names an epic (those count as parented; :func:`nativize_parents`
-    converts them). Each orphan targets the intake epic of its queue home
-    (:func:`epics.queue_home`): ``<org>/.github`` for a public repo, the repo
-    itself for a private one.
+    attached), issues with a native parent, and the issues *parents* leaves
+    alone: those whose trusted body ``Parent:`` line names an epic (they count
+    as parented; :func:`nativize_parents` converts them) and those held by a
+    stop. *parents* is :func:`body_only_parents` of the same *issues*, so a
+    ``Parent:`` line in an untrusted body never counts as a parent. Each
+    orphan targets the intake epic of its queue home (:func:`epics.queue_home`),
+    ``<org>/.github``.
     """
     if issues is None:
         issues = open_issues(org)
+    parented = parents.parented()
     orphans: list[Orphan] = []
     for issue in issues:
-        if epics.is_legitimate_top_level(set(issue.labels), issue.title, issue.body):
+        if epics.is_legitimate_top_level(issue.ref, set(issue.labels), issue.title, issue.body):
             continue
         if issue.native_parent is not None:
             continue
-        if issue.body_parent is not None and epics.is_epic(issue.body_parent):
+        if issue.ref in parented:
             continue
         home, name = epics.queue_home(f"{issue.ref.owner}/{issue.ref.repo}")
         orphans.append(Orphan(ref=issue.ref, home=home, name=name))
     return orphans
 
 
-_QUEUE_FULL_HINT = {
-    "intake": "Run epic-review intake.",
-    "planning": "Run epic-review planning.",
-    "deferred": "Run epic-review deferred.",
-}
-
-
 class StandingEpicFull(RuntimeError):  # noqa: N818 - the name is the plan's interface
-    """A queue epic is at the open-children cap; the pass stopped before overflowing it.
+    """An intake epic is at the open-children cap; the orphan pass stopped before overflowing it.
 
-    Raised before any write that would exceed the cap, naming every item not yet
-    linked, so nothing is attached past the cap and nothing is silently dropped.
+    Raised before any write that would exceed the cap, naming every orphan not
+    yet attached, so nothing is attached past the cap and nothing is silently
+    dropped.
     """
 
     def __init__(
-        self,
-        epic: epics.IssueRef,
-        open_children: int,
-        pending: list[epics.IssueRef],
-        *,
-        kind: str = "intake",
-        noun: str = "orphan(s) not attached",
+        self, epic: epics.IssueRef, open_children: int, pending: list[epics.IssueRef]
     ) -> None:
         self.epic = epic
         self.open_children = open_children
         self.pending = pending
         listed = ", ".join(ref.slug for ref in pending)
         super().__init__(
-            f"{kind} epic {epic.slug} is full ({open_children} open); "
-            f"{len(pending)} {noun}: {listed}. {_QUEUE_FULL_HINT[kind]}"
+            f"intake epic {epic.slug} is full ({open_children} open); "
+            f"{len(pending)} orphan(s) not attached: {listed}. Run epic-review intake."
         )
 
 
 class _QueueCapacity:
-    """Open-children counts per queue epic, checked before each link (the cap)."""
+    """Open-children counts per intake epic, checked before each link (the cap)."""
 
     def __init__(self) -> None:
         self._open: dict[epics.IssueRef, int] = {}
 
-    def reserve(
-        self, epic: epics.IssueRef, pending: list[epics.IssueRef], *, kind: str, noun: str
-    ) -> None:
+    def reserve(self, epic: epics.IssueRef, pending: list[epics.IssueRef]) -> None:
         """Count one more open child under *epic*, or raise if it is already full."""
         if epic not in self._open:
             self._open[epic] = sum(1 for c in epics.child_states(epic) if c.state == "OPEN")
         if self._open[epic] >= epics._ADHOC_ARCHIVE_SEGMENT_CAP:
-            raise StandingEpicFull(epic, self._open[epic], pending, kind=kind, noun=noun)
+            raise StandingEpicFull(epic, self._open[epic], pending)
         self._open[epic] += 1
 
 
-def attach_orphans(orphans: list[Orphan]) -> int:
+def attach_orphans(
+    orphans: list[Orphan], *, stops: trust.BatchStops, authors: TrustedAuthors
+) -> int:
     """Attach each orphan, in order, under its home's intake epic; return the count.
 
     The intake epic is resolved (created if absent) once per home. Before each
     attach the epic's open children are checked against the cap; at the cap this
     raises :class:`StandingEpicFull` naming every orphan not yet attached. Writes
     to GitHub; the caller gates it and scopes the org token.
+
+    An orphan an outsider opened (its author holds no role, as the trust layer
+    judges it) is never attached: it is reported on stderr, metadata only
+    (counts under Actions), and left out of the count and the cap, with a
+    clean exit (spec §5.3 of epic vergil-project/.github#1467). An orphan the
+    layer cannot read in full is a stop on that orphan alone, added to
+    *stops*: it is not attached, and the rest are. Every orphan is judged
+    before the first attach.
     """
+    orphans = _trusted_orphans(orphans, stops=stops, authors=authors)
     targets: dict[tuple[str, str], epics.IssueRef] = {}
     capacity = _QueueCapacity()
     for index, orphan in enumerate(orphans):
@@ -879,9 +1002,31 @@ def attach_orphans(orphans: list[Orphan]) -> int:
             targets[key] = epics.ensure_standing_epic(epics.INTAKE, orphan.home, orphan.name)
         target = targets[key]
         pending = [o.ref for o in orphans[index:]]
-        capacity.reserve(target, pending, kind="intake", noun="orphan(s) not attached")
+        capacity.reserve(target, pending)
         epics.add_child(target, orphan.ref)
     return len(orphans)
+
+
+def _trusted_orphans(
+    orphans: list[Orphan], *, stops: trust.BatchStops, authors: TrustedAuthors
+) -> list[Orphan]:
+    """*orphans* less the outsider-opened (each reported) and the unreadable (each a stop)."""
+    kept: list[Orphan] = []
+    skipped: list[trust.Skipped] = []
+    for orphan in orphans:
+        ref = orphan.ref
+        try:
+            content = trust.read_issue(_slug(ref), ref.number, authors=authors)
+            opened = trust.outsider_opened(content)
+        except trust.TrustReadError as exc:
+            _read_failure(stops, _slug(ref), ref.number, "issue", exc)
+            continue
+        if opened is None:
+            kept.append(orphan)
+        else:
+            skipped.append(opened)
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return kept
 
 
 @dataclass(frozen=True)
@@ -923,17 +1068,47 @@ def strip_retired_labels(drift: list[RetiredLabels]) -> int:
 
 
 def body_only_parents(
-    org: str, *, issues: list[OpenIssue] | None = None
-) -> list[tuple[epics.IssueRef, epics.IssueRef]]:
-    """``(task, epic)`` pairs whose only link is a body ``Parent:`` line naming an epic."""
+    org: str,
+    *,
+    stops: trust.BatchStops,
+    authors: TrustedAuthors,
+    issues: list[OpenIssue] | None = None,
+) -> BodyParents:
+    """The issues whose only link is a body ``Parent:`` line naming an epic, judged.
+
+    A ``Parent:`` line counts only from a body the trust layer trusts (spec
+    §5.2): each candidate (no native parent, and a listed body whose line
+    names an epic) is read again through the layer, and its pair is taken
+    from the trusted body. An untrusted body is reported on stderr, metadata
+    only, and gives no pair, so the issue is an orphan; a body the layer
+    cannot read in full is a stop on that issue alone, added to *stops*, and
+    the issue is held.
+    """
     if issues is None:
         issues = open_issues(org)
     pairs: list[tuple[epics.IssueRef, epics.IssueRef]] = []
+    held: set[epics.IssueRef] = set()
+    skipped: list[trust.Skipped] = []
     for issue in issues:
-        epic = _epic_body_parent(issue)
-        if epic is not None:
-            pairs.append((issue.ref, epic))
-    return pairs
+        if issue.native_parent is not None:
+            continue
+        declared = issue.body_parent
+        if declared is None or not epics.is_epic(declared):
+            continue
+        ref = issue.ref
+        try:
+            content = trust.read_issue(_slug(ref), ref.number, authors=authors)
+        except trust.TrustReadError as exc:
+            _read_failure(stops, _slug(ref), ref.number, "issue", exc)
+            held.add(ref)
+            continue
+        skipped += [item for item in content.skipped if item.field == _BODY_FIELD]
+        parent = _declared_parent(content.body or "")
+        if parent is None or (parent != declared and not epics.is_epic(parent)):
+            continue
+        pairs.append((ref, parent))
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return BodyParents(pairs=tuple(pairs), held=frozenset(held))
 
 
 def nativize_parents(pairs: list[tuple[epics.IssueRef, epics.IssueRef]]) -> int:
@@ -941,78 +1116,6 @@ def nativize_parents(pairs: list[tuple[epics.IssueRef, epics.IssueRef]]) -> int:
     for task, epic in pairs:
         epics.add_child(epic, task)
     return len(pairs)
-
-
-def public_self_homed_queues(
-    org: str, *, issues: list[OpenIssue] | None = None
-) -> list[epics.IssueRef]:
-    """Live queue epics outside ``<org>/.github`` in a repo that is now public."""
-    if issues is None:
-        issues = open_issues(org)
-    return [
-        issue.ref
-        for issue in issues
-        if issue.public
-        and issue.ref.repo != ".github"
-        and epics.standing_kind_of(set(issue.labels)) in epics.QUEUE_KINDS
-    ]
-
-
-def move_public_queues(queue_epics: list[epics.IssueRef], *, org: str) -> int:
-    """Move a now-public repo's queue items under the ``.github`` queues; return the count.
-
-    For each self-homed queue epic: reparent every open child under the
-    ``<org>/.github`` epic of the same kind (created if absent), then close the
-    emptied epic with a comment naming where the items went. The cap is checked
-    before every move; at the cap this raises :class:`StandingEpicFull` and the
-    old epic is left open, so nothing is half-moved silently.
-    """
-    capacity = _QueueCapacity()
-    moved = 0
-    for old in queue_epics:
-        key = epics.queue_kind(old)
-        if key is None:
-            raise ValueError(f"{old.slug} is not a queue epic")
-        kind = epics.QUEUE_KIND_BY_KEY[key]
-        target = epics.ensure_standing_epic(kind, f"{org}/.github", org)
-        open_kids = [c.ref for c in epics.child_states(old) if c.state == "OPEN"]
-        for index, child in enumerate(open_kids):
-            capacity.reserve(target, open_kids[index:], kind=key, noun="queue item(s) not moved")
-            epics.reparent_child(target, child)
-            moved += 1
-        github.run(
-            "issue",
-            "close",
-            str(old.number),
-            "--repo",
-            f"{old.owner}/{old.repo}",
-            "--comment",
-            f"Repo is now public; queue items moved to {target.slug}.",
-        )
-    return moved
-
-
-def private_under_public_epic(org: str, *, issues: list[OpenIssue] | None = None) -> list[str]:
-    """Open private-repo issues parented under a public ``<org>/.github`` epic (report only).
-
-    A likely unsupported public → private flip: tooling never migrates or
-    retracts it; a human resolves it. Native and body ``Parent:`` links both
-    count. A private ``.github`` means the whole org is private and homes there,
-    so nothing is reported then.
-    """
-    if issues is None:
-        issues = open_issues(org)
-    dotgithub = f"{org}/.github"
-    flagged: list[str] = []
-    for issue in issues:
-        if issue.public:
-            continue
-        parent = issue.native_parent or issue.body_parent
-        if parent is not None and f"{parent.owner}/{parent.repo}" == dotgithub:
-            flagged.append(issue.ref.slug)
-    if flagged and not github.is_public(dotgithub):
-        return []
-    return flagged
 
 
 @dataclass(frozen=True)
@@ -1092,18 +1195,18 @@ def _cross_org_refs(body: str, org: str) -> list[epics.IssueRef]:
     return list(found.values())
 
 
-def _standalone_confirmed(task: epics.IssueRef, trusted: frozenset[str]) -> bool:
-    """True iff a trusted comment on *task* carries ``Standalone-confirmed`` alone on its line."""
+def _standalone_confirmed(task: epics.IssueRef, authors: TrustedAuthors) -> bool:
+    """True iff a trusted comment on *task* carries ``Standalone-confirmed`` alone on its line.
+
+    The comments are read through the trust layer
+    (:func:`~vergil_tooling.lib.trusted_comments.bodies`): each one it leaves
+    out is reported on stderr, metadata only.
+    """
     with github.target_org(task.owner):
-        raw = github.read_json(
-            "issue", "view", str(task.number), "--repo", f"{task.owner}/{task.repo}",
-            "--json", "comments",
-        )  # fmt: skip
-    if not isinstance(raw, dict):
-        raise RuntimeError(f"unexpected 'gh issue view' response for {task.slug}: {raw!r}")
-    comments: Any = raw.get("comments") or []
-    lines = trusted_comment_lines(comments, trusted)
-    return STANDALONE_CONFIRMED in lines
+        bodies = trusted_comments.bodies(task, authors)
+    return any(
+        line.strip() == STANDALONE_CONFIRMED for body in bodies for line in body.splitlines()
+    )
 
 
 def misplaced_adhoc(org: str, *, issues: list[OpenIssue] | None = None) -> list[MisplacedTask]:
@@ -1112,14 +1215,13 @@ def misplaced_adhoc(org: str, *, issues: list[OpenIssue] | None = None) -> list[
     A task is a candidate when its title starts ``Logbook:`` (it belongs under
     the hoshin epic) or its body names an ``epic``-labelled issue in another
     org (it belongs under a proxy). A cross-org ref whose labels cannot be
-    read (private, deleted, an org the App cannot reach) is a candidate of its
+    read (deleted, or in an org the App cannot reach) is a candidate of its
     own, never raised and never skipped. A candidate is dropped when a trusted
     comment on it carries ``Standalone-confirmed`` alone on its line: the
     human ruled it standalone. Nothing is refused, moved, closed or labelled.
 
-    It reads the trusted authors (only once a candidate is found), so the audit
-    runs it only without ``--close``: the daily sweep has no trusted-authors
-    configuration. *issues* is the shared :func:`open_issues` enumeration.
+    It reads the trusted authors only once a candidate is found. *issues* is
+    the shared :func:`open_issues` enumeration.
     """
     if issues is None:
         issues = open_issues(org)
@@ -1127,7 +1229,7 @@ def misplaced_adhoc(org: str, *, issues: list[OpenIssue] | None = None) -> list[
         issue.ref for issue in issues if epics.standing_kind_of(set(issue.labels)) is epics.ADHOC
     }
     epic_label: dict[str, bool | None] = {}  # cross-org ref -> is an epic; None if unreadable
-    trusted: frozenset[str] | None = None
+    authors: TrustedAuthors | None = None
     found: list[MisplacedTask] = []
     for issue in sorted(issues, key=lambda i: (i.ref.owner, i.ref.repo, i.ref.number)):
         if issue.native_parent not in live_adhoc:
@@ -1149,9 +1251,9 @@ def misplaced_adhoc(org: str, *, issues: list[OpenIssue] | None = None) -> list[
                 reasons.append(f"names {ref.slug}, an epic in another org")
         if not reasons:
             continue
-        if trusted is None:
-            trusted = epic_size.trusted_logins()
-        if _standalone_confirmed(issue.ref, trusted):
+        if authors is None:
+            authors = load_trusted_authors()
+        if _standalone_confirmed(issue.ref, authors):
             continue
         found += [MisplacedTask(task=issue.ref, reason=reason) for reason in reasons]
     return found
@@ -1171,7 +1273,10 @@ def epic_children(epic: epics.IssueRef) -> list[epics.ChildState]:
     Each proxy is read under its own org's token, and its ``Primary:`` line must
     name *epic*: a proxy whose link is broken or disagrees raises
     :class:`proxies.ProxyLinkError`, never a silently shorter list. A failed
-    read, or a failed trusted-author load, propagates.
+    read, or a failed trusted-author load, propagates, and so does a proxy
+    body the trust layer does not trust (its ``Primary:`` line counts for
+    nothing: :class:`~vergil_tooling.lib.trust.UntrustedContentError`) or
+    cannot read in full (:class:`~vergil_tooling.lib.trust.TrustReadError`).
     """
     with github.target_org(epic.owner):
         children = list(epics.child_states(epic))
@@ -1250,19 +1355,23 @@ def proxy_link_problems(epic: epics.IssueRef) -> list[str]:
     *epic*. For a proxy: its ``Primary:`` line must resolve to an epic whose
     trusted comments name the proxy. A link that cannot be parsed or read is a
     problem, never a skipped item. A failed read of *epic* itself, or a failed
-    trusted-author load, propagates.
+    trusted-author load, propagates, as does a proxy body the trust layer does
+    not trust or cannot read in full (:func:`proxies.primary_of`).
     """
     with github.target_org(epic.owner):
         is_proxy = proxies.is_proxy_ref(epic)
     return _proxy_side_problems(epic) if is_proxy else _primary_side_problems(epic)
 
 
-def proxy_link_drift(home: str, *, listing: list[epic_docs.EpicRecord] | None = None) -> list[str]:
+def proxy_link_drift(
+    home: str, *, stops: trust.BatchStops, listing: list[epic_docs.EpicRecord] | None = None
+) -> list[str]:
     """The link problems of every open proxy in *home* (report only).
 
     *listing* is the home's :func:`list_home_epics`, shared with the other
-    per-epic checks; it is read here when not given. It reads trusted comments,
-    so the audit runs it only without ``--close``, never in the daily sweep.
+    per-epic checks; it is read here when not given. A proxy whose body the
+    trust layer does not trust (so its ``Primary:`` line counts for nothing),
+    or cannot read in full, is a stop on that proxy alone, added to *stops*.
     """
     home_owner, home_repo = home.split("/", 1)
     if listing is None:
@@ -1271,7 +1380,13 @@ def proxy_link_drift(home: str, *, listing: list[epic_docs.EpicRecord] | None = 
     for record in sorted(listing, key=lambda r: r["number"]):
         if record["state"] != "OPEN" or not epics.is_proxy(set(record["labels"])):
             continue
-        problems += _proxy_side_problems(epics.IssueRef(home_owner, home_repo, record["number"]))
+        proxy = epics.IssueRef(home_owner, home_repo, record["number"])
+        try:
+            problems += _proxy_side_problems(proxy)
+        except trust.UntrustedContentError as exc:
+            _stop(stops, exc)
+        except trust.TrustReadError as exc:
+            _read_failure(stops, _slug(proxy), proxy.number, "issue", exc)
     return problems
 
 
@@ -1288,7 +1403,11 @@ class ProxyClosure:
 
 
 def proxy_closures(
-    home: str, *, listing: list[epic_docs.EpicRecord] | None = None
+    home: str,
+    *,
+    stops: trust.BatchStops,
+    authors: TrustedAuthors,
+    listing: list[epic_docs.EpicRecord] | None = None,
 ) -> tuple[list[ProxyClosure], list[str]]:
     """Each open proxy in *home* whose primary is closed, and the proxies that could not be judged.
 
@@ -1298,8 +1417,14 @@ def proxy_closures(
     ``Primary:`` link fails (malformed, not an epic, or unreadable) is one line
     of *proxy_errors*, never raised, so one broken proxy cannot stop the
     sweep's other passes, as :func:`epics.drain_standing_org` treats a
-    corrupted home; the caller fails the run once every pass has run. It reads
-    no comment, so it needs no trusted-authors configuration.
+    corrupted home; the caller fails the run once every pass has run.
+
+    The ``Primary:`` line counts only from a body the trust layer trusts, and
+    the primary's close only when its actor holds a role in the primary's org
+    (spec §5.2): its own org's automation App is trusted there, read from any
+    org with the delivered configuration. A proxy whose body or primary's
+    close is untrusted, or cannot be read in full, is a stop on that proxy
+    alone, added to *stops*, and is never closed.
 
     *listing* is the home's :func:`list_home_epics`; it is read here when not
     given.
@@ -1318,8 +1443,9 @@ def proxy_closures(
                 primary = proxies.primary_of(proxy)
             with github.target_org(primary.owner):
                 primary_state = epics.issue_state(primary)
-            if primary_state != "CLOSED":
-                continue
+                if primary_state != "CLOSED":
+                    continue
+                trust.require_trusted_close(_slug(primary), primary.number, authors=authors)
             with github.target_org(proxy.owner):
                 open_tasks = sum(1 for c in epics.child_states(proxy) if c.state == "OPEN")
         except proxies.ProxyLinkError as exc:
@@ -1327,6 +1453,12 @@ def proxy_closures(
             continue
         except _LINK_READ_ERRORS as exc:
             errors.append(f"proxy {proxy.slug} could not be judged: {exc}")
+            continue
+        except trust.UntrustedContentError as exc:
+            _stop(stops, exc)
+            continue
+        except trust.TrustReadError as exc:
+            _read_failure(stops, _slug(proxy), proxy.number, "issue", exc, "primary")
             continue
         closures.append(ProxyClosure(proxy=proxy, primary=primary, open_tasks=open_tasks))
     return closures, errors
@@ -1419,7 +1551,6 @@ def render(
     *,
     org: str,
     window_days: int,
-    home: str | None = None,
     epics_outside: list[str] | None = None,
     stray: list[str] | None = None,
     pending_operational: list[OperationalStatus] | None = None,
@@ -1428,25 +1559,17 @@ def render(
     orphans: list[Orphan] | None = None,
     retired_labels: list[RetiredLabels] | None = None,
     body_only: list[tuple[epics.IssueRef, epics.IssueRef]] | None = None,
-    public_queues: list[epics.IssueRef] | None = None,
-    private_under_public: list[str] | None = None,
     misplaced: list[MisplacedArchive] | None = None,
     epic_docs_findings: list[EpicDocsFinding] | None = None,
     proxy_link_drift: list[str] | None = None,
     proxy_closures: list[ProxyClosure] | None = None,
     proxy_errors: list[str] | None = None,
     misplaced_adhoc: list[MisplacedTask] | None = None,
-    coverage_gap: str | None = None,
 ) -> str:
     """Format the drift + invariant report; a clean state says so explicitly.
 
-    A ``coverage_gap`` (from :func:`coverage_gap`) opens the report with an
-    **Incomplete coverage** section and replaces the clean-state line, so a
-    partial report is never read as a complete one (#3513).
-
-    The orphan pass (epic .github#176) adds ``orphans``, ``retired_labels``,
-    ``body_only`` and ``public_queues`` (what ``--close`` would apply) and the
-    report-only ``private_under_public`` invariant. ``misplaced`` is the
+    The orphan pass (epic .github#176) adds ``orphans``, ``retired_labels``
+    and ``body_only`` (what ``--close`` would apply). ``misplaced`` is the
     report-only :func:`misplaced_archives` invariant (vergil-tooling#3817).
 
     The report opens with a banner naming the audited org and window and
@@ -1472,17 +1595,14 @@ def render(
     orphans = orphans or []
     retired_labels = retired_labels or []
     body_only = body_only or []
-    public_queues = public_queues or []
-    private_under_public = private_under_public or []
     misplaced = misplaced or []
     epic_docs_findings = epic_docs_findings or []
     proxy_link_drift = proxy_link_drift or []
     proxy_closures = proxy_closures or []
     proxy_errors = proxy_errors or []
     misplaced_adhoc = misplaced_adhoc or []
-    scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
     banner = (
-        f"_Read-only audit of {scope} (merged PRs from the last "
+        f"_Read-only audit of the **{org}** org (merged PRs from the last "
         f"{window_days} days) — this report changes nothing; run `--close` (as "
         "a human) to close what it lists._"
     )
@@ -1499,8 +1619,6 @@ def render(
             orphans,
             retired_labels,
             body_only,
-            public_queues,
-            private_under_public,
             misplaced,
             epic_docs_findings,
             proxy_link_drift,
@@ -1509,18 +1627,7 @@ def render(
             misplaced_adhoc,
         ]
     ):
-        if coverage_gap is not None:
-            return "\n".join(
-                [
-                    *header,
-                    *_render_coverage_gap(coverage_gap),
-                    "_No drift in the repos this identity can see; the report is partial._",
-                    "",
-                ]
-            )
         return "\n".join([*header, "_No drift — everything that should be closed is closed._", ""])
-    if coverage_gap is not None:
-        header = [*header, *_render_coverage_gap(coverage_gap)]
     lines = [*header, "## Task drift (merged PR, task still open)", ""]
     if tasks:
         for task in sorted(tasks, key=lambda t: (t.repo, t.task)):
@@ -1548,23 +1655,25 @@ def render(
                 ", ".join(f"{ref.slug} ({status.by_kind.get(ref, '?')})" for ref in status.blocked)
                 or "none"
             )
-            lines.append(f"- {status.epic.slug} — runnable: {runnable}; blocked: {blocked}")
+            line = f"- {status.epic.slug} — runnable: {runnable}; blocked: {blocked}"
+            if status.stopped:
+                # A count only: under GitHub Actions an untrusted-content stop is
+                # never named (spec §5.3); stderr names each one where it may.
+                line += f"; stopped: {len(status.stopped)} (see stderr)"
+            lines.append(line)
     lines += _render_proxy_closures(proxy_closures)
     lines += _render_proxy_errors(proxy_errors)
-    lines += _render_orphan_pass(orphans, retired_labels, body_only, public_queues)
+    lines += _render_orphan_pass(orphans, retired_labels, body_only)
     if (
         epics_outside
         or stray
         or closed_operational_no_success
         or closed_epic_open_children
-        or private_under_public
         or misplaced
     ):
         lines += ["", "## Invariant violations (issues in the wrong place)", ""]
         if epics_outside:
-            lines.append(
-                "**Epics outside `.github`** (public repos) — move each to the org's `.github`:"
-            )
+            lines.append("**Epics outside `.github`** — move each to the org's `.github`:")
             lines += [f"- {slug}" for slug in sorted(epics_outside)]
         if stray:
             lines.append("**Stray `.github` issues** — not an epic, intake, or linked task:")
@@ -1584,11 +1693,10 @@ def render(
                     kid.slug for kid in sorted(kids, key=lambda k: (k.owner, k.repo, k.number))
                 )
                 lines.append(f"- {closed_epic.slug} — open children: {open_kids}")
-        lines += _render_private_under_public(private_under_public)
         lines += _render_misplaced_archives(misplaced)
     lines += _render_proxy_link_drift(proxy_link_drift)
     lines += _render_misplaced_adhoc(misplaced_adhoc)
-    lines += _render_epic_documents(epic_docs_findings, home or f"{org}/.github")
+    lines += _render_epic_documents(epic_docs_findings, f"{org}/.github")
     lines.append("")
     return "\n".join(lines)
 
@@ -1665,29 +1773,6 @@ def _render_proxy_errors(errors: list[str]) -> list[str]:
     ]
 
 
-_PRIVATE_UNDER_PUBLIC_HEADING = (
-    "**Private repo work under public .github epics** — an unsupported public → "
-    "private flip? Resolve by hand (spec: Private repos and visibility):"
-)
-
-
-def _render_coverage_gap(gap: str) -> list[str]:
-    return [
-        "## Incomplete coverage",
-        "",
-        f"- **This report is partial:** {gap}. Repos the identity cannot see are "
-        "not audited, so a missing finding does not mean a clean state. Run the "
-        "audit as an identity that sees every repo in the org.",
-        "",
-    ]
-
-
-def _render_private_under_public(slugs: list[str]) -> list[str]:
-    if not slugs:
-        return []
-    return [_PRIVATE_UNDER_PUBLIC_HEADING, *[f"- {slug}" for slug in sorted(slugs)]]
-
-
 _MISPLACED_ARCHIVES_HEADING = (
     "**Misplaced archives** — an archive stands top-level with the `archive` "
     "label and a stamped title; fix each one by hand:"
@@ -1705,7 +1790,6 @@ def _render_orphan_pass(
     orphans: list[Orphan],
     retired_labels: list[RetiredLabels],
     body_only: list[tuple[epics.IssueRef, epics.IssueRef]],
-    public_queues: list[epics.IssueRef],
 ) -> list[str]:
     """The ``--close`` orphan-pass preview, one section per non-empty pass, in apply order."""
     lines: list[str] = []
@@ -1715,13 +1799,6 @@ def _render_orphan_pass(
     if retired_labels:
         lines += ["", "## Retired kind labels (`--close` removes them)", ""]
         lines += [f"- {item.ref.slug} — {', '.join(item.labels)}" for item in retired_labels]
-    if public_queues:
-        lines += [
-            "",
-            "## Queues of now-public repos (`--close` moves their items to `.github`)",
-            "",
-        ]
-        lines += [f"- {ref.slug}" for ref in public_queues]
     if orphans:
         lines += ["", "## Orphans (`--close` attaches each to its intake epic)", ""]
         lines += [
@@ -1773,17 +1850,13 @@ def close_drift(
     epics: list[roadmap.EpicSummary],
     *,
     org: str,
-    home: str | None = None,
 ) -> list[str]:
     """Close each drifted task and rolled-up epic, leaving a comment on each.
 
-    Epics live in the resolved *home* (default ``{org}/.github``). Returns the
-    ``owner/repo#n`` slugs closed, in the order acted on. This performs
-    outward-effecting GitHub writes; the caller is responsible for gating it to a
-    human.
+    Epics live in ``{org}/.github``. Returns the ``owner/repo#n`` slugs closed,
+    in the order acted on. This performs outward-effecting GitHub writes; the
+    caller is responsible for gating it to a human.
     """
-    if home is None:
-        home = f"{org}/.github"
     closed: list[str] = []
     for task in sorted(tasks, key=lambda t: (t.repo, t.task)):
         github.run(
@@ -1796,7 +1869,7 @@ def close_drift(
             _TASK_CLOSE_COMMENT.format(pr=task.pr_number),
         )
         closed.append(f"{task.repo}#{task.task}")
-    epic_repo = home
+    epic_repo = f"{org}/.github"
     for epic in sorted(epics, key=lambda e: e.number):
         github.run(
             "issue",
@@ -1816,20 +1889,22 @@ def render_closed(
     *,
     org: str,
     window_days: int,
-    home: str | None = None,
     reopened: list[str] | None = None,
-    private_under_public: list[str] | None = None,
     misplaced: list[MisplacedArchive] | None = None,
     proxies_closed: list[str] | None = None,
     proxy_drift: list[str] | None = None,
     proxy_errors: list[str] | None = None,
+    proxy_link_drift: list[str] | None = None,
+    misplaced_adhoc: list[MisplacedTask] | None = None,
 ) -> str:
     """Summarize a ``--close`` run: what was closed and what was reopened.
 
     ``reopened`` is the closed-epic-with-open-child remediation (issue #2259):
     epics that were wrongly closed while a child was still open, now reopened.
-    ``private_under_public`` and ``misplaced`` are report-only (never acted on),
-    surfaced here too so the scheduled sweep's log carries them.
+    ``misplaced`` is report-only (never acted on), surfaced here too so the
+    scheduled sweep's log carries it, as are ``proxy_link_drift``
+    (:func:`proxy_link_drift`) and ``misplaced_adhoc`` (:func:`misplaced_adhoc`),
+    the trusted-comment checks.
 
     ``proxies_closed`` are the proxies :func:`close_proxies` closed;
     ``proxy_drift`` the ones it left open with an open task, and
@@ -1839,20 +1914,21 @@ def render_closed(
     proxy_drift = proxy_drift or []
     proxy_errors = proxy_errors or []
     reopened = reopened or []
-    private_under_public = private_under_public or []
     misplaced = misplaced or []
-    scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
-    banner = f"_Closed drift on {scope} (merged PRs from the last {window_days} days)._"
+    proxy_link_drift = proxy_link_drift or []
+    misplaced_adhoc = misplaced_adhoc or []
+    banner = f"_Closed drift on the **{org}** org (merged PRs from the last {window_days} days)._"
     header = ["# Epic/task drift audit — closed", "", banner, ""]
     if not any(
         [
             closed,
             reopened,
-            private_under_public,
             misplaced,
             proxies_closed,
             proxy_drift,
             proxy_errors,
+            proxy_link_drift,
+            misplaced_adhoc,
         ]
     ):
         return "\n".join([*header, "_No drift — nothing to close._", ""])
@@ -1873,9 +1949,8 @@ def render_closed(
             *[f"- {slug}" for slug in proxies_closed],
             "",
         ]
-    if private_under_public or misplaced or proxy_drift or proxy_errors:
+    if misplaced or proxy_drift or proxy_errors or proxy_link_drift or misplaced_adhoc:
         lines += ["## Needs a human (report only)", ""]
-        lines += _render_private_under_public(private_under_public)
         lines += _render_misplaced_archives(misplaced)
         if proxy_drift:
             lines.append("**Proxies left open** — the primary closed with a task still open:")
@@ -1883,5 +1958,14 @@ def render_closed(
         if proxy_errors:
             lines.append("**Proxy link errors** — the run fails; fix each link by hand:")
             lines += [f"- {error}" for error in proxy_errors]
+        if proxy_link_drift:
+            lines.append("**Proxy link drift** — fix each link by hand:")
+            lines += [f"- {problem}" for problem in proxy_link_drift]
+        if misplaced_adhoc:
+            lines.append(
+                "**Ad-hoc tasks that look misplaced** — move each one, or record"
+                f" `{STANDALONE_CONFIRMED}` on it:"
+            )
+            lines += [f"- {m.task.slug} — {m.reason}" for m in misplaced_adhoc]
         lines.append("")
     return "\n".join(lines)

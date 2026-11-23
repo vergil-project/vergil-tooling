@@ -10,6 +10,13 @@ consumers (the finalize close+rollup, the roadmap generator) speak this module's
 Node-id resolution and issue state use REST (``gh api``); the parent/children
 traversal and the link mutation use GraphQL (``github.graphql``). The unit tests
 mock the ``github`` boundary; real GraphQL/REST correctness is exercised in use.
+
+**Trusted content** (epic vergil-project/.github#1467, spec §5.2). The body
+lines (``Parent:``, ``Blocked-by:``) count only from a body the trust layer
+(:mod:`vergil_tooling.lib.trust`) trusts. An untrusted body is reported on
+stderr, metadata only, and gives no parent and no reflink child; for
+:func:`blockers_of` it is a stop. The rollup acts on a close only when its
+actor is trusted (:func:`rollup`).
 """
 
 from __future__ import annotations
@@ -23,7 +30,7 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
-from vergil_tooling.lib import github, release, remote_config, retry
+from vergil_tooling.lib import github, release, remote_config, retry, trust
 from vergil_tooling.lib.config import CONFIG_FILE
 
 # The listing bound and its truncation refusal live in lib.github, which uses
@@ -97,6 +104,9 @@ _BLOCKED_BY_RE = re.compile(
     r"^\s*Blocked-by:\s*([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)#(\d+)\s*$",
     re.MULTILINE,
 )
+
+# The field the trust layer gives a body's Skipped record.
+_BODY_FIELD = "body"
 
 _REF_RE = re.compile(r"^(?:([A-Za-z0-9._-]+/[A-Za-z0-9._-]+))?#([0-9]+)$")
 
@@ -202,31 +212,6 @@ def issue_state(ref: IssueRef) -> str:
     return _issue_state(ref)
 
 
-def issue_author(ref: IssueRef) -> str:
-    """Return the login that opened an issue, as ``gh issue view`` reports it.
-
-    An issue opened by a GitHub App reads as ``app/<login>``; the caller strips
-    that prefix before comparing with the trusted authors. A failed read
-    raises, and an empty login raises ``ValueError``: it is never read as
-    some author.
-    """
-    login = github.read_output(
-        "issue",
-        "view",
-        str(ref.number),
-        "--repo",
-        f"{ref.owner}/{ref.repo}",
-        "--json",
-        "author",
-        "--jq",
-        '.author.login // ""',
-    )
-    if not login:
-        msg = f"{ref.slug} has no author login"
-        raise ValueError(msg)
-    return login
-
-
 def _issue_title(ref: IssueRef) -> str:
     """Return an issue's title (used to tell a live ad-hoc epic from an archive)."""
     return github.read_output("api", _issue_endpoint(ref), "--jq", ".title")
@@ -259,6 +244,25 @@ def _native_child_states(epic: IssueRef) -> list[ChildState]:
     ]
 
 
+def _repo_slug(ref: IssueRef) -> str:
+    return f"{ref.owner}/{ref.repo}"
+
+
+def _trusted_body(ref: IssueRef) -> str | None:
+    """*ref*'s body when the trust layer trusts it; otherwise ``None``, reported.
+
+    The untrusted body is reported on stderr, metadata only. Its comments are
+    not this reader's concern, so their skips are not reported here. A read
+    the layer cannot complete raises
+    :class:`~vergil_tooling.lib.trust.TrustReadError`.
+    """
+    content = trust.read_issue(_repo_slug(ref), ref.number)
+    trust.report_skipped(
+        [item for item in content.skipped if item.field == _BODY_FIELD], stream=sys.stderr
+    )
+    return content.body
+
+
 def _body_declares_parent(body: str, epic: IssueRef) -> bool:
     """True iff *body* carries a ``Parent:`` line naming exactly *epic*."""
     return any(
@@ -278,7 +282,9 @@ def _reflink_child_states(epic: IssueRef) -> list[ChildState]:
     guards keep the fallback sound: scope the search to the epic's org with
     ``--owner``, and verify each candidate's body actually carries a
     ``Parent: <epic slug>`` line (via :func:`_body_declares_parent`) before
-    accepting it.
+    accepting it. That line counts only from a trusted body: each candidate is
+    read again through the trust layer, and one whose body it does not trust
+    is reported and left out (:func:`_trusted_body`).
     """
     results: Any = github.read_json(
         "search",
@@ -300,9 +306,12 @@ def _reflink_child_states(epic: IssueRef) -> list[ChildState]:
         if not _body_declares_parent(str(item.get("body") or ""), epic):
             continue
         owner, name = name_with_owner.split("/", 1)
+        ref = IssueRef(owner=owner, repo=name, number=int(item["number"]))
+        if not _body_declares_parent(_trusted_body(ref) or "", epic):
+            continue
         states.append(
             ChildState(
-                ref=IssueRef(owner=owner, repo=name, number=int(item["number"])),
+                ref=ref,
                 state=str(item["state"]).upper(),
                 title=str(item.get("title") or ""),
                 closed_at=str(item.get("closedAt") or ""),
@@ -346,22 +355,62 @@ def blockers_of(task: IssueRef) -> list[IssueRef]:
     native issue dependencies are REST-only and out of the sanctioned tooling's
     reach. If native dependencies become reachable later, this is the one place
     that would prefer them over the reflink.
+
+    The lines count only from a trusted body: an untrusted one is a stop
+    (:class:`~vergil_tooling.lib.trust.UntrustedContentError`, metadata only),
+    never "no blockers".
     """
-    body = github.read_output("api", _issue_endpoint(task), "--jq", ".body") or ""
+    content = trust.read_issue(_repo_slug(task), task.number, require_body=True)
+    body = content.body or ""
     return [
         IssueRef(owner=match.group(1), repo=match.group(2), number=int(match.group(3)))
         for match in _BLOCKED_BY_RE.finditer(body)
     ]
 
 
-def all_blockers_closed(task: IssueRef) -> bool:
-    """True iff every blocker of *task* is CLOSED.
+def all_blockers_closed(blockers: list[IssueRef]) -> bool:
+    """True iff every one of *blockers*, a task's blockers already read, is CLOSED.
 
-    No blockers means nothing holds *task*, so it is runnable — the empty case is
-    vacuously True. Used by the validation-aware rollup to classify an open
-    validation task as runnable (blockers closed) vs blocked.
+    No blockers means nothing holds the task, so it is runnable — the empty
+    case is vacuously True. It takes the list rather than the task, so a
+    batch run reads the blockers with :func:`blockers_or_stop` and stops an
+    untrusted child alone; the audit uses it to classify an open child as
+    runnable (blockers closed) vs blocked.
     """
-    return all(_issue_state(dep) == "CLOSED" for dep in blockers_of(task))
+    return all(_issue_state(dep) == "CLOSED" for dep in blockers)
+
+
+#: The field a blocker read's stop names: the ``Blocked-by:`` lines are in the body.
+BLOCKERS_STOP_FIELD = "body"
+
+
+def blockers_or_stop(task: IssueRef, stops: trust.BatchStops) -> list[IssueRef] | None:
+    """*task*'s blockers, as :func:`blockers_of` reads them, or ``None`` on a stop.
+
+    For a batch run, which stops the item, not the run (spec §5.3 of epic
+    vergil-project/.github#1467): an untrusted body
+    (:class:`~vergil_tooling.lib.trust.UntrustedContentError`) is added to
+    *stops* with its own metadata and cause, and a body the trust layer cannot
+    read in full (:class:`~vergil_tooling.lib.trust.TrustReadError`) as a
+    read failure on the ``body`` field, with its message as the detail. The
+    caller leaves *task* out and carries on; anything else propagates.
+    """
+    try:
+        return blockers_of(task)
+    except trust.UntrustedContentError as exc:
+        stops.add(exc.item, exc.item.cause)
+    except trust.TrustReadError as exc:
+        item = trust.Skipped(
+            repo=_repo_slug(task),
+            number=task.number,
+            kind="issue",
+            login=None,
+            at="",
+            field=BLOCKERS_STOP_FIELD,
+            cause=trust.READ_FAILURE,
+        )
+        stops.add(item, trust.READ_FAILURE, detail=str(exc))
+    return None
 
 
 def native_parent_of(task: IssueRef) -> IssueRef | None:
@@ -379,11 +428,15 @@ def native_parent_of(task: IssueRef) -> IssueRef | None:
 
 
 def parent_of(task: IssueRef) -> IssueRef | None:
-    """The epic *task* belongs to: native parent preferred, reflink fallback."""
+    """The epic *task* belongs to: native parent preferred, reflink fallback.
+
+    The fallback reads the ``Parent:`` line of a trusted body only: an
+    untrusted body is reported and gives no parent (:func:`_trusted_body`).
+    """
     native = native_parent_of(task)
     if native is not None:
         return native
-    body = github.read_output("api", _issue_endpoint(task), "--jq", ".body")
+    body = _trusted_body(task)
     match = _PARENT_RE.search(body or "")
     if match:
         return IssueRef(owner=match.group(1), repo=match.group(2), number=int(match.group(3)))
@@ -458,12 +511,12 @@ def qualify_epic_ref(ref: str, *, repo: str) -> IssueRef:
 
     *repo* (``"owner/name"``) is the repo of the **task** the epic is for — never
     simply the cwd repo. Epics live in their epic home
-    (:func:`resolve_epic_home`), so a bare ``#N`` names ``<org>/.github#N`` for a
-    public task and ``<repo>#N`` for a self-homed private one (#3411). A fully
-    qualified ``owner/repo#N`` is returned as written, with no network call.
+    (:func:`resolve_epic_home`), so a bare ``#N`` names ``<org>/.github#N``
+    (#3411). A fully qualified ``owner/repo#N`` is returned as written, with no
+    network call.
 
-    A bare ref probes repo visibility, so call it under
-    ``github.target_org(<task owner>)``. Fail-loud: a visibility error propagates.
+    A bare ref checks that ``<org>/.github`` exists, so call it under
+    ``github.target_org(<task owner>)``. Fail-loud: a failed check propagates.
     """
     parsed = parse_issue_ref(ref, default_repo=repo)
     if not ref.strip().startswith("#"):
@@ -480,9 +533,10 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
     ``"intake"``, ``"planning"`` and ``"deferred"`` likewise ensure *repo*'s
     intake, planning or deferred queue epic in its queue home
     (:func:`ensure_intake_epic`, :func:`ensure_planning_epic`,
-    :func:`ensure_deferred_epic`), and ``"hoshin"`` the hoshin epic in *repo*'s
-    org ``.github`` (:func:`ensure_hoshin_epic`); ``vrg-intake-route`` refuses
-    the hoshin sentinel itself. The ``vrg-epic-move`` and ``vrg-issue-create``
+    :func:`ensure_deferred_epic`), ``"hoshin"`` the hoshin epic in *repo*'s
+    org ``.github`` (:func:`ensure_hoshin_epic`), and ``"operations"`` the
+    operations epic there (:func:`ensure_operations_epic`); ``vrg-intake-route``
+    refuses the hoshin sentinel itself. The ``vrg-epic-move`` and ``vrg-issue-create``
     CLIs refuse the deferred epic themselves (:data:`DEFERRED_ROUTE_ONLY`); the
     sentinel resolves here so internal callers can reach it. Any other ref is parsed with
     :func:`qualify_epic_ref` (a bare ``#N`` reads against *repo*'s epic home)
@@ -496,6 +550,7 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
         PLANNING.sentinel: ensure_planning_epic,
         DEFERRED.sentinel: ensure_deferred_epic,
         HOSHIN.sentinel: ensure_hoshin_epic,
+        OPERATIONS.sentinel: ensure_operations_epic,
     }.get(ref)
     if ensure is not None:
         return ensure(repo)
@@ -506,7 +561,7 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
 
 
 class EpicHomeError(Exception):
-    """An epic home could not be resolved because a visibility probe failed.
+    """An epic home could not be resolved: ``<org>/.github`` is missing or its check failed.
 
     Carries a one-line, user-facing message; :func:`cli.cli_main` prints it as
     ``<prog>: <message>`` instead of a traceback.
@@ -516,52 +571,37 @@ class EpicHomeError(Exception):
 def resolve_epic_home(org: str, target_repo: str) -> str:
     """Map an explicit *target_repo* (bare name) to its epic home ``"owner/repo"``.
 
-    A public target homes centrally in ``<org>/.github`` (today's behavior). A
-    private target with a public ``.github`` homes its epics in itself
-    (self-contained). A private ``.github`` means the whole org is private, so
-    everything routes to ``.github``. A private target whose owner has no
-    ``.github`` at all (a personal account, typically) self-homes too: there is
-    no central home to use (#3603). A **public** target whose owner has no
+    Every repo's epics and queues home in ``<org>/.github``. An owner with no
     ``.github`` is refused up front with an :class:`EpicHomeError` naming the
     repo to create, rather than failing later when GitHub cannot find it
-    (#3643). Fail-loud: any other probe failure raises :class:`EpicHomeError`
-    (a missing token keeps its own error for :func:`cli.cli_main`).
+    (#3643). Fail-loud: any other failure of the existence check raises
+    :class:`EpicHomeError` (a missing token keeps its own error for
+    :func:`cli.cli_main`).
     """
     if target_repo == ".github":
         return f"{org}/.github"
     try:
-        target_public = github.is_public(f"{org}/{target_repo}")
-        try:
-            dotgithub_public: bool | None = github.is_public(f"{org}/.github")
-        except github.GitHubAPIError as exc:
-            if not github.is_repo_not_found(exc):
-                raise
-            dotgithub_public = None  # no <org>/.github: nowhere central to home
+        exists = github.repo_exists(org, ".github")
     except github.MissingGitHubTokenError:
         raise
     except github.GitHubAPIError as exc:
         msg = f"cannot resolve the epic home of {org}/{target_repo}: {exc}"
         raise EpicHomeError(msg) from exc
-    if target_public:
-        if dotgithub_public is None:
-            msg = (
-                f"{org}/{target_repo} is public, so its epics and queues live in "
-                f"{org}/.github, which does not exist; create the {org}/.github "
-                "repository and try again"
-            )
-            raise EpicHomeError(msg)
-        return f"{org}/.github"
-    if dotgithub_public is False:
-        return f"{org}/.github"  # a private .github: the whole org is private
-    return f"{org}/{target_repo}"  # public .github, or none: self-home
+    if not exists:
+        msg = (
+            f"the epics and queues of {org}/{target_repo} live in {org}/.github, "
+            f"which does not exist; create the {org}/.github repository and try again"
+        )
+        raise EpicHomeError(msg)
+    return f"{org}/.github"
 
 
 def require_org_home(org: str) -> str:
     """Return ``<org>/.github``, the org-wide queue and epic home, checking it exists.
 
     The org-wide paths of ``vrg-queue`` and ``vrg-epic-audit`` assume it does; an
-    owner with none (a personal account, typically) has no org-wide home at all,
-    only self-homed repos reached with ``--repo`` (#3613). Fail-loud: a missing
+    owner with none (a personal account, typically) has no queue or epic home at
+    all (#3613). Fail-loud: a missing
     ``.github`` and any other probe failure both raise :class:`EpicHomeError` (a
     missing token keeps its own error for :func:`cli.cli_main`).
     """
@@ -575,9 +615,7 @@ def require_org_home(org: str) -> str:
     if not exists:
         msg = (
             f"{org} has no .github repository, so there is no org-wide queue or "
-            f"epic home; create the {org}/.github repository to give it one, or "
-            f"pass --repo {org}/<repo> to reach a private, self-homed repo's own "
-            "queues and epics"
+            f"epic home; create the {org}/.github repository to give it one"
         )
         raise EpicHomeError(msg)
     return f"{org}/.github"
@@ -585,7 +623,7 @@ def require_org_home(org: str) -> str:
 
 @dataclass(frozen=True)
 class StandingKind:
-    """One kind of perpetual standing epic: ad-hoc, intake, planning, deferred or hoshin.
+    """One kind of perpetual standing epic: ad-hoc, the queues, hoshin or operations.
 
     ``key`` is the discriminating label that, alongside ``epic``, marks a live
     standing epic of this kind (and, alongside ``archive``, its per-quarter
@@ -676,7 +714,32 @@ HOSHIN = StandingKind(
     ),
     archive_body="Hoshin logbook tasks for {name} closed in {quarter}. Managed automatically.\n",
 )
-STANDING_KINDS: tuple[StandingKind, ...] = (ADHOC, INTAKE, PLANNING, DEFERRED, HOSHIN)
+# The operations epic: the ops issues of an org's unattended jobs, one epic per
+# org, always in <org>/.github (ensure_operations_epic), whatever repo the job
+# ran in (epic vergil-project/.github#1494). It is not a queue kind: an ops
+# issue is closed by hand once the problem is dealt with, never routed out.
+OPERATIONS = StandingKind(
+    key="operations",
+    sentinel="operations",
+    title_prefix="Epic (operations): ",
+    labels=("epic", "operations"),
+    archive_prefix="Archive (operations): ",
+    archive_labels=("archive", "operations"),
+    body=(
+        "Perpetual operations epic for {name}: one ops issue per failing "
+        "unattended job, filed by vrg-ops-report and closed by hand once the "
+        "problem is dealt with. Created and reused idempotently.\n"
+    ),
+    archive_body="Ops issues for {name} closed in {quarter}. Managed automatically.\n",
+)
+STANDING_KINDS: tuple[StandingKind, ...] = (
+    ADHOC,
+    INTAKE,
+    PLANNING,
+    DEFERRED,
+    HOSHIN,
+    OPERATIONS,
+)
 # The queue kinds: one intake, one planning and one deferred epic per queue home
 # (queue_home). Their items are not PR-workable (queue_item_kind).
 QUEUE_KINDS: tuple[StandingKind, ...] = (INTAKE, PLANNING, DEFERRED)
@@ -687,7 +750,7 @@ DRAINED_STANDING_KINDS: tuple[StandingKind, ...] = tuple(
     kind for kind in STANDING_KINDS if kind is not ADHOC
 )
 # The --epic sentinels resolve_epic_ref accepts: "adhoc", "intake", "planning",
-# "deferred", "hoshin".
+# "deferred", "hoshin", "operations".
 # Each resolves within the target repo's own org (its epic or queue home), so a
 # CLI's pre-network cross-org guard exempts exactly these (#3514).
 EPIC_SENTINELS: tuple[str, ...] = tuple(kind.sentinel for kind in STANDING_KINDS)
@@ -814,9 +877,7 @@ def _find_epic_by_title(
 def ensure_adhoc_epic(target_repo: str) -> IssueRef:
     """Return *target_repo*'s ad-hoc epic in its resolved epic home, creating it if absent.
 
-    The home is derived from *target_repo*'s visibility by
-    :func:`resolve_epic_home`: a public repo homes its ad-hoc epic centrally in
-    ``<org>/.github``; a private repo homes it in itself. One per repo, each
+    The home is ``<org>/.github`` (:func:`resolve_epic_home`). One per repo, each
     disambiguated by the title ``Epic (ad hoc): <bare repo name>`` and labelled
     ``epic`` + ``ad-hoc``. Idempotent: an existing epic with that title is
     reused; none means create it; two sharing the title is ambiguous and an
@@ -985,17 +1046,14 @@ def queue_home(target_repo: str) -> tuple[str, str]:
 
     The home of its intake, planning and deferred queue epics.
 
-    Returns ``(home, name)``. Queues follow the epic-home rule
-    (:func:`resolve_epic_home`): a repo homed in ``<org>/.github`` (every public
-    repo, and ``.github`` itself) shares the org's queues, named for the org; a
-    self-homed private repo keeps its own queues, named for its bare repo name.
+    Returns ``(home, name)``: ``<org>/.github`` (:func:`resolve_epic_home`, which
+    checks it exists) and the org-level queue, named for the org. Every repo in
+    the org shares the org's queues.
     """
     if "/" not in target_repo:
         raise ValueError(f"cannot resolve repo for queue home (repo={target_repo!r})")
     owner, bare = target_repo.split("/", 1)
-    home = resolve_epic_home(owner, bare)
-    name = owner if home == f"{owner}/.github" else bare
-    return home, name
+    return resolve_epic_home(owner, bare), owner
 
 
 def ensure_intake_epic(target_repo: str) -> IssueRef:
@@ -1026,18 +1084,26 @@ def ensure_deferred_epic(target_repo: str) -> IssueRef:
     return ensure_standing_epic(DEFERRED, home, name)
 
 
+def _org_home(target_repo: str, what: str) -> tuple[str, str]:
+    """``(<owner>/.github, <owner>)`` for *target_repo*: the home of an org-only epic.
+
+    Checks that ``.github`` exists (:func:`require_org_home`), so an owner with
+    none is an :class:`EpicHomeError`, never a create in a missing repo. *what*
+    names the epic in the error for a repo with no owner.
+    """
+    if "/" not in target_repo:
+        raise ValueError(f"cannot resolve repo for {what} epic (repo={target_repo!r})")
+    owner = target_repo.split("/", 1)[0]
+    return require_org_home(owner), owner
+
+
 def hoshin_home(target_repo: str) -> tuple[str, str]:
     """The home and name of *target_repo*'s hoshin epic: ``(<owner>/.github, <owner>)``.
 
-    Always the org's ``.github``, whatever *target_repo*'s visibility: unlike
-    :func:`queue_home`, a private repo never self-homes a hoshin epic. Checks
-    that ``.github`` exists (:func:`require_org_home`), so an owner with none is
-    an :class:`EpicHomeError`, never a create in a missing repo.
+    Always the org's ``.github``, like every queue (:func:`queue_home`); see
+    :func:`_org_home`.
     """
-    if "/" not in target_repo:
-        raise ValueError(f"cannot resolve repo for hoshin epic (repo={target_repo!r})")
-    owner = target_repo.split("/", 1)[0]
-    return require_org_home(owner), owner
+    return _org_home(target_repo, "hoshin")
 
 
 def ensure_hoshin_epic(target_repo: str) -> IssueRef:
@@ -1049,6 +1115,26 @@ def ensure_hoshin_epic(target_repo: str) -> IssueRef:
     """
     home, name = hoshin_home(target_repo)
     return ensure_standing_epic(HOSHIN, home, name)
+
+
+def operations_home(target_repo: str) -> tuple[str, str]:
+    """The home and name of *target_repo*'s operations epic: ``(<owner>/.github, <owner>)``.
+
+    Homed like the hoshin epic (:func:`hoshin_home`): one per org, whatever
+    repo the job ran in; see :func:`_org_home`.
+    """
+    return _org_home(target_repo, "operations")
+
+
+def ensure_operations_epic(target_repo: str) -> IssueRef:
+    """Return the operations epic of *target_repo*'s org, creating it if absent.
+
+    ``Epic (operations): <org>`` in ``<org>/.github``
+    (:func:`operations_home`), labelled ``epic`` + ``operations``, created and
+    reused idempotently like :func:`ensure_hoshin_epic`.
+    """
+    home, name = operations_home(target_repo)
+    return ensure_standing_epic(OPERATIONS, home, name)
 
 
 def resolve_orphan_epic(repo: str) -> IssueRef:
@@ -1084,9 +1170,10 @@ def is_proxy(labels: Collection[str]) -> bool:
     return "epic" in labels and PROXY_LABEL in labels
 
 
-# An epic's category (vergil-project/.github#1450): management (a queue or the
-# hoshin epic), ad-hoc, proxy, or development (every other epic). Each has one
-# category label, for display in the GitHub UI only: no code reads
+# An epic's category (vergil-project/.github#1450): management (a queue, the
+# hoshin epic or the operations epic), ad-hoc, proxy, or development (every
+# other epic). Each has one category label, for display in the GitHub UI only:
+# no code reads
 # epic-development or epic-management to decide behaviour or to find an epic.
 EpicCategory = Literal["management", "ad-hoc", "proxy", "development"]
 CATEGORY_LABELS: Mapping[EpicCategory, str] = MappingProxyType(
@@ -1186,7 +1273,8 @@ def queue_or_archive_kind(epic: IssueRef) -> str | None:
 def container_kind(epic: IssueRef) -> str | None:
     """The container kind of a live standing epic, else None.
 
-    ``"ad-hoc"``, ``"intake"``, ``"planning"``, ``"deferred"`` or ``"hoshin"``
+    ``"ad-hoc"``, ``"intake"``, ``"planning"``, ``"deferred"``, ``"hoshin"`` or
+    ``"operations"``
     when *epic* is the live standing epic of that kind; None for a development
     (finite) epic, a proxy epic, an archive, or a non-epic. One label read.
     """
@@ -1247,16 +1335,17 @@ def queue_refusal_message(ref: str, kind: str) -> str:
     return f"--issue ({ref}) is in the {kind} queue; {tail}"
 
 
-def is_legitimate_top_level(labels: set[str], title: str, body: str) -> bool:
-    """True iff an issue may stand without an epic parent.
+def is_legitimate_top_level(ref: IssueRef, labels: set[str], title: str, body: str) -> bool:
+    """True iff the issue *ref* may stand without an epic parent.
 
     The legitimate top-level kinds are epics (``epic``, including the standing
     epics), per-quarter archives (:func:`is_archive`), and release tracking issues
-    (:func:`release.is_release_tracking_issue`). Everything else needs a parent.
+    (:func:`release.is_release_tracking_issue`, which counts a title or marker
+    only from a trusted body). Everything else needs a parent.
     """
     if "epic" in labels or is_archive(labels, title):
         return True
-    return release.is_release_tracking_issue(title, body)
+    return release.is_release_tracking_issue(_repo_slug(ref), ref.number, title=title, body=body)
 
 
 def is_stamped_archive_title(title: str) -> bool:
@@ -1298,7 +1387,7 @@ def find_standing_epic(kind: StandingKind, home: str, name: str) -> IssueRef | N
 
 
 def _adhoc_home(target_repo: str) -> tuple[str, str]:
-    """``(home, bare)`` for *target_repo*'s ad-hoc epic and archives (visibility-resolved)."""
+    """``(home, bare)`` for *target_repo*'s ad-hoc epic and archives, homed in ``<org>/.github``."""
     if "/" not in target_repo:
         raise ValueError(f"cannot resolve repo for ad-hoc epic (repo={target_repo!r})")
     owner, bare = target_repo.split("/", 1)
@@ -1638,9 +1727,8 @@ def drain_adhoc_repo(target_repo: str, *, apply: bool, now: datetime) -> DrainPl
 def drain_adhoc_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
     """Drain every repo in *org*, isolating per-repo failures (spec §7).
 
-    Each repo resolves its own epic home via :func:`drain_adhoc_repo` →
-    :func:`plan_adhoc_drain` → :func:`resolve_epic_home`, so public
-    (``.github``-homed) and private (self-homed) ad-hoc epics are both covered. A
+    Each repo's ad-hoc epic is found in ``<org>/.github`` via
+    :func:`drain_adhoc_repo` → :func:`plan_adhoc_drain` → :func:`resolve_epic_home`. A
     corrupted repo (e.g. two ad-hoc epics sharing a title) is reported and
     skipped — never aborting the whole sweep. Returns one plan per repo that has
     a live ad-hoc epic.
@@ -1657,46 +1745,29 @@ def drain_adhoc_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
     return plans
 
 
-def _queue_homes(org: str) -> dict[str, str]:
-    """Every queue home in *org* mapped to its queue name.
-
-    ``<org>/.github`` (named for the org) always, plus each private repo that
-    self-homes its queues (named for its bare repo name) — the same rule
-    :func:`queue_home` applies to a single repo. Insertion-ordered, deduped.
-    """
-    homes: dict[str, str] = {f"{org}/.github": org}
-    for bare in github.list_org_repos(org):
-        home, name = queue_home(f"{org}/{bare}")
-        homes.setdefault(home, name)
-    return homes
-
-
 def drain_standing_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
     """Drain every standing epic but ad-hoc (:data:`DRAINED_STANDING_KINDS`) in *org*.
 
-    Covers ``<org>/.github``'s queues and every private repo's self-homed queues
-    (:func:`_queue_homes`), and the org's hoshin epic, which lives only in
-    ``<org>/.github`` (:func:`hoshin_home`). Each (kind, home) is planned and,
-    when *apply*, executed via :func:`apply_standing_drain`. A corrupted home
-    (e.g. two intake epics sharing a title) is reported on stderr and skipped —
-    never aborting the sweep. Returns one plan per live standing epic. Ad-hoc
-    epics are drained by :func:`drain_adhoc_org`, not here.
+    Covers the queues and the hoshin and operations epics of ``<org>/.github``,
+    their only home (:func:`queue_home`, :func:`hoshin_home`,
+    :func:`operations_home`). Each kind is planned and, when
+    *apply*, executed via :func:`apply_standing_drain`. A corrupted kind (e.g.
+    two intake epics sharing a title) is reported on stderr and skipped — never
+    aborting the sweep. Returns one plan per live standing epic. Ad-hoc epics
+    are drained by :func:`drain_adhoc_org`, not here.
     """
-    org_home = f"{org}/.github"
+    home = f"{org}/.github"
     plans: list[DrainPlan] = []
-    for home, name in _queue_homes(org).items():
-        for kind in DRAINED_STANDING_KINDS:
-            if kind is HOSHIN and home != org_home:
-                continue  # a hoshin epic is never self-homed
-            try:
-                plan = plan_standing_drain(kind, home, name, now=now)
-                if plan is not None and apply:
-                    apply_standing_drain(kind, home, name, plan)
-            except (ValueError, RuntimeError) as exc:
-                print(f"skipped {kind.key} drain in {home}: {exc}", file=sys.stderr)
-                continue
-            if plan is not None:
-                plans.append(plan)
+    for kind in DRAINED_STANDING_KINDS:
+        try:
+            plan = plan_standing_drain(kind, home, org, now=now)
+            if plan is not None and apply:
+                apply_standing_drain(kind, home, org, plan)
+        except (ValueError, RuntimeError) as exc:
+            print(f"skipped {kind.key} drain in {home}: {exc}", file=sys.stderr)
+            continue
+        if plan is not None:
+            plans.append(plan)
     return plans
 
 
@@ -1709,12 +1780,11 @@ def drain_standing_child(kind: StandingKind, parent: IssueRef, task: IssueRef) -
     canonical epic of *kind* or *task* has no ``closedAt``:
 
     - **ad-hoc**: the name is the bare repo in the title (``Epic (ad hoc):
-      <bare>``), which must be a real repo; its home is resolved by visibility.
+      <bare>``), which must be a real repo; its home is ``<org>/.github``.
       A stamped archive title or a non-repo special epic is left untouched.
-    - **intake / planning / deferred / hoshin**: the epic must be titled for its
-      home — the org in ``<org>/.github``, the bare repo name in a self-homed
-      private repo (never a hoshin epic, which lives only in ``.github``). Any
-      other title is reported on stderr and skipped (never guessed at).
+    - **intake / planning / deferred / hoshin / operations**: the epic must be titled for its
+      org, whose ``.github`` is its only home. Any other title is reported on
+      stderr and skipped (never guessed at).
     """
     title = _issue_title(parent)
     if kind is ADHOC:
@@ -1728,12 +1798,12 @@ def drain_standing_child(kind: StandingKind, parent: IssueRef, task: IssueRef) -
         # <bare> must be a real repo. A repo name has no space or "/", so reject
         # those fast (also skips non-repo special epics whose bare is a prose
         # description); then confirm via a direct existence probe (repo_exists,
-        # not list membership, so a self-homed private repo still passes).
+        # not list membership).
         name = title.removeprefix(ADHOC.title_prefix)
         if " " in name or "/" in name or not github.repo_exists(parent.owner, name):
             return
     else:
-        name = parent.owner if parent.repo == ".github" else parent.repo
+        name = parent.owner
         if title != f"{kind.title_prefix}{name}":
             print(
                 f"skipped {kind.key} drain of {task.slug}: parent {parent.slug} is titled "
@@ -1744,7 +1814,7 @@ def drain_standing_child(kind: StandingKind, parent: IssueRef, task: IssueRef) -
     closed_at = _issue_closed_at(task)
     if not closed_at:
         return
-    # An ad-hoc archive homes where the repo's epics home (by visibility); a queue
+    # An ad-hoc archive homes where the repo's epics home (<org>/.github); a queue
     # archive is the sibling of its queue epic, in the queue epic's own repo.
     home = (
         resolve_epic_home(parent.owner, name) if kind is ADHOC else f"{parent.owner}/{parent.repo}"
@@ -1769,50 +1839,41 @@ class ArchiveConversion:
 
 
 def plan_normalize_adhoc(org: str) -> list[ArchiveConversion]:
-    """Every legacy-form archive across *org*, open or closed, to convert.
+    """Every legacy-form archive in *org*, open or closed, to convert.
 
-    Pure/read-only. Resolves each repo's own epic home (public → ``<org>/.github``,
-    private → itself) the way :func:`drain_adhoc_org` does, deduping homes so a
-    shared ``.github`` is scanned once. A legacy archive is an issue whose title
-    matches :data:`_LEGACY_ADHOC_ARCHIVE_RE`; the unstamped live epic never matches.
+    Pure/read-only. Scans <org>/.github, the home of every repo's ad-hoc epic
+    and archives. A legacy archive is an issue whose title matches
+    :data:`_LEGACY_ADHOC_ARCHIVE_RE`; the unstamped live epic never matches.
     """
-    homes: dict[str, tuple[str, str]] = {}
-    for bare in github.list_org_repos(org):
-        home = resolve_epic_home(org, bare)
-        home_owner, home_repo = home.split("/", 1)
-        homes[home] = (home_owner, home_repo)
-    homes.setdefault(f"{org}/.github", (org, ".github"))
+    home = f"{org}/.github"
+    raw: Any = github.read_json(
+        "issue",
+        "list",
+        "--repo",
+        home,
+        "--label",
+        "epic",
+        "--label",
+        "ad-hoc",
+        "--state",
+        "all",
+        "--limit",
+        str(LISTING_LIMIT),
+        "--json",
+        "number,title",
+    )
+    refuse_truncated(raw, LISTING_LIMIT, f"the epic + ad-hoc issues of {home}")
     conversions: list[ArchiveConversion] = []
-    for home, (owner, home_repo) in homes.items():
-        raw: Any = github.read_json(
-            "issue",
-            "list",
-            "--repo",
-            home,
-            "--label",
-            "epic",
-            "--label",
-            "ad-hoc",
-            "--state",
-            "all",
-            "--limit",
-            str(LISTING_LIMIT),
-            "--json",
-            "number,title",
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        old_title = str(item.get("title", ""))
+        if not _LEGACY_ADHOC_ARCHIVE_RE.match(old_title):
+            continue
+        new_title = ADHOC.archive_prefix + old_title.removeprefix(ADHOC.title_prefix)
+        conversions.append(
+            ArchiveConversion(IssueRef(org, ".github", int(item["number"])), old_title, new_title)
         )
-        refuse_truncated(raw, LISTING_LIMIT, f"the epic + ad-hoc issues of {home}")
-        for item in raw if isinstance(raw, list) else []:
-            if not isinstance(item, dict):
-                continue
-            old_title = str(item.get("title", ""))
-            if not _LEGACY_ADHOC_ARCHIVE_RE.match(old_title):
-                continue
-            new_title = ADHOC.archive_prefix + old_title.removeprefix(ADHOC.title_prefix)
-            conversions.append(
-                ArchiveConversion(
-                    IssueRef(owner, home_repo, int(item["number"])), old_title, new_title
-                )
-            )
     return conversions
 
 
@@ -1946,19 +2007,30 @@ def rollup(task: IssueRef) -> None:
     steady-state event path, :func:`drain_standing_child`). A parent that is
     itself an archive is terminal and left untouched. A proxy epic
     (:func:`is_proxy`) is never rolled up: it stays open until its primary closes.
+
+    A close by an untrusted actor is not a close for the rollup (spec §5.2):
+    before the drain or the epic's close, *task*'s close, and before the
+    epic's close every other child's, must be trusted
+    (:func:`~vergil_tooling.lib.trust.require_trusted_close`). An untrusted
+    one is a stop before any write
+    (:class:`~vergil_tooling.lib.trust.UntrustedContentError`).
     """
     parent = parent_of(task)
     if parent is None or not is_epic(parent):
         return
     labels = _labels(parent)
     kind = standing_kind_of(labels)
-    if kind is not None:
-        drain_standing_child(kind, parent, task)
-        return
-    if is_proxy(labels):
+    if kind is None and is_proxy(labels):
         # A proxy lives as long as its primary: its own org's daily sweep closes
         # it once the primary is closed (vergil-project/.github#1417).
         return
+    trust.require_trusted_close(_repo_slug(task), task.number)
+    if kind is not None:
+        drain_standing_child(kind, parent, task)
+        return
     if all_children_closed(parent):
+        for child in child_states(parent):
+            if child.ref != task:
+                trust.require_trusted_close(_repo_slug(child.ref), child.ref.number)
         print(f"Rolling up epic {parent.slug} — all child tasks closed.")
         github.run("issue", "close", str(parent.number), "--repo", f"{parent.owner}/{parent.repo}")

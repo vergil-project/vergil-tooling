@@ -1,8 +1,9 @@
 """The turn checks over an issue's trusted comment stream.
 
-Every ``stream`` here is the output of
-:func:`vergil_tooling.lib.rulings.comments.trusted`: the comments by a trusted
-login, oldest first. The issue is single-threaded. After a request, the next
+Every ``stream`` here is the ``comments`` of
+:func:`vergil_tooling.lib.rulings.comments.read_stream`: the comments the trust
+layer trusts (by the human or an agent, and edited by no one else), oldest
+first. The issue is single-threaded. After a request, the next
 trusted comment must be the human's reply; after the reply, the next must be
 the agent's response. Anything else in either gap is a turn violation. An
 edited request or reply is fatal, and so is a request or reply that is gone.

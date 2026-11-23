@@ -57,6 +57,14 @@ which is unsafe when the calling shell's CWD is inside one.
 
 A PR list, `--all` and `--cleanup-only` are mutually exclusive.
 
+`--all` and the interactive form match a worktree's branch only to a
+same-repo PR whose author is trusted (`vrg-trusted-authors`). A fork PR on
+the same branch name, or a PR by an untrusted author, is never a candidate:
+it is reported on stderr with its metadata only (repo, number, login,
+time), never its title. Several open PRs on one branch are an error naming
+them (exit 1), never the first. The branch sweep's merge evidence is
+judged the same way.
+
 ## Usage
 
 ```bash
@@ -101,7 +109,10 @@ The watch reads each open PR once per poll and judges it in this order:
 
 1. **Develop PRs only.** A PR whose base is not `develop`, or whose head is
    a `release/*` branch, ends as *failed: not a develop PR* and is left
-   untouched. A release PR goes through `vrg-release`.
+   untouched. A release PR goes through `vrg-release`. The head branch is
+   read through the trust layer once, at the start: a PR that is not a
+   same-repo PR with a trusted author on its branch (a fork PR, for one)
+   ends the same way, and its branch is not named.
 2. **Merged.** The PR ends as *merged*. A PR that merged before the run
    started counts as merged at once, and the watch goes on for the rest.
 3. **Closed** without merging: *failed: closed*.
@@ -145,8 +156,14 @@ The watch runs the provenance check on every PR when it starts, and
 again each time a PR's head changes. `vrg-submit-pr` ran the same check
 before it turned auto-merge on. A violation always fails, and there is
 no override (issue #4695): it is either a real problem to investigate or
-a bug in the classifier to fix. What it does depends on whether the PR
-has merged:
+a bug in the classifier to fix. Each identity's role comes from the
+trusted-authors configuration, never from its name alone: the human may
+do anything, an agent may not author, edit, close, reopen or merge the
+PR or turn auto-merge on (the user identity may not approve it either),
+and an identity with no role is **untrusted**, with the same limits as
+the audit identity. An untrusted approval counts for nothing: it is
+reported on stderr, metadata only, and is no violation. What it does
+depends on whether the PR has merged:
 
 - **Open PR.** Finalize turns the PR's auto-merge off and reports it
   *failed: provenance*.
@@ -263,7 +280,10 @@ can take it.
    the CD report and for the report of a develop that did not validate.
 3. **Delete the merged PRs' branches.** Each merged PR's head branch and
    its `.worktrees/` worktree are deleted by name, since a squash merge
-   hides the branch from `git branch --merged`. The branch's PR-workflow
+   hides the branch from `git branch --merged`. A branch is named only
+   once the trust layer finds the PR itself merged, as a same-repo PR with
+   a trusted author, on that branch; otherwise its local branch and
+   worktree are kept, and the PR is named on the output. The branch's PR-workflow
    relay ref (`refs/vergil/pr-workflow/<branch>`, pushed by
    `report-ready`) is deleted with it, so a cloud-handoff ref never
    outlives its branch (issue #2369). A branch with no local copy is
@@ -440,7 +460,9 @@ lock, fast-forwards `develop` itself and cuts from the new head, even if
 another PR merged in between (see
 [The develop sync](../../guides/releasing.md#the-develop-sync)). Short of
 full success, the release is skipped and the run says why. A failed
-release never un-merges a PR: re-run `vrg-release` alone.
+release never un-merges a PR: finish it with `vrg-release --resume`
+once it has opened its tracking issue, or re-run `vrg-release` alone if
+it stopped before that.
 
 ## Batch PRs (one PR closing several issues)
 

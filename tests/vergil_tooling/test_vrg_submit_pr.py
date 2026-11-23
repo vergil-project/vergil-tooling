@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin.vrg_submit_pr import (
     NO_FINALIZE_REMOVED,
     NO_INSTALL_REMOVED,
@@ -49,7 +50,16 @@ from vergil_tooling.bin.vrg_submit_pr import (
 from vergil_tooling.bin.vrg_submit_pr import (
     _chain_finalize as _real_chain_finalize,
 )
-from vergil_tooling.lib import auto_merge, epics, github, pr_provenance, progress, retry, worktrees
+from vergil_tooling.lib import (
+    auto_merge,
+    epics,
+    github,
+    pr_provenance,
+    progress,
+    retry,
+    trust,
+    worktrees,
+)
 from vergil_tooling.lib.linkage import extract_tracking_refs
 from vergil_tooling.lib.planning_close import PlanningClose
 from vergil_tooling.lib.pr_body import build_pr_body
@@ -58,6 +68,7 @@ from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.worktrees import Worktree
 
 if TYPE_CHECKING:
@@ -1344,7 +1355,7 @@ class TestFinalizeByDefault:
     @pytest.mark.parametrize(
         ("argv", "message"),
         [
-            (["--finalize"], "--finalize was removed; finalizing is now the default"),
+            (["--finalize"], "--finalize was removed; vrg-submit-pr always finalizes"),
             (["--no-finalize"], NO_FINALIZE_REMOVED.removeprefix("vrg-submit-pr: ")),
             (["--release", "--no-finalize"], "--no-finalize was removed"),
             (["--install"], "--install was removed; install is part of every release"),
@@ -1576,14 +1587,16 @@ _EXISTS = _gh_error(
 )
 
 
-def _open_pr(**overrides: Any) -> github.OpenPR:
-    pr = github.OpenPR(
+def _open_pr(**overrides: Any) -> trust.PRRef:
+    pr = trust.PRRef(
+        number=21,
         url=_PR21,
         title="T",
-        head_ref="feature/1673-x",
-        base_ref="develop",
+        head="feature/1673-x",
         head_oid="h0",
-        cross_repo=False,
+        base="develop",
+        author_role=trust.Role.AGENTS,
+        state="OPEN",
     )
     return dataclasses.replace(pr, **overrides)
 
@@ -1595,7 +1608,7 @@ def _submit_with_create(
     with (
         patch(_MOD + "._push_branch"),
         patch(_MOD + "._create_pr", side_effect=create_effect) as create,
-        patch(_MOD + ".github.open_prs_for_head", side_effect=open_prs) as lookup,
+        patch("vergil_tooling.lib.pr_create.open_trusted_prs", side_effect=open_prs) as lookup,
         patch("vergil_tooling.lib.pr_create.time.sleep") as sleep,
         patch(_MOD + ".submission.record_submission") as record,
         patch(_MOD + ".pr_provenance.check_pr", return_value=pr_provenance.ProvenanceResult()),
@@ -1613,7 +1626,8 @@ def test_create_that_landed_is_adopted_not_retried(capsys: pytest.CaptureFixture
     )
     assert summary == SubmitSummary(opened=[_PR21], failed=[])
     create.assert_called_once()
-    lookup.assert_called_once_with("feature/1673-x", base="develop")
+    [spec] = lookup.call_args.args
+    assert (spec.head, spec.base) == ("feature/1673-x", "develop")
     sleep.assert_not_called()
     record.assert_called_once_with(Path("/repo/.worktrees/issue-1673-x"), pr_url=_PR21)
     enable.assert_called_once_with(_PR21, head="h0", method="SQUASH")
@@ -1637,13 +1651,10 @@ def test_already_exists_on_retry_is_adopted() -> None:
     [
         (_open_pr(head_oid="ffff"), "its head commit is 'ffff', not 'h0'"),
         (_open_pr(title="Other"), "its title is 'Other', not 'T'"),
-        (_open_pr(base_ref="main"), "its base is 'main', not 'develop'"),
-        (_open_pr(head_ref="Feature/1673-x"), "its head branch is 'Feature/1673-x'"),
-        (_open_pr(cross_repo=True), "its head is in another repository"),
     ],
 )
 def test_other_open_pr_is_refused_by_name(
-    other: github.OpenPR, reason: str, capsys: pytest.CaptureFixture[str]
+    other: trust.PRRef, reason: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """An open PR submit cannot show it opened fails loudly, naming it, and is not adopted."""
     summary, create, _lookup, record, enable, sleep = _submit_with_create([_EXISTS], [[other]])
@@ -1853,6 +1864,30 @@ def test_provenance_check_that_cannot_run_fails_pr() -> None:
     assert summary.opened == []
     assert summary.failed[0][0] == "https://x/pull/1"
     enable.assert_not_called()
+
+
+def test_provenance_without_trusted_authors_fails_pr_others_continue() -> None:
+    """A provenance check with no trusted-authors configuration fails that PR,
+    auto-merge left off and the reason named; the next PR is still attempted."""
+    a = _submission("feature/1-a", record_in=None)
+    b = _submission("feature/2-b", record_in=None)
+    with (
+        patch(_MOD + "._push_branch"),
+        patch(_MOD + "._create_pr", side_effect=["https://x/pull/1", "https://x/pull/2"]),
+        patch(
+            _MOD + ".pr_provenance.check_pr",
+            side_effect=[
+                TrustedAuthorsNotConfiguredError("no trusted authors are configured"),
+                pr_provenance.ProvenanceResult(),
+            ],
+        ),
+        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+    ):
+        enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
+        summary = _submit_all([a, b], _ARGS)
+    assert summary.opened == ["https://x/pull/2"]
+    assert summary.failed == [("https://x/pull/1", "no trusted authors are configured")]
+    enable.assert_called_once_with("https://x/pull/2", head="h0", method="SQUASH")
 
 
 def test_auto_merge_refusal_fails_pr_others_continue() -> None:
@@ -2477,6 +2512,139 @@ def test_task_linkage_keeps_ref_when_parent_not_epic() -> None:
 def test_task_linkage_noop_when_ref_unresolvable() -> None:
     with patch(f"{_MOD}.github.current_repo", return_value=""):
         assert _task_linkage("#42", "Ref") == "Ref"
+
+
+def _linkage_through_layer(layer: trust_stubs.FakeItems, monkeypatch: pytest.MonkeyPatch) -> str:
+    """:func:`_task_linkage` for org/repo#42, with no native parent, through the real layer."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+
+    def graphql(query: str, **variables: Any) -> object:
+        if query in (trust._ITEM_QUERY, trust._EVENTS_QUERY):
+            return layer(query, **variables)
+        assert query == epics._PARENT_QUERY, "only the parent lookup is answered here"
+        return {"node": {"parent": None}}
+
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", side_effect=graphql),
+        patch(f"{_MOD}.epics.is_epic", return_value=True) as is_epic,
+    ):
+        linkage = _task_linkage("#42", "Ref")
+    if linkage == "Ref":
+        is_epic.assert_not_called()
+    return linkage
+
+
+def test_submit_linkage_reads_trusted_parent_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    layer = trust_stubs.FakeItems(
+        {("org/repo", 42): trust_stubs.item(body="Parent: org/.github#75\n")}, strict=True
+    )
+    assert _linkage_through_layer(layer, monkeypatch) == "Closes"
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "kind", "login", "cause", "at"),
+    [
+        (trust_stubs.OUTSIDER, None, "issue", "drive-by", "untrusted", trust_stubs.CREATED),
+        (
+            trust_stubs.HUMAN,
+            trust_stubs.OUTSIDER,
+            "edit",
+            "drive-by",
+            "untrusted",
+            trust_stubs.EDITED,
+        ),
+        (trust_stubs.IMPOSTOR, None, "issue", "vergil-user", "wrong-type", trust_stubs.CREATED),
+    ],
+)
+def test_submit_linkage_ignores_untrusted_parent_line(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    author: dict[str, str],
+    editor: dict[str, str] | None,
+    kind: str,
+    login: str,
+    cause: str,
+    at: str,
+) -> None:
+    # A forged Parent: line in a body an outsider wrote or edited never upgrades to Closes.
+    layer = trust_stubs.FakeItems(
+        {
+            ("org/repo", 42): trust_stubs.item(
+                body=f"{trust_stubs.SPAM_TEXT}\nParent: org/.github#75\n",
+                author=author,
+                editor=editor,
+            )
+        },
+        strict=True,
+    )
+    assert _linkage_through_layer(layer, monkeypatch) == "Ref"
+    err = capsys.readouterr().err
+    assert (
+        err == f"skipped untrusted content: org/repo#42 {kind} {login} at {at} on body ({cause})\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        trust.TrustReadError("read_issue org/repo#42", "the GraphQL call failed: HTTP 502"),
+        TrustedAuthorsNotConfiguredError("trusted authors are not configured"),
+        trust.UntrustedContentError(
+            trust.Skipped("org/repo", 42, "issue", "drive-by", "t", "body", "untrusted"),
+            "the issue body is untrusted",
+        ),
+    ],
+)
+def test_trust_failure_before_any_pr_is_one_line(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    # A trust-layer failure in the per-issue checks is one line, never a traceback.
+    _write_workflow_state(tmp_path)
+    with (
+        patch(_MOD + ".git.repo_root", return_value=str(tmp_path)),
+        patch(_MOD + ".git.current_branch", return_value="feature/x"),
+        patch(_MOD + ".git.commit_sha", return_value="abc123"),
+        patch(_MOD + "._task_linkage", side_effect=error),
+        patch(_MOD + ".github.create_pr") as create,
+        pytest.raises(SystemExit) as exited,
+    ):
+        main([])
+    assert exited.value.code == 1
+    create.assert_not_called()
+    assert capsys.readouterr().err == f"vrg-submit-pr: {error}\n"
+
+
+def test_relay_untrusted_payload_opens_no_pr(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    stop = trust.UntrustedContentError(
+        trust.Skipped("org/repo", 0, "commit", "drive-by", "t", "the relay ref", "untrusted"),
+        "the commit's author is untrusted",
+    )
+    transport = MagicMock()
+    transport.read.side_effect = stop
+    with (
+        patch(_MOD + ".git.repo_root", return_value="/repo"),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+        patch(_MOD + ".GitHubTransport", return_value=transport),
+        patch(_MOD + ".github.create_pr") as create,
+        pytest.raises(SystemExit) as exited,
+    ):
+        main(["feature/a"])
+    assert exited.value.code == 1
+    create.assert_not_called()
+    err = capsys.readouterr().err
+    assert err == f"vrg-submit-pr: {stop}\n"
+    assert "org/repo commit drive-by at t on the relay ref (untrusted)" in err
 
 
 # -- _planning_close (a docs task's PR also closes its planning issue) --------

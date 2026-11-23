@@ -9,9 +9,16 @@ may not run ``gh api``, so this is the user agent's one way to read them
 (vergil-tooling#4105). The ``epic-retrospective`` sweep of the plugin
 consumes it.
 
+Only trusted comments are printed (GHSA-q6hx-8c85-9f56): the PR's reviews
+and inline comments are also read through the trust layer
+(:func:`vergil_tooling.lib.trust.read_reviews`), and a comment is kept only
+when it is one the layer trusts (its author and every editor hold a role),
+with the body the layer read. Every other comment is left out and reported on
+stderr, metadata only, never its text.
+
 The command is strictly read-only: it makes one paginated ``GET`` through
-:func:`vergil_tooling.lib.github.read_json_paginated` and nothing else. It
-widens no ``vrg-gh`` allowlist.
+:func:`vergil_tooling.lib.github.read_json_paginated` and the trust layer's
+GraphQL reads, and nothing else. It widens no ``vrg-gh`` allowlist.
 
 - Without ``--json`` it prints one block per comment, oldest first as the API
   returns them, or a single line saying the PR has none.
@@ -23,8 +30,9 @@ widens no ``vrg-gh`` allowlist.
   account, ``review_id`` is ``null`` when GitHub gives none, and
   ``in_reply_to_id`` is ``null`` for a comment that starts a thread.
 
-A GitHub API failure, or a response that is not the expected list of
-comments, prints ``ERROR:`` on stderr and exits 1; it never prints a partial
+A GitHub API failure, a response that is not the expected list of
+comments, or a trust-layer read that cannot complete (or a missing
+trusted-authors configuration) prints ``ERROR:`` on stderr and exits 1; it never prints a partial
 or empty list in its place. Bad arguments exit 2.
 """
 
@@ -35,12 +43,13 @@ import json
 import re
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import cast
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 # GitHub owner (user or org) names are alphanumeric with single inner hyphens;
 # repo names add ``.`` and ``_``. The repo may not be ``.`` or ``..``, so the
@@ -82,6 +91,12 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"ERROR: failed to read the review comments of {args.repo}#{args.pr}:"
             f" {error_text(exc)}",
+            file=sys.stderr,
+        )
+        return 1
+    except (trust.TrustReadError, TrustedAuthorsNotConfiguredError) as exc:
+        print(
+            f"ERROR: cannot judge the review comments of {args.repo}#{args.pr}: {exc}",
             file=sys.stderr,
         )
         return 1
@@ -142,9 +157,23 @@ def _pr_arg(value: str) -> int:
 
 
 def fetch_review_comments(repo: str, pr: int) -> list[ReviewComment]:
-    """Every inline review comment on *repo*'s PR *pr*, in API order."""
+    """Every trusted inline review comment on *repo*'s PR *pr*, in API order.
+
+    The REST listing gives each comment's place (path, line, review, thread
+    and URL); the trust layer decides which comments count and gives their
+    bodies (:func:`trust.read_reviews`). A comment it does not trust is left
+    out, and the untrusted ones are reported on stderr, metadata only.
+    """
     items = github.read_json_paginated(f"repos/{repo}/pulls/{pr}/comments")
-    return [parse_comment(item, index) for index, item in enumerate(items)]
+    listed = [parse_comment(item, index) for index, item in enumerate(items)]
+    content = trust.read_reviews(repo, pr)
+    trust.report_skipped(content.skipped, stream=sys.stderr)
+    bodies = {comment.id: comment.body for comment in content.review_comments}
+    return [
+        replace(comment, body=bodies[str(comment.id)])
+        for comment in listed
+        if str(comment.id) in bodies
+    ]
 
 
 def parse_comment(item: object, index: int) -> ReviewComment:

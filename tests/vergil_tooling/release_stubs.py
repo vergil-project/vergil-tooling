@@ -2,14 +2,62 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
+from vergil_tooling.lib import trust
 from vergil_tooling.lib.release.context import INDEX_STAGE
 from vergil_tooling.lib.release.state import FailedJob, initial_state
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from vergil_tooling.lib.release.context import ReleaseContext
+
+# The trust layer's branch lookup, which every release lookup by branch reads.
+BRANCH_LOOKUP = "vergil_tooling.lib.trust.prs_for_branch"
+FORK_LOGIN = "fork-owner"
+
+
+def branch_pr(
+    number: int, state: str, *, head: str = "h0", branch: str = "release/2.1.0"
+) -> trust.PRRef:
+    """A same-repo PR with a trusted author, as :func:`trust.prs_for_branch` returns it."""
+    return trust.PRRef(
+        number=number,
+        url=f"https://github.com/owner/repo/pull/{number}",
+        title="T",
+        head=branch,
+        head_oid=head,
+        base="develop",
+        author_role=trust.Role.AGENTS,
+        state=state,
+    )
+
+
+def fork_skip(number: int) -> trust.Skipped:
+    """The report :func:`trust.prs_for_branch` gives for a fork PR on the branch."""
+    return trust.Skipped(
+        "owner/repo",
+        number,
+        "pr",
+        FORK_LOGIN,
+        "2026-11-22T00:00:00Z",
+        "head",
+        trust.CROSS_REPOSITORY,
+    )
+
+
+@contextmanager
+def branch_lookup(
+    *prs: trust.PRRef, skipped: tuple[trust.Skipped, ...] = ()
+) -> Generator[MagicMock]:
+    """Patch the trust layer's branch lookup to return *prs*, reporting *skipped*."""
+    lookup = MagicMock(return_value=(list(prs), list(skipped)))
+    with patch(BRANCH_LOOKUP, lookup):
+        yield lookup
 
 
 def defer_publish(ctx: ReleaseContext, *names: str) -> None:

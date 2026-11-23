@@ -287,75 +287,6 @@ def test_create_pr_without_retry_missing_token() -> None:
         github.create_pr(base="develop", title="t", body_file="/b", retry=False)
 
 
-def _open_pr_row(**overrides: object) -> dict[str, object]:
-    row: dict[str, object] = {
-        "url": "https://github.com/o/r/pull/21",
-        "title": "T",
-        "headRefName": "feature/x",
-        "baseRefName": "develop",
-        "headRefOid": "abc",
-        "isCrossRepository": False,
-    }
-    return {**row, **overrides}
-
-
-def test_open_prs_for_head_reads_head_and_base() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[_open_pr_row()]) as mock:
-        prs = github.open_prs_for_head("feature/x", base="develop")
-    assert prs == [
-        github.OpenPR(
-            url="https://github.com/o/r/pull/21",
-            title="T",
-            head_ref="feature/x",
-            base_ref="develop",
-            head_oid="abc",
-            cross_repo=False,
-        )
-    ]
-    args = mock.call_args.args
-    assert args[args.index("--head") + 1] == "feature/x"
-    assert args[args.index("--base") + 1] == "develop"
-    assert args[args.index("--state") + 1] == "open"
-
-
-def test_open_prs_for_head_reads_the_cwd_repo_by_default() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[]) as mock:
-        github.open_prs_for_head("feature/x", base="develop")
-    assert "--repo" not in mock.call_args.args
-
-
-def test_open_prs_for_head_names_the_repo() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[_open_pr_row()]) as mock:
-        [pr] = github.open_prs_for_head("feature/x", base="develop", repo="o/r")
-    assert pr.url == "https://github.com/o/r/pull/21"
-    args = mock.call_args.args
-    assert args[args.index("--repo") + 1] == "o/r"
-    assert args[args.index("--json") + 1].endswith("isCrossRepository")
-
-
-def test_open_prs_for_head_empty() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
-        assert github.open_prs_for_head("feature/x", base="develop") == []
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"url": "u"},
-        [_open_pr_row(title="")],
-        [_open_pr_row(headRefOid=None)],
-        [_open_pr_row(isCrossRepository="no")],
-        ["not an object"],
-    ],
-)
-def test_open_prs_for_head_rejects_malformed(payload: object) -> None:
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value=payload),
-        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
-    ):
-        github.open_prs_for_head("feature/x", base="develop")
-
-
 def test_create_issue_returns_url_and_builds_command() -> None:
     with patch(
         "vergil_tooling.lib.github.read_output",
@@ -2970,7 +2901,7 @@ class TestAppAuthError:
         assert not issubclass(github.AppAuthError, subprocess.CalledProcessError)
 
     def test_repo_exists_does_not_swallow_it(self) -> None:
-        github.repo_visibility.cache_clear()
+        github._repo_probe.cache_clear()
         with (
             patch("vergil_tooling.lib.github.read_json", side_effect=_app_auth_error()),
             pytest.raises(github.AppAuthError),
@@ -3521,41 +3452,13 @@ class TestGetInstallationToken:
         assert token == "new_token"  # noqa: S105
 
 
-# -- pr_for_branch / is_draft / head_ref (issue #1423) ------------------------
+# -- is_draft / head_ref (issue #1423) ----------------------------------------
 
 
-def test_pr_for_branch_returns_first_open_pr() -> None:
-    payload = [
-        {
-            "number": 1423,
-            "url": "https://github.com/o/r/pull/1423",
-            "title": "T",
-            "headRefOid": "abc123",
-        }
-    ]
-    with patch("vergil_tooling.lib.github.read_json", return_value=payload) as rj:
-        result = github.pr_for_branch("feature/1423-pr-interface")
-    assert result == {
-        "number": "1423",
-        "url": "https://github.com/o/r/pull/1423",
-        "title": "T",
-        "headRefOid": "abc123",
-    }
-    rj.assert_called_once_with(
-        "pr",
-        "list",
-        "--head",
-        "feature/1423-pr-interface",
-        "--state",
-        "open",
-        "--json",
-        "number,url,title,headRefOid",
-    )
-
-
-def test_pr_for_branch_none_when_no_open_pr() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
-        assert github.pr_for_branch("feature/1423-pr-interface") is None
+def test_github_has_no_login_free_branch_lookup() -> None:
+    """A PR is found by its branch only through the trust layer (GHSA-r4j2-cwcp-xg56)."""
+    for name in ("pr_for_branch", "closed_pr_for_branch", "_first_pr_for_branch"):
+        assert not hasattr(github, name)
 
 
 def test_is_draft_true() -> None:
@@ -3586,31 +3489,6 @@ def test_merge_commit_sha_reads_merge_commit_oid() -> None:
     assert "mergeCommit" in args
     # The jq default keeps an unmerged PR from yielding "null".
     assert any("mergeCommit.oid" in a for a in args)
-
-
-_GOOD_PR = {"number": 1, "url": "https://github.com/o/r/pull/1", "title": "T", "headRefOid": "a"}
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        None,
-        {"number": 1},
-        ["nope"],
-        [{**_GOOD_PR, "number": None}],
-        [{**_GOOD_PR, "number": True}],
-        [{**_GOOD_PR, "url": ""}],
-        [{**_GOOD_PR, "title": None}],
-        [{**_GOOD_PR, "headRefOid": ""}],
-    ],
-)
-def test_pr_for_branch_rejects_a_malformed_response(payload: object) -> None:
-    # Never "no PR" or blank fields for a response that is not a PR list (#4058).
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value=payload),
-        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
-    ):
-        github.pr_for_branch("feature/1423-pr-interface")
 
 
 # -- pr_closing_references / close_issue (issue #4002) -------------------------
@@ -3718,108 +3596,65 @@ def test_close_issue_closes_as_completed_with_comment() -> None:
     )
 
 
-# -- closed_pr_for_branch (issue #1445) ----------------------------------------
+# -- repo_exists (issues #2709, #4907) ---------------------------------------
+def test_repo_exists_does_not_read_visibility() -> None:
+    # The probe asks GitHub for the repo's name only, never its visibility.
+    # A missing repo returns False; any other API error raises.
+    github._repo_probe.cache_clear()
+    with patch(
+        "vergil_tooling.lib.github.read_json", return_value={"nameWithOwner": "org/repo"}
+    ) as rj:
+        assert github.repo_exists("org", "repo") is True
+    rj.assert_called_once_with("repo", "view", "org/repo", "--json", "nameWithOwner")
+    assert not any("visibility" in str(arg).lower() for arg in rj.call_args.args)
 
-
-def test_closed_pr_for_branch_returns_first_closed_pr() -> None:
-    payload = [
-        {
-            "number": 1445,
-            "url": "https://github.com/o/r/pull/1445",
-            "title": "T",
-            "headRefOid": "deadbeef",
-        }
-    ]
-    with patch("vergil_tooling.lib.github.read_json", return_value=payload) as rj:
-        result = github.closed_pr_for_branch("feature/1445-finalize-cleanup-race")
-    assert result == {
-        "number": "1445",
-        "url": "https://github.com/o/r/pull/1445",
-        "title": "T",
-        "headRefOid": "deadbeef",
-    }
-    rj.assert_called_once_with(
-        "pr",
-        "list",
-        "--head",
-        "feature/1445-finalize-cleanup-race",
-        "--state",
-        "closed",
-        "--json",
-        "number,url,title,headRefOid",
-    )
-
-
-def test_closed_pr_for_branch_none_when_no_closed_pr() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
-        assert github.closed_pr_for_branch("feature/1445-finalize-cleanup-race") is None
-
-
-def test_closed_pr_for_branch_rejects_a_payload_not_dict() -> None:
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value=["nope"]),
-        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
-    ):
-        github.closed_pr_for_branch("feature/1445-finalize-cleanup-race")
-
-
-# -- repo_visibility / is_public (epic #130) ---------------------------------
-def test_is_public_true_for_public_repo() -> None:
-    github.repo_visibility.cache_clear()
-    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "PUBLIC"}):
-        assert github.is_public("org/repo") is True
-
-
-def test_is_public_false_for_private_and_internal() -> None:
-    github.repo_visibility.cache_clear()
-    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "PRIVATE"}):
-        assert github.is_public("org/priv") is False
-    github.repo_visibility.cache_clear()
-    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "INTERNAL"}):
-        assert github.is_public("org/intern") is False
-
-
-def test_repo_visibility_memoizes_one_probe_per_repo() -> None:
-    github.repo_visibility.cache_clear()
-    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "PUBLIC"}) as rj:
-        github.repo_visibility("org/repo")
-        github.repo_visibility("org/repo")
-    assert rj.call_count == 1
-
-
-def test_repo_visibility_fails_loud_on_empty() -> None:
-    github.repo_visibility.cache_clear()
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value={}),
-        pytest.raises(github.GitHubAPIError),
-    ):
-        github.repo_visibility("org/repo")
-
-
-# -- repo_exists (issue #2709) -----------------------------------------------
-def test_repo_exists_true_for_real_repo() -> None:
-    github.repo_visibility.cache_clear()
-    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "PRIVATE"}):
-        # A private repo the caller CAN see still exists — direct probe, not
-        # list membership.
-        assert github.repo_exists("org", "priv-repo") is True
-
-
-def test_repo_exists_false_for_missing_repo() -> None:
-    github.repo_visibility.cache_clear()
+    github._repo_probe.cache_clear()
     not_found = github.GitHubAPIError(
         1, ["gh", "repo", "view"], stderr="GraphQL: Could not resolve to a Repository"
     )
     with patch("vergil_tooling.lib.github.read_json", side_effect=not_found):
         assert github.repo_exists("org", "ghost-repo") is False
 
-
-def test_repo_exists_reraises_other_errors() -> None:
-    github.repo_visibility.cache_clear()
+    github._repo_probe.cache_clear()
     other = github.GitHubAPIError(1, ["gh", "repo", "view"], stderr="HTTP 401: Bad credentials")
     with (
         patch("vergil_tooling.lib.github.read_json", side_effect=other),
         pytest.raises(github.GitHubAPIError, match="Bad credentials"),
+    ):
+        github.repo_exists("org", "repo")
+
+
+def test_repo_exists_memoizes_one_probe_per_repo() -> None:
+    github._repo_probe.cache_clear()
+    with patch(
+        "vergil_tooling.lib.github.read_json", return_value={"nameWithOwner": "org/repo"}
+    ) as rj:
+        assert github.repo_exists("org", "repo") is True
+        assert github.repo_exists("org", "repo") is True
+    assert rj.call_count == 1
+
+
+def test_repo_exists_does_not_memoize_a_missing_repo() -> None:
+    # Only a found repo is remembered: a repo created later in the same
+    # process is seen on the next probe.
+    github._repo_probe.cache_clear()
+    not_found = github.GitHubAPIError(
+        1, ["gh", "repo", "view"], stderr="GraphQL: Could not resolve to a Repository"
+    )
+    with patch(
+        "vergil_tooling.lib.github.read_json",
+        side_effect=[not_found, {"nameWithOwner": "org/new"}],
+    ):
+        assert github.repo_exists("org", "new") is False
+        assert github.repo_exists("org", "new") is True
+
+
+@pytest.mark.parametrize("data", [{}, {"nameWithOwner": ""}, ["org/repo"]])
+def test_repo_exists_fails_loud_on_empty(data: object) -> None:
+    github._repo_probe.cache_clear()
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=data),
+        pytest.raises(github.GitHubAPIError, match="empty or missing nameWithOwner"),
     ):
         github.repo_exists("org", "repo")
 

@@ -16,7 +16,7 @@ from vergil_tooling.lib import tooling_install, vm_guest, vm_packages
 from vergil_tooling.lib.atomic_write import atomic_write_cmd
 from vergil_tooling.lib.identity import Identity
 from vergil_tooling.lib.package import repo_setup
-from vergil_tooling.lib.trusted_authors import TrustedAuthors, parse_trusted_authors
+from vergil_tooling.lib.trusted_authors import OrgConfig, TrustedAuthors, parse_trusted_authors
 from vergil_tooling.lib.vm_guest import (
     _PLUGIN_PATH_EXPORT,
     _PRUNE_PROBE,
@@ -421,17 +421,25 @@ class TestInjectCredentials:
         assert [p.name for p in config.iterdir()] == ["app.pem"]
 
 
+_AUTHORS = TrustedAuthors(
+    human=("example-human",),
+    agents=("example-agent",),
+    orgs={"example-org": OrgConfig(automation_app="example-org-automation")},
+)
+
+
 class TestInjectTrustedAuthors:
     def test_inject_trusted_authors_writes_vm_file(self) -> None:
         transport = _transport()
-        authors = TrustedAuthors(human=("example-human",), agents=("example-agent",))
+        authors = _AUTHORS
 
         inject_trusted_authors(transport, authors)
 
         transport.pipe.assert_called_once()
         cmd, content = transport.pipe.call_args.args
         assert cmd == atomic_write_cmd("~/.config/vergil/trusted-authors.toml", 0o600)
-        assert parse_trusted_authors(tomllib.loads(content)) == authors
+        raw = tomllib.loads(content)
+        assert parse_trusted_authors(raw, raw["orgs"]) == authors
         transport.run.assert_called_once_with("bash", "-c", "mkdir -p ~/.config/vergil")
 
     def test_inject_trusted_authors_removes_vm_file_when_host_has_none(self) -> None:
@@ -450,12 +458,13 @@ class TestInjectTrustedAuthors:
         config = home / ".config" / "vergil"
         config.mkdir(parents=True)
         (config / "trusted-authors.toml").write_text("stale\n")
-        authors = TrustedAuthors(human=("example-human",), agents=("example-agent",))
+        authors = _AUTHORS
 
         inject_trusted_authors(shell_transport(home), authors)
 
         written = config / "trusted-authors.toml"
-        assert parse_trusted_authors(tomllib.loads(written.read_text())) == authors
+        raw = tomllib.loads(written.read_text())
+        assert parse_trusted_authors(raw, raw["orgs"]) == authors
         assert written.stat().st_mode & 0o777 == 0o600
         assert [p.name for p in config.iterdir()] == ["trusted-authors.toml"]
 

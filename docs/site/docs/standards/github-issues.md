@@ -35,11 +35,13 @@ In any repo with a `vergil.toml`, **every issue is either a legitimate top-level
 kind or has an epic parent.** The legitimate top-level kinds are:
 
 - **epics** (`epic` label), including the standing ad-hoc, intake, planning,
-  deferred and hoshin epics, and the [proxy epics](#proxy-epics);
+  deferred, hoshin and operations epics, and the [proxy epics](#proxy-epics);
 - **archives** (`archive` label) — the per-quarter buckets of closed standing-epic
   children;
 - **release tracking issues** (`release: X.Y.Z`), which `vrg-release` creates
-  top-level for the length of a release.
+  top-level for the length of a release. The title or progress marker counts
+  only when the issue's body is trusted; a look-alike from an untrusted
+  author is reported and treated as an ordinary issue.
 
 There is no opt-out and no "unlinked" state. An issue's parent tells you where
 it stands:
@@ -180,7 +182,7 @@ cross-forge fallback.
 
 ### Standing epics
 
-The ad-hoc epic is one of five kinds of **standing epic** — perpetual
+The ad-hoc epic is one of six kinds of **standing epic** — perpetual
 umbrellas that are created and reused idempotently, never auto-close, and never
 gate rollup:
 
@@ -191,17 +193,17 @@ gate rollup:
 | Planning | `Epic (planning): <name>` | `epic` + `planning` | one per queue home | items waiting for or undergoing `epic-create` |
 | Deferred | `Epic (deferred): <name>` | `epic` + `deferred` | one per queue home | evaluated items parked until their revival conditions are met |
 | Hoshin | `Epic (hoshin): <org>` | `epic` + `hoshin` | one per org, always in `<org>/.github` | the `Logbook:` tasks `/vergil:hoshin` files and works |
+| Operations | `Epic (operations): <org>` | `epic` + `operations` | one per org, always in `<org>/.github` | the ops issues of the org's unattended jobs |
 
-An intake, planning, deferred or hoshin epic also gets the display-only
+An intake, planning, deferred, hoshin or operations epic also gets the display-only
 `epic-management` [category label](#epic-categories) when it is created; the
 tools find and test standing epics by the labels in the table alone.
 
 Intake, planning and deferred are the three **queue epics**. Their **queue
 home** follows the [epic-home rule](#epic-home-the-orggithub-rule): every
-public repo shares the org's set in `<org>/.github` (`<name>` is the org),
-while a **private** repo self-homes its own set (`<name>` is the repo), so
-private work never surfaces in a public issue. `vrg-issue-create --epic`
-accepts `adhoc`, `intake`, `planning` and `hoshin` as sentinels that resolve
+repo shares the org's set in `<org>/.github` (`<name>` is the org).
+`vrg-issue-create --epic`
+accepts `adhoc`, `intake`, `planning`, `hoshin` and `operations` as sentinels that resolve
 (creating if absent) the target repo's standing epic of that kind. It refuses
 `deferred`, as does `vrg-epic-move`: an item enters and leaves the deferred
 queue only through `vrg-intake-route`, which records the deferral (see
@@ -209,12 +211,20 @@ queue only through `vrg-intake-route`, which records the deferral (see
 
 The **hoshin epic** is not a queue: its tasks are PR-workable, but only
 `/vergil:hoshin` files and works them, so no queue processor picks them up.
-It is homed in `<org>/.github` whatever the target repo's visibility, and
-named for the org. Only `vrg-issue-create` (hoshin's filing) and
+It is homed in `<org>/.github`, like the queues, and named for the org. Only `vrg-issue-create` (hoshin's filing) and
 `vrg-epic-move` accept the `hoshin` sentinel; `vrg-intake-route` refuses a
 one-off into the hoshin epic, by sentinel or by ref. Its closed children
 drain into per-quarter `Archive (hoshin): <org>` archives like the other
 standing kinds.
+
+The **operations epic** is not a queue either: it holds one ops issue per
+failing unattended job, whatever repo the job ran in, and an ops issue is
+closed by hand once the problem is dealt with. It is homed in
+`<org>/.github` and named for the org, like the hoshin epic.
+`vrg-issue-create` and `vrg-epic-move` accept the `operations` sentinel, and
+`vrg-epic-create --standing operations --org <org>` ensures the epic without
+filing a task. Its closed children drain into per-quarter
+`Archive (operations): <org>` archives like the other standing kinds.
 
 ### Proxy epics
 
@@ -225,11 +235,15 @@ primary's ref first, so the title names the epic it stands in for. It is
 labelled `epic` + `proxy` and homes in the public `<owner>/.github`: proxies exist only between public
 repos. The link runs both ways, each side on a line alone on its line:
 
-- the proxy's body carries exactly one `Primary: <owner>/<repo>#<N>` line;
+- the proxy's body carries exactly one `Primary: <owner>/<repo>#<N>` line,
+  which counts only from a body the trust layer trusts (its author and every
+  editor trusted): an untrusted body gives no link, and every tool that reads
+  it stops on that proxy;
 - the primary records each proxy in a comment, never its body, carrying
-  `Proxy: <owner>/.github#<N>`. Only comments by a login that
-  `vrg-trusted-authors` lists count (a leading `app/` stripped), so a forged
-  comment on the public primary counts for nothing. A proxy is never removed
+  `Proxy: <owner>/.github#<N>`. Only comments the trust layer trusts count
+  (an author and every editor that hold a role of the right account type),
+  so a forged or outsider-edited comment on the public primary counts for
+  nothing. A proxy is never removed
   from the list: one created by mistake is closed and stays listed.
 
 A missing, duplicated or malformed `Primary:` line, one naming an issue that
@@ -248,8 +262,10 @@ bookends, because the primary carries them.
 
 A proxy's own org closes it: the daily sweep of its home
 (`vrg-epic-audit --close`) closes a proxy whose primary is closed and which
-has no open task. One that still has an open task after its primary closed is
-reported and left open. The primary's rollup never closes its proxies, since
+has no open task. The primary's close counts only when its actor is trusted
+in the primary's org (that org's own automation App included); an untrusted
+close is a stop on that proxy alone, which is never closed. One that still
+has an open task after its primary closed is reported and left open. The primary's rollup never closes its proxies, since
 it runs in the primary's org.
 
 Another org's epic tasks belong under that org's proxy, and hoshin's logbook
@@ -266,7 +282,7 @@ label, so one label filter in the GitHub UI shows each category:
 
 | Category | Epics | Category label |
 |---|---|---|
-| Management | the intake, planning, deferred and hoshin epics | `epic-management` |
+| Management | the intake, planning, deferred, hoshin and operations epics | `epic-management` |
 | Ad hoc | each repo's ad-hoc epic | `ad-hoc` |
 | Proxy | each [proxy epic](#proxy-epics) | `proxy` |
 | Development | every other epic: planned with `epic-create`, closed by rollup | `epic-development` |
@@ -281,13 +297,14 @@ missing or stray one changes nothing.
 The tools apply the category label when they create an epic.
 [`vrg-epic-create`](../reference/cli-tools-overview.md#vrg-epic-create)
 derives it from the epic's other labels, adding `epic-development` to a plain
-epic and `epic-management` to an intake, planning, deferred or hoshin one. It
+epic and `epic-management` to an intake, planning, deferred, hoshin or
+operations one. It
 refuses, creating nothing, a caller-given `--label epic-development` or
 `--label epic-management` and labels that mark two categories at once (for
 example `ad-hoc` and `proxy`). Every tool that creates a standing epic on
 demand (for example through the `--epic` sentinels of `vrg-issue-create`)
-adds `epic-management` when the new epic is an intake, planning, deferred or
-hoshin one, and nothing more to a new ad-hoc epic. An
+adds `epic-management` when the new epic is an intake, planning, deferred,
+hoshin or operations one, and nothing more to a new ad-hoc epic. An
 existing standing epic is still found by its kind's own labels, so one without
 `epic-management` is reused, never duplicated. A proxy keeps `epic` + `proxy`.
 
@@ -307,8 +324,8 @@ ad-hoc epic ends up holding only its still-open children.
 
 - **Archives** are titled `Archive (ad hoc): <repo> — <YYYY>-Q<n>` (the
   separator is a space, an em-dash `—`, and a space). They live in the same
-  resolved home as the live epic and carry the `archive` + `ad-hoc` labels. The
-  `archive` label replaced the `epic` label these buckets used to carry (`ad-hoc`
+  home as the live epic, `<org>/.github`, and carry the `archive` +
+  `ad-hoc` labels. The `archive` label replaced the `epic` label these buckets used to carry (`ad-hoc`
   is kept), so terminal per-quarter buckets no longer clutter `label:epic`
   views; only the live `Epic (ad hoc): <repo>` epic keeps `epic` + `ad-hoc`.
 - **Bucketing is by close quarter.** Each closed child is re-parented into the
@@ -355,20 +372,13 @@ vrg-adhoc-epic archive --repo <owner>/<repo>
 # Apply the moves and closes.
 vrg-adhoc-epic archive --repo <owner>/<repo> --apply
 
-# Visibility-aware sweep across every repo in an org.
+# Sweep across every repo in an org.
 vrg-adhoc-epic archive --all-in <ORG> --apply
 ```
 
 `--repo` targets a single repo; `--all-in <ORG>` sweeps every repo in the org,
-resolving each repo's ad-hoc home by visibility. Without `--apply` the command
+each repo's ad-hoc epic in `<org>/.github`. Without `--apply` the command
 mutates nothing.
-
-`--all-in` (here and for `normalize`) first checks that the identity in use can
-see every repo in the org: an App token installed on the org for all its
-repositories, or a human login that owns the org. When it may not, the command
-names the gap and exits 1 before reading anything, dry run included, so a
-private self-homed repo it cannot see is never skipped as if it had no ad-hoc
-epic.
 
 #### Normalizing legacy archives
 
@@ -385,9 +395,8 @@ vrg-adhoc-epic normalize --all-in <ORG>
 vrg-adhoc-epic normalize --all-in <ORG> --apply
 ```
 
-It sweeps every repo's resolved home, so it covers both the centrally-homed
-archives of public repos and the self-homed archives of private ones, and it
-converts both open and closed archives. It is **idempotent** — an
+It scans `<org>/.github`, the home of every repo's archives, and it converts
+both open and closed archives. It is **idempotent** — an
 already-converted archive is new-form and is skipped — so it is safe to re-run
 and doubles as a straggler net. The creation path is also self-healing: the next
 time the drain touches a quarter whose archive is still in legacy form, it heals
@@ -403,7 +412,7 @@ Two existing call sites keep archives current with no dedicated cron:
   its close-quarter archive.
 - **Backstop + backfill.** The daily `vrg-epic-audit --close` sweep runs the
   org-wide drain for every standing kind (ad-hoc, intake, planning,
-  deferred, hoshin): it
+  deferred, hoshin, operations): it
   distributes any backlog the steady-state path missed and closes past-quarter
   archives. This is the same trusted sweep that closes other
   provably-complete drift, so it is allowed to mutate under the scheduled
@@ -538,7 +547,7 @@ so tools can find and replace it:
 - **One writer:** only [`vrg-epic-docs`](../reference/cli-tools-overview.md#vrg-epic-docs)
   writes the section, never a hand edit, so its format lives in one place.
 - **Scope:** every epic except the standing epics (ad hoc, intake, planning,
-  deferred, hoshin, and the retired `standing` label or `Epic (standing):` title),
+  deferred, hoshin, operations, and the retired `standing` label or `Epic (standing):` title),
   [proxy epics](#proxy-epics) (their primary carries the documents) and
   `[archived]` epics. Task issues have no section.
 
@@ -578,28 +587,21 @@ hand-written `Documents:`, `Spec:`, `Plan:` and `Retrospective:` lines.
 
 ### Epic home (the `<org>/.github` rule)
 
-An epic's home repo is derived from repository visibility:
+Every repo homes its epics and queues centrally in the org's `.github`. An
+owner with **no** `.github` at all (typically a personal account) has no
+home: the tools refuse up front, naming the `<org>/.github` repository to
+create. Only GitHub's "repository does not exist" answer counts as no
+`.github`; any other failure to check for it is an error.
 
-- A **public** repo homes its epics centrally in the org's `.github`.
-- A **private** repo (with a public `.github`) homes its epics **in itself**.
-- A **private** `.github` means the whole org is private, so everything homes in
-  `.github`.
-- A **private** repo whose owner has **no** `.github` at all (typically a
-  personal account) homes its epics **in itself**: there is no central home.
-  Only GitHub's "repository does not exist" answer counts as no `.github`; any
-  other failure to read its visibility is an error.
-
-Ad-hoc epics follow the same rule — `Epic (ad hoc): <repo>` lives in the repo's
-resolved home. See
-[Epic home visibility flips](../guides/epic-home-visibility-flip.md) for
-relocating epics when a repo's visibility changes.
+Ad-hoc epics follow the same rule — `Epic (ad hoc): <repo>` lives in the
+org's `.github`.
 
 ### Compliance invariants
 
 `vrg-epic-audit` reports (read-only) any drift from the model:
 
-- **Epics live in `.github`.** An open `epic`-labelled issue outside `.github` in
-  a *public* repo is a violation (a private repo self-homes legitimately).
+- **Epics live in `.github`.** An open `epic`-labelled issue outside `.github`
+  is a violation.
 - **No stray `.github` issues.** The epic home holds only epics, the
   `archive`-labelled per-quarter buckets, and issues linked under an epic —
   managed tasks and intake/planning/deferred items alike; any other open issue
@@ -614,14 +616,8 @@ relocating epics when a repo's visibility changes.
   each **orphan** — an open issue in a managed repo (non-archived, with a
   `vergil.toml`) that is not a legitimate top-level kind and has no epic parent —
   together with the intake epic it would be attached to. It also lists issues
-  still carrying the retired `triage` / `idea` / `research` labels, issues
-  parented only by a body `Parent:` line, and self-homed queue epics
-  in a repo that has since become public.
-- **No private work under public epics.** An issue in a private repo parented
-  under a public `.github` epic is reported as a likely unsupported
-  public → private flip, for a human to resolve (see
-  [Epic home visibility flips](../guides/epic-home-visibility-flip.md)). Tooling
-  never migrates or retracts it.
+  still carrying the retired `triage` / `idea` / `research` labels, and issues
+  parented only by a body `Parent:` line.
 - **An archive stands top-level, labelled `archive`.** An open archive (an
   `archive` label, or a stamped `Archive (<kind>): <name> — <YYYY>-Qn` title)
   with a native parent, one whose stamped title lacks the `archive` label, or
@@ -646,15 +642,18 @@ with `VRG_EPIC_SWEEP=1`, or by a human — follows its drift closes and drains
 with an org-wide **orphan pass**, in order:
 
 1. **Nativize** body-only `Parent:` links into native sub-issue links, so every
-   consumer reads the same parent.
+   consumer reads the same parent. A `Parent:` line counts only from a body
+   the trust layer trusts: one in an untrusted body is reported on stderr,
+   metadata only, and never nativized, so its issue is an orphan.
 2. **Strip** the retired `triage` / `idea` / `research` labels from every open
    issue (its parent is left alone).
-3. **Move** a now-public repo's self-homed intake, planning and deferred items
-   under the
-   `.github` queues, then close the emptied self-homed epics — the only epics
-   the pass ever closes.
-4. **Attach** every orphan to its home's intake epic (creating it if absent).
-   Placement is intake review's job, not the sweep's.
+3. **Attach** every orphan to its home's intake epic (creating it if absent).
+   Placement is intake review's job, not the sweep's. An orphan an outsider
+   opened is reported and never attached.
+
+An issue whose body the trust layer cannot read in full is a stop on that
+issue alone: it is neither nativized nor attached, the rest of the pass runs,
+and the run exits 1.
 
 The pass is idempotent and never closes an item. Before each link it checks the
 target queue epic's open children against the cap (95, under GitHub's
@@ -727,9 +726,8 @@ item, with no category to choose. Create one with the sanctioned tool (the
 vrg-intake-create --title "<what>" [--body TEXT | --body-file PATH]
 ```
 
-The issue is filed in the current repo's queue home — `<org>/.github` for a
-public repo, the repo itself for a private one (override with `--repo`) — and is
-linked under that home's intake epic as it is created; there is no unlinked
+The issue is filed in the current repo's queue home, `<org>/.github` (override
+with `--repo`), and is linked under that home's intake epic as it is created; there is no unlinked
 path.
 
 ### Viewing the queues: `vrg-queue`
@@ -744,8 +742,8 @@ vrg-queue hoshin    # open tasks under the org's hoshin epic
 ```
 
 It defaults to the current org's `.github` queues; `--repo <owner>/<repo>`
-selects that repo's queue home (a self-homed private repo's own queues), and
-`--json` emits machine-readable output. It is read-only.
+selects that repo's org's queues (and narrows `adhoc` and `hoshin` to the
+repo), and `--json` emits machine-readable output. It is read-only.
 
 Planning and deferred items show their [epic size](#epic-size) (`M/14`, `?` unsized, `!` in
 error). `vrg-queue planning --sort size` (or `tasks`) puts the small end of the
@@ -812,8 +810,7 @@ that PR could no longer be submitted.
 
 A route is refused when the item's container epic does not allow
 it (see [`vrg-intake-route`](../reference/cli-tools-overview.md#vrg-intake-route)
-for the route table), for a cross-org target, and for a private item headed to a
-public repo or epic.
+for the route table), and for a cross-org target.
 
 A `security` item keeps its advisory links through every move. On a recreate,
 every advisory the item names is retargeted to the copy **before** the
@@ -968,8 +965,9 @@ vrg-intake-route <ref> size --tasks N [--confidence high|med|low] --reason TEXT
 
 `size` is allowed from planning and deferred only, and neither moves nor
 closes the item; the planning route takes the same options to size an item on
-its way in. Only sizing comments by
-[trusted authors](../guides/account-setup.md#trusted-authors) count. When the
+its way in. Only sizing comments the trust layer trusts, by
+[trusted authors](../guides/account-setup.md#trusted-authors) with the right
+account type and edited only by trusted authors, count. When the
 label and the latest sizing comment disagree, one is missing, the item has
 several size labels, its label names an unknown size (such as
 `epic-size:XXL`), or the comment is malformed, the item's sizing is in
@@ -1030,12 +1028,14 @@ up to date (see
 | `planning` | Marks the standing planning epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `deferred` | Marks the standing deferred epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `hoshin` | Marks the standing hoshin epic (with `epic`) and its archives (with `archive`); never auto-closes |
+| `operations` | Marks the standing operations epic (with `epic`) and its archives (with `archive`); never auto-closes |
+| `ops-report` | Ops issue filed for an unattended job, under the operations epic; never auto-closes |
 | `proxy` | Marks a [proxy epic](#proxy-epics) (with `epic`): a same-org umbrella for another org's epic tasks; open until its primary closes |
 | `epic-development` | Development epic: planned with epic-create, closes when its tasks close (a display-only [category label](#epic-categories)) |
-| `epic-management` | Management epic: the intake, planning, deferred or hoshin epic; never auto-closes (a display-only [category label](#epic-categories)) |
+| `epic-management` | Management epic: the intake, planning, deferred, hoshin or operations epic; never auto-closes (a display-only [category label](#epic-categories)) |
 | `in-progress` | Planning item whose `epic-create` session is underway |
 | `epic-size:S`, `epic-size:M`, `epic-size:L`, `epic-size:XL` | Planning or deferred item's estimated epic size: 1–9, 10–19, 20–39 or 40+ tasks (see [Epic size](#epic-size)) |
-| `archive` | Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred, hoshin); historical record |
+| `archive` | Terminal per-quarter archive of closed standing-epic work (ad-hoc, intake, planning, deferred, hoshin, operations); historical record |
 | `hotfix` | Emergency fix that skipped formal planning; flagged for retroactive review |
 | `validation` | Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed |
 | `deployment` | Deployment task: install/sync merged changes so they are usable; never auto-closed |
@@ -1044,7 +1044,7 @@ up to date (see
 | `security-disclosed` | Past issue that disclosed a security problem publicly; fixed, no private record |
 
 The parent epic carries an issue's state, so no label restates it. `intake`,
-`planning`, `deferred` and `hoshin` label only the standing epics (and their
+`planning`, `deferred`, `hoshin` and `operations` label only the standing epics (and their
 archives), the way `ad-hoc`
 does. The per-item queue labels are `in-progress`, used only on planning
 items, and the `epic-size:*` family, used only on planning and deferred items

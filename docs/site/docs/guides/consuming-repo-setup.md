@@ -129,7 +129,7 @@ to name the clone's parent directory explicitly. The clone uses SSH
 The wizard runs ten steps, each committed as `chore(init): step N - …`
 so an interrupted run resumes where it stopped:
 
-1. Create the GitHub repository (`--visibility`, default public).
+1. Create the GitHub repository, always public.
 2. Clone it.
 3. Generate `vergil.toml` from your answers (see Step 4).
 4. Scaffold `VERSION`, `CLAUDE.md`, `.claude/settings.json`,
@@ -582,7 +582,8 @@ To ship signed `.deb`/`.rpm` packages from releases:
 
 ### Optional: dependency-update hook
 
-Every `vrg-release` ends by updating the repo's dependencies (see
+Every `vrg-release` updates the repo's dependencies once the release is
+tagged and published (see
 [Dependency updates](releasing.md#dependency-updates)). The built-in
 updaters cover Python (`uv.lock`), Rust (`Cargo.lock`), TypeScript
 (`package-lock.json`), vergil ecosystem refs, the packaged

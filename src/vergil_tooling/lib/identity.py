@@ -10,7 +10,7 @@ from dataclasses import field as dc_field
 from pathlib import Path
 
 from vergil_tooling.lib.trusted_authors import STANZA as _TRUSTED_AUTHORS_STANZA
-from vergil_tooling.lib.trusted_authors import TrustedAuthors, parse_trusted_authors
+from vergil_tooling.lib.trusted_authors import TrustedAuthors, orgs_table, parse_trusted_authors
 
 _SIZE_PATTERN = re.compile(r"^\d+GiB$")
 
@@ -45,7 +45,8 @@ class IdentityConfig:
     vergil_vm: str = ""
     model: str = ""
     session_recent_days: int = 7
-    # The optional [trusted_authors] stanza; None when the host has none.
+    # The optional [trusted_authors] stanza with the [orgs.*] stanzas; None
+    # when the host has no [trusted_authors] stanza.
     trusted_authors: TrustedAuthors | None = None
 
 
@@ -176,7 +177,10 @@ def load_config(path: Path) -> IdentityConfig:
 
 
 def _load_trusted_authors_stanza(path: Path, raw: dict[str, object]) -> TrustedAuthors | None:
-    """Parse the optional [trusted_authors] stanza; exit loudly when it is invalid."""
+    """Parse the optional [trusted_authors] stanza with the [orgs.*] stanzas.
+
+    Exits loudly when the stanza is invalid or no org stanza accompanies it.
+    """
     stanza = raw.get(_TRUSTED_AUTHORS_STANZA)
     if stanza is None:
         return None
@@ -184,7 +188,7 @@ def _load_trusted_authors_stanza(path: Path, raw: dict[str, object]) -> TrustedA
         print(f"ERROR: {path}: [trusted_authors] must be a table", file=sys.stderr)
         raise SystemExit(1)
     try:
-        return parse_trusted_authors(stanza)
+        return parse_trusted_authors(stanza, orgs_table(raw))
     except ValueError as exc:
         print(f"ERROR: {path}: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

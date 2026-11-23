@@ -187,8 +187,9 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
    record is posted. A clean run names the released tag in its
    completion line (`✓  vrg-release v1.3.1 complete`).
 6. Check the end of the run for the `update-deps` result. A failed
-   dependency update does not undo the release, but it leaves an open
-   PR that blocks the next one, and the tracking issue open; see
+   dependency update does not undo the release, but it leaves the
+   tracking issue open, and can leave an open PR that blocks the next
+   release; see
    [Dependency updates](#dependency-updates).
 
 ### The `vrg-release` pipeline
@@ -262,7 +263,11 @@ naming them, and the release carries on. Once the cause is fixed,
   overwrites newer docs. Only a job no later run delivered is re-run,
   by itself (`gh run rerun <run> --job <job>`). A listing of `develop`'s
   newest CD runs that does not reach back to the recorded run stops the
-  stage rather than re-run it on a guess.
+  stage rather than re-run it on a guess: so many later runs have
+  started that the stage cannot tell whether one delivered the job. Here
+  the stage names a step to run by hand: run `develop`'s CD again, then
+  resume, and the new run's job, once it succeeds, counts as the
+  delivery.
 
 A recorded job whose run has succeeded since, re-run by hand say, is
 delivered without a re-run. Each delivered job leaves the state block
@@ -502,8 +507,10 @@ it instead:
   `main` commit its release PR merged onto and the release PR's head,
   as [the issue list](#the-issue-list) reads them. When the breached
   release itself superseded a release, the issues it absorbed are read
-  from that release's tracking issue, found by the closing comment a
-  `human` login of `vrg-trusted-authors` posted on it; that issue's
+  from that release's tracking issue, found by the closing comment the
+  human posted on it (a comment by the `human` role of
+  `vrg-trusted-authors`, a GitHub user account, that no one else has
+  edited, as the trust layer reads it); that issue's
   state is read under the identity rule, or rebuilt the same way when
   it fails the rule too.
 
@@ -539,16 +546,21 @@ tip differs from `origin`'s. Remove or reconcile the branch, then resume.
 
 An open back-merge PR from the earlier run is adopted and merged, and a
 merged one is skipped. A PR closed without merging is not adopted: the
-resume opens a new PR from the reused branch.
+resume opens a new PR from the reused branch. Here, and when `prepare`
+adopts the release PR, only a same-repo PR with a trusted author is
+adopted: a fork PR on the branch's name is reported on stderr and never
+adopted or merged.
 
 Within a run, `prepare`, `back-merge-bump` and the dependency update never
 retry a failed `gh pr create` blindly, since GitHub can open the PR and
 still return an error. After a failed attempt the stage looks for an open
-PR from its branch into the base. It adopts one only when it has the same
-head branch (in this repository), base, title and head commit, and carries
-on as for a PR it just opened; an adopted dependency-update PR gets its
-`dependency-update` label again. Any other open PR fails the stage, naming
-the PR. With none open, a transient error is retried with backoff.
+PR from its branch into the base, through the trust layer: only a same-repo
+PR with a trusted author counts, and a fork PR on the branch's name is
+reported on stderr and never adopted. It adopts the PR it finds only when
+it has the same title and head commit, and carries on as for a PR it just
+opened; an adopted dependency-update PR gets its `dependency-update` label
+again. Any other such PR fails the stage, naming the PR. With none open, a
+transient error is retried with backoff.
 
 ### Stale job records
 
@@ -612,7 +624,7 @@ Minor bumps are **deliberate opt-in** at every deployment target:
 
 | Consumer | What changes |
 |---|---|
-| Developer host | Nothing to change: the host installs an exact tag, never a line. The release's `install` stage installs `v1.4.0` on the Mac that ran it; any other host runs [`vrg-tooling-install v1.4.0`](#deployment-targets) |
+| Developer host | Nothing to change: the host keeps no pin. The release's `install` stage installs `v1.4.0` on the Mac that ran it, through the new line (`vrg-tooling-install v1.4`, `<MINOR>` expanded to the release's line); any other host runs [`vrg-tooling-install v1.4`](#deployment-targets) or `v1.4.0` |
 | Python repo `.venv` | Edit `pyproject.toml` `[tool.uv.sources]` to `tag = "v1.4"`, then `uv lock --upgrade-package vergil-tooling` |
 | Dev container image | Set `[dependencies].vergil` in `vergil.toml` to `v1.4`; `vergil.toml` is part of the cache key, so the next `vrg-container-run` rebuilds the branch's cached image with the release the rolling `v1.4` tag names |
 | Agent VM (Lima/cloud) | Set the identity's `vergil` version (in `identities.toml`) to `v1.4`, then `vrg-vm rebuild`, which installs and records the new line. A plain `vrg-vm update` keeps upgrading within the line recorded at install time, and `vrg-vm update --tag v1.4` is a one-off override that is not remembered (see [VM spec](../reference/vm-spec.md#vergil-tooling-inside-the-vm)) |
@@ -792,8 +804,8 @@ tracking issue to its end.
 
 ## Dependency updates
 
-Every release ends by updating the repo's dependencies to the newest
-versions their declared bounds allow. This is the `update-deps` stage,
+Every release updates the repo's dependencies to the newest versions
+their declared bounds allow. This is the `update-deps` stage,
 and it is the first change on the new `develop` version. It runs after
 `finalize`, once the release is tagged and published, so it can
 never affect the release itself, and its failure holds back none of
@@ -836,8 +848,9 @@ its bound deliberately.
 
 ### When the dependency update fails
 
-A failed dependency update never fails the release, but it cannot be
-ignored. What it leaves behind depends on where it failed:
+A failed dependency update never undoes the release, but it cannot be
+ignored: the release does not finish until the update succeeds or is
+skipped. What it leaves behind depends on where it failed:
 
 - **An updater or the repo hook failed** (`update`), for example a
   lookup error, a non-zero hook exit, or a hook that committed: this
@@ -847,7 +860,9 @@ ignored. What it leaves behind depends on where it failed:
   failing updater, carries the error and the command to reproduce it on
   `develop`, and is linked from the failure on the tracking issue and in
   the run summary. The worktree is removed. With no labelled PR, it does
-  not gate the next release.
+  not trip the [dependency-update gate](#the-dependency-update-gate),
+  though the open tracking issue still holds back the next release until
+  this one is finished.
 - **Validation failed** (`validation`), or **the PR's checks or merge
   failed** (`merge`): the PR stays open with its `dependency-update`
   label, and a task titled "Fix failed dependency update for
@@ -858,8 +873,8 @@ ignored. What it leaves behind depends on where it failed:
   raw output. It ends with the command to reproduce the failure.
 
 If a fix task for the same version and failure kind is already open,
-for example after `vrg-release --resume` re-runs an update that failed
-on a transient error, no second task is filed: the new failure is added
+for example after `vrg-release --resume` re-runs an update whose
+updater failed on a transient error, no second task is filed: the new failure is added
 as a comment on the open task, which is linked as above.
 
 Either way `vrg-release` exits 1, and the failure counts once in its
@@ -869,6 +884,16 @@ but `close-tracking` holds, so the tracking issue stays open:
 `vrg-release --resume` runs the update again once its cause is fixed,
 and `vrg-release --resume --without-deps` finishes the release without
 it, leaving the update to its fix task.
+
+A `validation` or `merge` failure leaves its PR open, and while it is
+open the resumed update refuses to start: the update for that version
+is still in flight (see
+[An existing update branch](../reference/dev/update-deps.md#an-existing-update-branch)).
+So once the cause is fixed, either finish the release with
+`vrg-release --resume --without-deps`, which leaves the PR to the next
+release's [dependency-update gate](#the-dependency-update-gate), or
+close the PR deliberately: `vrg-release --resume` then deletes its
+stale branch and runs the update afresh on the fixed `develop`.
 
 To fix a failed update, work the fix task like any other task, but cut
 its branch from the failed update so it starts from those commits:
@@ -880,13 +905,14 @@ vrg-git worktree add -b chore/<fix-issue>-dep-update-<version> \
 ```
 
 Fix the cause, then hand off and merge as usual. When the fix PR merges
-and closes the fix task as completed, the next `vrg-release` closes the
-dependency-update PR for you.
+and closes the fix task as completed, finish the open release as above;
+the next fresh `vrg-release` then closes the dependency-update PR for
+you, if it is still open.
 
 An `update` failure pushed no `deps/update-<version>` branch, so cut
 that fix task's branch from `origin/develop` instead. Once the fix
-merges, the next `vrg-update-deps` run, or the next `vrg-release`,
-applies the update.
+merges, `vrg-release --resume` applies the update and finishes the
+release.
 
 ### The dependency-update gate
 
@@ -898,8 +924,10 @@ labelled `dependency-update`. For each one:
   merged, so preflight comments on the deps PR, closes it, deletes its
   `deps/update-<version>` branch, and records it in the `prepare` comment
   on the tracking issue. GitHub's delete-on-merge setting never applies
-  to a PR closed without merging, so preflight deletes the branch itself.
-  If that delete fails, the PR stays closed and the gate still clears,
+  to a PR closed without merging, so preflight deletes the branch itself,
+  but only for a same-repo PR with a trusted author: a fork PR's head is
+  in the fork, so the branch of that name here is kept and the fork PR
+  is reported on stderr. If that delete fails, the PR stays closed and the gate still clears,
   but the release prints a warning and the `prepare` comment names the
   branch to delete by hand.
 - **The fix task is still open, the PR has no fix task, or the fix task
@@ -1168,13 +1196,16 @@ Only a trusted closing reference counts:
 - one a closing line in the PR body names (`Closes`, `Close` or
   `Closed`, the keywords the fleet's linkage rules sanction), while
   every identity in the body's history (its author, its last editor
-  and every earlier editor) is a trusted author (`human` or `agents`
-  of `vrg-trusted-authors`); or
-- one linked to the PR by hand, when every identity that linked it is
-  a trusted author.
+  and every earlier editor) holds the `human` or `agents` role, as the
+  trust layer judges it (a login of `vrg-trusted-authors` with the
+  account type of its role; an org's automation App does not count); or
+- one linked to the PR by hand, when every identity that linked it
+  holds one of those roles.
 
-Any other closing reference contributes no issue, and `preflight`
-names it, with its PR and the reason, in a `WARNING:` line. A release
+A PR body with any other identity in its history is never parsed. Any
+other closing reference contributes no issue, and `preflight` names it,
+with its PR and the reason (the untrusted identities by login and
+cause), in a `WARNING:` line. A release
 whose PRs close no issues has an empty list, which is valid. The
 trusted authors failing to load, or any of the reads failing or coming
 back truncated, refuses the release like any other incomplete
@@ -1206,10 +1237,12 @@ Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
 - A release that supersedes another adds a `- Supersedes: vX.Y.Z` line
   to the record on each issue it absorbed from it (see
   [Superseding a release](#superseding-a-release)).
-- A record counts only when its comment's author and last editor are
-  both `human` logins of `vrg-trusted-authors`. A record marker in a
-  comment by any other identity, or last edited by one, never counts:
-  the stage names it in a `warning:` line and ignores it.
+- A record counts only when its comment's author and last editor both
+  hold the `human` role: a `human` login of `vrg-trusted-authors` whose
+  account is a GitHub user, as the trust layer judges it. Any other
+  comment, an agent's included, is never read for a record: the stage
+  reports it on stderr, by issue, login, time and comment only (counts
+  by cause under GitHub Actions), and ignores it.
 - Before posting on an issue, the stage reads all its comments, every
   page, for a counting record, and records the issue as posted in the
   state block once it has found or posted one. A run interrupted partway
@@ -1230,28 +1263,32 @@ Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
 The state block is trusted only while the tracking issue is the human's.
 Every time `vrg-release` reads the state block, and again in the read
 before each write of it, it first locks the issue if it is not locked
-(an issue inherited from an older run included), then reads, in one
-paginated GraphQL query, every identity on the issue, and checks them
-against the `human` logins of
-[`vrg-trusted-authors`](../reference/cli-tools-overview.md#vrg-trusted-authors):
+(an issue inherited from an older run included), then reads every
+identity on the issue through the trust layer, every page, and accepts
+only the `human` role: a `human` login of
+[`vrg-trusted-authors`](../reference/cli-tools-overview.md#vrg-trusted-authors)
+whose account is a GitHub user.
 
 - **The identities that can change the state:** the issue's author,
   the body's last editor and every editor in its edit history, and
-  every actor that closed or reopened the issue. Each must be a `human`
-  login. Any other identity, an agent or a deleted account (`ghost`)
-  included, stops the run before it writes anything, with an error
-  starting `suspected security breach on tracking issue #<N>:` that
-  names the identity and what it did. The failure is not commented on
+  every actor that closed or reopened the issue. Each must hold the
+  `human` role. Any other identity, an agent, a deleted account (`ghost`)
+  or an account of the wrong type (an App named like the human) included,
+  stops the run before it writes anything, with an error starting
+  `suspected security breach on tracking issue #<N>:` that names the
+  identity, what it did and why it holds no role (`untrusted`,
+  `not-accepted`, `deleted` or `wrong-type`). The failure is not commented on
   the issue. Inspect the issue's edit history and events, but do not
   try to clean it up: GitHub keeps the editor of a body edit even once
   its revision is deleted, and keeps the issue's close and reopen
   events, so the issue can never pass the check again and the release
   can never be resumed. Replace the release instead, as
   [A breached tracking issue](#a-breached-tracking-issue) says.
-- **Other traces** cannot change the state: a comment, a
-  cross-reference, a mention, a subscription, or a label added or
-  removed by another identity. Each is printed as a warning, once per
-  run, and the run carries on.
+- **Other traces** cannot change the state: a comment or an edit of
+  one, a cross-reference, a mention, a subscription, or a label added or
+  removed by another identity. Each is printed as a warning naming the
+  identity and what it did, never its text, once per run, and the run
+  carries on.
 
 A failed read of the trusted authors or of the issue's identities, or
 a response that cannot be read in full, stops the run with the call

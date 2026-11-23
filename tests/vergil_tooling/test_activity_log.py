@@ -2,93 +2,260 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Any
 from unittest.mock import patch
 
-from vergil_tooling.lib import activity_log
+import pytest
+
+from tests.vergil_tooling import trust_stubs
+from vergil_tooling.lib import activity_log, trust
 from vergil_tooling.lib.activity_log import ActivityItem
 
-if TYPE_CHECKING:
-    import pytest
+TOOLING = "vergil-project/vergil-tooling"
+_SEARCH = trust._CLOSE_SEARCH_QUERIES["issue"]
 
 
-def test_gather_parses_and_skips_incomplete() -> None:
-    results = [
-        {
-            "number": 1912,
-            "title": "labels",
-            "repository": {"nameWithOwner": "vergil-project/vergil-tooling"},
-            "url": "u1912",
-            "closedAt": "2026-06-29T10:00:00Z",
+def _page(nodes: list[Any], cursor: str | None = None) -> dict[str, Any]:
+    return {"pageInfo": {"hasNextPage": cursor is not None, "endCursor": cursor}, "nodes": nodes}
+
+
+def _closed(
+    number: int,
+    title: str = "labels",
+    *,
+    repo: str = TOOLING,
+    author: Any = trust_stubs.HUMAN,
+    closer: Any = trust_stubs.HUMAN,
+    closed_at: str = "2026-06-29T10:00:00Z",
+    body: str = "real work",
+) -> dict[str, Any]:
+    """A closed issue as the layer's close-judging search returns it."""
+    return {
+        "__typename": "Issue",
+        "number": number,
+        "title": title,
+        "url": f"u{number}",
+        "state": "CLOSED",
+        "repository": {"nameWithOwner": repo},
+        "labels": _page([]),
+        "author": author,
+        "editor": None,
+        "body": body,
+        "createdAt": trust_stubs.CREATED,
+        "lastEditedAt": None,
+        "userContentEdits": _page([]),
+        "timelineItems": _page([]),
+        "closes": {
+            "nodes": [{"__typename": "ClosedEvent", "actor": closer, "createdAt": closed_at}]
         },
-        {  # missing repository -> skipped
-            "number": 99,
-            "title": "orphan",
-            "repository": {},
-            "url": "u99",
-            "closedAt": "2026-06-29T11:00:00Z",
-        },
-    ]
-    with patch("vergil_tooling.lib.github.read_json", return_value=results) as mock_search:
-        items = activity_log.gather("2026-06-01", org="vergil-project")
-    assert items == [
-        ActivityItem("vergil-project/vergil-tooling", 1912, "labels", "u1912", "2026-06-29")
-    ]
-    # the search carries org scope (--owner) and the since cutoff (--closed)
-    args = mock_search.call_args.args
-    assert "vergil-project" in args
-    assert ">=2026-06-01" in args
+    }
 
 
-def test_gather_skips_release_tracking_issues() -> None:
+class FakeSearch:
+    """A ``github.graphql`` stand-in answering the close-judging search, page by page."""
+
+    def __init__(self, *pages: tuple[list[dict[str, Any]], str | None, int]) -> None:
+        self.pages = list(pages)
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(self, query: str, **variables: Any) -> dict[str, Any]:
+        assert query == _SEARCH, "only the close-judging issue search is faked"
+        self.calls.append(variables)
+        nodes, cursor, count = self.pages.pop(0)
+        return {"search": {"issueCount": count, **_page(nodes, cursor)}}
+
+
+@pytest.fixture
+def search(monkeypatch: pytest.MonkeyPatch) -> Any:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+
+    def install(*nodes: dict[str, Any]) -> FakeSearch:
+        fake = FakeSearch((list(nodes), None, len(nodes)))
+        monkeypatch.setattr("vergil_tooling.lib.github.graphql", fake)
+        return fake
+
+    return install
+
+
+def test_gather_reads_closed_issues_through_the_trust_layer(search: Any) -> None:
+    fake = search(_closed(1912))
+    items = activity_log.gather("2026-06-01", org="vergil-project")
+    assert items == [ActivityItem(TOOLING, 1912, "labels", "u1912", "2026-06-29")]
+    # the search carries the org scope and the since cutoff
+    assert [call["q"] for call in fake.calls] == [
+        "user:vergil-project is:closed is:issue closed:>=2026-06-01"
+    ]
+
+
+def test_gather_dates_an_issue_by_its_latest_close(search: Any) -> None:
+    search(_closed(7, closed_at="2026-06-30T23:59:00Z"))
+    assert [i.closed_date for i in activity_log.gather("2026-06-01", org="o")] == ["2026-06-30"]
+
+
+def test_activity_log_omits_outsider_issue(search: Any, capsys: pytest.CaptureFixture[str]) -> None:
+    search(
+        _closed(1, "kept"),
+        _closed(2, trust_stubs.SPAM_TEXT, author=trust_stubs.OUTSIDER, body=trust_stubs.SPAM_TEXT),
+        _closed(3, "closed by an outsider", closer=trust_stubs.OUTSIDER),
+        _closed(4, "closed by an impostor", closer=trust_stubs.IMPOSTOR),
+        _closed(5, "opened by a deleted account", author=None),
+        _closed(6, "closed by the agent", closer=trust_stubs.AGENT),
+    )
+    items = activity_log.gather("2026-06-01", org="vergil-project")
+    assert [item.number for item in items] == [1, 6]
+    err = capsys.readouterr().err
+    assert f"{TOOLING}#2 issue drive-by" in err and "on body (untrusted)" in err
+    assert f"{TOOLING}#3 event drive-by" in err and "on close (untrusted)" in err
+    assert f"{TOOLING}#4 event vergil-user" in err and "on close (wrong-type)" in err
+    assert f"{TOOLING}#5 issue a deleted account" in err
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+def test_activity_log_skips_are_counts_only_under_actions(
+    search: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    search(_closed(1), _closed(2, author=trust_stubs.OUTSIDER), _closed(3, closer=None))
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    items = activity_log.gather("2026-06-01", org="vergil-project")
+    assert [item.number for item in items] == [1]
+    err = capsys.readouterr().err
+    assert err == "skipped 2 untrusted item(s) (deleted: 1, untrusted: 1)\n"
+
+
+CONTAINERS = "vergil-project/vergil-containers"
+_MARKER_BODY = "<!-- vrg-release:progress -->\n- [x] tag\n"
+
+
+def _search_and_reads(
+    monkeypatch: pytest.MonkeyPatch, layer: trust_stubs.FakeItems, *nodes: dict[str, Any]
+) -> FakeSearch:
+    """Answer the close-judging search with *nodes* and every item re-read from *layer*."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+    fake = FakeSearch((list(nodes), None, len(nodes)))
+
+    def answer(query: str, **variables: Any) -> dict[str, Any]:
+        return fake(query, **variables) if query == _SEARCH else layer(query, **variables)
+
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", answer)
+    return fake
+
+
+def test_gather_skips_release_tracking_issues(monkeypatch: pytest.MonkeyPatch) -> None:
     # A closed ``release: X.Y.Z`` issue is vrg-release bookkeeping, not work —
     # keep it out of the ledger, whether detected by body marker or by title.
-    results = [
+    layer = trust_stubs.FakeItems(
         {
-            "number": 1912,
-            "title": "labels",
-            "repository": {"nameWithOwner": "vergil-project/vergil-tooling"},
-            "url": "u1912",
-            "closedAt": "2026-06-29T10:00:00Z",
-            "body": "real work",
+            (CONTAINERS, 373): trust_stubs.item(body=_MARKER_BODY),
+            (CONTAINERS, 400): trust_stubs.item(body=""),
         },
-        {  # release issue by body marker -> skipped
-            "number": 373,
-            "title": "release: 2.1.4",
-            "repository": {"nameWithOwner": "vergil-project/vergil-containers"},
-            "url": "u373",
-            "closedAt": "2026-06-30T09:00:00Z",
-            "body": "<!-- vrg-release:progress -->\n- [x] tag\n",
-        },
-        {  # release issue by title only (body marker hand-removed) -> skipped
-            "number": 400,
-            "title": "release: 2.1.5",
-            "repository": {"nameWithOwner": "vergil-project/vergil-containers"},
-            "url": "u400",
-            "closedAt": "2026-06-30T10:00:00Z",
-            "body": "",
-        },
-    ]
-    with patch("vergil_tooling.lib.github.read_json", return_value=results):
-        items = activity_log.gather("2026-06-01", org="vergil-project")
-    assert items == [
-        ActivityItem("vergil-project/vergil-tooling", 1912, "labels", "u1912", "2026-06-29")
-    ]
+        strict=True,
+    )
+    _search_and_reads(
+        monkeypatch,
+        layer,
+        _closed(1912),
+        _closed(373, "release: 2.1.4", repo=CONTAINERS, body=_MARKER_BODY),
+        _closed(400, "release: 2.1.5", repo=CONTAINERS, body=""),
+    )
+    items = activity_log.gather("2026-06-01", org="vergil-project")
+    assert items == [ActivityItem(TOOLING, 1912, "labels", "u1912", "2026-06-29")]
+    # Only the release-looking issues are read again, to trust their bodies.
+    assert layer.reads == [(CONTAINERS, 373), (CONTAINERS, 400)]
 
 
-def test_gather_returns_empty_on_non_list() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value={"x": 1}):
-        assert activity_log.gather("2026-06-01", org="vergil-project") == []
+def test_gather_keeps_release_lookalike_whose_reread_body_is_untrusted(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The marker counts only in the body the trust layer re-reads; an untrusted
+    # body there makes the issue ordinary work, reported by metadata only.
+    body = f"{trust_stubs.SPAM_TEXT}\n<!-- vrg-release:progress -->\n"
+    layer = trust_stubs.FakeItems(
+        {(CONTAINERS, 373): trust_stubs.item(body=body, author=trust_stubs.OUTSIDER)},
+        strict=True,
+    )
+    _search_and_reads(monkeypatch, layer, _closed(373, "release: 2.1.4", repo=CONTAINERS))
+    items = activity_log.gather("2026-06-01", org="vergil-project")
+    assert [item.number for item in items] == [373]
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: {CONTAINERS}#373 issue drive-by at "
+        f"{trust_stubs.CREATED} on body (untrusted)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
 
 
-def test_gather_defaults_org_to_current_repo_owner() -> None:
-    with (
-        patch("vergil_tooling.lib.github.current_org", return_value="acme") as mock_org,
-        patch("vergil_tooling.lib.github.read_json", return_value=[]) as mock_search,
-    ):
+def test_gather_defaults_org_to_current_repo_owner(search: Any) -> None:
+    fake = search()
+    with patch("vergil_tooling.lib.github.current_org", return_value="acme") as mock_org:
         assert activity_log.gather("2026-06-01") == []
     mock_org.assert_called_once()
-    assert "acme" in mock_search.call_args.args
+    assert fake.calls[0]["q"].startswith("user:acme ")
+
+
+def test_gather_repo_scopes_search_to_one_repo(search: Any) -> None:
+    fake = search()
+    activity_log.gather("2026-06-01", org="vergil-project", repo="vergil-tooling")
+    assert fake.calls[0]["q"].startswith(f"repo:{TOOLING} is:closed ")
+    assert "user:" not in fake.calls[0]["q"]
+
+
+def test_gather_repo_accepts_owner_name(search: Any) -> None:
+    fake = search()
+    activity_log.gather("2026-06-01", org="vergil-project", repo="acme/widgets")
+    assert fake.calls[0]["q"].startswith("repo:acme/widgets ")
+
+
+def test_gather_graphql_calls_bounded_by_result_pages(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A window over the search cap is halved once; then 1,150 results take 12
+    # pages. 13 calls in all: one per page and one per halving, never per issue.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+    issues = [_closed(n) for n in range(1, 1151)]
+    first, second = issues[:600], issues[600:]
+    pages: list[tuple[list[dict[str, Any]], str | None, int]] = [([], "S0", 1150)]
+    for half in (first, second):
+        chunks = [half[i : i + 100] for i in range(0, len(half), 100)]
+        pages += [
+            (chunk, f"P{i}" if i < len(chunks) - 1 else None, len(half))
+            for i, chunk in enumerate(chunks)
+        ]
+    fake = FakeSearch(*pages)
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", fake)
+    items = activity_log.gather("2026-06-01", org="vergil-project")
+    assert len(items) == 1150
+    assert len(fake.calls) == 13
+    assert capsys.readouterr().err == ""
+
+
+def test_gather_one_day_over_the_cap_fails_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+    fake = FakeSearch(([], "S0", 1001))
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", fake)
+    with (
+        patch.object(trust, "datetime") as clock,
+        pytest.raises(trust.TrustReadError, match="more than the 1000"),
+    ):
+        clock.now.return_value.date.return_value = trust.date(2026, 6, 1)
+        activity_log.gather("2026-06-01", org="vergil-project")
+
+
+def test_gather_never_guesses_a_missing_close_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    hit = trust.TrustedHit(TOOLING, 1, "issue", "t", "u1", "CLOSED", (), "", trust.Role.HUMAN)
+    monkeypatch.setattr(trust, "search_window", lambda *a, **k: ([hit], []))
+    with pytest.raises(trust.TrustReadError, match="u1 has no close time"):
+        activity_log.gather("2026-06-01", org="vergil-project")
+
+
+def test_gather_read_failure_raises(search: Any) -> None:
+    broken = _closed(1)
+    broken["closes"] = {"nodes": []}
+    search(broken)
+    with pytest.raises(trust.TrustReadError, match="has no close event"):
+        activity_log.gather("2026-06-01", org="vergil-project")
 
 
 def test_render_empty() -> None:
@@ -115,42 +282,6 @@ def test_render_takes_a_title() -> None:
         "# Activity log: vergil-tooling\n"
     )
     assert activity_log.render([], title="X").startswith("# X\n")
-
-
-def test_gather_repo_scopes_search_to_one_repo() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[]) as mock_search:
-        activity_log.gather("2026-06-01", org="vergil-project", repo="vergil-tooling")
-    args = mock_search.call_args.args
-    assert args[args.index("--repo") + 1] == "vergil-project/vergil-tooling"
-    assert "--owner" not in args
-
-
-def test_gather_repo_accepts_owner_name() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[]) as mock_search:
-        activity_log.gather("2026-06-01", org="vergil-project", repo="acme/widgets")
-    args = mock_search.call_args.args
-    assert args[args.index("--repo") + 1] == "acme/widgets"
-
-
-def test_gather_warns_when_search_hits_its_cap(capsys: pytest.CaptureFixture[str]) -> None:
-    entry = {
-        "number": 1,
-        "title": "t",
-        "repository": {"nameWithOwner": "vergil-project/vergil-tooling"},
-        "url": "u",
-        "closedAt": "2026-06-29T10:00:00Z",
-    }
-    with patch("vergil_tooling.lib.github.read_json", return_value=[entry] * 1000) as mock_search:
-        items = activity_log.gather("2026-06-01", org="vergil-project")
-    assert len(items) == 1000
-    assert "1000" in mock_search.call_args.args
-    assert "cap" in capsys.readouterr().err
-
-
-def test_gather_below_cap_is_silent(capsys: pytest.CaptureFixture[str]) -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
-        activity_log.gather("2026-06-01", org="vergil-project")
-    assert capsys.readouterr().err == ""
 
 
 def test_repo_page_names() -> None:

@@ -25,14 +25,14 @@ The main modules under `src/vergil_tooling/lib/`:
   [`vrg-whoami`](cli-tools-overview.md#vrg-whoami); `platform_env.py`
   resolves the platform.
 - **`epics.py`**: the epic/task model: the `StandingKind` table (the
-  ad-hoc, intake, planning, deferred and hoshin standing epics and their
+  ad-hoc, intake, planning, deferred, hoshin and operations standing epics and their
   per-quarter archives), the epic categories and their derived category
   labels, epic and queue homes, sub-issue linking, rollup,
   and the parent-based queue-item check that `vrg-pr-workflow report-ready`
   and `vrg-submit-pr` use to refuse intake, planning and deferred items.
 - **`proxies.py`**: the proxy epic's link to its primary, read from the
-  proxy's `Primary:` body line and the primary's trusted `Proxy:` comments
-  (`epics.is_proxy` is the label test every development-epic check skips).
+  proxy's `Primary:` body line (from a body the trust layer trusts) and the
+  primary's trusted `Proxy:` comments (`epics.is_proxy` is the label test every development-epic check skips).
 - **`epic_audit.py`**, **`intake_route.py`** and **`queue_view.py`** build
   on `epics.py`: the `vrg-epic-audit` drift report and orphan pass, the
   `vrg-intake-route` mechanics and route table, and the `vrg-queue` views.
@@ -42,6 +42,9 @@ The main modules under `src/vergil_tooling/lib/`:
 - **`security_records.py`**: `vrg-security-record`, including the
   security-records pass of `vrg-security-record sync` (previewed by the
   read-only `vrg-epic-audit`).
+- **`outsider_report.py`**: the outsider report of `vrg-epic-audit
+  --untrusted`, the untrusted activity in a listed org's repos, built on the
+  trust layer (`trust.py`).
 - **`release/`**: the mechanized release workflow behind `vrg-release`:
   preflight, prepare, merge, bump, confirm, finalize, handoff, the
   orchestrator, the package-index wait, and the `update-deps` stage.

@@ -70,5 +70,6 @@ thin shell shim at `.claude/hooks/guard.sh` that calls
 
 Tag releases on `main` using semantic versioning. The release process
 publishes both a full tag (`v1.2.0`) and a rolling `v{major}.{minor}` tag
-(`v1.2`) that always points to the latest patch. Consuming repos pin to the
+(`v1.2`) that each release moves to its new patch (a rollback with
+`vrg-promote` can move it back). Consuming repos pin to the
 `v{major}.{minor}` tag in CI.

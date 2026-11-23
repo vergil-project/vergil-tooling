@@ -35,7 +35,8 @@ only `vrg-release` writes; see
 [Release tracking artifacts](../../guides/releasing.md#release-tracking-artifacts).
 `prepare` locks the issue, and `vrg-release` trusts the state block only
 while every identity that authored, edited, closed or reopened the issue
-is a `human` login of `vrg-trusted-authors`: any other identity stops
+holds the `human` role (a `human` login of `vrg-trusted-authors` whose
+account is a GitHub user): any other identity stops
 the run before it writes anything, as a suspected security breach; see
 [The lock and the identity rule](../../guides/releasing.md#the-lock-and-the-identity-rule).
 Such a release can never be resumed; it is replaced with
@@ -47,11 +48,20 @@ facts against GitHub and git, then runs only the stages not recorded
 done; see
 [Resuming a release](../../guides/releasing.md#resuming-a-release).
 
+`prepare` and `back-merge-bump` adopt an existing release or back-merge
+PR by its branch (`release/X.Y.Z`, `release/post-X.Y.Z`), so a re-run
+never opens a second one. Only a same-repo PR with a trusted author is
+adopted: a fork PR on the same branch name, or a PR whose author holds
+no role, is reported on stderr, metadata only, and never adopted or
+merged. Several open PRs on the branch, or a lookup that cannot
+complete, stop the stage, naming them.
+
 Once every earlier stage has succeeded, `release-records` posts a
 `Released:` record, as the human running the release, on each issue in
 the issue list that has no counting record yet. A record counts only
-when its comment's author and last editor are `human` logins of
-`vrg-trusted-authors`; a resume posts only the missing ones, and
+when its comment's author and last editor hold the `human` role, and
+every other comment is reported on stderr, metadata only; a resume posts
+only the missing ones, and
 `close-tracking` closes the tracking issue only once every record is
 posted; see
 [`Released:` records](../../guides/releasing.md#released-records).
@@ -112,7 +122,10 @@ part of every release`.
 ## Prerequisites
 
 - Run from the root checkout, on `develop`, with a clean working tree
-  that matches `origin/develop`.
+  that has not diverged from `origin/develop`: one that is only behind
+  is fast-forwarded (see
+  [The develop sync](../../guides/releasing.md#the-develop-sync)). A
+  `--resume` runs only the host, `gh` auth and config checks.
 - A reachable container runtime (docker or nerdctl) and an authenticated
   `gh`. `git-cliff` runs in the dev container through `vrg-container-run`,
   so it is not needed on the host.
@@ -124,7 +137,10 @@ On a fresh start (not on `--resume`), preflight refuses while any
 version. The refusal names each open issue and the
 `vrg-release --resume X.Y.Z` that finishes it, or, for an issue with no
 state block (left by older tooling), says to finish that release by
-hand and then close the issue. Lookup failures refuse the release. See
+hand and then close the issue. Only an issue whose body is trusted
+counts: one opened or edited by an identity with no trusted role is
+reported on stderr, metadata only, and never blocks the start. Lookup
+failures refuse the release. See
 [One release at a time](../../guides/releasing.md#one-release-at-a-time).
 
 `--supersede X.Y.Z` is the one exception: its check passes over release
@@ -145,8 +161,14 @@ release takes `X.Y.(Z+1)` unless `minor` or `major` is given, and
 On a fresh start (not on `--resume`), preflight refuses while an open
 PR carries the `dependency-update` label. First it closes, with a
 comment, any such PR whose linked fix task was closed as completed (the
-update landed through the fix PR), and deletes its head branch. A failed
-branch delete is reported, not fatal. `--allow-pending-deps` lets the
+update landed through the fix PR), and deletes its head branch. The
+branch is deleted only when the PR is a same-repo PR with a trusted
+author: a fork PR's head is in the fork, so the branch of that name here
+is kept, and the fork PR is reported on stderr, metadata only. A failed
+branch delete is reported, not fatal. The `Fix task:` link counts only
+from a trusted PR body, and a completed close counts only when a trusted
+identity closed the fix task: a close by anyone else stops the release
+before any PR is touched, naming who closed it. `--allow-pending-deps` lets the
 release past whatever still blocks. Lookup failures refuse the release.
 See [The dependency-update gate](../../guides/releasing.md#the-dependency-update-gate).
 

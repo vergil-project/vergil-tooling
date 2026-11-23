@@ -8,12 +8,11 @@ kind. This is the sanctioned path for creating one — ``vrg-gh`` denies raw
 ``gh issue create`` — used by the intake-capture skill (epic vergil-project/.github#176).
 
 Where it lands: ``--repo`` when given; otherwise the current repo's queue home
-(:func:`epics.queue_home`) — ``<org>/.github`` for a public repo, the repo
-itself for a self-homed private one, so a private repo's captures never leave
-it. The issue is linked, as it is created, under the intake epic of the repo it
-was filed in (:func:`epics.ensure_intake_epic`). The epic is resolved *before*
-the issue is created, so a failure there leaves nothing behind; a failure to
-link the created issue exits 1 naming its URL (the orphan sweep would attach it
+(:func:`epics.queue_home`), ``<org>/.github``. The issue is linked, as it is
+created, under the intake epic of the repo it was filed in
+(:func:`epics.ensure_intake_epic`). The epic is resolved *before* the issue is
+created, so a failure there leaves nothing behind; a failure to link the created
+issue exits 1 naming its URL (the orphan sweep would attach it
 later, but the operator must know now).
 """
 
@@ -95,9 +94,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog=_PROG,
         description=(
             "Capture an intake issue, linked under its home's intake epic. Filed "
-            "in the current repo's queue home by default (<org>/.github for a "
-            "public repo, the repo itself for a private one); use --repo to "
-            "override."
+            "in the current repo's queue home, <org>/.github, by default; use "
+            "--repo to override."
         ),
         epilog="epic-review intake routes the capture into the epic/task model later.",
     )

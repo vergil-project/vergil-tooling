@@ -106,11 +106,11 @@ class TestPackageGateProducible:
         )
         ci = CiConfig(versions=ctx.ci_versions, integration_tests=ctx.integration_tests)
         ruleset = desired_ci_gates_rulesets(
-            project, ci, ghas=True, docs=ctx.publish_docs, package=ruleset_package
+            project, ci, docs=ctx.publish_docs, package=ruleset_package
         )[0]
         assert ("package / evidence" in required_status_contexts(ruleset)) is ruleset_package
         result: list[str] = unproducible_ci_yaml_contexts(
-            render_ci_workflow(ctx), required_status_contexts(ruleset), ghas=True
+            render_ci_workflow(ctx), required_status_contexts(ruleset)
         )
         return result
 

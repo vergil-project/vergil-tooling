@@ -74,9 +74,8 @@ Each evidence-producing gate uploads exactly one workflow-run artifact:
 
 Every gate — **including the security scanners** — uploads its report(s) as a
 `ci-evidence-<gate>` artifact **unconditionally**, decoupled from any
-code-scanning upload. Under GitHub Advanced Security, CodeQL still drops its
-SARIF as an artifact alongside its code-scanning upload; Trivy and Semgrep do
-the same regardless of GHAS availability.
+code-scanning upload. CodeQL, Trivy and Semgrep each drop their SARIF as an
+artifact alongside their code-scanning upload.
 
 The harvester therefore reads **artifacts only** and never touches the
 code-scanning API — one code path, no GHAS branching, one fewer external
@@ -143,8 +142,8 @@ evidence, so it does not satisfy the gate.
 The set of gates that MUST emit evidence is **not a hand-maintained list.** It
 is **derived from the same source of truth that drives branch protection**:
 `lib/github_config.py:desired_ci_gates_rulesets()` computes a repo's required
-status checks from its `VergilConfig` (language, resolved versions, GHAS
-availability, and whether a `[package]` section is present). The evidence
+status checks from its `VergilConfig` (language, resolved versions, and
+whether a `[package]` section is present). The evidence
 layer consumes that *same* computation, so the gates that are **enforced to
 merge** and the gates that are **required to have evidence** are provably the
 same set, with no drift.
@@ -185,8 +184,9 @@ and at least one report file, or the release fails completeness.
 
 ### Per-repo correctness for free
 
-Because the set is *derived*, a repo with a different real profile — no GHAS
-(CodeQL not required), a non-Python stack, or a gate legitimately disabled —
+Because the set is *derived*, a repo with a different real profile — a
+language CodeQL does not analyze (CodeQL not required), a non-Python stack, or a
+gate legitimately disabled —
 demands evidence for exactly the gates it actually gates on. It cannot
 spuriously fail for a gate it never ran. Adding a future required gate
 automatically pulls it into the evidence set via the shared config; the
@@ -321,7 +321,7 @@ self-describing and verifiable:
 v{version}-ci-evidence.tar.gz
 └─ evidence/
    ├─ manifest.json          # top-level machine index (see below)
-   ├─ checks.json            # raw check-runs snapshot (name, conclusion, timing, log URL)
+   ├─ checks.json            # raw check-runs snapshot (name, conclusion)
    ├─ gates/
    │   ├─ security/          # python.sarif, trivy-results.sarif, semgrep-results.sarif, evidence.json
    │   ├─ test/              # coverage-<ver>.xml, junit-<ver>.xml (per Python version), evidence.json
@@ -333,7 +333,11 @@ v{version}-ci-evidence.tar.gz
 
 - `manifest.json` is the curated, per-gate machine index (schema below).
 - `checks.json` is the **raw** check-run snapshot — distinct from the manifest's
-  curated view — capturing every check's name, conclusion, timing, and log URL.
+  curated view — capturing each counted check's name and conclusion. Only the
+  check runs of the selected CI run's own check suite (created by GitHub
+  Actions) and the `CodeQL`, `Semgrep OSS` and `Trivy` checks created by
+  GitHub Advanced Security count; a check run of the same name from another
+  App or workflow is left out.
 - `gates/sbom/` is present only when the release built a package SBOM. The
   assemble step copies the SBOM already built during publish (also a
   standalone Release asset) into the bundle, so the archive stays fully
@@ -423,6 +427,13 @@ run on the **release PR**, whose validated tree is identical to what lands on
 PR head) and harvested at publish time while the PR's runs and artifacts are
 still fresh. `released_commit` records what shipped; `validated_head_sha` records
 what was validated — they name the same tree.
+
+The release PR is the merge commit's one **merged same-repo PR with a trusted
+author**, read through the trust layer: a fork PR, a PR by an author with no
+role, and an unmerged PR never stand in for it, and with none (or several) the
+harvest fails rather than take the first PR of the commit. The CI run is the
+latest green `CI` run built from the repo itself; a fork's run of the same
+commit is ignored.
 
 ## Verification: how a downstream auditor checks the bundle
 

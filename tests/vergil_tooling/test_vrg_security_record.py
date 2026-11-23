@@ -9,6 +9,7 @@ from unittest.mock import DEFAULT, MagicMock, call, patch
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin import vrg_security_record
 from vergil_tooling.bin.vrg_security_record import main
 from vergil_tooling.lib import github, security_records
@@ -19,7 +20,6 @@ from vergil_tooling.lib.security_records import (
     RetargetRefusedError,
     SecurityIssue,
 )
-from vergil_tooling.lib.security_records import advisory_home as real_advisory_home
 from vergil_tooling.lib.security_records import pair as real_pair
 from vergil_tooling.lib.security_records import pair_check as real_pair_check
 
@@ -273,21 +273,92 @@ def test_create_tracking_failure_prints_resume_with_issue(
 def test_create_resume_finds_issue_among_intake_children(
     env: MagicMock, files: dict[str, str]
 ) -> None:
+    body = f"Neutral.\n\nSecurity advisory: {HOME} {GHSA}  \n"
     env.read_json_paginated.return_value = [
         {"number": 300, "repository_url": "https://api.github.com/repos/org/.github", "body": ""},
-        {
-            "number": 321,
-            "repository_url": "https://api.github.com/repos/org/.github",
-            "body": f"Neutral.\n\nSecurity advisory: {HOME} {GHSA}  \n",
-        },
+        {"number": 321, "repository_url": "https://api.github.com/repos/org/.github", "body": body},
     ]
-    with patch.object(github, "read_json") as search:
+    layer = trust_stubs.FakeItems({("org/.github", 321): trust_stubs.item(body=body)}, strict=True)
+    with (
+        patch.object(github, "read_json") as search,
+        patch("vergil_tooling.lib.github.graphql", side_effect=layer),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+    ):
         assert main(_create_argv(files, "--resume", GHSA)) == 0
+    # Only the matching child's body is read through the trust layer.
+    assert layer.reads == [("org/.github", 321)]
     endpoint = env.read_json_paginated.call_args.args[0]
     assert endpoint == "repos/org/.github/issues/7/sub_issues"
     search.assert_not_called()
     env.create_issue.assert_not_called()
     env.add_child.assert_not_called()
+    env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "kind", "login"),
+    [
+        (trust_stubs.OUTSIDER, None, "issue", "drive-by"),
+        (trust_stubs.HUMAN, trust_stubs.OUTSIDER, "edit", "drive-by"),
+        (trust_stubs.IMPOSTOR, None, "issue", "vergil-user"),
+    ],
+)
+def test_resume_ignores_untrusted_body_match(
+    env: MagicMock,
+    files: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    author: object,
+    editor: object,
+    kind: str,
+    login: str,
+) -> None:
+    # A child whose untrusted body carries the line is never the resumed issue:
+    # the resume creates and links a new one, and reports the skip.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    body = f"{trust_stubs.SPAM_TEXT}\n\nSecurity advisory: {HOME} {GHSA}\n"
+    env.read_json_paginated.return_value = [
+        {"number": 400, "repository_url": "https://api.github.com/repos/org/.github", "body": body},
+    ]
+    layer = trust_stubs.FakeItems(
+        {("org/.github", 400): trust_stubs.item(body=body, author=author, editor=editor)},
+        strict=True,
+    )
+    with (
+        patch("vergil_tooling.lib.github.graphql", side_effect=layer),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+    ):
+        assert main(_create_argv(files, "--resume", GHSA)) == 0
+    env.create_issue.assert_called_once()
+    env.add_child.assert_called_once_with(INTAKE, ISSUE)
+    env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
+    err = capsys.readouterr().err
+    at = trust_stubs.EDITED if editor is not None else trust_stubs.CREATED
+    assert f"skipped untrusted content: org/.github#400 {kind} {login} at {at} on body" in err
+    assert "SPAM-MARKER-TEXT" not in err
+    assert SECRET not in err
+
+
+def test_resume_ignores_a_listed_line_the_trusted_body_lacks(
+    env: MagicMock, files: dict[str, str]
+) -> None:
+    # The listing showed the line, but the body the layer reads (and trusts)
+    # no longer has it: not the resumed issue.
+    listed = f"Neutral.\n\nSecurity advisory: {HOME} {GHSA}\n"
+    env.read_json_paginated.return_value = [
+        {
+            "number": 400,
+            "repository_url": "https://api.github.com/repos/org/.github",
+            "body": listed,
+        },
+    ]
+    layer = trust_stubs.FakeItems({("org/.github", 400): trust_stubs.item(body="Neutral.")})
+    with (
+        patch("vergil_tooling.lib.github.graphql", side_effect=layer),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+    ):
+        assert main(_create_argv(files, "--resume", GHSA)) == 0
+    env.create_issue.assert_called_once()
     env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
 
 
@@ -647,7 +718,10 @@ def test_show_missing_advisory(env: MagicMock, capsys: pytest.CaptureFixture[str
 
 
 def test_show_issue_prints_every_pair(env: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
-    env.list_advisories.return_value = _ADVISORIES
+    env.list_advisories.return_value = [
+        _ADVISORIES[0],
+        Advisory(OTHER, "closed", None, (ISSUE,), external=True),
+    ]
     env.read_json.return_value = {
         "body": f"Neutral.\n\nSecurity advisory: {HOME} {OTHER}\nSecurity advisory: {HOME} {GHSA}"
     }
@@ -655,7 +729,7 @@ def test_show_issue_prints_every_pair(env: MagicMock, capsys: pytest.CaptureFixt
     assert main(["show", ISSUE.slug]) == 0
     assert env.list_advisories.call_count == 1
     assert capsys.readouterr().out == (
-        f"{OTHER}  closed  (no affected repo)  tracks: (no tracking issue)  [external report]\n"
+        f"{OTHER}  closed  (no affected repo)  tracks: {ISSUE.slug}  [external report]\n"
         f"summary: summary of {OTHER}\n"
         "description:\n"
         f"details of {OTHER}\n"
@@ -665,6 +739,52 @@ def test_show_issue_prints_every_pair(env: MagicMock, capsys: pytest.CaptureFixt
         "description:\n"
         f"details of {GHSA}\n"
     )
+
+
+def test_show_issue_omits_untracked_advisory(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # OTHER is named by the body but tracks no issue: its details never print.
+    env.list_advisories.return_value = _ADVISORIES
+    env.read_json.return_value = {
+        "body": f"Security advisory: {HOME} {OTHER}\nSecurity advisory: {HOME} {GHSA}"
+    }
+    env.read_text.side_effect = lambda _home, ghsa: (f"summary of {ghsa}", f"details of {ghsa}")
+    assert main(["show", ISSUE.slug]) == 0
+    captured = capsys.readouterr()
+    assert f"summary of {GHSA}" in captured.out
+    assert OTHER not in captured.out
+    assert captured.err == (
+        f"vrg-security-record: not shown: advisory {OTHER} does not track {ISSUE.slug}\n"
+    )
+    env.read_text.assert_called_once_with(HOME, GHSA)
+
+
+def test_show_issue_refuses_when_no_named_advisory_tracks_it(
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env.list_advisories.return_value = [
+        Advisory(GHSA, "draft", "tool", (EXISTING,), external=False),
+        _ADVISORIES[1],
+    ]
+    env.read_json.return_value = {
+        "body": f"Security advisory: {HOME} {GHSA}\nSecurity advisory: {HOME} {OTHER}"
+    }
+    assert main(["show", ISSUE.slug]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        f"vrg-security-record: not shown: advisories {GHSA}, {OTHER} do not track {ISSUE.slug}\n"
+        f"vrg-security-record: no advisory {ISSUE.slug} names tracks it\n"
+    )
+    env.read_text.assert_not_called()
+
+
+def test_show_by_ghsa_needs_no_tracking(env: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
+    # Asked for by GHSA ID, the advisory itself is the subject: no issue to track.
+    env.list_advisories.return_value = _ADVISORIES
+    assert main(["show", OTHER]) == 0
+    assert f"summary: {SECRET}" in capsys.readouterr().out
 
 
 def test_show_issue_refuses_when_a_named_advisory_is_missing(
@@ -1142,50 +1262,6 @@ def test_sync_help_names_its_permission(capsys: pytest.CaptureFixture[str]) -> N
     text = " ".join(capsys.readouterr().out.split())
     assert "Repository security advisories: read and write" in text
     assert "--dry-run" in text
-
-
-# --- private home -----------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["list"],
-        ["list", "--repo", "org/tool"],
-        ["show", GHSA],
-        ["show", ISSUE.slug],
-        ["retarget", GHSA, "--from", EXISTING.slug, "--to", ISSUE.slug],
-        ["sync"],
-        ["sync", "--dry-run"],
-        ["close", GHSA, "--reason", "dropped"],
-        None,  # create, filled in below
-    ],
-)
-def test_private_home_refused_for_every_subcommand(
-    env: MagicMock,
-    files: dict[str, str],
-    capsys: pytest.CaptureFixture[str],
-    argv: list[str] | None,
-) -> None:
-    env.advisory_home.side_effect = real_advisory_home
-    with patch.object(security_records.github, "repo_visibility", return_value="PRIVATE"):
-        rc = main(argv if argv is not None else _create_argv(files))
-    assert rc == 1
-    err = capsys.readouterr().err
-    assert err.strip() == (
-        "vrg-security-record: org/.github is not public; security records need a "
-        "public org .github (private orgs are unsupported)"
-    )
-    for name in (
-        "find_duplicate",
-        "create_advisory",
-        "create_issue",
-        "mark_issue",
-        "retarget",
-        "list_advisories",
-        "read_text",
-    ):
-        getattr(env, name).assert_not_called()
 
 
 # --- helpers ----------------------------------------------------------------

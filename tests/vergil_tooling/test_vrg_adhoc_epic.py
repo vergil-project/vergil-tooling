@@ -22,7 +22,6 @@ def test_ensure_current_repo(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(
             f"{_MOD}.epics.ensure_adhoc_epic",
             return_value=epics.IssueRef("org", ".github", 5),
@@ -32,7 +31,7 @@ def test_ensure_current_repo(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     mock_ensure.assert_called_once_with("org/repo")
     out = capsys.readouterr().out
-    assert "epic home: org/.github [PUBLIC]" in out
+    assert "-> epic home: org/.github\n" in out
     assert "Ad-hoc epic:" in out
     assert "org/.github#5" in out
 
@@ -41,7 +40,6 @@ def test_ensure_repo_override(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.current_repo") as mock_cur,
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(
             f"{_MOD}.epics.ensure_adhoc_epic",
             return_value=epics.IssueRef("org", ".github", 9),
@@ -57,33 +55,28 @@ def test_ensure_repo_override(capsys: pytest.CaptureFixture[str]) -> None:
 def test_ensure_scopes_token_to_target_repo_owner() -> None:
     """Every App-token call in ensure runs under the --repo owner, not cwd (#3409).
 
-    From a checkout in another org, a cwd-scoped token cannot see a private
-    target repo ("Could not resolve to a Repository").
+    From a checkout in another org, a cwd-scoped token is minted for the
+    wrong org.
     """
     seen: list[str | None] = []
 
     def _home(_org: str, _bare: str) -> str:
         seen.append(github._target_org.get())
-        return "other-org/lab"
-
-    def _visibility(_repo: str) -> str:
-        seen.append(github._target_org.get())
-        return "PRIVATE"
+        return "other-org/.github"
 
     def _ensure(_repo: str) -> epics.IssueRef:
         seen.append(github._target_org.get())
-        return epics.IssueRef("other-org", "lab", 3)
+        return epics.IssueRef("other-org", ".github", 3)
 
     with (
         patch(f"{_MOD}.github.current_repo") as mock_cur,
         patch(f"{_MOD}.epics.resolve_epic_home", side_effect=_home),
-        patch(f"{_MOD}.github.repo_visibility", side_effect=_visibility),
         patch(f"{_MOD}.epics.ensure_adhoc_epic", side_effect=_ensure),
     ):
         rc = main(["ensure", "--repo", "other-org/lab"])
     assert rc == 0
     mock_cur.assert_not_called()
-    assert seen == ["other-org", "other-org", "other-org"]
+    assert seen == ["other-org", "other-org"]
 
 
 def test_ensure_created_but_not_confirmed_is_a_clean_error(
@@ -97,7 +90,6 @@ def test_ensure_created_but_not_confirmed_is_a_clean_error(
     )
     with (
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(
             f"{_MOD}.epics.ensure_adhoc_epic",
             side_effect=epics.StandingEpicNotVisibleError(message),
@@ -116,23 +108,6 @@ def test_ensure_malformed_repo_errors(capsys: pytest.CaptureFixture[str]) -> Non
     assert rc == 1
     assert "owner/repo" in capsys.readouterr().err
     mock_ensure.assert_not_called()
-
-
-def test_ensure_private_repo_echoes_self_home(capsys: pytest.CaptureFixture[str]) -> None:
-    # A private target's ad-hoc epic homes in the repo itself; the echo shows it.
-    with (
-        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/lab"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PRIVATE"),
-        patch(
-            f"{_MOD}.epics.ensure_adhoc_epic",
-            return_value=epics.IssueRef("org", "lab", 3),
-        ),
-    ):
-        rc = main(["ensure", "--repo", "org/lab"])
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "epic home: org/lab [PRIVATE]" in out
-    assert "org/lab#3" in out
 
 
 def test_archive_repo_dry_run_default(capsys: pytest.CaptureFixture[str]) -> None:
@@ -200,7 +175,6 @@ def test_archive_malformed_repo_errors(capsys: pytest.CaptureFixture[str]) -> No
 def test_archive_all_in_apply(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.target_org") as mock_scope,
-        patch(f"{_MOD}.epic_audit.coverage_gap", return_value=None),
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]) as mock_org,
     ):
         rc = main(["archive", "--all-in", "org", "--apply"])
@@ -218,7 +192,6 @@ def test_archive_all_in_renders_each_plan(capsys: pytest.CaptureFixture[str]) ->
     )
     with (
         patch(f"{_MOD}.github.target_org"),
-        patch(f"{_MOD}.epic_audit.coverage_gap", return_value=None),
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[plan]),
     ):
         rc = main(["archive", "--all-in", "org"])
@@ -244,7 +217,6 @@ def test_normalize_dry_run_lists_conversions(capsys: pytest.CaptureFixture[str])
     ]
     with (
         patch(f"{_MOD}.github.target_org"),
-        patch(f"{_MOD}.epic_audit.coverage_gap", return_value=None),
         patch(f"{_MOD}.epics.normalize_adhoc_archives", return_value=conv) as mock_norm,
     ):
         rc = main(["normalize", "--all-in", "org"])
@@ -258,74 +230,8 @@ def test_normalize_dry_run_lists_conversions(capsys: pytest.CaptureFixture[str])
 def test_normalize_apply_passes_apply_true() -> None:
     with (
         patch(f"{_MOD}.github.target_org"),
-        patch(f"{_MOD}.epic_audit.coverage_gap", return_value=None),
         patch(f"{_MOD}.epics.normalize_adhoc_archives", return_value=[]) as mock_norm,
     ):
         rc = main(["normalize", "--all-in", "org", "--apply"])
     assert rc == 0
     mock_norm.assert_called_once_with("org", apply=True)
-
-
-_GAP = "the GitHub App installation on org covers only selected repositories"
-
-
-@pytest.mark.parametrize("apply", [False, True])
-def test_archive_all_in_refuses_a_partial_view(
-    capsys: pytest.CaptureFixture[str], *, apply: bool
-) -> None:
-    # A token that may not see every repo must not read as "no private homes" (#4579).
-    scoped: list[str | None] = []
-
-    def _gap(org: str) -> str:
-        scoped.append(github._target_org.get())
-        assert org == "org"
-        return _GAP
-
-    argv = ["archive", "--all-in", "org", *(["--apply"] if apply else [])]
-    with (
-        patch(f"{_MOD}.epic_audit.coverage_gap", side_effect=_gap),
-        patch(f"{_MOD}.epics.drain_adhoc_org") as mock_org,
-    ):
-        rc = main(argv)
-    assert rc == 1
-    mock_org.assert_not_called()
-    assert scoped == ["org"]  # probed under the org's token
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert f"vrg-adhoc-epic: --all-in org refused: {_GAP}" in captured.err
-
-
-@pytest.mark.parametrize("apply", [False, True])
-def test_normalize_refuses_a_partial_view(
-    capsys: pytest.CaptureFixture[str], *, apply: bool
-) -> None:
-    scoped: list[str | None] = []
-
-    def _gap(_org: str) -> str:
-        scoped.append(github._target_org.get())
-        return _GAP
-
-    argv = ["normalize", "--all-in", "org", *(["--apply"] if apply else [])]
-    with (
-        patch(f"{_MOD}.epic_audit.coverage_gap", side_effect=_gap),
-        patch(f"{_MOD}.epics.normalize_adhoc_archives") as mock_norm,
-    ):
-        rc = main(argv)
-    assert rc == 1
-    mock_norm.assert_not_called()
-    assert scoped == ["org"]
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert f"vrg-adhoc-epic: --all-in org refused: {_GAP}" in captured.err
-
-
-def test_archive_repo_skips_the_org_coverage_probe() -> None:
-    # A single --repo drain reads its one repo directly, never the org's repo list.
-    with (
-        patch(f"{_MOD}.github.target_org"),
-        patch(f"{_MOD}.epic_audit.coverage_gap") as mock_gap,
-        patch(f"{_MOD}.epics.drain_adhoc_repo", return_value=None),
-    ):
-        rc = main(["archive", "--repo", "org/tooling"])
-    assert rc == 0
-    mock_gap.assert_not_called()

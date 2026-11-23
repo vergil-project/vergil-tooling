@@ -55,7 +55,7 @@ from vergil_tooling.bin.vrg_vm import (
 )
 from vergil_tooling.lib import identity_mode, vm_cloud, vm_memory
 from vergil_tooling.lib.identity import Identity, IdentityConfig
-from vergil_tooling.lib.trusted_authors import TrustedAuthors
+from vergil_tooling.lib.trusted_authors import OrgConfig, TrustedAuthors
 from vergil_tooling.lib.vm_backend import select_backend
 from vergil_tooling.lib.vm_spec import ComposedSpec, SpecError
 from vergil_tooling.lib.vm_transport import LimaTransport
@@ -735,7 +735,11 @@ class TestRestart:
 
 
 # Invented logins only — never a real one in a fixture (spec 4.4).
-_TRUSTED = TrustedAuthors(human=("example-human",), agents=("example-agent",))
+_TRUSTED = TrustedAuthors(
+    human=("example-human",),
+    agents=("example-agent",),
+    orgs={"example-org": OrgConfig(automation_app="example-org-automation")},
+)
 
 
 @pytest.fixture()
@@ -749,6 +753,9 @@ def trusted_config_file(tmp_path: Path) -> Path:
         [trusted_authors]
         human = ["example-human"]
         agents = ["example-agent"]
+
+        [orgs.example-org]
+        automation_app = "example-org-automation"
 
         [identities.vergil]
         vm_instance = "vergil-agent"

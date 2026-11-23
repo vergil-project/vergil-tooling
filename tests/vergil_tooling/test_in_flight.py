@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import epics, github, in_flight, live_branches, queue_view
+from vergil_tooling.lib import epics, github, in_flight, live_branches, queue_view, trust
 from vergil_tooling.lib.epics import ChildState, IssueRef
 from vergil_tooling.lib.in_flight import InFlightError, RepoSignals
 
@@ -460,7 +460,8 @@ def test_adhoc_items_in_flight_outranks_blocked(tmp_path: Path) -> None:
         patch(f"{_QV}.in_flight.find_clones", return_value={_REPO: tmp_path}) as find,
         patch(f"{_QV}.in_flight.repo_signals", return_value=signals) as read,
     ):
-        held, free = queue_view.adhoc_items("org/.github", roots=[tmp_path])
+        stops = trust.BatchStops()
+        held, free = queue_view.adhoc_items("org/.github", stops=stops, roots=[tmp_path])
     find.assert_called_once_with([_REPO], [tmp_path])
     read.assert_called_once_with(_REPO, tmp_path)
     assert held.state == "in-flight"
@@ -480,7 +481,7 @@ def test_adhoc_items_default_roots_and_no_tasks_reads_nothing() -> None:
         patch(f"{_QV}.live_branches.default_repo_roots") as defaults,
         patch(f"{_QV}.in_flight.find_clones") as find,
     ):
-        assert queue_view.adhoc_items("org/.github") == []
+        assert queue_view.adhoc_items("org/.github", stops=trust.BatchStops()) == []
     defaults.assert_not_called()
     find.assert_not_called()
 
@@ -503,7 +504,7 @@ def test_adhoc_items_no_roots_on_the_platform_raises(tmp_path: Path) -> None:
         ),
         pytest.raises(live_branches.RepoSetError, match="no default repo set"),
     ):
-        queue_view.adhoc_items("org/.github")
+        queue_view.adhoc_items("org/.github", stops=trust.BatchStops())
 
 
 def test_render_adhoc_text_in_flight() -> None:

@@ -19,19 +19,23 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, trust
 from vergil_tooling.lib.rulings import RulingError, comments
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 POST_TIMEOUT = 30
 REREADS = 3
 REREAD_DELAY = 2.0
 
-# What a failed re-read can raise: a gh failure, GraphQL errors, a page that is
-# not shaped as expected, or output that is not JSON. Each is carried in the
-# PostOutcomeUnknown message, never dropped.
-_READ_ERRORS = (github.GitHubAPIError, RuntimeError, RulingError, ValueError)
+# What a failed re-read can raise: a gh failure, GraphQL errors, a read the
+# trust layer could not complete, a comment ID that is not usable, or output
+# that is not JSON. Each is carried in the PostOutcomeUnknown message, never
+# dropped.
+_READ_ERRORS = (github.GitHubAPIError, RuntimeError, trust.TrustReadError, RulingError, ValueError)
 
 
 class PostNotLanded(RulingError):  # noqa: N818 - the name is the plan's interface
@@ -57,17 +61,21 @@ def _one_line(exc: Exception) -> str:
     return " ".join(str(exc).split())
 
 
-def post_comment_once(repo: str, issue: int, body: str, *, author: str) -> int:
+def post_comment_once(
+    repo: str, issue: int, body: str, *, author: str, authors: TrustedAuthors | None = None
+) -> int:
     """Post ``body`` on ``repo#issue`` exactly once and return the new comment's ID.
 
     ``author`` is the login the post is made as, used to recognise the landed
-    comment after a failure. Raises :class:`PostNotLanded` or
+    comment after a failure, among the comments the trust layer trusts
+    (:func:`comments.read_stream`, by *authors*, the loaded configuration by
+    default). Raises :class:`PostNotLanded` or
     :class:`PostOutcomeUnknown` after a failed post; a missing token
     (:class:`github.MissingGitHubTokenError`) means nothing was sent and is
     raised as it is.
     """
     where = f"{repo}#{issue}"
-    before = {comment.id for comment in comments.fetch_comments(repo, issue)}
+    before = comments.read_stream(repo, issue, authors).all_ids
     failure: Exception
     try:
         payload = github.post_json_once(
@@ -88,7 +96,7 @@ def post_comment_once(repo: str, issue: int, body: str, *, author: str) -> int:
     for _attempt in range(REREADS):
         time.sleep(REREAD_DELAY)
         try:
-            after = comments.fetch_comments(repo, issue)
+            after = comments.read_stream(repo, issue, authors).comments
         except _READ_ERRORS as exc:
             errors.append(exc)
             continue

@@ -8,7 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib import github
+from tests.vergil_tooling.release_stubs import branch_lookup, branch_pr, fork_skip
+from vergil_tooling.lib import github, trust
 from vergil_tooling.lib.release.bump import back_merge_and_bump
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 
@@ -18,14 +19,13 @@ if TYPE_CHECKING:
 _MOD = "vergil_tooling.lib.release.bump"
 
 
-@pytest.fixture(autouse=True)
-def _no_closed_pr() -> Iterator[MagicMock]:
-    """No closed back-merge PR unless a test says otherwise.
+_POST = "release/post-2.1.0"
 
-    The real ``pr_for_branch`` returns open PRs only, so every fresh-path test
-    also reaches the closed-PR lookup (#3328); default it to "none".
-    """
-    with patch(_MOD + ".github.closed_pr_for_branch", return_value=None) as m:
+
+@pytest.fixture(autouse=True)
+def _branch_lookup() -> Iterator[MagicMock]:
+    """No PR on the post branch unless a test says otherwise."""
+    with branch_lookup() as m:
         yield m
 
 
@@ -71,7 +71,6 @@ def test_back_merge_creates_branch_and_pr() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".git.run"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(
             _MOD + ".github.create_pr",
@@ -94,7 +93,6 @@ def test_back_merge_fetches_main_first() -> None:
 
     with (
         patch(_MOD + ".git.run", side_effect=capture_git_run),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(
             _MOD + ".github.create_pr",
@@ -118,7 +116,6 @@ def test_back_merge_commits_version_bump() -> None:
 
     with (
         patch(_MOD + ".git.run", side_effect=capture_git_run),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(
             _MOD + ".github.create_pr",
@@ -140,7 +137,6 @@ def test_back_merge_bumps_in_worktree() -> None:
     assert ctx.work_root != ctx.repo_root
     with (
         patch(_MOD + ".git.run"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1") as mock_bump,
         patch(
             _MOD + ".github.create_pr",
@@ -157,7 +153,6 @@ def test_back_merge_creates_pr_to_develop() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".git.run"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(_MOD + ".github.create_pr") as mock_pr,
         patch(_MOD + ".wait_and_merge"),
@@ -174,7 +169,6 @@ def test_back_merge_waits_and_merges() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".git.run"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(
             _MOD + ".github.create_pr",
@@ -194,10 +188,7 @@ def test_back_merge_skips_when_listed_open_pr_merged_since() -> None:
     """Listed as open, then merged before its state was read: skip the merge."""
     ctx = _ctx()
     with (
-        patch(
-            _MOD + ".github.pr_for_branch",
-            return_value={"url": "https://github.com/owner/repo/pull/9"},
-        ),
+        branch_lookup(branch_pr(9, "OPEN", branch=_POST)),
         patch(_MOD + ".github.pr_state", return_value="MERGED"),
         patch(_MOD + "._post_branch_version", return_value="2.1.1"),
         patch(_MOD + ".version.bump") as m_bump,
@@ -212,19 +203,17 @@ def test_back_merge_skips_when_listed_open_pr_merged_since() -> None:
     m_wm.assert_not_called()
 
 
-def test_back_merge_adopts_already_merged_pr_on_resume(_no_closed_pr: MagicMock) -> None:
+def test_back_merge_adopts_already_merged_pr_on_resume(_branch_lookup: MagicMock) -> None:
     """Resume after the back-merge merged: adopt it, never re-create the branch (#3328).
 
-    The real ``pr_for_branch`` returns open PRs only, so a merged back-merge PR
-    is found through the closed-PR lookup. The version is read from its pull
-    ref, which outlives a deleted head branch.
+    The branch has no open PR, but a merged one: it is adopted. The version is
+    read from its pull ref, which outlives a deleted head branch.
     """
     ctx = _ctx()
-    _no_closed_pr.return_value = {
-        "number": "951",
-        "url": "https://github.com/owner/repo/pull/951",
-        "headRefOid": "3bd942f2",
-    }
+    _branch_lookup.return_value = (
+        [branch_pr(951, "MERGED", branch=_POST)],
+        [],
+    )
     git_run_calls: list[tuple[str, ...]] = []
 
     def capture_git_run(*args: str) -> None:
@@ -232,8 +221,6 @@ def test_back_merge_adopts_already_merged_pr_on_resume(_no_closed_pr: MagicMock)
 
     with (
         patch(_MOD + ".git.run", side_effect=capture_git_run),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
         patch(_MOD + ".version.show", return_value="2.1.1") as m_show,
         patch(_MOD + ".version.bump") as m_bump,
         patch(_MOD + ".github.create_pr") as m_pr,
@@ -241,7 +228,7 @@ def test_back_merge_adopts_already_merged_pr_on_resume(_no_closed_pr: MagicMock)
     ):
         back_merge_and_bump(ctx)
 
-    _no_closed_pr.assert_called_once_with("release/post-2.1.0")
+    _branch_lookup.assert_called_once_with("owner/repo", _POST, state="all")
     assert ctx.bump_pr_url == "https://github.com/owner/repo/pull/951"
     assert ctx.next_version == "2.1.1"
     assert git_run_calls == [("fetch", "origin", "pull/951/head")]
@@ -251,18 +238,15 @@ def test_back_merge_adopts_already_merged_pr_on_resume(_no_closed_pr: MagicMock)
     m_wm.assert_not_called()
 
 
-def test_back_merge_ignores_closed_unmerged_pr(_no_closed_pr: MagicMock) -> None:
+def test_back_merge_ignores_closed_unmerged_pr(_branch_lookup: MagicMock) -> None:
     """A closed but unmerged back-merge PR is not adopted: the fresh path runs."""
     ctx = _ctx()
-    _no_closed_pr.return_value = {
-        "number": "950",
-        "url": "https://github.com/owner/repo/pull/950",
-        "headRefOid": "abc123",
-    }
+    _branch_lookup.return_value = (
+        [branch_pr(950, "CLOSED", branch=_POST)],
+        [],
+    )
     with (
         patch(_MOD + ".git.run"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.pr_state", return_value="CLOSED"),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(
             _MOD + ".github.create_pr",
@@ -278,29 +262,53 @@ def test_back_merge_ignores_closed_unmerged_pr(_no_closed_pr: MagicMock) -> None
     assert ctx.next_version == "2.1.1"
 
 
-def test_back_merge_open_pr_skips_closed_lookup(_no_closed_pr: MagicMock) -> None:
-    """An open back-merge PR is adopted directly; the closed lookup never runs."""
+def test_bump_ignores_fork_post_release_pr(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fork PR on the post branch's name is never adopted or merged, only reported.
+
+    GHSA-r4j2-cwcp-xg56: the fresh path runs and opens the release's own PR.
+    """
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
     ctx = _ctx()
     with (
+        branch_lookup(skipped=(fork_skip(666),)) as lookup,
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(
-            _MOD + ".github.pr_for_branch",
-            return_value={"url": "https://github.com/owner/repo/pull/9"},
-        ),
-        patch(_MOD + ".github.pr_state", return_value="OPEN"),
-        patch(_MOD + "._post_branch_version", return_value="2.1.1"),
-        patch(_MOD + ".wait_and_merge"),
+            _MOD + ".github.create_pr",
+            return_value="https://github.com/owner/repo/pull/101",
+        ) as m_pr,
+        patch(_MOD + ".wait_and_merge") as m_wm,
     ):
         back_merge_and_bump(ctx)
-    _no_closed_pr.assert_not_called()
+    lookup.assert_called_once_with("owner/repo", _POST, state="all")
+    m_pr.assert_called_once()
+    m_wm.assert_called_once_with("https://github.com/owner/repo/pull/101", phase="back-merge-bump")
+    assert ctx.bump_pr_url == "https://github.com/owner/repo/pull/101"
+    err = capsys.readouterr().err
+    assert "#666" in err
+    assert trust.CROSS_REPOSITORY in err
+
+
+def test_bump_refuses_several_open_prs_on_the_post_branch() -> None:
+    ctx = _ctx()
+    with (
+        branch_lookup(branch_pr(9, "OPEN", branch=_POST), branch_pr(10, "OPEN", branch=_POST)),
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + ".wait_and_merge") as m_wm,
+        pytest.raises(ReleaseError, match=r"2 open PRs on 'release/post-2\.1\.0' \(#9, #10\)"),
+    ):
+        back_merge_and_bump(ctx)
+    m_run.assert_not_called()
+    m_wm.assert_not_called()
+    assert ctx.bump_pr_url is None
 
 
 def test_back_merge_merges_existing_open_pr() -> None:
     ctx = _ctx()
     with (
-        patch(
-            _MOD + ".github.pr_for_branch",
-            return_value={"url": "https://github.com/owner/repo/pull/9"},
-        ),
+        branch_lookup(branch_pr(9, "OPEN", branch=_POST)),
         patch(_MOD + ".github.pr_state", return_value="OPEN"),
         patch(_MOD + "._post_branch_version", return_value="2.1.1"),
         patch(_MOD + ".github.create_pr") as m_pr,
@@ -317,10 +325,7 @@ def test_back_merge_existing_pr_state_retries_404() -> None:
     ctx = _ctx()
     err = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 404: Not Found")
     with (
-        patch(
-            _MOD + ".github.pr_for_branch",
-            return_value={"url": "https://github.com/owner/repo/pull/9"},
-        ),
+        branch_lookup(branch_pr(9, "OPEN", branch=_POST)),
         patch(_MOD + ".github.pr_state", side_effect=[err, "MERGED"]) as m_state,
         patch(_MOD + "._post_branch_version", return_value="2.1.1"),
         patch(_MOD + ".wait_and_merge") as m_wm,
@@ -357,7 +362,6 @@ def test_back_merge_never_returns_to_develop() -> None:
 
     with (
         patch(_MOD + ".git.run", side_effect=capture_git_run),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(
             _MOD + ".github.create_pr",
@@ -384,7 +388,6 @@ def test_back_merge_create_path_records_merge_sha(_merge_commit: MagicMock) -> N
     _merge_commit.side_effect = lambda _url: order.append("sha") or _MERGE_SHA
     with (
         patch(_MOD + ".git.run"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(_MOD + ".github.create_pr", return_value="https://github.com/owner/repo/pull/101"),
         patch(_MOD + ".wait_and_merge", side_effect=lambda *_a, **_k: order.append("merge")),
@@ -401,10 +404,7 @@ def test_back_merge_adopt_open_path_records_merge_sha(_merge_commit: MagicMock) 
     order: list[str] = []
     _merge_commit.side_effect = lambda _url: order.append("sha") or _MERGE_SHA
     with (
-        patch(
-            _MOD + ".github.pr_for_branch",
-            return_value={"url": "https://github.com/owner/repo/pull/9"},
-        ),
+        branch_lookup(branch_pr(9, "OPEN", branch=_POST)),
         patch(_MOD + ".github.pr_state", return_value="OPEN"),
         patch(_MOD + "._post_branch_version", return_value="2.1.1"),
         patch(_MOD + ".wait_and_merge", side_effect=lambda *_a, **_k: order.append("merge")),
@@ -420,10 +420,7 @@ def test_back_merge_adopt_listed_open_but_merged_records_merge_sha(
 ) -> None:
     ctx = _ctx()
     with (
-        patch(
-            _MOD + ".github.pr_for_branch",
-            return_value={"url": "https://github.com/owner/repo/pull/9"},
-        ),
+        branch_lookup(branch_pr(9, "OPEN", branch=_POST)),
         patch(_MOD + ".github.pr_state", return_value="MERGED"),
         patch(_MOD + "._post_branch_version", return_value="2.1.1"),
         patch(_MOD + ".wait_and_merge"),
@@ -434,19 +431,16 @@ def test_back_merge_adopt_listed_open_but_merged_records_merge_sha(
 
 
 def test_back_merge_adopt_merged_path_records_merge_sha(
-    _no_closed_pr: MagicMock, _merge_commit: MagicMock
+    _branch_lookup: MagicMock, _merge_commit: MagicMock
 ) -> None:
     """Resume after the back-merge merged: the adopted PR's merge commit is recorded."""
     ctx = _ctx()
-    _no_closed_pr.return_value = {
-        "number": "951",
-        "url": "https://github.com/owner/repo/pull/951",
-        "headRefOid": "3bd942f2",
-    }
+    _branch_lookup.return_value = (
+        [branch_pr(951, "MERGED", branch=_POST)],
+        [],
+    )
     with (
         patch(_MOD + ".git.run"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
         patch(_MOD + ".version.show", return_value="2.1.1"),
     ):
         back_merge_and_bump(ctx)
@@ -460,7 +454,6 @@ def test_back_merge_records_none_when_no_merge_commit(_merge_commit: MagicMock) 
     _merge_commit.return_value = ""
     with (
         patch(_MOD + ".git.run"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(_MOD + ".github.create_pr", return_value="https://github.com/owner/repo/pull/101"),
         patch(_MOD + ".wait_and_merge"),
@@ -475,13 +468,15 @@ _BUMP_PR = "https://github.com/owner/repo/pull/101"
 _BUMP_BRANCH = "release/post-2.1.0"
 _BUMP_HEAD = "b0mp"
 _TIMEOUT = github.GitHubAPIError(1, ("gh", "pr", "create"), "", "HTTP 504: Gateway Timeout")
-_OPEN_BUMP_PR = github.OpenPR(
+_OPEN_BUMP_PR = trust.PRRef(
+    number=101,
     url=_BUMP_PR,
     title="chore(release): back-merge 2.1.0 and bump to 2.1.1",
-    head_ref=_BUMP_BRANCH,
-    base_ref="develop",
+    head=_BUMP_BRANCH,
     head_oid=_BUMP_HEAD,
-    cross_repo=False,
+    base="develop",
+    author_role=trust.Role.AGENTS,
+    state="OPEN",
 )
 
 
@@ -493,10 +488,9 @@ def _bump_with_create(
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_BUMP_HEAD),
         patch(_MOD + "._checkout_post_branch", return_value=None),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(_MOD + ".github.create_pr", create),
-        patch(_MOD + ".github.open_prs_for_head", side_effect=open_prs) as lookup,
+        patch("vergil_tooling.lib.pr_create.open_trusted_prs", side_effect=open_prs) as lookup,
         patch("vergil_tooling.lib.pr_create.time.sleep") as sleep,
         patch(_MOD + ".wait_and_merge") as wait,
     ):
@@ -516,7 +510,8 @@ def test_back_merge_adopts_the_pr_a_failed_create_opened() -> None:
     ctx, lookup, sleep, wait = _bump_with_create(create, [[_OPEN_BUMP_PR]])
     assert ctx.bump_pr_url == _BUMP_PR
     create.assert_called_once()
-    lookup.assert_called_once_with(_BUMP_BRANCH, base="develop")
+    [spec] = lookup.call_args.args
+    assert (spec.head, spec.base) == (_BUMP_BRANCH, "develop")
     sleep.assert_not_called()
     wait.assert_called_once_with(_BUMP_PR, phase="back-merge-bump")
 

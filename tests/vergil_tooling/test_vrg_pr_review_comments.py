@@ -17,7 +17,7 @@ from vergil_tooling.bin.vrg_pr_review_comments import (
     parse_args,
     parse_comment,
 )
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, trust
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -42,9 +42,37 @@ def _api_comment(**overrides: object) -> dict[str, object]:
     return comment
 
 
+_AT = "2026-11-22T00:00:00Z"
+_SPAM = "SPAM-MARKER-TEXT see https://example.invalid/x"
+
+
 @pytest.fixture
 def paginated() -> Iterator[MagicMock]:
     with patch(f"{_MOD}.github.read_json_paginated") as mock:
+        yield mock
+
+
+def _trusted(*comments: tuple[int, str], skipped: tuple[trust.Skipped, ...] = ()) -> object:
+    """What ``trust.read_reviews`` returns when it trusts *comments* (id, body)."""
+    return trust.PRReviewContent(
+        reviews=(),
+        review_comments=tuple(
+            trust.TrustedComment(str(number), body, trust.Role.HUMAN, _AT)
+            for number, body in comments
+        ),
+        skipped=skipped,
+    )
+
+
+@pytest.fixture(autouse=True)
+def reviews(paginated: MagicMock) -> Iterator[MagicMock]:
+    """The trust layer's read: by default it trusts every comment the listing returns."""
+
+    def trust_all(_repo: str, _pr: int) -> object:
+        listed = paginated.return_value if isinstance(paginated.return_value, list) else []
+        return _trusted(*((int(c["id"]), str(c["body"])) for c in listed))
+
+    with patch(f"{_MOD}.trust.read_reviews", side_effect=trust_all) as mock:
         yield mock
 
 
@@ -240,6 +268,57 @@ def test_main_malformed_comment_exits_1(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "item 1 field" in captured.err
+
+
+def test_review_comments_omit_outsider_and_report(
+    paginated: MagicMock,
+    reviews: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
+    paginated.return_value = [
+        _api_comment(),
+        _api_comment(id=12, user={"login": "drive-by"}, body=_SPAM),
+    ]
+    outsider = trust.Skipped(
+        "o/r", 5, "review-comment", "drive-by", _AT, "review comment 12", trust.UNTRUSTED
+    )
+    reviews.side_effect = None
+    reviews.return_value = _trusted((11, "Consider a guard here."), skipped=(outsider,))
+    assert main(["--repo", "o/r", "--pr", "5", "--json"]) == 0
+    reviews.assert_called_once_with("o/r", 5)
+    captured = capsys.readouterr()
+    assert [c["id"] for c in json.loads(captured.out)] == [11]
+    assert captured.err == (
+        f"skipped untrusted content: o/r#5 review-comment drive-by at {_AT}"
+        " on review comment 12 (untrusted)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in captured.out + captured.err
+
+
+def test_review_comments_print_the_trusted_body(
+    paginated: MagicMock, reviews: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The body printed is the one the trust layer judged, never the listing's copy."""
+    paginated.return_value = [_api_comment(body=_SPAM)]
+    reviews.side_effect = None
+    reviews.return_value = _trusted((11, "The judged body."))
+    assert main(["--repo", "o/r", "--pr", "5"]) == 0
+    out = capsys.readouterr().out
+    assert "    The judged body." in out
+    assert "SPAM-MARKER-TEXT" not in out
+
+
+def test_review_comments_trust_read_failure_exits_1(
+    paginated: MagicMock, reviews: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    paginated.return_value = [_api_comment()]
+    reviews.side_effect = trust.TrustReadError("read_reviews o/r#5", "the GraphQL call failed")
+    assert main(["--repo", "o/r", "--pr", "5", "--json"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "ERROR: cannot judge the review comments of o/r#5" in captured.err
 
 
 def test_main_missing_token_is_the_auth_message(

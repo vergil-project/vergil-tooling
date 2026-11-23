@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import github, retry, text_table, trusted_authors
+from vergil_tooling.lib import github, retry, text_table, trust, trusted_authors
 from vergil_tooling.lib.release import checklist, guard, state
 from vergil_tooling.lib.release.context import ReleaseError
 
@@ -309,10 +309,10 @@ def _state_error(ctx: ReleaseContext, command: str, message: str) -> ReleaseErro
     )
 
 
-def _human_logins() -> tuple[str, ...]:
-    """The ``human`` logins of ``vrg-trusted-authors``; a failed load is an error, never ``()``."""
+def _trusted_authors() -> trusted_authors.TrustedAuthors:
+    """The ``vrg-trusted-authors`` configuration; a failed load is an error, never empty."""
     try:
-        return trusted_authors.load_trusted_authors().human
+        return trusted_authors.load_trusted_authors()
     except (trusted_authors.TrustedAuthorsNotConfiguredError, ValueError) as exc:
         raise ReleaseError(
             phase="state",
@@ -327,20 +327,28 @@ def _guard(ctx: ReleaseContext) -> None:
     Run after the body is read, so an edit made before the identities are
     read is in the edit history they are checked against. A breach raises
     :class:`guard.TrackingIssueBreach` naming the issue, before any write;
+    a read the trust layer cannot complete raises :class:`ReleaseError`;
     each foreign trace is printed as a warning once per run (spec §4.2 of
     epic vergil-project/.github#1440).
     """
     number = cast("int", ctx.issue_number)
-    humans = _human_logins()
+    authors = _trusted_authors()
     resource = f"tracking issue #{number}"
+    # The lock read retries a 404 on a just-created issue; once it has read
+    # the issue, the identity read below finds it too.
     retry.retry_known_resource(lambda: guard.ensure_locked(ctx.repo, number), resource=resource)
-    identities = retry.retry_known_resource(
-        lambda: guard.read_identities(ctx.repo, number), resource=resource
-    )
     try:
-        warnings = guard.check_tracking_issue(identities, humans)
-    except guard.TrackingIssueBreach as exc:
-        raise guard.TrackingIssueBreach(exc.login, exc.action, number=number) from exc
+        warnings = guard.check_tracking_issue(ctx.repo, number, authors=authors)
+    except trust.TrustReadError as exc:
+        raise ReleaseError(
+            phase="state",
+            command="check_tracking_issue",
+            message=(
+                f"Cannot read who changed tracking issue #{number}, so its release state "
+                "is not trusted."
+            ),
+            detail=str(exc),
+        ) from exc
     for warning in warnings:
         if warning not in ctx.tracking_warnings:
             ctx.tracking_warnings.add(warning)

@@ -8,11 +8,13 @@ which runs git in the process CWD; the fixture ``chdir``s into the clone.
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
+from vergil_tooling.lib import github, trust
 from vergil_tooling.lib.pr_workflow.github_transport import (
     GitHubTransport,
     list_relay_branches,
@@ -23,6 +25,31 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _BRANCH = "feature/2366-x"
+_REPO = "org/repo"
+
+
+class _Commits:
+    """A ``github.graphql`` stand-in for the layer's commit query: one author for every commit."""
+
+    def __init__(self) -> None:
+        self.user: Any = trust_stubs.HUMAN
+        self.reads: list[tuple[str, str]] = []
+
+    def __call__(self, query: str, **variables: Any) -> dict[str, Any]:
+        assert query == trust._COMMIT_QUERY, "only the commit query is faked"
+        self.reads.append((f"{variables['owner']}/{variables['name']}", str(variables["oid"])))
+        return trust_stubs.commit_author(self.user)
+
+
+@pytest.fixture(autouse=True)
+def commits(monkeypatch: pytest.MonkeyPatch) -> _Commits:
+    """The layer's commit reads: each relay commit has a trusted author unless a test says."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+    monkeypatch.setattr(github, "current_repo", lambda: _REPO)
+    fake = _Commits()
+    monkeypatch.setattr(github, "graphql", fake)
+    return fake
 
 
 def _git(*args: str, cwd: Path) -> str:
@@ -76,10 +103,48 @@ def test_read_returns_none_when_ref_absent(clone: Path) -> None:
     assert GitHubTransport(_BRANCH).read() is None
 
 
-def test_write_then_read_round_trips(clone: Path) -> None:
+def test_write_then_read_round_trips(clone: Path, commits: _Commits) -> None:
     transport = GitHubTransport(_BRANCH)
     transport.write(_state())
     assert transport.read() == _state()
+    # The payload was parsed only after its commit's author was judged.
+    relay_commit = _git("ls-remote", "origin", transport.ref, cwd=clone).split()[0]
+    assert commits.reads == [(_REPO, relay_commit)]
+
+
+@pytest.mark.parametrize(
+    ("user", "who", "cause"),
+    [
+        (trust_stubs.OUTSIDER, "drive-by", "untrusted"),
+        # An agent login comes back typed User, as GitHub types the field.
+        (trust_stubs.IMPOSTOR, "vergil-user", "wrong-type"),
+        # A bot or App email links to no user account.
+        (None, "an author with no GitHub user account", "deleted"),
+    ],
+)
+def test_relay_payload_untrusted_commit_author_raises(
+    clone: Path, commits: _Commits, user: dict[str, str] | None, who: str, cause: str
+) -> None:
+    commits.user = user
+    transport = GitHubTransport(_BRANCH)
+    transport.write(_state())
+    with pytest.raises(trust.UntrustedContentError) as raised:
+        transport.read()
+    assert str(raised.value) == (
+        "stopped before any write: the commit's author is untrusted: "
+        f"{_REPO} commit {who} at {trust_stubs.CREATED} on the relay ref {transport.ref} "
+        f"({cause}). The human decides next."
+    )
+
+
+def test_relay_payload_unreadable_author_raises(
+    clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = GitHubTransport(_BRANCH)
+    transport.write(_state())
+    monkeypatch.setattr(github, "graphql", lambda _query, **_vars: {"repository": {"object": None}})
+    with pytest.raises(trust.TrustReadError, match="the commit is missing or not an object"):
+        transport.read()
 
 
 def test_write_is_a_pure_ref_write_leaving_head_index_worktree_untouched(

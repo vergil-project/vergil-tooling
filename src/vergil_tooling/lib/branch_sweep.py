@@ -12,6 +12,9 @@ The rules, applied per remote branch by :func:`decide`:
   ``gh-pages``; any branch protected by classic branch protection or a
   ruleset; any branch with **no PR** (an agent pushes its branch before
   ``report-ready``, and the branch has no PR until the human submits it).
+  Only a same-repo PR with a trusted author counts: one from a fork, or one
+  an untrusted identity opened on the branch, is left out and reported
+  (:func:`list_prs`, epic vergil-project/.github#1467).
 * **Kept:** a branch with an open PR.
 * **Finished:** none of the branch's PRs is open and its newest PR is merged
   or closed. It is deleted only if the branch's current tip equals that PR's
@@ -28,20 +31,17 @@ from __future__ import annotations
 
 import enum
 import subprocess
+import sys
 from collections import Counter
 from dataclasses import dataclass
 from typing import cast
 from urllib.parse import quote
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, trust
 from vergil_tooling.lib.process_errors import error_text
 
 #: Branch names that are never deleted, whatever their PR history.
 RESERVED_BRANCHES = frozenset({"develop", "main", "gh-pages"})
-
-#: Upper bound on PRs fetched per branch. Reaching it is an error, not a
-#: silent truncation — an unseen older PR could still be open.
-PR_LIST_LIMIT = 1000
 
 _OPEN = "OPEN"
 _FINISHED_STATES = frozenset({"MERGED", "CLOSED"})
@@ -177,48 +177,19 @@ def list_branches(repo: str) -> list[RemoteBranch]:
 
 
 def list_prs(repo: str, branch: str) -> list[PullRequest]:
-    """Every same-repo PR whose head is *branch*, in any state.
+    """Every same-repo PR with a trusted author whose head is *branch*, in any state.
 
-    PRs from forks can share a head branch name but say nothing about this
-    repo's branch, so they are dropped.
+    Read through the trust layer (:func:`trust.prs_for_branch`): PRs from
+    forks can share a head branch name but say nothing about this repo's
+    branch, and a PR an untrusted identity opened on the branch says nothing
+    about whose work it holds, so both are left out and reported on stderr,
+    metadata only (epic vergil-project/.github#1467). A branch whose only PRs
+    are left out has no PR, so it is kept. A read the layer cannot complete
+    raises :class:`trust.TrustReadError`.
     """
-    raw = github.read_json(
-        "pr",
-        "list",
-        "--repo",
-        repo,
-        "--head",
-        branch,
-        "--state",
-        "all",
-        "--limit",
-        str(PR_LIST_LIMIT),
-        "--json",
-        "number,state,headRefOid,isCrossRepository",
-    )
-    if not isinstance(raw, list):
-        msg = f"unexpected API response for PRs of {branch}: {raw!r}"
-        raise ValueError(msg)
-    if len(raw) >= PR_LIST_LIMIT:
-        msg = f"{branch} has {PR_LIST_LIMIT}+ PRs; refusing to decide on a truncated list"
-        raise ValueError(msg)
-    prs: list[PullRequest] = []
-    for item in raw:
-        entry = _as_dict(item, f"PR of {branch}")
-        if entry.get("isCrossRepository") is True:
-            continue
-        number = entry.get("number")
-        if not isinstance(number, int) or isinstance(number, bool):
-            msg = f"unexpected API response for PR number of {branch}: {number!r}"
-            raise ValueError(msg)
-        prs.append(
-            PullRequest(
-                number=number,
-                state=_as_str(entry.get("state"), f"PR #{number} state"),
-                head_oid=_as_str(entry.get("headRefOid"), f"PR #{number} headRefOid"),
-            )
-        )
-    return prs
+    found, skipped = trust.prs_for_branch(repo, branch, state="all")
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return [PullRequest(number=pr.number, state=pr.state, head_oid=pr.head_oid) for pr in found]
 
 
 def ruleset_rule_types(repo: str, branch: str) -> list[str]:
@@ -286,7 +257,7 @@ def sweep(repo: str, *, apply: bool) -> list[Outcome]:
             outcomes.append(_sweep_one(repo, branch, default=default, apply=apply))
         except github.MissingGitHubTokenError:
             raise
-        except (subprocess.CalledProcessError, ValueError) as exc:
+        except (subprocess.CalledProcessError, ValueError, trust.TrustReadError) as exc:
             detail = " ".join(error_text(exc).split())
             outcomes.append(Outcome(branch.name, None, Action.ERROR, detail))
     return outcomes

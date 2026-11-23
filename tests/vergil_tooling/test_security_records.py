@@ -13,7 +13,8 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from vergil_tooling.lib import epics, github, labels, security_records
+from tests.vergil_tooling import trust_stubs
+from vergil_tooling.lib import epics, github, labels, security_records, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.security_records import (
     Advisory,
@@ -21,7 +22,6 @@ from vergil_tooling.lib.security_records import (
     CloseError,
     GuardResult,
     NoteError,
-    PrivateHomeError,
     RetargetError,
     RetargetRefusedError,
     SecurityIssue,
@@ -94,22 +94,15 @@ def test_security_label_constants_are_in_the_registry() -> None:
     assert security_records.SEVERITIES == ("critical", "high", "medium", "low")
 
 
-def test_advisory_home_returns_public_dotgithub(monkeypatch: pytest.MonkeyPatch) -> None:
-    visibility = MagicMock(return_value="PUBLIC")
-    monkeypatch.setattr(github, "repo_visibility", visibility)
+def test_advisory_home_is_org_dotgithub_without_a_gh_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every repo is public (epic vergil-project/.github#1476): the home is a
+    # fixed name, read from no gh call.
+    no_gh = MagicMock(side_effect=AssertionError("no gh call"))
+    monkeypatch.setattr(github, "read_json", no_gh)
+    monkeypatch.setattr(github, "read_output", no_gh)
     assert advisory_home("org") == HOME
-    visibility.assert_called_once_with(HOME)
-
-
-@pytest.mark.parametrize("visibility", ["PRIVATE", "INTERNAL"])
-def test_advisory_home_refuses_private(monkeypatch: pytest.MonkeyPatch, visibility: str) -> None:
-    monkeypatch.setattr(github, "repo_visibility", lambda _repo: visibility)
-    with pytest.raises(PrivateHomeError) as excinfo:
-        advisory_home("org")
-    assert str(excinfo.value) == (
-        "vrg-security-record: org/.github is not public; security records need a "
-        "public org .github (private orgs are unsupported)"
-    )
 
 
 # --- reference lines --------------------------------------------------------
@@ -479,6 +472,14 @@ class Issues:
         # An unmark drops the label inside its one PATCH, never by a DELETE.
         monkeypatch.setattr(github, "delete", MagicMock(side_effect=AssertionError("DELETE")))
         monkeypatch.setattr(github, "read_json_paginated", self.read_json_paginated)
+        # The comment dedups read through the trust layer: every comment in
+        # ``comments`` is a trusted human's; ``untrusted`` adds an issue's
+        # comment nodes by anyone, after those.
+        self.untrusted: dict[IssueRef, list[dict[str, Any]]] = {}
+        monkeypatch.setattr(github, "graphql", self.graphql)
+        monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+        monkeypatch.setattr(security_records, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         monkeypatch.setattr(github, "list_org_repos", self.list_org_repos)
         monkeypatch.setattr(epics, "is_managed_repo", lambda _repo: True)
 
@@ -560,6 +561,16 @@ class Issues:
             ]
         return list(self.comments[self._not_moved(endpoint)])
 
+    def graphql(self, query: str, **variables: Any) -> dict[str, Any]:
+        """The trust layer's item read: the issue's comments, followed past a transfer."""
+        assert query == trust._ITEM_QUERY
+        owner, repo, number = variables["owner"], variables["name"], variables["number"]
+        ref = IssueRef(str(owner), str(repo), int(str(number)))
+        self._maybe_fail(f"GRAPHQL {ref.slug}")
+        ref = self.moved.get(ref, ref)
+        nodes = trust_stubs.comments(*self.comments[ref]) + self.untrusted.get(ref, [])
+        return trust_stubs.item(nodes=nodes)
+
     def patches(self) -> list[tuple[str, str, dict[str, object]]]:
         return [w for w in self.writes if "security-advisories" in w[1]]
 
@@ -612,6 +623,38 @@ def test_unmark_issue_is_idempotent(issues: Issues) -> None:
     issues.comments[A] = ["Security record moved to org/tool#12"]
     unmark_issue(A, GHSA, (C,))
     assert issues.writes == []
+
+
+def test_unmark_dedup_ignores_outsider_comment(
+    issues: Issues, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An outsider's "moved" comment never stands in for the record's own.
+    moved = "Security record moved to org/tool#12"
+    issues.add(A, f"Neutral.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    issues.untrusted[A] = [
+        trust_stubs.comment(31, moved, trust_stubs.OUTSIDER),
+        trust_stubs.comment(32, moved, trust_stubs.IMPOSTOR),
+    ]
+    unmark_issue(A, GHSA, (C,))
+    assert issues.comments[A] == [moved]
+    assert issues.bodies[A] == "Neutral."
+    err = capsys.readouterr().err
+    assert err.splitlines() == [
+        f"skipped untrusted content: org/.github#10 comment drive-by at {trust_stubs.CREATED}"
+        " on comment 31 (untrusted)",
+        f"skipped untrusted content: org/.github#10 comment vergil-user at {trust_stubs.CREATED}"
+        " on comment 32 (wrong-type)",
+    ]
+
+
+def test_unmark_dedup_keeps_a_trusted_comment(issues: Issues) -> None:
+    # The record's own comment, from an interrupted run, is not posted twice.
+    moved = "Security record moved to org/tool#12"
+    issues.add(A, f"Neutral.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    issues.comments[A] = [moved]
+    unmark_issue(A, GHSA, (C,))
+    assert issues.comments[A] == [moved]
+    assert [w[0] for w in issues.writes] == ["PATCH"]
 
 
 def test_unmark_issue_strips_only_this_advisorys_line(issues: Issues) -> None:
@@ -1135,6 +1178,32 @@ def test_retarget_refuses_unrelated_source_when_targets_match(
         retarget(HOME, GHSA, (C,), source=B)
     assert "it tracks org/tool#12" in str(excinfo.value)
     assert "--from 'org/tool#12' --to 'org/tool#12'" in str(excinfo.value)
+    assert issues.writes == []
+
+
+@pytest.mark.parametrize(
+    "author", [trust_stubs.OUTSIDER, trust_stubs.IMPOSTOR], ids=["outsider", "impostor"]
+)
+def test_retarget_rerun_ignores_outsider_moved_comment(
+    issues: Issues, capsys: pytest.CaptureFixture[str], author: dict[str, str]
+) -> None:
+    # Only the record's own "moved" comment ties a source to a finished move:
+    # an untrusted copy naming exactly the targets is refused like no comment.
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
+    issues.add(B, "Unrelated.")
+    issues.untrusted[B] = [trust_stubs.comment(41, "Security record moved to org/tool#12", author)]
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        retarget(HOME, GHSA, (C,), source=B)
+    assert "it tracks org/tool#12" in str(excinfo.value)
+    assert issues.writes == []
+    err = capsys.readouterr().err
+    assert f"org/.github#11 comment {author['login']} at {trust_stubs.CREATED}" in err
+    assert SECRET not in err
+    # The same comment from a trusted author is the finished move: nothing to do.
+    issues.untrusted[B] = []
+    issues.comments[B] = ["Security record moved to org/tool#12"]
+    assert retarget(HOME, GHSA, (C,), source=B) == ()
     assert issues.writes == []
 
 
@@ -1886,6 +1955,30 @@ def test_close_rerun_after_a_failed_state_change_posts_once(
     assert issues.states == {GHSA: "closed"}
 
 
+def test_close_dedup_ignores_outsider_comment(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An outsider's copy of the close comment, or a trusted one an outsider
+    # edited, is no audit trail: the comment is still posted.
+    _listing(monkeypatch, _adv(tracking=(A,)))
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.closed.add(A)
+    issues.untrusted[A] = [
+        trust_stubs.comment(21, CLOSED_COMMENT, trust_stubs.OUTSIDER),
+        trust_stubs.comment(22, CLOSED_COMMENT, trust_stubs.HUMAN, editor=trust_stubs.OUTSIDER),
+    ]
+    assert close_record(HOME, GHSA, REASON).closed is True
+    assert issues.comments[A] == [CLOSED_COMMENT]
+    err = capsys.readouterr().err
+    assert err.splitlines() == [
+        f"skipped untrusted content: org/.github#10 comment drive-by at {trust_stubs.CREATED}"
+        " on comment 21 (untrusted)",
+        f"skipped untrusted content: org/.github#10 edit drive-by at {trust_stubs.EDITED}"
+        " on comment 22 (untrusted)",
+    ]
+    assert SECRET not in err
+
+
 def test_close_of_a_closed_advisory_only_completes_the_comments(
     issues: Issues, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1907,6 +2000,7 @@ def test_close_of_a_closed_advisory_only_completes_the_comments(
         ("GET repos/org/.github/issues?state=all&labels=security", "listing the security issues"),
         ("GET repos/org/.github/issues/10", "reading org/.github#10"),
         ("POST repos/org/.github/issues/10/comments", "commenting on org/.github#10"),
+        ("GRAPHQL org/.github#10", "commenting on org/.github#10"),
     ],
 )
 def test_close_names_the_failed_step(
@@ -2154,7 +2248,6 @@ class Move:
 
         monkeypatch.setattr(github, "write_json", write_json)
         monkeypatch.setattr(github, "post_json_once", self.post_json_once)
-        monkeypatch.setattr(github, "repo_visibility", lambda _repo: "PUBLIC")
         monkeypatch.setattr(security_records, "list_advisories", self.list_advisories)
         monkeypatch.setattr(github, "target_org", self.target_org)
 
@@ -2537,15 +2630,6 @@ def test_move_refuses_an_untracked_source(move: Move) -> None:
     move.issues.add(B, "Unrelated.")
     with pytest.raises(RetargetRefusedError, match="is not an issue it tracks"):
         retarget(HOME, GHSA, (FIX, FIX2), source=B)
-    assert move.issues.writes == []
-
-
-def test_move_needs_a_public_fix_home(move: Move, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        github, "repo_visibility", lambda repo: "PRIVATE" if "fix" in repo else "PUBLIC"
-    )
-    with pytest.raises(PrivateHomeError):
-        move.run()
     assert move.issues.writes == []
 
 

@@ -43,7 +43,7 @@ import argparse
 import sys
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import confirm, github, identity_mode
+from vergil_tooling.lib import confirm, github, identity_mode, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.rulings import RulingError, comments, draft_ref, human_post
 from vergil_tooling.lib.rulings.exchange import open_request
@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         repo, issue = comments.parse_issue_ref(args.issue)
         with github.target_org(repo.split("/", 1)[0]):
             return _post(_Issue(authors, human, repo, issue), args.text)
-    except (RulingError, TrustedAuthorsNotConfiguredError) as exc:
+    except (RulingError, TrustedAuthorsNotConfiguredError, trust.TrustReadError) as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
         return EXIT_ERROR
     except github.MissingGitHubTokenError:
@@ -129,7 +129,7 @@ class _Issue:
 
     def fetch(self) -> list[comments.IssueComment]:
         """The issue's trusted comment stream."""
-        return comments.trusted(comments.fetch_comments(self.repo, self.issue), self.authors)
+        return comments.read_stream(self.repo, self.issue, self.authors).comments
 
     def check_no_open_exchange(self, stream: list[comments.IssueComment]) -> None:
         """Refuse while a ruling request on the issue has no response yet.
@@ -218,7 +218,9 @@ def _post(ctx: _Issue, text: str | None) -> int:
         raise RulingError(msg)
 
     try:
-        comment_id = post_comment_once(ctx.repo, ctx.issue, body, author=ctx.human)
+        comment_id = post_comment_once(
+            ctx.repo, ctx.issue, body, author=ctx.human, authors=ctx.authors
+        )
     except PostNotLanded as exc:
         msg = f"{exc}. Re-running {_PROG} is safe"
         raise RulingError(msg) from exc

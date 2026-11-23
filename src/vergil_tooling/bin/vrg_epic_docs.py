@@ -1,8 +1,8 @@
 """Write an epic's Documents section: the links to its spec, plan and retrospective.
 
-``backfill`` writes the section on every epic of an epic home: the org's
-``.github`` (``--org``) or a private repo that keeps its own epics
-(``--repo``). It lists every ``epic``-labelled issue, open and closed, skips
+``backfill`` writes the section on every epic of an org's ``.github``
+(``--org``), the home of every epic. It lists every ``epic``-labelled issue,
+open and closed, skips
 container and ``[archived]`` epics, finds each epic's documents, and decides
 every entry that is still a note by the entry rules; a link already in the
 section is kept. An epic whose documents are ambiguous is named as needing a
@@ -44,7 +44,7 @@ _PROG = "vrg-epic-docs"
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.command == "backfill":
-        return _run_backfill(args.repo or f"{args.org}/.github", apply=args.apply)
+        return _run_backfill(f"{args.org}/.github", apply=args.apply)
     try:
         epic = epics.parse_issue_ref(args.epic, default_repo="")
         paths = {doc: _parse_path(getattr(args, doc), epic.owner) for doc in epic_docs.DOCS}
@@ -308,17 +308,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         )
     backfill = sub.add_parser(
         "backfill",
-        help="write the Documents section on every epic of an epic home",
-        description="List every epic of the home, open and closed, skipping container "
+        help="write the Documents section on every epic of an org's .github",
+        description="List every epic of the org's .github, open and closed, skipping container "
         "and [archived] epics; find each epic's documents and decide every entry that "
         "is still a note; keep existing links; remove hand-written document lines. An "
         "ambiguous epic is named and left unchanged. A dry run unless --apply is given. "
         "Exits 1 when any epic needs a decision or failed.",
     )
-    home = backfill.add_mutually_exclusive_group(required=True)
-    home.add_argument("--org", type=_org_name, help="the org whose .github holds the epics")
-    home.add_argument(
-        "--repo", type=_home_repo, help="OWNER/REPO: a private repo that keeps its own epics"
+    backfill.add_argument(
+        "--org", type=_org_name, required=True, help="the org whose .github holds the epics"
     )
     backfill.add_argument("--apply", action="store_true", help="make the edits")
     return parser.parse_args(argv)
@@ -330,15 +328,6 @@ _ORG_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")
 def _org_name(value: str) -> str:
     if not _ORG_RE.fullmatch(value):
         raise argparse.ArgumentTypeError(f"bad org name {value!r}")
-    return value
-
-
-def _home_repo(value: str) -> str:
-    owner, sep, repo = value.partition("/")
-    if not sep or not _ORG_RE.fullmatch(owner) or not _REPO_NAME_RE.fullmatch(repo):
-        raise argparse.ArgumentTypeError(f"bad repo {value!r}: give OWNER/REPO")
-    if repo in {".", ".."}:
-        raise argparse.ArgumentTypeError(f"bad repo {value!r}: give OWNER/REPO")
     return value
 
 

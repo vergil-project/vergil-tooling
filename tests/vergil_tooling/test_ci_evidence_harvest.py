@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from vergil_tooling.lib import ci_evidence, github
+from vergil_tooling.lib import ci_evidence, github, trust
 from vergil_tooling.lib.ci_evidence import (
     NoQualifyingRunError,
     ReleasePrUnresolvedError,
@@ -24,24 +24,73 @@ from vergil_tooling.lib.ci_evidence import (
     resolve_release_pr,
     select_ci_run,
 )
+from vergil_tooling.lib.github_config import GHAS_INTEGRATION_ID, GITHUB_ACTIONS_INTEGRATION_ID
+from vergil_tooling.lib.trust import PRRef, Role, Skipped
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
+# The head repository of a workflow run built from the release repo itself.
+_OWN = {"full_name": "o/r"}
+_MERGED = "2026-07-12T00:00:00Z"
+_SPAM = "SPAM-MARKER-TEXT see https://example.invalid/x"
+
+
 # --- resolve_release_pr -------------------------------------------------
 
 
-def test_resolve_release_pr_prefers_merged_from_api(monkeypatch: pytest.MonkeyPatch) -> None:
+def _rest_pr(number: int, branch: str, *, merged: bool = True) -> dict[str, Any]:
+    """A ``/commits/{sha}/pulls`` entry: the fields the resolver reads."""
+    return {
+        "number": number,
+        "merged_at": _MERGED if merged else None,
+        "head": {"ref": branch},
+        "title": _SPAM,
+    }
+
+
+def _pr_ref(number: int, branch: str) -> PRRef:
+    """A merged same-repo trusted PR, as ``trust.prs_for_branch`` returns it."""
+    return PRRef(
+        number=number,
+        url=f"https://github.com/o/r/pull/{number}",
+        title="chore(release): 1.2.3",
+        head=branch,
+        head_oid="a" * 40,
+        base="develop",
+        author_role=Role.AGENTS,
+        state="MERGED",
+    )
+
+
+def _branches(
+    monkeypatch: pytest.MonkeyPatch,
+    by_branch: dict[str, tuple[list[PRRef], list[Skipped]]],
+) -> list[tuple[str, str, str]]:
+    """Serve ``trust.prs_for_branch`` from *by_branch*; return the calls made."""
+    calls: list[tuple[str, str, str]] = []
+
+    def _lookup(repo: str, branch: str, *, state: str) -> tuple[list[PRRef], list[Skipped]]:
+        calls.append((repo, branch, state))
+        return by_branch.get(branch, ([], []))
+
+    monkeypatch.setattr(trust, "prs_for_branch", _lookup)
+    return calls
+
+
+def test_resolve_release_pr_takes_the_trusted_merged_pr(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         github,
         "read_json_paginated",
         lambda *a, **k: [
-            {"number": 10, "merged_at": None},
-            {"number": 42, "merged_at": "2026-07-12T00:00:00Z"},
+            _rest_pr(10, "feature/10-x", merged=False),
+            _rest_pr(42, "release/1.2.3"),
         ],
     )
+    calls = _branches(monkeypatch, {"release/1.2.3": ([_pr_ref(42, "release/1.2.3")], [])})
     assert resolve_release_pr("o/r", "abc") == 42
+    assert calls == [("o/r", "release/1.2.3", "merged")]
 
 
 def test_resolve_release_pr_reads_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -50,24 +99,77 @@ def test_resolve_release_pr_reads_every_page(monkeypatch: pytest.MonkeyPatch) ->
 
     def fake_read_output(*args: str, **_: object) -> str:
         calls.append(args)
-        page1 = [{"number": n, "merged_at": None} for n in range(1, 31)]
-        page2 = [{"number": 77, "merged_at": "2026-07-12T00:00:00Z"}]
+        page1 = [_rest_pr(n, f"feature/{n}", merged=False) for n in range(1, 31)]
+        page2 = [_rest_pr(77, "release/1.2.3")]
         return json.dumps(page1) + json.dumps(page2)
 
     monkeypatch.setattr(github, "read_output", fake_read_output)
+    _branches(monkeypatch, {"release/1.2.3": ([_pr_ref(77, "release/1.2.3")], [])})
     assert resolve_release_pr("o/r", "abc") == 77
     assert calls == [("api", "--paginate", "repos/o/r/commits/abc/pulls?per_page=100")]
 
 
-def test_resolve_release_pr_falls_back_to_first_unmerged(
+def test_evidence_has_no_first_pr_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only unmerged PRs: an error naming them, never the first (GHSA-r4j2-cwcp-xg56)."""
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
+        lambda *a, **k: [_rest_pr(7, "feature/7", merged=False), _rest_pr(8, "x", merged=False)],
+    )
+    calls = _branches(monkeypatch, {})
+    with pytest.raises(ReleasePrUnresolvedError, match=r"only unmerged PR\(s\) #7, #8"):
+        resolve_release_pr("o/r", "abc")
+    assert calls == []
+
+
+def test_evidence_ignores_fork_pr_for_commit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A merged fork PR is never the release PR, and it is reported, metadata only."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
+    monkeypatch.setattr(
+        github, "read_json_paginated", lambda *a, **k: [_rest_pr(6, "release/1.2.3")]
+    )
+    fork = Skipped("o/r", 6, "pr", "drive-by", _MERGED, "head", trust.CROSS_REPOSITORY)
+    _branches(monkeypatch, {"release/1.2.3": ([], [fork])})
+    with pytest.raises(ReleasePrUnresolvedError, match="#6 are not same-repo PRs"):
+        resolve_release_pr("o/r", "abc")
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: o/r#6 pr drive-by at {_MERGED} on head (cross-repository)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+def test_resolve_release_pr_never_takes_another_number_on_the_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A trusted PR with another number on the same branch never stands in for the fork's."""
+    monkeypatch.setattr(
+        github, "read_json_paginated", lambda *a, **k: [_rest_pr(6, "release/1.2.3")]
+    )
+    _branches(monkeypatch, {"release/1.2.3": ([_pr_ref(5, "release/1.2.3")], [])})
+    with pytest.raises(ReleasePrUnresolvedError, match="are not same-repo PRs"):
+        resolve_release_pr("o/r", "abc")
+
+
+def test_resolve_release_pr_several_trusted_merged_is_an_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         github,
         "read_json_paginated",
-        lambda *a, **k: [{"number": 7, "merged_at": None}, {"number": 8}],
+        lambda *a, **k: [_rest_pr(41, "release/a"), _rest_pr(42, "release/b")],
     )
-    assert resolve_release_pr("o/r", "abc") == 7
+    _branches(
+        monkeypatch,
+        {
+            "release/a": ([_pr_ref(41, "release/a")], []),
+            "release/b": ([_pr_ref(42, "release/b")], []),
+        },
+    )
+    with pytest.raises(ReleasePrUnresolvedError, match="several trusted merged PRs #41, #42"):
+        resolve_release_pr("o/r", "abc")
 
 
 def test_resolve_release_pr_uses_subject_when_api_has_no_pr(
@@ -79,19 +181,87 @@ def test_resolve_release_pr_uses_subject_when_api_has_no_pr(
         "read_output",
         lambda *a, **k: "Merge pull request #55 from o/release/x\n\nbody",
     )
+    seen: list[tuple[str, ...]] = []
+
+    def _read_json(*args: str) -> dict[str, Any]:
+        seen.append(args)
+        return _rest_pr(55, "release/x")
+
+    monkeypatch.setattr(github, "read_json", _read_json)
+    _branches(monkeypatch, {"release/x": ([_pr_ref(55, "release/x")], [])})
     assert resolve_release_pr("o/r", "abc") == 55
+    assert seen == [("api", "repos/o/r/pulls/55")]
 
 
 def test_resolve_release_pr_uses_squash_subject(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [])
     monkeypatch.setattr(github, "read_output", lambda *a, **k: "chore(release): prepare (#99)")
+    monkeypatch.setattr(github, "read_json", lambda *a: _rest_pr(99, "release/y"))
+    _branches(monkeypatch, {"release/y": ([_pr_ref(99, "release/y")], [])})
     assert resolve_release_pr("o/r", "abc") == 99
+
+
+def test_resolve_release_pr_subject_pr_must_be_trusted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [])
+    monkeypatch.setattr(github, "read_output", lambda *a, **k: "chore(release): prepare (#99)")
+    monkeypatch.setattr(github, "read_json", lambda *a: _rest_pr(99, "release/y"))
+    outsider = Skipped("o/r", 99, "pr", "drive-by", _MERGED, "author", trust.UNTRUSTED)
+    _branches(monkeypatch, {"release/y": ([], [outsider])})
+    with pytest.raises(ReleasePrUnresolvedError, match="#99 are not same-repo PRs"):
+        resolve_release_pr("o/r", "abc")
 
 
 def test_resolve_release_pr_raises_when_unresolvable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [])
     monkeypatch.setattr(github, "read_output", lambda *a, **k: "")
     with pytest.raises(ReleasePrUnresolvedError, match="cannot resolve release PR"):
+        resolve_release_pr("o/r", "abc")
+
+
+def test_resolve_release_pr_merged_pr_without_branch_is_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
+        lambda *a, **k: [{"number": 42, "merged_at": _MERGED}],
+    )
+    with pytest.raises(ValueError, match="PR #42 has no head branch"):
+        resolve_release_pr("o/r", "abc")
+
+
+def test_resolve_release_pr_pr_without_number_is_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
+        lambda *a, **k: [{"number": "42", "merged_at": _MERGED, "head": {"ref": "x"}}],
+    )
+    with pytest.raises(ValueError, match="a PR of commit abc has no usable number"):
+        resolve_release_pr("o/r", "abc")
+
+
+def test_resolve_release_pr_subject_pr_not_an_object_is_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [])
+    monkeypatch.setattr(github, "read_output", lambda *a, **k: "chore(release): prepare (#99)")
+    monkeypatch.setattr(github, "read_json", lambda *a: [])
+    with pytest.raises(ValueError, match="PR #99 of o/r is not a JSON object"):
+        resolve_release_pr("o/r", "abc")
+
+
+def test_resolve_release_pr_trust_read_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        github, "read_json_paginated", lambda *a, **k: [_rest_pr(42, "release/1.2.3")]
+    )
+
+    def _fail(*_a: Any, **_k: Any) -> Any:
+        raise trust.TrustReadError("prs_for_branch o/r release/1.2.3", "the GraphQL call failed")
+
+    monkeypatch.setattr(trust, "prs_for_branch", _fail)
+    with pytest.raises(trust.TrustReadError):
         resolve_release_pr("o/r", "abc")
 
 
@@ -107,6 +277,7 @@ def test_select_ci_run_ignores_cancelled(monkeypatch: pytest.MonkeyPatch) -> Non
                 "name": "CI",
                 "status": "completed",
                 "conclusion": "cancelled",
+                "head_repository": _OWN,
                 "run_started_at": "2026-07-12T00:00:00Z",
                 "id": 1,
             },
@@ -114,6 +285,7 @@ def test_select_ci_run_ignores_cancelled(monkeypatch: pytest.MonkeyPatch) -> Non
                 "name": "CI",
                 "status": "completed",
                 "conclusion": "success",
+                "head_repository": _OWN,
                 "run_started_at": "2026-07-12T00:05:00Z",
                 "id": 42,
             },
@@ -131,6 +303,7 @@ def test_select_ci_run_picks_latest_success(monkeypatch: pytest.MonkeyPatch) -> 
                 "name": "CI",
                 "status": "completed",
                 "conclusion": "success",
+                "head_repository": _OWN,
                 "run_started_at": "2026-07-12T00:00:00Z",
                 "id": 1,
             },
@@ -138,6 +311,7 @@ def test_select_ci_run_picks_latest_success(monkeypatch: pytest.MonkeyPatch) -> 
                 "name": "CI",
                 "status": "completed",
                 "conclusion": "success",
+                "head_repository": _OWN,
                 "run_started_at": "2026-07-12T00:09:00Z",
                 "id": 2,
             },
@@ -157,6 +331,7 @@ def test_select_ci_run_ignores_other_workflow_and_in_progress(
                 "name": "Nightly",
                 "status": "completed",
                 "conclusion": "success",
+                "head_repository": _OWN,
                 "run_started_at": "t",
                 "id": 1,
             },
@@ -164,6 +339,7 @@ def test_select_ci_run_ignores_other_workflow_and_in_progress(
                 "name": "CI",
                 "status": "in_progress",
                 "conclusion": None,
+                "head_repository": _OWN,
                 "run_started_at": "t",
                 "id": 2,
             },
@@ -171,6 +347,7 @@ def test_select_ci_run_ignores_other_workflow_and_in_progress(
                 "name": "CI",
                 "status": "completed",
                 "conclusion": "success",
+                "head_repository": _OWN,
                 "run_started_at": "t",
                 "id": 3,
             },
@@ -188,6 +365,7 @@ def test_select_ci_run_honors_workflow_argument(monkeypatch: pytest.MonkeyPatch)
                 "name": "Release",
                 "status": "completed",
                 "conclusion": "success",
+                "head_repository": _OWN,
                 "run_started_at": "t",
                 "id": 7,
             },
@@ -201,7 +379,13 @@ def test_select_ci_run_none_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         github,
         "read_json_paginated",
         lambda *a, **k: [
-            {"name": "CI", "status": "completed", "conclusion": "cancelled", "run_started_at": "t"},
+            {
+                "name": "CI",
+                "status": "completed",
+                "conclusion": "cancelled",
+                "head_repository": _OWN,
+                "run_started_at": "t",
+            },
         ],
     )
     with pytest.raises(NoQualifyingRunError) as exc:
@@ -216,13 +400,70 @@ def test_select_ci_run_empty_lookup_is_not_visible(monkeypatch: pytest.MonkeyPat
         github,
         "read_json_paginated",
         lambda *a, **k: [
-            {"name": "Docs", "status": "completed", "conclusion": "success", "run_started_at": "t"},
+            {
+                "name": "Docs",
+                "status": "completed",
+                "conclusion": "success",
+                "head_repository": _OWN,
+                "run_started_at": "t",
+            },
         ],
     )
     with pytest.raises(NoQualifyingRunError) as exc:
         select_ci_run("o/r", "deadbeef")
     assert exc.value.visible is False
     assert str(exc.value) == "no completed+success CI run for head SHA deadbeef"
+
+
+def test_select_ci_run_ignores_fork_run_of_the_same_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fork's newer green CI run of the same commit never attests the release."""
+    own = {
+        "id": 1,
+        "name": "CI",
+        "status": "completed",
+        "conclusion": "success",
+        "head_repository": _OWN,
+        "run_started_at": "2026-07-12T00:00:00Z",
+    }
+    fork = {**own, "id": 2, "head_repository": {"full_name": "drive-by/r"}}
+    fork["run_started_at"] = "2026-07-12T00:09:00Z"
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [own, fork])
+    assert select_ci_run("o/r", "abc")["id"] == 1
+
+
+def test_select_ci_run_only_fork_run_is_not_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+    fork = {
+        "id": 2,
+        "name": "CI",
+        "status": "completed",
+        "conclusion": "success",
+        "head_repository": {"full_name": "drive-by/r"},
+        "run_started_at": "t",
+    }
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [fork])
+    with pytest.raises(NoQualifyingRunError) as exc:
+        select_ci_run("o/r", "abc")
+    assert exc.value.visible is False
+
+
+def test_select_ci_run_skips_run_without_head_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run with no head repository (its fork deleted) is skipped, never a stop."""
+    own = {
+        "id": 1,
+        "name": "CI",
+        "status": "completed",
+        "conclusion": "success",
+        "head_repository": _OWN,
+        "run_started_at": "2026-07-12T00:00:00Z",
+    }
+    gone = {**own, "id": 3, "head_repository": None, "run_started_at": "2026-07-12T00:09:00Z"}
+    bare = {k: v for k, v in gone.items() if k != "head_repository"} | {"id": 4}
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [own, gone, bare])
+    assert select_ci_run("o/r", "abc")["id"] == 1
 
 
 # --- wait_for_ci_run (issue #3434) --------------------------------------
@@ -232,6 +473,7 @@ _SUCCESS_RUN = {
     "name": "CI",
     "status": "completed",
     "conclusion": "success",
+    "head_repository": _OWN,
     "run_started_at": "t",
 }
 
@@ -356,6 +598,7 @@ def test_select_ci_run_issues_a_get_not_a_post(monkeypatch: pytest.MonkeyPatch) 
                 "name": "CI",
                 "status": "completed",
                 "conclusion": "success",
+                "head_repository": _OWN,
                 "run_started_at": "t",
                 "id": 5,
             },
@@ -727,6 +970,25 @@ def test_download_evidence_artifacts_harvests_required_gate_on_page_two(
 
 # --- read_gate_conclusions ----------------------------------------------
 
+# The check suite of the selected CI run.
+_SUITE = 501
+
+
+def _check(
+    name: str,
+    conclusion: str | None = "success",
+    *,
+    app_id: int = GITHUB_ACTIONS_INTEGRATION_ID,
+    suite: int = _SUITE,
+) -> dict[str, Any]:
+    """A ``/commits/{sha}/check-runs`` entry: the fields the harvest reads."""
+    return {
+        "name": name,
+        "conclusion": conclusion,
+        "app": {"id": app_id},
+        "check_suite": {"id": suite},
+    }
+
 
 def test_read_gate_conclusions_includes_check_runs_past_first_page(
     monkeypatch: pytest.MonkeyPatch,
@@ -734,8 +996,8 @@ def test_read_gate_conclusions_includes_check_runs_past_first_page(
     """Check runs beyond the first page still reach the conclusion map (issue #3160)."""
     import subprocess
 
-    check_runs = [{"name": f"test / unit / {i}", "conclusion": "success"} for i in range(30)]
-    check_runs.append({"name": "security / evidence", "conclusion": "failure"})
+    check_runs = [_check(f"test / unit / {i}") for i in range(30)]
+    check_runs.append(_check("security / evidence", "failure"))
     stdout = _paged_gh_output("check_runs", check_runs)
 
     def _fake_run(argv: tuple[str, ...], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -745,7 +1007,7 @@ def test_read_gate_conclusions_includes_check_runs_past_first_page(
     monkeypatch.setattr("vergil_tooling.lib.github._gh_env", lambda: None)
     monkeypatch.setattr("vergil_tooling.lib.retry.subprocess.run", _fake_run)
 
-    result = read_gate_conclusions("o/r", "abc")
+    result = read_gate_conclusions("o/r", "abc", check_suite_id=_SUITE)
 
     assert len(result) == 31
     assert result["security / evidence"] == "failure"
@@ -757,13 +1019,67 @@ def test_read_gate_conclusions_maps_name_to_conclusion(
     monkeypatch.setattr(
         github,
         "read_json_paginated",
+        lambda *a, **k: [_check("test / unit / 3.14"), _check("security / codeql", None)],
+    )
+    result = read_gate_conclusions("o/r", "abc", check_suite_id=_SUITE)
+    assert result == {"test / unit / 3.14": "success", "security / codeql": ""}
+
+
+def test_check_runs_matched_by_app_and_workflow(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A check run with a gate's name from another app or workflow never counts."""
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
         lambda *a, **k: [
-            {"name": "test / unit / 3.14", "conclusion": "success"},
-            {"name": "security / codeql", "conclusion": None},
+            _check("test / unit / 3.14", "failure"),
+            # The same name from another App, and from another workflow's suite.
+            _check("test / unit / 3.14", "success", app_id=999),
+            _check("quality / evidence", "success", suite=777),
+            _check("quality / evidence", "failure"),
+            # GitHub Advanced Security's scanner checks count, any other name of its does not.
+            _check("CodeQL", "success", app_id=GHAS_INTEGRATION_ID, suite=900),
+            _check("Semgrep OSS", "success", app_id=GHAS_INTEGRATION_ID, suite=901),
+            _check("Trivy", "success", app_id=GHAS_INTEGRATION_ID, suite=902),
+            _check("test / unit / 3.13", "success", app_id=GHAS_INTEGRATION_ID),
+            # A scanner check's name from another App never counts.
+            _check("Trivy", "failure", app_id=999),
         ],
     )
-    result = read_gate_conclusions("o/r", "abc")
-    assert result == {"test / unit / 3.14": "success", "security / codeql": ""}
+    result = read_gate_conclusions("o/r", "abc", check_suite_id=_SUITE)
+    assert result == {
+        "test / unit / 3.14": "failure",
+        "quality / evidence": "failure",
+        "CodeQL": "success",
+        "Semgrep OSS": "success",
+        "Trivy": "success",
+    }
+
+
+def test_read_gate_conclusions_check_run_without_app_is_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        github,
+        "read_json_paginated",
+        lambda *a, **k: [{"id": 3, "name": "test / unit", "conclusion": "success"}],
+    )
+    with pytest.raises(ValueError, match="check run 3 has no creating app"):
+        read_gate_conclusions("o/r", "abc", check_suite_id=_SUITE)
+
+
+def test_read_gate_conclusions_actions_run_without_suite_is_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = {"id": 4, "name": "test / unit", "app": {"id": GITHUB_ACTIONS_INTEGRATION_ID}}
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [run])
+    with pytest.raises(ValueError, match="check run 4 has no check suite"):
+        read_gate_conclusions("o/r", "abc", check_suite_id=_SUITE)
+
+
+def test_check_suite_id_of_a_run_must_be_present() -> None:
+    assert ci_evidence._check_suite_id({"id": 1, "check_suite_id": _SUITE}) == _SUITE
+    with pytest.raises(ValueError, match="workflow run 1 has no check suite"):
+        ci_evidence._check_suite_id({"id": 1})
 
 
 def test_qualifying_run_predicate_is_reusable() -> None:
@@ -775,7 +1091,7 @@ def test_qualifying_run_predicate_is_reusable() -> None:
 # --- resolve_required_gates ---------------------------------------------
 
 
-def test_resolve_required_gates_wires_config_ghas_and_derivation(
+def test_resolve_required_gates_wires_config_and_derivation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
@@ -792,14 +1108,6 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
         return cfg
 
     monkeypatch.setattr(ci_evidence, "require_config_at_ref", fake_config)
-    monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
-
-    def fake_ghas(config: Any, *, visibility: str) -> bool:
-        captured["ghas_config"] = config
-        captured["visibility"] = visibility
-        return True
-
-    monkeypatch.setattr(ci_evidence, "ghas_available", fake_ghas)
 
     def fake_integration(config: Any) -> tuple[str, ...]:
         captured["integration_config"] = config
@@ -813,12 +1121,11 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
         project: Any,
         ci: Any,
         *,
-        ghas: bool,
         docs: bool,
         package: bool,
         integration_versions: tuple[str, ...],
     ) -> Any:
-        captured["derivation_args"] = (project, ci, ghas, docs, package, integration_versions)
+        captured["derivation_args"] = (project, ci, docs, package, integration_versions)
         return expected_gates
 
     monkeypatch.setattr(ci_evidence, "required_evidence_gates", fake_required)
@@ -828,11 +1135,9 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
     assert result is expected_gates
     # The config is the --repo target's, fetched at the given ref (#3226).
     assert captured["config_at"] == ("o/r", "cafef00d")
-    assert captured["ghas_config"] is cfg
-    assert captured["visibility"] == "public"
-    # docs is wired from config.publish.docs (here False) alongside ghas, and
-    # package from the presence of a [package] section (here absent).
-    assert captured["derivation_args"] == ("PROJECT", "CI", True, False, False, ("3.14",))
+    # docs is wired from config.publish.docs (here False), and package from
+    # the presence of a [package] section (here absent).
+    assert captured["derivation_args"] == ("PROJECT", "CI", False, False, ("3.14",))
     # The integration checks come from the resolver, for the same config.
     assert captured["integration_config"] is cfg
 
@@ -864,8 +1169,6 @@ def test_package_section_makes_harvest_download_ci_evidence_package(
         packages=(SimpleNamespace(builder="python"),),
     )
     monkeypatch.setattr(ci_evidence, "require_config_at_ref", lambda _repo, _ref: cfg)
-    monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
-    monkeypatch.setattr(ci_evidence, "ghas_available", lambda _c, *, visibility: True)
 
     required = ci_evidence.resolve_required_gates("o/r", "cafef00d")
     assert "package" in {g.name for g in required}
@@ -907,8 +1210,6 @@ def _images_repo_required_gates(monkeypatch: pytest.MonkeyPatch, *, images: bool
         packages=(),
     )
     monkeypatch.setattr(ci_evidence, "require_config_at_ref", lambda _repo, _ref: cfg)
-    monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
-    monkeypatch.setattr(ci_evidence, "ghas_available", lambda _c, *, visibility: True)
     return ci_evidence.resolve_required_gates("o/r", "cafef00d")
 
 

@@ -212,7 +212,10 @@ vrg-submit-pr feature/123-x feature/124-y
 For each branch, the tool:
 
 1. resolves the ready-state from a local worktree's `pr-workflow.json`
-   when one exists, else fetches it from the relay ref;
+   when one exists, else fetches it from the relay ref. The relay payload
+   is used only when the author GitHub links to its commit is the trusted
+   human; any other author (an agent or bot email included) stops the
+   run with nothing opened, naming the login only;
 2. verifies the tip of `origin/<branch>` matches the recorded `head_sha`
    (a mismatch fails loudly: the metadata is for a different commit);
 3. opens the PR with `--head <branch>` and **does not push**, since the
@@ -263,7 +266,7 @@ says why it is gone:
 
 | Flag | Why it is gone |
 | ---- | -------------- |
-| `--finalize` | Finalizing is the default |
+| `--finalize` | `vrg-submit-pr` always finalizes |
 | `--no-finalize` | `vrg-submit-pr` returns once each PR has merged or cannot merge |
 | `--install`, `--no-install` | Install is part of every release |
 | `--allow-provenance-violation` | A provenance violation always fails: fix its cause, or fix the classifier if the violation is a false one |
@@ -272,8 +275,14 @@ says why it is gone:
 ### Linkage Keywords
 
 `Ref`, or `Closes`, which submit auto-selects for a managed task (an
-issue with an `epic`-labelled parent) so it closes on merge. `Fixes` and
-`Resolves` are rejected.
+issue with an `epic`-labelled parent) so it closes on merge. The parent is
+the native one, else the `Parent:` line of the issue's body when the trust
+layer trusts that body; an untrusted body is reported on stderr and gives
+no parent. `Fixes` and `Resolves` are rejected.
+
+A trust-layer failure before any PR opens (an untrusted relay payload, a
+read the layer cannot complete, or no trusted-authors configuration) ends
+the run with a one-line error and nothing opened.
 
 ## Examples
 
@@ -330,9 +339,11 @@ plan, merges. So that PR also closes the epic's **planning issue**
 checks whether that issue is an epic's documentation task:
 
 1. Its parent epic's body names the planning issue on a
-   `Planning: <owner>/<repo>#<M>` line.
+   `Planning: <owner>/<repo>#<M>` line. The line counts only from a body
+   the trust layer trusts: an untrusted epic body stops the submission.
 2. That planning issue's latest `Docs task:` marker names the PR's issue.
-   Only comments by trusted authors count.
+   Only comments the trust layer trusts count, and an untrusted planning
+   issue body closes nothing (the reason is printed).
 
 If both hold, the body gets one more line under its issue linkage:
 

@@ -39,8 +39,10 @@ vrg-branch-sweep [--repo OWNER/NAME] [--apply]
 
 A branch is finished, and deleted under `--apply`, when all of these hold:
 
-1. it has at least one PR from the same repo (fork PRs that share the
-   branch name are ignored);
+1. it has at least one PR from the same repo with a trusted author, read
+   through the trust layer (a fork PR that shares the branch name, or a PR
+   an untrusted identity opened on it, is ignored and reported on stderr by
+   metadata only);
 2. none of its PRs is open;
 3. its newest PR (the highest number) is merged or closed;
 4. its current tip equals that PR's `headRefOid`.
@@ -90,7 +92,8 @@ command reports an `error` line with the cause, finishes the remaining
 branches, and then exits 1. A failure to read the repo's default branch or
 branch list stops the sweep at once with exit 1, since nothing can be
 decided without them. Missing or invalid GitHub credentials end the run
-with the standard authentication message.
+with the standard authentication message, and trusted authors that are not
+configured end it with a one-line error and exit 1.
 
 ## Exit codes
 

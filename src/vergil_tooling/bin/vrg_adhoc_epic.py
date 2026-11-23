@@ -1,16 +1,10 @@
 """Ensure a repo's ad-hoc epic exists (create-if-missing), idempotently.
 
 The ``Epic (ad hoc): <repo>`` umbrella (labelled ``epic`` + ``ad-hoc``) lives in
-the repo's resolved epic home — ``<org>/.github`` for a public repo, the repo
-itself when private — one per repo. This provisions it before linking
+the repo's epic home, ``<org>/.github``, one per repo. This provisions it before linking
 pre-existing issues to it as ad-hoc tasks. Routing
 work to ``adhoc`` (``vrg-issue-create``/``vrg-epic-move --epic adhoc``) also
 ensures it via the same path.
-
-``--all-in ORG`` walks every repo in ORG, private self-homed ones included, so
-it first checks that the identity in use can see every repo there. When it
-may not, it refuses (exit 1) before any read or write, so a short or empty
-list never reads as "no private homes" (#4579).
 """
 
 from __future__ import annotations
@@ -19,7 +13,7 @@ import argparse
 import sys
 from datetime import UTC, datetime
 
-from vergil_tooling.lib import epic_audit, epics, github
+from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.cli import cli_main
 
 
@@ -37,8 +31,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Manage a repo's ad-hoc epic. The live epic is 'Epic (ad hoc): "
             "<repo>' labelled epic + ad-hoc; stamped per-quarter buckets are "
             "'Archive (ad hoc): <repo> — YYYY-Qn' labelled archive + ad-hoc. "
-            "Homed by visibility: <org>/.github for a public repo, the repo "
-            "itself when private."
+            "Homed in <org>/.github."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -80,32 +73,13 @@ def cmd_ensure(args: argparse.Namespace) -> int:
         return 1
     owner, bare = repo.split("/", 1)
     # Scope the App token to the target repo's owner, not the cwd org: a
-    # cwd-scoped token cannot see a private repo in another org (#3409).
+    # cwd-scoped token is minted for the wrong org (#3409).
     with github.target_org(owner):
         home = epics.resolve_epic_home(owner, bare)
-        print(f"-> epic home: {home} [{github.repo_visibility(home)}]")
+        print(f"-> epic home: {home}")
         epic = epics.ensure_adhoc_epic(repo)
     print(f"Ad-hoc epic: {epic.slug}")
     return 0
-
-
-def _refuse_partial_org(org: str) -> bool:
-    """True, after naming the gap on stderr, when the token may not see all of *org*.
-
-    ``--all-in`` walks *org* through :func:`github.list_org_repos`, which lists
-    only the repos the token can see, so a private self-homed repo it cannot see
-    would be skipped silently (#4579). Call it under ``github.target_org(org)``.
-    """
-    gap = epic_audit.coverage_gap(org)
-    if gap is None:
-        return False
-    print(
-        f"vrg-adhoc-epic: --all-in {org} refused: {gap}, so repos it cannot see "
-        "would be skipped silently; run it as an identity that sees every repo "
-        "in the org.",
-        file=sys.stderr,
-    )
-    return True
 
 
 def _render_plan(plan: epics.DrainPlan) -> str:
@@ -124,8 +98,6 @@ def cmd_archive(args: argparse.Namespace) -> int:
         # Scope the App token to the org before any mutation, mirroring
         # vrg-epic-move / vrg-issue-create (spec §7).
         with github.target_org(args.all_in):
-            if _refuse_partial_org(args.all_in):
-                return 1
             plans = epics.drain_adhoc_org(args.all_in, apply=args.apply, now=now)
         print(f"[{verb}] {args.all_in}: {len(plans)} ad-hoc epic(s) with work to archive")
         for plan in plans:
@@ -145,8 +117,6 @@ def cmd_archive(args: argparse.Namespace) -> int:
 def cmd_normalize(args: argparse.Namespace) -> int:
     verb = "APPLY" if args.apply else "DRY-RUN"
     with github.target_org(args.all_in):
-        if _refuse_partial_org(args.all_in):
-            return 1
         conversions = epics.normalize_adhoc_archives(args.all_in, apply=args.apply)
     print(f"[{verb}] {args.all_in}: {len(conversions)} archive(s) to normalize")
     for conv in conversions:

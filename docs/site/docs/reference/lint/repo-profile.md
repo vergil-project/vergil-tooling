@@ -26,7 +26,7 @@ and any value that loader rejects fails the check. The core rules:
 | `[project].versioning-scheme` | Required; one of `application`, `library`, `none`, `semver` |
 | `[project].branching-model` | Required; one of `application-promotion`, `docs-single-branch`, `library-release` |
 | `[project].release-model` | Required; one of `artifact-publishing`, `environment-promotion`, `none`, `tagged-release` |
-| `[project].ghas` | Optional; must be a boolean |
+| `[project].ghas` | Retired: any value fails with `[project].ghas was removed in epic vergil-project/.github#1476: every repo is public` |
 | `[ci]` | Required table, even when it sets no keys |
 | `[ci].versions` | Optional pin; when set, a non-empty list of strings |
 | `[ci].primary-version` | Optional; a string |

@@ -370,40 +370,35 @@ def repo_installation_token(repo: str | Path) -> str | None:
 
 
 @functools.cache
-def repo_visibility(name_with_owner: str) -> str:
-    """Return *name_with_owner*'s GitHub visibility (``PUBLIC``/``PRIVATE``/``INTERNAL``).
+def _repo_probe(name_with_owner: str) -> str:
+    """Return *name_with_owner*'s ``nameWithOwner`` as GitHub reports it.
 
-    Fail-loud: a ``gh`` error (missing repo, auth, network) propagates as
-    :class:`GitHubAPIError` from :func:`read_output`; an empty result is also an
-    error. Memoized per process so audit/roadmap sweeps probe each repo once.
+    The existence probe under :func:`repo_exists`; it requests the name and
+    nothing else. Fail-loud: a ``gh`` error (missing repo, auth, network)
+    propagates as :class:`GitHubAPIError` from :func:`read_output`, and an
+    empty result is also an error. Memoized per process, so an audit or
+    roadmap sweep probes each repo once; an error is never memoized.
     """
-    data = read_json("repo", "view", name_with_owner, "--json", "visibility")
-    visibility = data.get("visibility") if isinstance(data, dict) else None
-    if not isinstance(visibility, str) or not visibility:
+    data = read_json("repo", "view", name_with_owner, "--json", "nameWithOwner")
+    found = data.get("nameWithOwner") if isinstance(data, dict) else None
+    if not isinstance(found, str) or not found:
         raise GitHubAPIError(
             1,
-            f"gh repo view {name_with_owner} --json visibility",
-            "empty or missing visibility",
+            f"gh repo view {name_with_owner} --json nameWithOwner",
+            "empty or missing nameWithOwner",
         )
-    return visibility
-
-
-def is_public(name_with_owner: str) -> bool:
-    """True only when *name_with_owner* is ``PUBLIC`` (``INTERNAL`` and ``PRIVATE`` are not)."""
-    return repo_visibility(name_with_owner) == "PUBLIC"
+    return found
 
 
 def repo_exists(owner: str, name: str) -> bool:
     """True iff ``<owner>/<name>`` is a real repository the caller can see.
 
-    A direct existence probe, not list membership: a **private** repo the caller
-    is authorized for still returns True, so a self-homed private repo is never
-    wrongly reported absent (which ``list_org_repos`` would do when it cannot see
-    private repos). No silent failure — only GitHub's genuine "not found" answer
-    yields False; every other error (auth, network, rate limit) propagates.
+    A direct existence probe, not list membership. No silent failure: only
+    GitHub's genuine "not found" answer yields False, and every other error
+    (auth, network, rate limit) propagates.
     """
     try:
-        repo_visibility(f"{owner}/{name}")
+        _repo_probe(f"{owner}/{name}")
     except GitHubAPIError as exc:
         if is_repo_not_found(exc):
             return False
@@ -637,9 +632,10 @@ def get_installation_token(
 
     With *require_installation*, an org that has no App installation
     raises :class:`NoInstallationError` instead of returning ``None``
-    — an App token minted for a different installation cannot reach
-    the requested owner's private repos, so silently falling back
-    would mask the failure as a missing grant. Without it, a
+    — an App token minted for a different installation cannot write
+    to the requested owner's repos or use the permissions granted
+    there, so silently falling back would mask the failure as a
+    missing grant. Without it, a
     no-installation org still returns ``None`` (with a warning): the
     cwd-scoped callers (#2070 kept ``vrg-finalize-pr`` on it
     deliberately, and anonymous ``git fetch`` of public repos) depend on
@@ -1316,52 +1312,6 @@ def _read_output_once(*args: str) -> str:
         error_type = MissingGitHubTokenError if missing_token else GitHubAPIError
         raise error_type(result.returncode, cmd, result.stdout, result.stderr)
     return result.stdout.strip()
-
-
-@dataclass(frozen=True)
-class OpenPR:
-    """One open PR, as :func:`open_prs_for_head` reads it."""
-
-    url: str
-    title: str
-    head_ref: str
-    base_ref: str
-    head_oid: str
-    cross_repo: bool
-
-
-_OPEN_PR_TEXT_FIELDS = ("url", "title", "headRefName", "baseRefName", "headRefOid")
-
-
-def open_prs_for_head(head: str, *, base: str, repo: str | None = None) -> list[OpenPR]:
-    """Every open PR whose head branch is *head* and base is *base*.
-
-    *repo* (``OWNER/REPO``) is passed as ``--repo``, as :func:`create_pr` does;
-    ``None`` leaves ``gh`` to read the cwd's repo.
-
-    ``gh pr list --head`` matches the branch name only, so a fork's PR from a
-    same-named branch is listed too; ``cross_repo`` tells it apart. A response
-    that is not a list, or a row missing a field, raises :class:`GitHubAPIError`
-    rather than read as "no PR" (#4058).
-    """
-    fields = ",".join((*_OPEN_PR_TEXT_FIELDS, "isCrossRepository"))
-    cmd: tuple[str, ...] = ("pr", "list", "--head", head, "--base", base, "--state", "open")
-    if repo is not None:
-        cmd += ("--repo", repo)
-    cmd += ("--json", fields)
-    result = read_json(*cmd)
-    if not isinstance(result, list):
-        raise _shape_error(("gh", *cmd), f"the PR list is {type(result).__name__}")
-    prs: list[OpenPR] = []
-    for row in result:
-        pr = _as_obj(row)
-        texts = [pr.get(key) for key in _OPEN_PR_TEXT_FIELDS]
-        cross = pr.get("isCrossRepository")
-        if not isinstance(cross, bool) or not all(isinstance(t, str) and t for t in texts):
-            raise _shape_error(("gh", *cmd), f"a PR row is {row!r}")
-        url, title, head_ref, base_ref, head_oid = cast("list[str]", texts)
-        prs.append(OpenPR(url, title, head_ref, base_ref, head_oid, cross_repo=cross))
-    return prs
 
 
 def create_issue(
@@ -2574,8 +2524,8 @@ def current_repo(*, cwd: str | Path | None = None) -> str:
     *cwd* lets a caller resolve another local checkout (e.g. a fleet sweep's
     clone) the same way, without changing the process's directory. The App
     token is then minted for the clone's own org, read from its ``origin``
-    remote, never the org of the process's directory: another installation's
-    token cannot see the clone's repo when it is private (#3463). A clone
+    remote, never the org of the process's directory, so the call runs under
+    the installation of the org that owns the clone (#3463). A clone
     whose org cannot be detected raises :class:`ValueError`, and an org with
     no App installation raises :class:`NoInstallationError`.
     """
@@ -2666,65 +2616,6 @@ def update_branch_rebase(pr: str, *, expected_head: str) -> None:
 def pr_state(pr: str) -> str:
     """Return the PR state: ``OPEN``, ``CLOSED``, or ``MERGED``."""
     return read_output("pr", "view", pr, "--json", "state", "--jq", ".state")
-
-
-def _first_pr_for_branch(branch: str, state: str) -> dict[str, str] | None:
-    """Return the first PR in *state* whose head is *branch*, or None.
-
-    ``headRefOid`` is included so callers can confirm a name-matched PR's
-    head actually corresponds to the branch's current tip — a branch name
-    reused after a same-named PR merged matches by name but not by tip
-    (issue #1719). An empty list is "no PR"; a response that is not a list,
-    or a first PR with no number, URL or head commit, raises
-    :class:`GitHubAPIError` rather than read as "no PR" or blank fields (#4058).
-    """
-    fields = "number,url,title,headRefOid"
-    cmd = ("pr", "list", "--head", branch, "--state", state, "--json", fields)
-    result = read_json(*cmd)
-    if not isinstance(result, list):
-        raise _shape_error(("gh", *cmd), f"the PR list is {type(result).__name__}")
-    if not result:
-        return None
-    first = _as_obj(result[0])
-    number = first.get("number")
-    url = first.get("url")
-    title = first.get("title")
-    head = first.get("headRefOid")
-    if (
-        not isinstance(number, int)
-        or isinstance(number, bool)
-        or number <= 0
-        or not isinstance(url, str)
-        or not url
-        or not isinstance(title, str)
-        or not isinstance(head, str)
-        or not head
-    ):
-        raise _shape_error(("gh", *cmd), f"the first PR is {result[0]!r}")
-    return {"number": str(number), "url": url, "title": title, "headRefOid": head}
-
-
-def pr_for_branch(branch: str) -> dict[str, str] | None:
-    """Return the open PR whose head is *branch*, or None.
-
-    GitHub permits at most one open PR per head/base pair within a
-    repo, so taking the first result is safe for the same-repo
-    workflow this serves.
-    """
-    return _first_pr_for_branch(branch, "open")
-
-
-def closed_pr_for_branch(branch: str) -> dict[str, str] | None:
-    """Return the most recent closed or merged PR whose head is *branch*.
-
-    GitHub's closed state includes merged PRs, so one query covers both.
-    Serves as merge evidence for the vrg-finalize-pr ancestry sweep
-    (issue #1445): a branch tip that is an ancestor of the target proves
-    nothing by itself — a freshly created branch satisfies the ancestry
-    test trivially — while a closed or merged PR shows the branch's work
-    is actually finished.
-    """
-    return _first_pr_for_branch(branch, "closed")
 
 
 def is_draft(pr: str) -> bool:
@@ -2922,7 +2813,7 @@ def refuse_truncated(rows: object, limit: int, what: str) -> None:
 def list_org_repos(org: str) -> list[str]:
     """Return the bare names of all (non-archived) repositories in *org*.
 
-    Asks for up to :data:`~vergil_tooling.lib.LISTING_LIMIT` repos and
+    Asks for up to :data:`~vergil_tooling.lib.github.LISTING_LIMIT` repos and
     raises :class:`EpicListTruncatedError` when it
     gets that many, since the list may then be cut off (#4051). A response
     that is not a list, or a row with no string ``name``, raises
@@ -2955,7 +2846,7 @@ def list_org_repos(org: str) -> list[str]:
 def list_project_repos(owner: str, project: str) -> list[str]:
     """Return sorted, unique repos of *owner* linked to GitHub Project *project*.
 
-    Lists up to :data:`~vergil_tooling.lib.LISTING_LIMIT` of *owner*'s
+    Lists up to :data:`~vergil_tooling.lib.github.LISTING_LIMIT` of *owner*'s
     repos and filters them here rather than through ``--jq``, so the
     truncation check sees every row gh returned: a listing that reaches the
     limit raises :class:`EpicListTruncatedError`

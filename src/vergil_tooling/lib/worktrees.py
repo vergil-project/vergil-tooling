@@ -19,13 +19,14 @@ import sys
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
-from vergil_tooling.lib import branch_names, git, github
+from vergil_tooling.lib import branch_names, git, github, trust
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import failure_message
 from vergil_tooling.lib.repo_init import prompt_choice, prompt_multi_choice
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -176,29 +177,91 @@ def classify_worktree(
     )
 
 
+class BranchPRError(Exception):
+    """A branch's PRs cannot be read as one answer: several are open on it."""
+
+
+# A failed branch PR lookup: gh, the trust layer's read or its missing
+# trusted-authors configuration, or an ambiguous answer. Each is reported as
+# the lookup's failure, never a traceback.
+_LOOKUP_ERRORS = (
+    subprocess.CalledProcessError,
+    trust.TrustReadError,
+    TrustedAuthorsNotConfiguredError,
+    BranchPRError,
+)
+
+
+def branch_prs(branch: str, *, state: Literal["open", "all"]) -> list[trust.PRRef]:
+    """The same-repo PRs with a trusted author whose head is *branch*.
+
+    Read through :func:`trust.prs_for_branch` in the current repo
+    (GHSA-r4j2-cwcp-xg56): a fork PR on the same branch name, or a PR whose
+    author holds no role, never matches. Each one skipped is reported on
+    stderr, metadata only. A read failure raises :class:`trust.TrustReadError`.
+    """
+    prs, skipped = trust.prs_for_branch(github.current_repo(), branch, state=state)
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return prs
+
+
+def _open_pr_of(branch: str, prs: Iterable[trust.PRRef]) -> trust.PRRef | None:
+    """The one open PR among *prs*; several raise :class:`BranchPRError`, never the first."""
+    opened = [pr for pr in prs if pr.state == "OPEN"]
+    if len(opened) > 1:
+        numbers = ", ".join(f"#{pr.number}" for pr in opened)
+        msg = f"{len(opened)} open PRs on {branch} ({numbers}): name the PR to act on"
+        raise BranchPRError(msg)
+    return opened[0] if opened else None
+
+
+def _latest_closed_pr_of(prs: Iterable[trust.PRRef]) -> trust.PRRef | None:
+    """The most recent (highest-numbered) closed or merged PR among *prs*."""
+    return max((pr for pr in prs if pr.state != "OPEN"), key=lambda pr: pr.number, default=None)
+
+
+def open_pr_for_branch(branch: str) -> trust.PRRef | None:
+    """The open same-repo trusted PR on *branch*, or ``None`` (see :func:`branch_prs`)."""
+    return _open_pr_of(branch, branch_prs(branch, state="open"))
+
+
+def closed_pr_for_branch(branch: str) -> trust.PRRef | None:
+    """The most recent closed or merged same-repo trusted PR on *branch*, or ``None``.
+
+    Merge evidence for the finalize branch sweep (issue #1445): a fork PR
+    closed on the same branch name is no evidence (GHSA-r4j2-cwcp-xg56).
+    """
+    return _latest_closed_pr_of(branch_prs(branch, state="all"))
+
+
 def _resolve_pr_state(branch: str) -> tuple[int | None, str | None, str | None]:
     """Resolve ``(pr_number, pr_state, pr_head_sha)`` for *branch*.
 
-    An open PR wins; otherwise the most recent closed/merged PR (whose
-    ``MERGED`` vs ``CLOSED`` state is read explicitly); otherwise
-    ``(None, None, None)`` for a branch with no PR.
+    An open PR wins; otherwise the most recent closed/merged PR, with its
+    ``MERGED`` or ``CLOSED`` state; otherwise ``(None, None, None)`` for a
+    branch with no PR. Only same-repo PRs with a trusted author count
+    (:func:`branch_prs`), and several open PRs raise :class:`BranchPRError`.
 
     ``pr_head_sha`` is the closed/merged PR's head commit, used to confirm
     the PR actually corresponds to the branch's current tip rather than a
     same-named PR that merged before the name was reused (issue #1719). It
     is ``None`` for an open PR, where the name match is authoritative.
     """
-    open_pr = github.pr_for_branch(branch)
+    prs = branch_prs(branch, state="all")
+    open_pr = _open_pr_of(branch, prs)
     if open_pr is not None:
-        return int(open_pr["number"]), "OPEN", None
-    closed = github.closed_pr_for_branch(branch)
+        return open_pr.number, "OPEN", None
+    closed = _latest_closed_pr_of(prs)
     if closed is not None:
-        return (
-            int(closed["number"]),
-            github.pr_state(closed["number"]),
-            closed.get("headRefOid") or None,
-        )
+        return closed.number, closed.state, closed.head_oid
     return None, None, None
+
+
+def _lookup_failure(exc: Exception) -> str:
+    """Why a branch's PR lookup failed: gh's stderr, or the trust layer's message."""
+    if isinstance(exc, subprocess.CalledProcessError):
+        return (exc.stderr or failure_message(exc)).strip()
+    return str(exc)
 
 
 def _newest_mtime(path: Path) -> float | None:
@@ -313,8 +376,8 @@ def gather_worktree_status(
     detail: str | None = None
     try:
         pr_number, pr_state, pr_head_sha = _resolve_pr_state(worktree.branch)
-    except subprocess.CalledProcessError as exc:
-        detail = (exc.stderr or failure_message(exc)).strip()
+    except _LOOKUP_ERRORS as exc:
+        detail = _lookup_failure(exc)
         return _with_workflow(
             classify_worktree(
                 worktree,
@@ -613,12 +676,11 @@ def gather_detached_status(
     pr_number: int | None = None
     if branch:
         try:
-            open_pr = github.pr_for_branch(branch)
-        except subprocess.CalledProcessError as exc:
-            reason = (exc.stderr or failure_message(exc)).strip()
-            detail += f"; open-PR lookup for {branch} failed: {reason}"
+            open_pr = open_pr_for_branch(branch)
+        except _LOOKUP_ERRORS as exc:
+            detail += f"; open-PR lookup for {branch} failed: {_lookup_failure(exc)}"
         else:
-            pr_number = int(open_pr["number"]) if open_pr is not None else None
+            pr_number = open_pr.number if open_pr is not None else None
 
     return WorktreeStatus(
         worktree=worktree,

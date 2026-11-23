@@ -24,9 +24,8 @@ extended to several advisories per issue by epic
   - a neutral **`security`-labelled issue** in the intake queue, which
     holds only a title, a body that says nothing about the problem, and a
     pointer to the advisory.
-- **The same rule for every repo, public or private.** Issues are always
-  neutral, and the details always live in the advisory. A private repo
-  gets no exception: its issues are written as if they were public.
+- **The same rule for every repo.** Issues are always neutral, and the
+  details always live in the advisory.
 - **Fix it within about a day.** Security is a top priority. A record is
   meant to be short-lived: once it is captured, fixing it comes first,
   with a target of about a day. This target is policy. The tooling does
@@ -66,21 +65,11 @@ security record is the durable, private home for them.
   package name (ecosystem `other`), so it stays queryable. When its fix
   lands in another org, the advisory moves to that org's `.github` (see
   [Moving a record to another org](#moving-a-record-to-another-org)).
-- **The issue** is created in the affected repo's **queue home**, the same
-  place `vrg-intake-create` files an item, and linked under its intake
-  epic:
-  - a public repo's queue home is `<org>/.github`;
-  - a private repo keeps its own queues, so its issue stays in the
-    private repo.
+- **The issue** is created in the affected repo's **queue home**,
+  `<org>/.github`, the same place `vrg-intake-create` files an item, and
+  linked under its intake epic. It is never created in a code repo itself.
 
-  It is never created in a public code repo itself.
-
-The org's `.github` repo must be **public**. GitHub documents repository
-security advisories for public repos only. When `<org>/.github` is not
-public, every `vrg-security-record` command refuses (`sync` included), and
-`vrg-intake-route` and `vrg-queue planning` fail when they meet a security
-item. None of them falls back to an issue-only record. Orgs with a private `.github`, and
-repos owned by a user account rather than an org, are not supported.
+Repos owned by a user account rather than an org are not supported.
 
 ### The two reference lines
 
@@ -245,8 +234,7 @@ and issue ref only. A pair is broken when:
 
 `sync` reports a broken pair and does not repair it; a human decides
 what to do. Broken pairs make `sync` exit 1, after it has synced the
-rest; `--dry-run` reports them and exits 0. An org whose `.github` is
-private makes both exit 1.
+rest; `--dry-run` reports them and exits 0.
 
 Nothing runs `sync` on a schedule, so an advisory's state lags its issues
 until someone runs it, and no nightly job checks the pairs. Run it after
@@ -635,25 +623,6 @@ hand:
 `sync` reports a broken pair and never repairs it, so a human repairs
 each one it reports, by hand.
 
-## Before a private repo goes public
-
-Because issues are neutral everywhere, a private repo's issues hold no
-security details, and nothing needs converting. Some places are outside
-the tooling's reach, though. Before you make a private repo public, check
-each of these by hand:
-
-- [ ] **Git history and commit messages**, on every branch and tag that
-      will be published.
-- [ ] **PR bodies and review comments**, including closed PRs.
-- [ ] **Wikis and Actions logs.** Logs become public with the repo.
-- [ ] **Issues written before this policy existed.** Run the past-issues
-      audit on the repo: attach a record to each unfixed one
-      (`vrg-security-record create --issue`), and label each fixed one
-      `security-disclosed`.
-
-The repo's epics move separately; see
-[Epic Home Visibility Flips](epic-home-visibility-flip.md).
-
 ## Accepted trade-offs
 
 - **Advisory states lag their issues.** No scheduled job syncs them:
@@ -663,11 +632,10 @@ The repo's epics move separately; see
   sweep's token.
 - **Advisories are not next to their code.** Every record is in
   `<org>/.github`, so every admin and security manager of `.github` can
-  see every draft, including one about a private (for example, client)
-  repo. Today those are the same people. The package-name field keeps the
+  see every draft. Today those are the same people. The package-name field keeps the
   affected repo queryable.
-- **A public issue shows that a problem exists.** For a public repo the
-  issue is public. Its `security` label and advisory line, together with
+- **A public issue shows that a problem exists.** Every issue is
+  public. Its `security` label and advisory line, together with
   a title that names the affected area, tell anyone that an unfixed
   security problem exists in that area. The issue never says what the
   problem is, and the record is meant to live about a day. This small,

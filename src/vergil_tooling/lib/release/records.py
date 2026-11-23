@@ -11,9 +11,12 @@ each issue in the state block's issue list that has no counting record yet::
     - Install: ran (`[publish].install`)
 
 A record counts, here and as evidence anywhere, only when its comment's
-author and last editor are both ``human`` logins of ``vrg-trusted-authors``.
-A record marker on any other identity's comment never counts: it is named as
-a warning and ignored.
+author and last editor both hold the ``human`` role (:data:`RECORD_ROLES`,
+``editors="last"``), as the trust layer judges it
+(:func:`~vergil_tooling.lib.trust.read_issue`, epic
+vergil-project/.github#1467): a ``human`` login of ``vrg-trusted-authors``
+whose account is a ``User``. Any other comment is never read for a record:
+it is reported on stderr, metadata only, and ignored.
 
 The stage is idempotent. Before posting, it reads the issue's comments, every
 page, for a counting record; one found is recorded as posted in the state
@@ -36,7 +39,7 @@ import sys
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from vergil_tooling.lib import github, trusted_authors
+from vergil_tooling.lib import github, trust, trusted_authors
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.tracking import write_state
 
@@ -45,30 +48,17 @@ if TYPE_CHECKING:
 
     from vergil_tooling.lib.release.context import ReleaseContext
     from vergil_tooling.lib.release.state import IssueEntry, StateBlock
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 PHASE = "release-records"
+# The roles a record's author and last editor must hold: the human only.
+RECORD_ROLES: frozenset[trust.Role] = frozenset({trust.Role.HUMAN})
 # The stage whose done record says the install ran or had nothing to run.
 _INSTALL = "install"
-# GraphQL caps a connection page at 100 nodes; the read follows every page.
-_PAGE = 100
 _SHORT_SHA = 7
-# The login a deleted account's author or editor reads as.
-_GHOST = "ghost"
+# The field the trust layer gives an issue body's Skipped record.
+_BODY_FIELD = "body"
 _REF_RE = re.compile(r"^(?P<repo>[^/\s#]+/[^/\s#]+)#(?P<number>[1-9][0-9]*)$")
-
-_COMMENTS_QUERY = f"""
-query($owner: String!, $name: String!, $number: Int!, $after: String) {{
-  repository(owner: $owner, name: $name) {{
-    issue(number: $number) {{
-      comments(first: {_PAGE}, after: $after) {{
-        totalCount
-        pageInfo {{ hasNextPage endCursor }}
-        nodes {{ author {{ login }} editor {{ login }} body }}
-      }}
-    }}
-  }}
-}}
-"""
 
 _MERGE_COMMIT_QUERY = """
 query($owner: String!, $name: String!, $number: Int!) {
@@ -85,18 +75,6 @@ query($owner: String!, $name: String!, $tag: String!) {
   }
 }
 """
-
-
-@dataclass(frozen=True)
-class Comment:
-    """One issue comment: its author, its last editor (``None`` if never edited) and its body.
-
-    Logins are bare (a leading ``app/`` stripped); a deleted account is ``ghost``.
-    """
-
-    author: str
-    editor: str | None
-    body: str
 
 
 class RecordReadError(github.GitHubAPIError):
@@ -144,50 +122,25 @@ def record_body(  # noqa: PLR0913 - the record's fields, each named
 
 
 def counting_record(
-    comments: Sequence[Comment], repo: str, version: str, humans: Sequence[str]
-) -> tuple[Comment | None, list[str]]:
-    """The first of *comments* holding the record of *repo* *version* that counts, and warnings.
+    comments: Sequence[trust.TrustedComment], repo: str, version: str
+) -> trust.TrustedComment | None:
+    """The first of *comments* holding the record of *repo* *version*, or ``None``.
 
-    A comment holds the record when a line of it, stripped, is the
-    :func:`marker`. It counts only when its author and, if it was edited,
-    its last editor are in *humans*. Each holding comment that does not
-    count is a warning naming the identity, and is otherwise ignored.
+    *comments* are the ones :func:`record_comments` trusts, so each already
+    passes the record rule. A comment holds the record when a line of it,
+    stripped, is the :func:`marker`.
     """
     expected = marker(repo, version)
-    humans_bare = {trusted_authors.bare_login(login) for login in humans}
-    found: Comment | None = None
-    warnings: list[str] = []
     for comment in comments:
-        if expected not in (line.strip() for line in comment.body.splitlines()):
-            continue
-        if comment.author not in humans_bare:
-            warnings.append(
-                f"a record marker for {repo} v{version} in a comment by {comment.author} "
-                "does not count: only a human login may post a record"
-            )
-        elif comment.editor is not None and comment.editor not in humans_bare:
-            warnings.append(
-                f"a record marker for {repo} v{version} in a comment last edited by "
-                f"{comment.editor} does not count: only a human login may edit a record"
-            )
-        elif found is None:
-            found = comment
-    return found, warnings
+        if expected in (line.strip() for line in comment.body.splitlines()):
+            return comment
+    return None
 
 
 def _obj(value: object, what: str, where: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RecordReadError(where, f"{what} is {value!r}")
     return cast("dict[str, Any]", value)
-
-
-def _login(value: object, what: str, where: str) -> str:
-    if value is None:
-        return _GHOST
-    login = _obj(value, what, where).get("login")
-    if not isinstance(login, str) or not login:
-        raise RecordReadError(where, f"{what} has no login: {value!r}")
-    return trusted_authors.bare_login(login)
 
 
 def _split_ref(ref: str) -> tuple[str, int]:
@@ -198,58 +151,22 @@ def _split_ref(ref: str) -> tuple[str, int]:
     return match.group("repo"), int(match.group("number"))
 
 
-def _comment(node: object, where: str) -> Comment:
-    item = _obj(node, "a comment", where)
-    body = item.get("body")
-    if not isinstance(body, str):
-        raise RecordReadError(where, f"a comment has no body: {node!r}")
-    raw_editor = item.get("editor")
-    return Comment(
-        author=_login(item.get("author"), "a comment's author", where),
-        editor=None if raw_editor is None else _login(raw_editor, "a comment's editor", where),
-        body=body,
-    )
+def record_comments(ref: str, *, authors: TrustedAuthors) -> tuple[trust.TrustedComment, ...]:
+    """The comments on issue *ref* (``<owner>/<repo>#<N>``) that may hold a record.
 
-
-def read_comments(ref: str) -> list[Comment]:
-    """Every comment on issue *ref* (``<owner>/<repo>#<N>``), with its author and last editor.
-
-    A paginated GraphQL read, followed until the last page. A failed page
-    raises from :func:`github.graphql`; a page that is not what was asked
-    for, or comments that do not add up to the ``totalCount``, raises
-    :class:`RecordReadError` naming the issue.
+    Read through :func:`~vergil_tooling.lib.trust.read_issue` with the record
+    rule, :data:`RECORD_ROLES` for the author and the last editor
+    (``editors="last"``), every page. Every other comment is reported on
+    stderr, metadata only, and never read for a record; the issue's own
+    body is not this reader's concern. A read that cannot complete raises
+    :class:`~vergil_tooling.lib.trust.TrustReadError`.
     """
     repo, number = _split_ref(ref)
-    owner, name = repo.split("/", 1)
-    where = f"the comments on {ref}"
-    comments: list[Comment] = []
-    total: object = None
-    cursor: str | None = None
-    while True:
-        variables: dict[str, object] = {"owner": owner, "name": name, "number": number}
-        if cursor is not None:
-            variables["after"] = cursor
-        data = github.graphql(_COMMENTS_QUERY, **variables)
-        repository = _obj(data.get("repository"), "repository", where)
-        issue = _obj(repository.get("issue"), "issue", where)
-        conn = _obj(issue.get("comments"), "comments", where)
-        nodes = conn.get("nodes")
-        info = _obj(conn.get("pageInfo"), "comments.pageInfo", where)
-        total = conn.get("totalCount")
-        if not isinstance(nodes, list) or not isinstance(total, int) or isinstance(total, bool):
-            raise RecordReadError(where, f"comments has no totalCount or nodes: {conn!r}")
-        comments.extend(_comment(node, where) for node in cast("list[object]", nodes))
-        has_next, end = info.get("hasNextPage"), info.get("endCursor")
-        if not isinstance(has_next, bool):
-            raise RecordReadError(where, f"comments.pageInfo has no hasNextPage: {info!r}")
-        if not has_next:
-            break
-        if not isinstance(end, str) or not end:
-            raise RecordReadError(where, f"comments has a next page but no cursor: {info!r}")
-        cursor = end
-    if len(comments) != total:
-        raise RecordReadError(where, f"GitHub lists {total} comments but returned {len(comments)}")
-    return comments
+    content = trust.read_issue(repo, number, roles=RECORD_ROLES, editors="last", authors=authors)
+    trust.report_skipped(
+        [item for item in content.skipped if item.field != _BODY_FIELD], stream=sys.stderr
+    )
+    return content.comments
 
 
 def _merge_commit(repo: str, number: int) -> str:
@@ -279,10 +196,10 @@ def _release_date(repo: str, tag: str) -> str:
     return published[:10]
 
 
-def _humans() -> tuple[str, ...]:
-    """The ``human`` logins of ``vrg-trusted-authors``; a failed load is an error, never ``()``."""
+def _authors() -> TrustedAuthors:
+    """The ``vrg-trusted-authors`` configuration; a failed load is an error, never empty."""
     try:
-        return trusted_authors.load_trusted_authors().human
+        return trusted_authors.load_trusted_authors()
     except (trusted_authors.TrustedAuthorsNotConfiguredError, ValueError) as exc:
         raise ReleaseError(
             phase=PHASE,
@@ -341,20 +258,19 @@ def _post(ref: str, body: str) -> None:
 def _record_issue(
     issue: IssueEntry,
     release: _Release,
-    humans: Sequence[str],
+    authors: TrustedAuthors,
     merge_commits: dict[int, str],
     supersedes: str | None,
 ) -> bool:
     """Confirm or post *issue*'s record; True when it was posted by this call.
 
     *supersedes* is the release the issue was absorbed from, or None. Each
-    foreign record marker found on the issue is printed as a warning.
+    comment that is not read for a record is reported on stderr
+    (:func:`record_comments`).
     """
-    found, warnings = counting_record(
-        read_comments(issue.ref), release.repo, release.version, humans
+    found = counting_record(
+        record_comments(issue.ref, authors=authors), release.repo, release.version
     )
-    for warning in warnings:
-        print(f"warning: {issue.ref}: {warning}", file=sys.stderr)
     if found is not None:
         return False
     for pr in issue.prs:
@@ -394,15 +310,20 @@ def post_records(ctx: ReleaseContext) -> None:
     if not pending:
         return
     release = _release(ctx, current)
-    humans = _humans()
+    authors = _authors()
     merge_commits: dict[int, str] = {}
     failures: list[str] = []
     for issue in pending:
         try:
             # An issue absorbed from a superseded release says so (spec §4.7).
             absorbed = current.supersedes if issue.ref in current.absorbed else None
-            new = _record_issue(issue, release, humans, merge_commits, absorbed)
-        except (subprocess.CalledProcessError, RuntimeError, ValueError) as exc:
+            new = _record_issue(issue, release, authors, merge_commits, absorbed)
+        except (
+            subprocess.CalledProcessError,
+            RuntimeError,
+            ValueError,
+            trust.TrustReadError,
+        ) as exc:
             failures.append(f"{issue.ref}: {exc}")
             continue
         current = replace(current, records_posted=(*current.records_posted, issue.ref))

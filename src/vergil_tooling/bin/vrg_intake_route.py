@@ -30,7 +30,7 @@ reads against the item's repo. Which routes an item allows depends on the
 container epic it is in (:data:`intake_route.ROUTES`); ``planning`` also
 takes a follow-on brainstorm out of a development epic. A refused route (a
 route its container does not allow, any other development-epic task,
-cross-org, or a private item headed somewhere public) exits 1 with the reason on stderr. So
+or cross-org) exits 1 with the reason on stderr. So
 does a one-off whose item does not end up under its target epic: the message
 names where the item is and how to recover (the ``vrg-epic-move`` fix for a
 wrong parent, the GitHub UI when GitHub keeps refusing the link as a duplicate
@@ -48,7 +48,7 @@ import argparse
 import sys
 from datetime import date
 
-from vergil_tooling.lib import epics, github, intake_route
+from vergil_tooling.lib import epics, github, intake_route, trust, trusted_authors
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.epic_size import CONFIDENCES, Sizing
 
@@ -67,9 +67,16 @@ def main(argv: list[str] | None = None) -> int:
         ValueError,
         intake_route.RouteHalfAppliedError,
         epics.StandingEpicNotVisibleError,
+        trust.TrustReadError,
+        trust.UntrustedContentError,
+        trusted_authors.TrustedAuthorsNotConfiguredError,
     ) as exc:
         # A half-applied route already names the item's state and the fix; a
-        # queue epic created but not confirmed names the new epic to check.
+        # queue epic created but not confirmed names the new epic to check. A
+        # planning item's comments read through the trust layer fail before
+        # any write when they cannot be read in full or no trusted authors
+        # are configured, and so does an item an outsider opened or whose body
+        # the layer does not trust; the message is metadata only.
         print(f"{_PROG}: {exc}", file=sys.stderr)
         return 1
     except github.NoInstallationError as exc:

@@ -5,25 +5,24 @@ from __future__ import annotations
 import argparse
 import ast
 import subprocess
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import github, progress
+from vergil_tooling.lib import github, progress, trust
 from vergil_tooling.lib.release import records
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.finalize import close_tracking
 from vergil_tooling.lib.release.orchestrator import ReleaseState, build_stages
 from vergil_tooling.lib.release.records import (
-    Comment,
     counting_record,
     marker,
     post_records,
-    read_comments,
     record_body,
+    record_comments,
 )
 from vergil_tooling.lib.release.state import IssueEntry, StateBlock, initial_state
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
@@ -39,6 +38,51 @@ _VERSION = "2.1.2"
 _HUMAN = "wphillipmoore"
 _AGENT = "wphillipmoore-vergil-user"
 _SHAS = {7: "a" * 40, 8: "b" * 40, 9: "c" * 40}
+_AUTHORS = TrustedAuthors(human=(_HUMAN,), agents=(_AGENT,))
+_CREATED = "2026-11-20T09:00:00Z"
+_EDITED = "2026-11-20T10:00:00Z"
+_GHOST = "ghost"
+# Each test login's account type, as GraphQL returns it; "ghost" is a deleted account.
+_TYPES = {_HUMAN: "User", _AGENT: "Bot", "drive-by": "User"}
+
+
+@dataclass(frozen=True)
+class Comment:
+    """A comment as a test writes it: logins (an actor dict for an odd account), then body.
+
+    *edits* are the earlier editors in its history; *editor* is its last editor.
+    """
+
+    author: str | dict[str, str] | None
+    editor: str | dict[str, str] | None
+    body: str
+    edits: tuple[str, ...] = ()
+
+
+def _actor(who: str | dict[str, str] | None) -> dict[str, str] | None:
+    if isinstance(who, dict):
+        return who
+    if who is None or who == _GHOST:
+        return None
+    return {"__typename": _TYPES[who], "login": who}
+
+
+def _node(index: int, comment: Comment) -> dict[str, object]:
+    """The layer's IssueComment node for *comment*, in a recorded response's shape."""
+    history = [*comment.edits, *([] if comment.editor is None else [comment.editor])]
+    return {
+        "id": f"IC_{index}",
+        "fullDatabaseId": str(index),
+        "author": _actor(comment.author),
+        "editor": _actor(comment.editor),
+        "body": comment.body,
+        "createdAt": _CREATED,
+        "lastEditedAt": None if comment.editor is None else _EDITED,
+        "userContentEdits": {
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+            "nodes": [{"editedAt": _EDITED, "editor": _actor(e)} for e in history],
+        },
+    }
 
 
 class _FakeGitHub:
@@ -52,8 +96,8 @@ class _FakeGitHub:
         self.reads: list[tuple[str, str | None]] = []
 
     def graphql(self, query: str, **variables: object) -> dict[str, object]:
-        if "comments(" in query:
-            return self._comments_page(variables)
+        if query in (trust._ITEM_QUERY, trust._COMMENTS_QUERY):  # noqa: SLF001
+            return self._comments_page(query, variables)
         if "mergeCommit" in query:
             number = variables["number"]
             assert isinstance(number, int)
@@ -62,7 +106,7 @@ class _FakeGitHub:
             return {"repository": {"release": {"publishedAt": "2026-11-20T10:00:00Z"}}}
         raise AssertionError(query)
 
-    def _comments_page(self, variables: dict[str, object]) -> dict[str, object]:
+    def _comments_page(self, query: str, variables: dict[str, object]) -> dict[str, object]:
         ref = f"{variables['owner']}/{variables['name']}#{variables['number']}"
         after = variables.get("after")
         assert after is None or isinstance(after, str)
@@ -73,22 +117,13 @@ class _FakeGitHub:
         everything = self.comments.get(ref, [])
         page = everything[start : start + 100]
         end = start + len(page)
-        nodes = [
-            {
-                "author": {"login": c.author},
-                "editor": None if c.editor is None else {"login": c.editor},
-                "body": c.body,
-            }
-            for c in page
-        ]
+        nodes = [_node(start + i + 1, c) for i, c in enumerate(page)]
         info = {"hasNextPage": end < len(everything), "endCursor": str(end) if page else None}
-        return {
-            "repository": {
-                "issue": {
-                    "comments": {"totalCount": len(everything), "pageInfo": info, "nodes": nodes}
-                }
-            }
-        }
+        item: dict[str, object] = {"comments": {"pageInfo": info, "nodes": nodes}}
+        if query == trust._ITEM_QUERY:  # noqa: SLF001 - the first page carries the issue body
+            item |= _node(0, Comment(_AGENT, None, "the task body"))
+            item["__typename"] = "Issue"
+        return {"repository": {"issueOrPullRequest": item}}
 
     def post(self, endpoint: str, body: dict[str, object]) -> dict[str, Any]:
         _, repo_owner, repo_name, _, number, _ = endpoint.split("/")
@@ -137,15 +172,16 @@ def fake() -> Iterator[_FakeGitHub]:
         patch(_MOD + ".github.graphql", side_effect=gh.graphql),
         patch(_MOD + ".github.post_json_once", side_effect=gh.post),
         patch(_MOD + ".write_state", side_effect=write),
-        patch(
-            _MOD + ".trusted_authors.load_trusted_authors",
-            return_value=TrustedAuthors(human=(_HUMAN,), agents=(_AGENT,)),
-        ),
+        patch(_MOD + ".trusted_authors.load_trusted_authors", return_value=_AUTHORS),
     ):
         yield gh
 
 
-def _record(author: str = _HUMAN, editor: str | None = None) -> Comment:
+def _record(
+    author: str | dict[str, str] | None = _HUMAN,
+    editor: str | dict[str, str] | None = None,
+    edits: tuple[str, ...] = (),
+) -> Comment:
     body = record_body(
         repo=_REPO,
         version=_VERSION,
@@ -155,7 +191,11 @@ def _record(author: str = _HUMAN, editor: str | None = None) -> Comment:
         install="ran",
         supersedes=None,
     )
-    return Comment(author, editor, body)
+    return Comment(author, editor, body, edits)
+
+
+def _trusted(body: str, index: int = 1) -> trust.TrustedComment:
+    return trust.TrustedComment(str(index), body, trust.Role.HUMAN, _CREATED)
 
 
 def test_record_body_matches_spec() -> None:
@@ -254,6 +294,13 @@ def test_records_resume_posts_only_missing(fake: _FakeGitHub) -> None:
     assert (resumed.records_new, resumed.records_found) == (1, 1)
 
 
+@pytest.fixture
+def local(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not under GitHub Actions, so the skip report lists each item, not counts."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
+@pytest.mark.usefixtures("local")
 def test_foreign_marker_ignored_with_warning(
     fake: _FakeGitHub, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -262,29 +309,68 @@ def test_foreign_marker_ignored_with_warning(
     post_records(ctx)
     assert fake.posts == ["o/r#1"]
     err = capsys.readouterr().err
-    assert f"warning: o/r#1: a record marker for o/r v2.1.2 in a comment by {_AGENT}" in err
+    assert f"skipped untrusted content: o/r#1 comment {_AGENT} at {_CREATED} on comment 1" in err
+    assert "(not-accepted)" in err
+    assert "the task body" not in err
 
 
-def test_edited_by_agent_record_does_not_count() -> None:
-    found, warnings = counting_record([_record(editor=_AGENT)], _REPO, _VERSION, [_HUMAN])
-    assert found is None
-    assert warnings == [
-        f"a record marker for o/r v2.1.2 in a comment last edited by {_AGENT} does not "
-        "count: only a human login may edit a record"
-    ]
+@pytest.mark.usefixtures("local")
+def test_edited_by_agent_record_does_not_count(
+    fake: _FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.comments["o/r#1"] = [_record(editor=_AGENT)]
+    post_records(_ctx(_state(_issues(1))))
+    assert fake.posts == ["o/r#1"]
+    err = capsys.readouterr().err
+    assert f"o/r#1 edit {_AGENT} at {_EDITED} on comment 1 (not-accepted)" in err
+
+
+def test_record_last_editor_rule_kept(fake: _FakeGitHub) -> None:
+    """Only the last editor is checked: an earlier edit by an agent does not stop a record."""
+    fake.comments["o/r#1"] = [_record(editor=_HUMAN, edits=(_AGENT,))]
+    ctx = _ctx(_state(_issues(1)))
+    post_records(ctx)
+    assert fake.posts == []
+    assert ctx.records_found == 1
+
+
+@pytest.mark.usefixtures("local")
+def test_record_from_user_named_like_app_or_outsider_does_not_count(
+    fake: _FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    impostor = {"__typename": "Bot", "login": _HUMAN}
+    spam = Comment("drive-by", None, f"{marker(_REPO, _VERSION)}\nSPAM-MARKER-TEXT")
+    fake.comments["o/r#1"] = [_record(author=impostor), spam]
+    post_records(_ctx(_state(_issues(1))))
+    assert fake.posts == ["o/r#1"]
+    err = capsys.readouterr().err
+    assert f"o/r#1 comment {_HUMAN} at {_CREATED} on comment 1 (wrong-type)" in err
+    assert f"o/r#1 comment drive-by at {_CREATED} on comment 2 (untrusted)" in err
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+def test_skip_report_counts_only_under_actions(
+    fake: _FakeGitHub, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    fake.comments["o/r#1"] = [_record(author=_AGENT), Comment("drive-by", None, "x")]
+    post_records(_ctx(_state(_issues(1))))
+    err = capsys.readouterr().err
+    assert "skipped 2 untrusted item(s) (not-accepted: 1, untrusted: 1)" in err
+    assert "drive-by" not in err
 
 
 def test_counting_record_found_and_marker_must_be_alone_on_its_line() -> None:
-    own = _record(editor=_HUMAN)
-    inline = Comment(_HUMAN, None, f"see {marker(_REPO, _VERSION)} above")
-    other_version = Comment(_HUMAN, None, marker(_REPO, "2.1.1"))
-    found, warnings = counting_record(
-        [inline, other_version, own], _REPO, _VERSION, [f"app/{_HUMAN}"]
-    )
-    assert found == own
-    assert warnings == []
-    deleted = Comment("ghost", None, own.body)
-    assert counting_record([deleted], _REPO, _VERSION, [_HUMAN])[0] is None
+    own = _trusted(_record().body, 3)
+    inline = _trusted(f"see {marker(_REPO, _VERSION)} above", 1)
+    other_version = _trusted(marker(_REPO, "2.1.1"), 2)
+    assert counting_record([inline, other_version, own], _REPO, _VERSION) == own
+    assert counting_record([inline, other_version], _REPO, _VERSION) is None
+
+
+def test_deleted_author_record_does_not_count(fake: _FakeGitHub) -> None:
+    fake.comments["o/r#1"] = [_record(author=None), _record(editor=_GHOST)]
+    assert record_comments("o/r#1", authors=_AUTHORS) == ()
 
 
 def test_records_failure_names_each_issue_and_blocks_close(fake: _FakeGitHub) -> None:
@@ -406,31 +492,12 @@ def test_records_comment_read_paginates(fake: _FakeGitHub) -> None:
 def test_records_comment_page_failure_raises(fake: _FakeGitHub) -> None:
     fake.comments["o/r#1"] = [Comment(_HUMAN, None, f"c{i}") for i in range(150)]
     fake.fail_read = {"o/r#1": 1}
-    with pytest.raises(github.GitHubAPIError, match="HTTP 502"):
-        read_comments("o/r#1")
+    with pytest.raises(trust.TrustReadError, match="HTTP 502"):
+        record_comments("o/r#1", authors=_AUTHORS)
     ctx = _ctx(_state(_issues(1)))
     with pytest.raises(ReleaseError, match=r"(?s)o/r#1: .*HTTP 502"):
         post_records(ctx)
     assert fake.posts == []
-
-
-def test_comment_read_refuses_a_short_count() -> None:
-    page = {
-        "repository": {
-            "issue": {
-                "comments": {
-                    "totalCount": 3,
-                    "pageInfo": {"hasNextPage": False, "endCursor": None},
-                    "nodes": [{"author": {"login": _HUMAN}, "editor": None, "body": "x"}],
-                }
-            }
-        }
-    }
-    with (
-        patch(_MOD + ".github.graphql", return_value=page),
-        pytest.raises(records.RecordReadError, match="lists 3 comments but returned 1"),
-    ):
-        read_comments("o/r#1")
 
 
 def test_records_refuse_failed_trusted_author_load(fake: _FakeGitHub) -> None:
@@ -443,47 +510,19 @@ def test_records_refuse_failed_trusted_author_load(fake: _FakeGitHub) -> None:
     assert fake.posts == []
 
 
-def _page(**overrides: object) -> dict[str, object]:
-    """One comments page holding one comment, with *overrides* applied to the connection."""
-    conn: dict[str, object] = {
-        "totalCount": 1,
-        "pageInfo": {"hasNextPage": False, "endCursor": None},
-        "nodes": [{"author": {"login": _HUMAN}, "editor": None, "body": "x"}],
-    }
-    conn.update(overrides)
-    return {"repository": {"issue": {"comments": conn}}}
-
-
-@pytest.mark.parametrize(
-    ("page", "match"),
-    [
-        ({"repository": None}, "repository is None"),
-        (_page(nodes=None), "no totalCount or nodes"),
-        (_page(totalCount=True), "no totalCount or nodes"),
-        (_page(nodes=[{"author": {"login": _HUMAN}, "editor": None}]), "has no body"),
-        (_page(nodes=[{"author": {}, "editor": None, "body": "x"}]), "author has no login"),
-        (_page(nodes=["x"]), "a comment is 'x'"),
-        (_page(pageInfo={"endCursor": None}), "has no hasNextPage"),
-        (_page(pageInfo={"hasNextPage": True, "endCursor": ""}), "next page but no cursor"),
-    ],
-)
-def test_comment_read_refuses_a_malformed_page(page: dict[str, object], match: str) -> None:
-    with (
-        patch(_MOD + ".github.graphql", return_value=page),
-        pytest.raises(records.RecordReadError, match=match),
-    ):
-        read_comments("o/r#1")
-
-
-def test_comment_read_keeps_a_deleted_author_and_an_editor() -> None:
-    nodes = [{"author": None, "editor": {"login": f"app/{_AGENT}"}, "body": "x"}]
-    with patch(_MOD + ".github.graphql", return_value=_page(nodes=nodes)):
-        assert read_comments("o/r#1") == [Comment("ghost", _AGENT, "x")]
+def test_comment_read_refuses_an_actor_without_its_type(fake: _FakeGitHub) -> None:
+    """An actor whose account type is missing is a read failure, never a guess."""
+    fake.comments["o/r#1"] = [_record(author={"login": _HUMAN})]
+    with pytest.raises(trust.TrustReadError, match="has no __typename"):
+        record_comments("o/r#1", authors=_AUTHORS)
+    with pytest.raises(ReleaseError, match=r"o/r#1: .*has no __typename"):
+        post_records(_ctx(_state(_issues(1))))
+    assert fake.posts == []
 
 
 def test_comment_read_refuses_a_malformed_ref() -> None:
     with pytest.raises(ValueError, match="is not <owner>/<repo>#<N>"):
-        read_comments("o/r/1")
+        record_comments("o/r/1", authors=_AUTHORS)
 
 
 def test_merge_commit_and_release_date_refuse_a_missing_value() -> None:
@@ -508,8 +547,8 @@ def test_merge_commit_and_release_date_refuse_a_missing_value() -> None:
 
 
 def test_counting_record_keeps_the_first_of_two() -> None:
-    first, second = _record(), _record(editor=_HUMAN)
-    assert counting_record([first, second], _REPO, _VERSION, [_HUMAN]) == (first, [])
+    first, second = _trusted(_record().body, 1), _trusted(_record().body, 2)
+    assert counting_record([first, second], _REPO, _VERSION) == first
 
 
 def test_records_refuse_without_a_tag(fake: _FakeGitHub) -> None:
@@ -643,7 +682,7 @@ def test_records_stage_wraps_subprocess_errors_only(fake: _FakeGitHub) -> None:
     """A failure that is not a read or post error (a bug) is not collected per issue."""
     ctx = _ctx(_state(_issues(1)))
     with (
-        patch(_MOD + ".read_comments", side_effect=KeyError("bug")),
+        patch(_MOD + ".record_comments", side_effect=KeyError("bug")),
         pytest.raises(KeyError),
     ):
         post_records(ctx)
@@ -653,13 +692,13 @@ def test_records_stage_wraps_subprocess_errors_only(fake: _FakeGitHub) -> None:
 def test_records_stage_collects_a_failed_read_per_issue(fake: _FakeGitHub) -> None:
     ctx = _ctx(_state(_issues(1, 2)))
     error = subprocess.CalledProcessError(1, ("gh",), stderr="boom")
-    real = read_comments
+    real = record_comments
 
-    def flaky(ref: str) -> list[Comment]:
+    def flaky(ref: str, *, authors: TrustedAuthors) -> tuple[trust.TrustedComment, ...]:
         if ref == "o/r#1":
             raise error
-        return real(ref)
+        return real(ref, authors=authors)
 
-    with patch(_MOD + ".read_comments", side_effect=flaky), pytest.raises(ReleaseError):
+    with patch(_MOD + ".record_comments", side_effect=flaky), pytest.raises(ReleaseError):
         post_records(ctx)
     assert fake.posts == ["o/r#2"]

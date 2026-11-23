@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_epic_create import main, parse_args
-from vergil_tooling.lib import github, proxies
+from vergil_tooling.lib import github, proxies, trust
 from vergil_tooling.lib.epics import IssueRef
 
 if TYPE_CHECKING:
@@ -34,11 +34,10 @@ def test_title_required_without_proxy_for(capsys: pytest.CaptureFixture[str]) ->
     mock_create.assert_not_called()
 
 
-def test_default_target_is_current_repo_public_goes_to_dotgithub() -> None:
+def test_default_target_is_current_repo_goes_to_dotgithub() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github") as home,
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
     ):
         rc = main(["--title", "Epic: X", "--body", "B"])
@@ -58,7 +57,6 @@ def test_main_scopes_token_to_target_owner() -> None:
     with (
         patch(f"{_MOD}.github.target_org") as mock_scope,
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="other-org/.github"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
     ):
         rc = main(["--repo", "other-org/repo", "--title", "T"])
@@ -66,33 +64,19 @@ def test_main_scopes_token_to_target_owner() -> None:
     mock_scope.assert_called_once_with("other-org")
 
 
-def test_explicit_private_target_homes_in_self() -> None:
-    with (
-        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/lab") as home,
-        patch(f"{_MOD}.github.repo_visibility", return_value="PRIVATE"),
-        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-    ):
-        rc = main(["--repo", "org/lab", "--title", "T"])
-    assert rc == 0
-    home.assert_called_once_with("org", "lab")
-    assert mock_create.call_args.kwargs["repo"] == "org/lab"
-
-
 def test_prints_resolved_home(capsys: pytest.CaptureFixture[str]) -> None:
     with (
-        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/lab"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PRIVATE"),
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
     ):
         main(["--repo", "org/lab", "--title", "T"])
-    assert "epic home: org/lab [PRIVATE]" in capsys.readouterr().out
+    assert "-> epic home: org/.github\n" in capsys.readouterr().out
 
 
 def test_adds_extra_labels() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
     ):
         rc = main(["--title", "T", "--label", "ad-hoc"])
@@ -104,7 +88,6 @@ def test_dedups_epic_label() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
     ):
         main(["--title", "T", "--label", "epic"])
@@ -118,7 +101,6 @@ def _create(argv: list[str]) -> tuple[int, MagicMock]:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
     ):
         rc = main(argv)
@@ -169,7 +151,6 @@ def test_ensures_labels_before_create(_ensure_labels_ok: MagicMock) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/.github"),
-        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
         patch(
             f"{_MOD}.github.create_issue",
             side_effect=lambda **_kwargs: calls.append("create") or _URL,
@@ -280,6 +261,39 @@ def test_proxy_for_refusal_exits_1(error: Exception, capsys: pytest.CaptureFixtu
     assert f"vrg-epic-create: {error}" in capsys.readouterr().err
 
 
+_SKIPPED = trust.Skipped(
+    repo="logical-minds-foundry/.github",
+    number=320,
+    kind="issue",
+    login="drive-by",
+    at="2026-11-01T09:30:00Z",
+    field="body",
+    cause="untrusted",
+)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        trust.UntrustedContentError(_SKIPPED, "the issue body is untrusted"),
+        trust.TrustReadError("read_issue logical-minds-foundry/.github#320", "no data"),
+    ],
+    ids=["untrusted-content", "trust-read-error"],
+)
+def test_proxy_for_untrusted_content_is_one_line_error(
+    error: Exception, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A proxy or primary the trust layer does not trust (or cannot read in
+    # full) is a one-line, metadata-only error, exit 1: never a traceback.
+    with patch(f"{_MOD}.proxies.create_proxy", side_effect=error):
+        rc = main(_PROXY_ARGS)
+    assert rc == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == f"vrg-epic-create: {error}\n"
+    assert len(err.splitlines()) == 1
+
+
 def test_proxy_for_token_missing_refuses(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(
@@ -321,3 +335,129 @@ def test_proxy_for_needs_full_ref(ref: str, capsys: pytest.CaptureFixture[str]) 
     assert rc == 1
     assert "full 'owner/repo#N' ref" in capsys.readouterr().err
     create.assert_not_called()
+
+
+# -- --standing: ensure an org's standing epic (epic vergil-project/.github#1494) --
+
+_OPS_TITLE = "Epic (operations): acme"
+
+
+def test_ensure_standing_operations_creates_no_task(capsys: pytest.CaptureFixture[str]) -> None:
+    """No operations epic yet: it is created in acme/.github, and nothing else is."""
+    created = "https://github.com/acme/.github/issues/31"
+    with (
+        patch(f"{_MOD}.github.target_org") as mock_scope,
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            side_effect=[[], [{"number": 31, "title": _OPS_TITLE}]],
+        ),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
+        patch("vergil_tooling.lib.epics.add_child") as mock_add,
+    ):
+        rc = main(["--standing", "operations", "--org", "acme"])
+    assert rc == 0
+    mock_scope.assert_called_once_with("acme")
+    mock_create.assert_called_once()
+    kwargs = mock_create.call_args.kwargs
+    assert kwargs["repo"] == "acme/.github"
+    assert kwargs["title"] == _OPS_TITLE
+    assert kwargs["labels"] == ["epic", "operations", "epic-management"]
+    mock_add.assert_not_called()
+    assert capsys.readouterr().out.strip() == "Operations epic: acme/.github#31"
+
+
+def test_ensure_standing_operations_reuses_existing(capsys: pytest.CaptureFixture[str]) -> None:
+    """An operations epic already open is reused: no create, its ref printed."""
+    with (
+        patch(f"{_MOD}.github.target_org"),
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            return_value=[{"number": 12, "title": _OPS_TITLE}],
+        ),
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+        patch("vergil_tooling.lib.epics.add_child") as mock_add,
+    ):
+        rc = main(["--standing", "operations", "--org", "acme"])
+    assert rc == 0
+    mock_create.assert_not_called()
+    mock_add.assert_not_called()
+    assert capsys.readouterr().out.strip() == "Operations epic: acme/.github#12"
+
+
+@pytest.mark.parametrize("kind", ["intake", "planning", "deferred", "hoshin", "operations"])
+def test_standing_resolves_the_kind_sentinel_in_org_github(kind: str) -> None:
+    epic = IssueRef("acme", ".github", 9)
+    with (
+        patch(f"{_MOD}.github.target_org"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=epic) as mock_resolve,
+    ):
+        assert main(["--standing", kind, "--org", "acme"]) == 0
+    mock_resolve.assert_called_once_with(kind, repo="acme/.github")
+
+
+def test_standing_refuses_adhoc(capsys: pytest.CaptureFixture[str]) -> None:
+    # The ad-hoc epic is per repo (vrg-adhoc-epic ensure), not an org epic.
+    with pytest.raises(SystemExit):
+        parse_args(["--standing", "adhoc", "--org", "acme"])
+    assert "invalid choice" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--title", "T"],
+        ["--body", "B"],
+        ["--body-file", "f"],
+        ["--label", "x"],
+        ["--assignee", "a"],
+        ["--repo", "acme/widget"],
+    ],
+)
+def test_standing_refuses_derived_flags(
+    extra: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    with patch(f"{_MOD}.epics.resolve_epic_ref") as mock_resolve:
+        rc = main(["--standing", "operations", "--org", "acme", *extra])
+    assert rc == 1
+    assert extra[0] in capsys.readouterr().err
+    mock_resolve.assert_not_called()
+
+
+@pytest.mark.parametrize("org", [[], ["--org", ""], ["--org", "acme/widget"]])
+def test_standing_needs_org(org: list[str], capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.epics.resolve_epic_ref") as mock_resolve:
+        rc = main(["--standing", "operations", *org])
+    assert rc == 1
+    assert "needs --org ORG" in capsys.readouterr().err
+    mock_resolve.assert_not_called()
+
+
+def test_standing_and_proxy_for_are_exclusive(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.epics.resolve_epic_ref") as mock_resolve,
+        patch(f"{_MOD}.proxies.create_proxy") as mock_proxy,
+    ):
+        rc = main(["--standing", "operations", "--org", "acme", "--proxy-for", "a/.github#1"])
+    assert rc == 1
+    assert "exclusive" in capsys.readouterr().err
+    mock_resolve.assert_not_called()
+    mock_proxy.assert_not_called()
+
+
+def test_org_without_standing_refused(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.github.create_issue") as mock_create:
+        rc = main(["--title", "T", "--org", "acme"])
+    assert rc == 1
+    assert "--org is only for --standing" in capsys.readouterr().err
+    mock_create.assert_not_called()
+
+
+def test_proxy_for_refuses_org(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.proxies.create_proxy") as mock_proxy:
+        rc = main([*_PROXY_ARGS, "--org", "acme"])
+    assert rc == 1
+    assert "--org" in capsys.readouterr().err
+    mock_proxy.assert_not_called()

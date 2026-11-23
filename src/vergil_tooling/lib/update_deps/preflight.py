@@ -6,7 +6,7 @@ import os
 import subprocess
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import branch_sweep, config, git, github, version
+from vergil_tooling.lib import branch_sweep, config, git, github, trust, version
 from vergil_tooling.lib.checkout_lock import checkout_lock
 from vergil_tooling.lib.managed_worktree import ManagedWorktreeError, create_worktree
 from vergil_tooling.lib.process_errors import error_text
@@ -15,6 +15,7 @@ from vergil_tooling.lib.release.preflight import (
     check_gh_auth,
     fast_forward_develop,
 )
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.update_deps.context import UpdateDepsContext, UpdateDepsError
 
 if TYPE_CHECKING:
@@ -49,10 +50,15 @@ def _finished_pr(
     """
     try:
         prs = branch_sweep.list_prs(repo, branch)
-    except (subprocess.CalledProcessError, ValueError) as exc:
+    except (
+        subprocess.CalledProcessError,
+        ValueError,
+        trust.TrustReadError,
+        TrustedAuthorsNotConfiguredError,
+    ) as exc:
         raise UpdateDepsError(
             phase="preflight",
-            command=f"gh pr list --head {branch} --state all",
+            command=f"prs_for_branch {repo} {branch}",
             message=(
                 f"{branch} already exists, and its PRs could not be listed; "
                 "refusing to treat it as anything but in flight."

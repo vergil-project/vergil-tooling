@@ -193,8 +193,11 @@ opened.
 A re-run at the same `develop` version that fails the same way (the
 same failure kind) does not file a second task. The new failure is
 added as a comment on the open task, and that task is the one linked
-from the PR body and the run summary. If the lookup for an open task
-fails, the run fails rather than risk filing a duplicate.
+from the PR body and the run summary. Only an open task whose body is
+trusted is reused: a look-alike task opened or edited by an identity
+with no trusted role is reported on stderr and never adopted. If the
+lookup for an open task fails, the run fails rather than risk filing a
+duplicate.
 
 The fix flow is in
 [When the dependency update fails](../../guides/releasing.md#when-the-dependency-update-fails).

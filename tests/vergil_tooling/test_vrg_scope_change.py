@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin import vrg_scope_change
-from vergil_tooling.lib import confirm, github, identity_mode
+from vergil_tooling.lib import confirm, github, identity_mode, trust
 from vergil_tooling.lib.identity_mode import IdentityMode
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.comments import IssueComment
@@ -43,11 +44,21 @@ def response_comment(cid: int, request_id: int, reply_id: int) -> IssueComment:
     return IssueComment(cid, AGENT, f"R1.1: fixed\n\n{marker}", False)
 
 
+def actor(login: str) -> dict[str, str] | None:
+    """The GraphQL actor of *login*: an agent login is a Bot, any other a User; empty is deleted."""
+    if not login:
+        return None
+    return {"__typename": "Bot" if login in AUTHORS.agents else "User", "login": login}
+
+
 class FakeGh:
     """``o/r#7`` and its scope draft ref: comments, the human's POST, the draft API."""
 
     def __init__(self) -> None:
         self.comments: list[IssueComment] = [IssueComment(10, AGENT, "findings", False)]
+        # Per comment ID, an author or editor other than the one the login implies.
+        self.authors: dict[int, dict[str, str] | None] = {}
+        self.editors: dict[int, dict[str, str]] = {}
         self.posted: list[str] = []
         self.post_error: Exception | None = None
         self.post_lands = True
@@ -61,11 +72,18 @@ class FakeGh:
     def add_comment(self, *, author: str, body: str = "a comment") -> None:
         self.comments.append(IssueComment(self.next_id + 50, author, body, False))
 
-    def fetch_comments(self, repo: str, issue: int) -> list[IssueComment]:
-        assert (repo, issue) == ("o/r", 7)
+    def node(self, comment: IssueComment) -> dict[str, Any]:
+        author = self.authors.get(comment.id, actor(comment.author))
+        editor = self.editors.get(comment.id, author if comment.edited else None)
+        return trust_stubs.comment(comment.id, comment.body, author, editor=editor)
+
+    def graphql(self, query: str, **variables: object) -> dict[str, Any]:
+        """The trust layer's item query for ``o/r#7``: its comments, one page."""
+        assert query == trust._ITEM_QUERY
+        assert variables == {"owner": "o", "name": "r", "number": 7}
         if self.posted and self.read_error_after_post is not None:
             raise self.read_error_after_post
-        return list(self.comments)
+        return trust_stubs.item(nodes=[self.node(c) for c in self.comments])
 
     def fetch_scope_draft(self, repo: str, issue: int) -> str | None:
         assert (repo, issue) == ("o/r", 7)
@@ -147,8 +165,9 @@ class OrgSpy:
 
 @pytest.fixture
 def gh(monkeypatch: pytest.MonkeyPatch) -> FakeGh:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     fake = FakeGh()
-    monkeypatch.setattr("vergil_tooling.lib.rulings.comments.fetch_comments", fake.fetch_comments)
+    monkeypatch.setattr(github, "graphql", fake.graphql)
     monkeypatch.setattr(
         "vergil_tooling.lib.rulings.draft_ref.fetch_scope_draft", fake.fetch_scope_draft
     )
@@ -293,6 +312,46 @@ def test_posts_after_a_closed_exchange(cli: Cli, gh: FakeGh, draft: Callable[[st
     cli.answer("y")
     assert cli(*ARGS) == 0
     assert cli.posted_body == BODY
+
+
+def test_scope_change_edited_by_outsider(
+    cli: Cli, gh: FakeGh, draft: Callable[[str], None]
+) -> None:
+    # The agent's open request, trusted, refuses the scope change; once an
+    # outsider has edited it, it is no longer the agent's and refuses nothing.
+    tampered = f"{trust_stubs.SPAM_TEXT}\n\n{REQUEST_MARKER}"
+    gh.comments.append(IssueComment(41, AGENT, tampered, True))
+    gh.editors[41] = trust_stubs.OUTSIDER
+    draft("Also cover the docs.\n")
+    cli.answer("y")
+    assert cli(*ARGS) == 0
+    assert cli.posted_body == BODY
+    assert "has open ruling request" not in cli.stderr
+    assert (
+        f"skipped untrusted content: o/r#7 edit drive-by at {trust_stubs.EDITED}"
+        " on comment 41 (untrusted)\n"
+    ) in cli.stderr
+    assert "SPAM-MARKER-TEXT" not in cli.stdout + cli.stderr
+    assert "example.invalid" not in cli.stdout + cli.stderr
+
+
+def test_scope_change_edited_by_outsider_is_not_already_posted(
+    cli: Cli, gh: FakeGh, draft: Callable[[str], None]
+) -> None:
+    # The human's earlier scope change, once an outsider has edited it, is not
+    # taken as this one already posted: the tool shows and posts it afresh.
+    gh.comments.append(IssueComment(55, HUMAN, BODY, True))
+    gh.editors[55] = trust_stubs.OUTSIDER
+    draft("Also cover the docs.\n")
+    cli.answer("y")
+    assert cli(*ARGS) == 0
+    assert "already posted" not in cli.stderr
+    assert cli.prompts == ["Post this scope change as h?"]
+    assert gh.posted == [BODY]
+    assert (
+        f"skipped untrusted content: o/r#7 edit drive-by at {trust_stubs.EDITED}"
+        " on comment 55 (untrusted)\n"
+    ) in cli.stderr
 
 
 def test_refuses_without_a_draft(cli: Cli) -> None:
@@ -523,13 +582,43 @@ def test_draft_api_error_is_reported(cli: Cli, monkeypatch: pytest.MonkeyPatch) 
     assert "does not hold exactly one file" in cli.stderr
 
 
-def test_github_error_while_reading_is_an_error(cli: Cli, monkeypatch: pytest.MonkeyPatch) -> None:
-    def api_broken(_repo: str, _issue: int) -> list[IssueComment]:
+def test_github_error_reading_the_draft_is_an_error(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A gh failure outside the trust layer (the draft ref read) is an error, exit 1."""
+
+    def broken(*_args: object) -> str | None:
         raise _api_error("gh: Server Error (HTTP 500)")
 
-    monkeypatch.setattr("vergil_tooling.lib.rulings.comments.fetch_comments", api_broken)
+    monkeypatch.setattr("vergil_tooling.lib.rulings.draft_ref.fetch_scope_draft", broken)
     assert cli(*ARGS) == 1
     assert "HTTP 500" in cli.stderr
+    assert cli.posted_body is None
+
+
+def test_github_error_while_reading_is_an_error(cli: Cli, monkeypatch: pytest.MonkeyPatch) -> None:
+    def api_broken(_query: str, **_variables: object) -> dict[str, Any]:
+        raise _api_error("gh: Server Error (HTTP 500)")
+
+    monkeypatch.setattr(github, "graphql", api_broken)
+    assert cli(*ARGS) == 1
+    assert "HTTP 500" in cli.stderr
+
+
+def test_trust_read_error_is_one_line_and_posts_nothing(
+    cli: Cli, gh: FakeGh, draft: Callable[[str], None]
+) -> None:
+    # An actor without __typename: the layer never guesses its type.
+    gh.authors[10] = {"login": AGENT}
+    draft("Also cover the docs.\n")
+    assert cli(*ARGS) == 1
+    assert cli.stderr.startswith(
+        "vrg-scope-change: cannot read who wrote the content (read_issue o/r#7)"
+    )
+    assert cli.stdout == ""
+    assert cli.prompts == []
+    assert cli.posted_body is None
+    assert gh.drafts[SCOPE_REF] == "Also cover the docs.\n"
 
 
 def _no_token() -> github.MissingGitHubTokenError:

@@ -9,7 +9,8 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from vergil_tooling.lib import epics, github, intake_route, security_records
+from tests.vergil_tooling import trust_stubs
+from vergil_tooling.lib import epics, github, intake_route, security_records, trust
 from vergil_tooling.lib.epic_size import Sizing
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.intake_route import (
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 _MOD = "vergil_tooling.lib.intake_route"
 # Captured before any patching, to run the real planning ensure under Env.
 _REAL_ENSURE_PLANNING_EPIC = epics.ensure_planning_epic
+_REAL_PARENT_OF = epics.parent_of
 
 ITEM = IssueRef("org", ".github", 352)
 INTAKE = IssueRef("org", ".github", 7)
@@ -67,11 +69,18 @@ class Env:
         }
         # The issues carrying the 'epic' label (epics.is_epic).
         self.epic_refs: set[IssueRef] = {INTAKE, PLANNING, DEFERRED, ADHOC_DOTGITHUB, DEV_EPIC}
-        self.labels: list[str] = []
+        # The item's own labels, as a 'labels' read of it gives them; None is
+        # the labels of *issue_view*, which every other issue's read gives.
+        self.labels: list[str] | None = None
         self.comments: list[str] = []
+        # The item's comment nodes as the trust layer reads them; by default
+        # one per entry of *comments*, by a trusted human.
+        self.comment_nodes: list[dict[str, Any]] | None = None
+        # Who wrote and last edited the item's body, as the trust layer reads it.
+        self.body_author: Any = trust_stubs.HUMAN
+        self.body_editor: Any = None
         # Closing-PR URL -> state (OPEN, CLOSED, MERGED).
         self.closing_prs: dict[str, str] = {}
-        self.public: dict[str, bool] = {}
         self.native_parent: dict[IssueRef, IssueRef | None] = {}
         # Sub-issue listings GitHub still shows although the child's parent
         # field says otherwise: epic -> stale children (#4004).
@@ -86,6 +95,8 @@ class Env:
         self.api_states: dict[str, str] = {}
         # The 'gh search issues' rows for a planning item's Planning: line.
         self.search_results: Any = []
+        # The search hits whose body an outsider wrote, as the trust layer reads it.
+        self.untrusted_hits: set[int] = set()
         self.transfer: Any = "https://github.com/org/tool/issues/900"
         self.issue_view: dict[str, object] = {
             "title": "Make the thing faster",
@@ -169,11 +180,8 @@ class Env:
             if isinstance(self.search_results, BaseException):
                 raise self.search_results
             return self.search_results
-        if fields == "labels,comments":
-            return {
-                "labels": [{"name": name} for name in self.labels],
-                "comments": [{"body": body} for body in self.comments],
-            }
+        if fields == "labels" and int(args[2]) == ITEM.number and self.labels is not None:
+            return {"labels": [{"name": name} for name in self.labels]}
         if fields == "closedByPullRequestsReferences":
             return {
                 "closedByPullRequestsReferences": [
@@ -181,6 +189,31 @@ class Env:
                 ]
             }
         return self.issue_view
+
+    def graphql(self, query: str, **variables: Any) -> dict[str, Any]:
+        """The trust layer's item read: the item's body and comments, any other issue's none."""
+        nodes = self.comment_nodes
+        if nodes is None:
+            nodes = trust_stubs.comments(*self.comments)
+        item = trust_stubs.item(
+            body=str(self.issue_view.get("body") or ""),
+            author=self.body_author,
+            editor=self.body_editor,
+            nodes=nodes,
+        )
+        items = {(f"{ITEM.owner}/{ITEM.repo}", ITEM.number): item}
+        # Each search hit's body, as the trust layer reads it again: by the
+        # trusted human, or by an outsider for the numbers in *untrusted_hits*.
+        for hit in self.search_results if isinstance(self.search_results, list) else []:
+            repo = str((hit.get("repository") or {}).get("nameWithOwner") or "")
+            outsider = hit["number"] in self.untrusted_hits
+            author = trust_stubs.OUTSIDER if outsider else trust_stubs.HUMAN
+            items.setdefault(
+                (repo, int(hit["number"])),
+                trust_stubs.item(body=str(hit.get("body") or ""), author=author),
+            )
+        fake = trust_stubs.FakeItems(items)
+        return fake(query, **variables)
 
     def _read_output(self, *args: str) -> str:
         if args[:2] == ("issue", "transfer"):
@@ -217,8 +250,8 @@ def env() -> Iterator[Env]:
         patch(f"{_MOD}.epics.ensure_intake_epic", state.ensure_intake_epic),
         patch(f"{_MOD}.epics.ensure_deferred_epic", state.ensure_deferred_epic),
         patch(f"{_MOD}.epics.resolve_epic_ref", state.resolve_epic_ref),
-        # The never-creating lookups a one-off re-run uses (#4291): every repo
-        # here is public, so all of them home in org/.github.
+        # The never-creating lookups a one-off re-run uses (#4291): all of them
+        # home in org/.github.
         patch(f"{_MOD}.epics.resolve_epic_home", side_effect=lambda owner, bare: "org/.github"),
         patch(f"{_MOD}.epics.queue_home", side_effect=lambda repo: ("org/.github", "org")),
         patch(f"{_MOD}.epics.find_standing_epic", side_effect=state.find_standing_epic),
@@ -229,7 +262,8 @@ def env() -> Iterator[Env]:
                 default_repo=repo,
             ),
         ),
-        patch(f"{_MOD}.github.is_public", side_effect=lambda r: state.public.get(r, True)),
+        patch("vergil_tooling.lib.github.graphql", state.graphql),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
         patch(f"{_MOD}.github.run", state.run),
         patch(f"{_MOD}.github.read_output", state.read_output),
         patch(f"{_MOD}.github.read_json", state.read_json),
@@ -387,6 +421,129 @@ def _assert_untouched(env: Env) -> None:
     env.ensure_deferred_epic.assert_not_called()
 
 
+def test_route_parent_fallback_trusted_only(
+    env: Env, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With no native parent, the item's container comes from its body's
+    # Parent: line, which counts only from a trusted body. Outside Actions,
+    # so the skip is reported per item, not counted by cause.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    env.issue_view = {**env.issue_view, "body": f"It is slow.\n\nParent: {INTAKE.slug}\n"}
+    with patch(f"{_MOD}.epics.parent_of", _REAL_PARENT_OF):
+        route(ITEM, Drop(reason="not feasible"), today=TODAY)
+    assert [c.args[:2] for c in env.run.call_args_list] == [("issue", "close")]
+    assert capsys.readouterr().err == ""
+
+    # The same line in a body an outsider edited gives no parent: a refusal.
+    env.run.reset_mock()
+    env.body_editor = trust_stubs.OUTSIDER
+    with (
+        patch(f"{_MOD}.epics.parent_of", _REAL_PARENT_OF),
+        pytest.raises(RouteRefusedError, match="has no parent"),
+    ):
+        route(ITEM, Drop(reason="not feasible"), today=TODAY)
+    _assert_untouched(env)
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: {ITEM.slug} edit drive-by at {trust_stubs.EDITED}"
+        " on body (untrusted)\n"
+    )
+
+
+_EVERY_ROUTE: list[RouteAction] = [
+    Drop(reason="not feasible"),
+    Defer(reason="r", revisit_when="w"),
+    OneOff(repo="org/tool"),
+    ToPlanning(),
+    ToPlanning(sizing=Sizing(14, "med", "One sentence.")),
+    ToIntake(),
+    Split(into=(IssueRef("org", "tool", 10), IssueRef("org", "lib", 11)), reason="two fixes"),
+    SizeItem(Sizing(14, "med", "One sentence.")),
+]
+
+
+def _assert_nothing_resolved_or_written(env: Env) -> None:
+    for mock in (
+        env.run,
+        env.read_output,
+        env.read_json,
+        env.create_issue,
+        env.ensure_labels,
+        env.add_child,
+        env.reparent_child,
+        env.remove_child,
+        env.ensure_planning_epic,
+        env.ensure_intake_epic,
+        env.ensure_deferred_epic,
+        env.resolve_epic_ref,
+        env.retarget,
+    ):
+        mock.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("author", "login", "cause"),
+    [
+        (trust_stubs.OUTSIDER, "drive-by", "untrusted"),
+        (trust_stubs.IMPOSTOR, "vergil-user", "wrong-type"),
+    ],
+    ids=["outsider", "impostor"],
+)
+@pytest.mark.parametrize("action", _EVERY_ROUTE, ids=lambda a: type(a).__name__)
+def test_route_outsider_issue_stops(
+    env: Env, action: RouteAction, author: Any, login: str, cause: str
+) -> None:
+    # A tool pointed at an outsider-opened item acts on nothing: every route
+    # stops before anything resolves or is written, naming only metadata.
+    env.issue_view = {**env.issue_view, "body": f"Parent: {INTAKE.slug}\n{trust_stubs.SPAM_TEXT}"}
+    env.body_author = author
+    with (
+        patch(f"{_MOD}.epics.parent_of") as parent_of,
+        pytest.raises(trust.UntrustedContentError) as excinfo,
+    ):
+        route(ITEM, action, today=TODAY)
+    parent_of.assert_not_called()
+    _assert_nothing_resolved_or_written(env)
+    item = excinfo.value.item
+    assert (item.repo, item.number, item.kind, item.login, item.field, item.cause) == (
+        f"{ITEM.owner}/{ITEM.repo}",
+        ITEM.number,
+        "issue",
+        login,
+        "body",
+        cause,
+    )
+    assert excinfo.value.reason == "the item was opened by an untrusted author"
+    assert "SPAM-MARKER-TEXT" not in str(excinfo.value)
+    assert str(excinfo.value).startswith("stopped before any write: ")
+
+
+@pytest.mark.parametrize(
+    "action",
+    [SizeItem(Sizing(14, "med", "One sentence.")), ToPlanning(sizing=Sizing(3, "high", "Small."))],
+    ids=["size", "to-planning-sized"],
+)
+def test_size_outsider_issue_stops(env: Env, action: RouteAction) -> None:
+    # Sizing runs only through routing (epic_size reads nothing from GitHub),
+    # so sizing an outsider-opened item is the routing stop: no Sized comment
+    # and no epic-size label.
+    env.parent = PLANNING
+    env.native_parent[ITEM] = PLANNING
+    env.body_author = trust_stubs.OUTSIDER
+    with pytest.raises(trust.UntrustedContentError):
+        route(ITEM, action, today=TODAY)
+    _assert_nothing_resolved_or_written(env)
+
+
+def test_route_trusted_item_with_outsider_comment_is_routed(env: Env) -> None:
+    # Only the author decides the stop: an outsider's comment on a trusted
+    # item does not stop the route.
+    env.comment_nodes = [trust_stubs.comment(11, trust_stubs.SPAM_TEXT, trust_stubs.OUTSIDER)]
+    result = route(ITEM, Drop(reason="not feasible"), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    assert [c.args[:2] for c in env.run.call_args_list] == [("issue", "close")]
+
+
 def _planning_item(env: Env) -> None:
     env.parent = PLANNING
     env.native_parent[ITEM] = PLANNING
@@ -411,6 +568,39 @@ def test_route_drop_planning_refuses_open_marker_epic(env: Env) -> None:
     ):
         route(ITEM, Drop(reason="no longer needed"), today=TODAY)
     _assert_untouched(env)
+
+
+def test_forged_epic_marker_does_not_block_drop(
+    env: Env, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An outsider's comment, a trusted one an outsider edited and a User named
+    # like the agent App each name an open epic: none is a marker, so the drop
+    # goes ahead and each is reported, metadata only.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    _planning_item(env)
+    forged = f"Epic: org/.github#600\n{trust_stubs.SPAM_TEXT}"
+    env.comment_nodes = [
+        trust_stubs.comment(11, forged, trust_stubs.OUTSIDER),
+        trust_stubs.comment(12, forged, trust_stubs.HUMAN, editor=trust_stubs.OUTSIDER),
+        trust_stubs.comment(13, forged, trust_stubs.IMPOSTOR),
+    ]
+    env.api_states = {"repos/org/.github/issues/600": "open"}
+    result = route(ITEM, Drop(reason="no longer needed"), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    assert env.run.call_args.args[:3] == ("issue", "close", "352")
+    # The named epic's state is never read: no trusted marker names it.
+    assert not [c for c in env.read_output.call_args_list if c.args[0] == "api"]
+    err = capsys.readouterr().err
+    assert err.splitlines() == [
+        f"skipped untrusted content: org/.github#352 comment drive-by at "
+        f"{trust_stubs.CREATED} on comment 11 (untrusted)",
+        f"skipped untrusted content: org/.github#352 edit drive-by at "
+        f"{trust_stubs.EDITED} on comment 12 (untrusted)",
+        f"skipped untrusted content: org/.github#352 comment vergil-user at "
+        f"{trust_stubs.CREATED} on comment 13 (wrong-type)",
+    ]
+    assert "SPAM-MARKER-TEXT" not in err
+    assert "example.invalid" not in err
 
 
 def test_route_drop_planning_refuses_open_epic_found_by_planning_line(env: Env) -> None:
@@ -509,6 +699,22 @@ def test_route_defer_planning_refuses_open_epic_found_by_planning_line(env: Env)
     ):
         route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
     _assert_untouched(env)
+
+
+def test_route_defer_planning_ignores_an_untrusted_planning_line(
+    env: Env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A Planning: line counts only in a body the trust layer trusts, read again per hit."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    _planning_item(env)
+    env.search_results = [_epic_hit(648, "OPEN")]
+    env.untrusted_hits = {648}
+    route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    err = capsys.readouterr().err
+    assert "skipped untrusted content:" in err
+    assert "648" in err
+    assert "Planning: org/.github#352" not in err
 
 
 def test_route_defer_planning_ignores_hit_without_the_exact_planning_line(env: Env) -> None:
@@ -827,21 +1033,10 @@ def test_route_defer_label_failure_after_move_fails_loudly(env: Env) -> None:
     assert "Deferred 2026-10-23: r\nRevisit when: w\nDeferred from: org/.github#8" in message
 
 
-def test_route_defer_refuses_private_item_to_public_deferred_epic(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.public = {"org/secret": False}
-    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
-        route(secret_item, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_not_called()
-    env.add_child.assert_not_called()
-    env.run.assert_not_called()
-
-
 def test_route_defer_uses_items_repo_queue_home(env: Env) -> None:
     secret_item = IssueRef("org", "secret", 5)
     secret_deferred = IssueRef("org", "secret", 3)
     env.ensure_deferred_epic.return_value = secret_deferred
-    env.public = {"org/secret": False}
     route(secret_item, Defer(reason="r", revisit_when="w"), today=TODAY)
     env.ensure_deferred_epic.assert_called_once_with("org/secret")
     env.add_child.assert_called_once_with(secret_deferred, secret_item)
@@ -865,16 +1060,6 @@ def test_route_to_intake_refused_from_intake(env: Env) -> None:
         route(ITEM, ToIntake(), today=TODAY)
     env.ensure_intake_epic.assert_not_called()
     env.reparent_child.assert_not_called()
-
-
-def test_route_to_intake_refuses_private_item_to_public_intake_epic(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.parent = DEFERRED
-    env.public = {"org/secret": False}
-    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
-        route(secret_item, ToIntake(), today=TODAY)
-    env.reparent_child.assert_not_called()
-    env.add_child.assert_not_called()
 
 
 def test_route_planning_from_deferred(env: Env) -> None:
@@ -929,18 +1114,6 @@ def test_route_planning_from_intake_does_not_read_closing_prs(env: Env) -> None:
     route(ITEM, ToPlanning(), today=TODAY)
     reads = [c.args[-1] for c in env.read_json.call_args_list]
     assert "closedByPullRequestsReferences" not in reads
-
-
-def test_route_planning_from_adhoc_refuses_private_item_to_public_planning_epic(
-    env: Env,
-) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.parent = ADHOC_DOTGITHUB
-    env.native_parent[secret_item] = ADHOC_DOTGITHUB
-    env.public = {"org/secret": False}
-    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
-        route(secret_item, ToPlanning(), today=TODAY)
-    env.reparent_child.assert_not_called()
 
 
 def test_route_defer_adhoc_open_closing_pr_names_deferring(env: Env) -> None:
@@ -1108,7 +1281,6 @@ def test_route_planning_uses_items_repo_queue_home(env: Env) -> None:
     secret_planning = IssueRef("org", "secret", 2)
     env.ensure_planning_epic.return_value = secret_planning
     env.native_parent[secret_item] = IssueRef("org", "secret", 1)
-    env.public = {"org/secret": False}
     route(secret_item, ToPlanning(), today=TODAY)
     env.ensure_planning_epic.assert_called_once_with("org/secret")
     env.reparent_child.assert_called_once_with(secret_planning, secret_item)
@@ -1132,14 +1304,6 @@ def test_route_planning_ensures_in_progress_label_in_items_repo(env: Env) -> Non
         ("org/tool", ("in-progress",)),
     ]
     env.reparent_child.assert_called_once_with(PLANNING, tool_item)
-
-
-def test_route_planning_refuses_private_item_to_public_planning_epic(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.public = {"org/secret": False}
-    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
-        route(secret_item, ToPlanning(), today=TODAY)
-    env.reparent_child.assert_not_called()
 
 
 # -- planning: a follow-on brainstorm out of a development epic (#4296) -------
@@ -1236,20 +1400,6 @@ def test_route_planning_refuses_brainstorm_linked_only_by_body_line(env: Env) ->
     with pytest.raises(RouteRefusedError, match="not a container epic"):
         route(ITEM, ToPlanning(), today=TODAY)
     _assert_untouched(env)
-
-
-def test_route_planning_refuses_private_brainstorm_to_public_planning_epic(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    secret_epic = IssueRef("org", "secret", 40)
-    env.parent = secret_epic
-    env.native_parent[secret_item] = secret_epic
-    env.epic_refs.add(secret_epic)
-    env.issue_view = {**env.issue_view, "title": "Follow-on brainstorm: x", "labels": []}
-    env.public = {"org/secret": False}
-    with pytest.raises(RouteRefusedError, match="private repo org/secret"):
-        route(secret_item, ToPlanning(), today=TODAY)
-    env.reparent_child.assert_not_called()
-    env.run.assert_not_called()
 
 
 def test_route_planning_brainstorm_epic_record_failure_names_both_comments(env: Env) -> None:
@@ -1764,33 +1914,6 @@ def test_route_one_off_unreadable_transfer_output_fails_loudly(env: Env) -> None
     env.add_child.assert_not_called()
 
 
-def test_route_refuses_private_item_to_public_target(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.public = {"org/secret": False, "org/tool": True}
-    with pytest.raises(RouteRefusedError, match="private repo org/secret.*public org/tool"):
-        route(secret_item, OneOff(repo="org/tool"), today=TODAY)
-    env.resolve_epic_ref.assert_not_called()
-    assert _transfer_calls(env) == []
-
-
-def test_route_refuses_private_item_to_public_epic(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.public = {"org/secret": False, "org/vault": False, "org/.github": True}
-    env.resolve_epic_ref.return_value = IssueRef("org", ".github", 60)
-    with pytest.raises(RouteRefusedError, match=r"public org/\.github"):
-        route(secret_item, OneOff(repo="org/vault", epic="org/.github#60"), today=TODAY)
-    assert _transfer_calls(env) == []
-
-
-def test_route_private_item_to_private_target_is_allowed(env: Env) -> None:
-    secret_item = IssueRef("org", "secret", 5)
-    env.public = {"org/secret": False, "org/vault": False}
-    env.resolve_epic_ref.return_value = IssueRef("org", "vault", 3)
-    env.transfer = "https://github.com/org/vault/issues/77"
-    result = route(secret_item, OneOff(repo="org/vault"), today=TODAY)
-    assert result == RouteResult(final=IssueRef("org", "vault", 77), moved_by="transfer")
-
-
 def test_route_one_off_refuses_cross_org_repo(env: Env) -> None:
     with pytest.raises(RouteRefusedError, match="cross-org"):
         route(ITEM, OneOff(repo="other/tool"), today=TODAY)
@@ -1880,6 +2003,64 @@ def test_split_security_item_retargets_to_all_tasks_before_close(env: Env) -> No
     assert order == ["retarget", "issue:close"]
 
 
+@pytest.mark.parametrize(
+    ("author", "editor", "kind", "login"),
+    [
+        (trust_stubs.OUTSIDER, None, "issue", "drive-by"),
+        (trust_stubs.HUMAN, trust_stubs.OUTSIDER, "edit", "drive-by"),
+        (trust_stubs.IMPOSTOR, None, "issue", "vergil-user"),
+    ],
+)
+@pytest.mark.parametrize(
+    "action",
+    [Split(into=SPLIT_INTO, reason="two fixes"), OneOff(repo="org/tool")],
+    ids=["split", "one-off"],
+)
+def test_route_security_lines_untrusted_body_raises(
+    env: Env, action: RouteAction, author: Any, editor: Any, kind: str, login: str
+) -> None:
+    # The advisory lines of a body the layer does not trust pick nothing: the
+    # route stops before any write, naming only metadata.
+    env.make_security_item()
+    env.issue_view = {
+        **env.issue_view,
+        "body": f"{env.issue_view['body']}\n{trust_stubs.SPAM_TEXT}",
+    }
+    env.body_author, env.body_editor = author, editor
+    with pytest.raises(trust.UntrustedContentError) as excinfo:
+        route(ITEM, action, today=TODAY)
+    assert (excinfo.value.item.kind, excinfo.value.item.login) == (kind, login)
+    assert excinfo.value.item.field == "body"
+    assert "SPAM-MARKER-TEXT" not in str(excinfo.value)
+    env.retarget.assert_not_called()
+    env.run.assert_not_called()
+    env.read_output.assert_not_called()
+    env.create_issue.assert_not_called()
+    env.remove_child.assert_not_called()
+
+
+def test_recreate_copies_the_trusted_body_read_before_the_move(env: Env) -> None:
+    _transfer_fails(env)
+    trusted_body = env.issue_view["body"]
+    reads = 0
+
+    def graphql(query: str, **variables: Any) -> dict[str, Any]:
+        nonlocal reads
+        reads += 1
+        return trust_stubs.item(body=str(trusted_body))
+
+    # The body gh would show after the failed transfer is never copied.
+    env.issue_view = {**env.issue_view, "body": "changed since the read"}
+    with patch("vergil_tooling.lib.github.graphql", side_effect=graphql):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    # Every read comes before the move: the outsider-opened check, the trusted
+    # comments the size is read from, then the body.
+    assert reads == 3
+    body = env.create_issue.call_args.kwargs["body"]
+    assert body.startswith(f"{trusted_body}\n\n")
+    assert "changed since the read" not in body
+
+
 def test_split_security_item_retarget_failure_leaves_original_open(env: Env) -> None:
     env.make_security_item()
     env.retarget.side_effect = RETARGET_FAILED
@@ -1892,9 +2073,9 @@ def test_split_security_item_retarget_failure_leaves_original_open(env: Env) -> 
     env.run.assert_not_called()
 
 
-def test_split_security_item_private_home_leaves_original_open(env: Env) -> None:
+def test_split_security_item_unreadable_home_leaves_original_open(env: Env) -> None:
     env.make_security_item()
-    env.advisory_home.side_effect = security_records.PrivateHomeError("org/.github is not public")
+    env.tracked_issues.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
     with pytest.raises(RouteRefusedError, match=f"advisory {GHSA} was not retargeted"):
         route(ITEM, Split(into=SPLIT_INTO, reason="two fixes"), today=TODAY)
     env.retarget.assert_not_called()
@@ -1951,10 +2132,11 @@ def test_transfer_security_item_retargets_to_final(env: Env) -> None:
     # The settle wait and its confirming wait both come before the retarget.
     assert order == ["settle", "settle", "retarget"]
     # The item was read before the move, while it still had its labels: once
-    # for its size (and in-progress), once for its advisories.
+    # for its size (and in-progress), once for its advisories. Its comments
+    # come from the trust layer, never from gh.
     assert env.read_json.call_args_list == [
-        call("issue", "view", "352", "--repo", "org/.github", "--json", "labels,comments"),
-        call("issue", "view", "352", "--repo", "org/.github", "--json", "labels,body"),
+        call("issue", "view", "352", "--repo", "org/.github", "--json", "labels"),
+        call("issue", "view", "352", "--repo", "org/.github", "--json", "labels"),
     ]
 
 
@@ -3140,13 +3322,43 @@ def test_one_off_from_deferred_clears_size(env: Env) -> None:
     assert _sizing_calls(env) == _cleared_calls("352", "org/.github")
 
 
-def test_one_off_needs_no_trusted_authors(env: Env) -> None:
+def test_one_off_trusted_authors_error_propagates_before_the_move(env: Env) -> None:
+    # The size is read from the comments the trust layer trusts, so a one-off
+    # needs the trusted authors; without them nothing moves.
     _sized_item(env)
     unconfigured = RuntimeError("trusted authors are not configured")
     with (
-        patch("vergil_tooling.lib.epic_size.load_trusted_authors", side_effect=unconfigured),
-        patch("vergil_tooling.lib.trusted_authors.load_trusted_authors", side_effect=unconfigured),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", side_effect=unconfigured),
+        pytest.raises(RuntimeError, match="trusted authors are not configured"),
     ):
-        result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    assert _transfer_calls(env) == []
+    env.run.assert_not_called()
+    env.reparent_child.assert_not_called()
+
+
+def test_one_off_outsider_sizing_comment_posts_no_cleared_marker(
+    env: Env, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The skip report lists each skipped comment only outside GitHub Actions.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    env.parent = PLANNING
+    env.native_parent[ITEM] = PLANNING
+    env.labels = ["idea"]
+    _sized_labels(env, "bug")
+    forged = SIZING_BODY.replace("Reason: ", f"Reason: {trust_stubs.SPAM_TEXT} ", 1)
+    assert forged != SIZING_BODY
+    env.comment_nodes = [trust_stubs.comment(11, forged, trust_stubs.OUTSIDER)]
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=MOVED, moved_by="transfer")
-    assert _sizing_calls(env) == _cleared_calls("900", "org/tool")
+    # Unsized: no label edit and no cleared marker.
+    env.run.assert_not_called()
+    captured = capsys.readouterr()
+    assert (
+        "skipped untrusted content: org/.github#352 comment drive-by at "
+        f"{trust_stubs.CREATED} on comment 11 (untrusted)"
+    ) in captured.err.splitlines()
+    for text in (captured.out, captured.err):
+        assert "SPAM-MARKER-TEXT" not in text
+        assert "example.invalid" not in text
+        assert "Sized " not in text

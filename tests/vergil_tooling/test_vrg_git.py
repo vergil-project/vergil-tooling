@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin.vrg_git import (
     _check_issue_is_open_task,
     _check_local_rewrite,
@@ -27,13 +28,32 @@ from vergil_tooling.bin.vrg_git import (
     _worktree_convention_active,
     main,
 )
-from vergil_tooling.lib import epics, github, retry
+from vergil_tooling.lib import epics, github, retry, trust
 from vergil_tooling.lib.pr_workflow import engine
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 # `gh issue view --json state,labels` for an open, ordinary task: what the
 # branch-creation guard (#3592) must see before it lets an issue branch through.
 _OPEN_TASK = {"state": "OPEN", "labels": [{"name": "enhancement"}]}
+
+_REPO = "org/repo"
+
+
+@pytest.fixture(autouse=True)
+def layer(monkeypatch: pytest.MonkeyPatch) -> trust_stubs.FakeItems:
+    """The trust layer's reads: every issue was opened by a trusted author unless a test says.
+
+    The guard reads the current repo, then the issue through the real layer,
+    answered by :class:`~tests.vergil_tooling.trust_stubs.FakeItems`.
+    """
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+    monkeypatch.setattr(github, "current_repo", lambda: _REPO)
+    fake = trust_stubs.FakeItems()
+    monkeypatch.setattr(github, "graphql", fake)
+    return fake
+
 
 # -- no arguments -------------------------------------------------------------
 
@@ -2161,6 +2181,108 @@ class TestCheckIssueIsOpenTask:
         issue = {"state": "OPEN", "labels": ["epic", None]}
         assert self._check("feature/12-ok", return_value=issue)[0] is None
         assert self._check("feature/12-ok", return_value={"state": "OPEN"})[0] is None
+
+    def test_open_task_reads_its_author_through_the_layer(
+        self, layer: trust_stubs.FakeItems
+    ) -> None:
+        msg, _ = self._check("feature/12-ok", return_value=_OPEN_TASK)
+        assert msg is None
+        assert layer.reads == [(_REPO, 12)]
+
+    def test_open_task_with_untrusted_comment_allowed(self, layer: trust_stubs.FakeItems) -> None:
+        # Only the author decides it: an outsider's comment never blocks a task.
+        layer.items[(_REPO, 12)] = trust_stubs.item(
+            nodes=[trust_stubs.comment(9, trust_stubs.SPAM_TEXT, trust_stubs.OUTSIDER)]
+        )
+        assert self._check("feature/12-ok", return_value=_OPEN_TASK)[0] is None
+
+    @pytest.mark.parametrize(
+        ("author", "login", "cause"),
+        [
+            (trust_stubs.OUTSIDER, "drive-by", "untrusted"),
+            (trust_stubs.IMPOSTOR, "vergil-user", "wrong-type"),
+        ],
+    )
+    def test_open_task_check_refuses_outsider_issue(
+        self, layer: trust_stubs.FakeItems, author: dict[str, str], login: str, cause: str
+    ) -> None:
+        layer.items[(_REPO, 12)] = trust_stubs.item(body=trust_stubs.SPAM_TEXT, author=author)
+        msg, _ = self._check("feature/12-ok", return_value=_OPEN_TASK)
+        assert msg == (
+            "cannot create feature/12-ok: stopped before any write: the issue was "
+            f"opened by an untrusted author: {_REPO}#12 issue {login} at "
+            f"{trust_stubs.CREATED} on body ({cause}). The human decides next."
+        )
+        assert "SPAM-MARKER-TEXT" not in msg
+
+    def test_open_task_check_refuses_deleted_author(self, layer: trust_stubs.FakeItems) -> None:
+        layer.items[(_REPO, 12)] = trust_stubs.item(author=None)
+        msg, _ = self._check("feature/12-ok", return_value=_OPEN_TASK)
+        assert msg is not None
+        assert "issue a deleted account" in msg
+        assert "(deleted)" in msg
+
+    def test_closed_or_epic_issue_skips_author_read(self, layer: trust_stubs.FakeItems) -> None:
+        self._check("feature/12-ok", return_value={"state": "CLOSED", "labels": []})
+        self._check("feature/12-ok", return_value={"state": "OPEN", "labels": [{"name": "epic"}]})
+        assert layer.reads == []
+
+    def test_author_read_failure_refuses(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Fail closed: an author the layer cannot read is never taken as trusted.
+        def fail(_query: str, **_variables: object) -> object:
+            raise github.GitHubAPIError(1, "gh api graphql", stderr="HTTP 502: Bad Gateway")
+
+        monkeypatch.setattr(github, "graphql", fail)
+        msg, _ = self._check("feature/12-ok", return_value=_OPEN_TASK)
+        assert msg is not None
+        assert msg.startswith("cannot create feature/12-ok: could not confirm who opened issue #12")
+        assert "HTTP 502: Bad Gateway" in msg
+
+    def test_no_trusted_authors_configuration_refuses(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def missing() -> object:
+            raise TrustedAuthorsNotConfiguredError("no trusted-authors configuration")
+
+        monkeypatch.setattr(trust, "load_trusted_authors", missing)
+        msg, _ = self._check("feature/12-ok", return_value=_OPEN_TASK)
+        assert msg is not None
+        assert "could not confirm who opened issue #12" in msg
+        assert "no trusted-authors configuration" in msg
+
+    def test_current_repo_failure_refuses(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fail() -> str:
+            raise subprocess.CalledProcessError(1, ["gh"])
+
+        monkeypatch.setattr(github, "current_repo", fail)
+        msg, _ = self._check("feature/12-ok", return_value=_OPEN_TASK)
+        assert msg is not None
+        assert msg.startswith("cannot create feature/12-ok: could not read issue #12")
+
+    def test_outsider_issue_denies_worktree_add_via_main(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        layer: trust_stubs.FakeItems,
+    ) -> None:
+        root = tmp_path / "repo"
+        (root / ".worktrees").mkdir(parents=True)
+        monkeypatch.chdir(root)
+        layer.items[(_REPO, 9)] = trust_stubs.item(
+            body=trust_stubs.SPAM_TEXT, author=trust_stubs.OUTSIDER
+        )
+        with (
+            patch("vergil_tooling.bin.vrg_git.main_worktree_root", return_value=root),
+            patch("vergil_tooling.bin.vrg_git.github.read_json", return_value=_OPEN_TASK),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            rc = main(["worktree", "add", "-b", "feature/9-x", ".worktrees/issue-9-x"])
+        assert rc == 1
+        mock_run.assert_not_called()
+        err = capsys.readouterr().err
+        assert "opened by an untrusted author" in err
+        assert "SPAM-MARKER-TEXT" not in err
 
     def test_non_issue_branch_skips_lookup(self) -> None:
         msg, mock_read = self._check("release/2.1.180")

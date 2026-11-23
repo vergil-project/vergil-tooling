@@ -125,9 +125,9 @@ def repo_live_branches(repo: Path) -> frozenset[str]:
     or block on an SSH prompt; the URL itself is not printed, as it may embed
     credentials.
 
-    When ``ls-remote`` fails — typically a private repo in the mounted projects
-    tree that the agent's App cannot read — the repo's ``refs/remotes/origin/*``
-    stand in, with a warning naming the repo and the error. The fallback errs
+    When ``ls-remote`` fails (a network error, or an origin repo that no longer
+    exists), the repo's ``refs/remotes/origin/*`` stand in, with a warning
+    naming the repo and the error. The fallback errs
     toward keeping: tracking refs are stale only in the direction of listing
     branches the remote has since deleted. Failing to read the repo itself (its
     local branches, remotes or tracking refs) still raises ``CalledProcessError``.

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from vergil_tooling.lib import github, pr_create, pr_merge
+from vergil_tooling.lib import github, pr_create, pr_merge, trust
 from vergil_tooling.lib.update_deps import pr
 from vergil_tooling.lib.update_deps.changes import PackageChange
 from vergil_tooling.lib.update_deps.context import (
@@ -149,13 +149,15 @@ def test_prepare_pr_pushes_ensures_label_and_labels_pr(monkeypatch) -> None:
 
 _DEPS_PR = "https://github.com/o/r/pull/9"
 _TIMEOUT = github.GitHubAPIError(1, ("gh", "pr", "create"), "", "HTTP 504: Gateway Timeout")
-_OPEN_DEPS_PR = github.OpenPR(
+_OPEN_DEPS_PR = trust.PRRef(
+    number=9,
     url=_DEPS_PR,
     title="chore(deps): dependency update for 2.1.243",
-    head_ref="deps/update-2.1.243",
-    base_ref="develop",
+    head="deps/update-2.1.243",
     head_oid="h0",
-    cross_repo=False,
+    base="develop",
+    author_role=trust.Role.AGENTS,
+    state="OPEN",
 )
 
 
@@ -180,7 +182,9 @@ def _prepare_with_create(
     gh_runs: list[tuple[str, ...]] = []
     slept: list[float] = []
     monkeypatch.setattr(_MOD + ".github.create_pr", fake_create)
-    monkeypatch.setattr(_MOD + ".github.open_prs_for_head", lambda *_a, **_kw: next(lookups))
+    monkeypatch.setattr(
+        "vergil_tooling.lib.pr_create.open_trusted_prs", lambda *_a, **_kw: next(lookups)
+    )
     monkeypatch.setattr(_MOD + ".github.run", lambda *a: gh_runs.append(a))
     monkeypatch.setattr(pr_create.time, "sleep", slept.append)
     ctx = _ctx()
@@ -198,12 +202,12 @@ def test_prepare_pr_adopts_the_pr_a_failed_create_opened_and_labels_it(monkeypat
 
 
 def test_prepare_pr_refuses_an_open_pr_it_did_not_open(monkeypatch) -> None:
-    other = dataclasses.replace(_OPEN_DEPS_PR, cross_repo=True)
+    other = dataclasses.replace(_OPEN_DEPS_PR, head_oid="ffff")
     with pytest.raises(UpdateDepsError, match="was not adopted") as exc:
         _prepare_with_create(monkeypatch, [_TIMEOUT], [[other]])
     assert exc.value.phase == "prepare-pr"
     assert _DEPS_PR in str(exc.value)
-    assert "its head is in another repository" in str(exc.value)
+    assert "its head commit is 'ffff', not 'h0'" in str(exc.value)
 
 
 def test_prepare_pr_create_that_really_failed_is_retried(monkeypatch) -> None:
@@ -535,12 +539,43 @@ def test_cleanup_worktree_skips_branch_delete_when_none(monkeypatch) -> None:
     assert runs == []
 
 
+# The fix-task bodies the trust layer reads, by number; None is an
+# untrusted body, reported as skipped. A number not listed is a read the test
+# did not expect.
+_BODIES: dict[int, str | None] = {}
+_OUTSIDER = "drive-by"
+_AT = "2026-11-22T00:00:00Z"
+_SPAM = "SPAM-MARKER-TEXT see https://example.invalid/x"
+
+
+def _read_issue(repo: str, number: int) -> trust.IssueContent:
+    body = _BODIES[number]
+    skipped = (
+        ()
+        if body is not None
+        else (trust.Skipped(repo, number, "issue", _OUTSIDER, _AT, "body", trust.UNTRUSTED),)
+    )
+    role = None if body is None else trust.Role.AUTOMATION
+    return trust.IssueContent(
+        body=body, body_role=role, author_role=role, comments=(), skipped=skipped
+    )
+
+
+@pytest.fixture(autouse=True)
+def _trusted_reads(monkeypatch) -> None:
+    _BODIES.clear()
+    monkeypatch.setattr(_MOD + ".trust.read_issue", _read_issue)
+
+
 def _task(number: int, title: str, kind: str) -> dict[str, object]:
+    """An open issue as the search lists it; the trust layer reads the same body."""
+    body = f"Intro.\n\n## Failure: {kind}\n\nm\n"
+    _BODIES[number] = body
     return {
         "number": number,
         "url": f"https://github.com/o/r/issues/{number}",
         "title": title,
-        "body": f"Intro.\n\n## Failure: {kind}\n\nm\n",
+        "body": body,
     }
 
 
@@ -567,7 +602,53 @@ def test_find_open_fix_task_matches_title_and_failure_kind(monkeypatch) -> None:
     assert args[:4] == ("issue", "list", "--repo", "o/r")
     assert args[args.index("--search") + 1] == f'"{title}" in:title'
     assert args[args.index("--state") + 1] == "open"
-    assert set(args[args.index("--json") + 1].split(",")) == {"number", "url", "title", "body"}
+    assert set(args[args.index("--json") + 1].split(",")) == {"number", "url", "title"}
+
+
+_TITLE = "Fix failed dependency update for 2.1.243"
+
+
+def test_fix_task_by_outsider_not_adopted(monkeypatch, capsys) -> None:
+    """An outsider's look-alike fix task is never adopted, and it is reported."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
+    rows = [_task(27, _TITLE, "update")]
+    _BODIES[27] = None
+    rows[0]["body"] = f"{_SPAM}\n\n## Failure: update\n"
+    monkeypatch.setattr(_MOD + ".github.read_json", lambda *a: rows)
+    assert pr.find_open_fix_task("o/r", "2.1.243", "update") is None
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: o/r#27 issue {_OUTSIDER} at {_AT} on body (untrusted)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+def test_older_outsider_fix_task_never_hides_a_trusted_one(monkeypatch) -> None:
+    rows = [_task(27, _TITLE, "update"), _task(31, _TITLE, "update")]
+    _BODIES[27] = None
+    monkeypatch.setattr(_MOD + ".github.read_json", lambda *a: rows)
+    assert pr.find_open_fix_task("o/r", "2.1.243", "update") == "https://github.com/o/r/issues/31"
+
+
+def test_fix_task_judged_from_the_trusted_body(monkeypatch) -> None:
+    """The failure heading is read from the trust layer's body, not the listing's."""
+    rows = [_task(27, _TITLE, "update")]
+    _BODIES[27] = "Intro.\n\n## Failure: validation\n"
+    monkeypatch.setattr(_MOD + ".github.read_json", lambda *a: rows)
+    assert pr.find_open_fix_task("o/r", "2.1.243", "update") is None
+
+
+def test_fix_task_trust_read_failure_files_nothing(monkeypatch) -> None:
+    monkeypatch.setattr(_MOD + ".github.read_json", lambda *a: [_task(27, _TITLE, "update")])
+
+    def _fail(*_a, **_k):
+        raise trust.TrustReadError("read_issue o/r#27", "the GraphQL call failed")
+
+    monkeypatch.setattr(_MOD + ".trust.read_issue", _fail)
+    with pytest.raises(UpdateDepsError, match="Could not read who wrote an open fix task") as info:
+        pr.find_open_fix_task("o/r", "2.1.243", "update")
+    assert info.value.phase == "fix-task"
+    assert "the GraphQL call failed" in (info.value.detail or "")
 
 
 def test_find_open_fix_task_none_for_other_version_or_kind(monkeypatch) -> None:

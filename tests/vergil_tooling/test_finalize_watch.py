@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from vergil_tooling.lib import auto_merge, finalize_watch, github, pr_provenance, progress
+from vergil_tooling.lib import auto_merge, finalize_watch, github, pr_provenance, progress, trust
 from vergil_tooling.lib.finalize_watch import (
     DEADLINE_ENV,
     FinalizeWatchError,
@@ -105,6 +105,29 @@ class FakeGitHub:
     last: dict[str, dict[str, Any]] = field(default_factory=dict)
     run_reads: list[tuple[str, str]] = field(default_factory=list)
     last_pr: str = ""
+    branch_lookups: list[tuple[str, str, str]] = field(default_factory=list)
+
+    def prs_for_branch(
+        self, repo: str, branch: str, *, state: str
+    ) -> tuple[list[trust.PRRef], list[trust.Skipped]]:
+        """The trust layer's answer: the PR last read, unless its state says ``_fork``."""
+        self.branch_lookups.append((repo, branch, state))
+        current = self._current(self.last_pr)
+        number = int(self.last_pr.rsplit("/", 1)[-1])
+        if current.get("_fork"):
+            skip = trust.Skipped(repo, number, "pr", "mallory", "t", "head", trust.CROSS_REPOSITORY)
+            return [], [skip]
+        ref = trust.PRRef(
+            number=number,
+            url=self.last_pr,
+            title=str(current["title"]),
+            head=branch,
+            head_oid=str(current["headRefOid"]),
+            base=str(current["baseRefName"]),
+            author_role=trust.Role.AGENTS,
+            state=str(current["state"]),
+        )
+        return [ref], []
 
     def script(self, n: int, *states: dict[str, Any]) -> None:
         self.states[url(n)] = list(states)
@@ -181,6 +204,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     ):
         monkeypatch.setattr(github, name, getattr(api, name))
     monkeypatch.setattr(pr_provenance, "check_pr", api.check_pr)
+    monkeypatch.setattr(trust, "prs_for_branch", api.prs_for_branch)
     monkeypatch.setattr(auto_merge, "auto_merge_enabled", api.auto_merge_enabled)
     clock = SimpleNamespace(monotonic=api.monotonic, sleep=api.sleep)
     monkeypatch.setattr(finalize_watch, "time", clock)
@@ -234,6 +258,52 @@ def test_release_branch_not_watched(fake: FakeGitHub) -> None:
     assert fake.provenance_checks == []
     assert fake.disables == []
     assert fake.sleeps == []
+
+
+def test_head_branch_confirmed_once_through_the_trust_layer(fake: FakeGitHub) -> None:
+    fake.script(1, pr_state(1), pr_state(1), merged(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+    assert fake.branch_lookups == [("o/r", "feature/1-thing", "all")]
+
+
+def test_unconfirmed_pr_not_watched(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A PR the trust layer does not confirm on its branch is never watched or named by branch."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    fake.script(1, pr_state(1, _fork=True))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "failed: not a develop PR"
+    assert result.detail == "it is not a same-repo PR with a trusted author on its branch"
+    assert result.branch == ""
+    assert fake.provenance_checks == []
+    assert fake.sleeps == []
+    assert "feature/1-thing" not in capsys.readouterr().out
+
+
+def test_trust_read_failure_stops_the_watch(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_a: object, **_kw: object) -> object:
+        raise trust.TrustReadError("prs_for_branch o/r feature/1-thing", "no repository")
+
+    monkeypatch.setattr(trust, "prs_for_branch", broken)
+    fake.script(1, pr_state(1))
+
+    with pytest.raises(FinalizeWatchError, match="confirming the PR through the trust layer"):
+        run([url(1)])
+
+
+def test_unparseable_url_stops_the_watch(fake: FakeGitHub) -> None:
+    fake.script(1, pr_state(1, url="https://example.com/not-a-pr"))
+
+    with pytest.raises(FinalizeWatchError, match="cannot read the repository and number"):
+        run([url(1)])
 
 
 def test_non_develop_base_not_watched(fake: FakeGitHub) -> None:

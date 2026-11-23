@@ -2,15 +2,15 @@
 
 GitHub sub-issues allow only one parent, so re-parenting is unlink-then-link.
 The target epic is resolved via :func:`epics.resolve_epic_ref` (accepting the
-``adhoc``, ``intake``, ``planning`` and ``hoshin`` sentinels and validating
+``adhoc``, ``intake``, ``planning``, ``hoshin`` and ``operations`` sentinels and validating
 epic-ness); moving a task already under the target epic is a no-op.
 
 The sentinels and a bare ``#N`` epic ref are read against the **task's** repo,
 never the cwd repo: ``adhoc`` is the task repo's ad-hoc epic, ``intake`` and
-``planning`` its intake and planning queue epics, ``hoshin`` its org's hoshin
-epic (always in ``<org>/.github``), and ``#N``
-is issue N in the task repo's epic home (``<org>/.github`` for a public repo,
-the repo itself for a self-homed private one). A fully qualified
+``planning`` its intake and planning queue epics, ``hoshin`` and
+``operations`` its org's hoshin and operations epics (always in
+``<org>/.github``), and ``#N``
+is issue N in the task repo's epic home, ``<org>/.github``. A fully qualified
 ``owner/repo#N`` is taken as written (#3409, #3411).
 
 The deferred queue is entered and left only through ``vrg-intake-route``, which
@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
         task = epics.parse_issue_ref(args.task, default_repo=default_repo)
         task_repo = f"{task.owner}/{task.repo}"
         # Scope the App token to the task's owner (#2070). The epic must live in
-        # the same org — the standing sentinels (adhoc/intake/planning/hoshin) and a
+        # the same org — the standing sentinels (adhoc/intake/planning/hoshin/operations) and a
         # bare '#N' all resolve within the task repo's epic or queue home (in
         # the task's org), so only a qualified ref can diverge; guard that
         # before any network call so a cross-org mistake is a clear message,
@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         with github.target_org(task.owner):
             # 'adhoc' and a bare '#N' resolve against the *task's* repo (its
             # ad-hoc epic / its epic home), never the cwd repo (#3409, #3411).
-            # The epic-home visibility probes run under the task owner's token.
+            # The epic-home existence check runs under the task owner's token.
             try:
                 epic = epics.resolve_epic_ref(args.epic, repo=task_repo)
             except (ValueError, epics.StandingEpicNotVisibleError) as exc:
@@ -108,10 +108,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--epic",
         required=True,
         help="Target epic: 'adhoc' (the task repo's ad-hoc epic), 'intake' or "
-        "'planning' (the task repo's intake or planning queue epic), 'hoshin' (the "
-        "task org's hoshin epic, in <org>/.github), #N (issue N in the "
-        "task repo's epic home: <org>/.github for a public repo, the repo itself for "
-        "a self-homed private one), or owner/repo#N (taken as written)",
+        "'planning' (the task repo's intake or planning queue epic), 'hoshin' or "
+        "'operations' (the task org's hoshin or operations epic, in <org>/.github), "
+        "#N (issue N in the "
+        "task repo's epic home, <org>/.github), or owner/repo#N (taken as written)",
     )
     return parser.parse_args(argv)
 

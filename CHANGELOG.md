@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.336] - 2026-11-23
+
+### Bug fixes
+
+- read queue markers and notes only from trusted comments (#4919)
+- count outcomes and dedup comments only from trusted authors (#4920)
+- trust security-record lines only from trusted bodies (#4924)
+- stop only the item whose comments cannot be read in the queue views (#4969)
+- read parents and blockers only from trusted bodies, and roll up only trusted closes (#4922)
+- never attach or route outsider-opened issues (#4928)
+- find PRs by branch only among same-repo trusted PRs (#4917)
+- attest only the commit's same-repo PR and its own check runs (#4918)
+- adopt fix tasks and release issues only when trusted (#4926)
+- classify PR identities and review comments through the trust layer (#4927)
+- report an API fallback failure as exit 2 (#4975)
+- leave outsider-opened and outsider-closed issues out of the activity log (#4976)
+- stop only the child whose body is untrusted in the task views and the epic audit (#4977)
+- require trusted authors for task checks, release markers, linkage and relay payloads (#4979)
+- adopt only same-repo trusted PRs in the release (#4982)
+- nativize parents and close drift only from trusted content (#4983)
+- move the remaining comment and body readers onto the trust layer (#4985)
+
+### CI
+
+- stop granting actions: read to the security job (#4957)
+
+### Documentation
+
+- bring the docs in line with resumable releases and release records (#4947)
+
+### Features
+
+- home every epic and queue in the org .github (#4943)
+- add the Vergil org list and per-org automation identities to the trusted authors (#4951)
+- publish and check the Actions copies of the trusted authors (#4956)
+- add the trust layer for issue bodies and comments (#4955)
+- retire [project].ghas and drop GHAS inference and private-repo scaffolding (#4958)
+- add trusted events, branch lookups and reviews to the trust layer (#4960)
+- add vrg-issue-read for skills (#4968)
+- add the operations standing epic kind (#4974)
+- add the outsider report (#4980)
+- list every untrusted edit of reviews and inline review comments (#4984)
+
+### Refactoring
+
+- give every repo the counts-only Dependabot report (#4944)
+- remove the epic-audit visibility passes (#4948)
+- remove the token-coverage guard (#4950)
+- remove the routing, linking, proxy and security-records visibility guards (#4954)
+- remove the visibility primitives and give repo_exists its own probe (#4959)
+- move the release identity rules onto the trust layer (#4981)
+
+### Testing
+
+- fail on content reads outside the trust layer (#5004)
+
 ## [2.1.335] - 2026-11-22
 
 ### Chores

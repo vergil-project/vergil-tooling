@@ -19,7 +19,7 @@ the dev-tree override venv.
 | [vrg-gh](cli-tools-overview.md#vrg-gh) | Identity-aware `gh` wrapper with a per-identity allowlist |
 | [vrg-whoami](cli-tools-overview.md#vrg-whoami) | Print the resolved identity role or platform |
 | [vrg-hook-guard](cli-tools-overview.md#vrg-hook-guard) | Claude Code hook that blocks raw `git` and `gh` |
-| [vrg-trusted-authors](cli-tools-overview.md#vrg-trusted-authors) | Print the GitHub logins whose issues and comments automation may trust |
+| [vrg-trusted-authors](cli-tools-overview.md#vrg-trusted-authors) | Print the GitHub identities whose issues and comments automation may trust, and the Vergil orgs |
 | [vrg-resolve-tracking-issue](cli-tools-overview.md#vrg-resolve-tracking-issue) | Print a merge commit's tracking issue |
 | [vrg-vm](cli-tools-overview.md#vrg-vm) | Manage the identity agent VMs |
 | [vrg-vm-resolve-session](cli-tools-overview.md#vrg-vm-resolve-session) | Pick and start a Claude Code session inside an identity VM (run by `vrg-vm session`) |
@@ -58,6 +58,7 @@ the dev-tree override venv.
 | [vrg-host](dev/host.md) | Report, upgrade and pin the macOS host dependencies |
 | [vrg-tooling-install](cli-tools-overview.md#vrg-tooling-install) | Install an exact vergil-tooling release on the host, locked to its `uv.lock` |
 | [vrg-issue-create](cli-tools-overview.md#vrg-issue-create) | Create an issue and link it under an epic in one step |
+| [vrg-issue-read](cli-tools-overview.md#vrg-issue-read) | Print an issue's or PR's trusted content, or the trusted results of a search or list |
 | [vrg-epic-create](cli-tools-overview.md#vrg-epic-create) | Create a top-level epic in its home repo |
 | [vrg-epic-docs](cli-tools-overview.md#vrg-epic-docs) | Write an epic's Documents section |
 | [vrg-epic-link](cli-tools-overview.md#vrg-epic-link) | Link a task under an epic as a native sub-issue |

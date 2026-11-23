@@ -41,9 +41,9 @@ alone, and fails closed:
 A line naming an org other than the issue's own is refused
 (:class:`AdvisoryLineError`), never ignored.
 
-Advisories are listed once per org per view. An org with no public
-``.github`` holds no advisories, so its listing is skipped, unless one of its
-items names an advisory: then the home is resolved anyway and refused loudly.
+Advisories are listed once per org per view. An org with no ``.github`` holds
+no advisories, so its listing is skipped, unless one of its items names an
+advisory: then the home is listed anyway, and a failed read fails the view.
 
 The ad-hoc view is not a review queue: it is the open tasks under every live
 ``Epic (ad hoc): <repo>`` epic (``epic`` + ``ad-hoc``) in a home, grouped by
@@ -65,11 +65,30 @@ ad-hoc view's fields, states, marks, dispositions and order: both share one
 body. The epic is looked up, never created; a home with none is an empty
 list. With a ``repo``, only the epic's children in that repo are listed.
 
+The markers and notes come from **trusted comments** only (spec §5.2 of epic
+vergil-project/.github#1467): each view reads every open item's comments
+through :func:`vergil_tooling.lib.trusted_comments.bodies`, loading the trusted
+authors once per view, so a comment the layer does not trust (an outsider's,
+or one an outsider edited) never sets a planning marker, a deferral note or
+the latest note. Each skipped comment is reported on stderr, metadata only,
+and the view carries on. A comment read the layer cannot complete stops that
+item only (spec §5.3, batch runs; #4966): the item is left out of the view and
+recorded as a read-failure stop in the caller's
+:class:`~vergil_tooling.lib.trust.BatchStops`, and the view carries on with the
+rest. Any other read failure still fails the whole view.
+
+The ad-hoc and hoshin views read each task's ``Blocked-by:`` lines from its
+body, which counts only when the trust layer trusts it (#4922). A task whose
+body is untrusted, or cannot be read in full, stops that task only (#4971):
+it is left out and recorded in the caller's
+:class:`~vergil_tooling.lib.trust.BatchStops` with its cause, and the view
+carries on with the rest.
+
 Planning and deferred items carry an **epic size**
-(:mod:`vergil_tooling.lib.epic_size`): each view reads the item's labels and
-its comments with their authors, and derives its size record from the
-``epic-size:*`` label and the latest trusted sizing comment, reading the
-trusted authors once per view (the loader's errors propagate). An item whose
+(:mod:`vergil_tooling.lib.epic_size`): each view derives its size record
+from the item's ``epic-size:*`` label and the latest sizing comment among
+the comments the trust layer trusts, the same read its notes come from
+(the loader's errors propagate). An item whose
 size is in error keeps a held or deferral note with ``| size: <error>``
 appended; otherwise ``size: <error>`` replaces its latest-comment note.
 :func:`sort_planning` orders the planning queue by age, size or task count,
@@ -95,8 +114,11 @@ from vergil_tooling.lib import (
     in_flight,
     live_branches,
     security_records,
+    trust,
+    trusted_comments,
 )
 from vergil_tooling.lib.epics import IssueRef
+from vergil_tooling.lib.trusted_authors import load_trusted_authors
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -105,6 +127,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.epic_size import SizeRecord
     from vergil_tooling.lib.in_flight import Disposition
     from vergil_tooling.lib.security_records import Advisory
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 # Progress-marker line prefixes. ``epic-create`` writes the first three as lines
 # in planning-issue comments and the last in the new epic's body; the skill
@@ -272,29 +295,13 @@ def _open_children(kind: epics.StandingKind, home: str, name: str) -> list[Issue
     return [c.ref for c in epics.child_states(epic) if c.state == "OPEN"]
 
 
-def _comment_bodies(view: dict[str, Any]) -> list[str]:
-    return [str(c.get("body") or "") for c in view.get("comments") or []]
-
-
-def _authored_comments(view: dict[str, Any]) -> list[tuple[str, str]]:
-    """Each comment as ``(author login, body)``, oldest first.
-
-    A comment whose author GitHub does not give (a deleted account) has the
-    login ``""``, which no trusted author matches.
-    """
-    out: list[tuple[str, str]] = []
-    for c in view.get("comments") or []:
-        author = c.get("author") or {}
-        out.append((str(author.get("login") or ""), str(c.get("body") or "")))
-    return out
-
-
 def _labels(view: dict[str, Any]) -> set[str]:
     return {str(lbl.get("name") or "") for lbl in view.get("labels") or []}
 
 
-def _size_record(view: dict[str, Any], trusted: frozenset[str]) -> SizeRecord:
-    return epic_size.size_record(_labels(view), _authored_comments(view), trusted)
+def _size_record(view: dict[str, Any], trusted_bodies: list[str]) -> SizeRecord:
+    """The item's size record, from its labels and the comment bodies the trust layer trusts."""
+    return epic_size.size_record(_labels(view), trusted_bodies)
 
 
 def _with_size_error(note: str, size: SizeRecord, *, keep_note: bool) -> str:
@@ -318,18 +325,54 @@ def _oldest_first(items: list[QueueItem]) -> list[QueueItem]:
     return sorted(items, key=lambda i: (i.created_at, i.ref.slug))
 
 
-def intake_items(home: str, name: str) -> list[QueueItem]:
-    """The open intake items under *home*'s intake epic for *name*, oldest first."""
+# The field a queue item's read-failure stop names: the view stops on its comments.
+STOP_FIELD = "comments"
+
+
+def _trusted_bodies(
+    ref: IssueRef, authors: TrustedAuthors, stops: trust.BatchStops
+) -> list[str] | None:
+    """*ref*'s trusted comment bodies, or ``None`` when the layer cannot read them.
+
+    A read failure is a stop on this item only (spec §5.3): it is added to
+    *stops* with its :class:`~vergil_tooling.lib.trust.TrustReadError` message,
+    and the caller leaves the item out and carries on.
+    """
+    try:
+        return trusted_comments.bodies(ref, authors)
+    except trust.TrustReadError as exc:
+        item = trust.Skipped(
+            repo=f"{ref.owner}/{ref.repo}",
+            number=ref.number,
+            kind="issue",
+            login=None,
+            at="",
+            field=STOP_FIELD,
+            cause=trust.READ_FAILURE,
+        )
+        stops.add(item, trust.READ_FAILURE, detail=str(exc))
+        return None
+
+
+def intake_items(home: str, name: str, *, stops: trust.BatchStops) -> list[QueueItem]:
+    """The open intake items under *home*'s intake epic for *name*, oldest first.
+
+    An item whose comments cannot be read is left out and added to *stops*.
+    """
+    authors = load_trusted_authors()
     items: list[QueueItem] = []
     for ref in _open_children(epics.INTAKE, home, name):
-        view = _view(ref, "title,createdAt,comments")
+        view = _view(ref, "title,createdAt")
+        comments = _trusted_bodies(ref, authors, stops)
+        if comments is None:
+            continue
         items.append(
             QueueItem(
                 ref=ref,
                 title=str(view.get("title") or ""),
                 created_at=str(view.get("createdAt") or ""),
                 state="waiting",
-                note=_latest_note(_comment_bodies(view)),
+                note=_latest_note(comments),
                 epic=None,
             )
         )
@@ -459,16 +502,13 @@ def _held_note(ref: IssueRef, hold: AdvisoryHold) -> str:
 def _org_advisories(org: str, *, named: bool) -> list[Advisory]:
     """Every advisory in *org*'s advisory home, or none when the org can hold none.
 
-    Security records live only in a public ``<org>/.github``. When an item of
-    *org* names an advisory, the home is resolved with
-    :func:`security_records.advisory_home`, which refuses a home that is not
-    public loudly. When none does, an org whose ``.github`` is absent or not
-    public holds no advisory that could track an item, so nothing is listed;
-    any failed GitHub call propagates.
+    Security records live only in ``<org>/.github``. When an item of *org*
+    names an advisory, the home is resolved with
+    :func:`security_records.advisory_home`. When none does, an org with no
+    ``.github`` holds no advisory that could track an item, so nothing is
+    listed; any failed GitHub call propagates.
     """
-    if not named and not (
-        github.repo_exists(org, ".github") and github.is_public(f"{org}/.github")
-    ):
+    if not named and not github.repo_exists(org, ".github"):
         return []
     return security_records.list_advisories(security_records.advisory_home(org))
 
@@ -497,27 +537,30 @@ def _holds(views: Sequence[tuple[IssueRef, dict[str, Any]]]) -> dict[IssueRef, A
     }
 
 
-def planning_items(home: str, name: str) -> list[QueueItem]:
+def planning_items(home: str, name: str, *, stops: trust.BatchStops) -> list[QueueItem]:
     """The open planning items under *home*'s planning epic for *name*, oldest first.
 
     An item is held back from ``ready-to-close`` while :func:`advisory_hold`
     holds it (spec 4.4b of epic vergil-project/.github#517, spec 4.2 of #573,
     spec 6.3 of #1331; #3826, #3996). A broken pair replaces the item's
-    latest-comment note but does not hold it.
+    latest-comment note but does not hold it. An item whose comments cannot be
+    read is left out and added to *stops*.
     """
-    trusted = epic_size.trusted_logins()
+    authors = load_trusted_authors()
     views = [
-        (ref, _view(ref, "title,createdAt,labels,comments,body"))
+        (ref, _view(ref, "title,createdAt,labels,body"))
         for ref in _open_children(epics.PLANNING, home, name)
     ]
     holds = _holds(views)
     items: list[QueueItem] = []
     for ref, view in views:
-        comments = _comment_bodies(view)
+        comments = _trusted_bodies(ref, authors, stops)
+        if comments is None:
+            continue
         markers = parse_planning_markers(comments)
         hold = holds[ref]
         state, demoted = _planning_state(_labels(view), markers, advisory_held=hold.held)
-        size = _size_record(view, trusted)
+        size = _size_record(view, comments)
         if demoted:
             note = _held_note(ref, hold)
         elif hold.broken is not None:
@@ -538,18 +581,22 @@ def planning_items(home: str, name: str) -> list[QueueItem]:
     return _oldest_first(items)
 
 
-def deferred_items(home: str, name: str) -> list[QueueItem]:
+def deferred_items(home: str, name: str, *, stops: trust.BatchStops) -> list[QueueItem]:
     """The open deferred items under *home*'s deferred epic for *name*.
 
     Least recently deferred first; an item with no deferral comment sorts first,
-    with an empty note.
+    with an empty note. An item whose comments cannot be read is left out and
+    added to *stops*.
     """
-    trusted = epic_size.trusted_logins()
+    authors = load_trusted_authors()
     keyed: list[tuple[str, QueueItem]] = []
     for ref in _open_children(epics.DEFERRED, home, name):
-        view = _view(ref, "title,createdAt,labels,comments")
-        size = _size_record(view, trusted)
-        deferral = parse_latest_deferral(_comment_bodies(view))
+        view = _view(ref, "title,createdAt,labels")
+        comments = _trusted_bodies(ref, authors, stops)
+        if comments is None:
+            continue
+        size = _size_record(view, comments)
+        deferral = parse_latest_deferral(comments)
         note = (
             f"Deferred {deferral.day}: {deferral.reason} | Revisit when: {deferral.revisit_when}"
             if deferral is not None
@@ -653,44 +700,53 @@ def _in_flight_signals(
 
 
 def adhoc_items(
-    home: str, *, repo: str | None = None, roots: Sequence[Path] | None = None
+    home: str,
+    *,
+    stops: trust.BatchStops,
+    repo: str | None = None,
+    roots: Sequence[Path] | None = None,
 ) -> list[AdhocItem]:
     """The open tasks under every live ad-hoc epic in *home*.
 
     Grouped by repo (repos in name order), oldest first within each. With
     *repo* (``owner/name``), only that repo's ad-hoc epic is read, and a repo
-    with none gives an empty list. The caller resolves *home*: for *repo*, with
-    :func:`epics.resolve_epic_home`. A task with any in-flight mark is
+    with none gives an empty list. The caller resolves *home*, the org's
+    ``.github``, with :func:`epics.require_org_home`. A task with any in-flight mark is
     ``in-flight``, whatever its blockers; the marks of each repo with open
     tasks are read from its main clone under *roots* (default: the platform's
-    repo roots). A failed read of the epics, a sub-issue list, a task, a
-    blocker list, a blocker's state or any in-flight source raises, as does a
-    truncated epic search or a repo with no main clone; nothing is shown
-    short or wrongly ready.
+    repo roots). A task whose body is untrusted, or cannot be read in full
+    by the trust layer, is left out and added to *stops* (spec §5.3: a batch
+    run stops the item, not the run). A failed read of the epics, a
+    sub-issue list, a task, a blocker's state or any in-flight source
+    raises, as does a truncated epic search or a repo with no main clone;
+    nothing is shown short or wrongly ready.
     """
     bare = None if repo is None else _bare_name(repo)
-    return _standing_items(_adhoc_epics(home, bare), repo=None, roots=roots)
+    return _standing_items(_adhoc_epics(home, bare), repo=None, roots=roots, stops=stops)
 
 
 def hoshin_items(
-    home: str, *, repo: str | None = None, roots: Sequence[Path] | None = None
+    home: str,
+    *,
+    stops: trust.BatchStops,
+    repo: str | None = None,
+    roots: Sequence[Path] | None = None,
 ) -> list[AdhocItem]:
     """The open tasks under *home*'s hoshin epic, as :func:`adhoc_items` gives them.
 
     The epic is ``Epic (hoshin): <owner>``, *home*'s owner, looked up with
     :func:`epics.find_standing_epic` (never created); a home with none gives
-    an empty list. The caller resolves *home*: for *repo*, with
-    :func:`epics.hoshin_home`, since a hoshin epic always lives in the org's
-    ``.github``, never in a self-homed private repo. With *repo*
+    an empty list. The caller resolves *home*, the org's ``.github``, with
+    :func:`epics.require_org_home`. With *repo*
     (``owner/name``), only the epic's children in that repo are listed.
-    Fields, states, in-flight marks, dispositions, order and failures are
-    :func:`adhoc_items`'s.
+    Fields, states, in-flight marks, dispositions, order, stops and failures
+    are :func:`adhoc_items`'s.
     """
     if repo is not None:
         _bare_name(repo)
     owner = home.split("/", 1)[0]
     epic = epics.find_standing_epic(epics.HOSHIN, home, owner)
-    return _standing_items([] if epic is None else [epic], repo=repo, roots=roots)
+    return _standing_items([] if epic is None else [epic], repo=repo, roots=roots, stops=stops)
 
 
 def _bare_name(repo: str) -> str:
@@ -701,13 +757,20 @@ def _bare_name(repo: str) -> str:
 
 
 def _standing_items(
-    epic_refs: Sequence[IssueRef], *, repo: str | None, roots: Sequence[Path] | None
+    epic_refs: Sequence[IssueRef],
+    *,
+    repo: str | None,
+    roots: Sequence[Path] | None,
+    stops: trust.BatchStops,
 ) -> list[AdhocItem]:
     """The open children of *epic_refs* as tasks, by repo and oldest first.
 
     The shared body of :func:`adhoc_items` and :func:`hoshin_items`. With
     *repo* (``owner/name``), a child in any other repo is left out before it
-    is read (GitHub names ignore case). Every read failure raises.
+    is read (GitHub names ignore case). A child whose body the trust layer
+    does not trust, or cannot read in full, is a stop on that child only
+    (:func:`epics.blockers_or_stop`): it is left out, added to *stops*, and
+    the rest are read. Every other read failure raises.
     """
     found: list[tuple[IssueRef, dict[str, Any], tuple[IssueRef, ...]]] = []
     for epic in epic_refs:
@@ -717,9 +780,10 @@ def _standing_items(
             if repo is not None and _repo_of(child.ref).casefold() != repo.casefold():
                 continue
             view = _view(child.ref, "title,createdAt,labels")
-            open_blockers = tuple(
-                dep for dep in epics.blockers_of(child.ref) if epics.issue_state(dep) != "CLOSED"
-            )
+            blockers = epics.blockers_or_stop(child.ref, stops)
+            if blockers is None:
+                continue
+            open_blockers = tuple(dep for dep in blockers if epics.issue_state(dep) != "CLOSED")
             found.append((child.ref, view, open_blockers))
     signals = _in_flight_signals([ref for ref, _, _ in found], roots)
     items: list[AdhocItem] = []

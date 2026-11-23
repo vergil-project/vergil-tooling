@@ -15,7 +15,7 @@ import pytest
 
 from vergil_tooling.bin import vrg_release_record
 from vergil_tooling.bin.vrg_release_record import main
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, trust
 from vergil_tooling.lib.release.records import marker, record_body
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
@@ -28,6 +28,24 @@ _TASK = f"{_REPO}#5"
 _HUMAN = "wphillipmoore"
 _AGENT = "wphillipmoore-vergil-user"
 _AUTHORS = TrustedAuthors(human=(_HUMAN,), agents=(_AGENT,))
+_CREATED = "2026-11-20T09:00:00Z"
+_EDITED = "2026-11-20T10:00:00Z"
+# Each test login's account type, as GraphQL returns it.
+_TYPES = {_HUMAN: "User", _AGENT: "Bot", "mallory": "User"}
+
+
+def _actor(who: str | dict[str, str] | None) -> dict[str, str] | None:
+    """A ``{ __typename login }`` actor; a dict is passed through for an odd account."""
+    if who is None or isinstance(who, dict):
+        return who
+    return {"__typename": _TYPES[trust.normalise_login(who)], "login": who}
+
+
+def _edits(*editors: Any) -> dict[str, Any]:
+    return {
+        "pageInfo": {"hasNextPage": False, "endCursor": None},
+        "nodes": [{"editedAt": _EDITED, "editor": _actor(e)} for e in editors],
+    }
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -76,11 +94,24 @@ def origin(tmp_path: Path) -> _Origin:
     return _Origin(tmp_path)
 
 
-def _comment(body: str, author: str = _HUMAN, editor: str | None = None) -> dict[str, Any]:
+def _comment(
+    body: str, author: str | dict[str, str] = _HUMAN, editor: str | None = None
+) -> dict[str, Any]:
+    """A comment as a test writes it; :class:`_FakeGitHub` gives it the layer's node shape."""
+    return {"author": author, "editor": editor, "body": body}
+
+
+def _node(index: int, comment: dict[str, Any]) -> dict[str, Any]:
+    editor = comment["editor"]
     return {
-        "author": {"login": author},
-        "editor": None if editor is None else {"login": editor},
-        "body": body,
+        "id": f"IC_{index}",
+        "fullDatabaseId": str(index),
+        "author": _actor(comment["author"]),
+        "editor": _actor(editor),
+        "body": comment["body"],
+        "createdAt": _CREATED,
+        "lastEditedAt": None if editor is None else _EDITED,
+        "userContentEdits": _edits() if editor is None else _edits(editor),
     }
 
 
@@ -110,9 +141,11 @@ def _closing_pr(
         "mergeCommit": {"oid": sha} if merged else None,
         "repository": {"nameWithOwner": repo},
         "body": "Summary.\n\nCloses #5",
-        "author": {"login": author},
+        "author": _actor(author),
         "editor": None,
-        "userContentEdits": {"totalCount": 0, "nodes": []},
+        "createdAt": _CREATED,
+        "lastEditedAt": None,
+        "userContentEdits": _edits(),
         "closingIssuesReferences": {
             "totalCount": 1,
             "nodes": [{"number": 5, "repository": {"nameWithOwner": repo}}],
@@ -138,14 +171,18 @@ class _FakeGitHub:
         assert variables["number"] == 5
         if self.fail is not None and self.fail in query:
             raise github.GitHubAPIError(1, ("gh", "api", "graphql"), stderr="HTTP 502")
-        if "comments(" in query:
+        if query in (trust._ITEM_QUERY, trust._COMMENTS_QUERY):  # noqa: SLF001
             after = variables.get("after")
             start = int(after) if isinstance(after, str) else 0
             page = self.comments[start : start + 100]
             end = start + len(page)
             info = {"hasNextPage": end < len(self.comments), "endCursor": str(end)}
-            conn = {"totalCount": len(self.comments), "pageInfo": info, "nodes": page}
-            return {"repository": {"issue": {"comments": conn}}}
+            nodes = [_node(start + i + 1, c) for i, c in enumerate(page)]
+            item: dict[str, Any] = {"comments": {"pageInfo": info, "nodes": nodes}}
+            if query == trust._ITEM_QUERY:  # noqa: SLF001 - the first page carries the body
+                item |= _node(0, _comment("the task body", author=_AGENT))
+                item["__typename"] = "Issue"
+            return {"repository": {"issueOrPullRequest": item}}
         if "closedByPullRequestsReferences" in query:
             if self.closing is not None:
                 return self.closing
@@ -283,8 +320,9 @@ def test_check_two_versions_uses_newest_lists_other(
 
 
 def test_check_ignores_agent_record_with_warning(
-    origin: _Origin, capsys: pytest.CaptureFixture[str]
+    origin: _Origin, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     merged = origin.commit("feat: the change (#7)")
     origin.tag("v2.1.2")
     origin.commit("more")
@@ -296,24 +334,40 @@ def test_check_ignores_agent_record_with_warning(
         ],
         [_closing_pr(7, merged)],
     )
-    rc, out, _ = _run(fake, origin, capsys)
+    rc, out, err = _run(fake, origin, capsys)
     assert rc == 4
     assert out is not None
     assert out["verdict"] == "none"
-    assert out["warnings"] == [
-        f"a record marker for o/r v2.1.3 in a comment by {_AGENT} does not count: "
-        "only a human login may post a record",
-        f"a record marker for o/r v2.1.2 in a comment last edited by {_AGENT} does not "
-        "count: only a human login may edit a record",
-    ]
+    assert out["warnings"] == []
+    assert f"o/r#5 comment {_AGENT} at {_CREATED} on comment 1 (not-accepted)" in err
+    assert f"o/r#5 edit {_AGENT} at {_EDITED} on comment 2 (not-accepted)" in err
 
-    # Beside a human's record, the agent's is still only a warning.
+    # Beside a human's record, the agent's is still only reported.
     fake.comments.append(_comment(_record("2.1.2")))
-    rc, out, _ = _run(fake, origin, capsys)
+    rc, out, err = _run(fake, origin, capsys)
     assert rc == 0
     assert out is not None
     assert out["record"]["version"] == "2.1.2"
-    assert len(out["warnings"]) == 2
+    assert out["warnings"] == []
+    assert err.count("skipped untrusted content") == 2
+
+
+def test_check_ignores_outsider_and_impostor_records(
+    origin: _Origin, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A record marker in an outsider's or a wrong-type account's comment is never read."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    impostor = {"__typename": "Bot", "login": _HUMAN}
+    spam = f"{marker('x/y', '9.9.9')}\n{_record('2.1.2')}\nSPAM-MARKER-TEXT"
+    fake = _FakeGitHub([_comment(spam, author="mallory"), _comment(_record("2.1.2"), impostor)])
+    rc, out, err = _run(fake, origin, capsys)
+    assert rc == 4
+    assert out is not None
+    assert out["warnings"] == []
+    assert f"o/r#5 comment mallory at {_CREATED} on comment 1 (untrusted)" in err
+    assert f"o/r#5 comment {_HUMAN} at {_CREATED} on comment 2 (wrong-type)" in err
+    assert "SPAM-MARKER-TEXT" not in err
+    assert "x/y" not in err
 
 
 def test_check_foreign_repo_marker_ignored(
@@ -392,7 +446,7 @@ def test_check_counts_hand_linked_pr_by_filtered_count(
     node = _closing_pr(7, merged)
     node["body"] = "No closing line."
     issue = {"number": 5, "repository": {"nameWithOwner": _REPO}}
-    event = {"actor": {"login": _HUMAN}, "subject": issue, "source": {}}
+    event = {"actor": _actor(_HUMAN), "createdAt": _EDITED, "subject": issue, "source": {}}
     node["timelineItems"] = {"filteredCount": 1, "totalCount": 6, "nodes": [event]}
     fake = _FakeGitHub([_comment(_record("2.1.2"))], [node])
     rc, out, _ = _run(fake, origin, capsys)

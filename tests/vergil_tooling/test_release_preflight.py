@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vergil_tooling.lib import trust
 from vergil_tooling.lib.cd_runs import CDRunLookupError
 from vergil_tooling.lib.checkout_lock import CheckoutLockError, checkout_lock
 from vergil_tooling.lib.managed_worktree import ManagedWorktreeError
@@ -31,11 +32,86 @@ from vergil_tooling.lib.release.preflight import (
 from vergil_tooling.lib.release.state import IssueEntry
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterator
+    from collections.abc import Generator, Iterator, Mapping, Sequence
 
     from vergil_tooling.lib.release.context import ReleaseContext
 
 _MOD = "vergil_tooling.lib.release.preflight"
+
+
+# The bodies the trust layer reads, by number; a number not listed reads as a
+# trusted empty body. A ``None`` body is an untrusted one, reported as skipped.
+_BODIES: dict[int, str | None] = {}
+_OUTSIDER = "drive-by"
+_AT = "2026-11-22T00:00:00Z"
+
+
+def _read_issue(repo: str, number: int) -> trust.IssueContent:
+    body = _BODIES.get(number, "")
+    skipped = (
+        ()
+        if body is not None
+        else (trust.Skipped(repo, number, "issue", _OUTSIDER, _AT, "body", trust.UNTRUSTED),)
+    )
+    role = None if body is None else trust.Role.AGENTS
+    return trust.IssueContent(
+        body=body, body_role=role, author_role=role, comments=(), skipped=skipped
+    )
+
+
+# The deps PRs the trust layer's branch lookup finds on a branch, by number:
+# those in _FORK_PRS are fork PRs, skipped and reported; the rest are same-repo
+# PRs with a trusted author.
+_DEPS_PRS = (9, 10, 11, 12, 3281)
+_FORK_PRS: set[int] = set()
+_FORK_OWNER = "fork-owner"
+
+
+def _prs_for_branch(
+    repo: str, branch: str, *, state: str
+) -> tuple[list[trust.PRRef], list[trust.Skipped]]:
+    assert state == "open"
+    found = [
+        trust.PRRef(
+            number=n,
+            url=f"https://github.com/{repo}/pull/{n}",
+            title="deps",
+            head=branch,
+            head_oid="a" * 40,
+            base="develop",
+            author_role=trust.Role.AUTOMATION,
+            state="OPEN",
+        )
+        for n in _DEPS_PRS
+        if n not in _FORK_PRS
+    ]
+    skipped = [
+        trust.Skipped(repo, n, "pr", _FORK_OWNER, _AT, "head", trust.CROSS_REPOSITORY)
+        for n in sorted(_FORK_PRS)
+    ]
+    return found, skipped
+
+
+@pytest.fixture(autouse=True)
+def trusted_reads() -> Iterator[MagicMock]:
+    """Serve the trust layer's reads from :data:`_BODIES` and :data:`_FORK_PRS`.
+
+    Every close is trusted. Yields the ``close_judgement`` stand-in for a test
+    to change.
+    """
+    _BODIES.clear()
+    _FORK_PRS.clear()
+    with (
+        patch(_MOD + ".trust.read_issue", side_effect=_read_issue),
+        patch(_MOD + ".trust.prs_for_branch", side_effect=_prs_for_branch),
+        patch(
+            _MOD + ".trust.close_judgement",
+            return_value=trust.Judgement(trust.Role.AUTOMATION, None),
+        ) as close,
+    ):
+        yield close
+    _BODIES.clear()
+    _FORK_PRS.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -331,6 +407,8 @@ _RESUME_READ = "vergil_tooling.lib.release.resume.github.read_json"
 
 
 def _release_issue(ver: str, number: int, body: str) -> dict[str, object]:
+    """An open release issue as the search lists it; the trust layer reads the same body."""
+    _BODIES[number] = body
     return {"number": number, "title": f"release: {ver}", "body": body}
 
 
@@ -432,6 +510,68 @@ def test_fresh_start_open_release_read_failure_raises() -> None:
     ):
         _check_no_open_release("owner/repo")
     assert info.value.phase == "preflight"
+
+
+_SPAM = "SPAM-MARKER-TEXT see https://example.invalid/x"
+
+
+def test_outsider_release_issue_does_not_block_start(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An outsider's ``release:`` issue is reported, metadata only, and never blocks."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
+    open_issues = [_release_issue("2.0.33", 99, f"{_SPAM}\n{_state_body('2.0.33')}")]
+    _BODIES[99] = None
+    with patch(_RESUME_READ, return_value=open_issues):
+        _check_no_open_release("owner/repo")
+    captured = capsys.readouterr()
+    assert captured.err == (
+        f"skipped untrusted content: owner/repo#99 issue {_OUTSIDER} at {_AT} on body (untrusted)\n"
+    )
+    assert "Open-release check passed: no release is in flight" in captured.out
+    assert "SPAM-MARKER-TEXT" not in captured.out + captured.err
+
+
+def test_untrusted_release_issue_never_hides_a_trusted_one() -> None:
+    open_issues = [
+        _release_issue("2.0.33", 99, _state_body("2.0.33")),
+        _release_issue("2.0.34", 98, _SPAM),
+    ]
+    _BODIES[98] = None
+    with (
+        patch(_RESUME_READ, return_value=open_issues),
+        pytest.raises(ReleaseError) as info,
+    ):
+        _check_no_open_release("owner/repo")
+    lines = [line for line in str(info.value).splitlines() if line.startswith("- ")]
+    assert len(lines) == 1
+    assert "release 2.0.33" in lines[0]
+    assert "SPAM-MARKER-TEXT" not in str(info.value)
+
+
+def test_release_issue_judged_from_the_trusted_body() -> None:
+    """The recovery line reads the trusted body, never the search listing's copy."""
+    open_issues = [_release_issue("2.0.33", 99, "no block in the listing")]
+    _BODIES[99] = _state_body("2.0.33")
+    with (
+        patch(_RESUME_READ, return_value=open_issues),
+        pytest.raises(ReleaseError) as info,
+    ):
+        _check_no_open_release("owner/repo")
+    assert "`vrg-release --resume 2.0.33`" in str(info.value)
+
+
+def test_release_issue_trust_read_failure_refuses() -> None:
+    open_issues = [_release_issue("2.0.33", 99, _state_body("2.0.33"))]
+    failure = trust.TrustReadError("read_issue owner/repo#99", "the GraphQL call failed")
+    with (
+        patch(_RESUME_READ, return_value=open_issues),
+        patch(_MOD + ".trust.read_issue", side_effect=failure),
+        pytest.raises(ReleaseError, match="Could not read who wrote owner/repo#99") as info,
+    ):
+        _check_no_open_release("owner/repo")
+    assert info.value.phase == "preflight"
+    assert "the GraphQL call failed" in (info.value.detail or "")
 
 
 @pytest.mark.parametrize(
@@ -934,7 +1074,14 @@ _PRS = [
 ]
 
 
+def _register_pr_bodies(prs: Sequence[Mapping[str, object]]) -> None:
+    for pr in prs:
+        body = pr.get("body")
+        _BODIES[int(str(pr["url"]).rsplit("/", 1)[1])] = body if isinstance(body, str) else ""
+
+
 def test_pending_deps_prs_parses_fix_task() -> None:
+    _register_pr_bodies(_PRS)
     with patch(_MOD + ".github.read_json", return_value=_PRS) as m:
         prs = pending_deps_prs("o/r")
     assert prs == [
@@ -952,6 +1099,50 @@ def test_pending_deps_prs_parses_fix_task() -> None:
     assert args[args.index("--state") + 1] == "open"
     assert args[args.index("--label") + 1] == "dependency-update"
     assert "headRefName" in args[args.index("--json") + 1].split(",")
+    # The listing's copy of a body is never read: only the trust layer's is.
+    assert "body" not in args[args.index("--json") + 1].split(",")
+
+
+def test_fix_task_link_from_untrusted_body_ignored(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
+    listed = [
+        {
+            "url": "https://github.com/o/r/pull/9",
+            "body": f"{_SPAM}\n\nFix task: https://github.com/o/r/issues/10\n",
+            "headRefName": _HEAD,
+        }
+    ]
+    _BODIES[9] = None
+    with patch(_MOD + ".github.read_json", return_value=listed):
+        prs = pending_deps_prs("o/r")
+    assert prs == [PendingDepsPr(head=_HEAD, url="https://github.com/o/r/pull/9", fix_task=None)]
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: o/r#9 issue {_OUTSIDER} at {_AT} on body (untrusted)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+def test_fix_task_link_read_failure_refuses() -> None:
+    listed = [{"url": "https://github.com/o/r/pull/9", "headRefName": _HEAD}]
+    failure = trust.TrustReadError("read_issue o/r#9", "the GraphQL call failed")
+    with (
+        patch(_MOD + ".github.read_json", return_value=listed),
+        patch(_MOD + ".trust.read_issue", side_effect=failure),
+        pytest.raises(ReleaseError, match="Could not read who wrote o/r#9"),
+    ):
+        pending_deps_prs("o/r")
+
+
+def test_pending_deps_prs_rejects_url_without_number() -> None:
+    listed = [{"url": "https://github.com/o/r/pulls", "headRefName": _HEAD}]
+    with (
+        patch(_MOD + ".github.read_json", return_value=listed),
+        pytest.raises(ReleaseError, match="PR url with no number"),
+    ):
+        pending_deps_prs("o/r")
 
 
 @pytest.mark.parametrize("head", [None, ""])
@@ -1269,6 +1460,67 @@ def test_preflight_branch_already_deleted_counts_as_deleted(
     assert "already deleted" in capsys.readouterr().out
 
 
+def test_deps_gate_never_deletes_for_fork_pr(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fork PR's head is in the fork: the same-named branch here is never deleted.
+
+    GHSA-r4j2-cwcp-xg56: the PR is still closed, its fork reported, metadata only.
+    """
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
+    _FORK_PRS.add(9)
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
+    ctx, calls = _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", "COMPLETED")})
+    assert [c[:2] for c in calls] == [["pr", "comment"], ["pr", "close"]]
+    assert not any(c[0] == "api" for c in calls)
+    assert ctx.cleared_deps_prs == [_PR9]
+    assert ctx.undeleted_deps_branches == []
+    out = capsys.readouterr()
+    assert f"Not deleting branch {_HEAD}" in out.out
+    assert f"o/r#9 pr {_FORK_OWNER}" in out.err
+    assert trust.CROSS_REPOSITORY in out.err
+
+
+def test_deps_gate_branch_lookup_failure_changes_nothing() -> None:
+    """A failed branch lookup is never "same repo": nothing is closed or deleted."""
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
+    failure = trust.TrustReadError(f"prs_for_branch o/r {_HEAD}", "the GraphQL call failed")
+    with (
+        patch(_MOD + ".trust.prs_for_branch", side_effect=failure),
+        pytest.raises(ReleaseError, match="Could not read the PRs on branch") as info,
+    ):
+        _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", "COMPLETED")})
+    assert info.value.phase == "preflight"
+    assert "the GraphQL call failed" in str(info.value.detail)
+
+
+def test_deps_gate_looks_up_every_branch_before_closing_any() -> None:
+    pending = [
+        PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10),
+        PendingDepsPr(head="deps/other", url=_PR11, fix_task=_TASK12),
+    ]
+    failure = trust.TrustReadError("prs_for_branch o/r deps/other", "the GraphQL call failed")
+
+    def second_fails(
+        repo: str, branch: str, *, state: str
+    ) -> tuple[list[trust.PRRef], list[trust.Skipped]]:
+        if branch == "deps/other":
+            raise failure
+        return _prs_for_branch(repo, branch, state=state)
+
+    statuses: dict[str, tuple[str, str | None]] = {
+        _TASK10: ("CLOSED", "COMPLETED"),
+        _TASK12: ("CLOSED", "COMPLETED"),
+    }
+    writes: list[list[str]] = []
+    with (
+        patch(_MOD + ".trust.prs_for_branch", side_effect=second_fails),
+        pytest.raises(ReleaseError, match="Could not read the PRs on branch deps/other"),
+    ):
+        _run_preflight_with_tasks(pending, statuses, run_side_effect=writes.append)
+    assert writes == []
+
+
 def test_every_pr_close_in_src_deletes_its_branch() -> None:
     """A PR closed without merging keeps its branch unless the closer deletes it (#3332).
 
@@ -1420,6 +1672,78 @@ def test_preflight_looks_up_every_fix_task_before_closing_any() -> None:
         m_run = stack.enter_context(patch(_MOD + ".github.run"))
         with pytest.raises(ReleaseError, match="lookup failed"):
             preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    m_run.assert_not_called()
+
+
+def test_outsider_close_of_fix_task_does_not_clear_gate(trusted_reads: MagicMock) -> None:
+    """A completed close by an untrusted actor stops the release before any write."""
+    pending = [
+        PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10),
+        PendingDepsPr(head=_HEAD, url=_PR11, fix_task=_TASK12),
+    ]
+    trusted_reads.side_effect = lambda repo, number: (
+        trust.Judgement(None, trust.UNTRUSTED)
+        if number == 12
+        else trust.Judgement(trust.Role.AUTOMATION, None)
+    )
+    closed = trust.IssueEvent("closed", trust.Identity(_OUTSIDER, "User"), _AT)
+    with contextlib.ExitStack() as stack:
+        for p in _fresh_patches(pending):
+            stack.enter_context(p)
+        stack.enter_context(patch(_MOD + ".fix_task_status", return_value=("CLOSED", "COMPLETED")))
+        stack.enter_context(patch(_MOD + ".trust.read_events", return_value=(closed,)))
+        m_run = stack.enter_context(patch(_MOD + ".github.run"))
+        with pytest.raises(ReleaseError) as info:
+            preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    assert str(info.value) == (
+        "stopped before any write: the fix task's close is untrusted: "
+        f"o/r#12 event {_OUTSIDER} at {_AT} on close (untrusted). The human decides next."
+    )
+    assert info.value.phase == "preflight"
+    # Not even the PR whose fix task a trusted actor closed is touched.
+    m_run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("events", "expected"),
+    [
+        (
+            (trust.IssueEvent("closed", trust.Identity(None, None), _AT),),
+            f"stopped before any write: the fix task's close is untrusted: o/r#10 event "
+            f"a deleted account at {_AT} on close (deleted). The human decides next.",
+        ),
+        ((), "Could not read who closed fix task"),
+    ],
+)
+def test_untrusted_fix_task_close_names_its_actor_or_refuses(
+    trusted_reads: MagicMock, events: tuple[trust.IssueEvent, ...], expected: str
+) -> None:
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
+    trusted_reads.return_value = trust.Judgement(None, trust.DELETED)
+    with contextlib.ExitStack() as stack:
+        for p in _fresh_patches(pending):
+            stack.enter_context(p)
+        stack.enter_context(patch(_MOD + ".fix_task_status", return_value=("CLOSED", "COMPLETED")))
+        stack.enter_context(patch(_MOD + ".trust.read_events", return_value=events))
+        m_run = stack.enter_context(patch(_MOD + ".github.run"))
+        with pytest.raises(ReleaseError) as info:
+            preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    assert expected in str(info.value)
+    m_run.assert_not_called()
+
+
+def test_fix_task_close_read_failure_refuses() -> None:
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
+    failure = trust.TrustReadError("read_events o/r#10", "the GraphQL call failed")
+    with contextlib.ExitStack() as stack:
+        for p in _fresh_patches(pending):
+            stack.enter_context(p)
+        stack.enter_context(patch(_MOD + ".fix_task_status", return_value=("CLOSED", "COMPLETED")))
+        stack.enter_context(patch(_MOD + ".trust.close_judgement", side_effect=failure))
+        m_run = stack.enter_context(patch(_MOD + ".github.run"))
+        with pytest.raises(ReleaseError, match="Could not read who closed fix task") as info:
+            preflight(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    assert "the GraphQL call failed" in (info.value.detail or "")
     m_run.assert_not_called()
 
 

@@ -105,7 +105,7 @@ wins. When no PR opened, a failed submit exits 3. A usage error, or a
 refusal before anything opened, exits 1.
 
 **Removed flags** are refused by name before any side effect: ``--finalize``
-(finalizing is the default), ``--no-finalize`` (submit returns once each PR
+(submit always finalizes), ``--no-finalize`` (submit returns once each PR
 has merged or cannot merge), ``--install`` and ``--no-install`` (install is
 part of every release), ``--allow-provenance-violation`` (a provenance
 violation always fails; fix its cause or the classifier) and ``--yes``/``-y``
@@ -135,6 +135,7 @@ from vergil_tooling.lib import (
     pr_create,
     pr_provenance,
     progress,
+    trust,
     worktrees,
 )
 from vergil_tooling.lib.cli import cli_main
@@ -146,6 +147,7 @@ from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release import gate
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
@@ -190,6 +192,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"vrg-submit-pr --release: {refusal}", file=sys.stderr)
             return 1
 
+    # A trust-layer failure before any PR opens (an untrusted relay payload or
+    # body, a trust read that cannot complete, no trusted-authors configuration)
+    # escapes to cli_main, which ends the run with its one-line message.
     if args.branches:
         # Relay path: branches identify the submit. It opens PRs worktree-free
         # (from the branch's relayed ready-state), then finalizes them locally
@@ -302,7 +307,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-FINALIZE_REMOVED = "vrg-submit-pr: --finalize was removed; finalizing is now the default"
+FINALIZE_REMOVED = "vrg-submit-pr: --finalize was removed; vrg-submit-pr always finalizes"
 NO_FINALIZE_REMOVED = (
     "vrg-submit-pr: --no-finalize was removed; "
     "vrg-submit-pr returns once each PR has merged or cannot merge"
@@ -537,11 +542,16 @@ class _SubmitFailedError(Exception):
 
 # The failures that end one PR's submit without stopping the others: a refusal
 # from this module's checks (SystemExit with its message), a failed git or gh
-# call, a malformed GitHub payload, and auto-merge that could not be turned on.
+# call, a malformed GitHub payload, a trust-layer failure (an untrusted or
+# unreadable item, or no trusted-authors configuration to classify by), and
+# auto-merge that could not be turned on.
 _PER_PR_ERRORS = (
     SystemExit,
     subprocess.CalledProcessError,
     ValueError,
+    TrustedAuthorsNotConfiguredError,
+    trust.UntrustedContentError,
+    trust.TrustReadError,
     auto_merge.AutoMergeError,
     _SubmitFailedError,
 )

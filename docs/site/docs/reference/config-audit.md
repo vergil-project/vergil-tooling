@@ -211,9 +211,9 @@ audit does not guess the value. It reports the setting as not checked:
   requirement for any other field, so the line for one of those says
   `needs a token GitHub returns the field to`. A repo setting of the
   wrong type is an error.
-- A setting the desired state leaves unmanaged (secret scanning on a
-  private repo without GHAS) is skipped as before, not listed as not
-  checked.
+- A setting the desired state leaves unmanaged (a ruleset's
+  `bypass_actors` under a token that cannot see them) is skipped as
+  before, not listed as not checked.
 - A 403 that names no missing permission (a rate limit, for example) is
   still an error, as is any other unexpected status.
 - **An empty bypass list under the automation identity is not checked.**
@@ -491,8 +491,9 @@ root:
 
 Every managed repo pins `vergil-tooling` to the **rolling major-minor
 tag** `vX.Y`, never a specific patch. The nightly `ops.yml` job installs
-`vergil-tooling@vX.Y`, which always resolves to the latest patch under
-that line — including its fragment set. So:
+`vergil-tooling@vX.Y`, which resolves to the release the rolling tag
+names, the latest patch under that line unless a rollback moved it
+back — including its fragment set. So:
 
 > change a fragment → release a `vergil-tooling` patch under `vX.Y` →
 > **every repo's nightly `update` finds the fence drifted** and opens a
@@ -539,13 +540,10 @@ each difference as a `security.<field>` `DiffItem`:
 
 | Field | Desired | Notes |
 |---|---|---|
-| `security.vulnerability_alerts` | `true` | Dependabot alerts on, for **every** repo, public or private |
+| `security.vulnerability_alerts` | `true` | Dependabot alerts on, for **every** repo |
 | `security.dependabot_security_updates` | `disabled` | Dependabot never opens a security-update PR |
-| `security.secret_scanning` | `enabled` | Only when GHAS is available; otherwise unmanaged |
-| `security.secret_scanning_push_protection` | `enabled` | Only when GHAS is available; otherwise unmanaged |
-
-GHAS is available when `[project].ghas` in `vergil.toml` says so, and
-otherwise exactly when the repo is not private.
+| `security.secret_scanning` | `enabled` | For every repo |
+| `security.secret_scanning_push_protection` | `enabled` | For every repo |
 
 The first two rows are the **report-only Dependabot posture** (epic
 [vergil-project/.github#420](https://github.com/vergil-project/.github/issues/420)):
@@ -618,10 +616,13 @@ order:
   agent with Contents write could push to such a branch and have its
   content merged with no human in the loop. Deletion is not restricted:
   the branches are temporary. The App's numeric ID differs per org. The
-  tooling reads the App's slug from `$VRG_AUTOMATION_APP` or, for a human
-  run, from the org-level Actions variable `VRG_AUTOMATION_APP`, and looks
-  the ID up with `GET /apps/{slug}`. A missing variable or a failed lookup
-  fails the run (exit 2).
+  tooling reads the App's slug from `$VRG_AUTOMATION_APP` in a job of the
+  same org, and otherwise (a human run, or a job of another org) from the
+  org's `[orgs.<org>]` stanza of the
+  [trusted-authors configuration](../guides/account-setup.md#trusted-authors),
+  never from the API, and looks the ID up with `GET /apps/{slug}`. An org
+  with no stanza, a missing configuration or a failed lookup fails the run
+  (exit 2).
 - **Bypass actors are not compared under an App token that is not the
   automation identity**, such as an agent App's token or a CI
   `GITHUB_TOKEN`. Such a token cannot read a ruleset's bypass list, so in

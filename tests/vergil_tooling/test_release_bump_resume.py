@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.release_stubs import branch_lookup
 from vergil_tooling.lib import git
 from vergil_tooling.lib.release.bump import back_merge_and_bump
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
@@ -97,11 +98,10 @@ def gh() -> Iterator[dict[str, MagicMock]]:
     """GitHub with no back-merge PR yet; creating and merging one succeeds."""
     with (
         patch("vergil_tooling.lib.github.get_installation_token", return_value=None),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        branch_lookup(),
         patch(_MOD + ".github.create_pr", return_value=_PR) as create_pr,
         # A failed create looks for the PR it may have opened (#4699): none here.
-        patch(_MOD + ".github.open_prs_for_head", return_value=[]),
+        patch("vergil_tooling.lib.pr_create.open_trusted_prs", return_value=[]),
         patch(_MOD + ".github.merge_commit_sha", return_value="m3rge"),
         patch(_MOD + ".wait_and_merge") as wait_and_merge,
     ):
