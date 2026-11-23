@@ -5,7 +5,39 @@
 The hook guard is a Claude Code `PreToolUse` hook that blocks raw
 `git` and `gh` commands in agent sessions. It delegates to
 `vrg-hook-guard` (when vergil-tooling is installed) or falls back
-to a `jq`-based hard deny.
+to a `jq`-based hard deny. In an agent identity, `vrg-hook-guard` also
+refuses raw reads of issue and PR content (see
+[Raw content reads](#raw-content-reads)).
+
+## Raw content reads
+
+For an agent identity, `vrg-hook-guard` refuses the obvious raw
+`vrg-gh` reads of issue and PR content, with a deny decision that names
+[`vrg-issue-read`](../cli-tools-overview.md#vrg-issue-read), the trusted
+read command that keeps only content the trust layer trusts:
+
+- `--comments` on any `issue` or `pr` command;
+- a `--json` that selects `body`, `comments`, `reviews`, `latestReviews`
+  or `closingIssuesReferences` on an `issue`, `pr` or
+  `search issues|prs` command;
+- an `issue view` or `pr view` with no `--json`, whose default output
+  prints the body;
+- an `api` path with a `comments` or `reviews` segment;
+- an `issue list`, `pr list`, `search issues` or `search prs` whose query
+  matches text: a free-text term or an `in:` qualifier, in a list's
+  `--search` or a search's query, or a search's `--match`.
+
+A list or search made only of qualifiers (labels, states, dates,
+authors, `reason:`, `is:`) that requests no content field is a metadata
+read and stays allowed, as do reads such as
+`vrg-gh issue view <N> --json labels,parent,state` and run and release
+listings. Human mode is unchanged: the check applies only when an agent
+identity signal is present.
+
+The list is a guard against accidents, not a security boundary: what
+keeps untrusted content from driving behaviour is the trust layer
+itself. The shim's `jq` fallback, used only when vergil-tooling is not
+installed, does not apply this check.
 
 ## Malformed input fails closed
 

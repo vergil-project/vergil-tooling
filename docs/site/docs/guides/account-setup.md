@@ -388,16 +388,24 @@ automation_app = "<automation-app-slug>"
 - An invalid stanza makes every `vrg-vm` command fail loudly when it loads
   `identities.toml`.
 
-The stanza is used first by `issue-implement`, which starts work on an issue
-only when a trusted author opened it, and by `epic-create`'s design-review
-rounds. `vrg-queue planning`, `vrg-queue deferred` and a bare `vrg-queue`,
-which reads both of those queues, need it too: only trusted authors' sizing
-comments set an item's
-[epic size](../standards/github-issues.md#epic-size), and with no stanza
-those views fail rather than guess.
-It seeds the system-wide rule for every tool and skill that reads issues,
-planned in
-[vergil-project/.github#579](https://github.com/vergil-project/.github/issues/579).
+**Publish before the first release that reads it.** Every tool that acts
+on GitHub content reads the configuration. Add the org's `[orgs.<org>]`
+stanza before installing the first vergil-tooling release that reads it;
+right after installing it, run `vrg-trusted-authors publish` for the org,
+so its GitHub Actions jobs find `VRG_TRUSTED_AUTHORS` when they first run
+that release, and `vrg-vm update --all` to deliver the file to the VMs.
+A job that runs before the variable is published stops loudly rather than
+guess, and is re-run once it is.
+
+The configuration drives the system-wide trust rule (epic
+[vergil-project/.github#1467](https://github.com/vergil-project/.github/issues/1467)):
+every tool and skill acts only on GitHub content that a trusted identity
+wrote, judged by the trust layer, and reports the rest as metadata only.
+Skills read issue and PR content through
+[`vrg-issue-read`](../reference/cli-tools-overview.md#vrg-issue-read), and
+`vrg-epic-audit --untrusted` lists the untrusted activity in an org's
+repos for the morning review. With no configuration, every reader fails
+rather than guess.
 
 ## Verification checklist
 

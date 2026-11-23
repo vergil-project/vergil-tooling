@@ -409,8 +409,11 @@ supported versions of each language live in one place: the version manifest in
 [vergil-containers](https://github.com/vergil-project/vergil-containers), which
 publishes them as `docker/versions/window.json` at every Vergil ref (the
 *version window*). The lifecycle job in vergil-containers adds versions to the
-window and drops them from it as they enter and leave support; consuming repos
-do not edit anything when the window moves.
+window and drops them from it as they enter and leave support (it is turned off
+until [vergil-project/.github#1128](https://github.com/vergil-project/.github/issues/1128)
+restores it; see
+[The lifecycle job](../standards/development/runtime-version-support-policy.md#the-lifecycle-job));
+consuming repos do not edit anything when the window moves.
 
 One resolver (`src/vergil_tooling/lib/versions/resolve.py`) turns a repo's
 `vergil.toml` and the window into the versions it builds. It reads the window at

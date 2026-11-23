@@ -128,8 +128,12 @@ the `[package.python]` keys.
 
 The lifecycle job in vergil-containers adds and drops Python versions. When a
 new minor is GA it opens the pull request that adds it to the manifest; when a
-minor reaches end of life it opens the one that drops it. Once the change is
-in the published window:
+minor reaches end of life it opens the one that drops it (the job is turned
+off until
+[vergil-project/.github#1128](https://github.com/vergil-project/.github/issues/1128)
+restores it; see
+[The lifecycle job](../runtime-version-support-policy.md#the-lifecycle-job)).
+Once the change is in the published window:
 
 - an unpinned library gains or loses a CI leg on its next build;
 - an unpinned app moves to the newest version on its next build (a packaged

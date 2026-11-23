@@ -400,7 +400,7 @@ has), `author` is `null` for a deleted account,
 | Args | `--repo <owner>/<repo>`, `--pr N`, `--json` |
 | Preconditions | GitHub App credentials for the `--repo` owner; the trusted-authors configuration |
 | Failure mode | A GitHub API failure, a response that is not a list of well-formed comments, or a trust-layer read that cannot complete prints `ERROR:` on stderr and exits 1; it never prints a partial or empty list in its place |
-| Exit codes | 0 success, 1 GitHub API failure or malformed response, 2 bad arguments |
+| Exit codes | 0 success, 1 GitHub API failure, malformed response or trust-layer read failure, 2 bad arguments |
 | Status | Active |
 
 ### vrg-await
@@ -626,8 +626,9 @@ subject (the merge-commit `Merge pull request #N from …` pattern, then the
 squash-merge `… (#N)` pattern), then from the GitHub API's
 commit-to-pulls lookup, which takes only the commit's merged PR: with
 none merged it is an error naming the PRs found, never the first of them.
-`--pr` skips the lookup. Used by the `version-bump-pr` composite action in
-vergil-actions.
+`--pr` skips the lookup. No workflow calls it: vergil-actions' former
+caller, the `version-bump-pr` composite action, has been removed, so it is
+a manual tool.
 
 | Attribute | Value |
 |---|---|
@@ -2119,6 +2120,19 @@ JSON on stdin and prints a deny decision when a command invokes `git` or
 the quoted argument of `bash -c` / `sh -c` is checked too. It is a no-op
 outside a repo with a `vergil.toml`.
 
+In an agent identity it also refuses the raw `vrg-gh` reads of issue and
+PR content and names [`vrg-issue-read`](#vrg-issue-read), the trusted read
+command, in their place: `--comments` on an `issue` or `pr` command, a
+`--json` that selects `body`, `comments`, `reviews`, `latestReviews` or
+`closingIssuesReferences`, an `issue view` or `pr view` with no `--json`,
+an `api` path with a `comments` or `reviews` segment, and an issue or PR
+list or search whose query matches text. A list or search made only of
+qualifiers that requests no content field, and other metadata reads such
+as `issue view --json labels,parent,state`, stay allowed. This blocklist
+guards against accidents; it is not a security boundary. Human mode is
+unchanged. See
+[Raw content reads](hooks/pre-commit.md#raw-content-reads).
+
 Two layers call it: each repo's `.claude/settings.json` wires
 `.claude/hooks/guard.sh`, a shim that runs `vrg-hook-guard` when
 vergil-tooling is installed and otherwise falls back to a `jq`-based hard
@@ -2134,7 +2148,7 @@ parse or check is refused (see
 | Source | `vergil_tooling.bin.vrg_hook_guard` |
 | Args | None (hook JSON on stdin) |
 | Preconditions | Run by Claude Code as a `PreToolUse` hook |
-| Failure mode | A deny decision as JSON on stdout for raw `git`/`gh`; in a managed repository, malformed input is refused with a message on stderr; anything else allows the command |
+| Failure mode | A deny decision as JSON on stdout for raw `git`/`gh`, and, in an agent identity, for a raw `vrg-gh` content read; in a managed repository, malformed input is refused with a message on stderr; anything else allows the command |
 | Exit codes | 0 allow or deny decision, 2 malformed input refused (fails closed) |
 | Status | Active |
 

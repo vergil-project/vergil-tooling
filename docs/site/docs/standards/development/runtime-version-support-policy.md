@@ -53,6 +53,13 @@ policy and computes the target window. For a language whose automation is
 `pr` it opens the pull request that changes the manifest; for one whose
 automation is `report` it reports the gap in an issue until a human acts.
 
+!!! note "The lifecycle job is turned off"
+    The job is disabled in vergil-containers' nightly `ops.yml` until
+    [vergil-project/.github#1128](https://github.com/vergil-project/.github/issues/1128)
+    restores it. Until then nothing opens the add or drop PRs or the gap
+    issues, so the window does not move by itself, and an empty queue of
+    lifecycle PRs and issues no longer means the window is in sync.
+
 Repos do not edit anything when the window moves, and there are no per-repo
 tiers, preview periods or job labels to maintain.
 
