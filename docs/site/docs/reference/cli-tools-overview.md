@@ -2755,7 +2755,7 @@ included, so it flags lines the gate passes.
 | Args | `--check {common,lint,typecheck,build,test,audit,semgrep,trivy,docs,custom}`, `--all-versions` (Python only; alone or with `--check test`), `--markdown [--fix] FILE...` (alone) |
 | Preconditions | Inside a dev container (run it as `vrg-container-run -- vrg-validate`) |
 | Failure mode | Runs every stage after install and reports all failures in one run; install fails fast |
-| Exit codes | 0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example `--check custom --all-versions`) |
+| Exit codes | 0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example `--check custom --all-versions`); with `--markdown`, 1 for a FILE that does not exist or an invalid config, 0 when every FILE is skipped, otherwise markdownlint's own exit code |
 | Status | Active |
 
 ### validate_common (internal)

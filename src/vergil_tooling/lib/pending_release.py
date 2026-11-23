@@ -169,8 +169,8 @@ class PendingChange:
     :attr:`ChangeKind.UNTRUSTED`."""
     kind: ChangeKind
     type_label: str
-    """``deps``, ``release``, ``automation``, the conventional type,
-    ``untrusted``, or ``-``."""
+    """``lifecycle``, ``deps``, ``release``, ``automation``, the conventional
+    type, ``untrusted``, or ``-``."""
     merged_ts: float
     """Epoch seconds: the PR's merge time, or the commit date for NO_PR."""
     shas: tuple[str, ...]

@@ -930,9 +930,11 @@ def bump(repo_root: Path, part: str = "patch") -> str:
     cfg = read_config(repo_root)
     language = cfg.project.primary_language
 
-    # Every Rust check runs before any file is written, VERSION included, so a
-    # manifest with no version table, or a bump that would break a member's
-    # versioned path dependency, fails with nothing changed.
+    # The Rust manifest checks run before any file is written, VERSION
+    # included, so a manifest with no version table, or a bump that would
+    # break a member's versioned path dependency, fails with nothing changed.
+    # The Cargo.lock check runs later, inside _write_bump, after the version
+    # files are written; the rollback below puts them back if it fails.
     if language == "rust":
         cargo_toml = _discover_version_file(repo_root, language)
         if cargo_toml is not None and cargo_toml.is_file():
