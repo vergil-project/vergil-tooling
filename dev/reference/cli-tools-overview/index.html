@@ -20453,6 +20453,16 @@ denied for the user identity. Its own <code>run job-log --repo &lt;owner&gt;/&lt
 for every identity, with terminal control sequences stripped (see
 <a href="../../guides/permission-model/#run-job-log"><code>run job-log</code></a>). <code>vrg-gh --help</code>
 lists the allowlist.</p>
+<p><code>vrg-gh</code> needs gh 2.97.0 or newer, the release that added <code>gh api
+--allow-escape-sequences</code>, which <code>run job-log</code> uses
+(<a href="https://github.com/cli/cli/releases/tag/v2.97.0">gh v2.97.0</a>). Before
+running gh it checks the version and refuses an older or unreadable one,
+naming the version required, rather than letting gh fail with its own
+unknown-flag error. The version is read with <code>gh --version</code> once per gh
+binary and cached in <code>$XDG_CACHE_HOME/vergil/gh-version.json</code> (default
+<code>~/.cache</code>), keyed on the binary's path, size and modification time, so an
+upgrade of gh is seen at once. <code>vrg-host status</code> reports a gh below the
+minimum as an ERROR (see <a href="../dev/host/#minimum-versions">Minimum versions</a>).</p>
 <table>
 <thead>
 <tr>
@@ -20471,11 +20481,11 @@ lists the allowlist.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td><code>gh</code> on PATH; identity resolved via <code>vrg-whoami</code></td>
+<td><code>gh</code> 2.97.0 or newer on PATH; identity resolved via <code>vrg-whoami</code></td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A refused command prints the reason on stderr</td>
+<td>A refused command, or a gh that is missing, too old or of unreadable version, prints the reason on stderr</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -22826,7 +22836,8 @@ value.</p>
 <p>A check takes <code>--fix-base</code> (the <code>HEAD</code> the previous step judged, refused
 unless it is the <code>head_sha</code> of that step's stored request), one
 <code>--earlier-result</code> per earlier step in step order, each checked against
-that step's stored request, <code>--fix-id</code> for each earlier ID asked to change
+that step's stored request and its capture record (so a result edited
+after its own step's check is refused), <code>--fix-id</code> for each earlier ID asked to change
 (it becomes <code>earlier_finding_ids</code>) and <code>--ruled-id</code> for each earlier defect
 the human excused (not sent to the reviewer). It refuses an ID no earlier
 result raised, an ID given to both, a check with no <code>--fix-id</code>, and an
