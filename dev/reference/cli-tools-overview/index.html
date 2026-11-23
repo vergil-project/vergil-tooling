@@ -22007,7 +22007,7 @@ the original closed with <code>Moved to:</code>), <code>sync</code> sets each pa
 reports broken pairs (<code>--dry-run</code> previews it), and <code>close</code> closes a draft
 advisory whose issues are all closed, posting the GHSA ID and a required
 <code>--reason</code> on each of them first, and <code>note</code> appends a dated private note
-from a file to an advisory's description (append-only). Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
+from a file to an advisory's description (append-only). Advisory text is printed only by <code>show</code> and <code>list --details</code>. An issue's <code>Security advisory:</code> lines are read only from a body the trust layer trusts: an untrusted body stops a mark, retarget or close before any write, and <code>sync</code> reports it, metadata only, leaves the advisories tracking it unchanged and exits 1. See
 <a href="../dev/security-record/">vrg-security-record</a> and
 <a href="../../guides/security-records/">Security Records</a>.</p>
 <table>
@@ -22769,6 +22769,12 @@ a stop on untrusted content is counted, and only read failures are named),
 and the run exits 1. An org with no <code>[orgs.&lt;org&gt;]</code> stanza in the
 configuration is not a Vergil org: the audit says so on stderr and exits 0
 without sweeping it.</p>
+<p>The security-records preview is the exception to the carry-on rule for
+skipped content: a <code>security</code> issue whose body is untrusted is reported on
+stderr (metadata only) and on the preview's <code>- untrusted:</code> line, each
+advisory tracking it is left unchanged, and the report exits 1 after the
+rest of it has run (vergil-tooling#4990). <code>--close</code> never runs the
+preview.</p>
 <p>A <strong>Proxy link drift</strong> section lists each open proxy epic in the home whose
 <code>Primary:</code> line is broken or whose primary carries no matching trusted
 <code>Proxy:</code> comment. It is report-only, and runs with <code>--close</code> too, in the
@@ -22888,7 +22894,7 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, or error, 2 bad arguments</td>
+<td>0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, an untrusted <code>security</code> issue body found by the security-records preview, or error, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>

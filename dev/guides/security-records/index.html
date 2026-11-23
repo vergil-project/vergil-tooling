@@ -18803,6 +18803,12 @@ two lines a move to another org writes, <code>Moved from: &lt;GHSA-id&gt;</code>
 copy and <code>Moved to: &lt;org&gt;/.github &lt;GHSA-id&gt;</code> on the original (see
 <a href="#moving-a-record-to-another-org">Moving a record to another org</a>):
 <code>create</code> and <code>note</code> refuse text holding either line.</p>
+<p>An issue's <code>Security advisory:</code> lines count only in a body the trust
+layer trusts: its author and every editor are trusted authors. A body
+anyone else wrote or edited is never acted on. <code>create --issue</code>,
+<code>retarget</code> and <code>close</code> stop before any write when a body they rely on is
+untrusted, and <code>sync</code> reports it, metadata only, leaves each advisory
+tracking it unchanged, and exits 1 for the human to decide.</p>
 <h3 id="the-labels">The labels<a class="headerlink" href="#the-labels" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
