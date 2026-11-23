@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin.vrg_activity_log import main
-from vergil_tooling.lib import activity_log, github
+from vergil_tooling.lib import activity_log, github, trust
 from vergil_tooling.lib.activity_log import ActivityItem
 
 _MOD = "vergil_tooling.bin.vrg_activity_log"
@@ -63,6 +63,22 @@ def test_main_reports_missing_installation() -> None:
     ):
         rc = main(["--org", "other-org"])
     assert rc == 1
+
+
+def test_main_trust_read_failure_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    error = trust.TrustReadError("search_window issue closed", "the search failed")
+    with patch(f"{_MOD}.activity_log.gather", side_effect=error):
+        rc = main(["--org", "vergil-project", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.err == (
+        "vrg-activity-log: cannot read who wrote the content"
+        " (search_window issue closed): the search failed\n"
+    )
+    # nothing is written: a partial ledger is never published
+    assert list(tmp_path.iterdir()) == []
 
 
 _ITEM = ActivityItem("vergil-project/vergil-tooling", 7, "seven", "u7", "2026-06-29")

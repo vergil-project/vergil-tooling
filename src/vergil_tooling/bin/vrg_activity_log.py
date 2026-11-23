@@ -16,7 +16,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from vergil_tooling.lib import activity_log, github
+from vergil_tooling.lib import activity_log, github, trust
 from vergil_tooling.lib.cli import cli_main
 
 _WINDOW_DAYS = 30
@@ -52,6 +52,10 @@ def main(argv: list[str] | None = None) -> int:
             items = activity_log.gather(since, org=org, repo=args.repo)
     except github.NoInstallationError as exc:
         print(f"vrg-activity-log: {github.no_installation_message(exc)}", file=sys.stderr)
+        return 1
+    except trust.TrustReadError as exc:
+        # Metadata only: the layer's errors never carry the content they read.
+        print(f"vrg-activity-log: {exc}", file=sys.stderr)
         return 1
     if args.out_dir is not None:
         pages = activity_log.render_pages(items)

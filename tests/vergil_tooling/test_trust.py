@@ -1644,6 +1644,246 @@ def test_search_items_loads_configured_authors(
     assert [h.number for h in hits] == [1]
 
 
+# --- judge_close and search_window ---------------------------------------------------
+
+CLOSED = "2026-11-03T12:00:00Z"
+_CLOSE_SEARCH = trust._CLOSE_SEARCH_QUERIES["issue"]
+
+
+def _closed_hit(number: int, author: Any = HUMAN, closer: Any = HUMAN, **kwargs: Any) -> Any:
+    """A closed search result carrying its latest close (``judge_close``)."""
+    node = _hit(number, author, state="CLOSED", **kwargs)
+    node["closes"] = {
+        "nodes": [{"__typename": "ClosedEvent", "actor": closer, "createdAt": CLOSED}]
+    }
+    return node
+
+
+def test_close_search_reads_the_latest_close_only() -> None:
+    assert "closes: timelineItems(last: 1, itemTypes: [CLOSED_EVENT])" in _CLOSE_SEARCH
+    assert "... on ClosedEvent { actor { __typename login } createdAt }" in _CLOSE_SEARCH
+    assert "closes:" not in trust._SEARCH_QUERIES["issue"]
+    assert all("closes:" not in query for query in trust._LIST_QUERIES.values())
+
+
+def test_search_items_judge_close_keeps_trusted_close(answer: Any) -> None:
+    fake = answer({_CLOSE_SEARCH: [_search([_closed_hit(1), _closed_hit(2, closer=AGENT)])]})
+    hits, skipped = _search_issues(judge_close=True)
+    assert skipped == []
+    assert [(h.number, h.close_role, h.closed_at) for h in hits] == [
+        (1, Role.HUMAN, CLOSED),
+        (2, Role.AGENTS, CLOSED),
+    ]
+    assert [query for query, _ in fake.calls] == [_CLOSE_SEARCH]
+
+
+def test_search_items_without_judge_close_has_no_close(answer: Any) -> None:
+    answer({trust._SEARCH_QUERIES["issue"]: [_search([_hit(1)])]})
+    hits, _ = _search_issues()
+    assert (hits[0].close_role, hits[0].closed_at) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("closer", "login", "cause"),
+    [
+        (OUTSIDER, "drive-by", trust.UNTRUSTED),
+        (None, None, trust.DELETED),
+        ({"__typename": "User", "login": "the-agent"}, "the-agent", trust.WRONG_TYPE),
+    ],
+)
+def test_search_items_judge_close_skips_untrusted_close(
+    answer: Any, closer: Any, login: str | None, cause: str
+) -> None:
+    answer({_CLOSE_SEARCH: [_search([_closed_hit(1), _closed_hit(2, closer=closer)])]})
+    hits, skipped = _search_issues(judge_close=True)
+    assert [h.number for h in hits] == [1]
+    assert skipped == [Skipped(REPO, 2, "event", login, CLOSED, "close", cause)]
+
+
+def test_search_items_judge_close_outsider_opened_is_skipped(answer: Any) -> None:
+    answer({_CLOSE_SEARCH: [_search([_closed_hit(3, OUTSIDER)])]})
+    hits, skipped = _search_issues(judge_close=True)
+    assert hits == []
+    assert skipped == [Skipped(REPO, 3, "issue", "drive-by", CREATED, "body", trust.UNTRUSTED)]
+
+
+def test_search_items_judge_close_roles_parameter_applies(answer: Any) -> None:
+    answer({_CLOSE_SEARCH: [_search([_closed_hit(1, closer=AGENT)])]})
+    hits, skipped = _search_issues(judge_close=True, roles=frozenset({Role.HUMAN}))
+    assert hits == []
+    assert [(s.field, s.cause) for s in skipped] == [("close", trust.NOT_ACCEPTED)]
+
+
+@pytest.mark.parametrize(
+    ("closes", "match"),
+    [
+        ({"nodes": []}, "acme/widgets#1 has no close event"),
+        (None, "the closes of acme/widgets#1 is missing"),
+        ({}, "the closes of acme/widgets#1 has no nodes"),
+        (
+            {"nodes": [{"__typename": "ClosedEvent", "actor": HUMAN, "createdAt": CLOSED}] * 2},
+            "not the latest close alone",
+        ),
+        ({"nodes": [{"__typename": "ReopenedEvent"}]}, "not asked for"),
+        ({"nodes": [{"__typename": "ClosedEvent", "actor": HUMAN}]}, "has no createdAt"),
+    ],
+)
+def test_search_items_judge_close_malformed_close_raises(
+    answer: Any, closes: Any, match: str
+) -> None:
+    node = _closed_hit(1)
+    node["closes"] = closes
+    answer({_CLOSE_SEARCH: [_search([node])]})
+    with pytest.raises(TrustReadError, match=match):
+        _search_issues(judge_close=True)
+
+
+def test_search_items_judge_close_missing_closes_raises(answer: Any) -> None:
+    answer({_CLOSE_SEARCH: [_search([_hit(1, state="CLOSED")])]})
+    with pytest.raises(TrustReadError, match="has no closes"):
+        _search_issues(judge_close=True)
+
+
+def test_search_items_count_growing_over_the_cap_raises(answer: Any) -> None:
+    answer(
+        {
+            trust._SEARCH_QUERIES["issue"]: [
+                _search([_hit(1)], "S1", count=1000),
+                _search([_hit(2)], count=1001),
+            ]
+        }
+    )
+    with pytest.raises(TrustReadError, match="grew to 1001 items while it was read"):
+        _search_issues()
+
+
+def _window(**kwargs: Any) -> tuple[list[trust.TrustedHit], list[Skipped]]:
+    return trust.search_window(
+        f"org:{ORG} is:closed",
+        kind="issue",
+        field="closed",
+        authors=AUTHORS,
+        judge_close=True,
+        **kwargs,
+    )
+
+
+def test_search_window_one_search_when_under_the_cap(answer: Any) -> None:
+    fake = answer({_CLOSE_SEARCH: [_search([_closed_hit(1), _closed_hit(2, closer=OUTSIDER)])]})
+    hits, skipped = _window(since="2026-10-23")
+    assert [h.number for h in hits] == [1]
+    assert [(s.number, s.field) for s in skipped] == [(2, "close")]
+    assert [v["q"] for _, v in fake.calls] == [f"org:{ORG} is:closed is:issue closed:>=2026-10-23"]
+
+
+def test_search_window_with_until_is_a_closed_range(answer: Any) -> None:
+    fake = answer({_CLOSE_SEARCH: [_search([])], trust._SEARCH_QUERIES["issue"]: [_search([])]})
+    _window(since="2026-10-23", until="2026-11-21")
+    trust.search_window(
+        "x", kind="issue", field="updated", since="2026-11-21", until="2026-11-21", authors=AUTHORS
+    )
+    assert [v["q"] for _, v in fake.calls] == [
+        f"org:{ORG} is:closed is:issue closed:2026-10-23..2026-11-21",
+        "x is:issue updated:2026-11-21",
+    ]
+
+
+def test_search_window_halves_a_part_over_the_cap(answer: Any) -> None:
+    fake = answer(
+        {
+            _CLOSE_SEARCH: [
+                _search([], "S0", count=1500),  # the whole window: over the cap
+                _search([], "S1", count=1200),  # its first half: over again
+                _search([_closed_hit(1)]),  # 2026-11-01..2026-11-02
+                _search([_closed_hit(2)]),  # 2026-11-03..2026-11-04
+                _search([_closed_hit(3)], "P1", count=2),  # 2026-11-05..2026-11-08, page 1
+                _search([_closed_hit(4)], count=2),  # page 2
+            ]
+        }
+    )
+    hits, skipped = _window(since="2026-11-01", until="2026-11-08")
+    assert skipped == []
+    assert [h.number for h in hits] == [1, 2, 3, 4]
+    assert [v["q"].rsplit(" ", 1)[-1] for _, v in fake.calls] == [
+        "closed:2026-11-01..2026-11-08",
+        "closed:2026-11-01..2026-11-04",
+        "closed:2026-11-01..2026-11-02",
+        "closed:2026-11-03..2026-11-04",
+        "closed:2026-11-05..2026-11-08",
+        "closed:2026-11-05..2026-11-08",
+    ]
+    assert fake.calls[5][1]["after"] == "P1"
+    # An over-cap part costs its first page only: nothing past it is read.
+    assert "after" not in fake.calls[0][1]
+    assert "after" not in fake.calls[1][1]
+
+
+def test_search_window_open_ended_halves_up_to_today(answer: Any) -> None:
+    today = trust.datetime.now(trust.UTC).date()
+    since = today - trust.timedelta(days=3)
+    fake = answer({_CLOSE_SEARCH: [_search([], "S0", count=1001), _search([]), _search([])]})
+    _window(since=since.isoformat())
+    mid = since + trust.timedelta(days=1)
+    assert [v["q"].rsplit(" ", 1)[-1] for _, v in fake.calls] == [
+        f"closed:>={since.isoformat()}",
+        f"closed:{since.isoformat()}..{mid.isoformat()}",
+        f"closed:>={(mid + trust.timedelta(days=1)).isoformat()}",
+    ]
+
+
+def test_search_window_one_day_over_the_cap_raises(answer: Any) -> None:
+    answer({_CLOSE_SEARCH: [_search([], "S0", count=1001)]})
+    with pytest.raises(TrustReadError, match=r"closed:2026-11-05 matches 1001 items, more than"):
+        _window(since="2026-11-05", until="2026-11-05")
+
+
+def test_search_window_lists_each_item_once(answer: Any) -> None:
+    # An item closed again between two parts' reads can match both.
+    answer(
+        {
+            _CLOSE_SEARCH: [
+                _search([], "S0", count=1001),
+                _search([_closed_hit(1)]),
+                _search([_closed_hit(1), _closed_hit(2)]),
+            ]
+        }
+    )
+    hits, _ = _window(since="2026-11-01", until="2026-11-02")
+    assert [h.number for h in hits] == [1, 2]
+
+
+def test_search_window_until_before_since_is_refused() -> None:
+    with pytest.raises(ValueError, match="before since"):
+        _window(since="2026-11-02", until="2026-11-01")
+
+
+def test_search_window_calls_are_bounded_by_result_pages(answer: Any) -> None:
+    # 250 results in one part: three pages, three calls, however many results.
+    nodes = [_closed_hit(n) for n in range(1, 251)]
+    pages = [nodes[:100], nodes[100:200], nodes[200:]]
+    fake = answer(
+        {
+            _CLOSE_SEARCH: [
+                _search(pages[0], "P1", count=250),
+                _search(pages[1], "P2", count=250),
+                _search(pages[2], count=250),
+            ]
+        }
+    )
+    hits, skipped = _window(since="2026-11-01", until="2026-11-21")
+    assert len(hits) == 250 and skipped == []
+    assert len(fake.calls) == 3
+
+
+def test_search_window_loads_configured_authors(
+    answer: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answer({trust._SEARCH_QUERIES["issue"]: [_search([_hit(1)])]})
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    hits, _ = trust.search_window("x", kind="issue", field="created", since="2026-11-01")
+    assert [h.number for h in hits] == [1]
+
+
 def test_list_items_reads_the_repository(answer: Any) -> None:
     query = trust._LIST_QUERIES["pr", "open"]
     pr = _hit(3, AGENT, typename="PullRequest", title="Logbook: 2026-11-22")
