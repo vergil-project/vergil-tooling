@@ -2776,7 +2776,9 @@ dependabot-limit guard (when `.github/dependabot.yml` exists, every
 can never open a PR), hadolint
 on `Dockerfile*`, actionlint on `.github/workflows/`, the runner-labels
 guard (no workflow value may be `ubuntu-latest`; pin runners to
-`ubuntu-24.04`), and ansible-lint (using the bundled canonical config) when the repo
+`ubuntu-24.04`), the secrets-inherit guard (`secrets: inherit` only to the
+vergil-actions workflows that read the `automation` environment), and
+ansible-lint (using the bundled canonical config) when the repo
 carries Ansible content.
 
 | Attribute | Value |

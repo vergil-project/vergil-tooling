@@ -29,10 +29,7 @@ from vergil_tooling.lib.repo_init import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_INHERIT_LINE = (
-    "    secrets: inherit"
-    "  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit\n"
-)
+_INHERIT_LINE = "    secrets: inherit\n"
 
 
 @pytest.fixture(autouse=True)
@@ -140,44 +137,25 @@ class TestPackagedCdWorkflow:
         assert "CARGO_REGISTRY_TOKEN" not in content
         jobs = yaml.safe_load(content)["jobs"]
         assert jobs["release"]["secrets"] == "inherit"
-        # The only explicit map is the docs job's App secrets (issue #4965).
-        assert content.count("    secrets:\n") == 1
-        assert jobs["docs"]["secrets"] == {
-            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
-            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
-        }
+        # The docs job inherits the App keys too (epic .github#1384).
+        assert jobs["docs"]["secrets"] == "inherit"
+        assert "    secrets:\n" not in content
 
-    def test_no_package_keeps_least_privilege_map(self) -> None:
+    def test_no_package_inherits_the_same(self) -> None:
+        # Without [package] the release inherits too: the App keys live in the
+        # automation environment (epic .github#1384).
         ctx = _packaged_python_ctx()
         ctx.package = False
-        ctx.primary_language = "rust"
-        ctx.ci_versions = ["stable"]
-        content = render_cd_workflow(ctx)
-        assert "secrets: inherit" not in content
-        assert "      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}\n" in content
-
-    def test_no_package_python_forwards_only_app_secrets(self) -> None:
-        ctx = _packaged_python_ctx()
-        ctx.package = False
-        content = render_cd_workflow(ctx)
-        assert "secrets: inherit" not in content
-        assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == {
-            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
-            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
-        }
+        assert render_cd_workflow(ctx) == render_cd_workflow(_packaged_python_ctx())
 
     def test_package_without_release_emits_no_release_job(self) -> None:
         ctx = _packaged_python_ctx()
         ctx.publish_release = False
         content = render_cd_workflow(ctx)
         assert "cd-release" not in content
-        assert "secrets: inherit" not in content
         jobs = yaml.safe_load(content)["jobs"]
         assert set(jobs) == {"docs"}
-        assert jobs["docs"]["secrets"] == {
-            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
-            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
-        }
+        assert jobs["docs"]["secrets"] == "inherit"
 
     def test_matches_hand_written_cd(self) -> None:
         generated = yaml.safe_load(render_cd_workflow(_packaged_python_ctx()))

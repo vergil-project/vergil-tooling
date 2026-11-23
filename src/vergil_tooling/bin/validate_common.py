@@ -19,7 +19,9 @@ Runs inside the dev container via ``vrg-container-run``:
   8. actionlint on ``.github/workflows/``
   9. runner-labels: no workflow value may be ``ubuntu-latest``; runners are
      pinned to ``ubuntu-24.04`` (epic .github#649)
-  10. ansible-lint when the repo carries Ansible content, using the
+  10. secrets-inherit: a job passes ``secrets: inherit`` only to an
+     allow-listed vergil-actions workflow (epic .github#1384)
+  11. ansible-lint when the repo carries Ansible content, using the
      bundled canonical config as the rule baseline while honoring the
      repo's local ``skip_list`` / ``exclude_paths`` (issues #1667, #1952)
 
@@ -38,7 +40,7 @@ from typing import TYPE_CHECKING
 import yaml
 
 from vergil_tooling.bin import repo_profile
-from vergil_tooling.lib import dependabot, doc_links, git, github
+from vergil_tooling.lib import dependabot, doc_links, git, github, secrets_inherit
 from vergil_tooling.lib.config import ConfigError, read_config
 
 if TYPE_CHECKING:
@@ -122,6 +124,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
             return result.returncode
 
     rc = _check_runner_labels(repo_root)
+    if rc != 0:
+        return rc
+
+    rc = _check_secrets_inherit(repo_root)
     if rc != 0:
         return rc
 
@@ -288,6 +294,42 @@ def _check_runner_labels(repo_root: Path) -> int:
             print(
                 f"{rel}:{line}: {_FLOATING_RUNNER_LABEL} is not allowed; "
                 f"use {_PINNED_RUNNER_LABEL}",
+                file=sys.stderr,
+            )
+            failed = True
+    return 1 if failed else 0
+
+
+def _check_secrets_inherit(repo_root: Path) -> int:
+    """Refuse ``secrets: inherit`` outside the allow-list (epic .github#1384).
+
+    A job may pass ``secrets: inherit`` only to a vergil-actions workflow in
+    :data:`~vergil_tooling.lib.secrets_inherit.INHERIT_ALLOWED`, the ones
+    that read the automation environment's secrets; every other caller
+    passes an explicit secrets map. Each refused ``inherit`` is named by path
+    and line with its job and ``uses:``. A workflow that is not YAML fails
+    the check rather than passing unread. No workflows returns 0.
+    """
+    workflow_files = _find_workflow_files(repo_root)
+    if not workflow_files:
+        return 0
+    print(f"Running: secrets-inherit ({len(workflow_files)} files in .github/workflows/)")
+    failed = False
+    for workflow in workflow_files:
+        path = Path(workflow)
+        rel = path.relative_to(repo_root).as_posix()
+        try:
+            violations = secrets_inherit.inherit_violations(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            print(f"{rel}: unparseable: {exc}", file=sys.stderr)
+            failed = True
+            continue
+        for violation in violations:
+            target = violation.uses if violation.uses is not None else "no reusable workflow"
+            print(
+                f"{rel}:{violation.line}: job {violation.job} passes secrets: inherit to "
+                f"{target}; inherit is allowed only for the vergil-actions workflows "
+                f"{', '.join(secrets_inherit.INHERIT_ALLOWED)}. Pass an explicit secrets map",
                 file=sys.stderr,
             )
             failed = True

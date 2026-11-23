@@ -422,8 +422,9 @@ package-index dispatch) will fail.
 
 ### CI publishing secrets
 
-The release workflow forwards per-ecosystem secrets to `cd-release`
-(see [CI Architecture](ci-architecture.md#cd-release-publishing-secrets)):
+The release workflow passes the publishing secrets to `cd-release`
+through `secrets: inherit`
+(see [CI Architecture](ci-architecture.md#cd-and-ops-reusable-workflow-secrets)):
 
 | Secret | Blast radius |
 |---|---|

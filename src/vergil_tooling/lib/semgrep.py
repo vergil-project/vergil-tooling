@@ -35,10 +35,18 @@ _LANGUAGE_RULESETS: dict[str, str] = {
 # github-actions-mutable-action-tag flags every `uses: …@vN` action ref. It is
 # exempted fleet-wide pending vergil-project/.github#194 (pin third-party action
 # SHAs once pin-advancement tooling exists); our own vergil-actions@v2.1 refs are
-# a permanent exception (our release line). All other rules stay enforced.
+# a permanent exception (our release line).
+#
+# secrets-inherit flags every `secrets: inherit`. vrg-validate's common
+# `secrets-inherit` check replaces it (epic vergil-project/.github#1384): it
+# allows `inherit` for the vergil-actions workflows that read the automation
+# environment's secrets and refuses it everywhere else
+# (vergil_tooling.lib.secrets_inherit), so the rule has one definition and the
+# allowed callers need no `nosemgrep`. All other rules stay enforced.
 DEFAULT_EXCLUDED_RULES: tuple[str, ...] = (
     "yaml.github-actions.security.github-actions-mutable-action-tag"
     ".github-actions-mutable-action-tag",
+    "yaml.github-actions.security.secrets-inherit.secrets-inherit",
 )
 
 

@@ -446,8 +446,10 @@ fatal before tagging. The caller has two requirements:
 - **`secrets: inherit`** on the `cd-release` caller. Environment secrets reach
   a job in a cross-repo reusable workflow only with `inherit`; an explicit
   secrets map leaves `package-sign` with an empty key (proven by
-  vergil-project/packages#6). Semgrep flags `secrets: inherit`, so suppress it
-  inline with a justification:
+  vergil-project/packages#6). `vrg-github-repo-init` generates it for every
+  repo, since the App keys reach `cd-release` the same way, and
+  `vrg-validate`'s `secrets-inherit` check allows it for `cd-release.yml`
+  (see [CD and ops: reusable-workflow secrets](../guides/ci-architecture.md#cd-and-ops-reusable-workflow-secrets)):
 
 ```yaml
   release:
@@ -457,7 +459,7 @@ fatal before tagging. The caller has two requirements:
       language: python
     # `inherit` is required: environment secrets reach a job in a cross-repo
     # reusable workflow only with `secrets: inherit`. The callee is first-party.
-    secrets: inherit  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
+    secrets: inherit
 ```
 
 After the release is tagged, `cd-release` dispatches to the org's `packages`
