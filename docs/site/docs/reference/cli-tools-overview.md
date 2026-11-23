@@ -1286,12 +1286,19 @@ days. `--repo` narrows it to one repo; `--out-dir` instead writes the
 multi-page form for a docs site (`index.md`, `days/<date>.md`,
 `repos/<name>.md`). The docs-refresh workflow publishes it.
 
+It reads the issues through the trust layer's batched search, which judges
+each issue's author, editors, renames and latest close in the same paged
+calls. An issue opened or last closed by an identity outside the trusted
+roles is left out and reported on stderr, metadata only (counts by cause
+under GitHub Actions). A window with more closures than GitHub's search
+returns is split by date and read in full.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_activity_log` |
 | Args | `--org ORG`, then `--repo REPO` or `--out-dir DIR` |
 | Preconditions | GitHub App credentials for the target org |
-| Failure mode | Exits 1 when no App installation covers the org |
+| Failure mode | Exits 1 when no App installation covers the org, or on a trust-layer read failure (including a single day with more closures than the search returns); nothing is written |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 

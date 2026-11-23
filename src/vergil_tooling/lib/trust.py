@@ -27,7 +27,9 @@ or reopen is trusted when its actor is (:func:`read_events`,
 :func:`close_judgement`, :func:`require_trusted_close`). A PR found by its
 branch is same-repo and has a trusted author (:func:`prs_for_branch`); a fork
 PR never matches. A search or list result is trusted when its body is, and
-everyone who renamed it holds a role (:func:`search_items`, :func:`list_items`).
+everyone who renamed it holds a role (:func:`search_items`, :func:`list_items`);
+a search can judge each result's latest close in the same call, and
+:func:`search_window` splits a date window that would meet GitHub's search cap.
 
 **Failing loudly** (spec §3). An API error, a missing field or a connection
 that is not read in full raises :class:`TrustReadError`, never "trusted",
@@ -46,6 +48,7 @@ from __future__ import annotations
 import os
 from collections import Counter
 from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -1110,28 +1113,45 @@ def _renames_selection(after: str = "") -> str:
     )
 
 
-def _hit_selection(kind: ItemKind) -> str:
-    """What a search or list reads of each result: one GraphQL type per query."""
+# The latest close of a result, under its own alias: ``last: 1`` of its
+# close events, so a search judges every result's close in the same call.
+_CLOSE_SELECTION = (
+    "closes: timelineItems(last: 1, itemTypes: [CLOSED_EVENT])"
+    f" {{ nodes {{ __typename ... on ClosedEvent {{ actor {_ACTOR} createdAt }} }} }}"
+)
+
+
+def _hit_selection(kind: ItemKind, *, close: bool = False) -> str:
+    """What a search or list reads of each result: one GraphQL type per query.
+
+    *close* adds the result's latest close event (:data:`_CLOSE_SELECTION`).
+    """
+    extra = f" {_CLOSE_SELECTION}" if close else ""
     return (
         f"__typename ... on {_TYPENAMES[kind]} {{"
         f" number title url state repository {{ nameWithOwner }}"
         f" labels(first: {_PAGE}) {{ {_PAGE_INFO} nodes {{ name }} }}"
-        f" {_BODY_FIELDS} {_renames_selection()} }}"
+        f" {_BODY_FIELDS} {_renames_selection()}{extra} }}"
     )
 
 
-def _search_query(kind: ItemKind) -> str:
+def _search_query(kind: ItemKind, *, close: bool = False) -> str:
     return f"""
 query($q: String!, $after: String) {{
   search(query: $q, type: ISSUE, first: {_PAGE}, after: $after) {{
     issueCount {_PAGE_INFO}
-    nodes {{ {_hit_selection(kind)} }}
+    nodes {{ {_hit_selection(kind, close=close)} }}
   }}
 }}
 """
 
 
 _SEARCH_QUERIES = {kind: _search_query(kind) for kind in _KINDS}
+# The same searches, each result carrying its latest close (``judge_close``).
+_CLOSE_SEARCH_QUERIES = {kind: _search_query(kind, close=True) for kind in _KINDS}
+
+# The date qualifiers a windowed search splits on (:func:`search_window`).
+WindowField = Literal["created", "updated", "closed"]
 
 _LIST_STATES: dict[tuple[str, str], str] = {
     ("issue", "open"): "states: [OPEN], ",
@@ -1180,7 +1200,9 @@ class TrustedHit:
     *kind* is ``issue`` or ``pr``; *state* is GraphQL's ``OPEN``, ``CLOSED``
     or ``MERGED``. *body_role* is the body's author's role; every editor of
     the body and everyone who renamed the item (by the reader's
-    :data:`EditorRule`) holds a role the reader accepts.
+    :data:`EditorRule`) holds a role the reader accepts. With
+    ``judge_close``, *close_role* is the role of whoever closed the item
+    last and *closed_at* the time of that close; both are ``None`` otherwise.
     """
 
     repo: str
@@ -1192,6 +1214,8 @@ class TrustedHit:
     labels: tuple[str, ...]
     body: str
     body_role: Role
+    close_role: Role | None = None
+    closed_at: str | None = None
 
 
 @dataclass
@@ -1205,6 +1229,8 @@ class _Hit:
     body: _Content
     renames: list[tuple[Identity, str]]
     renames_cursor: str | None
+    # The latest close's actor and time, when the read asked for it.
+    close: tuple[Identity, str] | None = None
 
 
 def _rename(node: object, call: str, what: str) -> tuple[Identity, str]:
@@ -1217,7 +1243,28 @@ def _rename(node: object, call: str, what: str) -> tuple[Identity, str]:
     )
 
 
-def _hit(node: object, call: str, kind: ItemKind) -> _Hit:
+def _latest_close_of(item: Mapping[str, Any], call: str, what: str) -> tuple[Identity, str]:
+    """The actor and time of the latest close a result carries (:data:`_CLOSE_SELECTION`).
+
+    A result with no close event raises :class:`TrustReadError`: whoever
+    closed it cannot be read.
+    """
+    closes = _obj(_get(item, "closes", call, what), call, f"the closes of {what}")
+    nodes = _get(closes, "nodes", call, f"the closes of {what}")
+    if not isinstance(nodes, list) or len(nodes) > 1:
+        raise TrustReadError(call, f"the closes of {what} are not the latest close alone")
+    if not nodes:
+        raise TrustReadError(call, f"{what} has no close event")
+    event = _obj(nodes[0], call, f"the close of {what}")
+    if _get(event, "__typename", call, f"the close of {what}") != "ClosedEvent":
+        raise TrustReadError(call, f"the close of {what} is of a type that was not asked for")
+    return (
+        _actor(event, "actor", call, f"the close of {what}"),
+        _text(event, "createdAt", call, f"the close of {what}"),
+    )
+
+
+def _hit(node: object, call: str, kind: ItemKind, *, close: bool = False) -> _Hit:
     item = _obj(node, call, "a result")
     if _get(item, "__typename", call, "a result") != _TYPENAMES[kind]:
         raise TrustReadError(call, f"a result is not of the kind asked for ({kind})")
@@ -1249,6 +1296,7 @@ def _hit(node: object, call: str, kind: ItemKind) -> _Hit:
         body=_content(item, call, f"the body of {what}"),
         renames=[_rename(rename, call, what) for rename in rename_nodes],
         renames_cursor=renames_cursor,
+        close=_latest_close_of(item, call, what) if close else None,
     )
 
 
@@ -1301,6 +1349,15 @@ def _judge_hit(
             return Skipped(
                 hit.repo, hit.number, "event", _bare(identity), at, "title", judgement.cause
             )
+    close_role: Role | None = None
+    if hit.close is not None:
+        actor, at = hit.close
+        judgement = _accepted(actor, org=org, roles=roles, authors=authors)
+        if judgement.cause is not None:
+            return Skipped(
+                hit.repo, hit.number, "event", _bare(actor), at, "close", judgement.cause
+            )
+        close_role = judgement.role
     return TrustedHit(
         repo=hit.repo,
         number=hit.number,
@@ -1311,6 +1368,8 @@ def _judge_hit(
         labels=hit.labels,
         body=hit.body.body,
         body_role=cast("Role", role),
+        close_role=close_role,
+        closed_at=None if hit.close is None else hit.close[1],
     )
 
 
@@ -1335,10 +1394,46 @@ def _judge_hits(
     return trusted, skipped
 
 
+def _search_hits(
+    full: str, *, kind: ItemKind, call: str, judge_close: bool
+) -> tuple[list[_Hit], int | None]:
+    """Every result of the search *full*, or none and the count when it is over the cap.
+
+    The cap is checked on the first page, so an over-cap search costs one
+    call. A count that rises over the cap on a later page raises
+    :class:`TrustReadError`: the pages already read may not be all of it.
+    """
+    query = (_CLOSE_SEARCH_QUERIES if judge_close else _SEARCH_QUERIES)[kind]
+    hits: list[_Hit] = []
+    cursor: str | None = None
+    while True:
+        variables: dict[str, object] = {"q": full}
+        if cursor is not None:
+            variables["after"] = cursor
+        data = _graphql(call, query, **variables)
+        search = _obj(data.get("search"), call, "the search")
+        count = _get(search, "issueCount", call, "the search")
+        if not isinstance(count, int) or isinstance(count, bool):
+            raise TrustReadError(call, "the search has no usable issueCount")
+        if count > SEARCH_RESULT_CAP:
+            if cursor is None:
+                return [], count
+            raise TrustReadError(
+                call,
+                f"the search grew to {count} items while it was read, more than the"
+                f" {SEARCH_RESULT_CAP} GitHub's search returns",
+            )
+        nodes, cursor = _connection(search, call, "the search results")
+        hits += [_hit(node, call, kind, close=judge_close) for node in nodes]
+        if cursor is None:
+            return hits, None
+
+
 def search_items(
     query: str,
     *,
     kind: ItemKind,
+    judge_close: bool = False,
     roles: frozenset[Role] = ALL_ROLES,
     editors: EditorRule = "every",
     authors: TrustedAuthors | None = None,
@@ -1348,36 +1443,95 @@ def search_items(
     *query* is GitHub search syntax; ``is:issue`` or ``is:pr`` is added by
     *kind*. Every page is read, and every result is judged as a body is
     (spec §5.2: its author and its editors), and its title too: everyone who
-    renamed it must hold a role in *roles*. Each other result is returned as
+    renamed it must hold a role in *roles*. ``judge_close=True``, for a
+    search of closed items, reads each result's latest close in the same
+    call and judges its actor too (an untrusted close is skipped with kind
+    ``event`` and field ``close``); a result with no close event raises
+    :class:`TrustReadError`. Each other result is returned as
     :class:`Skipped` for the caller to report, never dropped. A query that
     matches more than :data:`SEARCH_RESULT_CAP` items raises
     :class:`TrustReadError`: GitHub would return only part of them.
     """
     if authors is None:
         authors = load_trusted_authors()
-    full = f"{query} is:{kind}"
     call = f"search_items {kind}"
+    hits, over = _search_hits(f"{query} is:{kind}", kind=kind, call=call, judge_close=judge_close)
+    if over is not None:
+        raise TrustReadError(
+            call,
+            f"the search matches {over} items, more than the {SEARCH_RESULT_CAP}"
+            " GitHub's search returns; narrow the query",
+        )
+    return _judge_hits(hits, call=call, kind=kind, roles=roles, editors=editors, authors=authors)
+
+
+def _date_range(lo: date, hi: date | None) -> str:
+    """A search date qualifier's value: from *lo*, to *hi* (open-ended when ``None``)."""
+    if hi is None:
+        return f">={lo.isoformat()}"
+    if lo == hi:
+        return lo.isoformat()
+    return f"{lo.isoformat()}..{hi.isoformat()}"
+
+
+def search_window(
+    query: str,
+    *,
+    kind: ItemKind,
+    field: WindowField,
+    since: str,
+    until: str | None = None,
+    judge_close: bool = False,
+    roles: frozenset[Role] = ALL_ROLES,
+    editors: EditorRule = "every",
+    authors: TrustedAuthors | None = None,
+) -> tuple[list[TrustedHit], list[Skipped]]:
+    """:func:`search_items` over a date window, split so that no part meets the cap.
+
+    Searches *query* for the items whose *field* (``created``, ``updated``
+    or ``closed``) is on or after *since* (``YYYY-MM-DD``) and, when *until*
+    is given, on or before it; open-ended otherwise. A part of the window
+    that matches more than :data:`SEARCH_RESULT_CAP` items is halved by
+    date and each half searched on its own, so a busy window is read in
+    full. The GitHub calls are the result pages, plus one first page for
+    each halving and any further page of one result's edits or renames. A
+    single day over the cap raises :class:`TrustReadError`: GitHub would
+    return only part of it.
+
+    Results are judged as :func:`search_items` judges them, *judge_close*
+    included, and each item appears once.
+    """
+    if authors is None:
+        authors = load_trusted_authors()
+    call = f"search_window {kind} {field}"
+    start = date.fromisoformat(since)
+    stop = None if until is None else date.fromisoformat(until)
+    if stop is not None and stop < start:
+        msg = f"until ({until}) is before since ({since})"
+        raise ValueError(msg)
     hits: list[_Hit] = []
-    cursor: str | None = None
-    while True:
-        variables: dict[str, object] = {"q": full}
-        if cursor is not None:
-            variables["after"] = cursor
-        data = _graphql(call, _SEARCH_QUERIES[kind], **variables)
-        search = _obj(data.get("search"), call, "the search")
-        count = _get(search, "issueCount", call, "the search")
-        if not isinstance(count, int) or isinstance(count, bool):
-            raise TrustReadError(call, "the search has no usable issueCount")
-        if count > SEARCH_RESULT_CAP:
-            raise TrustReadError(
-                call,
-                f"the search matches {count} items, more than the {SEARCH_RESULT_CAP}"
-                " GitHub's search returns; narrow the query",
-            )
-        nodes, cursor = _connection(search, call, "the search results")
-        hits += [_hit(node, call, kind) for node in nodes]
-        if cursor is None:
-            break
+    seen: set[tuple[str, int]] = set()
+    # The parts still to read, oldest first: (from, to), to None for open-ended.
+    parts: list[tuple[date, date | None]] = [(start, stop)]
+    while parts:
+        lo, hi = parts.pop(0)
+        full = f"{query} is:{kind} {field}:{_date_range(lo, hi)}"
+        found, over = _search_hits(full, kind=kind, call=call, judge_close=judge_close)
+        if over is not None:
+            last = hi if hi is not None else datetime.now(UTC).date()
+            if lo >= last:
+                raise TrustReadError(
+                    call,
+                    f"{field}:{_date_range(lo, hi)} matches {over} items, more than the"
+                    f" {SEARCH_RESULT_CAP} GitHub's search returns",
+                )
+            mid = lo + (last - lo) // 2
+            parts[:0] = [(lo, mid), (mid + timedelta(days=1), hi)]
+            continue
+        for hit in found:
+            if (hit.repo, hit.number) not in seen:
+                seen.add((hit.repo, hit.number))
+                hits.append(hit)
     return _judge_hits(hits, call=call, kind=kind, roles=roles, editors=editors, authors=authors)
 
 
