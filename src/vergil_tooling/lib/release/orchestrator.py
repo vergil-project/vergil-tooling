@@ -87,7 +87,7 @@ def _preflight_stage(state: ReleaseState) -> None:
     ctx.without_deps = _without_deps(ctx, given=state.without_deps)
     # The read-only stages before prepare ran before the issue existed, so the
     # checklist the issue is created with has them ticked already (#4367).
-    names = _stage_names()
+    names = _checklist_names()
     ctx.progress_block = checklist.render(names, checked=names[: names.index("prepare")])
     state.ctx = ctx
 
@@ -172,7 +172,7 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
             _record_failure(ctx, name)
             raise wrapped from exc
         comment_phase_complete(ctx, name, _phase_details(ctx, name))
-        names = _stage_names()
+        names = _checklist_names()
         ensure_checklist(ctx, names, checked=names[: names.index(name)])
         tick_stage(ctx, name)
 
@@ -245,6 +245,18 @@ def _record_failure(ctx: ReleaseContext, name: str) -> None:
 def _stage_names() -> list[str]:
     """The pipeline stage names, in execution order."""
     return [stage.name for stage in build_stages()]
+
+
+# Stages the tracking issue's checklist leaves out. publish-status runs after
+# close-tracking, the last stage that writes the issue body, and reports only
+# to the terminal, so a box for it would stay unticked on every finished
+# release (#4946).
+_UNLISTED = frozenset({"publish-status"})
+
+
+def _checklist_names() -> list[str]:
+    """The stage names the tracking issue's checklist lists, in execution order."""
+    return [name for name in _stage_names() if name not in _UNLISTED]
 
 
 def build_stages() -> list[Stage]:
