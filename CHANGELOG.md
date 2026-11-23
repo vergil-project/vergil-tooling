@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.338] - 2026-11-23
+
+### Bug fixes
+
+- hold back a ready worktree whose PR GitHub already has open or merged (#4993)
+- wait for a settled mergeable status before reporting a conflict (#4998)
+
+### Features
+
+- print the vergil-tooling version in vrg-submit-pr and vrg-finalize-pr runs and logs (#4994)
+- refuse raw issue and PR content reads by agents (#5041)
+
 ## [2.1.337] - 2026-11-23
 
 ### Bug fixes
