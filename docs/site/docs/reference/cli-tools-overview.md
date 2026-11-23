@@ -117,12 +117,25 @@ for every identity, with terminal control sequences stripped (see
 [`run job-log`](../guides/permission-model.md#run-job-log)). `vrg-gh --help`
 lists the allowlist.
 
+`vrg-gh` needs gh 2.97.0 or newer, the release that added `gh api
+--allow-escape-sequences`, which `run job-log` uses
+([gh v2.97.0](https://github.com/cli/cli/releases/tag/v2.97.0)). Before
+running gh it checks the version and refuses an older or unreadable one,
+naming the version required, rather than letting gh fail with its own
+unknown-flag error. The version is read with `gh --version` once per gh
+binary and cached in `$XDG_CACHE_HOME/vergil/gh-version.json` (default
+`~/.cache`), keyed on the binary's path, size and modification time, so an
+upgrade of gh is seen at once. `vrg-host status` reports a gh below the
+minimum as an ERROR (see [Minimum versions](dev/host.md#minimum-versions)).
+Every other `vrg-*` tool that runs gh makes the same check before its first
+gh call, so an old gh is refused the same way there too.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_gh` |
 | Args | `<subcommand> <action> [args...]`, forwarded to `gh` |
-| Preconditions | `gh` on PATH; identity resolved via `vrg-whoami` |
-| Failure mode | A refused command prints the reason on stderr |
+| Preconditions | `gh` 2.97.0 or newer on PATH; identity resolved via `vrg-whoami` |
+| Failure mode | A refused command, or a gh that is missing, too old or of unreadable version, prints the reason on stderr |
 | Exit codes | 0 success; 1 refusal; 2 no subcommand or bad `run job-log` arguments; otherwise gh's exit code |
 | Status | Active |
 
@@ -194,8 +207,10 @@ relay ref `refs/vergil/pr-workflow/<branch>` (unconditional — no config,
 no off-platform detection), so a cloud VM's report-ready reaches the Mac
 that later runs `vrg-submit-pr <branch>` even though the two never share a
 disk. The relay push is a pure ref write built with git plumbing; it never
-advances the branch, so it stays **freeze-neutral**. A push failure is
-loud on stderr but never rolls back the durable local file. Because the
+advances the branch, so it stays **freeze-neutral**. A relay ref that
+cannot be written fails `report-ready` (exit 1, no `ok`), naming the ref
+that was not written, but never rolls back the durable local file: the
+re-run it names writes the relay ref (#5035). Because the
 ref is world-readable on a public repo, keep secrets out of
 `--title/--summary/--notes`. Reaching **ready** *freezes* the branch:
 `vrg-commit`, `vrg-reword` and the `vrg-git` push path then refuse further
@@ -336,7 +351,12 @@ reasons are:
 - `check_cancelled`: a required check was cancelled, and no newer run of its
   workflow replaced the cancelled run within two minutes; `failed_checks`
   names it.
-- `conflict`: the PR has a merge conflict with its base.
+- `conflict`: the PR has a merge conflict with its base, reported at the
+  same head for two minutes. After a push, GitHub takes a while to
+  recompute whether the PR can merge, and meanwhile it may still report
+  the conflict the push resolved, so the wait goes on first and says so on
+  stderr. A new head starts the two minutes again, and any other merge
+  state clears the conflict. It is the rule `vrg-finalize-pr` applies.
 - `auto_merge_off`: auto-merge is off, at the start or after a push.
 - `closed`: the PR was closed without merging.
 - `orphaned_check`: every pending check is stuck after its workflow run
@@ -387,7 +407,7 @@ has), `author` is `null` for a deleted account,
 | Args | `--repo <owner>/<repo>`, `--pr N`, `--json` |
 | Preconditions | GitHub App credentials for the `--repo` owner; the trusted-authors configuration |
 | Failure mode | A GitHub API failure, a response that is not a list of well-formed comments, or a trust-layer read that cannot complete prints `ERROR:` on stderr and exits 1; it never prints a partial or empty list in its place |
-| Exit codes | 0 success, 1 GitHub API failure or malformed response, 2 bad arguments |
+| Exit codes | 0 success, 1 GitHub API failure, malformed response or trust-layer read failure, 2 bad arguments |
 | Status | Active |
 
 ### vrg-await
@@ -566,7 +586,12 @@ Print or bump the repo's version. `show` prints the current version
 increments `patch` (default), `minor` or `major` and prints the new version.
 For a Python or Rust repo, `bump` then refreshes the lockfile (`uv lock`,
 `cargo update --workspace`) in the dev container, through
-`vrg-container-run`, so no host toolchain is needed. A bump is all or
+`vrg-container-run`, so no host toolchain is needed. In a Rust repo, `bump`
+first sets the bumped workspace crates' own entries in `Cargo.lock` to the
+new version, so the lockfile already matches `Cargo.toml` when
+`vrg-container-run` builds the dev image and its `cargo fetch --locked`
+warmup finds nothing stale; `cargo update --workspace` then runs as before.
+A bump is all or
 nothing: when any step fails, the lockfile refresh included, `bump` puts
 `VERSION`, the language manifest, the secondary version files and the
 lockfile back as they were, says so on stderr and exits non-zero. Used by
@@ -613,8 +638,9 @@ subject (the merge-commit `Merge pull request #N from …` pattern, then the
 squash-merge `… (#N)` pattern), then from the GitHub API's
 commit-to-pulls lookup, which takes only the commit's merged PR: with
 none merged it is an error naming the PRs found, never the first of them.
-`--pr` skips the lookup. Used by the `version-bump-pr` composite action in
-vergil-actions.
+`--pr` skips the lookup. No workflow calls it: vergil-actions' former
+caller, the `version-bump-pr` composite action, has been removed, so it is
+a manual tool.
 
 | Attribute | Value |
 |---|---|
@@ -764,7 +790,13 @@ create it waits until the lookup lists the new issue, so the next run finds
 it. It **never closes an issue**. Every read goes through the trust layer:
 only issues, and report comments, written by the automation App count, so
 an outsider's issue with the same title or an outsider's
-`ops-report: recovered` comment is ignored. Issue text carries the run link,
+`ops-report: recovered` comment is ignored. An open ops issue the App
+opened whose body someone else edited, or that someone else renamed, is
+skipped too, so the next failure opens a new issue; the new issue names
+each skipped one by number only
+(`skipped (edited by someone other than the App): #N`), never quoting it,
+and leaves it open with no comment. An outsider-opened issue with the same
+title is never named. Issue text carries the run link,
 job, step, date and issue numbers only, never log text.
 
 | Attribute | Value |
@@ -1569,6 +1601,36 @@ record, and writes nothing.
 | Exit codes | 0 the result passed, 1 it failed or a file could not be read, 2 bad arguments |
 | Status | Active |
 
+### vrg-merge-review-close
+
+Posts merge review's closing comment on the task issue, as the agent, with
+its machine-readable record line (epic vergil-project/.github#1384):
+`Merge review record: head=<sha> fingerprint=<hex> outcome=<outcome>`.
+`--body-file` holds the closing comment as the merge-review skill writes
+it: the eligibility line for `--outcome` first, then, on a fix to an open
+PR, the `Branch as reviewed:` line, then the closing state of every item.
+Every line is kept, and the record line goes right below the eligibility
+line (or the branch line). The command computes the head and the
+[change fingerprint](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/change_fingerprint.py)
+itself; it takes neither as an argument. For an issue of a batch before
+handoff (it has a batch marker), the change is that issue's own, from the
+previous issue's commit to `HEAD`, which must hold only the issue's first
+commit and its `fixup!` commits; folded, its fingerprint is the issue's
+commit's. Otherwise, a fix to an open PR included, it is the change since
+the merge base with `origin/develop`. Submit, the watch and the audit read
+the records back from the trust layer's comment stream, agent role only,
+skipping an edited comment. A re-run that finds the same comment already
+posted by the agent prints its ID and posts nothing.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_merge_review_close` (library: `lib/merge_review/record.py`) |
+| Args | `--issue 'OWNER/REPO#N' --outcome OUTCOME --body-file FILE` |
+| Preconditions | The `user` identity mode, as `<human>-vergil-user`; a clean worktree whose clone's `origin` is the issue's repository; `--outcome` `eligible` or `not-eligible (<reason>)` (stopped, waiting, fatal and error are refused); a body whose first line is the eligibility line for that outcome and which has no record line of its own |
+| Failure mode | `vrg-merge-review-close: <reason>` on stderr and exit 1, posting nothing. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
+| Exit codes | 0 posted or already posted (the comment ID on stdout), 1 refused or error, 2 bad arguments |
+| Status | Active |
+
 ### vrg-change-class
 
 The merge-review change classifier (epic vergil-project/.github#881): it
@@ -1655,7 +1717,8 @@ value.
 A check takes `--fix-base` (the `HEAD` the previous step judged, refused
 unless it is the `head_sha` of that step's stored request), one
 `--earlier-result` per earlier step in step order, each checked against
-that step's stored request, `--fix-id` for each earlier ID asked to change
+that step's stored request and its capture record (so a result edited
+after its own step's check is refused), `--fix-id` for each earlier ID asked to change
 (it becomes `earlier_finding_ids`) and `--ruled-id` for each earlier defect
 the human excused (not sent to the reviewer). It refuses an ID no earlier
 result raised, an ID given to both, a check with no `--fix-id`, and an
@@ -1965,8 +2028,7 @@ PR    BRANCH                    BASE     TYPE       AUTHOR                     C
 ```
 
 - **Rows** come in PR-number order. TYPE is as in Pending release
-  below, except that a `lifecycle/*` head branch (a language version
-  added or dropped) shows `lifecycle` first. AUTHOR is the PR author's
+  below. AUTHOR is the PR author's
   login (`ghost` for a deleted account). CI is the head commit's
   combined check state (`success`, `failure`, `pending`, `error`,
   `expected`), or `none` when it has no checks. OPENED is the PR's age.
@@ -2001,7 +2063,7 @@ PR     BRANCH                      TYPE     MERGED  TITLE
 #4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
 #4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
 #4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
-3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 1 other PR.
+3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 0 lifecycle PRs, 1 other PR.
 ```
 
 - **Release line.** It follows the section heading on the same line,
@@ -2015,13 +2077,15 @@ PR     BRANCH                      TYPE     MERGED  TITLE
   are ignored.
 - **Rows** come in merge order, oldest first. TYPE is the PR title's
   conventional-commit type (`-` when it has none), except that a
+  language lifecycle PR (a `lifecycle/*` head branch, a language
+  version added or dropped) shows `lifecycle`, a
   release back-merge (a `release/post-*` head branch) shows `release`,
   an automation PR (an `automation/*` head branch, such as
   `automation/repo-config-sync/<run-id>`) shows `automation`, and a
   dependency update (a `deps/update-*` head branch or a
   `dependency-update` label) shows `deps`. The head branch decides
-  before the label, so an automation PR is never counted as a
-  dependency update or a development PR. MERGED is the PR's
+  before the label, so an automation or lifecycle PR is never counted
+  as a dependency update or a development PR. MERGED is the PR's
   merge time. A TITLE over 72 characters is cut, ending in `…`.
 - **A commit with no PR** shows `PROBLEM` in the PR column and `-` for
   BRANCH and TYPE, with its commit date and subject, and a
@@ -2037,7 +2101,8 @@ PR     BRANCH                      TYPE     MERGED  TITLE
 - **Nothing pending** prints `Nothing pending release: develop and main
   are level.` in place of the table.
 - **The summary line** counts the changes: dependency updates, release
-  back-merges, automation PRs and other PRs, every bucket listed, plus
+  back-merges, automation PRs, lifecycle PRs and other PRs, every bucket
+  listed, plus
   `<n> PROBLEM: commits with no PR` and `<n> PROBLEM: not a same-repo
   PR with a trusted author`, each only when there are some.
 - **A lookup that fails or is incomplete** (an API error, a missing
@@ -2105,6 +2170,19 @@ JSON on stdin and prints a deny decision when a command invokes `git` or
 the quoted argument of `bash -c` / `sh -c` is checked too. It is a no-op
 outside a repo with a `vergil.toml`.
 
+In an agent identity it also refuses the raw `vrg-gh` reads of issue and
+PR content and names [`vrg-issue-read`](#vrg-issue-read), the trusted read
+command, in their place: `--comments` on an `issue` or `pr` command, a
+`--json` that selects `body`, `comments`, `reviews`, `latestReviews` or
+`closingIssuesReferences`, an `issue view` or `pr view` with no `--json`,
+an `api` path with a `comments` or `reviews` segment, and an issue or PR
+list or search whose query matches text. A list or search made only of
+qualifiers that requests no content field, and other metadata reads such
+as `issue view --json labels,parent,state`, stay allowed. This blocklist
+guards against accidents; it is not a security boundary. Human mode is
+unchanged. See
+[Raw content reads](hooks/pre-commit.md#raw-content-reads).
+
 Two layers call it: each repo's `.claude/settings.json` wires
 `.claude/hooks/guard.sh`, a shim that runs `vrg-hook-guard` when
 vergil-tooling is installed and otherwise falls back to a `jq`-based hard
@@ -2120,7 +2198,7 @@ parse or check is refused (see
 | Source | `vergil_tooling.bin.vrg_hook_guard` |
 | Args | None (hook JSON on stdin) |
 | Preconditions | Run by Claude Code as a `PreToolUse` hook |
-| Failure mode | A deny decision as JSON on stdout for raw `git`/`gh`; in a managed repository, malformed input is refused with a message on stderr; anything else allows the command |
+| Failure mode | A deny decision as JSON on stdout for raw `git`/`gh`, and, in an agent identity, for a raw `vrg-gh` content read; in a managed repository, malformed input is refused with a message on stderr; anything else allows the command |
 | Exit codes | 0 allow or deny decision, 2 malformed input refused (fails closed) |
 | Status | Active |
 
@@ -2461,7 +2539,17 @@ toward keeping. An image is kept when:
   branch is live when it is a local branch (which covers every worktree)
   or exists on the repo's `origin`.
 
-Only an image that matches none of these is removed. Origin is read with
+Only an image that matches none of these is removed. A protected-branch
+image whose repository is the directory name of no repo in the repo set is
+**unplaced**: its repository may be gone, or may live outside the roots,
+and the tag cannot tell which. Prune always keeps it and, unless a
+container uses it, lists it after the verdicts with the
+`<runtime> rmi <ref>` command to remove it by hand once you know its
+repository is gone (issue #5000). To place a repository that lives
+elsewhere, re-run with its directory **added** to the current roots, as
+the list's hint spells out: `--root` replaces the roots, so naming that
+directory alone would shrink the repo set and let `--apply` remove other
+repos' live images. Origin is read with
 `git ls-remote`, so a branch deleted on GitHub counts as gone. When a
 repo's origin cannot be read (a network error, or an origin repo that no
 longer exists), that repo's local `refs/remotes/origin/*` stand in, with a
@@ -2658,13 +2746,22 @@ writes `.vergil/vrg-validate-last.json`: the commit at the start, the exit
 code, whether the run was full (no `--check`) and the tree clean at the
 start, and each stage's status. `vrg-merge-review-request` reads it.
 
+`--markdown FILE...` is the ad-hoc markdown lint: it runs no stage and
+writes no run record, and markdownlints only the given files exactly as
+the common stage would, against the bundled config. A file the common
+stage does not lint (outside its scope, under a `[markdownlint].ignore`
+path, or gitignored) is named and skipped, so the result never disagrees
+with the gate. `--fix` lets markdownlint fix what it can. A bare
+`markdownlint <file>` uses markdownlint's defaults instead, line length
+included, so it flags lines the gate passes.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_validate` |
-| Args | `--check {common,lint,typecheck,build,test,audit,semgrep,trivy,docs,custom}`, `--all-versions` (Python only; alone or with `--check test`) |
+| Args | `--check {common,lint,typecheck,build,test,audit,semgrep,trivy,docs,custom}`, `--all-versions` (Python only; alone or with `--check test`), `--markdown [--fix] FILE...` (alone) |
 | Preconditions | Inside a dev container (run it as `vrg-container-run -- vrg-validate`) |
 | Failure mode | Runs every stage after install and reports all failures in one run; install fails fast |
-| Exit codes | 0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example `--check custom --all-versions`) |
+| Exit codes | 0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example `--check custom --all-versions`); with `--markdown`, 1 for a FILE that does not exist or an invalid config, 0 when every FILE is skipped, otherwise markdownlint's own exit code |
 | Status | Active |
 
 ### validate_common (internal)
@@ -2685,7 +2782,9 @@ dependabot-limit guard (when `.github/dependabot.yml` exists, every
 can never open a PR), hadolint
 on `Dockerfile*`, actionlint on `.github/workflows/`, the runner-labels
 guard (no workflow value may be `ubuntu-latest`; pin runners to
-`ubuntu-24.04`), and ansible-lint (using the bundled canonical config) when the repo
+`ubuntu-24.04`), the secrets-inherit guard (`secrets: inherit` only to the
+vergil-actions workflows that read the `automation` environment), and
+ansible-lint (using the bundled canonical config) when the repo
 carries Ansible content.
 
 | Attribute | Value |

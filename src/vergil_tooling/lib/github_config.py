@@ -75,6 +75,26 @@ class DesiredPublishConfig:
 
 
 @dataclass
+class DesiredEnvironment:
+    """A deployment environment the repo config converges.
+
+    *deployment_branch_policy* is ``"custom"`` (only the listed branches and
+    tags may deploy), ``"protected"`` (any protected branch) or ``"all"``
+    (GitHub's ``null`` policy: any branch). *custom_branches* and
+    *custom_tags* are the names of the custom policies of each type, sorted.
+    *reviewers* are the required reviewers as ``<type>:<login or slug>``,
+    sorted. *wait_timer* is in minutes.
+    """
+
+    name: str
+    deployment_branch_policy: str
+    custom_branches: list[str]
+    custom_tags: list[str]
+    reviewers: list[str]
+    wait_timer: int
+
+
+@dataclass
 class DesiredState:
     repo_settings: DesiredRepoSettings
     security: DesiredSecuritySettings
@@ -87,6 +107,10 @@ class DesiredState:
     # vergil-project/.github#1218, spec §6.1). The fetched state sets it true
     # only when develop carries classic protection with ``strict: true``.
     classic_develop_strict: bool = False
+    # The deployment environments the config manages, by name. The fetched
+    # state holds only those it read, so an environment absent from it is
+    # missing on GitHub (or not checked: see FetchResult.not_checked).
+    environments: list[DesiredEnvironment] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -327,6 +351,113 @@ def desired_automation_branch_ruleset(app_id: int | None) -> DesiredRuleset:
         ref_include=[AUTOMATION_BRANCH_PREFIX],
         bypass_actors=bypass,
         rules=[{"type": "creation"}, {"type": "update"}, {"type": "non_fast_forward"}],
+    )
+
+
+MAIN_UPDATE_RULESET_NAME = "Main updates"
+
+# The human merges every release PR into main: ``vrg-release``, whose
+# ``merge-release`` stage (shared by ``--resume`` and ``--supersede``) does the
+# merge, refuses every agent identity, and with no agent App configured it
+# runs on the human's own gh auth (epic vergil-project/.github#1384, Task 2).
+# The automation App never merges into main, so it is not a bypass actor.
+APP_MERGES_RELEASES = False
+
+
+def desired_main_update_ruleset(app_id: int | None, *, app_merges_releases: bool) -> DesiredRuleset:
+    """Only the repository Admin role updates ``main``.
+
+    The ``update`` rule lets only a bypass actor update a matching ref, and a
+    pull request's merge updates its base branch, so no other identity can
+    merge into ``main``, whatever pull-request permission it holds. An agent
+    given ``pull_requests: write`` to merge its own PRs into ``develop``
+    therefore cannot merge a release PR, or any other PR, into ``main``
+    (epic vergil-project/.github#1384, spec §4.1).
+
+    The bypass actors are the repository Admin role (``RepositoryRole`` 5, the
+    human who releases), plus the automation App (an ``Integration``, by its
+    numeric *app_id*) only when *app_merges_releases*. The ruleset carries no
+    ``creation`` rule, so repo init can still create ``main``.
+
+    *app_id* ``None`` leaves the bypass list unmanaged (skipped), which
+    :func:`compute_desired_state` allows only with ``skip_bypass``.
+    """
+    bypass: list[dict[str, object]] | None = None
+    if app_id is not None:
+        bypass = [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]
+        if app_merges_releases:
+            bypass.append(
+                {"actor_id": app_id, "actor_type": "Integration", "bypass_mode": "always"}
+            )
+    return DesiredRuleset(
+        name=MAIN_UPDATE_RULESET_NAME,
+        target="branch",
+        enforcement="active",
+        ref_include=["refs/heads/main"],
+        bypass_actors=bypass,
+        rules=[{"type": "update"}],
+    )
+
+
+AUDIT_MARKER_RULESET_NAME = "Agent audit markers"
+AUDIT_MARKER_PREFIX = "refs/heads/vergil/agent-audit/*"
+
+
+def desired_audit_marker_ruleset(app_id: int | None) -> DesiredRuleset:
+    """Only the repository Admin role and the automation App write audit markers.
+
+    The daily agent audit records how far it has checked in marker branches
+    under ``vergil/agent-audit/``. The identity being audited must not be able
+    to create, move or delete them, so creation, update and deletion are
+    restricted to the bypass actors: the repository Admin role
+    (``RepositoryRole`` 5, the human, whose repo init creates the markers) and
+    the org automation App (an ``Integration``, by its numeric *app_id*),
+    which runs the audit (epic vergil-project/.github#1384, spec §4.8).
+
+    *app_id* ``None`` leaves the bypass list unmanaged (skipped), which
+    :func:`compute_desired_state` allows only with ``skip_bypass``.
+    """
+    bypass: list[dict[str, object]] | None = None
+    if app_id is not None:
+        bypass = [
+            {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"},
+            {"actor_id": app_id, "actor_type": "Integration", "bypass_mode": "always"},
+        ]
+    return DesiredRuleset(
+        name=AUDIT_MARKER_RULESET_NAME,
+        target="branch",
+        enforcement="active",
+        ref_include=[AUDIT_MARKER_PREFIX],
+        bypass_actors=bypass,
+        rules=[{"type": "update"}, {"type": "creation"}, {"type": "deletion"}],
+    )
+
+
+AUTOMATION_ENVIRONMENT_NAME = "automation"
+AUTOMATION_ENVIRONMENT_BRANCHES = ("develop", "main")
+
+
+def desired_automation_environment() -> DesiredEnvironment:
+    """The ``automation`` environment: only ``develop`` and ``main`` may deploy to it.
+
+    The automation App's credentials (and every other secret that can write
+    or act) live only in this environment, never at org or repo level, and
+    every job that needs one declares it (epic vergil-project/.github#1384,
+    spec §4.2). Its deployment branch policy admits only ``develop`` and
+    ``main`` (releases run on ``main``), so a workflow running on any other
+    branch, an agent's branch included, gets no such secret. It has no
+    reviewers and no wait timer: the jobs that use it run unattended.
+
+    Every repo gets both branches, a ``docs-single-branch`` repo included: a
+    policy naming a branch the repo does not have admits nothing.
+    """
+    return DesiredEnvironment(
+        name=AUTOMATION_ENVIRONMENT_NAME,
+        deployment_branch_policy="custom",
+        custom_branches=sorted(AUTOMATION_ENVIRONMENT_BRANCHES),
+        custom_tags=[],
+        reviewers=[],
+        wait_timer=0,
     )
 
 
@@ -953,14 +1084,16 @@ def compute_desired_state(
     App's token or a CI ``GITHUB_TOKEN``), which GitHub never shows the field
     to. Otherwise
     *automation_app_id*, the org automation App's numeric ID, is required: it
-    is a bypass actor of the tag-protection and automation-branch rulesets. A
-    missing ID without *skip_bypass* raises rather than leaving those rulesets
-    unmanaged.
+    is a bypass actor of the tag-protection, automation-branch and
+    agent-audit-marker rulesets (and of main updates, were the App to merge
+    releases). A missing ID without *skip_bypass* raises rather than leaving
+    those rulesets unmanaged.
     """
     if not skip_bypass and automation_app_id is None:
         msg = (
-            "the automation App's ID is required for the tag-protection and "
-            "automation-branch rulesets' bypass actors unless bypass_actors are skipped"
+            "the automation App's ID is required for the tag-protection, "
+            "automation-branch and agent-audit-marker rulesets' bypass actors "
+            "unless bypass_actors are skipped"
         )
         raise ValueError(msg)
     rulesets: list[DesiredRuleset] = []
@@ -969,6 +1102,10 @@ def compute_desired_state(
     rulesets.append(desired_tag_protection_ruleset(automation_app_id))
     rulesets.append(desired_rolling_tag_branch_ruleset())
     rulesets.append(desired_automation_branch_ruleset(automation_app_id))
+    rulesets.append(
+        desired_main_update_ruleset(automation_app_id, app_merges_releases=APP_MERGES_RELEASES)
+    )
+    rulesets.append(desired_audit_marker_ruleset(automation_app_id))
     rulesets.extend(
         desired_ci_gates_rulesets(
             config.project,
@@ -996,6 +1133,7 @@ def compute_desired_state(
         ),
         rulesets=rulesets,
         publish=publish,
+        environments=[desired_automation_environment()],
     )
 
 
@@ -1458,6 +1596,182 @@ def _read_repo_settings(
     )
 
 
+# What the environment reads need. GitHub's "Permissions required for GitHub
+# Apps" lists ``GET /repos/{owner}/{repo}/environments/{name}`` and its
+# ``deployment-branch-policies`` listing under the Actions permission (read);
+# writing either needs Administration write.
+ENVIRONMENT_READ = "actions=read"
+
+# The fields the deployment-branch-policies listing supplies.
+_ENVIRONMENT_POLICY_FIELDS = ("custom_branches", "custom_tags")
+
+# Protection rule types the audit reads. ``branch_policy`` only marks that a
+# deployment branch policy is set; the policy itself is read separately.
+_ENVIRONMENT_RULE_TYPES = frozenset({"branch_policy", "wait_timer", "required_reviewers"})
+
+
+def _environment_endpoint(repo: str, name: str) -> str:
+    return f"repos/{repo}/environments/{name}"
+
+
+def _branch_policies_endpoint(repo: str, name: str) -> str:
+    return f"{_environment_endpoint(repo, name)}/deployment-branch-policies"
+
+
+def _environment_branch_policy(raw: object, endpoint: str) -> str:
+    """The environment's deployment branch policy: ``all``, ``protected`` or ``custom``.
+
+    GitHub returns ``null`` for "all branches"; otherwise exactly one of its
+    two flags is true. Anything else raises rather than read as a policy.
+    """
+    if raw is None:
+        return "all"
+    if isinstance(raw, dict):
+        policy = cast("dict[str, object]", raw)
+        flags = (policy.get("protected_branches"), policy.get("custom_branch_policies"))
+        if flags == (True, False):
+            return "protected"
+        if flags == (False, True):
+            return "custom"
+    msg = f"{endpoint} returned an unreadable deployment_branch_policy: {raw!r}"
+    raise RuntimeError(msg)
+
+
+def _environment_protection(raw: object, endpoint: str) -> tuple[list[str], int]:
+    """The environment's required reviewers and wait timer from ``protection_rules``.
+
+    A rule of a type the audit does not know, or a malformed rule, raises:
+    it could restrict or open the environment in a way the desired state
+    never chose, so it is never skipped silently.
+    """
+    if raw is None:
+        return [], 0
+    if not isinstance(raw, list):
+        msg = f"{endpoint} returned protection_rules that are not a list: {raw!r}"
+        raise RuntimeError(msg)
+    reviewers: list[str] = []
+    wait_timer = 0
+    for rule_raw in cast("list[object]", raw):
+        rule = cast("dict[str, object]", rule_raw) if isinstance(rule_raw, dict) else None
+        rule_type = rule.get("type") if rule is not None else None
+        if rule is None or rule_type not in _ENVIRONMENT_RULE_TYPES:
+            msg = f"{endpoint} returned an unknown protection rule: {rule_raw!r}"
+            raise RuntimeError(msg)
+        if rule_type == "wait_timer":
+            value = rule.get("wait_timer")
+            if not isinstance(value, int) or isinstance(value, bool):
+                msg = f"{endpoint} returned an unreadable wait_timer: {value!r}"
+                raise RuntimeError(msg)
+            wait_timer = value
+        elif rule_type == "required_reviewers":
+            reviewers.extend(_environment_reviewers(rule.get("reviewers"), endpoint))
+    return sorted(reviewers), wait_timer
+
+
+def _environment_reviewers(raw: object, endpoint: str) -> list[str]:
+    """Each required reviewer as ``<type>:<login or slug>``."""
+    if not isinstance(raw, list):
+        msg = f"{endpoint} returned reviewers that are not a list: {raw!r}"
+        raise RuntimeError(msg)
+    found: list[str] = []
+    for entry_raw in cast("list[object]", raw):
+        entry = cast("dict[str, object]", entry_raw) if isinstance(entry_raw, dict) else {}
+        reviewer_raw = entry.get("reviewer")
+        reviewer = cast("dict[str, object]", reviewer_raw) if isinstance(reviewer_raw, dict) else {}
+        kind = entry.get("type")
+        who = reviewer.get("login") or reviewer.get("slug")
+        if not isinstance(kind, str) or not isinstance(who, str):
+            msg = f"{endpoint} returned an unreadable reviewer: {entry_raw!r}"
+            raise RuntimeError(msg)
+        found.append(f"{kind}:{who}")
+    return found
+
+
+def _parse_branch_policies(raw: Sequence[object], endpoint: str) -> list[tuple[str, str, int]]:
+    """The listed deployment branch policies as ``(type, name, id)``.
+
+    The type is ``branch`` or ``tag``; any other entry raises rather than be
+    dropped from the comparison.
+    """
+    policies: list[tuple[str, str, int]] = []
+    for entry_raw in raw:
+        entry = cast("dict[str, object]", entry_raw) if isinstance(entry_raw, dict) else {}
+        kind, name, policy_id = entry.get("type"), entry.get("name"), entry.get("id")
+        if (
+            kind not in ("branch", "tag")
+            or not isinstance(name, str)
+            or not isinstance(policy_id, int)
+        ):
+            msg = f"{endpoint} returned an unreadable branch policy: {entry_raw!r}"
+            raise ValueError(msg)
+        policies.append((str(kind), name, policy_id))
+    return policies
+
+
+def _read_branch_policies(
+    repo: str, name: str, not_checked: list[NotChecked]
+) -> tuple[list[str], list[str]]:
+    """The environment's custom branch and tag policy names, sorted.
+
+    A permission-gap 403 records both fields as not checked (their empty
+    placeholders are never compared); any other error propagates.
+    """
+    endpoint = _branch_policies_endpoint(repo, name)
+    try:
+        raw = github.read_json_paginated(endpoint, "branch_policies")
+    except github.GitHubAPIError as exc:
+        if not _is_permission_gap(exc):
+            raise
+        not_checked.extend(
+            NotChecked(field=f"environments.{name}.{f}", permission=ENVIRONMENT_READ)
+            for f in _ENVIRONMENT_POLICY_FIELDS
+        )
+        return [], []
+    policies = _parse_branch_policies(raw, endpoint)
+    branches = sorted(n for kind, n, _ in policies if kind == "branch")
+    tags = sorted(n for kind, n, _ in policies if kind == "tag")
+    return branches, tags
+
+
+def _fetch_environment(
+    repo: str, name: str, not_checked: list[NotChecked]
+) -> DesiredEnvironment | None:
+    """Read one environment, ``None`` when it does not exist or cannot be read.
+
+    A 404 means the environment is missing, which the diff reports as drift.
+    A permission-gap 403 records ``environments.<name>`` as not checked, so
+    the missing entry is never compared. Any other error, and any malformed
+    answer, raises: an unreadable environment never reads as converged.
+    """
+    endpoint = _environment_endpoint(repo, name)
+    try:
+        data = github.read_json("api", endpoint)
+    except github.GitHubAPIError as exc:
+        if "HTTP 404" in (exc.stderr or ""):
+            return None
+        if not _is_permission_gap(exc):
+            raise
+        not_checked.append(NotChecked(field=f"environments.{name}", permission=ENVIRONMENT_READ))
+        return None
+    if not isinstance(data, dict):
+        msg = f"{endpoint} returned {type(data).__name__}, not an environment object"
+        raise RuntimeError(msg)
+    policy = _environment_branch_policy(data.get("deployment_branch_policy"), endpoint)
+    reviewers, wait_timer = _environment_protection(data.get("protection_rules"), endpoint)
+    branches: list[str] = []
+    tags: list[str] = []
+    if policy == "custom":
+        branches, tags = _read_branch_policies(repo, name, not_checked)
+    return DesiredEnvironment(
+        name=name,
+        deployment_branch_policy=policy,
+        custom_branches=branches,
+        custom_tags=tags,
+        reviewers=reviewers,
+        wait_timer=wait_timer,
+    )
+
+
 def fetch_actual_state(repo: str) -> FetchResult:
     """Fetch the current GitHub configuration for a repo via gh api."""
     repo_data = github.read_json("api", f"repos/{repo}")
@@ -1597,6 +1911,8 @@ def fetch_actual_state(repo: str) -> FetchResult:
     classic = _classic_protection_drift(repo, repo_settings.default_branch, rulesets, not_checked)
     rulesets.extend(classic.synthetic)
 
+    environment = _fetch_environment(repo, AUTOMATION_ENVIRONMENT_NAME, not_checked)
+
     return FetchResult(
         state=DesiredState(
             repo_settings=repo_settings,
@@ -1605,6 +1921,7 @@ def fetch_actual_state(repo: str) -> FetchResult:
             rulesets=rulesets,
             publish=DesiredPublishConfig(release=False, docs=False),
             classic_develop_strict=classic.develop_strict,
+            environments=[environment] if environment is not None else [],
         ),
         not_checked=not_checked,
     )
@@ -1902,6 +2219,29 @@ def _undesired_ruleset_expected(name: str, desired_by_name: dict[str, DesiredRul
     return "absent (replaced by " + " and ".join(repr(n) for n in replacements) + ")"
 
 
+def _diff_environments(
+    desired: list[DesiredEnvironment],
+    actual: list[DesiredEnvironment],
+    items: list[DiffItem],
+    skipped: list[str],
+) -> None:
+    """Compare each managed environment field by field.
+
+    One missing on GitHub is a single ``environments.<name>`` item. A live
+    environment the desired state does not name is never compared: the
+    config manages only the environments it declares.
+    """
+    actual_by_name = {e.name: e for e in actual}
+    for env in desired:
+        live = actual_by_name.get(env.name)
+        if live is None:
+            items.append(
+                DiffItem(field=f"environments.{env.name}", expected="present", actual="missing")
+            )
+            continue
+        _diff_dataclass(f"environments.{env.name}", env, live, items, skipped)
+
+
 def _diff_producibility(
     desired: list[DesiredRuleset],
     actual: list[DesiredRuleset],
@@ -2018,6 +2358,7 @@ def _compute_checked_diff(*, desired: DesiredState, actual: DesiredState) -> Con
     )
     _diff_rulesets(desired.rulesets, actual.rulesets, items, skipped, undeclared)
     _diff_producibility(desired.rulesets, actual.rulesets, items)
+    _diff_environments(desired.environments, actual.environments, items, skipped)
     if actual.classic_develop_strict != desired.classic_develop_strict:
         items.append(
             DiffItem(
@@ -2158,6 +2499,59 @@ def _apply_rulesets(repo: str, desired: list[DesiredRuleset]) -> None:
             github.delete(f"repos/{repo}/rulesets/{rs_id}")
 
 
+def _environment_policy_body(env: DesiredEnvironment) -> dict[str, bool] | None:
+    """The ``deployment_branch_policy`` body of an environment write."""
+    if env.deployment_branch_policy == "all":
+        return None
+    if env.deployment_branch_policy == "protected":
+        return {"protected_branches": True, "custom_branch_policies": False}
+    if env.deployment_branch_policy == "custom":
+        return {"protected_branches": False, "custom_branch_policies": True}
+    msg = f"environment {env.name!r} has an unknown deployment branch policy"
+    raise ValueError(msg)
+
+
+def _apply_environments(repo: str, desired: list[DesiredEnvironment]) -> None:
+    """Create or update each environment, then converge its custom branch policies.
+
+    The environment is written whole (no reviewers is ``[]``, which clears
+    them). Missing custom policies are created before stray ones are
+    deleted, so the policy set never passes through empty. Every environment
+    is checked before anything is written: one with reviewers is refused
+    (the desired state names a reviewer by login, and GitHub's write needs
+    its numeric ID), as is an unknown branch policy.
+    """
+    bodies: list[tuple[DesiredEnvironment, dict[str, bool] | None]] = []
+    for env in desired:
+        if env.reviewers:
+            msg = (
+                f"refusing to write environment {env.name!r}: it names reviewers, "
+                "which this tool cannot resolve to GitHub IDs"
+            )
+            raise ValueError(msg)
+        bodies.append((env, _environment_policy_body(env)))
+    for env, policy in bodies:
+        github.write_json(
+            "PUT",
+            _environment_endpoint(repo, env.name),
+            {"wait_timer": env.wait_timer, "reviewers": [], "deployment_branch_policy": policy},
+        )
+        if env.deployment_branch_policy != "custom":
+            continue
+        endpoint = _branch_policies_endpoint(repo, env.name)
+        live = _parse_branch_policies(
+            github.read_json_paginated(endpoint, "branch_policies"), endpoint
+        )
+        wanted = {("branch", b) for b in env.custom_branches}
+        wanted |= {("tag", t) for t in env.custom_tags}
+        have = {(kind, name) for kind, name, _ in live}
+        for kind, name in sorted(wanted - have):
+            github.write_json("POST", endpoint, {"name": name, "type": kind})
+        for kind, name, policy_id in live:
+            if (kind, name) not in wanted:
+                github.delete(f"{endpoint}/{policy_id}")
+
+
 @dataclass
 class ClassicProtectionReport:
     """The outcome of scoped classic-protection cleanup for one branch.
@@ -2241,4 +2635,5 @@ def apply_desired_state(repo: str, desired: DesiredState) -> list[ClassicProtect
     _apply_security_settings(repo, desired.security)
     _apply_actions_permissions(repo, desired.actions_permissions)
     _apply_rulesets(repo, desired.rulesets)
+    _apply_environments(repo, desired.environments)
     return _cleanup_classic_branch_protection(repo, desired.rulesets)

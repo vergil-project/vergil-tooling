@@ -102,7 +102,7 @@ mechanisms. Both exist; they complement each other.
 
 | Layer | Where it runs | Catches |
 |---|---|---|
-| **Claude Code hook guard** | `.claude/hooks/guard.sh` checked into each repo; wired via `.claude/settings.json` as a `PreToolUse` hook on the `Bash` matcher. Delegates to `vrg-hook-guard` (regex-based detection of raw `git`/`gh` commands). The five branch/context checks live in `vrg-commit` itself. | Raw `git` commands blocked • raw `gh` commands blocked • `vrg-commit` additionally checks: detached HEAD, protected branches, branch prefix, issue number |
+| **Claude Code hook guard** | `.claude/hooks/guard.sh` checked into each repo; wired via `.claude/settings.json` as a `PreToolUse` hook on the `Bash` matcher. Delegates to `vrg-hook-guard` (regex-based detection of raw `git`/`gh` commands, and of agents' raw `vrg-gh` content reads). The five branch/context checks live in `vrg-commit` itself. | Raw `git` commands blocked • raw `gh` commands blocked • agents' raw `vrg-gh` reads of issue and PR content blocked, naming `vrg-issue-read` • `vrg-commit` additionally checks: detached HEAD, protected branches, branch prefix, issue number |
 | **Plugin PreToolUse hooks** | Delivered by the [`vergil-claude-plugin`](https://github.com/vergil-project/vergil-claude-plugin). Fires on Claude Code's `Bash`/`Write`/`Edit` tool invocations. | Raw `git commit` (forces `vrg-commit`) • Raw `gh pr create` (forces `vrg-submit-pr`) • commits originating from outside `.worktrees/*` on repos that have adopted the worktree convention • heredoc syntax in CLI args • associative-array bashisms |
 
 **Why both?** The hook guard catches all raw `git`/`gh` commands

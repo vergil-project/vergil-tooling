@@ -17,6 +17,13 @@ jobs:
     uses: vergil-project/vergil-actions/.github/workflows/cd-docs.yml@v2.1
     permissions:
       contents: write
+    # `inherit` is required: the automation App keys live in the `automation`
+    # environment, and environment secrets reach a cross-repo reusable
+    # workflow only under `secrets: inherit` (vergil-project/packages#6).
+    # Allowed only for the App-key workflows (vrg-validate's secrets-inherit
+    # check). The nosemgrep stays until the vergil-tooling release that
+    # excludes semgrep's secrets-inherit rule, which that check replaces.
+    secrets: inherit  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
 
   release:
     # Skips the push that creates `main`, which no release PR produced (#4580).
@@ -30,5 +37,5 @@ jobs:
     # package-sign job sees an empty PACKAGE_SIGNING_KEY from its
     # `package-signing` environment. The callee is first-party (same org); it
     # also uses APP_CLIENT_ID / APP_PRIVATE_KEY for the package-released
-    # dispatch (spec §8.2).
+    # dispatch (spec §8.2), read from the `automation` environment.
     secrets: inherit  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit

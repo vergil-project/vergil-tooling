@@ -345,6 +345,22 @@ def test_classify_automation_branch() -> None:
     assert classify("feat: x", "automationx/1", []) == (ChangeKind.OTHER, "feat")
 
 
+def test_classify_lifecycle_branch() -> None:
+    # A language lifecycle PR is typed by its branch, whatever its title's
+    # conventional type or its labels, as the open-PR section types it.
+    assert classify("feat(versions): add rust 1.99", "lifecycle/rust-add-1.99", []) == (
+        ChangeKind.LIFECYCLE,
+        "lifecycle",
+    )
+    assert classify("chore: drop", "lifecycle/python-drop-3.10", ["dependency-update"]) == (
+        ChangeKind.LIFECYCLE,
+        "lifecycle",
+    )
+    # Only the branch prefix counts.
+    assert classify("feat: x", "feature/1-lifecycle", []) == (ChangeKind.OTHER, "feat")
+    assert classify("feat: x", "lifecyclex/1", []) == (ChangeKind.OTHER, "feat")
+
+
 # --- gather_pending_release: mapping --------------------------------------------
 
 

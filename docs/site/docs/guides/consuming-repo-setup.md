@@ -318,7 +318,10 @@ the first of its common checks. See the
 ### Hook guard
 
 `.claude/hooks/guard.sh` blocks raw `git` and `gh` commands in Claude
-Code agent sessions. It delegates to `vrg-hook-guard` when
+Code agent sessions, and agents' raw `vrg-gh` reads of issue and PR
+content (see
+[Raw content reads](../reference/hooks/pre-commit.md#raw-content-reads)).
+It delegates to `vrg-hook-guard` when
 vergil-tooling is installed and otherwise falls back to a `jq`-based
 hard deny. `vrg-github-repo-init` writes it, executable, from the
 packaged template
@@ -572,9 +575,10 @@ To ship signed `.deb`/`.rpm` packages from releases:
    [Package configuration](../reference/package-config.md)).
 2. Re-run `vrg-github-repo-init --adopt` from the repo root. It keeps
    `[package]` (and any other hand-written table) and regenerates the
-   workflows: `ci.yml` gains a `package` job calling `ci-package.yml`, and the
-   `cd.yml` `release` job switches to `secrets: inherit`. The GitHub config
-   step then makes `package / evidence` a required check.
+   workflows: `ci.yml` gains a `package` job calling `ci-package.yml`. The
+   `cd.yml` `release` job already passes `secrets: inherit`, which carries the
+   signing secrets. The GitHub config step then makes `package / evidence` a
+   required check.
 3. Create a `package-signing` environment, restricted to `main`, holding
    `PACKAGE_SIGNING_KEY` and `PACKAGE_SIGNING_PASSPHRASE`.
 4. Make sure the org's GitHub App can dispatch to `<org>/packages`, which

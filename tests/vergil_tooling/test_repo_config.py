@@ -338,6 +338,13 @@ class TestClaudeMdTemplate:
         assert "never directly on the host" in section
         assert "is the only validation command" not in _TEMPLATE_TEXT
 
+    def test_template_names_the_gates_markdown_lint(self) -> None:
+        # The ad-hoc markdown lint is vrg-validate's single-file lint, which
+        # uses the gate's config; a bare markdownlint run does not (#4589).
+        section = _TEMPLATE_TEXT.split("## Validation\n", 1)[1].split("\n## ", 1)[0]
+        assert "vrg-container-run -- vrg-validate --markdown" in section
+        assert "vrg-container-run -- markdownlint" not in _TEMPLATE_TEXT
+
     def test_previous_template_files_are_gone(self) -> None:
         assert not (_TEMPLATE_PATH.parent / "claude_md_consumer_previous.md").exists()
         assert not (_TEMPLATE_PATH.parent / "claude_settings_previous.json").exists()

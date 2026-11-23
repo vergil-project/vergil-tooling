@@ -222,6 +222,12 @@ never echoing a value. The reviewer reads `issue_comments` as it reads
 of the previous step's stored `request-<step>.json`, so the fix diff always
 starts where the judged change ended.
 
+A check's builder also re-checks every earlier result in
+`earlier_result_paths` against that step's stored request, as
+`vrg-merge-review-check` does: its [capture record](#the-capture-record)
+first (rule 10 of [the result check](#the-result-check)), then the other
+rules. A result edited after its own step's check is refused there too.
+
 Pre-existing notes and items ruled keep, file, defer or wont-fix are not in
 `earlier_finding_ids`; their rulings and lookups record them, and the check
 is not asked about them.

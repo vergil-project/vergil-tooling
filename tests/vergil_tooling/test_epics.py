@@ -2941,7 +2941,7 @@ def test_unbuildable_parent_kind_unparseable_ref_is_none() -> None:
 
 
 def test_unbuildable_parent_kind_propagates_lookup_failure() -> None:
-    # A failed lookup is never read as "not queued": it raises, and the caller
+    # A failed lookup is never read as a buildable parent: it raises, and the caller
     # decides (report-ready defers loudly; vrg-submit-pr fails).
     with (
         patch("vergil_tooling.lib.epics.native_parent_of", side_effect=OSError("gh")),

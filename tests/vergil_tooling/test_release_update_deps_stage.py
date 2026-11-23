@@ -363,6 +363,27 @@ def test_update_deps_failure_recorded_in_state(
     assert ctx.deferred_publish_failures == []
 
 
+def test_failed_merged_branch_deletion_leaves_the_stage_not_done(
+    monkeypatch: pytest.MonkeyPatch, written: list[StateBlock]
+) -> None:
+    """#4952: the PR merged but its branch could not be deleted; a resume retries."""
+    exc = UpdateDepsError(
+        phase="finalize",
+        command="gh api -X DELETE repos/o/r/git/refs/heads/deps/update-2.1.243",
+        message="The dependency-update PR https://x/pull/9 merged, but deleting its branch failed",
+    )
+    _patch(monkeypatch, exc)
+    ctx = _rctx()
+    ctx.issue_number = 42
+    ctx.state = _block(done=_BEFORE_DEPS)
+    with pytest.raises(ReleaseError, match="merged, but deleting its branch failed"):
+        _run_stage(ctx)
+    assert written == []
+    assert "update-deps" not in ctx.state.done
+    assert ctx.deferred_failures == ["update-deps"]
+    assert holds("close-tracking", ctx.deferred_failures) == ["update-deps"]
+
+
 def test_update_deps_success_recorded_done(
     monkeypatch: pytest.MonkeyPatch, written: list[StateBlock]
 ) -> None:

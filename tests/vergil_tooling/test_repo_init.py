@@ -29,7 +29,6 @@ from vergil_tooling.lib.languages import CheckKind, language_commands
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
     _assert_ci_gates_producible,
-    _cd_release_secrets,
     _check_remote_steps,
     _container_suffix,
     _load_existing_config,
@@ -68,6 +67,7 @@ from vergil_tooling.lib.repo_init import (
     step_scaffold_config_files,
     step_scaffold_language,
 )
+from vergil_tooling.lib.secrets_inherit import inherit_violations
 from vergil_tooling.lib.versions import ResolutionError
 
 if TYPE_CHECKING:
@@ -621,6 +621,10 @@ class TestRenderOpsWorkflow:
         assert f"- cron: '{minute} 1 * * *'" in yaml
         assert "ops-github-config.yml@v2.1" in yaml
         assert "workflow_dispatch:" in yaml
+        # The config job reads the App keys from the automation environment,
+        # which reaches it only under `secrets: inherit` (epic .github#1384).
+        assert "    secrets: inherit\n" in yaml
+        assert inherit_violations(yaml) == []
 
     def test_scaffolded_repo_passes_new_audit_checks(self, tmp_path: Path) -> None:
         """A freshly scaffolded repo passes both new audit checks (round-trip)."""
@@ -1155,14 +1159,9 @@ class TestRenderCdWorkflow:
         # cd-release@v2.1 derives the release image tag from the resolver's
         # primary, so the caller passes no container tag (issue #3484).
         assert "container-tag" not in content
-        # python publishes via OIDC trusted publishing, so only the automation
-        # App secrets the tag push needs are forwarded (issue #4747), and the
-        # blanket `secrets: inherit` must never be emitted (epic .github#189).
-        assert "secrets: inherit" not in content
-        assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == {
-            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
-            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
-        }
+        # cd-release reads the App keys from the automation environment, which
+        # reaches it only under `secrets: inherit` (epic .github#1384).
+        assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == "inherit"
         assert "attestations: write" in content
         assert "id-token: write" in content
         assert "pull-requests: write" in content
@@ -1207,47 +1206,50 @@ class TestRenderCdWorkflow:
         # caller passes no container tag (issue #3484).
         assert "container-tag" not in content
         assert "attestations: write" in content
-        # go needs no publishing token: only the App secrets, never blanket inherit.
-        assert "secrets: inherit" not in content
-        assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == {
-            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
-            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
-        }
-        # The docs job is not a cd-release call and gets no secrets.
-        assert "secrets" not in yaml.safe_load(content)["jobs"]["docs"]
+        # Both callees read the App keys from the automation environment, so
+        # both jobs inherit (epic .github#1384) and no explicit map is left.
+        jobs = yaml.safe_load(content)["jobs"]
+        assert jobs["release"]["secrets"] == "inherit"
+        assert jobs["docs"]["secrets"] == "inherit"
+        assert "    secrets:\n" not in content
 
-    def test_release_rust_explicit_secrets(self) -> None:
+    def test_release_rust_inherits(self) -> None:
+        # inherit carries the publisher's CARGO_REGISTRY_TOKEN, so no map is
+        # written for it (epic .github#1384).
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.publish_docs = False
         ctx.publish_release = True
         ctx.primary_language = "rust"
         content = render_cd_workflow(ctx)
-        assert "secrets: inherit" not in content
-        assert "    secrets:\n" in content
-        assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == {
-            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
-            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
-            "CARGO_REGISTRY_TOKEN": "${{ secrets.CARGO_REGISTRY_TOKEN }}",
-        }
+        assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == "inherit"
+        assert "CARGO_REGISTRY_TOKEN" not in content
 
-    def test_release_without_language_forwards_app_secrets(self) -> None:
+    def test_release_without_language_inherits(self) -> None:
         # A repo with no primary language still releases through cd-release,
         # which pushes the tags with the App's token (issue #4747).
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.publish_docs = False
         ctx.publish_release = True
         content = render_cd_workflow(ctx)
-        assert "      APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}\n" in content
-        assert "      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}\n" in content
+        assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == "inherit"
 
-    def test_cd_release_secrets_helper(self) -> None:
-        # Every release gets the App secrets; publishers add their exact set.
-        app = ["APP_CLIENT_ID", "APP_PRIVATE_KEY"]
-        assert _cd_release_secrets("python") == app
-        assert _cd_release_secrets("go") == app
-        assert _cd_release_secrets(None) == app
-        assert _cd_release_secrets("elixir") == app
-        assert _cd_release_secrets("rust") == [*app, "CARGO_REGISTRY_TOKEN"]
+    @pytest.mark.parametrize(
+        ("language", "package"),
+        [("python", False), ("go", False), ("rust", False), ("", False), ("python", True)],
+    )
+    def test_generated_cd_inherits_only_for_cd_release(
+        self, language: str, *, package: bool
+    ) -> None:
+        # Every `secrets: inherit` the generated cd.yml writes calls an
+        # App-key workflow the secrets-inherit check allows (epic .github#1384).
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.publish_docs = True
+        ctx.publish_release = True
+        ctx.primary_language = language
+        ctx.package = package
+        content = render_cd_workflow(ctx)
+        assert content.count("    secrets: inherit\n") == 2
+        assert inherit_violations(content) == []
 
 
 class TestRenderMkdocsYml:
@@ -2273,8 +2275,10 @@ class TestRenderEpicRollupWorkflow:
         content = render_epic_rollup_workflow("v2.1")
         assert "on:\n  issues:\n    types: [closed]" in content
         assert "ops-epic-rollup.yml@v2.1" in content
-        assert "APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}" in content
-        assert "APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}" in content
+        # The rollup reads the App keys from the automation environment, which
+        # reaches it only under `secrets: inherit` (epic .github#1384).
+        assert yaml.safe_load(content)["jobs"]["epic-rollup"]["secrets"] == "inherit"
+        assert inherit_violations(content) == []
 
 
 class TestStepDocsSite:

@@ -81,10 +81,22 @@ class VersionSyncError(Exception):
 class CargoVersionError(Exception):
     """A Cargo manifest's version cannot be read, or a bump of it would break the workspace.
 
-    Deliberately not a :class:`ValueError`: :func:`bump` and :func:`bump_paths`
-    skip a language file on ``(FileNotFoundError, ValueError)``, and this error
-    must pass through them rather than leave ``VERSION`` and ``Cargo.toml``
+    Deliberately not a :class:`ValueError`, so a caller catching one for
+    another purpose never hides it and leaves ``VERSION`` and ``Cargo.toml``
     out of step.
+    """
+
+
+class VersionFileError(Exception):
+    """A version file holds no version that can be read (#5019).
+
+    Each expected problem with ``pyproject.toml``, ``version.go``,
+    ``Cargo.toml`` or ``.claude-plugin/plugin.json`` (a file that does not
+    parse, no version where one belongs) is raised as this error, naming the
+    file and the fix, so the ``vrg-version`` entry point can print it as one
+    line. Deliberately not a :class:`ValueError` or :class:`KeyError`, which
+    the entry point never catches: one of those is a bug and keeps its
+    traceback.
     """
 
 
@@ -247,6 +259,20 @@ def _inherits_version(crate_data: dict[str, Any]) -> bool:
     return isinstance(version, dict) and version.get("workspace") is True
 
 
+def _bumped_crates(
+    repo_root: Path, data: dict[str, Any], members: dict[Path, dict[str, Any]]
+) -> dict[Path, dict[str, Any]]:
+    """The crates of *members* whose version is the one a bump writes, by directory.
+
+    The root package alone when it holds its own version, else every member
+    inheriting ``[workspace.package].version``.
+    """
+    if cargo_version_table(data) == ("package",):
+        root = repo_root.resolve()
+        return {root: members[root]}
+    return {path: crate for path, crate in members.items() if _inherits_version(crate)}
+
+
 def _check_member_requirements(repo_root: Path, data: dict[str, Any], new: str) -> None:
     """Fail when *new* would break a versioned path dependency on a bumped crate.
 
@@ -260,10 +286,7 @@ def _check_member_requirements(repo_root: Path, data: dict[str, Any], new: str) 
     """
     root = repo_root.resolve()
     members = _workspace_members(repo_root, data)
-    if cargo_version_table(data) == ("package",):
-        bumped = {root}
-    else:
-        bumped = {path for path, crate in members.items() if _inherits_version(crate)}
+    bumped = set(_bumped_crates(repo_root, data, members))
     entries: list[tuple[str, Path, str, str, dict[str, Any]]] = []
     workspace = data.get("workspace")
     workspace_deps = workspace.get("dependencies") if isinstance(workspace, dict) else None
@@ -307,6 +330,97 @@ def _check_cargo_bump(repo_root: Path, cargo_toml: Path, old: str, new: str) -> 
     text = cargo_toml.read_text()
     _rewrite_cargo_version(text, old, new)
     _check_member_requirements(repo_root, tomllib.loads(text), new)
+
+
+# A ``[[package]]`` entry's ``version`` line in ``Cargo.lock``, and one entry
+# of a ``dependencies`` array: ``"name"`` or ``"name version"``, with an
+# optional ``(source)`` when the name and version are ambiguous.
+_CARGO_LOCK_VERSION_RE = re.compile(r'^version = "(?P<version>[^"]*)"\s*$')
+_CARGO_LOCK_DEPENDENCY_RE = re.compile(r'^(?P<lead>\s*")(?P<name>[^" ]+) (?P<version>[^" ]+)"')
+
+
+def _rewrite_cargo_lock_versions(text: str, names: frozenset[str], old: str, new: str) -> str:
+    """*text*, a ``Cargo.lock``, with the workspace crates *names* moved from *old* to *new*.
+
+    Only a ``[[package]]`` entry with no ``source`` (a workspace crate, never
+    a registry or git one) named in *names* at *old* is changed, along with
+    each ``"name old"`` reference to it in a ``dependencies`` array. Raises
+    :class:`CargoVersionError` when the lockfile does not parse, or when the
+    edit does not leave it reading *new* for each of those crates.
+    """
+    try:
+        packages = tomllib.loads(text).get("package", [])
+    except tomllib.TOMLDecodeError as exc:
+        msg = f"cannot parse Cargo.lock: {exc}"
+        raise CargoVersionError(msg) from exc
+    targets = {
+        p["name"]
+        for p in packages
+        if p.get("name") in names and p.get("version") == old and "source" not in p
+    }
+    if not targets:
+        return text
+    lines = text.splitlines(keepends=True)
+    blocks: list[list[int]] = []
+    for index, line in enumerate(lines):
+        if line.strip() == "[[package]]":
+            blocks.append([])
+        elif blocks:
+            blocks[-1].append(index)
+    for block in blocks:
+        fields = {
+            key.strip(): value.strip()
+            for key, _, value in (lines[i].partition("=") for i in block)
+            if value and not key.startswith((" ", "\t"))
+        }
+        if fields.get("name", "").strip('"') not in targets or "source" in fields:
+            continue
+        for i in block:
+            if _CARGO_LOCK_VERSION_RE.match(lines[i].rstrip("\r\n")):
+                lines[i] = lines[i].replace(f'"{old}"', f'"{new}"', 1)
+                break
+    for index, line in enumerate(lines):
+        m = _CARGO_LOCK_DEPENDENCY_RE.match(line)
+        if m is not None and m["name"] in targets and m["version"] == old:
+            start, end = m.span("version")
+            lines[index] = line[:start] + new + line[end:]
+    rewritten = "".join(lines)
+    after = {
+        p["name"]: p.get("version")
+        for p in tomllib.loads(rewritten).get("package", [])
+        if p.get("name") in targets and "source" not in p
+    }
+    stale = sorted(name for name in targets if after.get(name) != new)
+    if stale:
+        msg = f"cannot set {', '.join(stale)} to {new} in Cargo.lock: no plain version line"
+        raise CargoVersionError(msg)
+    return rewritten
+
+
+def _write_cargo_lock_versions(repo_root: Path, old: str, new: str) -> None:
+    """Move the bumped workspace crates' own ``Cargo.lock`` entries to *new*.
+
+    It runs before the lock refresh, so ``Cargo.lock`` already matches the
+    bumped ``Cargo.toml`` when ``vrg-container-run`` builds the dev image:
+    the image's ``cargo fetch --locked`` warmup then runs, rather than
+    logging cargo's stale-lockfile error and skipping
+    (vergil-project/vergil-tooling#4593). ``cargo update --workspace`` still
+    runs after it and stays the lockfile's authority. With no ``Cargo.lock``
+    or no ``Cargo.toml``, nothing is written: the lock refresh creates it.
+    """
+    lockfile = repo_root / _LOCKFILES["rust"]
+    cargo_toml = repo_root / _DEFAULT_VERSION_FILES["rust"]
+    if not lockfile.is_file() or not cargo_toml.is_file():
+        return
+    data = tomllib.loads(cargo_toml.read_text())
+    crates = _bumped_crates(repo_root, data, _workspace_members(repo_root, data))
+    # Every bumped crate has a [package] table (it holds or inherits the
+    # version), and Cargo requires its name.
+    names = frozenset(str(crate["package"]["name"]) for crate in crates.values())
+    text = lockfile.read_text()
+    rewritten = _rewrite_cargo_lock_versions(text, names, old, new)
+    if rewritten != text:
+        lockfile.write_text(rewritten)
 
 
 _JSON_DECODER = json.JSONDecoder()
@@ -435,8 +549,22 @@ def _read_typescript_file(path: Path, fix: str) -> str:
 
 
 def _write_typescript_file(path: Path, text: str) -> None:
+    _write_version_text(path, text, encoding="utf-8")
+
+
+def _read_version_text(path: Path) -> str:
+    """The text of the version file *path*; :class:`VersionSyncError` naming it otherwise."""
     try:
-        path.write_text(text, encoding="utf-8")
+        return path.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        msg = f"cannot read {path.name}: {exc}. Fix: make it a readable text file"
+        raise VersionSyncError(msg) from exc
+
+
+def _write_version_text(path: Path, text: str, *, encoding: str | None = None) -> None:
+    """Write *text* to the version file *path*; :class:`VersionSyncError` naming it otherwise."""
+    try:
+        path.write_text(text, encoding=encoding)
     except OSError as exc:
         msg = f"cannot write {path.name}: {exc}. Fix: make it writable, then bump again"
         raise VersionSyncError(msg) from exc
@@ -484,16 +612,23 @@ def _check_typescript_bump(repo_root: Path, old: str, new: str) -> None:
     _rewrite_package_lock_version(lock_text, new, lockfile.name)
 
 
-def _discover_version_file(repo_root: Path, language: str) -> Path:
+def _discover_version_file(repo_root: Path, language: str) -> Path | None:
+    """The version file *language* keeps beside VERSION, or ``None`` when it has none.
+
+    A language with a fixed file name gets its path whether or not the file
+    exists. Go's file is found by search, so a Go repo with no
+    ``**/version.go`` has no version file: ``None``, an explicit answer
+    rather than an exception, so no caller needs a handler that would also
+    hide a real failure to read or write the file (#4588). A language this
+    function does not know raises :class:`ValueError`: that is a bug in the
+    caller, never a missing file.
+    """
     if language in _DEFAULT_VERSION_FILES:
         return repo_root / _DEFAULT_VERSION_FILES[language]
 
     if language == "go":
         matches = [m for m in repo_root.glob("**/version.go") if ".git" not in m.parts]
-        if not matches:
-            msg = f"No **/version.go found in {repo_root}"
-            raise FileNotFoundError(msg)
-        return matches[0]
+        return matches[0] if matches else None
 
     msg = f"Unsupported language for version discovery: {language}"
     raise ValueError(msg)
@@ -503,9 +638,8 @@ def _cross_check_language_file(
     repo_root: Path, language: str | None, canonical_version: str
 ) -> None:
     if language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
-        try:
-            lang_file = _discover_version_file(repo_root, language)
-        except FileNotFoundError, ValueError:
+        lang_file = _discover_version_file(repo_root, language)
+        if lang_file is None:
             print(
                 f"warning: {language} version file not found; sync check skipped",
                 file=sys.stderr,
@@ -536,7 +670,11 @@ def _cross_check_language_file(
                         raise VersionSyncError(str(exc)) from exc
                     lang_version = _manifest_version(manifest, canonical_version)
                 else:
-                    lang_version = _read_version(lang_file.read_text(), language)
+                    lang_version = _read_version(
+                        _read_version_text(lang_file),
+                        language,
+                        lang_file.relative_to(repo_root).as_posix(),
+                    )
                 if lang_version != canonical_version:
                     lang_rel = lang_file.relative_to(repo_root).as_posix()
                     msg = _version_mismatch(lang_rel, canonical_version, lang_version, language)
@@ -545,34 +683,86 @@ def _cross_check_language_file(
     for rel_path, fmt in _SECONDARY_VERSION_FILES.items():
         secondary = repo_root / rel_path
         if secondary.is_file():
-            sec_version = _read_version(secondary.read_text(), fmt)
+            sec_version = _read_version(_read_version_text(secondary), fmt, rel_path)
             if sec_version != canonical_version:
                 msg = f"VERSION contains {canonical_version} but {rel_path} contains {sec_version}"
                 raise VersionSyncError(msg)
 
 
-def _read_version(text: str, language: str) -> str:
+def _parse_version_toml(text: str, name: str) -> dict[str, Any]:
+    """The TOML *text* of the version file *name*; :class:`VersionFileError` otherwise."""
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        msg = f"{name} is not valid TOML: {exc}. Fix: correct the TOML"
+        raise VersionFileError(msg) from exc
+
+
+def _read_python_version(text: str, name: str) -> str:
+    """The ``[project].version`` of the ``pyproject.toml`` *text*, called *name*."""
+    project = _parse_version_toml(text, name).get("project")
+    if not isinstance(project, dict):
+        problem = "no [project] table"
+    elif "version" not in project:
+        problem = "no [project] version"
+    elif not isinstance(project["version"], str):
+        problem = "a [project] version that is not a string"
+    else:
+        return project["version"]
+    msg = (
+        f"{name} has {problem}. Fix: set [project] version to the VERSION file's "
+        'version, as version = "<version>"'
+    )
+    raise VersionFileError(msg)
+
+
+def _read_plugin_version(text: str, name: str) -> str:
+    """The ``version`` of the ``plugin.json`` *text*, called *name*."""
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        msg = f"{name} is not valid JSON: {exc}. Fix: correct the JSON"
+        raise VersionFileError(msg) from exc
+    if not isinstance(data, dict):
+        msg = f"{name} is not a JSON object. Fix: make its top level an object"
+        raise VersionFileError(msg)
+    version = data.get("version")
+    if not isinstance(version, str):
+        problem = "no version" if version is None else "a version that is not a string"
+        msg = (
+            f"{name} has {problem}. Fix: set its version to the VERSION file's "
+            'version, as "version": "<version>"'
+        )
+        raise VersionFileError(msg)
+    return version
+
+
+def _read_version(text: str, language: str, name: str | None = None) -> str:
+    """The version in *text*, a version file of *language* called *name*.
+
+    *name* names the file in an error; it defaults to the language's usual
+    file name. A version file that does not parse or holds no version raises
+    :class:`VersionFileError`, or for Cargo.toml's version table
+    :class:`CargoVersionError` (#5019).
+    """
     if language == "python":
-        data = tomllib.loads(text)
-        return str(data["project"]["version"])
+        return _read_python_version(text, name or "pyproject.toml")
 
     if language == "rust":
-        return _cargo_version(tomllib.loads(text))
+        return _cargo_version(_parse_version_toml(text, name or "Cargo.toml"))
 
     if language == "go":
         m = _GO_VERSION_RE.search(text)
         if not m:
-            msg = 'No Version = "..." found'
-            raise ValueError(msg)
+            msg = (
+                f'{name or "version.go"} has no Version = "..." line. '
+                'Fix: declare the version in it as Version = "<version>"'
+            )
+            raise VersionFileError(msg)
         return m.group(1)
 
     if language == "claude-plugin":
-        data = json.loads(text)
-        version = data.get("version")
-        if version is None:
-            msg = "No 'version' key in plugin.json"
-            raise ValueError(msg)
-        return str(version)
+        return _read_plugin_version(text, name or ".claude-plugin/plugin.json")
 
     return text.strip()
 
@@ -637,20 +827,52 @@ def _write_version(version_file: Path, language: str, old: str, new: str) -> Non
         _write_typescript_file(version_file, _rewrite_package_json_version(text, old, new))
         return
 
-    text = version_file.read_text()
+    text = _read_version_text(version_file)
 
     if language == "rust":
         text = _rewrite_cargo_version(text, old, new)
-    elif language == "python":
-        text = text.replace(f'version = "{old}"', f'version = "{new}"', 1)
-    elif language == "go":
-        text = text.replace(f'Version = "{old}"', f'Version = "{new}"', 1)
-    elif language == "claude-plugin":
-        text = text.replace(f'"version": "{old}"', f'"version": "{new}"', 1)
+    elif language in _VERSION_LINES:
+        line = _VERSION_LINES[language]
+        text = text.replace(line.format(old), line.format(new), 1)
+        _check_version_rewrite(text, version_file.name, language, old, new)
     else:
         text = new + "\n"
 
-    version_file.write_text(text)
+    _write_version_text(version_file, text)
+
+
+# The exact version line the text replace in :func:`_write_version` rewrites,
+# by version file format.
+_VERSION_LINES: dict[str, str] = {
+    "python": 'version = "{}"',
+    "go": 'Version = "{}"',
+    "claude-plugin": '"version": "{}"',
+}
+
+
+def _check_version_rewrite(text: str, name: str, language: str, old: str, new: str) -> None:
+    """Check that *text*, the rewritten version file *name*, holds the version *new*.
+
+    A text replace that matches nothing leaves the file as it was, so the
+    bump would report success while the file and VERSION disagree (#5052).
+    Raises :class:`VersionSyncError` naming the file and the fix otherwise.
+    """
+    found = _read_version(text, language, name)
+    if found == new:
+        return
+    expected = _VERSION_LINES[language].format(old)
+    if found == old:
+        msg = (
+            f"cannot bump {name} from {old} to {new}: its version is not written as "
+            f"{expected}, the line the bump rewrites. "
+            f"Fix: write it exactly as {expected}, then bump again"
+        )
+    else:
+        msg = (
+            f"VERSION contains {old} but {name} contains {found}. "
+            f"Fix: set it to the VERSION file's {old} as {expected}, then bump again"
+        )
+    raise VersionSyncError(msg)
 
 
 def _run_lockfile_maintenance(repo_root: Path, language: str) -> None:
@@ -708,18 +930,19 @@ def bump(repo_root: Path, part: str = "patch") -> str:
     cfg = read_config(repo_root)
     language = cfg.project.primary_language
 
-    # Every Rust check runs before any file is written, VERSION included, so a
-    # manifest with no version table, or a bump that would break a member's
-    # versioned path dependency, fails with nothing changed.
+    # The Rust manifest checks run before any file is written, VERSION
+    # included, so a manifest with no version table, or a bump that would
+    # break a member's versioned path dependency, fails with nothing changed.
+    # The Cargo.lock check runs later, inside _write_bump, after the version
+    # files are written; the rollback below puts them back if it fails.
     if language == "rust":
         cargo_toml = _discover_version_file(repo_root, language)
-        if cargo_toml.is_file():
+        if cargo_toml is not None and cargo_toml.is_file():
             _check_cargo_bump(repo_root, cargo_toml, old_version, new_version)
 
     # Likewise for TypeScript: a missing package.json or lockfile, a missing
     # or mismatched version, or a lockfile with no root version fields fails
-    # before VERSION is written. It never reaches the handler in _write_bump,
-    # which other languages keep (#1165 Task 5).
+    # before VERSION is written.
     if language == "typescript":
         _check_typescript_bump(repo_root, old_version, new_version)
 
@@ -783,18 +1006,21 @@ def _write_bump(repo_root: Path, language: str | None, old_version: str, new_ver
     if language == "typescript":
         _write_version(repo_root / _PACKAGE_JSON, language, old_version, new_version)
     elif language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
-        try:
-            lang_file = _discover_version_file(repo_root, language)
-            if lang_file.is_file():
-                _write_version(lang_file, language, old_version, new_version)
-        except FileNotFoundError, ValueError:
-            pass
+        # No version file (a Go repo with no version.go, or a missing
+        # pyproject.toml or Cargo.toml) means VERSION alone is bumped, as
+        # #1165 Task 5 kept. Any failure to read or write a file that does
+        # exist propagates, and bump() restores every saved path (#4588).
+        lang_file = _discover_version_file(repo_root, language)
+        if lang_file is not None and lang_file.is_file():
+            _write_version(lang_file, language, old_version, new_version)
 
     for rel_path, fmt in _SECONDARY_VERSION_FILES.items():
         secondary = repo_root / rel_path
         if secondary.is_file():
             _write_version(secondary, fmt, old_version, new_version)
 
+    if language == "rust":
+        _write_cargo_lock_versions(repo_root, old_version, new_version)
     if language is not None:
         _run_lockfile_maintenance(repo_root, language)
 
@@ -817,13 +1043,10 @@ def bump_paths(repo_root: Path) -> frozenset[str]:
     paths = {VERSION_FILE, *_SECONDARY_VERSION_FILES}
     language = read_config(repo_root).project.primary_language
     if language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
-        try:
-            lang_file = _discover_version_file(repo_root, language)
-        except FileNotFoundError, ValueError:
-            # bump() writes no language file then, so none is listed: a dirty
-            # path outside this set is refused by the caller, never ignored.
-            pass
-        else:
+        lang_file = _discover_version_file(repo_root, language)
+        # With no version file bump() writes none, so none is listed: a dirty
+        # path outside this set is refused by the caller, never ignored.
+        if lang_file is not None:
             paths.add(lang_file.relative_to(repo_root).as_posix())
     if language is not None and language in _LOCKFILES:
         paths.add(_LOCKFILES[language])

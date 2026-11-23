@@ -79,8 +79,7 @@ class RepoInitContext:
     initial_version: str = "0.1.0"
     # True when vergil.toml declares ``[package]`` (epic
     # vergil-project/.github#356). Never prompted: it is read from an existing
-    # vergil.toml on adopt, and drives the ``package`` CI job and the
-    # ``secrets: inherit`` CD release caller (issue #3144).
+    # vergil.toml on adopt, and drives the ``package`` CI job (issue #3144).
     package: bool = False
     # The resolver's answer for the vergil.toml step 3 writes (epic
     # vergil-project/.github#407). It names the generated release job's
@@ -513,27 +512,28 @@ def _container_suffix(resolution: Resolution | None) -> str:
     return resolution.primary_container_suffix if resolution else NO_LANGUAGE_SUFFIX
 
 
-_CD_RELEASE_APP_SECRETS = ("APP_CLIENT_ID", "APP_PRIVATE_KEY")
-"""The automation App secrets every ``cd-release.yml`` call needs (issue #4747)."""
+_SECRETS_INHERIT_LINES = (
+    "    # `inherit` is required: the automation App keys live in the\n",
+    "    # `automation` environment, and environment secrets reach a cross-repo\n",
+    "    # reusable workflow only under `secrets: inherit`. Allowed only for the\n",
+    "    # App-key workflows (vrg-validate's secrets-inherit check).\n",
+    "    secrets: inherit\n",
+)
+"""The ``secrets:`` of every generated job calling an App-key workflow.
 
-
-def _cd_release_secrets(language: str | None) -> list[str]:
-    """Secrets ``cd-release.yml`` consumes for a language (least-privilege).
-
-    Every release needs the automation App's ``APP_CLIENT_ID`` and
-    ``APP_PRIVATE_KEY``: cd-release pushes the release tags with the App's
-    installation token and fails at "Require the automation App secrets"
-    without them (vergil-project/vergil-actions#1315, issue #4747). After
-    them come exactly what the ecosystem's publisher reads, so a generated
-    ``cd.yml`` forwards only what its release needs instead of the blanket
-    ``secrets: inherit`` (epic vergil-project/.github#189). python (OIDC
-    trusted publishing) and go (no token), and any non-listed or
-    non-publishing language, add no publisher secret.
-    """
-    publisher_secrets = {
-        "rust": ["CARGO_REGISTRY_TOKEN"],
-    }
-    return [*_CD_RELEASE_APP_SECRETS, *publisher_secrets.get(language or "", [])]
+The automation App keys, and every other secret that can write or act, live
+only in the repo's ``automation`` environment (epic
+vergil-project/.github#1384). GitHub delivers a cross-repo reusable
+workflow's environment secrets only under ``secrets: inherit``, never through
+an explicit map (the probe in vergil-project/packages#6), and a calling job
+cannot declare an environment. So each generated caller of an App-key
+workflow (``cd-docs``, ``cd-release``, ``ops-epic-rollup``,
+``ops-github-config``) inherits, superseding the explicit App-key maps of
+issue #4747 and epic vergil-project/.github#1494. ``inherit`` also carries a
+``[package]`` repo's signing secrets and the rust publisher's
+``CARGO_REGISTRY_TOKEN`` to ``cd-release``. Every such workflow is on
+:data:`~vergil_tooling.lib.secrets_inherit.INHERIT_ALLOWED`.
+"""
 
 
 def render_ci_workflow(ctx: RepoInitContext) -> str:
@@ -714,12 +714,16 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
     ]
 
     if ctx.publish_docs:
+        # cd-docs reports its failures with the automation App's token (epic
+        # vergil-project/.github#1494, spec §5.6; issue #4965), read from the
+        # automation environment, so every call inherits.
         lines.extend(
             [
                 "  docs:\n",
                 _uses_line("cd-docs", ctx.vergil_version),
                 "    permissions:\n",
                 "      contents: write\n",
+                *_SECRETS_INHERIT_LINES,
             ]
         )
 
@@ -747,33 +751,11 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
                 f"      language: {suffix}\n",
             ]
         )
-        # Forward the automation App secrets every release needs, plus only
-        # the secrets this ecosystem's publisher needs, keyed on the primary
-        # language, instead of a blanket `secrets: inherit` (epic
-        # vergil-project/.github#189, issue #4747).
-        #
-        # Exception — a [package] repo must inherit: GitHub delivers a
-        # cross-repo reusable workflow's *environment* secrets only under
-        # `secrets: inherit`, never via an explicit map, so cd-release's
-        # package-sign job would see an empty PACKAGE_SIGNING_KEY from its
-        # `package-signing` environment (probe in vergil-project/packages#6;
-        # issue #3144). inherit also carries the App and publisher secrets.
-        secret_names = _cd_release_secrets(ctx.primary_language)
-        if ctx.package:
-            lines.extend(
-                [
-                    "    # `inherit` is required: environment secrets reach a job in a\n",
-                    "    # cross-repo reusable workflow only under `secrets: inherit`\n",
-                    "    # (vergil-project/packages#6). An explicit map leaves cd-release's\n",
-                    "    # package-sign job an empty PACKAGE_SIGNING_KEY. The callee is\n",
-                    "    # first-party (vergil-project/vergil-actions).\n",
-                    "    secrets: inherit"
-                    "  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit\n",
-                ]
-            )
-        else:
-            lines.append("    secrets:\n")
-            lines.extend(f"      {name}: ${{{{ secrets.{name} }}}}\n" for name in secret_names)
+        # cd-release pushes the release tags with the automation App's token
+        # (issue #4747), and a [package] repo's package-sign job reads its
+        # `package-signing` environment (issue #3144): both reach it only
+        # under `secrets: inherit`, which also carries the publisher's token.
+        lines.extend(_SECRETS_INHERIT_LINES)
 
     return "".join(lines)
 
@@ -804,9 +786,7 @@ def render_epic_rollup_workflow(vergil_version: str) -> str:
         f"{_uses_line('ops-epic-rollup', vergil_version)}"
         "    permissions:\n"
         "      contents: read\n"
-        "    secrets:\n"
-        "      APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}\n"
-        "      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}\n"
+        f"{''.join(_SECRETS_INHERIT_LINES)}"
     )
 
 
@@ -847,9 +827,7 @@ def render_ops_workflow(ctx: RepoInitContext) -> str:
         "    permissions:\n"
         "      contents: read\n"
         "      issues: write\n"
-        "    secrets:\n"
-        "      APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}\n"
-        "      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}\n"
+        f"{''.join(_SECRETS_INHERIT_LINES)}"
     )
 
 

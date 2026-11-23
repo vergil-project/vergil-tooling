@@ -18,7 +18,7 @@ the dev-tree override venv.
 | [vrg-git](cli-tools-overview.md#vrg-git) | Policy-enforcing `git` wrapper for agent sessions |
 | [vrg-gh](cli-tools-overview.md#vrg-gh) | Identity-aware `gh` wrapper with a per-identity allowlist |
 | [vrg-whoami](cli-tools-overview.md#vrg-whoami) | Print the resolved identity role or platform |
-| [vrg-hook-guard](cli-tools-overview.md#vrg-hook-guard) | Claude Code hook that blocks raw `git` and `gh` |
+| [vrg-hook-guard](cli-tools-overview.md#vrg-hook-guard) | Claude Code hook that blocks raw `git` and `gh`, and agents' raw content reads |
 | [vrg-trusted-authors](cli-tools-overview.md#vrg-trusted-authors) | Print the GitHub identities whose issues and comments automation may trust, and the Vergil orgs |
 | [vrg-resolve-tracking-issue](cli-tools-overview.md#vrg-resolve-tracking-issue) | Print a merge commit's tracking issue |
 | [vrg-vm](cli-tools-overview.md#vrg-vm) | Manage the identity agent VMs |
@@ -40,6 +40,7 @@ the dev-tree override venv.
 | [vrg-scope-change](dev/scope-change.md) | Post a scope change on a task issue, as the human (human-only) |
 | [vrg-merge-review-request](cli-tools-overview.md#vrg-merge-review-request) | Build a merge-review request from a clean, fully validated branch |
 | [vrg-merge-review-check](cli-tools-overview.md#vrg-merge-review-check) | Check a stored merge-review result against the request it answers |
+| [vrg-merge-review-close](cli-tools-overview.md#vrg-merge-review-close) | Post merge review's closing comment with its record line: the head, the change fingerprint and the outcome |
 | [vrg-change-class](cli-tools-overview.md#vrg-change-class) | Print a branch's merge-review change class: `docs-only` or `code` |
 | [vrg-ensure-label](cli-tools-overview.md#vrg-ensure-label) | Ensure GitHub labels exist |
 | [vrg-github-repo-config](config-audit.md) | Audit/reconcile a repo against canonical config |
@@ -101,4 +102,4 @@ Run inside dev containers launched by `vrg-container-run`.
 
 | Hook | Purpose |
 | ---- | ------- |
-| [Claude Code Hook Guard](hooks/pre-commit.md) | `PreToolUse` guard that blocks raw `git` and `gh`; also documents the `vrg-commit` branch checks |
+| [Claude Code Hook Guard](hooks/pre-commit.md) | `PreToolUse` guard that blocks raw `git` and `gh`, and agents' raw issue and PR content reads; also documents the `vrg-commit` branch checks |

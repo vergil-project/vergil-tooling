@@ -182,6 +182,8 @@ def test_already_landed_update_is_a_clean_noop(monkeypatch, capsys) -> None:
     """Preflight found deps/update-<v>'s PR merged (#3330): nothing runs, exit 0."""
     monkeypatch.setattr(_MOD + ".git.run", lambda *a: pytest.fail("git ran"))
     monkeypatch.setattr(_MOD + ".pr.cleanup_worktree", lambda ctx: pytest.fail("cleaned up"))  # noqa: ARG005
+    deleted: list[str | None] = []
+    monkeypatch.setattr(_MOD + ".pr.delete_merged_branch", lambda ctx: deleted.append(ctx.branch))
     state = UpdateDepsState(repo_root=Path("/tmp/r"))  # noqa: S108
     ctx = UpdateDepsContext(
         repo="o/r",
@@ -200,6 +202,8 @@ def test_already_landed_update_is_a_clean_noop(monkeypatch, capsys) -> None:
     out = capsys.readouterr().out
     assert "Dependency update for 2.1.243 already merged: https://github.com/o/r/pull/7" in out
     assert "Held back" not in out
+    # The PR is confirmed merged, so its leftover branch is deleted (#4952).
+    assert deleted == ["deps/update-2.1.243"]
 
 
 def test_finalize_removes_worktree_on_noop(monkeypatch) -> None:
@@ -211,14 +215,51 @@ def test_finalize_removes_worktree_on_noop(monkeypatch) -> None:
     assert cleaned["done"] is True
 
 
-def test_finalize_removes_worktree_on_success(monkeypatch) -> None:
-    cleaned = {"done": False}
-    monkeypatch.setattr(_MOD + ".pr.cleanup_worktree", lambda ctx: cleaned.update(done=True))  # noqa: ARG005
+def test_finalize_removes_worktree_then_deletes_the_merged_branch(monkeypatch) -> None:
+    order: list[str] = []
+    monkeypatch.setattr(_MOD + ".pr.cleanup_worktree", lambda ctx: order.append("cleanup"))  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".pr.delete_merged_branch", lambda ctx: order.append("delete"))  # noqa: ARG005
     state, ctx = _state()
     ctx.any_changes = True
     ctx.pr_url = "https://x/pr/1"
+    ctx.merged = True
     finalize_stage(state)
-    assert cleaned["done"] is True
+    assert order == ["cleanup", "delete"]
+
+
+@pytest.mark.parametrize("kind", ["validation", "merge"])
+def test_finalize_keeps_the_branch_of_a_pr_that_did_not_merge(monkeypatch, kind) -> None:
+    """An unmerged PR's branch stays on origin for a resume (#4952)."""
+    monkeypatch.setattr(_MOD + ".pr.cleanup_worktree", lambda ctx: None)  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".pr.delete_merged_branch", lambda ctx: pytest.fail("deleted"))  # noqa: ARG005
+    state, ctx = _state()
+    ctx.any_changes = True
+    ctx.pr_url = "https://x/pr/1"
+    ctx.failure = DepsFailure(kind=kind, message="m", output_tail="t", reproduce="r")
+    finalize_stage(state)
+
+
+def test_run_update_raises_when_the_merged_branch_cannot_be_deleted(monkeypatch) -> None:
+    """A failed deletion fails the update, after the worktree is gone (#4952)."""
+    state_ctx = UpdateDepsContext(repo="o/r", repo_root=Path("/tmp/r"))  # noqa: S108
+    state_ctx.branch = "deps/update-2.1.243"
+    monkeypatch.setattr(_MOD + ".preflight", _preflight_returning(state_ctx))
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: None)
+    cleaned: list[bool] = []
+    monkeypatch.setattr(_MOD + ".validate.run_validation", lambda: None)
+    monkeypatch.setattr(
+        _MOD + ".pr.prepare_pr", lambda ctx: setattr(ctx, "pr_url", "https://x/pr/1")
+    )
+    monkeypatch.setattr(_MOD + ".pr.merge_pr", lambda ctx: setattr(ctx, "merged", True))
+    monkeypatch.setattr(_MOD + ".pr.cleanup_worktree", lambda ctx: cleaned.append(True))  # noqa: ARG005
+
+    def _fail(ctx: UpdateDepsContext) -> None:  # noqa: ARG001
+        raise UpdateDepsError(phase="finalize", command="gh api", message="could not delete")
+
+    monkeypatch.setattr(_MOD + ".pr.delete_merged_branch", _fail)
+    with pytest.raises(UpdateDepsError, match="could not delete"):
+        run_update(repo_root=Path("/tmp/r"), registry=[_Changed()])  # noqa: S108
+    assert cleaned == [True]
 
 
 def test_build_stages_names_and_modes() -> None:

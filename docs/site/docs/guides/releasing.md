@@ -199,8 +199,11 @@ run when it fails. A *deferred* stage records its failure and lets the
 later stages run, except those [the hold rule](#the-hold-rule) holds
 back; the run then exits 1 with a summary. Every tracked
 stage posts a completion or failure comment on the release tracking
-issue and ticks its box in the issue's stage checklist. A stage that
-succeeds also records itself done in the issue's state block, with the
+issue and ticks its box in the issue's stage checklist. The checklist
+lists every stage but `publish-status`, which runs after
+`close-tracking` has made the last write to the issue and reports only
+to the terminal, so a finished release's checklist has every box
+ticked. A stage that succeeds also records itself done in the issue's state block, with the
 facts later stages need; a [resume](#resuming-a-release) runs only the
 stages not recorded done.
 
@@ -837,7 +840,8 @@ one that is behind when the release runs it. The pipeline:
    already exists, its PR decides what happens; see
    [An existing update branch](../reference/dev/update-deps.md#an-existing-update-branch).
    On `--resume`, if the update for this version already merged, the
-   stage succeeds and its tracking-issue comment links the merged PR.
+   stage deletes the branch it left, on origin and locally, then
+   succeeds, and its tracking-issue comment links the merged PR.
 2. Run each applicable updater, committing each one's changes
    separately. The built-in updaters and the per-repo hook are described
    in the [dependency-update reference](../reference/dependency-update-config.md).
@@ -845,8 +849,13 @@ one that is behind when the release runs it. The pipeline:
    The tracking-issue comment says "No dependency changes; no PR opened."
 4. Otherwise run `vrg-container-run -- vrg-validate` once, push the
    branch, and open a PR to `develop` labelled `dependency-update`.
-5. If validation passed, wait for the PR's checks, merge it, and
-   delete its branch on origin.
+5. If validation passed, wait for the PR's checks and merge it. Once
+   the PR is confirmed merged, remove the worktree and delete the
+   `deps/update-<version>` branch on origin and locally. If the PR did
+   not merge, the branch stays on origin, as the open PR's head, for a
+   resume. A failed deletion fails the stage, with the branch to delete
+   by hand: it is not recorded done, and `vrg-release --resume`, finding
+   the PR merged, tries the deletion again.
 
 The stage's comment on the tracking issue always carries a
 **Held back by declared bounds** table: the dependencies whose newest
@@ -883,7 +892,10 @@ skipped. What it leaves behind depends on where it failed:
 If a fix task for the same version and failure kind is already open,
 for example after `vrg-release --resume` re-runs an update whose
 updater failed on a transient error, no second task is filed: the new failure is added
-as a comment on the open task, which is linked as above.
+as a comment on the open task, which is linked as above. Only an open
+task whose body the trust layer trusts is reused: a look-alike task
+opened or edited by an identity with no trusted role is reported on
+stderr, metadata only, and never adopted.
 
 Either way `vrg-release` exits 1, and the failure counts once in its
 summary: the `update-deps` stage fails, and `publish-status` repeats it
@@ -943,6 +955,13 @@ labelled `dependency-update`. For each one:
   preflight refuses, naming each PR and why it blocks. A fix task
   closed without being completed means the update did not land; whether
   to close the PR or fix it is a human decision.
+
+Only trusted content counts toward the gate. The `Fix task:` link is
+read only from a PR body the trust layer trusts, so a PR whose body an
+untrusted identity wrote or edited has no fix task and blocks. A
+completed close clears the gate only when a trusted identity closed the
+fix task: a close by anyone else stops the release before any PR is
+touched, naming who closed it, and the human decides.
 
 Clear a blocking PR by landing its fix task, merging the PR, or closing
 it deliberately. For an urgent release, `--allow-pending-deps` lets the
@@ -1039,6 +1058,10 @@ its recovery:
 - An issue with no state block was opened by older `vrg-release`
   tooling, which `--resume` cannot finish. Finish that release by hand,
   then close the issue.
+
+Only an issue whose body the trust layer trusts counts: a
+`release: X.Y.Z` issue opened or edited by an identity with no trusted
+role is reported on stderr, metadata only, and never blocks the start.
 
 The one exception is `vrg-release --supersede X.Y.Z`, whose check
 passes over release `X.Y.Z`'s own tracking issue, and only it (see
@@ -1234,7 +1257,7 @@ Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
 
 - Release: https://github.com/vergil-project/vergil-tooling/releases/tag/v2.1.340
 - Closed by: #4840 (merge commit 1a2b3c4)
-- Install: ran (`[publish].install`)
+- Install: ran — installed v2.1.340 (commit fab2581)
 ```
 
 - The date is the day the GitHub Release was published, and each closing
@@ -1242,6 +1265,12 @@ Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
 - The install line reads `ran` when the repo configures
   `[publish].install` and `none configured` when it does not; a record
   in a repo with no install attests the release and its publish only.
+  When the install's output reports what it installed, in a line
+  holding `installed vX.Y.Z (commit <sha>)` as `vrg-tooling-install`
+  prints, the `install` stage records that release and commit in the
+  state block (`install_version` and `install_commit`), and the line
+  names them: `ran — installed v2.1.340 (commit fab2581)`. An install
+  that reports neither keeps the plain `` ran (`[publish].install`) ``.
   The stage refuses while the state block does not record `install`
   done.
 - Every issue in the list gets its record, whatever its state: closed as

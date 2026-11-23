@@ -173,3 +173,31 @@ def test_unpublished_links_host_alone_and_other_hosts_ignored() -> None:
         "and https://vergil-project.github.io.evil.example/gone/\n"
     )
     assert doc_links.unpublished_links(text) == []
+
+
+# -- the checking repo's own site (issue #4612) ------------------------------
+
+
+@pytest.mark.parametrize("path", ["", "/", "/latest/guides/x/", "/dev/", "#top"])
+def test_own_site_not_flagged_as_unpublished(path: str) -> None:
+    text = f"[x]({_HOST}/vergil-new-repo{path})\n"
+    assert doc_links.unpublished_links(text) == [
+        (1, "vergil-new-repo", f"{_HOST}/vergil-new-repo{path}")
+    ]
+    assert doc_links.unpublished_links(text, own_site="vergil-new-repo") == []
+
+
+def test_own_site_does_not_publish_other_sites() -> None:
+    text = f"<{_HOST}/gone/x/>\n"
+    assert doc_links.unpublished_links(text, own_site="vergil-new-repo") == [
+        (1, "gone", f"{_HOST}/gone/x/")
+    ]
+
+
+def test_own_site_is_versioned() -> None:
+    """``repo_init`` creates every site under mike, so a deep link to the
+    repo's own site still needs a version segment."""
+    deep = f"{_HOST}/vergil-new-repo/guides/x/"
+    text = f"<{deep}> <{_HOST}/vergil-new-repo/latest/guides/x/> <{_HOST}/vergil-new-repo/>\n"
+    assert doc_links.unversioned_links(text) == []
+    assert doc_links.unversioned_links(text, own_site="vergil-new-repo") == [(1, deep)]

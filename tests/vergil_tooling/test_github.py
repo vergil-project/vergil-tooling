@@ -3012,6 +3012,30 @@ class TestGetInstallationToken:
             method="POST",
         )
 
+    def test_finds_the_installation_for_a_differently_cased_org(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # GitHub owner logins are case-insensitive (#5053).
+        _configure_app(tmp_path, monkeypatch)
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
+            patch(
+                "vergil_tooling.lib.github._resolve_installations",
+                return_value={"other-org": "111", "Test-Org": "67890"},
+            ),
+            patch("vergil_tooling.lib.github._jwt_api_request") as mock_req,
+        ):
+            mock_req.return_value = {"token": "ghs_install_token_abc"}
+            token = github.get_installation_token(org="tEST-oRG", require_installation=True)
+        assert token == "ghs_install_token_abc"  # noqa: S105
+        mock_req.assert_called_once_with(
+            "/app/installations/67890/access_tokens",
+            "fake-jwt",
+            method="POST",
+        )
+
     def test_returns_none_and_warns_once_when_org_not_in_installations(
         self,
         tmp_path: Path,

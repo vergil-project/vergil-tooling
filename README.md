@@ -65,6 +65,9 @@ Raw `git` and `gh` commands are blocked in AI agent sessions by
 `vrg-hook-guard`, a Claude Code `PreToolUse` hook. Each repo ships a
 thin shell shim at `.claude/hooks/guard.sh` that calls
 `vrg-hook-guard` to enforce the `vrg-git`/`vrg-gh` wrapper policy.
+It also refuses agents' raw `vrg-gh` reads of issue and PR content
+(bodies, comments and reviews) and names `vrg-issue-read`, the trusted
+read command, in their place.
 
 ## Releasing
 

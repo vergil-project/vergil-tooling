@@ -422,6 +422,28 @@ def _reprobe(dep: HostDependency) -> str | _Outcome:
     return after
 
 
+def _below_minimum_outcome(dep: HostDependency, before: str, after: str) -> _Outcome | None:
+    """The ERROR outcome when *after* the upgrade is still below *dep*'s minimum, else ``None``.
+
+    A version that cannot be ordered against the minimum is an ERROR too, as
+    ``status`` reports it (issue #4613).
+    """
+    try:
+        below = host_status.below_minimum(dep, after)
+    except ValueError as exc:
+        return _Outcome(
+            f"ERROR    {dep.name}: {before} -> {after} cannot be ordered against its "
+            f"minimum {dep.minimum} ({exc})",
+            host_status.ERROR,
+        )
+    if not below:
+        return None
+    return _Outcome(
+        f"ERROR    {dep.name}: {before} -> {after}, still below its minimum {dep.minimum}",
+        host_status.ERROR,
+    )
+
+
 def _upgrade_behind(dep: HostDependency, before: str, edge: str) -> _Outcome:
     """Upgrade a dependency that is behind *edge* and report the real transition."""
     outcome = _run_upgrade(dep)
@@ -430,6 +452,9 @@ def _upgrade_behind(dep: HostDependency, before: str, edge: str) -> _Outcome:
     after = _reprobe(dep)
     if isinstance(after, _Outcome):
         return after
+    floor = _below_minimum_outcome(dep, before, after)
+    if floor is not None:
+        return floor
     if after == before:
         return _Outcome(
             f"unchanged {dep.name}: still {before}, latest {edge} "
@@ -463,6 +488,9 @@ def _upgrade_no_latest(dep: HostDependency, before: str, state: str) -> _Outcome
     after = _reprobe(dep)
     if isinstance(after, _Outcome):
         return after
+    floor = _below_minimum_outcome(dep, before, after)
+    if floor is not None:
+        return floor
     unmanaged = state == "latest-unmanaged"
     why = "no latest feed" if unmanaged else "latest unknown: its latest probe did not answer"
     note = f" (unchanged; {why})" if after == before else f" ({why})"
@@ -545,6 +573,9 @@ def _upgrade_one(dep: HostDependency, *, force: bool) -> _Outcome:
             held=True,
         )
     if state == "current":
+        floor = _below_minimum_outcome(dep, before, before)
+        if floor is not None:
+            return floor
         return _Outcome(f"skipped  {dep.name}: current ({before})", host_status.OK)
     if state == "behind":
         return _upgrade_behind(dep, before, str(edge))

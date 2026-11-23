@@ -448,9 +448,12 @@ def _published_pr(branch: str, head_sha: str) -> trust.PRRef | None:
     opened by hand leaves the worktree looking ready (issue #4993). GitHub
     is asked instead: an open PR on *branch* means the work is in flight,
     and a merged PR whose head is the reported *head_sha* means it has
-    landed and the worktree is cleanup. A merged PR at another head is a
-    reused branch name (issue #1719), whose new tip is still to submit.
-    Only same-repo PRs with a trusted author count
+    landed and the worktree is cleanup. A PR closed without merging at the
+    reported head is cleanup too, as ``vrg-repo-status`` and the finalize
+    sweep count it, and is never opened again silently (issue #5038): a
+    merged one at that head wins over it. A merged or closed PR at another
+    head is a reused branch name (issue #1719), whose new tip is still to
+    submit. Only same-repo PRs with a trusted author count
     (:func:`worktrees.branch_prs`). A failed read refuses the selection.
     """
     try:
@@ -464,8 +467,19 @@ def _published_pr(branch: str, head_sha: str) -> trust.PRRef | None:
     opened = [pr for pr in prs if pr.state == "OPEN"]
     if opened:
         return max(opened, key=lambda pr: pr.number)
-    merged = [pr for pr in prs if pr.state == "MERGED" and pr.head_oid == head_sha]
-    return max(merged, key=lambda pr: pr.number, default=None)
+    for state in ("MERGED", "CLOSED"):
+        at_head = [pr for pr in prs if pr.state == state and pr.head_oid == head_sha]
+        if at_head:
+            return max(at_head, key=lambda pr: pr.number)
+    return None
+
+
+def _closed_unmerged_ways_on(pr: trust.PRRef) -> str:
+    """The two ways on from a PR closed without merging at the reported head (#5038)."""
+    return (
+        f"reopen PR #{pr.number} on GitHub to go on with it, or run "
+        "`vrg-finalize-pr --cleanup-only` to remove the worktree"
+    )
 
 
 def _create_pr(*, target_branch: str, title: str, pr_body: str, head: str | None = None) -> str:
@@ -1118,12 +1132,14 @@ def _ready_worktrees(root: Path) -> list[tuple[worktrees.Worktree, dict[str, str
     single picker and the batch selector (issue #1673). A worktree whose
     state is ready is still held back when GitHub already has a PR for it
     (:func:`_published_pr`, issue #4993): an open one is in flight, and a
-    merged one is cleanup. When other worktrees go ahead, each one held
-    back that way is named on stderr, since its state file says ready.
+    merged one is cleanup, as is one closed without merging at the reported
+    head (issue #5038). When other worktrees go ahead, each one held back
+    that way is named on stderr, since its state file says ready.
     """
     ready: list[tuple[worktrees.Worktree, dict[str, str]]] = []
     in_flight: list[str] = []
     merged: list[str] = []
+    closed: list[str] = []
     not_ready: list[str] = []
     # Ready by their state file but held back by GitHub: named when others go on.
     held_back: list[str] = []
@@ -1146,11 +1162,17 @@ def _ready_worktrees(root: Path) -> list[tuple[worktrees.Worktree, dict[str, str
         elif pr.state == "OPEN":
             in_flight.append(f"{wt.path.name}: PR #{pr.number} ({pr.url})")
             held_back.append(f"{wt.path.name}: PR #{pr.number} is already open ({pr.url})")
-        else:
+        elif pr.state == "MERGED":
             merged.append(f"{wt.path.name}: PR #{pr.number} ({pr.url})")
             held_back.append(
                 f"{wt.path.name}: PR #{pr.number} has merged ({pr.url}); "
                 "the worktree is cleanup, not a submit"
+            )
+        else:
+            closed.append(f"{wt.path.name}: PR #{pr.number} ({pr.url})")
+            held_back.append(
+                f"{wt.path.name}: PR #{pr.number} was closed without merging "
+                f"({pr.url}); {_closed_unmerged_ways_on(pr)}"
             )
 
     if ready:
@@ -1166,11 +1188,18 @@ def _ready_worktrees(root: Path) -> list[tuple[worktrees.Worktree, dict[str, str
             lines.append("")
             lines.append("  Merged (cleanup — run `vrg-finalize-pr --cleanup-only`):")
             lines.extend(f"    {entry}" for entry in merged)
+        if closed:
+            lines.append("")
+            lines.append(
+                "  Closed without merging (reopen the PR on GitHub, or run "
+                "`vrg-finalize-pr --cleanup-only`):"
+            )
+            lines.extend(f"    {entry}" for entry in closed)
         if not_ready:
             lines.append("")
             lines.append("  Not ready (no submission metadata yet):")
             lines.extend(f"    {entry}" for entry in not_ready)
-        if not in_flight and not merged and not not_ready:
+        if not in_flight and not merged and not closed and not not_ready:
             lines.append("  (no .worktrees/ entries exist)")
         raise SystemExit("\n".join(lines))
     return ready
@@ -1310,13 +1339,48 @@ def _prepare(
     )
 
 
+def _held_back(pr: trust.PRRef) -> int:
+    """Say why this worktree's branch is not submitted: GitHub already has its PR.
+
+    An open PR is in flight, so there is nothing to do (exit 0, as for a
+    worktree whose own state records the submit). A PR merged at the
+    reported head has landed, so the worktree is cleanup: the run is
+    refused (issue #5037). A PR closed without merging at the reported
+    head is cleanup too, and the run is refused naming it, so a new PR is
+    never opened at that head silently (issue #5038).
+    """
+    if pr.state == "OPEN":
+        print(
+            f"vrg-submit-pr: this worktree's branch already has an open PR #{pr.number} "
+            f"({pr.url}).\n"
+            "  Nothing to do; the PR is in flight. Run vrg-finalize-pr on it to "
+            "watch it merge and settle develop.",
+        )
+        return 0
+    if pr.state == "CLOSED":
+        msg = (
+            f"vrg-submit-pr: this worktree's PR #{pr.number} was closed without "
+            f"merging at the reported head ({pr.url}); nothing was submitted.\n"
+            f"  To go on: {_closed_unmerged_ways_on(pr)}."
+        )
+        raise SystemExit(msg)
+    msg = (
+        f"vrg-submit-pr: this worktree's PR #{pr.number} has merged at the reported "
+        f"head ({pr.url}); nothing was submitted.\n"
+        "  This worktree is cleanup, not a submit: run "
+        "`vrg-finalize-pr --cleanup-only` to remove it."
+    )
+    raise SystemExit(msg)
+
+
 def _run_template_mode(args: argparse.Namespace) -> int:
     root = Path(git.repo_root())
 
     # Location resolution: from the main worktree (repo root), resolve
     # which `.worktrees/` worktree to submit from and move there. The
     # invoking shell is unaffected — chdir applies to this process only.
-    if git.is_main_worktree():
+    picked = git.is_main_worktree()
+    if picked:
         # Batch when --all/--select is given. A single selection falls through
         # to the unchanged single-PR path below (issue #1673). Interactive
         # no-flag multi-select is a deliberate follow-up: the no-flag path
@@ -1358,6 +1422,15 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     # the PR head unreported (issue #3815).
     expected_head = fields.get("head_sha", "")
     _require_local_head(branch, expected_head)
+    # The root picker has already asked GitHub (_ready_worktrees); a run from
+    # inside the worktree asks here, so a PR opened by hand is never opened
+    # twice nor a merged one pushed again (issue #5037), and a PR closed
+    # without merging at the reported head is never reopened as a new one
+    # (issue #5038).
+    if not picked:
+        published = _published_pr(branch, expected_head)
+        if published is not None:
+            return _held_back(published)
     target = _target_branch(args.base, fields.get("base"))
     title = fields["title"]
     notes = fields.get("notes", "")
@@ -1567,7 +1640,8 @@ def _require_relay_agrees(branch: str, local: WorkflowState) -> None:
     """Refuse when the relay ref disagrees with the local ready-state.
 
     The local worktree file is preferred over the relay ref, but the two are
-    written separately and a relay push can fail with only a warning. When
+    written separately and a relay push can fail after the local write (which
+    fails report-ready but keeps the local file, #5035). When
     they disagree on the status or the recorded head, one of them is stale and
     there is no safe way to pick: refuse and say how to republish both. An
     absent relay ref is not a disagreement (a branch whose relay push never

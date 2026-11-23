@@ -483,3 +483,135 @@ def test_unknown_auto_enable_fails_closed() -> None:
 def test_human_auto_merge_enabled_allowed(name: str) -> None:
     result = _check_timeline(_recorded_timeline(name))
     assert result.ok
+
+
+# The user agent's own PR (epic vergil-project/.github#1384, spec §4.3): it may
+# open it, turn auto-merge on and merge it; on anyone else's PR every action
+# forbidden before stays a violation, and its approval is one on every PR.
+_USER_VIEW = json.dumps({"author": {"login": "app/a-vergil-user", "is_bot": True}})
+_OTHER_AGENT_VIEW = json.dumps({"author": {"login": "app/the-agent", "is_bot": True}})
+
+
+def _check_actions(
+    timeline: list[dict[str, Any]],
+    *,
+    reviews: list[dict[str, object]] | None = None,
+    author_view: str = _USER_VIEW,
+) -> pr_provenance.ProvenanceResult:
+    with patch(
+        "vergil_tooling.lib.pr_provenance.github.read_output",
+        side_effect=_paged_fake([reviews or []], [timeline], [], author_view=author_view),
+    ):
+        return pr_provenance.check_pr("9")
+
+
+def _violations(result: pr_provenance.ProvenanceResult) -> list[tuple[str, str]]:
+    return [(v.login, v.action) for v in result.violations]
+
+
+@pytest.mark.parametrize("event", ["auto_squash_enabled", "auto_rebase_enabled"])
+def test_user_creates_and_automerges_own_pr(event: str) -> None:
+    # The author's identity (``app/<slug>`` from ``gh pr view``) and the
+    # timeline actor's (``<slug>[bot]``) are one identity once normalised.
+    timeline = _as_agent(_recorded_timeline("auto_merge_rebase_enable"), event)
+    assert _check_actions(timeline).ok
+
+
+def test_user_merge_of_own_pr_allowed() -> None:
+    # The ``merged_now`` path: GitHub refused auto-merge on a PR that could
+    # already merge, so the user agent merged it directly.
+    assert _check_actions([{"event": "merged", "actor": _bot(_AGENT)}]).ok
+
+
+@pytest.mark.parametrize(
+    ("event", "action"), [("renamed", "edited"), ("closed", "closed"), ("reopened", "reopened")]
+)
+def test_user_other_actions_on_own_pr_forbidden(event: str, action: str) -> None:
+    # Only create, auto-merge and merge are allowed on its own PR; submit never
+    # renames a PR, so ``edited`` stays forbidden there too.
+    result = _check_actions([{"event": event, "actor": _bot(_AGENT)}])
+    assert _violations(result) == [(_AGENT, action)]
+
+
+@pytest.mark.parametrize(
+    ("event", "action"),
+    [
+        ("auto_squash_enabled", "auto_merge_enabled"),
+        ("merged", "merged"),
+        ("closed", "closed"),
+        ("reopened", "reopened"),
+        ("renamed", "edited"),
+    ],
+)
+def test_user_action_on_human_pr_forbidden(event: str, action: str) -> None:
+    result = _check_actions([{"event": event, "actor": _bot(_AGENT)}], author_view=_ALICE_VIEW)
+    assert _violations(result) == [(_AGENT, action)]
+
+
+def test_user_action_on_another_agents_pr_forbidden() -> None:
+    # "Its own" is the same identity, not merely the same role: the other
+    # agent's opening of its own PR is allowed, this agent's merge of it is not.
+    result = _check_actions(
+        [{"event": "merged", "actor": _bot(_AGENT)}], author_view=_OTHER_AGENT_VIEW
+    )
+    assert _violations(result) == [(_AGENT, "merged")]
+
+
+@pytest.mark.parametrize(
+    "view",
+    [
+        json.dumps({"author": {"login": "a-vergil-user", "is_bot": False}}),
+        json.dumps({"author": None}),
+    ],
+)
+def test_user_action_on_untrusted_or_deleted_authors_pr_forbidden(view: str) -> None:
+    # A role's login of the wrong account type, or a deleted account, never
+    # authors the user agent's own PR.
+    result = _check_actions([{"event": "merged", "actor": _bot(_AGENT)}], author_view=view)
+    assert (_AGENT, "merged") in _violations(result)
+
+
+def test_user_approval_forbidden_even_on_own_pr() -> None:
+    result = _check_actions([], reviews=[{"state": "APPROVED", "user": _bot(_AGENT)}])
+    assert _violations(result) == [(_AGENT, "approved")]
+
+
+def test_evaluate_without_author_grants_no_own_pr() -> None:
+    # No author named: nothing is the user agent's own PR (fails closed).
+    actor = trust.Identity("a-vergil-user[bot]", "Bot")
+    actions = [Action("a-vergil-user", Role.USER, "merged", actor)]
+    assert _violations(pr_provenance.evaluate(actions)) == [(_AGENT, "merged")]
+    assert pr_provenance.evaluate(actions, author=trust.Identity("app/a-vergil-user", "Bot")).ok
+
+
+def test_evaluate_action_without_identity_grants_no_own_pr() -> None:
+    actions = [Action("a-vergil-user", Role.USER, "merged")]
+    author = trust.Identity("app/a-vergil-user", "Bot")
+    assert _violations(pr_provenance.evaluate(actions, author=author)) == [(_AGENT, "merged")]
+
+
+@pytest.mark.parametrize(
+    "action", ["created", "edited", "closed", "reopened", "merged", "auto_merge_enabled"]
+)
+def test_audit_rules_unchanged(action: str) -> None:
+    # The audit identity's own PR grants it nothing; its approval stays allowed.
+    actor = trust.Identity("a-vergil-audit[bot]", "Bot")
+    author = trust.Identity("app/a-vergil-audit", "Bot")
+    result = pr_provenance.evaluate(
+        [Action("a-vergil-audit", Role.AUDIT, action, actor)], author=author
+    )
+    assert [v.action for v in result.violations] == [action]
+    approval = [Action("a-vergil-audit", Role.AUDIT, "approved", actor)]
+    assert pr_provenance.evaluate(approval, author=author).ok
+
+
+@pytest.mark.parametrize(
+    "action", ["created", "edited", "closed", "reopened", "merged", "auto_merge_enabled"]
+)
+def test_untrusted_rules_unchanged(action: str) -> None:
+    # An untrusted identity's "own" PR grants it nothing either.
+    actor = trust.Identity("stranger", "User")
+    result = pr_provenance.evaluate(
+        [Action("stranger", Role.UNTRUSTED, action, actor)], author=actor
+    )
+    assert [v.action for v in result.violations] == [action]

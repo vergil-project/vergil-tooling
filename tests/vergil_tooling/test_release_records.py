@@ -253,6 +253,20 @@ def test_records_say_none_configured_without_an_install(fake: _FakeGitHub) -> No
     assert "- Install: none configured" in fake.comments["o/r#1"][0].body
 
 
+def test_records_name_the_reported_install(fake: _FakeGitHub) -> None:
+    ctx = _ctx(_state(_issues(1), install_version=_VERSION, install_commit="f" * 40))
+    post_records(ctx)
+    assert "- Install: ran — installed v2.1.2 (commit fffffff)" in (
+        fake.comments["o/r#1"][0].body.splitlines()
+    )
+
+
+def test_records_keep_ran_when_the_install_reported_nothing(fake: _FakeGitHub) -> None:
+    ctx = _ctx(_state(_issues(1)))
+    post_records(ctx)
+    assert "- Install: ran (`[publish].install`)" in fake.comments["o/r#1"][0].body.splitlines()
+
+
 def test_records_refuse_when_install_not_done(fake: _FakeGitHub) -> None:
     ctx = _ctx(_state(_issues(1), done=("promote",)))
     with pytest.raises(ReleaseError, match="does not record install done"):

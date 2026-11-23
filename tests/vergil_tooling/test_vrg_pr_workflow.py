@@ -687,7 +687,34 @@ def test_report_ready_batch_removes_markers_from_a_worktree(
     assert _state_file(worktree).is_file()
 
 
-def test_report_ready_batch_removes_markers_when_relay_push_warns(
+def test_report_ready_batch_relay_push_failure_fails_after_removing_markers(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # #5035: an unwritten relay ref fails report-ready, but only once the rest of
+    # the recording (the batch markers included) is done, so the re-run it names
+    # only has the relay ref left to write.
+    _branch(ready_clone, "feat: a (#10)", "feat: b (#11)")
+    write_markers(ready_clone, ["#10", "#11"], base_sha="c" * 40)
+    relay.return_value.ref = "refs/vergil/pr-workflow/feature/10-x"
+    relay.return_value.write.side_effect = subprocess.CalledProcessError(1, "git push")
+    assert _report("10", "11") == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "the relay ref refs/vergil/pr-workflow/feature/10-x was NOT written" in captured.err
+    assert "Re-run report-ready" in captured.err
+    assert read_marker(ready_clone, "#10") is None
+    assert read_marker(ready_clone, "#11") is None
+    assert json.loads(_state_file(ready_clone).read_text())["status"] == "ready"
+    # The re-run it names writes the relay ref and succeeds.
+    relay.return_value.write.side_effect = None
+    assert _report("10", "11") == 0
+
+
+def test_report_ready_batch_relay_and_marker_failures_are_both_reported(
     ready_clone: Path,
     rules: MagicMock,
     relay: MagicMock,
@@ -696,11 +723,17 @@ def test_report_ready_batch_removes_markers_when_relay_push_warns(
 ) -> None:
     _branch(ready_clone, "feat: a (#10)", "feat: b (#11)")
     write_markers(ready_clone, ["#10", "#11"], base_sha="c" * 40)
+    relay.return_value.ref = "refs/vergil/pr-workflow/feature/10-x"
     relay.return_value.write.side_effect = subprocess.CalledProcessError(1, "git push")
-    assert _report("10", "11") == 0
-    assert "could not push pr-workflow relay ref" in capsys.readouterr().err
-    assert read_marker(ready_clone, "#10") is None
-    assert read_marker(ready_clone, "#11") is None
+    with patch(
+        "vergil_tooling.bin.vrg_pr_workflow.batch_marker.remove_markers",
+        side_effect=OSError("read-only file system"),
+    ):
+        assert _report("10", "11") == 1
+    err = capsys.readouterr().err
+    assert "the relay ref refs/vergil/pr-workflow/feature/10-x was NOT written" in err
+    assert "the batch markers of #10, #11 could not be removed" in err
+    assert "read-only file system" in err
 
 
 def test_report_ready_batch_keeps_markers_on_refusal(

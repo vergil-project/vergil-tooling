@@ -68,6 +68,13 @@ config that is now gone.
 
 This runs inside the dev container where `markdownlint` is on PATH.
 
+To lint a few files while working, run
+`vrg-container-run -- vrg-validate --markdown [--fix] <file>...`. It
+lints each given file the gate lints against the same bundled config,
+and names and skips any file the gate does not lint, so its result
+matches the gate's. A bare `markdownlint <file>` does not: it falls back
+to markdownlint's defaults, MD013 included.
+
 ## Links to other Vergil docs sites
 
 Right after markdownlint, the common checks run docs-links over the same
@@ -97,7 +104,12 @@ link returns 404 whatever its path. Each such hit is named by path and
 line with the site name. The site name is compared exactly, and a
 trailing dot that ends a sentence right after the site name is not part
 of it. A repository that starts publishing versioned docs is added to
-the list; until then the check flags links to its site.
+the list; until then the check flags links to its site from other
+repositories. The repository being checked is the exception: when its
+`vergil.toml` sets `[publish].docs = true` (the default) and its
+`origin` is a `vergil-project` repository on GitHub, its own site is
+treated as a published, versioned site, so a new repository's README
+link to its own docs passes from its first pull request.
 
 ## Exit Codes
 

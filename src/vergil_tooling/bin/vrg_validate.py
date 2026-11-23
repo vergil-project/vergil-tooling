@@ -45,6 +45,12 @@ bootstrapped either (issue #4624). See
 with none of its manifests but with sources of its language (a branch that
 deletes ``Cargo.toml``, say) is not unstarted: its install stage fails.
 
+``--markdown [--fix] FILE...`` runs no stage: it markdownlints only the given files,
+exactly as the common stage would (the bundled config, and a file outside
+its scope or ignored is named and skipped), so an ad-hoc lint never
+disagrees with the gate; ``--fix`` lets markdownlint fix what it can. It
+writes no run record (issue #4589).
+
 ``--all-versions`` (Python only) adds one test stage per resolved CI version
 after the test stage, so the coverage gate runs on every interpreter PR-CI
 tests, not only the dev container's (issue #3547).
@@ -158,10 +164,36 @@ def main(argv: list[str] | None = None) -> int:
             "each on a uv-managed interpreter (Python only)."
         ),
     )
+    parser.add_argument(
+        "--markdown",
+        action="store_true",
+        help=(
+            "Only markdownlint the FILEs, exactly as the full run's common stage "
+            "would: the bundled config, and a file outside its scope is skipped."
+        ),
+    )
+    parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="With --markdown, let markdownlint fix what it can.",
+    )
+    parser.add_argument("files", nargs="*", metavar="FILE", help="The files --markdown lints.")
     progress.add_progress_args(parser, ())
     args = parser.parse_args(argv)
     if args.all_versions and args.check not in (None, "test"):
         parser.error("--all-versions runs the test stage; use it alone or with --check test")
+    if args.markdown:
+        if args.check is not None or args.all_versions:
+            parser.error(
+                "--markdown lints only the given files; use it without --check or --all-versions"
+            )
+        if not args.files:
+            parser.error("--markdown needs at least one FILE")
+    else:
+        if args.fix:
+            parser.error("--fix applies to --markdown only")
+        if args.files:
+            parser.error("FILE arguments apply to --markdown only")
 
     if not _in_dev_container():
         print(
@@ -170,6 +202,13 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+
+    # A single-file lint is not a pipeline run: it writes no validate record,
+    # so it never stands in for the full run merge-review reads (issue #4589).
+    if args.markdown:
+        from vergil_tooling.bin.validate_common import lint_markdown
+
+        return lint_markdown(args.files, fix=args.fix)
 
     # Prepend `.venv/bin` unconditionally. Under the container's anonymous
     # `.venv` mask the dir is empty at startup and populated by the install
@@ -493,33 +532,19 @@ def _check_custom_validator(path: Path) -> None:
 _CONAN_AUDIT_TOKEN_ENV = "CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER"  # noqa: S105
 
 
-def _skip_conan_audit_scan(cmds: list[list[str]]) -> list[list[str]]:
-    """Drop ``conan audit scan`` when no ConanCenter provider token is set.
+def _missing_conan_audit_token(cmd: list[str]) -> bool:
+    """Whether *cmd* is ``conan audit scan`` with no ConanCenter provider token set.
 
     ``conan audit scan`` authenticates against ConanCenter's advisory API and
-    hard-fails (``Missing authentication token``) without a provider token — an
-    empty token does not degrade it. ``ci-audit.yml`` passes the token from a
-    repo/org secret and documents that *vrg-validate* skips this gate with a
-    notice when the secret is unset, so a cpp repo without the token is not
-    wedged; this is where that promised skip actually lives. The rest of the
-    audit stage (e.g. ``conan graph info``) still runs, and a real token
-    restores the scan. Detection is by command shape, so only the cpp conan
-    audit is affected.
+    hard-fails (``Missing authentication token``) without a provider token; an
+    empty token does not degrade it. A missing token fails the scan loudly
+    (#4999), never skips it: a skipped CVE gate would pass silently. Detection
+    is by command shape, so only the cpp conan audit is affected.
     """
-    if os.environ.get(_CONAN_AUDIT_TOKEN_ENV, "").strip():
-        return cmds
-    kept: list[list[str]] = []
-    for cmd in cmds:
-        if cmd[:3] == ["conan", "audit", "scan"]:
-            print(
-                f"NOTICE: skipping `conan audit scan` — {_CONAN_AUDIT_TOKEN_ENV} "
-                "is unset, so there is no credential for ConanCenter's advisory "
-                "API. Set the secret to enable CVE scanning.",
-                file=sys.stderr,
-            )
-            continue
-        kept.append(cmd)
-    return kept
+    return (
+        cmd[:3] == ["conan", "audit", "scan"]
+        and not os.environ.get(_CONAN_AUDIT_TOKEN_ENV, "").strip()
+    )
 
 
 # Cargo's library target kinds: any of them makes ``cargo test --doc`` select a
@@ -648,8 +673,19 @@ def _run_audit_command(cmd: list[str]) -> int:
 
     ``pip-audit`` alone talks to a remote feed per package, so only it gets
     :func:`~vergil_tooling.lib.audit_retry.run_pip_audit`'s bounded retry on
-    a network or timeout error; every other command runs once.
+    a network or timeout error; every other command runs once. A
+    ``conan audit scan`` with no ConanCenter token is not run: it fails with
+    an error naming the token (#4999), and the rest of the stage still runs.
     """
+    if _missing_conan_audit_token(cmd):
+        print(
+            f"ERROR: `conan audit scan` needs {_CONAN_AUDIT_TOKEN_ENV}, which is unset, "
+            "so the C/C++ dependency audit cannot run. Set it as the CI secret, or "
+            "locally with conan_audit_token_path in ~/.config/vergil/identities.toml "
+            "(see the C++ overview's ConanCenter Audit Token section).",
+            file=sys.stderr,
+        )
+        return 1
     if cmd and cmd[0] == "pip-audit":
         return audit_retry.run_pip_audit(cmd)
     return progress.run(cmd, check=False)
@@ -1314,10 +1350,6 @@ def _build_stages(
                 ),
             )
             for kind in kinds
-        ]
-        kind_cmds = [
-            (kind, _skip_conan_audit_scan(cmds) if kind is CheckKind.AUDIT else cmds)
-            for kind, cmds in kind_cmds
         ]
         kind_cmds = [(kind, cmds) for kind, cmds in kind_cmds if cmds]
         missing, sources = _bootstrap_state(language, repo_root)

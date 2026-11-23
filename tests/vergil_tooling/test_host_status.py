@@ -469,3 +469,65 @@ def test_render_pinned_offers_show_levels_and_leading_edge() -> None:
     assert "pinned (tracked debt): minor 26.7.1, major 27.0.1" in out
     assert "pin: 26.x, holding back from 27.0.1 (inducing release 27.0.0)" in out
     assert "!! RE-EVALUATION DUE: leading edge 27.0.1 is past inducing release 27.0.0" in out
+
+
+# -- minimum (#4613) -----------------------------------------------------------------
+
+
+def test_below_minimum_is_error_and_keeps_the_version_state() -> None:
+    dep = _dep(minimum="2.97.0")
+    state, sev = hs.classify(dep, installed="2.96.0", latest="2.103.3", check_results=[])
+    assert (state, sev) == ("behind", hs.ERROR)
+
+
+def test_at_or_above_minimum_is_unaffected() -> None:
+    dep = _dep(minimum="2.97.0")
+    assert hs.classify(dep, installed="2.97.0", latest="2.97.0", check_results=[]) == (
+        "current",
+        hs.OK,
+    )
+    assert hs.classify(dep, installed="2.97.0_1", latest="2.103.3", check_results=[]) == (
+        "behind",
+        hs.WARN,
+    )
+
+
+def test_below_minimum_is_error_even_when_pinned_and_held() -> None:
+    dep = _dep(minimum="2.97.0", pin=_pin(constraint="1.0"))
+    state, sev = hs.classify(dep, installed="1.0", latest="1.0", check_results=[])
+    assert (state, sev) == ("pinned", hs.ERROR)
+
+
+def test_below_minimum_with_no_latest_feed_is_error() -> None:
+    dep = _dep(minimum="2.97.0", latest="unmanaged")
+    state, sev = hs.classify(dep, installed="2.0", latest=hm.UNMANAGED, check_results=[])
+    assert (state, sev) == ("latest-unmanaged", hs.ERROR)
+
+
+def test_missing_ignores_minimum() -> None:
+    dep = _dep(minimum="2.97.0")
+    assert hs.classify(dep, installed=None, latest="2.0", check_results=[]) == (
+        "missing",
+        hs.ERROR,
+    )
+
+
+def test_minimum_not_orderable_raises() -> None:
+    with pytest.raises(hv.IncomparableVersionError):
+        hs.classify(_dep(minimum="2.97.0"), installed="2.x", latest="2.x", check_results=[])
+
+
+def test_no_minimum_is_never_below() -> None:
+    assert hs.below_minimum(_dep(), "0.0.1") is False
+
+
+def test_render_shows_the_minimum() -> None:
+    low = _dep(minimum="2.97.0")
+    reports = [
+        hs.Report(low, "2.96.0", "2.103.3", "behind", hs.ERROR),
+        hs.Report(dataclasses.replace(low, name="gh2"), "2.103.3", "2.103.3", "current", hs.OK),
+        hs.probe_error_report(low, "boom"),
+    ]
+    text = hs.render(reports, today=datetime.date(2026, 11, 23))
+    assert text.count("minimum 2.97.0: UNSATISFIED") == 1
+    assert text.count("minimum 2.97.0: satisfied") == 1

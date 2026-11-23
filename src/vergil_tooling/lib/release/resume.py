@@ -215,6 +215,7 @@ def _branch_version(ctx: ReleaseContext, *, committed: bool) -> str:
         FileNotFoundError,
         version.VersionSyncError,
         version.CargoVersionError,
+        version.VersionFileError,
         subprocess.CalledProcessError,
     ) as exc:
         raise ReleaseError(

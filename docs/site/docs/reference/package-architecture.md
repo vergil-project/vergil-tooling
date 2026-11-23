@@ -20,6 +20,26 @@ The main modules under `src/vergil_tooling/lib/`:
 
 - **`git.py`**: git subprocess wrappers.
 - **`github.py`**: `gh` CLI subprocess wrappers.
+- **`trust.py`**: the trust layer, the one place a behaviour-driving read
+  of GitHub content happens (a body, comments, reviews, edit history,
+  event actors, closing references, or a PR found by its head branch).
+  An identity holds the `human`, `agents` or `automation` role, or none
+  ([Trusted authors](../guides/account-setup.md#trusted-authors)); a body
+  or comment is trusted when its author and its editors hold a role; a
+  close or reopen when its actor does. Readers return the trusted items
+  and report each untrusted one as metadata only, or, where the content
+  is load-bearing, stop. A read it cannot complete fails loudly, never
+  as "trusted" or "nothing found", and a batch run stops the one item,
+  not the run. `trusted_authors.py` loads the configuration and
+  `trust_publish.py` publishes and checks its GitHub Actions copies.
+  The guard test, `tests/vergil_tooling/test_trust_guard.py`, scans the
+  package and fails on any content read outside `trust.py` unless
+  `tests/vergil_tooling/trust_guard_exemptions.toml` lists it with a
+  reason: a query built at runtime with its fields declared
+  (`[[registered]]`), content acted on only through the layer's answer
+  (`[[judged]]`), a display-only read (`[[exempt]]`), or a read a tracked
+  task moves onto the layer (`[[pending]]`). Adding an entry is a
+  reviewed change.
 - **`config.py`**: parse and validate `vergil.toml`.
 - **`identity_mode.py`**: the identity resolver behind
   [`vrg-whoami`](cli-tools-overview.md#vrg-whoami); `platform_env.py`

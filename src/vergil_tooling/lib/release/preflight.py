@@ -168,7 +168,12 @@ def preflight(
 
     try:
         current_version = version.show(repo_root)
-    except (FileNotFoundError, version.VersionSyncError, version.CargoVersionError) as exc:
+    except (
+        FileNotFoundError,
+        version.VersionSyncError,
+        version.CargoVersionError,
+        version.VersionFileError,
+    ) as exc:
         raise ReleaseError(
             phase="preflight",
             command="version.show",

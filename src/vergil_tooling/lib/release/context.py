@@ -101,6 +101,12 @@ class ReleaseContext:
     # (issue #1643). None when no install is configured.
     install_commands: str | None = None
 
+    # The release and commit a successful install reported installing, as
+    # ``(X.Y.Z, commit)``, read from an ``installed vX.Y.Z (commit <sha>)``
+    # line of its output (vrg-tooling-install prints one). None when it
+    # reported neither, or did not run.
+    install_reported: tuple[str, str] | None = None
+
     # What this run's release-records stage did: the records it posted, and
     # the issues it found already holding a counting record (spec §4.9 of
     # epic vergil-project/.github#1440).

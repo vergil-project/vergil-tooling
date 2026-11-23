@@ -509,3 +509,13 @@ def test_resume_refuses_an_unreadable_version(release_branch: Path) -> None:
     _run_git(release_branch, "commit", "-q", "-am", "drop VERSION")
     with pytest.raises(ReleaseError, match="Cannot read the VERSION of 'release/2.1.0'"):
         check_release_version(_branch_ctx(release_branch), _minor())
+
+
+def test_resume_refuses_a_malformed_version_file(release_branch: Path) -> None:
+    (release_branch / ".claude-plugin").mkdir()
+    (release_branch / ".claude-plugin" / "plugin.json").write_text('{"name": ')
+    with pytest.raises(
+        ReleaseError,
+        match=r"Cannot read the VERSION of 'release/2\.1\.0'.*plugin\.json is not valid JSON",
+    ):
+        check_release_version(_branch_ctx(release_branch), _minor())

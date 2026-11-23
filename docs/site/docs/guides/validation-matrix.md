@@ -112,7 +112,9 @@ repository that has a `vergil.toml`.
 
 `.claude/hooks/guard.sh`, wired in `.claude/settings.json`, calls
 `vrg-hook-guard`. It blocks raw `git` and `gh` commands and lets
-`vrg-git`, `vrg-gh` and the other `vrg-*` tools through. See the
+`vrg-git`, `vrg-gh` and the other `vrg-*` tools through, but refuses an
+agent's raw `vrg-gh` read of issue or PR content, naming `vrg-issue-read`.
+See the
 [Claude Code Hook Guard reference](../reference/hooks/pre-commit.md).
 
 ### vrg-git
@@ -191,7 +193,8 @@ dev images come from
    name the org does not publish (anything but the versioned sites and
    the unversioned `docs` and `packages`) fails too. The check reads the
    same markdown as markdownlint, less `epics/archive/`, against the
-   fixed lists of sites in vergil-tooling (no network), and names each
+   fixed lists of sites in vergil-tooling (no network) plus the checked
+   repository's own site when it publishes docs, and names each
    hit by path and line, with its `/latest/` form or its site name. See
    [Links to other Vergil docs sites](../reference/lint/markdown-standards.md#links-to-other-vergil-docs-sites).
 4. shellcheck on shell scripts under `scripts/` and on every `*.sh`
@@ -204,7 +207,16 @@ dev images come from
    file (a `runs-on`, a matrix value, a `with:` input) may be
    `ubuntu-latest`. Pin GitHub-hosted runners to `ubuntu-24.04`; the
    check names each hit by path and line.
-9. ansible-lint, when the repository has Ansible content.
+9. secrets-inherit: a job in a `.github/workflows/*.yml` or `*.yaml`
+   file may pass `secrets: inherit` only to a vergil-actions workflow that
+   reads the `automation` environment's secrets (`cd-release.yml`,
+   `cd-docs.yml`, `cd-docs-refresh.yml`, `publish-index.yml`,
+   `ops-github-config.yml`, `ops-upstream-refresh.yml`,
+   `ops-epic-rollup.yml`, `ops-epic-sweep.yml`, `ops-agent-audit.yml`).
+   Every other caller passes an explicit secrets map; the check names each
+   refused `inherit` by path and line. See
+   [CD and ops: reusable-workflow secrets](ci-architecture.md#cd-and-ops-reusable-workflow-secrets).
+10. ansible-lint, when the repository has Ansible content.
 
 The first failing check stops the run. In CI the common checks run once,
 as `quality / common`.

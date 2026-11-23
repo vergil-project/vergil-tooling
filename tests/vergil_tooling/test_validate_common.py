@@ -23,9 +23,12 @@ from vergil_tooling.bin.validate_common import (
     _find_workflow_files,
     _find_yaml_files,
     _has_ansible_content,
+    _own_docs_site,
+    lint_markdown,
     main,
 )
 from vergil_tooling.lib import dependabot
+from vergil_tooling.lib.repo_init import RepoInitContext, render_readme
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -92,6 +95,19 @@ def _no_workflow_listing() -> Iterator[None]:
     with patch(
         "vergil_tooling.bin.validate_common._find_workflow_files",
         side_effect=_listing,
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _no_own_docs_site() -> Iterator[None]:
+    """Name no own docs site: reading ``origin`` needs a real repository,
+    which most tests' ``tmp_path`` is not. The lookup itself is tested
+    against real repos below, through the name imported at module load,
+    which this patch does not replace (#4612)."""
+    with patch(
+        "vergil_tooling.bin.validate_common._own_docs_site",
+        return_value=None,
     ):
         yield
 
@@ -656,6 +672,164 @@ def test_main_long_line_passes_with_md013_off(tmp_path: Path, scope: str) -> Non
         ),
     ):
         assert main() == 0
+
+
+# -- lint_markdown (vrg-validate --markdown, issue #4589) ---------------------
+
+
+def _lint_markdown(
+    tmp_path: Path, paths: list[str], *, fix: bool = False, returncode: int = 0
+) -> tuple[int, list[list[str]]]:
+    """Run lint_markdown in *tmp_path* with markdownlint mocked; return the exit
+    code and every command it ran."""
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=returncode),
+        ) as mock_run,
+    ):
+        rc = lint_markdown(paths, fix=fix)
+    return rc, [call.args[0] for call in mock_run.call_args_list]
+
+
+def test_lint_markdown_uses_the_gates_config(tmp_path: Path) -> None:
+    """A file in scope is linted with the same command the gate runs."""
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    site = tmp_path / "docs" / "site"
+    site.mkdir(parents=True)
+    page = site / "index.md"
+    page.write_text("# Hello\n")
+
+    rc, calls = _lint_markdown(tmp_path, [str(page)])
+    assert rc == 0
+    assert len(calls) == 1
+    assert calls[0][:2] == ["markdownlint", "--config"]
+    assert calls[0][2].endswith("markdownlint.yaml")
+    assert "vergil_tooling" in calls[0][2]
+    assert calls[0][3:] == [str(page)]
+
+
+def test_lint_markdown_fix_passes_fix(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    readme = tmp_path / "README.md"
+    readme.write_text("# Hello\n")
+
+    rc, calls = _lint_markdown(tmp_path, [str(readme)], fix=True)
+    assert rc == 0
+    assert calls[0][3:] == ["--fix", str(readme)]
+
+
+def test_lint_markdown_returns_markdownlint_failure(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    readme = tmp_path / "README.md"
+    readme.write_text("# Hello\n")
+
+    rc, _calls = _lint_markdown(tmp_path, [str(readme)], returncode=1)
+    assert rc == 1
+
+
+def test_lint_markdown_skips_files_the_gate_does_not_lint(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A file outside the scope, or under an ignore path, is named and skipped,
+    and the rest are still linted."""
+    toml = _MINIMAL_TOML + '\n[markdownlint]\nignore = ["docs/site/docs/research"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    research = tmp_path / "docs" / "site" / "docs" / "research"
+    research.mkdir(parents=True)
+    ignored = research / "report.md"
+    ignored.write_text("# Report\n")
+    outside = tmp_path / "CHANGELOG.md"
+    outside.write_text("# Changelog\n")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Hello\n")
+
+    rc, calls = _lint_markdown(tmp_path, [str(ignored), str(outside), str(readme)])
+    assert rc == 0
+    assert calls[0][3:] == [str(readme)]
+    out = capsys.readouterr().out
+    assert f"{ignored} is not linted by vrg-validate" in out
+    assert f"{outside} is not linted by vrg-validate" in out
+
+
+def test_lint_markdown_only_skipped_files_runs_nothing(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    outside = tmp_path / "notes.md"
+    outside.write_text("# Notes\n")
+
+    rc, calls = _lint_markdown(tmp_path, [str(outside)])
+    assert rc == 0
+    assert calls == []
+
+
+def test_lint_markdown_relative_path_matches_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A path given relative to the working directory is matched to the scope."""
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    epic = tmp_path / "epics" / "1-x"
+    epic.mkdir(parents=True)
+    (epic / "spec.md").write_text("# Spec\n")
+    monkeypatch.chdir(tmp_path)
+
+    rc, calls = _lint_markdown(tmp_path, ["epics/1-x/spec.md"])
+    assert rc == 0
+    assert calls[0][3:] == ["epics/1-x/spec.md"]
+
+
+def test_lint_markdown_missing_file_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    missing = tmp_path / "README.md"
+
+    rc, calls = _lint_markdown(tmp_path, [str(missing)])
+    assert rc == 1
+    assert calls == []
+    assert f"{missing}: no such file" in capsys.readouterr().err
+
+
+def test_lint_markdown_without_vergil_toml_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    readme = tmp_path / "README.md"
+    readme.write_text("# Hello\n")
+
+    rc, calls = _lint_markdown(tmp_path, [str(readme)])
+    assert rc == 1
+    assert calls == []
+    assert "vergil.toml not found" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(
+    shutil.which("markdownlint") is None,
+    reason="markdownlint binary not on PATH (only present in the dev container)",
+)
+def test_lint_markdown_long_line_passes_as_in_the_gate(tmp_path: Path) -> None:
+    """The ad-hoc lint passes a >100-column line the gate passes (MD013 off),
+    which a bare markdownlint run would flag, against the real binary."""
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    site = tmp_path / "docs" / "site"
+    site.mkdir(parents=True)
+    page = site / "long.md"
+    page.write_text(_LONG_DOC)
+
+    bare = subprocess.run(  # noqa: S603
+        ["markdownlint", str(page)],  # noqa: S607
+        check=False,
+        capture_output=True,
+        cwd=tmp_path,
+    )
+    assert bare.returncode != 0
+    with patch(
+        "vergil_tooling.bin.validate_common.git.repo_root",
+        return_value=tmp_path,
+    ):
+        assert lint_markdown([str(page)]) == 0
 
 
 def test_main_shellcheck_runs(tmp_path: Path) -> None:
@@ -1243,6 +1417,34 @@ def test_main_runner_labels_fails(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert "ubuntu-latest is not allowed; use ubuntu-24.04" in captured.err
 
 
+def test_main_secrets_inherit_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    _workflow(
+        tmp_path,
+        "on: push\njobs:\n  quality:\n"
+        "    uses: vergil-project/vergil-actions/.github/workflows/ci-quality.yml@v2.1\n"
+        "    secrets: inherit\n",
+    )
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.repo_profile.main",
+            return_value=0,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ),
+    ):
+        assert main() == 1
+    captured = capsys.readouterr()
+    assert "Running: secrets-inherit" in captured.out
+    assert "job quality passes secrets: inherit to" in captured.err
+
+
 # -- _find_workflow_files -----------------------------------------------------
 
 
@@ -1726,3 +1928,96 @@ def test_main_docs_links_failure_stops_run(tmp_path: Path) -> None:
         assert main() == 1
     tool_names = [call[0][0][0] for call in mock_run.call_args_list]
     assert tool_names == ["markdownlint"]
+
+
+# -- the repo's own docs site (issue #4612) ----------------------------------
+
+
+def _new_repo_readme(name: str) -> str:
+    """The README ``repo_init`` writes for a new repo that publishes docs."""
+    return render_readme(RepoInitContext(org="vergil-project", name=name, publish_docs=True))
+
+
+def test_docs_links_new_repo_readme_passes_with_own_site(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A new repo's generated README links to its own site, which no release
+    of the fixed lists names yet: the check passes once it knows the site."""
+    _md(tmp_path, "README.md", _new_repo_readme("vergil-new-repo"))
+    assert _check_docs_links(tmp_path) == 1
+    assert "vergil-new-repo, which is not a published Vergil docs site" in capsys.readouterr().err
+    assert _check_docs_links(tmp_path, own_site="vergil-new-repo") == 0
+
+
+def _repo_with_origin(path: Path, url: str | None) -> Path:
+    repo = _git_repo(path, "")
+    if url is not None:
+        subprocess.run(
+            ["git", "-C", str(repo), "remote", "add", "origin", url],
+            check=True,
+            capture_output=True,
+        )
+    return repo
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/vergil-project/vergil-new-repo.git",
+        "git@github.com:vergil-project/vergil-new-repo.git",
+        "https://github.com/Vergil-Project/vergil-new-repo",
+    ],
+)
+def test_own_docs_site_is_repo_name(tmp_path: Path, url: str) -> None:
+    repo = _repo_with_origin(tmp_path / "clone", url)
+    assert _own_docs_site(repo, publishes_docs=True) == "vergil-new-repo"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        None,
+        "https://github.com/other-org/vergil-new-repo.git",
+        "https://gitlab.com/vergil-project/vergil-new-repo.git",
+    ],
+)
+def test_own_docs_site_none_off_the_org(tmp_path: Path, url: str | None) -> None:
+    repo = _repo_with_origin(tmp_path / "clone", url)
+    assert _own_docs_site(repo, publishes_docs=True) is None
+
+
+def test_own_docs_site_none_without_docs(tmp_path: Path) -> None:
+    repo = _repo_with_origin(
+        tmp_path / "clone", "https://github.com/vergil-project/vergil-new-repo.git"
+    )
+    assert _own_docs_site(repo, publishes_docs=False) is None
+
+
+def test_own_docs_site_git_failure_raises(tmp_path: Path) -> None:
+    with pytest.raises(subprocess.CalledProcessError):
+        _own_docs_site(tmp_path, publishes_docs=True)
+
+
+@pytest.mark.parametrize(("docs", "expected"), [("true", True), ("false", False)])
+def test_main_passes_own_site_to_docs_links(tmp_path: Path, docs: str, expected: bool) -> None:
+    """``main`` looks the site up from ``[publish].docs`` and hands it to the
+    check, so a new repo's README passes from its first run."""
+    toml = _MINIMAL_TOML + f"\n[publish]\nrelease = false\ndocs = {docs}\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    _md(tmp_path, "README.md", _new_repo_readme("vergil-new-repo"))
+    with (
+        patch("vergil_tooling.bin.validate_common.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.validate_common.repo_profile.main", return_value=0),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common._own_docs_site",
+            side_effect=lambda _root, *, publishes_docs: (
+                "vergil-new-repo" if publishes_docs else None
+            ),
+        ) as own_site,
+    ):
+        assert main() == (0 if expected else 1)
+    own_site.assert_called_once_with(tmp_path, publishes_docs=expected)

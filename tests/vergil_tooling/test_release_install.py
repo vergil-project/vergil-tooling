@@ -20,6 +20,7 @@ from vergil_tooling.lib.release.install import (
     expand,
     install,
     minor,
+    reported_install,
     run_install,
 )
 from vergil_tooling.lib.release.state import initial_state
@@ -127,6 +128,45 @@ def test_install_success_leaves_nothing_to_read(
         install(ctx)
     assert ctx.install_message is None
     assert capsys.readouterr().out == ""
+
+
+def test_install_keeps_the_reported_version_and_commit(
+    template: MagicMock, ls_remote: MagicMock
+) -> None:
+    _set(template, "vrg-tooling-install v<MINOR>\nvrg-vm update --all")
+    ctx = _ctx()
+    output = (
+        "Resolved 40 packages\n"
+        f"vrg-tooling-install: installed v2.1.0 (commit {_TAG_COMMIT})\n"
+        "vrg-vm: updated 2 VMs\n"
+    )
+    with patch(_MOD + ".run_install", return_value=(0, output)):
+        install(ctx)
+    assert ctx.install_reported == ("2.1.0", _TAG_COMMIT)
+
+
+def test_install_that_reports_nothing_keeps_nothing(
+    template: MagicMock, ls_remote: MagicMock
+) -> None:
+    _set(template, "uv tool install pkg@v<VERSION>")
+    ctx = _ctx()
+    ctx.install_reported = ("9.9.9", _OTHER)
+    with patch(_MOD + ".run_install", return_value=(0, "Installed 40 packages\n")):
+        install(ctx)
+    assert ctx.install_reported is None
+
+
+def test_reported_install_takes_the_last_report() -> None:
+    output = "installed v2.1.0 (commit abcdef1)\ninstalled v2.1.1 (commit 1234567)\n"
+    assert reported_install(output) == ("2.1.1", "1234567")
+
+
+@pytest.mark.parametrize(
+    "output",
+    ["", "Installed 40 packages\n", "installed v2.1 (commit abcdef1)\n", "installed v2.1.0\n"],
+)
+def test_reported_install_reports_nothing_without_a_full_report(output: str) -> None:
+    assert reported_install(output) is None
 
 
 def test_install_failure_raises_and_keeps_full_output(

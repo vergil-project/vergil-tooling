@@ -16,7 +16,7 @@ the [repo-profile](reference/lint/repo-profile.md) check, linters and
 the language validation drivers
 
 **Claude Code hook guard** (`.claude/hooks/`):
-PreToolUse hook that blocks raw `git` and `gh`, routing through `vrg-*` wrappers
+PreToolUse hook that blocks raw `git` and `gh`, routing through `vrg-*` wrappers, and refuses agents' raw issue and PR content reads in favour of `vrg-issue-read`
 
 ## Design Principles
 

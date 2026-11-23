@@ -323,8 +323,8 @@ For semgrep, write the suppression as a `nosemgrep` comment that names the
 **exact rule ID**, and put the justification and a tracking reference in the
 same comment, after the rule ID:
 
-```yaml
-    secrets: inherit  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit -- reusable workflow needs the release token; reviewed in #123
+```python
+subprocess.call(CMD, shell=True)  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true -- fixed command string, no user input; see #456
 ```
 
 Semgrep also accepts the comment on the line **above** the finding:
@@ -356,51 +356,59 @@ tracking issue and a reason, and the audit log lists every exception it
 applied (see
 [TypeScript audit exceptions](validation-matrix.md#typescript-audit-exceptions)).
 
-### CD: release-publishing secrets
+### CD and ops: reusable-workflow secrets
 
-The release-publishing workflow generated into a consuming repo's
-`cd.yml` (by `repo_init`) forwards **explicit, least-privilege secrets**
-to the reusable `cd-release` workflow per ecosystem — never a blanket
-`secrets: inherit` (epic
-[vergil-project/.github#189](https://github.com/vergil-project/.github/issues/189)).
-The map lives in `_cd_release_secrets()`
-(`src/vergil_tooling/lib/repo_init.py`). Every release forwards the
-automation App's `APP_CLIENT_ID` and `APP_PRIVATE_KEY`: `cd-release`
-pushes the release tags with the App's installation token, and fails
-at "Require the automation App secrets" without them. After those
-come exactly what each publisher reads:
+Every secret a workflow reads that can write or act, the org automation
+App's `APP_CLIENT_ID` and `APP_PRIVATE_KEY` first, lives only in each
+repo's `automation` environment
+([epic vergil-project/.github#1384](https://github.com/vergil-project/.github/issues/1384);
+see [the automation environment](../reference/config-audit.md#github-checks-the-automation-environment)).
+Environment secrets reach a job in a cross-repo reusable workflow only
+when the caller passes `secrets: inherit`: an explicit secrets map
+leaves the callee an empty value (proven by the probe in
+[vergil-project/packages#6](https://github.com/vergil-project/packages/issues/6)),
+and a job that calls a reusable workflow cannot declare an environment.
+So the callers of the vergil-actions workflows that read those secrets
+pass `secrets: inherit`, and every other caller passes an explicit,
+least-privilege secrets map. This narrows the least-privilege rule of
+epic [vergil-project/.github#189](https://github.com/vergil-project/.github/issues/189)
+on purpose, and only for these callers: the over-sharing is small once
+no org- or repo-level secret can write or act, and the called workflows
+are protected paths.
 
-| Ecosystem | Secrets forwarded |
-| --------- | ----------------- |
-| python | App secrets only (PyPI OIDC trusted publishing) |
-| go | App secrets only (no publish token) |
-| rust | App secrets and `CARGO_REGISTRY_TOKEN` |
+The allowed workflows are `INHERIT_ALLOWED` in
+`src/vergil_tooling/lib/secrets_inherit.py`:
 
-A language whose publisher needs no secret (python, go, or any
-non-publishing language) gets a `secrets:` block naming only the two
-App secrets, never `secrets: inherit`.
-References to our own `vergil-actions@v2.1` reusable workflows are
-unaffected — they are trusted first-party refs.
+| Workflow | Reads |
+| -------- | ----- |
+| `cd-release.yml` | The App keys (release tags, package-index dispatch), the publisher's token (`CARGO_REGISTRY_TOKEN`), and a `[package]` repo's `package-signing` environment |
+| `cd-docs.yml`, `cd-docs-refresh.yml` | The App keys, to report a docs failure |
+| `publish-index.yml` | The App keys and the `index-signing` environment |
+| `ops-github-config.yml`, `ops-upstream-refresh.yml` | The App keys |
+| `ops-epic-rollup.yml`, `ops-epic-sweep.yml` | The App keys |
+| `ops-agent-audit.yml` | The App keys |
 
-**Exception: repos with `[package]`.** A repo whose `vergil.toml` has a
-`[package]` section MUST call `cd-release` with `secrets: inherit`,
-suppressed inline:
+Each must be called from `vergil-project/vergil-actions` (at any ref), or
+as a local `./.github/workflows/` path, the way vergil-actions calls its
+own; a workflow of the same name in any other repository is refused.
+`vrg-validate`'s common `secrets-inherit` check refuses `secrets: inherit`
+on any other `uses:` (see
+[the common checks](validation-matrix.md#common-checks)). It replaces
+semgrep's registry `secrets-inherit` rule, which is excluded fleet-wide
+(`DEFAULT_EXCLUDED_RULES` in `src/vergil_tooling/lib/semgrep.py`), so
+there is one definition of the rule and an allowed caller needs no
+`nosemgrep`.
 
-```yaml
-    secrets: inherit  # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
-```
-
-Its `package-sign` job reads `PACKAGE_SIGNING_KEY` and
-`PACKAGE_SIGNING_PASSPHRASE` from the caller's `package-signing`
-environment. Environment secrets reach a job in a cross-repo reusable
-workflow only through `inherit`: an explicit secrets map leaves
-`package-sign` with an empty key (proven by the probe in
-[vergil-project/packages#6](https://github.com/vergil-project/packages/issues/6)).
-The callee is first-party, so the blanket form is an accepted, reviewed
-exception. `vrg-github-repo-init` generates this caller for `[package]` repos
-([vergil-project/vergil-tooling#3144](https://github.com/vergil-project/vergil-tooling/issues/3144)).
+The workflows `vrg-github-repo-init` generates follow it: the `cd.yml`
+`docs` and `release` jobs, the `ops.yml` `github-config` job and the
+`epic-rollup.yml` caller all pass `secrets: inherit`, whatever the
+language and whether or not the repo has `[package]`. They supersede the
+explicit App-key maps of
+[vergil-project/vergil-tooling#4747](https://github.com/vergil-project/vergil-tooling/issues/4747)
+and epic
+[vergil-project/.github#1494](https://github.com/vergil-project/.github/issues/1494).
 See the [CD section of the package config reference](../reference/package-config.md#cd)
-for the full caller.
+for a `[package]` repo's caller.
 
 ### Version resolution
 
@@ -409,8 +417,11 @@ supported versions of each language live in one place: the version manifest in
 [vergil-containers](https://github.com/vergil-project/vergil-containers), which
 publishes them as `docker/versions/window.json` at every Vergil ref (the
 *version window*). The lifecycle job in vergil-containers adds versions to the
-window and drops them from it as they enter and leave support; consuming repos
-do not edit anything when the window moves.
+window and drops them from it as they enter and leave support (it is turned off
+until [vergil-project/.github#1128](https://github.com/vergil-project/.github/issues/1128)
+restores it; see
+[The lifecycle job](../standards/development/runtime-version-support-policy.md#the-lifecycle-job));
+consuming repos do not edit anything when the window moves.
 
 One resolver (`src/vergil_tooling/lib/versions/resolve.py`) turns a repo's
 `vergil.toml` and the window into the versions it builds. It reads the window at
@@ -598,7 +609,7 @@ chosen, and why.
 **`dev-ts-node`**
 :   Base: `base` (Ubuntu 24.04), with the major's pinned nodejs.org
     prebuilt tarball at `/opt/node/<major>` (never built from
-    source). Includes Node.js, npm, Prettier and license-checker.
+    source). Includes Node.js, npm and Prettier.
     TypeScript, ESLint, typescript-eslint, `@eslint/js`, Vitest and
     `@vitest/coverage-v8` are not in the image: each repository declares
     them as devDependencies, and the gates run them from its

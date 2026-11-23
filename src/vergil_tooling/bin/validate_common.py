@@ -3,7 +3,9 @@
 Runs inside the dev container via ``vrg-container-run``:
   1. Repository profile validation (includes README structural checks)
   2. markdownlint on docs/site/, README.md and epics/, in one pass against
-     the bundled config, which disables MD013 line-length (issue #4103)
+     the bundled config, which disables MD013 line-length (issue #4103);
+     :func:`lint_markdown` lints given files the same way, for
+     ``vrg-validate --markdown`` (issue #4589)
   3. docs-links: links to a mike-versioned Vergil docs site carry a version
      segment (``latest``, ``dev`` or a version number), over the same
      markdown scope less ``epics/archive/`` (issue #3831)
@@ -17,7 +19,9 @@ Runs inside the dev container via ``vrg-container-run``:
   8. actionlint on ``.github/workflows/``
   9. runner-labels: no workflow value may be ``ubuntu-latest``; runners are
      pinned to ``ubuntu-24.04`` (epic .github#649)
-  10. ansible-lint when the repo carries Ansible content, using the
+  10. secrets-inherit: a job passes ``secrets: inherit`` only to an
+     allow-listed vergil-actions workflow (epic .github#1384)
+  11. ansible-lint when the repo carries Ansible content, using the
      bundled canonical config as the rule baseline while honoring the
      repo's local ``skip_list`` / ``exclude_paths`` (issues #1667, #1952)
 
@@ -31,12 +35,16 @@ import subprocess
 import sys
 from importlib.resources import files
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
 from vergil_tooling.bin import repo_profile
-from vergil_tooling.lib import dependabot, doc_links, git
-from vergil_tooling.lib.config import read_config
+from vergil_tooling.lib import dependabot, doc_links, git, github, secrets_inherit
+from vergil_tooling.lib.config import ConfigError, read_config
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
@@ -57,18 +65,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     # "(N files)" as "N markdown files I changed" and reporting a phantom
     # off-by-one when a changed file fell outside the scope (issue #2601).
     if markdown_files:
-        print(
-            f"Running: markdownlint ({len(markdown_files)} files in docs/site/, README.md, epics/)"
-        )
-        markdownlint_config = files("vergil_tooling.configs") / "markdownlint.yaml"
-        result = subprocess.run(  # noqa: S603
-            ["markdownlint", "--config", str(markdownlint_config), *markdown_files],  # noqa: S607
-            check=False,
-        )
-        if result.returncode != 0:
-            return result.returncode
+        print(f"Running: markdownlint ({len(markdown_files)} files in {_MARKDOWN_SCOPE})")
+        rc = _run_markdownlint(markdown_files)
+        if rc != 0:
+            return rc
 
-    rc = _check_docs_links(repo_root)
+    own_site = _own_docs_site(repo_root, publishes_docs=cfg.publish.docs)
+    rc = _check_docs_links(repo_root, own_site=own_site)
     if rc != 0:
         return rc
 
@@ -121,6 +124,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
             return result.returncode
 
     rc = _check_runner_labels(repo_root)
+    if rc != 0:
+        return rc
+
+    rc = _check_secrets_inherit(repo_root)
     if rc != 0:
         return rc
 
@@ -181,7 +188,26 @@ def _check_dependabot_limit(repo_root: Path) -> int:
     return 1 if violations else 0
 
 
-def _check_docs_links(repo_root: Path) -> int:
+def _own_docs_site(repo_root: Path, *, publishes_docs: bool) -> str | None:
+    """Return the checking repository's own site on the org's Pages host, or
+    ``None`` when it has none (issue #4612).
+
+    The site is the repository's name when ``[publish].docs`` is true and
+    ``origin`` is a repository of :data:`doc_links.PAGES_OWNER` on github.com.
+    A repository that publishes no docs, has no ``origin`` or lives elsewhere
+    has no site there, so the check keeps to its fixed lists. A git failure
+    raises rather than checking less.
+    """
+    if not publishes_docs or "origin" not in git.remote_names(repo_root):
+        return None
+    slug = github.github_remote_repo(git.remote_url("origin", repo_root))
+    if slug is None:
+        return None
+    owner, name = slug.split("/", 1)
+    return name if owner.lower() == doc_links.PAGES_OWNER else None
+
+
+def _check_docs_links(repo_root: Path, *, own_site: str | None = None) -> int:
     """Refuse links to a mike-versioned Vergil docs site that lack a version
     segment (issue #3831), and links to a site on the org's Pages host that
     is not published at all (issue #4599).
@@ -194,8 +220,9 @@ def _check_docs_links(repo_root: Path) -> int:
     scope is markdownlint's (``docs/site/**/*.md``, ``README.md``,
     ``epics/**/*.md``) less ``epics/archive/``, and independent of
     ``[markdownlint].ignore``: a file left out of the lint still publishes its
-    links. The sites are the fixed lists in :mod:`vergil_tooling.lib.doc_links`,
-    so no network is used. Each hit is named by path and line, in line order.
+    links. The sites are the fixed lists in :mod:`vergil_tooling.lib.doc_links`
+    plus *own_site*, the repository's own site (:func:`_own_docs_site`), so no
+    network is used. Each hit is named by path and line, in line order.
     """
     archive = repo_root / "epics" / "archive"
     markdown_files = [
@@ -220,11 +247,11 @@ def _check_docs_links(repo_root: Path) -> int:
                 f"{url} has no version segment and returns 404; "
                 f"use {doc_links.versioned_form(url)}",
             )
-            for line, url in doc_links.unversioned_links(text)
+            for line, url in doc_links.unversioned_links(text, own_site=own_site)
         ]
         hits += [
             (line, f"{url} links to {site}, which is not a published Vergil docs site")
-            for line, site, url in doc_links.unpublished_links(text)
+            for line, site, url in doc_links.unpublished_links(text, own_site=own_site)
         ]
         # Stable sort: two hits on one line keep each kind's text order.
         for line, message in sorted(hits, key=lambda hit: hit[0]):
@@ -267,6 +294,42 @@ def _check_runner_labels(repo_root: Path) -> int:
             print(
                 f"{rel}:{line}: {_FLOATING_RUNNER_LABEL} is not allowed; "
                 f"use {_PINNED_RUNNER_LABEL}",
+                file=sys.stderr,
+            )
+            failed = True
+    return 1 if failed else 0
+
+
+def _check_secrets_inherit(repo_root: Path) -> int:
+    """Refuse ``secrets: inherit`` outside the allow-list (epic .github#1384).
+
+    A job may pass ``secrets: inherit`` only to a vergil-actions workflow in
+    :data:`~vergil_tooling.lib.secrets_inherit.INHERIT_ALLOWED`, the ones
+    that read the automation environment's secrets; every other caller
+    passes an explicit secrets map. Each refused ``inherit`` is named by path
+    and line with its job and ``uses:``. A workflow that is not YAML fails
+    the check rather than passing unread. No workflows returns 0.
+    """
+    workflow_files = _find_workflow_files(repo_root)
+    if not workflow_files:
+        return 0
+    print(f"Running: secrets-inherit ({len(workflow_files)} files in .github/workflows/)")
+    failed = False
+    for workflow in workflow_files:
+        path = Path(workflow)
+        rel = path.relative_to(repo_root).as_posix()
+        try:
+            violations = secrets_inherit.inherit_violations(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            print(f"{rel}: unparseable: {exc}", file=sys.stderr)
+            failed = True
+            continue
+        for violation in violations:
+            target = violation.uses if violation.uses is not None else "no reusable workflow"
+            print(
+                f"{rel}:{violation.line}: job {violation.job} passes secrets: inherit to "
+                f"{target}; inherit is allowed only for the vergil-actions workflows "
+                f"{', '.join(secrets_inherit.INHERIT_ALLOWED)}. Pass an explicit secrets map",
                 file=sys.stderr,
             )
             failed = True
@@ -380,6 +443,65 @@ def _find_repo_sh_files(repo_root: Path) -> list[str]:
         if path.is_file():
             found.append(str(path))
     return found
+
+
+_MARKDOWN_SCOPE = "docs/site/, README.md, epics/"
+
+
+def _run_markdownlint(markdown_files: Sequence[str], *, fix: bool = False) -> int:
+    """Run markdownlint over *markdown_files* against the bundled config, the
+    one config every file in the gate's scope is linted with (issue #4103)."""
+    markdownlint_config = files("vergil_tooling.configs") / "markdownlint.yaml"
+    fix_args = ["--fix"] if fix else []
+    result = subprocess.run(  # noqa: S603
+        ["markdownlint", "--config", str(markdownlint_config), *fix_args, *markdown_files],  # noqa: S607
+        check=False,
+    )
+    return result.returncode
+
+
+def lint_markdown(paths: Sequence[str], *, fix: bool = False) -> int:
+    """Lint the given markdown files exactly as the gate's markdownlint step
+    does (issue #4589): ``vrg-validate --markdown <file>...``.
+
+    A bare ``markdownlint <file>`` uses markdownlint's defaults, MD013 on, so
+    it flags lines the gate passes. Here a path is linted against the bundled
+    config only when the gate lints it: it is in the gate's scope
+    (:func:`_find_markdown_files`, less the ``[markdownlint].ignore`` paths)
+    and not gitignored. A path the gate does not lint is named and skipped,
+    so the ad-hoc result never disagrees with the gate. A path that is not a
+    file is an error. *fix* passes ``--fix`` to markdownlint.
+    """
+    missing = [path for path in paths if not Path(path).is_file()]
+    if missing:
+        for path in missing:
+            print(f"ERROR: {path}: no such file", file=sys.stderr)
+        return 1
+    repo_root = git.repo_root()
+    try:
+        cfg = read_config(repo_root)
+    except (FileNotFoundError, ConfigError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    scope = {
+        Path(path).resolve()
+        for path in _drop_gitignored(
+            repo_root, _find_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
+        )
+    }
+    linted: list[str] = []
+    for path in paths:
+        if Path(path).resolve() in scope:
+            linted.append(path)
+        else:
+            print(
+                f"markdownlint: {path} is not linted by vrg-validate "
+                f"(outside {_MARKDOWN_SCOPE}, ignored or gitignored); skipped"
+            )
+    if not linted:
+        return 0
+    print(f"Running: markdownlint ({len(linted)} of {len(paths)} files given)")
+    return _run_markdownlint(linted, fix=fix)
 
 
 def _find_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> list[str]:

@@ -168,10 +168,16 @@ def fix_task_stage(state: UpdateDepsState) -> None:
 
 
 def finalize_stage(state: UpdateDepsState) -> None:
-    """Print the held-back report (every run, spec §7.1) and remove the worktree."""
+    """Print the held-back report (spec §7.1), remove the worktree, delete a merged branch.
+
+    The branch is deleted, on origin and locally, only once its PR is
+    confirmed merged: by this run's merge, or found already merged by
+    preflight on a re-run. A failed deletion raises, so the run fails (#4952).
+    """
     ctx = _require_ctx(state)
     if ctx.landed_pr_url is not None:
         print(f"Dependency update for {ctx.version} already merged: {ctx.landed_pr_url}")
+        pr.delete_merged_branch(ctx)
         return
     print("Held back by declared bounds:")
     print(report.render_markdown(report.collect(ctx.results)))
@@ -182,6 +188,8 @@ def finalize_stage(state: UpdateDepsState) -> None:
     else:
         print(f"Dependency update merged: {ctx.pr_url}")
     pr.cleanup_worktree(ctx)
+    if ctx.merged:
+        pr.delete_merged_branch(ctx)
 
 
 def status_stage(state: UpdateDepsState) -> None:

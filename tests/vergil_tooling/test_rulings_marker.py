@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.comments import IssueComment
 from vergil_tooling.lib.rulings.marker import (
     MARKER_PREFIX,
+    REQUEST_KINDS,
     Marker,
+    RequestKind,
     malformed_marker,
     parse_marker,
     render_marker,
@@ -90,6 +94,12 @@ def test_malformed_marker_is_not_parsed() -> None:
         "<!-- vrg-ruling kind=response request=١ reply=2 -->",
         "<!-- vrg-ruling kind=request request=1 reply=2 -->",
         "<!-- vrg-ruling",
+        "<!-- vrg-ruling kind=request type=bogus -->",
+        "<!-- vrg-ruling kind=request type= -->",
+        "<!-- vrg-ruling kind=request type=Protected-Change -->",
+        "<!-- vrg-ruling kind=request  type=protected-change -->",
+        "<!-- vrg-ruling type=protected-change kind=request -->",
+        "<!-- vrg-ruling kind=response request=1 reply=2 type=protected-change -->",
     ],
 )
 def test_near_miss_markers_are_malformed(line: str) -> None:
@@ -111,3 +121,40 @@ def test_marker_ignored_unless_by_agent() -> None:
     assert malformed_marker(IssueComment(1, "h", "<!-- vrg-ruling bogus", False), AGENT) is False
     assert parse_marker(IssueComment(1, "", body, False), "") is None
     assert parse_marker(IssueComment(1, "h-vergil-audit", body, False), AGENT) is None
+
+
+# --- the request kinds (epic .github#1384, Task 6a) ---------------------------------
+
+
+@pytest.mark.parametrize("kind", ["protected-change", "merge-review-exemption"])
+def test_typed_request_marker_round_trips(kind: RequestKind) -> None:
+    marker = Marker("request", None, None, kind)
+    line = render_marker(marker)
+    assert line == f"<!-- vrg-ruling kind=request type={kind} -->"
+    c = _agent(f"text\n\n{line}")
+    assert parse_marker(c, AGENT) == marker
+    assert malformed_marker(c, AGENT) is False
+
+
+def test_existing_requests_unchanged() -> None:
+    """An old-form request marker still parses as an ordinary request, with no type."""
+    c = _agent("R1.1: fix or file? Recommendation: fix\n\n<!-- vrg-ruling kind=request -->")
+    assert parse_marker(c, AGENT) == Marker("request", None, None)
+    assert parse_marker(c, AGENT) == Marker("request", None, None, None)
+    assert render_marker(Marker("request", None, None)) == "<!-- vrg-ruling kind=request -->"
+
+
+def test_request_kinds_are_the_two() -> None:
+    assert tuple(REQUEST_KINDS) == ("protected-change", "merge-review-exemption")
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        Marker("response", 1, 2, "protected-change"),
+        Marker("request", None, None, cast("RequestKind", "bogus")),
+    ],
+)
+def test_render_marker_refuses_a_misplaced_or_unknown_type(marker: Marker) -> None:
+    with pytest.raises(RulingError, match="type"):
+        render_marker(marker)

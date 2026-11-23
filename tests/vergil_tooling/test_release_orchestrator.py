@@ -186,10 +186,32 @@ def test_preflight_stage_renders_the_checklist_the_issue_is_created_with() -> No
     with patch(_MOD + ".preflight", return_value=ctx):
         _preflight_stage(state)
     assert ctx.progress_block is not None
-    names = [stage.name for stage in build_stages()]
+    # publish-status reports only to the terminal and has no box (#4946).
+    names = [stage.name for stage in build_stages() if stage.name != "publish-status"]
     pairs = checklist.parse(ctx.progress_block)
     assert [name for name, _ in pairs] == names
     assert [name for name, done in pairs if done] == ["audit", "preflight"]
+
+
+def test_a_finished_release_leaves_no_unticked_stage() -> None:
+    # #4946: every tracked stage ticks its own box, so once each has run, the
+    # checklist close-tracking leaves on the closed issue has no open box.
+    from vergil_tooling.lib.release import checklist
+    from vergil_tooling.lib.release.resume import ALWAYS_RUN
+
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    ctx = _ctx()
+    with patch(_MOD + ".preflight", return_value=ctx):
+        _preflight_stage(state)
+    assert ctx.progress_block is not None
+    body = ctx.progress_block
+    for stage in build_stages():
+        if stage.name not in ALWAYS_RUN:
+            body = checklist.tick(body, stage.name)
+    pairs = checklist.parse(body)
+    assert pairs
+    assert [name for name, done in pairs if not done] == []
+    assert pairs[-1][0] == "close-tracking"
 
 
 def test_preflight_stage_passes_allow_pending_deps() -> None:
@@ -248,9 +270,36 @@ def test_tracked_stage_ticks_checklist_with_prior_stages_prechecked() -> None:
         _tracked("prepare", MagicMock())(state)
     names = m_ensure.call_args.args[1]
     checked = m_ensure.call_args.kwargs["checked"]
+    assert "publish-status" not in names
     assert names[: names.index("prepare")] == checked
     assert "prepare" not in checked
     m_tick.assert_called_once_with(state.ctx, "prepare")
+
+
+@pytest.mark.parametrize(
+    ("reported", "version", "commit"),
+    [(("2.1.0", "f" * 40), "2.1.0", "f" * 40), (None, None, None)],
+)
+def test_tracked_install_records_what_it_reported(
+    reported: tuple[str, str] | None, version: str | None, commit: str | None
+) -> None:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    state.ctx = _ctx()
+
+    def ran(ctx: ReleaseContext) -> None:
+        ctx.install_commands = "vrg-tooling-install v2.1"
+        ctx.install_reported = reported
+
+    with (
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+    ):
+        _tracked("install", ran)(state)
+    assert state.ctx.state is not None
+    assert state.ctx.state.install_done is True
+    assert state.ctx.state.install_version == version
+    assert state.ctx.state.install_commit == commit
 
 
 def test_stage_names_match_pipeline_order() -> None:

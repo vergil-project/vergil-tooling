@@ -59,6 +59,9 @@ class UpdateDepsContext:
     # Set by preflight when deps/update-<version>'s PR already merged (#3330):
     # the update for this version is done, so the run does nothing and exits 0.
     landed_pr_url: str | None = None
+    # Set by the merge stage once this run merged its PR; finalize then deletes
+    # the branch (#4952).
+    merged: bool = False
 
     @property
     def has_work(self) -> bool:
