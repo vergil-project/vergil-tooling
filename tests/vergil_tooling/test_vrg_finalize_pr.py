@@ -1979,7 +1979,7 @@ _REAL_READ_CLOSING_REFS = closing_refs.read_closing_refs
 
 
 @contextmanager
-def _layer(*answers: dict[str, object]) -> Iterator[MagicMock]:
+def _layer(*answers: dict[str, object]) -> Generator[MagicMock]:
     """The real closing-references read, its GraphQL answered by *answers* in turn."""
     graphql = MagicMock(side_effect=list(answers))
     with (

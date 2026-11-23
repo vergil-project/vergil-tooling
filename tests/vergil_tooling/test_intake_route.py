@@ -1209,6 +1209,15 @@ def test_route_defer_adhoc_closing_pr_read_failure_moves_nothing(env: Env) -> No
     env.ensure_deferred_epic.assert_not_called()
 
 
+def test_route_defer_adhoc_closing_pr_without_a_pr_url_fails(env: Env) -> None:
+    env.parent = ADHOC_DOTGITHUB
+    env.closing_prs = {"https://github.com/org/.github/issues/42": "OPEN"}
+    with pytest.raises(RuntimeError, match="has no PR URL"):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_not_called()
+    assert env.closing_pr_reads == []
+
+
 def test_route_defer_adhoc_closing_pr_reported_as_counts_under_actions(
     env: Env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -13,11 +13,12 @@ turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
    on an open PR with a violation, which ends ``failed: provenance``.
 2. **Settles** develop once, only if at least one PR merged. ``close-refs``
    closes any issue a merged PR closes that GitHub left open (issue #4002),
-   by a closing reference the trust layer counts, before the lock is taken, since it touches only GitHub. Then, under the
-   checkout lock (``lib/checkout_lock.py``, spec §6.4), it syncs the main
-   worktree to ``origin/develop``, cleans up merged branches and worktrees,
-   provisions the dev image, and runs one ``vrg-container-run --
-   vrg-validate`` on the synced head. The lock is let go before the CD
+   by a closing reference the trust layer counts, before the lock is taken,
+   since it touches only GitHub. Then, under the checkout lock
+   (``lib/checkout_lock.py``, spec §6.4), it syncs the main worktree to
+   ``origin/develop``, cleans up merged branches and worktrees, provisions
+   the dev image, and runs one ``vrg-container-run -- vrg-validate`` on the
+   synced head. The lock is let go before the CD
    report, so it never covers a wait on GitHub.
 3. **Reports** the synced head's CD run as ``CD: <state> <url>``, without
    waiting on it (spec §6.5). ``--wait-cd`` blocks on that run instead,

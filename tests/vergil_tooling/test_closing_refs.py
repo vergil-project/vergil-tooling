@@ -170,6 +170,7 @@ def test_read_closing_refs_malformed_fields_are_a_read_error(graphql: MagicMock)
     [
         ({"number": 0, "state": "OPEN", "repository": {"nameWithOwner": "o/r"}}, "number"),
         ({"number": 7, "state": "GONE", "repository": {"nameWithOwner": "o/r"}}, "state"),
+        ({"number": 7, "state": "OPEN", "repository": {"nameWithOwner": "o"}}, "repository"),
     ],
 )
 def test_read_closing_refs_bad_reference_is_a_read_error(

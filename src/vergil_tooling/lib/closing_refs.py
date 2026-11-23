@@ -14,7 +14,7 @@ lists is returned apart, by ref and state only, never acted on.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import trust
 from vergil_tooling.lib.github import ClosingIssue
@@ -82,10 +82,8 @@ def read_closing_refs(repo: str, number: int, *, authors: TrustedAuthors) -> Clo
         raise trust.TrustReadError(
             call, "the pull request's closing fields are malformed"
         ) from None
-    refs = pr.node.get("closingIssuesReferences")
-    nodes = refs.get("nodes") if isinstance(refs, dict) else None
-    if not isinstance(nodes, list):
-        raise trust.TrustReadError(call, "the pull request has no closing references")
+    # trusted_closing_refs has read the list in full: its nodes are a list.
+    nodes = cast("list[object]", pr.node["closingIssuesReferences"]["nodes"])
     issues = [_reference(node, call) for node in nodes]
     kept = set(numbers)
     counted = tuple(
