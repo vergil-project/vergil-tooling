@@ -563,8 +563,9 @@ lockfile back as they were, says so on stderr and exits non-zero. Used by
 the CD workflows to read the release version.
 
 In a TypeScript repo the version is also kept in `package.json`. `show`
-fails, naming the fix, when `package.json` is missing, has no `version`, or
-holds another version than `VERSION`; `vrg-validate`'s TypeScript pre-gate
+fails, naming the fix, when `package.json` is missing, cannot be read or
+parsed (not UTF-8, not JSON), has no `version`, or holds another version
+than `VERSION`; `vrg-validate`'s TypeScript pre-gate
 makes the same check on the PR. `bump` rewrites only the top-level `version`
 of `package.json` and the two root version fields of `package-lock.json`
 (its top-level `version` and `packages[""].version`), keeping every other

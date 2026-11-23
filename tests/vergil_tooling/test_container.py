@@ -1207,3 +1207,10 @@ def test_withheld_reason(name: str, reason: str | None) -> None:
 def test_never_forwarded_names_and_prefixes() -> None:
     assert "NODE_OPTIONS" in NEVER_FORWARDED
     assert NEVER_FORWARDED_PREFIXES == ("npm_config_", "COREPACK_", "VOLTA_")
+
+
+def test_read_package_json_missing_names_the_fix(tmp_path: Path) -> None:
+    path = tmp_path / "package.json"
+    with pytest.raises(PackageJsonError) as excinfo:
+        read_package_json(path)
+    assert str(excinfo.value) == f"package.json not found at {path}. Fix: create it"

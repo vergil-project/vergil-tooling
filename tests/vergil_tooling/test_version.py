@@ -1383,6 +1383,7 @@ def test_typescript_bump_missing_lockfile_fails_first(tmp_path: Path) -> None:
             r'package-lock\.json \["packages"\]\[""\]\["version"\] is not a string',
         ),
         ("not json", r"package-lock\.json cannot be parsed"),
+        ("[]", r"package-lock\.json cannot be parsed: the top level is not a JSON object"),
     ],
 )
 def test_typescript_bump_bad_lockfile_fails_first(
@@ -1421,3 +1422,16 @@ def test_go_bump_without_version_file_unchanged(tmp_path: Path) -> None:
     (tmp_path / "VERSION").write_text("1.0.0\n")
     assert bump(tmp_path) == "1.0.1"
     assert (tmp_path / "VERSION").read_text() == "1.0.1\n"
+
+
+def test_show_non_utf8_package_json_names_the_fix(tmp_path: Path) -> None:
+    # A package.json that is not UTF-8 is the shared reader's error, never a
+    # UnicodeDecodeError traceback (#4992).
+    _ts_repo(tmp_path, package_json=None)
+    path = tmp_path / "package.json"
+    path.write_bytes(b'{"version": "0.1.0", "name": "\xff"}')
+    with pytest.raises(VersionSyncError) as excinfo:
+        show(tmp_path)
+    msg = str(excinfo.value)
+    assert msg.startswith(f"package.json at {path} cannot be parsed: not UTF-8 (")
+    assert msg.endswith(". Fix: correct the JSON")
