@@ -436,3 +436,36 @@ def test_dataclasses_are_frozen() -> None:
     field = "name"
     with pytest.raises(AttributeError):
         setattr(check, field, "d")
+
+
+# -- minimum (#4613) -----------------------------------------------------------------
+
+
+def test_minimum_parses_as_a_bare_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    _use(monkeypatch, _DEP + 'minimum = "v2.97.0"\n')
+    (dep,) = host_deps.load_manifest()
+    assert dep.minimum == "2.97.0"
+
+
+def test_minimum_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    _use(monkeypatch, _DEP)
+    (dep,) = host_deps.load_manifest()
+    assert dep.minimum is None
+
+
+@pytest.mark.parametrize(
+    ("value", "match"),
+    [
+        ('"2.97.0-rc1"', "is not a bare version"),
+        ('"latest"', "is not a bare version"),
+        ('""', "must be a non-empty string"),
+        ("2", "must be a non-empty string"),
+    ],
+)
+def test_bad_minimum_raises(monkeypatch: pytest.MonkeyPatch, value: str, match: str) -> None:
+    _load_error(monkeypatch, _DEP + f"minimum = {value}\n", match)
+
+
+def test_packaged_gh_declares_a_minimum() -> None:
+    deps = {dep.name: dep for dep in host_deps.load_manifest()}
+    assert deps["gh"].minimum == "2.97.0"

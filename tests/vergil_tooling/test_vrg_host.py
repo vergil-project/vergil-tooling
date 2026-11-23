@@ -268,8 +268,11 @@ def test_pin_records_in_pins_file_and_status_shows_debt(
     monkeypatch.setattr(vrg_host.host_methods, "latest_version", lambda d: "2.42.0")
     # Only auxiliary-check probes reach _run here; satisfy them (gcloud's numpy check).
     monkeypatch.setattr(vrg_host.host_methods, "_run", lambda cmd: "")
-    assert vrg_host.main(["status"]) == 1  # gh pinned but re-evaluation due -> WARN
+    # gh pinned with re-evaluation due (WARN), and held below vrg-gh's 2.97.0
+    # minimum, which a pin never excuses (ERROR, #4613).
+    assert vrg_host.main(["status"]) == 2
     out = capsys.readouterr().out
+    assert "minimum 2.97.0: UNSATISFIED" in out
     assert "pinned (tracked debt)" in out
     assert "pin: 2.40.x, holding back from 2.42.0 (inducing release 2.41.0)" in out
     assert "!! RE-EVALUATION DUE" in out
@@ -761,14 +764,16 @@ def test_upgrade_honors_pin_from_pins_file(
     # A pin recorded with `vrg-host pin` (host-local pins file, not the packaged
     # manifest) is a real hold for upgrade.
     assert vrg_host.main(_PIN_ARGS) == 0
-    calls = _fake_host(monkeypatch)  # every dependency 1.0, latest 2.0
+    # Every dependency 1.0, latest 2.0, except gh: at its 2.97.0 minimum, so an
+    # upgrade to its latest passes the minimum check.
+    calls = _fake_host(monkeypatch, installed={"gh": "2.97.0"}, latest={"gh": "2.98.0"})
     capsys.readouterr()
 
     assert vrg_host.main(["upgrade", "gh"]) == 1
     assert calls == []
     assert (
-        "held     gh: pinned to 2.40.x (2.41.0 breaks vrg-gh auth) at 1.0, holding back from 2.0"
-        in capsys.readouterr().out
+        "held     gh: pinned to 2.40.x (2.41.0 breaks vrg-gh auth) at 2.97.0, "
+        "holding back from 2.98.0" in capsys.readouterr().out
     )
 
     # Every other auto dependency in the packaged manifest, in manifest order.
@@ -787,13 +792,13 @@ def test_upgrade_honors_pin_from_pins_file(
 
     assert vrg_host.main(["upgrade", "--force", "gh"]) == 0
     assert calls == [*unpinned_auto, "gh"]
-    assert "upgraded gh: 1.0 -> 2.0" in capsys.readouterr().out
+    assert "upgraded gh: 2.97.0 -> 2.98.0" in capsys.readouterr().out
 
     assert vrg_host.main(["unpin", "gh"]) == 0  # a freed pin no longer holds
     assert vrg_host.main(["upgrade", "gh"]) == 0
     assert calls == [*unpinned_auto, "gh"]  # now current: skipped, not held
     out = capsys.readouterr().out
-    assert "skipped  gh: current (2.0)" in out and "held" not in out
+    assert "skipped  gh: current (2.98.0)" in out and "held" not in out
 
 
 def test_upgrade_honors_pin_written_via_host_pins(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1649,3 +1654,75 @@ def test_status_reports_tooling_owned_by_release(
     assert _row(row)[:7] == _row("[OK   ] vergil-tooling uv-tool 2.1.241 -> unmanaged")
     assert "installed by the vergil-tooling release" in row
     assert "current" not in row  # git-sourced: no feed, so it never claims to be current
+
+
+# -- minimum (#4613) -----------------------------------------------------------------
+
+
+def test_status_below_minimum_is_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _stub(monkeypatch, (_dep(minimum="2.97.0"),), {"gh": "2.96.0"}, {"gh": "2.103.3"})
+    assert vrg_host.main(["status"]) == 2
+    out = capsys.readouterr().out
+    assert "[ERROR] gh" in out
+    assert "minimum 2.97.0: UNSATISFIED" in out
+
+
+def test_upgrade_past_the_minimum_is_ok(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _stub_upgrade(
+        monkeypatch,
+        (_dep(minimum="2.97.0"),),
+        installed={"gh": "2.96.0"},
+        latest={"gh": "2.103.3"},
+        after={"gh": "2.103.3"},
+    )
+    assert vrg_host.main(["upgrade", "gh"]) == 0
+    assert "upgraded gh: 2.96.0 -> 2.103.3" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("after", ["2.96.5", "2.96.0"])
+def test_upgrade_still_below_the_minimum_is_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], after: str
+) -> None:
+    _stub_upgrade(
+        monkeypatch,
+        (_dep(minimum="2.97.0"),),
+        installed={"gh": "2.96.0"},
+        latest={"gh": "2.103.3"},
+        after={"gh": after},
+    )
+    assert vrg_host.main(["upgrade", "gh"]) == 2
+    assert f"ERROR    gh: 2.96.0 -> {after}, still below its minimum 2.97.0" in (
+        capsys.readouterr().out
+    )
+
+
+def test_upgrade_not_orderable_against_the_minimum_is_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _stub_upgrade(
+        monkeypatch,
+        (_dep(minimum="2.97.0", latest="unmanaged"),),
+        installed={"gh": "2.96.0"},
+        latest={"gh": hm.UNMANAGED},
+        after={"gh": "2.x"},
+    )
+    assert vrg_host.main(["upgrade", "gh"]) == 2
+    assert "cannot be ordered against its minimum 2.97.0" in capsys.readouterr().out
+
+
+def test_upgrade_current_but_below_the_minimum_is_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = _stub_upgrade(
+        monkeypatch,
+        (_dep(minimum="2.97.0"),),
+        installed={"gh": "2.96.0"},
+        latest={"gh": "2.96.0"},
+    )
+    assert vrg_host.main(["upgrade", "gh"]) == 2
+    assert calls == []
+    assert "still below its minimum 2.97.0" in capsys.readouterr().out
