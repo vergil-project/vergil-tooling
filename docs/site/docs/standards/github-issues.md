@@ -946,9 +946,14 @@ The line does not begin with the keyword, so the PR is not read as a batch PR
 plan next. It checks that each item is still valid and still needs a full epic,
 and leaves it in the queue, defers it, drops it, or routes it as a one-off when
 it is small enough for a repo's ad-hoc epic. Items that `epic-create` is
-expanding or has finished are only shown, never resumed. Which item to expand
-next is the human's choice, made by running `epic-create` on it; pick only what
-will be implemented soon, since a plan left sitting goes stale.
+expanding are only shown, never resumed. A `ready-to-close` item that nothing
+closed (one from before the docs PR closed its planning item, or one whose docs
+PR did not carry the close) is closed as completed with the comment
+`Planned as <epic ref>`, and its `in-progress` label is removed. The review
+refuses to close one whose epic was closed as not planned (abandoned): that
+item is not planned, whatever its markers say, and needs planning again. Which
+item to expand next is the human's choice, made by running `epic-create` on it;
+pick only what will be implemented soon, since a plan left sitting goes stale.
 
 #### Epic size
 
