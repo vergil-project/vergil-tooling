@@ -118,6 +118,63 @@ def commit_author(user: Any = HUMAN, *, at: str = CREATED) -> dict[str, Any]:
     }
 
 
+def _linked(repo: str, number: int) -> dict[str, Any]:
+    return {"number": number, "repository": {"nameWithOwner": repo}}
+
+
+def closing_pr(
+    repo: str,
+    number: int,
+    *closes: tuple[str, int, str],
+    state: str = "MERGED",
+    body: str | None = None,
+    author: Any = HUMAN,
+    editor: Any = None,
+    links: tuple[tuple[Any, str, int], ...] = (),
+    merged_at: str | None = EDITED,
+) -> dict[str, Any]:
+    """The answer to :func:`trust.read_pr_closing`'s query for PR *repo*#*number*.
+
+    Each of *closes* is a closing reference GitHub lists, ``(repo, number,
+    state)``; by default the body names each with a ``Closes`` line. Each of
+    *links* is a hand link, ``(actor, repo, number)``.
+    """
+    if body is None:
+        body = "Summary.\n\n" + "\n".join(f"Closes {r}#{n}" for r, n, _ in closes)
+    return {
+        "repository": {
+            "pullRequest": {
+                "number": number,
+                "state": state,
+                "mergedAt": merged_at if state == "MERGED" else None,
+                "repository": {"nameWithOwner": repo},
+                "author": author,
+                "editor": editor,
+                "body": body,
+                "createdAt": CREATED,
+                "lastEditedAt": EDITED if editor is not None else None,
+                "userContentEdits": _edits([editor] if editor is not None else []),
+                "closingIssuesReferences": {
+                    "totalCount": len(closes),
+                    "nodes": [{**_linked(r, n), "state": s} for r, n, s in closes],
+                },
+                "timelineItems": {
+                    "filteredCount": len(links),
+                    "nodes": [
+                        {
+                            "actor": actor,
+                            "createdAt": EDITED,
+                            "subject": _linked(r, n),
+                            "source": {},
+                        }
+                        for actor, r, n in links
+                    ],
+                },
+            }
+        }
+    }
+
+
 class FakeItems:
     """A ``github.graphql`` stand-in answering the layer's item and events queries per issue.
 

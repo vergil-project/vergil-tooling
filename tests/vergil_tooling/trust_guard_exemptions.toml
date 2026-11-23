@@ -149,6 +149,16 @@ trusts, or a hand link whose every linker holds a role) mark the rest."""
 
 [[judged]]
 path = "lib/intake_route.py"
+function = "_guard_open_closing_pr"
+fields = ["closedByPullRequestsReferences"]
+judge = ["lib/closing_refs.py:read_closing_refs", "lib/pending_release.py:trusted_closing_refs"]
+reason = """The PRs GitHub lists as closing the item are candidates, by URL only. A PR \
+holds the route only when closing_refs.read_closing_refs, reading it by number through \
+trust.read_pr_closing, finds it open and trusted_closing_refs counts its reference to \
+the item."""
+
+[[judged]]
+path = "lib/intake_route.py"
 function = "_planning_epic_states"
 fields = ["body"]
 judge = ["lib/intake_route.py:_trusted_planning_body"]
@@ -251,25 +261,11 @@ sets the row's displayed type. The view writes nothing and decides nothing."""
 # --- pending ---------------------------------------------------------------------
 
 [[pending]]
-path = "bin/vrg_finalize_pr.py"
-function = "_read_closing_refs"
-fields = ["closingIssuesReferences"]
-task = "vergil-project/vergil-tooling#4987"
-reason = "fixed by vergil-project/vergil-tooling#4987"
-
-[[pending]]
 path = "lib/epic_docs.py"
 function = "read_body"
 fields = ["body"]
 task = "vergil-project/vergil-tooling#4989"
 reason = "fixed by vergil-project/vergil-tooling#4989"
-
-[[pending]]
-path = "lib/intake_route.py"
-function = "_guard_open_closing_pr"
-fields = ["closedByPullRequestsReferences"]
-task = "vergil-project/vergil-tooling#4987"
-reason = "fixed by vergil-project/vergil-tooling#4987"
 
 [[pending]]
 path = "lib/queue_view.py"

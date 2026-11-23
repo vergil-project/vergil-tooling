@@ -249,17 +249,26 @@ merged task open and blocks epic rollup (issue #4002). For each merged
 PR, finalize reads its `closingIssuesReferences`: the issues GitHub
 itself lists as closed by the PR, through a closing keyword or a
 Development link. It never parses the PR text, so an issue the PR only
-mentions (`Ref` linkage) is never touched. If any listed issue is still
-open, finalize waits 10 seconds for an auto-close still in flight, reads
-again, then closes each one still open with reason `completed` and the
-comment "Completed by PR `<owner>/<repo>#N` (merged `<time>`); GitHub
-did not auto-close it." Each closed issue is reported in the output.
+mentions (`Ref` linkage) is never touched. The PR is read through the
+trust layer, and finalize acts only on the references it counts: an issue
+in the PR's own repo that a closing line names in a trusted body (the
+author and every editor hold the human or agents role), or that a
+trusted account linked by hand. Any other listed reference (from an
+untrusted body or hand link, or in another repo) is left open and
+reported as `<owner>/<repo>#N: left open`, and each untrusted body or
+link is reported on stderr by repo, number, login and cause only. If any
+counted issue is still open, finalize waits 10 seconds for an auto-close
+still in flight, reads again, then closes each one still open with reason
+`completed` and the comment "Completed by PR `<owner>/<repo>#N`
+(merged `<time>`); GitHub did not auto-close it." Each closed issue is
+reported in the output.
 
 This step touches only GitHub, so it runs before the checkout lock is
-taken. A failure to read the references, or to close any issue, makes
-finalize exit 1. Every merged PR is handled first, and the error names
-each issue still open. The rest of the settle phase still runs, because
-the PRs have merged.
+taken. A failure to read the references (one the trust layer cannot
+read in full included, or no trusted authors configured), or to close
+any issue, makes finalize exit 1. Every merged PR is handled first, and
+the error names each issue still open. The rest of the settle phase
+still runs, because the PRs have merged.
 
 #### The checkout lock
 
