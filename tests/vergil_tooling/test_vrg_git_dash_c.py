@@ -25,8 +25,8 @@ import pytest
 
 from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin import vrg_git
-from vergil_tooling.lib import trust
 from vergil_tooling.bin.vrg_git import _split_dash_c, main
+from vergil_tooling.lib import trust
 from vergil_tooling.lib.pr_workflow.freeze import FreezeCheck
 
 if TYPE_CHECKING:
