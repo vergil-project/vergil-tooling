@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass, field
+from typing import cast
 
 import pytest
 
-from vergil_tooling.lib import branch_sweep, github
+from vergil_tooling.lib import branch_sweep, github, trust
 from vergil_tooling.lib.branch_sweep import (
     Action,
     Outcome,
@@ -22,6 +23,7 @@ from vergil_tooling.lib.branch_sweep import (
 REPO = "acme/widgets"
 TIP = "a" * 40
 OTHER = "b" * 40
+AT = "2026-11-01T00:00:00Z"
 
 
 def _branch(name: str, tip: str = TIP, *, protected: bool = False) -> RemoteBranch:
@@ -129,22 +131,56 @@ def _err(cmd: str) -> github.GitHubAPIError:
 
 @dataclass
 class FakeGitHub:
-    """Stands in for lib.github's read_json / read_json_paginated / delete."""
+    """Stands in for lib.github's read_json / read_json_paginated / delete.
+
+    The PRs of a branch come through the trust layer's
+    :func:`trust.prs_for_branch`: each of :attr:`prs` is an :func:`_api_pr`,
+    and a fork's PR or one with an untrusted author comes back skipped, as
+    the layer reports it.
+    """
 
     default: object = field(default_factory=lambda: {"default_branch": "develop"})
     branches: list[object] = field(default_factory=list)
-    prs: dict[str, object] = field(default_factory=dict)
+    prs: dict[str, list[dict[str, object]]] = field(default_factory=dict)
     rules: dict[str, list[object]] = field(default_factory=dict)
     refs: dict[str, object] = field(default_factory=dict)
     fail: set[str] = field(default_factory=set)
     deleted: list[str] = field(default_factory=list)
+    pr_lookups: list[tuple[str, str, str]] = field(default_factory=list)
+
+    def prs_for_branch(
+        self, repo: str, branch: str, *, state: str
+    ) -> tuple[list[trust.PRRef], list[trust.Skipped]]:
+        self.pr_lookups.append((repo, branch, state))
+        if f"prs:{branch}" in self.fail:
+            raise trust.TrustReadError(f"prs_for_branch {repo} {branch}", "HTTP 502: boom")
+        found: list[trust.PRRef] = []
+        skipped: list[trust.Skipped] = []
+        for pr in self.prs.get(branch, []):
+            number = cast("int", pr["number"])
+            if pr["fork"]:
+                skipped.append(
+                    trust.Skipped(repo, number, "pr", "forker", AT, "head", trust.CROSS_REPOSITORY)
+                )
+            elif pr["untrusted"]:
+                skipped.append(
+                    trust.Skipped(repo, number, "pr", "outsider", AT, "author", trust.UNTRUSTED)
+                )
+            else:
+                found.append(
+                    trust.PRRef(
+                        number=number,
+                        url=f"https://github.com/{repo}/pull/{number}",
+                        title="a title",
+                        head=branch,
+                        head_oid=cast("str", pr["headRefOid"]),
+                        author_role=trust.Role.AGENTS,
+                        state=cast("str", pr["state"]),
+                    )
+                )
+        return found, skipped
 
     def read_json(self, *args: str) -> object:
-        if args[0] == "pr":
-            branch = args[args.index("--head") + 1]
-            if f"prs:{branch}" in self.fail:
-                raise _err("gh pr list")
-            return self.prs.get(branch, [])
         endpoint = args[1]
         if endpoint == f"repos/{REPO}":
             return self.default
@@ -180,6 +216,8 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     monkeypatch.setattr(github, "read_json", gh.read_json)
     monkeypatch.setattr(github, "read_json_paginated", gh.read_json_paginated)
     monkeypatch.setattr(github, "delete", gh.delete)
+    monkeypatch.setattr(trust, "prs_for_branch", gh.prs_for_branch)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     return gh
 
 
@@ -187,8 +225,16 @@ def _api_branch(name: str, tip: str = TIP, *, protected: bool = False) -> dict[s
     return {"name": name, "commit": {"sha": tip}, "protected": protected}
 
 
-def _api_pr(number: int, state: str, head: str = TIP, *, fork: bool = False) -> dict[str, object]:
-    return {"number": number, "state": state, "headRefOid": head, "isCrossRepository": fork}
+def _api_pr(
+    number: int, state: str, head: str = TIP, *, fork: bool = False, untrusted: bool = False
+) -> dict[str, object]:
+    return {
+        "number": number,
+        "state": state,
+        "headRefOid": head,
+        "fork": fork,
+        "untrusted": untrusted,
+    }
 
 
 def _by_branch(outcomes: list[Outcome]) -> dict[str, Outcome]:
@@ -318,21 +364,40 @@ def test_sweep_records_delete_failure(fake: FakeGitHub) -> None:
     assert fake.deleted == []
 
 
-def test_sweep_records_malformed_pr_data(fake: FakeGitHub) -> None:
-    fake.branches = [_api_branch("feature/1-x")]
-    fake.prs = {"feature/1-x": [{"number": "10", "state": "MERGED", "headRefOid": TIP}]}
-    (outcome,) = branch_sweep.sweep(REPO, apply=False)
-    assert outcome.action is Action.ERROR
-    assert "PR number" in outcome.reason
+def test_sweep_ignores_untrusted_pr_and_reports_it(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An untrusted author's closed PR at the tip never makes a pushed branch finished."""
+    fake.branches = [_api_branch("feature/7-x")]
+    fake.prs = {"feature/7-x": [_api_pr(20, "CLOSED", untrusted=True)]}
+    fake.refs = {"feature/7-x": {"object": {"sha": TIP}}}
+    (outcome,) = branch_sweep.sweep(REPO, apply=True)
+    assert outcome.action is Action.KEPT
+    assert outcome.reason == "no PR"
+    assert fake.deleted == []
+    assert fake.pr_lookups == [(REPO, "feature/7-x", "all")]
+    err = capsys.readouterr().err
+    assert f"{REPO}#20 pr outsider" in err
+    assert "untrusted" in err
+
+
+def test_sweep_decides_on_trusted_prs_only(fake: FakeGitHub) -> None:
+    """An untrusted open PR beside a trusted merged one does not keep the branch."""
+    fake.branches = [_api_branch("feature/8-x")]
+    fake.prs = {"feature/8-x": [_api_pr(30, "MERGED"), _api_pr(31, "OPEN", untrusted=True)]}
+    fake.refs = {"feature/8-x": {"object": {"sha": TIP}}}
+    (outcome,) = branch_sweep.sweep(REPO, apply=True)
+    assert outcome.action is Action.DELETED
+    assert outcome.pr is not None and outcome.pr.number == 30
 
 
 def test_sweep_propagates_missing_token(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
     fake.branches = [_api_branch("feature/1-x")]
 
-    def boom(*_args: str) -> object:
+    def boom(*_args: str, **_kwargs: str) -> object:
         raise github.MissingGitHubTokenError(1, "gh", "", "set GH_TOKEN")
 
-    monkeypatch.setattr(github, "read_json", boom)
+    monkeypatch.setattr(trust, "prs_for_branch", boom)
     monkeypatch.setattr(branch_sweep, "default_branch", lambda _repo: "develop")
     with pytest.raises(github.MissingGitHubTokenError):
         branch_sweep.sweep(REPO, apply=False)
@@ -364,22 +429,21 @@ def test_list_branches_rejects_non_bool_protected(fake: FakeGitHub) -> None:
         branch_sweep.list_branches(REPO)
 
 
-def test_list_prs_rejects_non_list(fake: FakeGitHub) -> None:
-    fake.prs = {"x": {"oops": 1}}
-    with pytest.raises(ValueError, match="PRs of x"):
-        branch_sweep.list_prs(REPO, "x")
+def test_list_prs_keeps_trusted_same_repo_prs(fake: FakeGitHub) -> None:
+    fake.prs = {
+        "x": [
+            _api_pr(1, "CLOSED"),
+            _api_pr(2, "MERGED", OTHER),
+            _api_pr(3, "OPEN", fork=True),
+            _api_pr(4, "OPEN", untrusted=True),
+        ]
+    }
+    assert branch_sweep.list_prs(REPO, "x") == [_pr(1, "CLOSED"), _pr(2, "MERGED", OTHER)]
 
 
-def test_list_prs_refuses_truncated_list(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(branch_sweep, "PR_LIST_LIMIT", 2)
-    fake.prs = {"x": [_api_pr(1, "CLOSED"), _api_pr(2, "CLOSED")]}
-    with pytest.raises(ValueError, match="truncated"):
-        branch_sweep.list_prs(REPO, "x")
-
-
-def test_list_prs_rejects_bool_number(fake: FakeGitHub) -> None:
-    fake.prs = {"x": [{"number": True, "state": "MERGED", "headRefOid": TIP}]}
-    with pytest.raises(ValueError, match="PR number"):
+def test_list_prs_raises_a_trust_read_failure(fake: FakeGitHub) -> None:
+    fake.fail = {"prs:x"}
+    with pytest.raises(trust.TrustReadError, match="HTTP 502"):
         branch_sweep.list_prs(REPO, "x")
 
 

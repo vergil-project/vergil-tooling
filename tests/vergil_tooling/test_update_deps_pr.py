@@ -598,7 +598,7 @@ def test_find_open_fix_task_matches_title_and_failure_kind(monkeypatch) -> None:
     assert args[:4] == ("issue", "list", "--repo", "o/r")
     assert args[args.index("--search") + 1] == f'"{title}" in:title'
     assert args[args.index("--state") + 1] == "open"
-    assert set(args[args.index("--json") + 1].split(",")) == {"number", "url", "title", "body"}
+    assert set(args[args.index("--json") + 1].split(",")) == {"number", "url", "title"}
 
 
 _TITLE = "Fix failed dependency update for 2.1.243"

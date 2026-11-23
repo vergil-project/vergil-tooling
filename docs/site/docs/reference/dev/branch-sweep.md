@@ -39,8 +39,10 @@ vrg-branch-sweep [--repo OWNER/NAME] [--apply]
 
 A branch is finished, and deleted under `--apply`, when all of these hold:
 
-1. it has at least one PR from the same repo (fork PRs that share the
-   branch name are ignored);
+1. it has at least one PR from the same repo with a trusted author, read
+   through the trust layer (a fork PR that shares the branch name, or a PR
+   an untrusted identity opened on it, is ignored and reported on stderr by
+   metadata only);
 2. none of its PRs is open;
 3. its newest PR (the highest number) is merged or closed;
 4. its current tip equals that PR's `headRefOid`.

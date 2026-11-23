@@ -1,8 +1,9 @@
 """Extract the release tracking issue number from a PR on main.
 
 Given a commit (typically HEAD on main in a CD workflow), this tool
-determines the associated PR number, reads the PR body via the GitHub
-API, and prints the tracking issue number found in the ``Ref #N``
+determines the associated PR number, reads the PR body through the trust
+layer (a body an untrusted identity wrote or edited is a stop), and prints
+the tracking issue number found in the ``Ref #N``
 linkage pattern.
 
 PR discovery uses three strategies in order:
@@ -26,10 +27,11 @@ import subprocess
 import sys
 from typing import cast
 
-from vergil_tooling.lib import git, github
+from vergil_tooling.lib import git, github, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.linkage import extract_merge_pr, extract_tracking_issue
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 # Backward-compatible alias: the merge/squash subject → PR-number extraction now
 # lives in ``lib.linkage`` (shared with the CI-evidence harvest layer).
@@ -108,6 +110,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+_PR_MERGE_JQ = "[.[] | {number, merged_at}]"
+
+
 class UnmergedPRsError(Exception):
     """The commit has PRs, but none of them merged: its message names them."""
 
@@ -123,7 +128,9 @@ def _pr_from_api(commit: str) -> int | None:
     sha = git.read_output("rev-parse", commit)
     # Paginated (issue #3162) so a merged PR past the first page is still seen.
     # A malformed page raises ValueError, reported by main() — never read as empty.
-    result = github.read_json_paginated(f"repos/{repo}/commits/{sha}/pulls")
+    # Projected to each PR's number and merge time at the source: the rest of a
+    # PR object (its body, its head branch) is content this lookup never reads.
+    result = github.read_json_paginated(f"repos/{repo}/commits/{sha}/pulls", jq=_PR_MERGE_JQ)
     prs = cast("list[dict[str, object]]", [p for p in result if isinstance(p, dict)])
     for pr in prs:
         if pr.get("merged_at"):
@@ -140,18 +147,27 @@ def _pr_from_api(commit: str) -> int | None:
 
 
 def _resolve_from_pr(pr_num: int) -> int:
+    """Print the tracking issue PR *pr_num*'s body links; the body must be trusted.
+
+    The body is read through the trust layer (:func:`trust.read_issue`): a
+    body an untrusted identity wrote or edited is a stop, reported by
+    metadata only, never parsed (epic vergil-project/.github#1467).
+    """
     try:
         repo = github.current_repo()
-        pr_data = github.read_json("api", f"repos/{repo}/pulls/{pr_num}")
-    except subprocess.CalledProcessError as exc:
+        content = trust.read_issue(repo, pr_num, require_body=True)
+    except trust.UntrustedContentError as exc:
+        print(f"ERROR: PR #{pr_num}: {exc}", file=sys.stderr)
+        return 1
+    except (
+        subprocess.CalledProcessError,
+        trust.TrustReadError,
+        TrustedAuthorsNotConfiguredError,
+    ) as exc:
         print(f"ERROR: failed to fetch PR #{pr_num}: {error_text(exc)}", file=sys.stderr)
         return 2
 
-    if not isinstance(pr_data, dict):
-        print(f"ERROR: unexpected API response for PR #{pr_num}", file=sys.stderr)
-        return 2
-    raw_body = pr_data.get("body")
-    body = raw_body if isinstance(raw_body, str) else ""
+    body = content.body or ""
     if not body:
         print(f"ERROR: PR #{pr_num} has no body", file=sys.stderr)
         return 1
