@@ -131,12 +131,15 @@ Rulesets replace legacy branch protection rules. Legacy branch protection must
 not be used on any repository.
 
 **Enforce-admins-ON**: Every ruleset has an empty `bypass_actors` list except
-two. Tag protection may be bypassed only by the repository Admin role (the
+four. Tag protection may be bypassed only by the repository Admin role (the
 human, who moves rolling tags) and the org automation App (whose installation
 token the release pushes `vX.Y.Z` tags with). Automation branches may be
 bypassed only by the org automation App and the repository Admin role, which
-are the only identities that may write those branches. Every other ruleset
-applies to all users, including repository administrators.
+are the only identities that may write those branches. Main updates may be
+bypassed only by the repository Admin role, the human who merges releases.
+Agent audit markers may be bypassed only by the repository Admin role and
+the org automation App, which runs the audit. Every other ruleset applies to
+all users, including repository administrators.
 
 The rulesets are declared by `compute_desired_state()` in
 `lib/github_config.py` and checked by the config audit; the
@@ -186,6 +189,17 @@ branch names, so a tag or branch of either shape can never appear unprotected.
      merge through GitHub auto-merge
    - No deletion restriction: the branches are temporary
    - Bypass: the org automation App and the repository Admin role only
+
+6. **Main updates** (targets: `main`)
+   - Prevent updating `main`, merging a pull request into it included, so
+     no identity but the human can merge into `main`
+   - No creation restriction, so repo init can create `main`
+   - Bypass: the repository Admin role only
+
+7. **Agent audit markers** (targets: `vergil/agent-audit/*`)
+   - Prevent creating, updating or deleting the daily agent audit's marker
+     branches, so the identity being audited cannot move them
+   - Bypass: the repository Admin role and the org automation App only
 
 Rulesets are managed via the GitHub API or the repository settings UI. When
 creating or updating rulesets, verify the configuration by checking an open PR

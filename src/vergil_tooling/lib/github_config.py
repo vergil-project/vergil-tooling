@@ -330,6 +330,85 @@ def desired_automation_branch_ruleset(app_id: int | None) -> DesiredRuleset:
     )
 
 
+MAIN_UPDATE_RULESET_NAME = "Main updates"
+
+# The human merges every release PR into main: ``vrg-release``, whose
+# ``merge-release`` stage (shared by ``--resume`` and ``--supersede``) does the
+# merge, refuses every agent identity, and with no agent App configured it
+# runs on the human's own gh auth (epic vergil-project/.github#1384, Task 2).
+# The automation App never merges into main, so it is not a bypass actor.
+APP_MERGES_RELEASES = False
+
+
+def desired_main_update_ruleset(app_id: int | None, *, app_merges_releases: bool) -> DesiredRuleset:
+    """Only the repository Admin role updates ``main``.
+
+    The ``update`` rule lets only a bypass actor update a matching ref, and a
+    pull request's merge updates its base branch, so no other identity can
+    merge into ``main``, whatever pull-request permission it holds. An agent
+    given ``pull_requests: write`` to merge its own PRs into ``develop``
+    therefore cannot merge a release PR, or any other PR, into ``main``
+    (epic vergil-project/.github#1384, spec §4.1).
+
+    The bypass actors are the repository Admin role (``RepositoryRole`` 5, the
+    human who releases), plus the automation App (an ``Integration``, by its
+    numeric *app_id*) only when *app_merges_releases*. The ruleset carries no
+    ``creation`` rule, so repo init can still create ``main``.
+
+    *app_id* ``None`` leaves the bypass list unmanaged (skipped), which
+    :func:`compute_desired_state` allows only with ``skip_bypass``.
+    """
+    bypass: list[dict[str, object]] | None = None
+    if app_id is not None:
+        bypass = [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]
+        if app_merges_releases:
+            bypass.append(
+                {"actor_id": app_id, "actor_type": "Integration", "bypass_mode": "always"}
+            )
+    return DesiredRuleset(
+        name=MAIN_UPDATE_RULESET_NAME,
+        target="branch",
+        enforcement="active",
+        ref_include=["refs/heads/main"],
+        bypass_actors=bypass,
+        rules=[{"type": "update"}],
+    )
+
+
+AUDIT_MARKER_RULESET_NAME = "Agent audit markers"
+AUDIT_MARKER_PREFIX = "refs/heads/vergil/agent-audit/*"
+
+
+def desired_audit_marker_ruleset(app_id: int | None) -> DesiredRuleset:
+    """Only the repository Admin role and the automation App write audit markers.
+
+    The daily agent audit records how far it has checked in marker branches
+    under ``vergil/agent-audit/``. The identity being audited must not be able
+    to create, move or delete them, so creation, update and deletion are
+    restricted to the bypass actors: the repository Admin role
+    (``RepositoryRole`` 5, the human, whose repo init creates the markers) and
+    the org automation App (an ``Integration``, by its numeric *app_id*),
+    which runs the audit (epic vergil-project/.github#1384, spec §4.8).
+
+    *app_id* ``None`` leaves the bypass list unmanaged (skipped), which
+    :func:`compute_desired_state` allows only with ``skip_bypass``.
+    """
+    bypass: list[dict[str, object]] | None = None
+    if app_id is not None:
+        bypass = [
+            {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"},
+            {"actor_id": app_id, "actor_type": "Integration", "bypass_mode": "always"},
+        ]
+    return DesiredRuleset(
+        name=AUDIT_MARKER_RULESET_NAME,
+        target="branch",
+        enforcement="active",
+        ref_include=[AUDIT_MARKER_PREFIX],
+        bypass_actors=bypass,
+        rules=[{"type": "update"}, {"type": "creation"}, {"type": "deletion"}],
+    )
+
+
 # ---------------------------------------------------------------------------
 # CI gates ruleset derivation
 # ---------------------------------------------------------------------------
@@ -953,14 +1032,16 @@ def compute_desired_state(
     App's token or a CI ``GITHUB_TOKEN``), which GitHub never shows the field
     to. Otherwise
     *automation_app_id*, the org automation App's numeric ID, is required: it
-    is a bypass actor of the tag-protection and automation-branch rulesets. A
-    missing ID without *skip_bypass* raises rather than leaving those rulesets
-    unmanaged.
+    is a bypass actor of the tag-protection, automation-branch and
+    agent-audit-marker rulesets (and of main updates, were the App to merge
+    releases). A missing ID without *skip_bypass* raises rather than leaving
+    those rulesets unmanaged.
     """
     if not skip_bypass and automation_app_id is None:
         msg = (
-            "the automation App's ID is required for the tag-protection and "
-            "automation-branch rulesets' bypass actors unless bypass_actors are skipped"
+            "the automation App's ID is required for the tag-protection, "
+            "automation-branch and agent-audit-marker rulesets' bypass actors "
+            "unless bypass_actors are skipped"
         )
         raise ValueError(msg)
     rulesets: list[DesiredRuleset] = []
@@ -969,6 +1050,10 @@ def compute_desired_state(
     rulesets.append(desired_tag_protection_ruleset(automation_app_id))
     rulesets.append(desired_rolling_tag_branch_ruleset())
     rulesets.append(desired_automation_branch_ruleset(automation_app_id))
+    rulesets.append(
+        desired_main_update_ruleset(automation_app_id, app_merges_releases=APP_MERGES_RELEASES)
+    )
+    rulesets.append(desired_audit_marker_ruleset(automation_app_id))
     rulesets.extend(
         desired_ci_gates_rulesets(
             config.project,
