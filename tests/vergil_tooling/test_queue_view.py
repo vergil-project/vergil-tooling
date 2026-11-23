@@ -31,9 +31,11 @@ def authors() -> Iterator[MagicMock]:
         yield loader
 
 
-# What the trust layer reads for each issue number: its comment nodes. Each
-# _FakeGh registers its views here; an issue not registered has no comments.
-_LAYER: dict[int, list[dict[str, Any]]] = {}
+# What the trust layer reads for each issue number: the item query's keyword
+# arguments (its body, the body's author and editor, its comment nodes). Each
+# _FakeGh registers its views here; an issue not registered has a trusted body
+# and no comments.
+_LAYER: dict[int, dict[str, Any]] = {}
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +45,7 @@ def layer(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
 
     def graphql(query: str, **variables: Any) -> dict[str, Any]:
-        return trust_stubs.item(nodes=_LAYER.get(int(variables["number"]), []))
+        return trust_stubs.item(**_LAYER.get(int(variables["number"]), {}))
 
     with patch("vergil_tooling.lib.github.graphql", side_effect=graphql) as fake:
         yield fake
@@ -65,12 +67,15 @@ def _view(
     labels: tuple[str, ...] = (),
     comments: tuple[str | tuple[str, str], ...] = (),
     body: str = "",
+    body_author: dict[str, str] = trust_stubs.HUMAN,
+    body_editor: dict[str, str] | None = None,
     nodes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """An issue view; a comment is a body (by ``someone``) or ``(author, body)``.
 
-    ``gh`` shows no comments: the trust layer reads them (``someone`` as the
-    trusted human), or, given, the comment *nodes*.
+    ``gh`` shows no body or comments: the trust layer reads them (``someone``
+    as the trusted human), or, given, the comment *nodes*. The body is by
+    *body_author*, edited once by *body_editor* when given.
     """
     if nodes is None:
         authored = [c if isinstance(c, tuple) else ("someone", c) for c in comments]
@@ -81,14 +86,13 @@ def _view(
         "title": title,
         "createdAt": created_at,
         "labels": [{"name": name} for name in labels],
-        "body": body,
-        "_nodes": nodes,
+        "_layer": {"body": body, "author": body_author, "editor": body_editor, "nodes": nodes},
     }
 
 
 def _register(views: dict[int, dict[str, Any]]) -> None:
     for number, view in views.items():
-        _LAYER[number] = view["_nodes"]
+        _LAYER[number] = view["_layer"]
 
 
 class _FakeGh:
@@ -926,6 +930,96 @@ def test_planning_unreadable_advisory_home_fails_loudly() -> None:
         queue_view.planning_items("org/.github", "org", stops=trust.BatchStops())
 
 
+def _planning_with_stops(
+    views: dict[int, dict[str, Any]], advisories: list[Advisory]
+) -> tuple[list[QueueItem], trust.BatchStops, MagicMock]:
+    """The planning view and its stops, with *advisories* as the org's listing."""
+    children = [ChildState(IssueRef("org", ".github", n), "OPEN", "") for n in views]
+    stops = trust.BatchStops()
+    with (
+        patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC),
+        patch(f"{_MOD}.epics.child_states", return_value=children),
+        patch(f"{_MOD}.github.read_json", side_effect=_fake_gh(views, {51: "CLOSED"})),
+        patch(f"{_MOD}.github.repo_exists", return_value=True),
+        patch(f"{_MOD}.security_records.advisory_home", return_value="org/.github"),
+        patch(f"{_MOD}.security_records.list_advisories", return_value=advisories) as listing,
+    ):
+        items = queue_view.planning_items("org/.github", "org", stops=stops)
+    return items, stops, listing
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "kind", "login", "cause"),
+    [
+        (trust_stubs.OUTSIDER, None, "issue", "drive-by", "untrusted"),
+        (trust_stubs.IMPOSTOR, None, "issue", "vergil-user", "wrong-type"),
+        (trust_stubs.HUMAN, trust_stubs.OUTSIDER, "edit", "drive-by", "untrusted"),
+    ],
+)
+def test_untrusted_planning_body_stops_only_its_item(  # noqa: PLR0913 - the parametrised case
+    capsys: pytest.CaptureFixture[str],
+    author: dict[str, str],
+    editor: dict[str, str] | None,
+    kind: str,
+    login: str,
+    cause: str,
+) -> None:
+    # The Security advisory: lines count only from a body the trust layer
+    # trusts (spec §5.2 of epic vergil-project/.github#1467). An untrusted one
+    # is a stop on its item (§5.3), never "names no advisory", and none of its
+    # lines reaches the hold rule.
+    forged = f"Security advisory: other/.github {_OTHER_GHSA}\n{_ADVISORY_BODY}"
+    views = {
+        5: _view(
+            "plan x",
+            "2026-10-01T00:00:00Z",
+            labels=("in-progress",),
+            comments=_ALL_MARKERS,
+            body=forged,
+            body_author=author,
+            body_editor=editor,
+        ),
+        6: _view("plan y", "2026-10-02T00:00:00Z", comments=("a note",)),
+    }
+    items, stops, _listing = _planning_with_stops(views, [])
+    assert [item.ref.number for item in items] == [6]
+    assert items[0].note == "a note"
+    at = trust_stubs.EDITED if kind == "edit" else trust_stubs.CREATED
+    assert stops.stopped == (trust.Skipped("org/.github", 5, kind, login, at, "body", cause),)
+    assert stops.exit_code() == 1
+    stops.print_summary(stream := io.StringIO())
+    assert f"org/.github#5 {kind} {login} at {at} on body ({cause})" in stream.getvalue()
+    err = capsys.readouterr().err
+    assert _OTHER_GHSA not in err
+    assert "stopped" not in err
+
+
+def test_untrusted_planning_body_under_actions_is_counted_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    views = {
+        5: _view(
+            "plan x", "2026-10-01T00:00:00Z", body=_ADVISORY_BODY, body_author=trust_stubs.OUTSIDER
+        )
+    }
+    items, stops, _listing = _planning_with_stops(views, [])
+    assert items == []
+    assert stops.named == ()
+    stops.print_summary(stream := io.StringIO())
+    assert "drive-by" not in stream.getvalue()
+    assert "#5" not in stream.getvalue()
+
+
+def test_trusted_planning_body_still_holds() -> None:
+    # The same body by a trusted author holds the item, as the hold rule says.
+    views = {5: _ready_view()}
+    items, stops, _listing = _planning_with_stops(views, [_advisory(_GHSA, _PLAN)])
+    [item] = items
+    assert (item.state, item.note) == ("in-progress", _HELD_NOTE)
+    assert stops.stopped == ()
+
+
 # -- rendering -------------------------------------------------------------------
 
 _NOW = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
@@ -1016,6 +1110,8 @@ def test_view_field_lists() -> None:
         # is never asked for comments (or their authors).
         assert "labels" in fields.split(","), (kind, fields)
         assert "comments" not in fields.split(","), (kind, fields)
+        # The planning hold's body comes from the trust layer, never from gh.
+        assert "body" not in fields.split(","), (kind, fields)
 
 
 def test_planning_item_carries_size(authors: MagicMock) -> None:

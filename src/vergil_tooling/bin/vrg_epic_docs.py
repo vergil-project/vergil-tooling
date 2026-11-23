@@ -22,6 +22,14 @@ A ``PATH`` is repo-relative, with no leading ``/``, whitespace or backtick
 (the link text is a backticked path); a ``<repo>`` name is letters, digits,
 ``.``, ``-`` and ``_``, as GitHub allows.
 
+Every body the command writes back is read through the trust layer
+(:func:`vergil_tooling.lib.epic_docs.read_body`): ``set``, and ``backfill
+--apply`` just before each write. A body whose author or an editor holds no
+role is a stop, named by its metadata only, and is never parsed or written:
+``set`` exits 1 with nothing edited, and ``backfill`` leaves that epic
+unchanged and counts it as failed. The dry run previews the listing's
+bodies and writes nothing.
+
 The whole run, reads and writes, happens under the epic owner's App token
 (``github.target_org``). See :mod:`vergil_tooling.lib.epic_docs` for the
 section's format.
@@ -33,9 +41,17 @@ import argparse
 import re
 import sys
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import epic_docs, epics, github
+from vergil_tooling.lib import epic_docs, epics, github, trust
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.trusted_authors import (
+    TrustedAuthorsNotConfiguredError,
+    load_trusted_authors,
+)
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 _PROG = "vrg-epic-docs"
 
@@ -59,10 +75,20 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except github.MissingGitHubTokenError:
         raise
-    except (github.GitHubAPIError, ValueError) as exc:
+    except trust.UntrustedContentError as exc:
+        # The message says the run stopped before any write, metadata only.
+        print(f"{_PROG}: {epic.slug}: {exc}", file=sys.stderr)
+        return 1
+    except (
+        github.GitHubAPIError,
+        trust.TrustReadError,
+        TrustedAuthorsNotConfiguredError,
+        ValueError,
+    ) as exc:
         # Every failure that reaches here comes before the write (_set
         # reports a failed write itself): a malformed section, an unreadable
-        # API answer, or a failed read or branch lookup.
+        # API answer, a missing or invalid trusted-author configuration, or a
+        # failed read or branch lookup.
         print(f"{_PROG}: {epic.slug}: {exc}; nothing was edited", file=sys.stderr)
         return 1
 
@@ -169,9 +195,10 @@ def _run_backfill(home: str, *, apply: bool) -> int:
         return 1
     except github.MissingGitHubTokenError:
         raise
-    except (github.GitHubAPIError, ValueError) as exc:
+    except (github.GitHubAPIError, TrustedAuthorsNotConfiguredError, ValueError) as exc:
         # Per-epic failures are reported inside the loop; what reaches here is
-        # the listing or the home's branch lookup, before any epic is edited.
+        # the trusted-author load, the listing or the home's branch lookup,
+        # before any epic is edited.
         print(f"{_PROG}: {home}: {exc}; nothing was edited", file=sys.stderr)
         return 1
 
@@ -198,6 +225,8 @@ class _Tally:
 
 def _backfill(home: str, *, apply: bool) -> int:
     owner, repo = home.split("/", 1)
+    # The dry run reads no body through the layer, so it needs no authors.
+    authors = load_trusted_authors() if apply else None
     records = epic_docs.list_epics(home)
     branch = epic_docs.default_branch(owner, repo)
     dirs = epic_docs.epic_directories(owner, repo, branch)
@@ -206,14 +235,21 @@ def _backfill(home: str, *, apply: bool) -> int:
     for record in records:
         slug = f"{home}#{record['number']}"
         try:
-            outcome = _backfill_one(record, owner, repo, branch, dirs, branches, apply=apply)
+            outcome = _backfill_one(
+                record, owner, repo, branch, dirs, branches, apply=apply, authors=authors
+            )
         except epic_docs.Ambiguous as exc:
             print(f"{slug}: needs a decision: {exc}; left unchanged (settle it with set)")
             tally.decision += 1
             continue
         except github.MissingGitHubTokenError:
             raise
-        except (github.GitHubAPIError, ValueError) as exc:
+        except trust.UntrustedContentError as exc:
+            # The message says the epic stopped before any write, metadata only.
+            print(f"{_PROG}: {slug}: {exc}", file=sys.stderr)
+            tally.failed += 1
+            continue
+        except (github.GitHubAPIError, trust.TrustReadError, ValueError) as exc:
             print(f"{_PROG}: {slug}: {exc}; left unchanged", file=sys.stderr)
             tally.failed += 1
             continue
@@ -231,18 +267,26 @@ def _backfill_one(  # noqa: PLR0913 - the run's shared lookups, passed rather th
     branches: dict[str, str],
     *,
     apply: bool,
+    authors: TrustedAuthors | None,
 ) -> str:
     """Decide, print and (with *apply*) write one epic's section; return its tally field.
 
-    Under *apply* the body is read again just before the write, so an edit
-    made since the listing is not lost. Discovery runs on the body as it is,
-    before legacy lines are removed. Raises :class:`epic_docs.Ambiguous`, or
-    an API or format error, before anything is written; a failed write is
-    reported here and counted as ``failed``.
+    Under *apply* the body is read again just before the write, through the
+    trust layer (:func:`epic_docs.read_body`, judged against *authors*), so an
+    edit made since the listing is not lost and an untrusted body is never
+    parsed or written back. Discovery runs on the body as it is, before
+    legacy lines are removed. Raises :class:`epic_docs.Ambiguous`, an
+    untrusted-body stop or a trust-layer read failure, or an API or format
+    error, before anything is written; a failed write is reported here and
+    counted as ``failed``.
     """
     number = record["number"]
     slug = f"{owner}/{repo}#{number}"
-    body = epic_docs.read_body(owner, repo, number) if apply else (record["body"] or "")
+    body = (
+        epic_docs.read_body(owner, repo, number, authors=authors)
+        if apply
+        else (record["body"] or "")
+    )
     current = epic_docs.parse(body, repo)
     links = {
         doc: entry for doc, entry in (current or {}).items() if isinstance(entry, epic_docs.DocLink)

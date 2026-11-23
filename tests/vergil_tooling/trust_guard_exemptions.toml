@@ -249,7 +249,7 @@ function = "list_epics"
 fields = ["body"]
 reason = """The backfill listing's body feeds only the dry-run preview, which prints \
 each epic's proposed Documents section. Under --apply each epic's body is read again \
-(read_body) just before its write."""
+through the trust layer (read_body, require_body=True) just before its write."""
 
 [[exempt]]
 path = "lib/open_prs.py"
@@ -259,17 +259,3 @@ reason = """vrg-repo-status's open-PR view: the head branch is shown in its row 
 sets the row's displayed type. The view writes nothing and decides nothing."""
 
 # --- pending ---------------------------------------------------------------------
-
-[[pending]]
-path = "lib/epic_docs.py"
-function = "read_body"
-fields = ["body"]
-task = "vergil-project/vergil-tooling#4989"
-reason = "fixed by vergil-project/vergil-tooling#4989"
-
-[[pending]]
-path = "lib/queue_view.py"
-function = "planning_items"
-fields = ["body"]
-task = "vergil-project/vergil-tooling#4989"
-reason = "fixed by vergil-project/vergil-tooling#4989"

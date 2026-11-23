@@ -1074,6 +1074,48 @@ def test_bare_json_with_a_stop_prints_no_partial_object(
     ]
 
 
+_UNTRUSTED_PLAN = trust.Skipped(
+    "org/.github", 7, "issue", "drive-by", "2026-11-01T00:00:00Z", "body", trust.UNTRUSTED
+)
+
+
+def _untrusted_body(*items: QueueItem) -> Any:
+    """A planning view listing *items* that stops org/.github#7 on its untrusted body."""
+
+    def view(_home: str, _name: str, *, stops: trust.BatchStops) -> list[QueueItem]:
+        stops.add(_UNTRUSTED_PLAN, trust.UNTRUSTED)
+        return list(items)
+
+    return view
+
+
+@pytest.mark.usefixtures("local")
+def test_planning_untrusted_body_text_and_json(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, out, err = _run(capsys, ["planning"], {"planning": _untrusted_body(_S3)})
+    assert rc == 1
+    lines = out.splitlines()
+    assert lines[0] == "planning queue for org in org/.github: 2 open item(s), 1 stopped"
+    assert lines[-1] == "org/.github#7  stopped: its body is untrusted (see stderr)"
+    stop = "stopped: org/.github#7 issue drive-by at 2026-11-01T00:00:00Z on body (untrusted)"
+    assert err == f"{stop}\n"
+    rc, out, err = _run(capsys, ["planning", "--json"], {"planning": _untrusted_body(_S3)})
+    assert rc == 1
+    assert out == ""
+    assert err.splitlines() == [stop, _no_json_line("planning")]
+
+
+def test_planning_untrusted_body_under_actions_is_counted_only(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    rc, out, err = _run(capsys, ["planning"], {"planning": _untrusted_body(_S3)})
+    assert rc == 1
+    assert out.splitlines()[0] == "planning queue for org in org/.github: 2 open item(s), 1 stopped"
+    assert err.splitlines() == ["stopped 1 item(s) (untrusted: 1)"]
+    assert "org/.github#7" not in out + err
+    assert "drive-by" not in out + err
+
+
 def test_stops_under_actions_count_and_list_refs(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
