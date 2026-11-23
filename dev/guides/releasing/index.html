@@ -19879,10 +19879,6 @@ get the fix on the next normal action:</p>
 <td>The release's <code>install</code> stage installs the patch on the Mac that ran it; any other host runs <a href="#deployment-targets"><code>vrg-tooling-install vX.Y.Z</code></a> with the new version (<code>vrg-host</code> reports the installed version but never upgrades it)</td>
 </tr>
 <tr>
-<td>Python repo <code>.venv</code></td>
-<td><code>uv lock --upgrade-package vergil-tooling</code> (typically batched with other dep bumps)</td>
-</tr>
-<tr>
 <td>Dev container image</td>
 <td>The base images carry no vergil-tooling. The next <code>vrg-container-run</code> rebuilds the branch's cached image with the patch once <code>promote</code> moves the rolling <code>vX.Y</code> tag to it: a <code>vX.Y</code> line pin in <code>vergil.toml</code> resolves to the release that tag names (see <a href="../../reference/cli-tools-overview/#how-the-cache-tracks-vergil-tooling-releases">How the cache tracks vergil-tooling releases</a>). An exact <code>vX.Y.Z</code> pin stays put</td>
 </tr>
@@ -19892,21 +19888,25 @@ get the fix on the next normal action:</p>
 </tr>
 </tbody>
 </table>
+<p>A Python repo has nothing of its own to bump: its <code>pyproject.toml</code> and
+<code>.venv</code> carry no vergil-tooling, and it picks up a release through the
+dev container image, like a repo in any other language.</p>
 <h2 id="minor-release-opt-in-for-new-features">Minor release — opt-in for new features<a class="headerlink" href="#minor-release-opt-in-for-new-features" title="Permanent link">&para;</a></h2>
 <p>A minor release adds backwards-compatible new features. Versions:
 <code>v1.3.x</code> → <code>v1.4.0</code>.</p>
 <h3 id="producer-steps_1">Producer steps<a class="headerlink" href="#producer-steps_1" title="Permanent link">&para;</a></h3>
 <p>Same steps as patch, with one important addition: the rolling
-minor tag changes from <code>v1.3</code> to <code>v1.4</code>. Any per-repo dev-dep
-declarations <strong>must be bumped manually</strong> — the rolling-tag mechanism
-only handles patches within a minor.</p>
+minor tag changes from <code>v1.3</code> to <code>v1.4</code>. Any line pin to <code>v1.3</code> (a
+repo's <code>vergil.toml</code>, an agent identity's version) <strong>must be bumped
+manually</strong> — the rolling-tag mechanism only handles patches within a
+minor.</p>
 <ol>
 <li>Run <code>vrg-release minor</code>. It bumps the version to the next minor
    (<code>1.4.0</code>) on the release branch instead of releasing the current
    <code>develop</code> version. Everything else matches a patch release.</li>
-<li><strong>Coordinate consumer bumps.</strong> Each Python repo that has
-   <code>[tool.uv.sources]</code> pinning to <code>v1.3</code> needs its <code>pyproject.toml</code>
-   updated to <code>v1.4</code>. This is a per-repo decision — consumers who
+<li><strong>Coordinate consumer bumps.</strong> Each repo whose <code>vergil.toml</code> pins
+   <code>[dependencies].vergil</code> to <code>v1.3</code> needs it updated to <code>v1.4</code> (see
+   the consumer steps below). This is a per-repo decision — consumers who
    prefer to stay on <code>v1.3</code> can keep doing so until they're ready.</li>
 <li>Update anywhere the documentation pins a minor to the new tag.
    The host install by hand in <code>getting-started.md</code> names an exact
@@ -19925,10 +19925,6 @@ only handles patches within a minor.</p>
 <tr>
 <td>Developer host</td>
 <td>Nothing to change: the host keeps no pin. The release's <code>install</code> stage installs <code>v1.4.0</code> on the Mac that ran it, through the new line (<code>vrg-tooling-install v1.4</code>, <code>&lt;MINOR&gt;</code> expanded to the release's line); any other host runs <a href="#deployment-targets"><code>vrg-tooling-install v1.4</code></a> or <code>v1.4.0</code></td>
-</tr>
-<tr>
-<td>Python repo <code>.venv</code></td>
-<td>Edit <code>pyproject.toml</code> <code>[tool.uv.sources]</code> to <code>tag = "v1.4"</code>, then <code>uv lock --upgrade-package vergil-tooling</code></td>
 </tr>
 <tr>
 <td>Dev container image</td>
