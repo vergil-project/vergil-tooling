@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.340] - 2026-11-23
+
+### CI
+
+- read the automation App secrets from the automation environment (#5088)
+
+### Chores
+
+- uv lock --upgrade
+
+### Features
+
+- verify past approvals (#5084)
+- add vrg-checkpoint with init, status, tick and reset (#5085) (#5089)
+- add vrg-checkpoint reconcile (#5090)
+- add app-secrets, a read-only check that the App secrets reach each in-scope repo (#5091)
+
 ## [2.1.339] - 2026-11-23
 
 ### Bug fixes
