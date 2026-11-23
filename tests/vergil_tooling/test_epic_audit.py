@@ -648,6 +648,29 @@ def test_render_closed_empty_says_nothing_to_close() -> None:
 # -- validation-aware rollup/audit (epic vergil-project/.github#115) ----------
 
 
+def _blockers(
+    table: dict[int, list[epics.IssueRef] | Exception],
+) -> Any:
+    """A ``blockers_of`` fake: each task's blockers, or the exception its read raises."""
+
+    def blockers_of(ref: epics.IssueRef) -> list[epics.IssueRef]:
+        found = table.get(ref.number, [])
+        if isinstance(found, Exception):
+            raise found
+        return found
+
+    return blockers_of
+
+
+# Blocker #100 is still open, #101 closed.
+_OPEN_DEP = epics.IssueRef("org", "repo", 100)
+_CLOSED_DEP = epics.IssueRef("org", "repo", 101)
+
+
+def _dep_state(ref: epics.IssueRef) -> str:
+    return "OPEN" if ref == _OPEN_DEP else "CLOSED"
+
+
 def test_operational_status_classifies_runnable_vs_blocked() -> None:
     epic = epics.IssueRef("org", ".github", 115)
     val_runnable = epics.IssueRef("org", "repo", 7)
@@ -662,18 +685,22 @@ def test_operational_status_classifies_runnable_vs_blocked() -> None:
     def kind(ref: epics.IssueRef) -> str | None:
         return "validation" if ref.number in (7, 8, 9) else None
 
-    def all_blockers_closed(ref: epics.IssueRef) -> bool:
-        return ref.number == 7  # #7 runnable, #8 still blocked
-
+    stops = trust.BatchStops()
     with (
         patch("vergil_tooling.lib.epics.child_states", return_value=children),
         patch("vergil_tooling.lib.epics.operational_kind", side_effect=kind),
-        patch("vergil_tooling.lib.epics.all_blockers_closed", side_effect=all_blockers_closed),
+        patch(
+            "vergil_tooling.lib.epics.blockers_of",
+            side_effect=_blockers({7: [_CLOSED_DEP], 8: [_CLOSED_DEP, _OPEN_DEP]}),
+        ),
+        patch("vergil_tooling.lib.epics.issue_state", side_effect=_dep_state),
     ):
-        status = epic_audit.operational_status(epic)
+        status = epic_audit.operational_status(epic, stops=stops)
     assert status.runnable == (val_runnable,)
     assert status.blocked == (val_blocked,)
+    assert status.stopped == ()
     assert status.pending == (val_runnable, val_blocked)
+    assert stops.stopped == ()
 
 
 def test_operational_status_tags_kind() -> None:
@@ -688,12 +715,61 @@ def test_operational_status_tags_kind() -> None:
     with (
         patch("vergil_tooling.lib.epics.child_states", return_value=children),
         patch("vergil_tooling.lib.epics.operational_kind", side_effect=kind),
-        patch("vergil_tooling.lib.epics.all_blockers_closed", return_value=True),
+        patch("vergil_tooling.lib.epics.blockers_of", return_value=[]),
     ):
-        status = epic_audit.operational_status(epic)
+        status = epic_audit.operational_status(epic, stops=trust.BatchStops())
     # keyed by IssueRef (cross-repo safe), not bare number
     assert status.by_kind[val] == "validation"
     assert status.by_kind[dep] == "deployment"
+
+
+# Spec §5.3 of epic vergil-project/.github#1467: a batch run stops the child (#4971).
+_UNTRUSTED_CHILD = trust.Skipped(
+    "org/repo", 7, "issue", "drive-by", "2026-11-01T00:00:00Z", "body", trust.UNTRUSTED
+)
+_UNREADABLE_CHILD = trust.Skipped("org/repo", 8, "issue", None, "", "body", trust.READ_FAILURE)
+_STOPPING = {
+    7: trust.UntrustedContentError(_UNTRUSTED_CHILD, "the issue body is untrusted"),
+    8: trust.TrustReadError("read_issue org/repo#8", "the body is missing"),
+}
+
+
+def test_operational_status_stops_only_the_untrusted_child() -> None:
+    epic = epics.IssueRef("org", ".github", 115)
+    children = [epics.ChildState(epics.IssueRef("org", "repo", n), "OPEN") for n in (7, 8, 10, 11)]
+    stops = trust.BatchStops()
+    with (
+        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch("vergil_tooling.lib.epics.operational_kind", return_value="validation"),
+        patch(
+            "vergil_tooling.lib.epics.blockers_of",
+            side_effect=_blockers({**_STOPPING, 11: [_OPEN_DEP]}),
+        ),
+        patch("vergil_tooling.lib.epics.issue_state", side_effect=_dep_state),
+    ):
+        status = epic_audit.operational_status(epic, stops=stops)
+    assert [ref.number for ref in status.runnable] == [10]
+    assert [ref.number for ref in status.blocked] == [11]
+    assert [ref.number for ref in status.stopped] == [7, 8]
+    # A stopped child is still pending, with its kind.
+    assert [ref.number for ref in status.pending] == [10, 11, 7, 8]
+    assert status.by_kind[epics.IssueRef("org", "repo", 7)] == "validation"
+    assert stops.stopped == (_UNTRUSTED_CHILD, _UNREADABLE_CHILD)
+
+
+def test_operational_status_other_failures_still_raise() -> None:
+    epic = epics.IssueRef("org", ".github", 115)
+    failure = github.GitHubAPIError(1, ["gh", "api"], "", "HTTP 502")
+    with (
+        patch(
+            "vergil_tooling.lib.epics.child_states",
+            return_value=[epics.ChildState(epics.IssueRef("org", "repo", 7), "OPEN")],
+        ),
+        patch("vergil_tooling.lib.epics.operational_kind", return_value="validation"),
+        patch("vergil_tooling.lib.epics.blockers_of", side_effect=failure),
+        pytest.raises(github.GitHubAPIError, match="502"),
+    ):
+        epic_audit.operational_status(epic, stops=trust.BatchStops())
 
 
 def test_child_status_classifies_every_open_child() -> None:
@@ -707,18 +783,19 @@ def test_child_status_classifies_every_open_child() -> None:
         epics.ChildState(op_runnable, "OPEN"),
         epics.ChildState(epics.IssueRef("org", "repo", 13), "CLOSED"),  # closed -> ignored
     ]
-
-    def all_blockers_closed(ref: epics.IssueRef) -> bool:
-        return ref.number != 11  # only #11 is still blocked
-
     with (
         patch("vergil_tooling.lib.epics.child_states", return_value=children),
-        patch("vergil_tooling.lib.epics.all_blockers_closed", side_effect=all_blockers_closed),
+        patch(
+            "vergil_tooling.lib.epics.blockers_of",
+            side_effect=_blockers({10: [_CLOSED_DEP], 11: [_OPEN_DEP]}),
+        ),
+        patch("vergil_tooling.lib.epics.issue_state", side_effect=_dep_state),
     ):
-        status = epic_audit.child_status(epic)
+        status = epic_audit.child_status(epic, stops=trust.BatchStops())
     # Every open child is classified, plain tasks included — no kind gating.
     assert status.runnable == (plain_runnable, op_runnable)
     assert status.blocked == (plain_blocked,)
+    assert status.stopped == ()
 
 
 def test_child_status_empty_when_no_open_children() -> None:
@@ -726,31 +803,55 @@ def test_child_status_empty_when_no_open_children() -> None:
     children = [epics.ChildState(epics.IssueRef("org", "repo", 1), "CLOSED")]
     with (
         patch("vergil_tooling.lib.epics.child_states", return_value=children),
-        patch("vergil_tooling.lib.epics.all_blockers_closed", return_value=True) as mock_blockers,
+        patch("vergil_tooling.lib.epics.blockers_of", return_value=[]) as mock_blockers,
     ):
-        status = epic_audit.child_status(epic)
+        status = epic_audit.child_status(epic, stops=trust.BatchStops())
     assert status.runnable == ()
     assert status.blocked == ()
     mock_blockers.assert_not_called()  # closed children are never queried
 
 
+def test_child_status_stops_only_the_untrusted_child() -> None:
+    epic = epics.IssueRef("org", ".github", 99)
+    children = [epics.ChildState(epics.IssueRef("org", "repo", n), "OPEN") for n in (7, 8, 10)]
+    stops = trust.BatchStops()
+    with (
+        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch("vergil_tooling.lib.epics.blockers_of", side_effect=_blockers(_STOPPING)),
+    ):
+        status = epic_audit.child_status(epic, stops=stops)
+    # A stopped child is never runnable: its dependencies are unknown.
+    assert [ref.number for ref in status.runnable] == [10]
+    assert status.blocked == ()
+    assert [ref.number for ref in status.stopped] == [7, 8]
+    assert stops.stopped == (_UNTRUSTED_CHILD, _UNREADABLE_CHILD)
+    assert stops.exit_code() == 1
+
+
 def test_operational_pending_collects_only_epics_with_open_validations() -> None:
     val = epics.IssueRef("org", "repo", 7)
+    stopped = epics.IssueRef("org", "repo", 9)
 
-    def fake_status(epic: epics.IssueRef) -> epic_audit.OperationalStatus:
+    def fake_status(epic: epics.IssueRef, *, stops: trust.BatchStops) -> Any:
         if epic.number == 115:
             return epic_audit.OperationalStatus(epic, (val,), (), {val: "validation"})
+        if epic.number == 116:  # only a stopped child: still pending
+            return epic_audit.OperationalStatus(epic, (), (), {stopped: "validation"}, (stopped,))
         return epic_audit.OperationalStatus(epic, (), (), {})  # nothing pending
 
+    stops = trust.BatchStops()
     with (
         patch(
             "vergil_tooling.lib.epic_audit.roadmap.gather",
-            return_value=[MagicMock(number=115), MagicMock(number=200)],
+            return_value=[MagicMock(number=115), MagicMock(number=116), MagicMock(number=200)],
         ),
-        patch("vergil_tooling.lib.epic_audit.operational_status", side_effect=fake_status),
+        patch(
+            "vergil_tooling.lib.epic_audit.operational_status", side_effect=fake_status
+        ) as status,
     ):
-        pending = epic_audit.operational_pending("org")
-    assert [s.epic.number for s in pending] == [115]
+        pending = epic_audit.operational_pending("org", stops=stops)
+    assert [s.epic.number for s in pending] == [115, 116]
+    assert all(call.kwargs["stops"] is stops for call in status.call_args_list)
 
 
 def _run_closed_operational(
@@ -882,6 +983,26 @@ def test_render_includes_operational_pending_section() -> None:
     assert "Operational tasks pending" in out
     assert "org/repo#7 (validation)" in out  # runnable, kind-tagged
     assert "org/repo#8 (deployment)" in out  # blocked, kind-tagged
+    assert "stopped" not in out
+
+
+def test_render_counts_stopped_operational_children_never_naming_them() -> None:
+    val = epics.IssueRef("org", "repo", 7)
+    stopped = epics.IssueRef("org", "repo", 9)
+    status = epic_audit.OperationalStatus(
+        epics.IssueRef("org", ".github", 115),
+        (val,),
+        (),
+        {val: "validation", stopped: "validation"},
+        (stopped,),
+    )
+    out = epic_audit.render([], [], org="org", window_days=30, pending_operational=[status])
+    assert (
+        "- org/.github#115 — runnable: org/repo#7 (validation); blocked: none; "
+        "stopped: 1 (see stderr)"
+    ) in out.splitlines()
+    # The report may run under GitHub Actions: an untrusted child is counted only.
+    assert "org/repo#9" not in out
 
 
 def test_render_flags_closed_operational_without_success() -> None:
@@ -895,7 +1016,7 @@ def test_render_flags_closed_operational_without_success() -> None:
 def test_operational_pending_reads_dotgithub_epics() -> None:
     captured: list[epics.IssueRef] = []
 
-    def fake_status(epic: epics.IssueRef) -> epic_audit.OperationalStatus:
+    def fake_status(epic: epics.IssueRef, *, stops: trust.BatchStops) -> Any:
         captured.append(epic)
         return epic_audit.OperationalStatus(epic, (), (), {})
 
@@ -903,7 +1024,7 @@ def test_operational_pending_reads_dotgithub_epics() -> None:
         patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=[MagicMock(number=5)]),
         patch("vergil_tooling.lib.epic_audit.operational_status", side_effect=fake_status),
     ):
-        epic_audit.operational_pending("org")
+        epic_audit.operational_pending("org", stops=trust.BatchStops())
     assert captured == [epics.IssueRef("org", ".github", 5)]
 
 

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_epic_audit import main
-from vergil_tooling.lib import epic_audit, github, proxies
+from vergil_tooling.lib import epic_audit, github, proxies, trust
 from vergil_tooling.lib.epic_audit import (
     EpicDocsFinding,
     MisplacedArchive,
@@ -181,6 +181,52 @@ def test_main_reads_the_whole_audit_under_the_audited_org_token() -> None:
     assert seen == dict.fromkeys(
         ("home", "tasks", "epics", "outside", "drain", "issues"), "lab-org"
     )
+
+
+def _stopping_pending(*, org: str, stops: trust.BatchStops) -> list[epic_audit.OperationalStatus]:
+    """``operational_pending`` that stops one untrusted child (#4971) and reports it pending."""
+    del org
+    child = IssueRef("org", "repo", 9)
+    item = trust.Skipped("org/repo", 9, "issue", "drive-by", "2026-11-01", "body", "untrusted")
+    stops.add(item, item.cause)
+    epic = IssueRef("org", ".github", 115)
+    return [epic_audit.OperationalStatus(epic, (), (), {child: "validation"}, (child,))]
+
+
+def _run_stopping_audit(capsys: pytest.CaptureFixture[str]) -> tuple[int, str, str]:
+    with (
+        _patched(_report_patches()),
+        patch(
+            f"{_MOD}.epic_audit.operational_pending",
+            side_effect=lambda org, *, stops: _stopping_pending(org=org, stops=stops),
+        ),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+    ):
+        rc = main([])
+    captured = capsys.readouterr()
+    return rc, captured.out, captured.err
+
+
+def test_main_stopped_child_is_reported_and_exits_1(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A batch run stops the child, not the audit (spec §5.3; #4971).
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    rc, out, err = _run_stopping_audit(capsys)
+    assert rc == 1
+    assert "- org/.github#115 — runnable: none; blocked: none; stopped: 1 (see stderr)" in out
+    assert err == "stopped: org/repo#9 issue drive-by at 2026-11-01 on body (untrusted)\n"
+
+
+def test_main_stopped_child_under_actions_is_counted_only(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    rc, out, err = _run_stopping_audit(capsys)
+    assert rc == 1
+    assert err == "stopped 1 item(s) (untrusted: 1)\n"
+    assert "org/repo#9" not in out + err
+    assert "drive-by" not in out + err
 
 
 def test_close_does_not_run_the_epic_documents_check() -> None:

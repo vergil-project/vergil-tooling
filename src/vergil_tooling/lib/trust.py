@@ -1464,6 +1464,19 @@ class BatchStops:
         """The stopped items, in the order they were added."""
         return tuple(item for item, _, _ in self._stops)
 
+    @property
+    def named(self) -> tuple[Skipped, ...]:
+        """The stopped items a report may name here, in order.
+
+        Every one outside GitHub Actions; under Actions, whose logs are public,
+        only the read failures, since a stop caused by untrusted content or
+        an untrusted identity is counted only (spec §5.3).
+        """
+        under_actions = _under_actions()
+        return tuple(
+            item for item, cause, _ in self._stops if not under_actions or cause == READ_FAILURE
+        )
+
     def exit_code(self) -> int:
         return 1 if self._stops else 0
 

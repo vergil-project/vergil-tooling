@@ -403,6 +403,39 @@ def all_blockers_closed(task: IssueRef) -> bool:
     return all(_issue_state(dep) == "CLOSED" for dep in blockers_of(task))
 
 
+#: The field a blocker read's stop names: the ``Blocked-by:`` lines are in the body.
+BLOCKERS_STOP_FIELD = "body"
+
+
+def blockers_or_stop(task: IssueRef, stops: trust.BatchStops) -> list[IssueRef] | None:
+    """*task*'s blockers, as :func:`blockers_of` reads them, or ``None`` on a stop.
+
+    For a batch run, which stops the item, not the run (spec §5.3 of epic
+    vergil-project/.github#1467): an untrusted body
+    (:class:`~vergil_tooling.lib.trust.UntrustedContentError`) is added to
+    *stops* with its own metadata and cause, and a body the trust layer cannot
+    read in full (:class:`~vergil_tooling.lib.trust.TrustReadError`) as a
+    read failure on the ``body`` field, with its message as the detail. The
+    caller leaves *task* out and carries on; anything else propagates.
+    """
+    try:
+        return blockers_of(task)
+    except trust.UntrustedContentError as exc:
+        stops.add(exc.item, exc.item.cause)
+    except trust.TrustReadError as exc:
+        item = trust.Skipped(
+            repo=_repo_slug(task),
+            number=task.number,
+            kind="issue",
+            login=None,
+            at="",
+            field=BLOCKERS_STOP_FIELD,
+            cause=trust.READ_FAILURE,
+        )
+        stops.add(item, trust.READ_FAILURE, detail=str(exc))
+    return None
+
+
 def native_parent_of(task: IssueRef) -> IssueRef | None:
     """*task*'s native sub-issue parent, or None — never the body ``Parent:`` line.
 
