@@ -127,7 +127,12 @@ The watch reads each open PR once per poll and judges it in this order:
 7. **A required check was cancelled** and no newer run of its workflow
    replaced the cancelled run: *failed: cancelled*, naming the check. The
    PR stays pending for two minutes first, in case a re-run starts.
-8. **A conflict** with its base: *failed: conflict*.
+8. **A conflict** with its base, reported at the same head for two
+   minutes: *failed: conflict*. After a push, GitHub takes a while to
+   recompute whether the PR can merge, and meanwhile it may still report
+   the conflict the push resolved. So the PR stays pending first, shown as
+   `conflict reported, waiting for GitHub to settle it`. A new head starts
+   the two minutes again, and any other merge state clears the conflict.
 
 **A superseded run is not a failure.** A push to an open PR starts a new
 CI run, and the workflow's `concurrency: cancel-in-progress` cancels the
@@ -190,7 +195,9 @@ Watch status after 0m30s:
 
 - **PR** and **TITLE**: the PR number and its title, cut to 50
   characters with `...`.
-- **STATE**: while the PR is pending, `checks pending (<n>)` (checks not
+- **STATE**: while the PR is pending, `conflict reported, waiting for
+  GitHub to settle it` (a conflict not yet reported for two minutes),
+  `checks pending (<n>)` (checks not
   finished yet, counting a required check that has not registered),
   `checks green, merging` (no check left, and GitHub can merge it),
   `behind develop`, or `waiting (<merge state>)` for any other merge

@@ -707,6 +707,46 @@ def test_conflict(fake: FakeGitHub) -> None:
     [result] = run([url(1)])
 
     assert result.outcome == "failed: conflict"
+    assert result.detail == ("the PR can no longer merge cleanly (reported at its head for 2m00s)")
+    # Held pending for the settle time, from the first read that saw it.
+    assert fake.sleeps == [15.0] * 9
+
+
+def test_a_conflict_that_clears_before_it_settles_is_no_failure(fake: FakeGitHub) -> None:
+    """Just after a push GitHub may still report the conflict the push resolved;
+    a status that clears within the settle time never fails the PR (#4998)."""
+    dirty = pr_state(1, mergeStateStatus="DIRTY")
+    fake.script(1, dirty, dirty, pr_state(1, mergeStateStatus="CLEAN"), merged(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+
+
+def test_a_new_head_starts_the_conflict_settle_again(fake: FakeGitHub) -> None:
+    dirty_a = pr_state(1, mergeStateStatus="DIRTY")
+    dirty_b = pr_state(1, mergeStateStatus="DIRTY", headRefOid=HEAD_B)
+    fake.script(1, dirty_a, dirty_a, dirty_b)
+
+    [result] = watch([url(1)], conflict_settle=30)
+
+    assert result.outcome == "failed: conflict"
+    assert result.head == HEAD_B
+    # HEAD_B is first read at 30s, so the conflict settles at 60s, not 30s.
+    assert fake.sleeps == [15.0] * 4
+
+
+def test_a_settling_conflict_is_pending_in_the_status_table(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.script(1, pr_state(1, mergeStateStatus="DIRTY"), merged(1))
+
+    run([url(1)])
+
+    first = _tables(capsys.readouterr().out)[0]
+    assert "  #1  feat: change 1  conflict reported, waiting for GitHub to settle it  0m00s\n" in (
+        first
+    )
 
 
 def test_closed(fake: FakeGitHub) -> None:
