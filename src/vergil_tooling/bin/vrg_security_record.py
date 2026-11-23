@@ -37,7 +37,10 @@ neutral ``security``-labelled intake issue carrying only a pointer to it.
   and prints only ``Noted <GHSA> in <org>/.github.`` (vergil-tooling#3998).
 - ``sync`` runs the security-records pass over the org: it sets each paired
   advisory to ``closed`` or ``draft`` from its issues and reports broken
-  pairs and unpaired external reports; ``--dry-run`` previews it. Its close
+  pairs and unpaired external reports; ``--dry-run`` previews it. An issue
+  whose body the trust layer does not trust is reported by metadata only,
+  each advisory tracking it is left unchanged, and the run exits 1, preview
+  included (vergil-tooling#4990). Its close
   guard keeps an advisory ``draft``, reported on a ``held:`` line, while a
   queue item or an issue closed other than as completed tracks it. It needs
   Repository security advisories read and write on ``<org>/.github``, which
@@ -701,9 +704,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "that a queue item (an intake, planning or deferred item, live or "
             "archived) or an issue closed with any other reason still tracks "
             "stays draft and is reported on a held: line with the next step; a "
-            "hold does not fail the pass. Exit 1 if any pair is broken or any "
-            "issue's parent cannot be read (after syncing the rest) or the pass "
-            "fails. Needs Repository security advisories: read and write on "
+            "hold does not fail the pass. An issue whose body is untrusted is "
+            "reported by metadata only and each advisory tracking it is left "
+            "unchanged. Exit 1 if any pair is broken or any issue's parent cannot "
+            "be read (after syncing the rest), if any issue body is untrusted, or "
+            "the pass fails. Needs Repository security advisories: read and write on "
             "<org>/.github. No schedule runs it: the human or the user agent "
             "runs it (the human's gh login or the user App), and vrg-epic-audit "
             "previews it read-only."
@@ -714,7 +719,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help=(
             "Preview: report what would sync, any broken pairs and any held advisories, "
-            "change nothing, exit 0"
+            "change nothing, exit 0 even on a broken pair or a failed parent read "
+            "(but 1 on an untrusted issue body)"
         ),
     )
     return parser.parse_args(argv)
