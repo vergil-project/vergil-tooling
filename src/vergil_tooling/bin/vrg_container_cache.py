@@ -12,6 +12,7 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -75,8 +76,10 @@ def main(argv: list[str] | None = None) -> int:
         description=(
             "Remove cached per-branch images whose branch matches no live branch "
             "(local, worktree or origin) in any repo of the repo set. Protected "
-            "branches and images used by a container are always kept. Dry run by "
-            "default; --apply removes."
+            "branches and images used by a container are always kept. A "
+            "protected-branch image of a repository not in the repo set is kept "
+            "and listed as unplaced, for removal by hand. Dry run by default; "
+            "--apply removes."
         ),
     )
     prune.add_argument("--apply", action="store_true", help="Remove the images (default: dry run)")
@@ -269,6 +272,7 @@ def _cmd_prune(args: argparse.Namespace, *, runtime: str) -> int:
         print(f"  {action:<6}  {verdict.image.ref}  ({verdict.reason})")
     doomed = [v.image.ref for v in verdicts if v.remove]
     print()
+    _report_unplaced([v.image.ref for v in verdicts if v.unplaced], roots, runtime=runtime)
     if not args.apply:
         print(
             f"Dry run: {len(doomed)} of {len(verdicts)} cached image(s) would be removed. "
@@ -279,6 +283,33 @@ def _cmd_prune(args: argparse.Namespace, *, runtime: str) -> int:
     print(f"Removed {len(doomed) - len(failures)} of {len(doomed)} cached image(s).")
     _report_failures(failures)
     return 1 if failures else 0
+
+
+def _report_unplaced(refs: list[str], roots: list[Path], *, runtime: str) -> None:
+    """Name the kept images prune cannot place in the repo set (#5000).
+
+    Each names a protected branch of a repository found under none of the
+    roots: a repo that is gone, or one that lives elsewhere. The tag cannot
+    tell which, so prune never removes one; the human removes those whose
+    repository is gone. ``--root`` replaces the roots, so the hint for a
+    repository that lives elsewhere repeats every current root beside it:
+    naming that directory alone would shrink the repo set and let ``--apply``
+    remove other repos' live images.
+    """
+    if not refs:
+        return
+    where = ", ".join(str(r) for r in roots)
+    keep_roots = " ".join(f"--root {shlex.quote(str(r))}" for r in roots)
+    print(
+        f"Unplaced: {len(refs)} cached image(s) of a protected branch name a repository "
+        f"found under none of {where}, so prune keeps them. If a repository lives "
+        "elsewhere, add its directory to the current roots (never name it alone, which "
+        f"shrinks the repo set): vrg-container-cache prune {keep_roots} --root DIR. "
+        "If it is gone, remove its image by hand:"
+    )
+    for ref in refs:
+        print(f"  {runtime} rmi {ref}")
+    print()
 
 
 def _report_failures(failures: list[tuple[str, str]]) -> None:

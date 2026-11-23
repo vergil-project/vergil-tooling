@@ -132,10 +132,73 @@ def test_live_branch_in_any_repo_is_kept_via_its_sanitized_name() -> None:
 
 @pytest.mark.parametrize("branch", ["develop", "main", "release"])
 def test_protected_branch_is_kept_even_when_not_live(branch: str) -> None:
-    live: dict[Path, frozenset[str]] = {_REPO_A: frozenset()}
+    live: dict[Path, frozenset[str]] = {Path("/projects/org/repo-a"): frozenset()}
     [verdict] = plan_prune([_img(branch)], live, ())
     assert not verdict.remove
+    assert not verdict.unplaced
     assert verdict.reason == f"protected branch '{branch}'"
+
+
+# -- an unplaced repository (#5000) -------------------------------------------------
+
+
+@pytest.mark.parametrize("branch", ["develop", "main", "release"])
+def test_protected_branch_of_an_unplaced_repo_is_kept_as_unplaced(branch: str) -> None:
+    # The repo set has no clone named "spike", so the image cannot be placed:
+    # its repo may be gone or may live outside the roots, so it is kept and
+    # flagged for the human, never removed.
+    live: dict[Path, frozenset[str]] = {Path("/projects/org/repo-a"): frozenset({branch})}
+    [verdict] = plan_prune([_img(branch, repo="spike")], live, ())
+    assert not verdict.remove
+    assert verdict.unplaced
+    assert verdict.reason == (
+        f"protected branch '{branch}' of repository 'spike', which is not in the repo set; unplaced"
+    )
+
+
+def test_unplaced_protected_image_a_container_uses_is_kept_as_in_use() -> None:
+    live: dict[Path, frozenset[str]] = {Path("/projects/org/repo-a"): frozenset()}
+    [verdict] = plan_prune([_img("develop", repo="spike")], live, ("aaaa1111",))
+    assert not verdict.remove
+    assert not verdict.unplaced
+    assert verdict.reason == "in use by a container"
+
+
+def test_repo_is_placed_by_its_sanitized_directory_name() -> None:
+    # A clone directory whose name a tag cannot hold is placed by the name its
+    # images carry; a name that sanitizes to nothing places nothing.
+    live: dict[Path, frozenset[str]] = {
+        Path("/projects/org/my repo"): frozenset(),
+        Path("/projects/org/---"): frozenset(),
+    }
+    [verdict] = plan_prune([_img("develop", repo="my-repo")], live, ())
+    assert verdict.reason == "protected branch 'develop'"
+
+
+def test_unplaced_repo_does_not_change_the_finished_branch_rule() -> None:
+    # Only protected branches are kept as unplaced; a finished branch of an
+    # unplaced repo is removed as before, and a live one kept.
+    live: dict[Path, frozenset[str]] = {Path("/projects/org/repo-a"): frozenset({"feature/1-x"})}
+    gone, live_one = plan_prune(
+        [_img("feature-3-gone", repo="spike"), _img("feature-1-x", repo="spike")], live, ()
+    )
+    assert gone.remove
+    assert not gone.unplaced
+    assert not live_one.remove
+    assert not live_one.unplaced
+
+
+def test_prune_finished_images_never_removes_an_unplaced_image() -> None:
+    unplaced = f"{_PY}:3.14--develop--spike.0123abcd"
+    gone = f"{_PY}:3.14--feature-3-gone--spike.4567abcd"
+    run, removed = _runtime(f"{unplaced}\tid1\n{gone}\tid2\n")
+    live = {Path("/projects/org/repo-a"): frozenset({"develop"})}
+    with patch(_LIVE, return_value=live), patch(_RUN, side_effect=run):
+        assert prune_finished_images([Path("/projects/org/repo-a")], runtime="docker") == (
+            [gone],
+            [],
+        )
+    assert removed == [gone]
 
 
 @pytest.mark.parametrize(

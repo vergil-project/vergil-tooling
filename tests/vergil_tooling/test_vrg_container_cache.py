@@ -636,7 +636,7 @@ def _prune_images() -> list[CacheImage]:
 
 
 def _projects(tmp_path: Path) -> Path:
-    (tmp_path / "org" / "a" / ".git").mkdir(parents=True)
+    (tmp_path / "org" / "repo-a" / ".git").mkdir(parents=True)
     return tmp_path
 
 
@@ -644,7 +644,7 @@ def _projects(tmp_path: Path) -> Path:
 def _prune_env(
     tmp_path: Path, *, removed: list[tuple[str, str]] | None = None
 ) -> Generator[MagicMock]:
-    repo = (tmp_path / "org" / "a").resolve()
+    repo = (tmp_path / "org" / "repo-a").resolve()
     with (
         patch(_CLI + ".detect_runtime", return_value="nerdctl"),
         patch(_CLI + ".default_repo_roots", return_value=[_projects(tmp_path)]),
@@ -664,10 +664,42 @@ def test_prune_is_a_dry_run_by_default(tmp_path: Path, capsys: pytest.CaptureFix
     assert f"Repo set: 1 repo(s) under {tmp_path}" in out
     assert "keep    ghcr.io/vergil-project/prod-python:3.14--develop--repo-a.0123abcd" in out
     assert "(protected branch 'develop')" in out
-    assert "(branch 'feature-1-live' live in org/a)" in out
+    assert "(branch 'feature-1-live' live in org/repo-a)" in out
+    assert "Unplaced:" not in out
     assert "(in use by a container)" in out
     assert "remove  ghcr.io/vergil-project/prod-python:3.14--feature-2-gone--repo-a.0123abcd" in out
     assert "Dry run: 1 of 4 cached image(s) would be removed." in out
+
+
+_UNPLACED = f"{_PY}:3.14--develop--spike.0123abcd"
+
+
+def test_prune_reports_unplaced_images_and_keeps_them(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A protected-branch image of a repo under none of the roots is named, with
+    the command to remove it by hand, and never removed (#5000)."""
+    images = [*_prune_images(), CacheImage(_UNPLACED, "id-spike", "develop", "spike")]
+    with (
+        _prune_env(tmp_path) as m_remove,
+        patch(_CLI + ".list_cache_images", return_value=images),
+    ):
+        assert main(["prune"]) == 0
+        assert main(["prune", "--apply"]) == 0
+    m_remove.assert_called_once_with([f"{_PY}:3.14--feature-2-gone--repo-a.0123abcd"], "nerdctl")
+    out = capsys.readouterr().out
+    assert (
+        f"keep    {_UNPLACED}  (protected branch 'develop' of repository 'spike', "
+        "which is not in the repo set; unplaced)"
+    ) in out
+    assert (
+        "Unplaced: 1 cached image(s) of a protected branch name a repository found under "
+        f"none of {tmp_path}, so prune keeps them."
+    ) in out
+    # --root replaces the roots, so the hint keeps the current one (#5000).
+    assert f"vrg-container-cache prune --root {tmp_path} --root DIR." in out
+    assert f"  nerdctl rmi {_UNPLACED}\n" in out
+    assert "Dry run: 1 of 5 cached image(s) would be removed." in out
 
 
 def test_prune_apply_removes_only_finished_images(
