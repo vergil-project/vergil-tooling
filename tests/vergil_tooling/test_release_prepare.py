@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -334,7 +333,10 @@ def test_prepare_fails_loud_on_merged_pr_with_unrelated_tip() -> None:
 def test_prepare_ignores_fork_release_pr(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A fork PR on the release branch's name is never adopted, only reported (GHSA-r4j2-cwcp-xg56)."""
+    """A fork PR on the release branch's name is never adopted, only reported.
+
+    GHSA-r4j2-cwcp-xg56: the fresh path runs and opens the release's own PR.
+    """
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
     ctx = _ctx()
     with (

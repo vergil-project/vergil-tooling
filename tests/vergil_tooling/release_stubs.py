@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from vergil_tooling.lib import trust
 from vergil_tooling.lib.release.context import INDEX_STAGE
 from vergil_tooling.lib.release.state import FailedJob, initial_state
 
 if TYPE_CHECKING:
-    from unittest.mock import _patch
+    from collections.abc import Generator
 
     from vergil_tooling.lib.release.context import ReleaseContext
 
@@ -48,11 +49,14 @@ def fork_skip(number: int) -> trust.Skipped:
     )
 
 
+@contextmanager
 def branch_lookup(
     *prs: trust.PRRef, skipped: tuple[trust.Skipped, ...] = ()
-) -> _patch[object]:
+) -> Generator[MagicMock]:
     """Patch the trust layer's branch lookup to return *prs*, reporting *skipped*."""
-    return patch(BRANCH_LOOKUP, return_value=(list(prs), list(skipped)))
+    lookup = MagicMock(return_value=(list(prs), list(skipped)))
+    with patch(BRANCH_LOOKUP, lookup):
+        yield lookup
 
 
 def defer_publish(ctx: ReleaseContext, *names: str) -> None:

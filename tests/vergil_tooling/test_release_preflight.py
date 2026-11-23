@@ -1507,7 +1507,10 @@ def test_deps_gate_looks_up_every_branch_before_closing_any() -> None:
             raise failure
         return _prs_for_branch(repo, branch, state=state)
 
-    statuses = {_TASK10: ("CLOSED", "COMPLETED"), _TASK12: ("CLOSED", "COMPLETED")}
+    statuses: dict[str, tuple[str, str | None]] = {
+        _TASK10: ("CLOSED", "COMPLETED"),
+        _TASK12: ("CLOSED", "COMPLETED"),
+    }
     writes: list[list[str]] = []
     with (
         patch(_MOD + ".trust.prs_for_branch", side_effect=second_fails),
