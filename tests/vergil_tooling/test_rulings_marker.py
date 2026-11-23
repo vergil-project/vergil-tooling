@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from vergil_tooling.lib.rulings import RulingError
@@ -150,7 +152,7 @@ def test_request_kinds_are_the_two() -> None:
     "marker",
     [
         Marker("response", 1, 2, "protected-change"),
-        Marker("request", None, None, "bogus"),  # type: ignore[arg-type]
+        Marker("request", None, None, cast("RequestKind", "bogus")),
     ],
 )
 def test_render_marker_refuses_a_misplaced_or_unknown_type(marker: Marker) -> None:

@@ -14,7 +14,7 @@ from vergil_tooling.lib import confirm, github, identity_mode, trust
 from vergil_tooling.lib.identity_mode import IdentityMode
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.comments import IssueComment
-from vergil_tooling.lib.rulings.marker import MARKER_PREFIX, Marker, render_marker
+from vergil_tooling.lib.rulings.marker import MARKER_PREFIX, Marker, RequestKind, render_marker
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 if TYPE_CHECKING:
@@ -665,8 +665,8 @@ def test_missing_token_on_the_draft_delete_reaches_the_cli_boundary(
 # --- the decision line (epic .github#1384, Task 6a) --------------------------------
 
 
-def typed_request(cid: int, kind: str) -> IssueComment:
-    marker = render_marker(Marker("request", None, None, kind))  # type: ignore[arg-type]
+def typed_request(cid: int, kind: RequestKind) -> IssueComment:
+    marker = render_marker(Marker("request", None, None, kind))
     return IssueComment(cid, AGENT, f"Request text.\n\n{marker}", False)
 
 
@@ -682,7 +682,7 @@ def typed_request(cid: int, kind: str) -> IssueComment:
     ],
 )
 def test_ruling_reply_refuses_missing_decision_for_new_kinds(
-    cli: Cli, gh: FakeGh, kind: str, reply: str
+    cli: Cli, gh: FakeGh, kind: RequestKind, reply: str
 ) -> None:
     gh.comments = [typed_request(41, kind)]
     assert cli(*ARGS, "--response-text", reply) == 1
@@ -695,7 +695,7 @@ def test_ruling_reply_refuses_missing_decision_for_new_kinds(
 @pytest.mark.parametrize("kind", ["protected-change", "merge-review-exemption"])
 @pytest.mark.parametrize("reply", ["Decision: approve", "Checked the diff.\nDecision: refuse\n"])
 def test_ruling_reply_posts_one_decision_for_new_kinds(
-    cli: Cli, gh: FakeGh, kind: str, reply: str
+    cli: Cli, gh: FakeGh, kind: RequestKind, reply: str
 ) -> None:
     gh.comments = [typed_request(41, kind)]
     cli.answer("y")
