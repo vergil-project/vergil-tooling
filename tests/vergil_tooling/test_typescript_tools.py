@@ -689,7 +689,19 @@ def test_unparseable_package_json_is_reported(tmp_path: Path) -> None:
     repo = _prettier_repo(tmp_path)
     (repo / "package.json").write_text("{", encoding="utf-8")
     (problem,) = check_prettier_single_source(repo)
-    assert problem.startswith('cannot check package.json for a "prettier" key: package.json at ')
+    assert problem.startswith(f"package.json at {repo / 'package.json'} cannot be parsed: ")
+
+
+def test_unparseable_package_json_is_reported_once(tmp_path: Path) -> None:
+    """Every check that reads package.json reports it in the same words, so the
+    pre-gate lists it once, never again inside the Prettier check's (#5020)."""
+    repo = _git_versioned_repo(tmp_path)
+    (repo / "package.json").write_text("{", encoding="utf-8")
+    with patch.object(typescript_tools, "load_required", return_value={"typescript": 6}):
+        problems = run_pre_gate_checks(repo)
+    (parse_problem,) = check_build_script(repo)
+    assert parse_problem.startswith(f"package.json at {repo / 'package.json'} cannot be parsed: ")
+    assert [problem for problem in problems if parse_problem in problem] == [parse_problem]
 
 
 # -- a missing or non-UTF-8 package.json is reported once (#4992) -------------------
