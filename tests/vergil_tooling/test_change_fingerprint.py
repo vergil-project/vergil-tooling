@@ -165,6 +165,31 @@ def test_binary_deletion_has_a_fingerprint(repo: Path) -> None:
     assert len(change_fingerprint(repo, "develop", "feature")) == 64
 
 
+def _replace_with_symlink(repo: Path, path: str, target: str) -> None:
+    (repo / path).unlink()
+    (repo / path).symlink_to(target)
+
+
+@pytest.mark.parametrize("path", ["a.txt", "img.bin"])
+def test_type_change_has_a_fingerprint(repo: Path, path: str) -> None:
+    _replace_with_symlink(repo, path, "first-target")
+    _commit(repo, "branch")
+    first = change_fingerprint(repo, "develop", "feature")
+    assert len(first) == 64
+    _replace_with_symlink(repo, path, "other-target")
+    _git(repo, "commit", "-q", "--amend", "-a", "--no-edit")
+    assert change_fingerprint(repo, "develop", "feature") != first
+
+
+def test_type_change_survives_rebase(repo: Path) -> None:
+    _replace_with_symlink(repo, "img.bin", "target")
+    _commit(repo, "branch")
+    before = change_fingerprint(repo, "develop", "feature")
+    _on_develop(repo, "edit", lambda: _replace_line(repo, "a.txt", 17, "develop line 17\n"))
+    _git(repo, "rebase", "-q", "develop")
+    assert change_fingerprint(repo, "develop", "feature") == before
+
+
 def test_rename_survives_develop_edit_to_renamed_file(repo: Path) -> None:
     _git(repo, "mv", "a.txt", "b.txt")
     _replace_line(repo, "b.txt", 2, "branch line 2\n")

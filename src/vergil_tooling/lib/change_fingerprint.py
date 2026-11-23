@@ -124,7 +124,10 @@ def _raw_entries(repo: Path, left: str, right: str) -> list[tuple[bytes, str]]:
     """``(path, head blob)`` for each changed file, in the patch's file order.
 
     The path is the destination path (the source path of a deletion) and the
-    blob is ``deleted`` for a deletion.
+    blob is ``deleted`` for a deletion. A type change (status ``T``: a file
+    becoming a symlink or a gitlink, or back) is one raw record but two patch
+    sections, a deletion then a creation, so it gives two entries: the path
+    with ``deleted``, then the path with its new blob.
     """
     out = _git(
         repo, "diff", "--raw", "-z", "--no-abbrev", *_DIFF_OPTIONS, left, right, attr_source=right
@@ -144,6 +147,8 @@ def _raw_entries(repo: Path, left: str, right: str) -> list[tuple[bytes, str]]:
         if len(paths) != count:
             msg = f"truncated git diff --raw record {meta!r} for {left}..{right}"
             raise FingerprintError(msg)
+        if status == "T":
+            entries.append((paths[-1], "deleted"))
         entries.append((paths[-1], "deleted" if new_blob == _NULL_BLOB else new_blob))
         index += 1 + count
     return entries
