@@ -19484,7 +19484,15 @@ closed by hand once the problem is dealt with. It is homed in
 <code>vrg-issue-create</code> and <code>vrg-epic-move</code> accept the <code>operations</code> sentinel, and
 <code>vrg-epic-create --standing operations --org &lt;org&gt;</code> ensures the epic without
 filing a task. Its closed children drain into per-quarter
-<code>Archive (operations): &lt;org&gt;</code> archives like the other standing kinds.</p>
+<code>Archive (operations): &lt;org&gt;</code> archives like the other standing kinds.
+An ops issue is not PR-workable: <code>vrg-pr-workflow report-ready</code> and
+<code>vrg-submit-pr</code> refuse it as they refuse a queue item, and a code fix found
+while working one is filed as a follow-up task in its own repo. The daily
+sweep's drift close (<code>vrg-epic-audit --close</code>) never closes an ops issue that
+a merged PR names, and <code>vrg-intake-route</code> never routes one out of the
+operations epic. An intake item may be routed <em>into</em> it as a one-off
+(<code>--epic operations</code>), so an operational problem captured by hand reaches the
+queue through intake review.</p>
 <h3 id="proxy-epics">Proxy epics<a class="headerlink" href="#proxy-epics" title="Permanent link">&para;</a></h3>
 <p>A <strong>proxy epic</strong> is a same-org umbrella for the tasks that a development epic
 in another org (its <strong>primary</strong>) has in this org. It is titled

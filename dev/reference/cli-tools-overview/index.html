@@ -14776,6 +14776,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-ops-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-ops-report
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-issue-create" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19431,6 +19442,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-ops-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-ops-report
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-issue-create" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -20304,8 +20326,10 @@ frozen; <code>vrg-pr-workflow unfreeze</code> is the way back (see the freeze in
 </table>
 <h3 id="vrg-git">vrg-git<a class="headerlink" href="#vrg-git" title="Permanent link">&para;</a></h3>
 <p>A safe git wrapper for agent sessions. It forwards to <code>git</code> only after
-enforcing policy: a subcommand allowlist, read-only forms of <code>reflog</code> and
-<code>symbolic-ref</code>, denied subcommands (<code>commit</code>, <code>config</code> and others; use
+enforcing policy: a subcommand allowlist, read-only forms of <code>reflog</code>,
+<code>symbolic-ref</code>, <code>remote</code> (the list, <code>get-url</code> and <code>show -n</code>), <code>config</code>
+(<code>--get</code>, <code>--get-all</code>, <code>--get-regexp</code> and <code>--list</code>) and <code>tag</code> (its list
+forms), denied subcommands (<code>commit</code>, <code>gc</code> and others; use
 <code>vrg-commit</code> for commits), a flag deny-list (<code>push --force</code>, <code>branch -D</code>,
 <code>rebase -i</code> without <code>--autosquash</code>), the worktree convention, the
 <code>&lt;type&gt;/&lt;N&gt;-&lt;slug&gt;</code> branch form for an open, non-epic issue opened by a
@@ -20429,8 +20453,8 @@ A single-issue PR whose issue is an epic's documentation task also closes the
 epic's planning issue, on a <code>- Planning issue: Closes &lt;ref&gt;</code> line of its own;
 when it cannot, it says why (see
 <a href="../dev/submit-pr/#the-planning-issue-of-a-docs-task">the planning issue of a docs task</a>).
-It refuses an issue whose native parent is an intake, planning or deferred
-epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>). Human-run: agent
+It refuses an issue whose native parent is an intake, planning, deferred or
+operations epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>). Human-run: agent
 identities are refused, and agents hand off with
 <code>vrg-pr-workflow report-ready</code> instead.</p>
 <p>Every mode takes one path (epic vergil-project/.github#1218): one
@@ -20531,7 +20555,11 @@ its old head, and fails with nothing changed if that push fails (#3815).
 <code>vrg-submit-pr</code>) refuses an issue whose native parent is an intake, planning
 or deferred epic: a queue item is not buildable until it is routed with
 <code>epic-review intake</code>, expanded with <code>epic-create</code>, or revived with
-<code>epic-review deferred</code> (epics vergil-project/.github#176 and #508).
+<code>epic-review deferred</code> (epics vergil-project/.github#176 and #508). Both
+refuse an ops issue too, one whose native parent is the
+<a href="../../standards/github-issues/#standing-epics">operations epic</a>: no PR closes
+it, so a fix is filed as a follow-up task in its own repo and the ops issue
+is closed by hand (epic vergil-project/.github#1494).
 Local-settings guard: <code>report-ready</code> refuses an agent (warns a human), before
 pushing or recording anything, while a loadable <code>.claude/settings.local.json</code>
 is not absent or <code>{}</code> (epic vergil-project/.github#558).
@@ -20556,7 +20584,7 @@ the check again when it builds the body (see
 <a href="../dev/submit-pr/#the-planning-issue-of-a-docs-task">the planning issue of a docs task</a>).
 Any other issue, and a batch, prints no <code>planning_close</code>.</p>
 <p>The batch hard rules are: 2 to 8 issues, none listed twice, every one in
-this repo, a task (not an epic, archive or queue item), not operational, not
+this repo, a task (not an epic, archive, queue item or ops issue), not operational, not
 directly Blocked-by an open deployment task and opened by a trusted author,
 and all with the same parent epic (a finite epic or the repo's ad-hoc epic).
 The one-commit-per-issue check holds the branch, from its base, to exactly
@@ -21347,6 +21375,62 @@ the trust layer; any other is reported on stderr by metadata only. See <a href="
 </tr>
 </tbody>
 </table>
+<h3 id="vrg-ops-report">vrg-ops-report<a class="headerlink" href="#vrg-ops-report" title="Permanent link">&para;</a></h3>
+<p>Report an unattended job's result on its ops issue (epic
+vergil-project/.github#1494), once at the end of the job's run. The report
+key is the repo and a stable job name, never the workflow file: the ops
+issue is the open issue in <code>--repo</code> titled <code>ops: &lt;repo&gt; / &lt;job&gt; failing</code>,
+labelled <code>ops-report</code> and opened by the org's automation App. <code>--results</code>
+combines the GitHub job results of every job that makes up the named job:
+any <code>failure</code> wins, then <code>cancelled</code>, then <code>success</code>; all <code>skipped</code> reports
+nothing. A failure or cancel opens the issue under the org's operations
+epic (<code>Epic (operations): &lt;org&gt;</code>, in <code>&lt;org&gt;/.github</code>), naming the job, run,
+step, date and the most recent closed ops issue with the same title
+(<code>previous occurrence: #N</code>), or comments on the open one. A success
+comments <code>ops-report: recovered</code> only on the first green run after a
+failure or cancel, and otherwise does nothing. Two open ops issues for one
+key get the report on the oldest, naming the others. An issue found or
+created that is not linked under the operations epic is linked. After a
+create it waits until the lookup lists the new issue, so the next run finds
+it. It <strong>never closes an issue</strong>. Every read goes through the trust layer:
+only issues, and report comments, written by the automation App count, so
+an outsider's issue with the same title or an outsider's
+<code>ops-report: recovered</code> comment is ignored. Issue text carries the run link,
+job, step, date and issue numbers only, never log text.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_ops_report</code> (library: <code>lib/ops_report.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo OWNER/NAME</code>, <code>--job NAME</code>, <code>--results R[,R…]</code> (each <code>success</code>, <code>failure</code>, <code>cancelled</code> or <code>skipped</code>), <code>--run-url URL</code>, <code>--step NAME</code> (optional)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>The automation identity: <code>VRG_AUTOMATION_APP</code> set and the token verified as that App's (every other identity is refused before any read); the trusted-authors configuration (<code>VRG_TRUSTED_AUTHORS</code> under Actions)</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A refused identity, a trust-layer read failure, a failed create, comment, label or link, or a created issue never listed exits 1 with the error on stderr, naming any issue it created</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 on every outcome (<code>created</code>, <code>commented</code>, <code>recovered</code>, <code>nothing</code>), 1 any read, write or identity error, 2 bad arguments (a missing flag, or an invalid <code>--repo</code>, <code>--job</code>, <code>--results</code>, <code>--run-url</code> or <code>--step</code> value), before any identity check or read</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
 <h3 id="vrg-issue-create">vrg-issue-create<a class="headerlink" href="#vrg-issue-create" title="Permanent link">&para;</a></h3>
 <p>Create an issue and link it under an epic (a native sub-issue) in one step.
 It is the sanctioned issue-creation path: <code>vrg-gh</code> denies raw
@@ -21860,7 +21944,9 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
   repo (transfer, or recreate with a link back when GitHub refuses the
   transfer) and link it under that repo's ad-hoc epic (default <code>adhoc</code>) or the
   named epic. It refuses the hoshin epic: <code>--epic hoshin</code> before anything
-  resolves (so nothing is created), and a ref that names a hoshin epic. A planning item's <code>in-progress</code> label is removed from the moved
+  resolves (so nothing is created), and a ref that names a hoshin epic. It
+  accepts <code>--epic operations</code>, the org's operations epic, so an operational
+  problem captured by hand reaches the operations queue. A planning item's <code>in-progress</code> label is removed from the moved
   issue once the move has settled; a recreated issue never carries it. A
   one-off also ends the item's estimated size, from intake, planning or
   deferred alike: a recreated issue never carries an <code>epic-size:*</code> label, and
@@ -21941,6 +22027,14 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
 <tr>
 <td>a development epic</td>
 <td><code>planning</code> for a follow-on brainstorm only; any other task is refused, naming the parent</td>
+</tr>
+<tr>
+<td>the hoshin epic</td>
+<td>none — its logbook tasks are never routed</td>
+</tr>
+<tr>
+<td>the operations epic</td>
+<td>none — an ops issue is closed by hand once dealt with, never routed</td>
 </tr>
 <tr>
 <td>anything else</td>
@@ -22738,7 +22832,8 @@ makes there, and writes only to the path it prints.</p>
 stdout. It is read-only by default. <strong>Drift</strong> is a task still open although
 a merged PR that links it landed within the last <code>--window-days</code> days (a
 body's one linkage line, or every <code>Closes</code> line of a body with several, so
-each issue of a batch PR is checked), and
+each issue of a batch PR is checked; a queue item, an operational task and
+an ops issue under the operations epic never are), and
 an open finite epic whose children are all closed (a standing or
 <a href="../../standards/github-issues/#proxy-epics">proxy epic</a> never is). The <strong>invariant</strong> checks
 are the <a href="../../standards/github-issues/#compliance-invariants">compliance invariants</a>:
