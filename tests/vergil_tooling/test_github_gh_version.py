@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from vergil_tooling.lib import cd_runs, gh_version, github
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.package import PackageError
 from vergil_tooling.lib.package.index import collect
 from vergil_tooling.lib.package.repo_setup import local_run
@@ -131,3 +132,24 @@ def test_package_index_local_tool_is_not_gh_checked(bin_dir: Path) -> None:
     collect._invoke(_run, "rpm", "-qp", "x.rpm")
     assert ran == [("rpm", "-qp", "x.rpm")]
     assert _calls(bin_dir) == []
+
+
+def test_a_vrg_tool_refuses_an_old_gh_with_one_line_and_exit_1(
+    bin_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fake_gh(bin_dir, _OLD)
+
+    @cli_main
+    def main(argv: list[str] | None = None) -> int:
+        github.read_output("api", "user")
+        return 0
+
+    with pytest.raises(SystemExit) as excinfo:
+        main([])
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert err.startswith("test-github-gh-version: gh 2.96.0 (")
+    assert "needs gh 2.97.0 or newer" in err
+    assert len(err.splitlines()) == 1
+    assert _calls(bin_dir) == ["--version"]

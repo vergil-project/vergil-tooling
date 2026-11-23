@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import epics, github, trust
+from vergil_tooling.lib import epics, gh_version, github, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
@@ -79,6 +79,13 @@ class TestCliMain:
         exc = github.MissingGitHubTokenError(4, ["gh", "api"], "", "set GH_TOKEN")
         err = _exit_message(exc, capsys)
         assert err == f"{github.missing_token_message(_PROG)}\n"
+
+    def test_gh_version_error_is_a_clean_message(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        exc = gh_version.GhVersionError("gh 2.96.0 (/usr/bin/gh) is too old")
+        err = _exit_message(exc, capsys)
+        assert err == f"{_PROG}: gh 2.96.0 (/usr/bin/gh) is too old\n"
 
     def test_epic_home_error_is_a_clean_message(self, capsys: pytest.CaptureFixture[str]) -> None:
         exc = epics.EpicHomeError("cannot resolve the epic home of org/repo: HTTP 502")
