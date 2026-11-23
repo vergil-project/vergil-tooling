@@ -21140,7 +21140,12 @@ as done.</p>
 increments <code>patch</code> (default), <code>minor</code> or <code>major</code> and prints the new version.
 For a Python or Rust repo, <code>bump</code> then refreshes the lockfile (<code>uv lock</code>,
 <code>cargo update --workspace</code>) in the dev container, through
-<code>vrg-container-run</code>, so no host toolchain is needed. A bump is all or
+<code>vrg-container-run</code>, so no host toolchain is needed. In a Rust repo, <code>bump</code>
+first sets the bumped workspace crates' own entries in <code>Cargo.lock</code> to the
+new version, so the lockfile already matches <code>Cargo.toml</code> when
+<code>vrg-container-run</code> builds the dev image and its <code>cargo fetch --locked</code>
+warmup finds nothing stale; <code>cargo update --workspace</code> then runs as before.
+A bump is all or
 nothing: when any step fails, the lockfile refresh included, <code>bump</code> puts
 <code>VERSION</code>, the language manifest, the secondary version files and the
 lockfile back as they were, says so on stderr and exits non-zero. Used by
@@ -23179,8 +23184,7 @@ already shows its PRs through its worktrees.</p>
 </code></pre></div>
 <ul>
 <li><strong>Rows</strong> come in PR-number order. TYPE is as in Pending release
-  below, except that a <code>lifecycle/*</code> head branch (a language version
-  added or dropped) shows <code>lifecycle</code> first. AUTHOR is the PR author's
+  below. AUTHOR is the PR author's
   login (<code>ghost</code> for a deleted account). CI is the head commit's
   combined check state (<code>success</code>, <code>failure</code>, <code>pending</code>, <code>error</code>,
   <code>expected</code>), or <code>none</code> when it has no checks. OPENED is the PR's age.
@@ -23213,7 +23217,7 @@ rebase-merged as several commits is one row).</p>
 <a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
 <a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
 <a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 1 other PR.
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 0 lifecycle PRs, 1 other PR.
 </code></pre></div>
 <ul>
 <li><strong>Release line.</strong> It follows the section heading on the same line,
@@ -23227,13 +23231,15 @@ rebase-merged as several commits is one row).</p>
   are ignored.</li>
 <li><strong>Rows</strong> come in merge order, oldest first. TYPE is the PR title's
   conventional-commit type (<code>-</code> when it has none), except that a
+  language lifecycle PR (a <code>lifecycle/*</code> head branch, a language
+  version added or dropped) shows <code>lifecycle</code>, a
   release back-merge (a <code>release/post-*</code> head branch) shows <code>release</code>,
   an automation PR (an <code>automation/*</code> head branch, such as
   <code>automation/repo-config-sync/&lt;run-id&gt;</code>) shows <code>automation</code>, and a
   dependency update (a <code>deps/update-*</code> head branch or a
   <code>dependency-update</code> label) shows <code>deps</code>. The head branch decides
-  before the label, so an automation PR is never counted as a
-  dependency update or a development PR. MERGED is the PR's
+  before the label, so an automation or lifecycle PR is never counted
+  as a dependency update or a development PR. MERGED is the PR's
   merge time. A TITLE over 72 characters is cut, ending in <code>…</code>.</li>
 <li><strong>A commit with no PR</strong> shows <code>PROBLEM</code> in the PR column and <code>-</code> for
   BRANCH and TYPE, with its commit date and subject, and a
@@ -23249,7 +23255,8 @@ rebase-merged as several commits is one row).</p>
 <li><strong>Nothing pending</strong> prints <code>Nothing pending release: develop and main
   are level.</code> in place of the table.</li>
 <li><strong>The summary line</strong> counts the changes: dependency updates, release
-  back-merges, automation PRs and other PRs, every bucket listed, plus
+  back-merges, automation PRs, lifecycle PRs and other PRs, every bucket
+  listed, plus
   <code>&lt;n&gt; PROBLEM: commits with no PR</code> and <code>&lt;n&gt; PROBLEM: not a same-repo
   PR with a trusted author</code>, each only when there are some.</li>
 <li><strong>A lookup that fails or is incomplete</strong> (an API error, a missing
