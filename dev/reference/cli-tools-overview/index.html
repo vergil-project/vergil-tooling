@@ -24401,7 +24401,7 @@ included, so it flags lines the gate passes.</p>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example <code>--check custom --all-versions</code>)</td>
+<td>0 all passed, 1 a stage failed or the config is invalid, 2 usage error (for example <code>--check custom --all-versions</code>); with <code>--markdown</code>, 1 for a FILE that does not exist or an invalid config, 0 when every FILE is skipped, otherwise markdownlint's own exit code</td>
 </tr>
 <tr>
 <td>Status</td>

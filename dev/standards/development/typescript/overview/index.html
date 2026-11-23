@@ -18947,7 +18947,7 @@ full contract and the runtime details are in
   vitest, and Vitest loads <code>@vitest/coverage-v8</code> from the repository for the
   coverage run. Its ESLint config imports typescript-eslint and <code>@eslint/js</code>,
   and typescript-eslint declares typescript and eslint as peer dependencies.</li>
-<li>The image owns prettier and license-checker.</li>
+<li>The image owns prettier.</li>
 </ul>
 <h3 id="required-devdependencies-and-their-accepted-majors">Required devDependencies and their accepted majors<a class="headerlink" href="#required-devdependencies-and-their-accepted-majors" title="Permanent link">&para;</a></h3>
 <p>The gates run the repository's own tools by path, from <code>node_modules/.bin</code>:
@@ -19012,7 +19012,7 @@ typescript-eslint and Vitest come from the repository's own devDependencies,
 held to their accepted majors (see
 <a href="#required-devdependencies-and-their-accepted-majors">Required devDependencies</a>),
 and their exact versions float through the lockfile. Only the image's own
-tools, Prettier and license-checker, come with the image.</p>
+tool, Prettier, comes with the image.</p>
 <h2 id="typecheck-and-the-release-build">Typecheck and the Release Build<a class="headerlink" href="#typecheck-and-the-release-build" title="Permanent link">&para;</a></h2>
 <p>TYPECHECK runs <code>tsc --noEmit</code>: it reads the consumer's <code>tsconfig.json</code> and
 reports type errors without writing any output.</p>

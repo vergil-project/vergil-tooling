@@ -18622,7 +18622,7 @@ from it.</p>
 <tr>
 <td>TypeScript</td>
 <td>typescript, eslint, typescript-eslint, <code>@eslint/js</code>, vitest, <code>@vitest/coverage-v8</code></td>
-<td>prettier, license-checker</td>
+<td>prettier</td>
 </tr>
 <tr>
 <td>Python</td>
@@ -18640,8 +18640,7 @@ from it.</p>
 <li><strong>TypeScript.</strong> eslint is on the repository side because typescript-eslint
   declares it as a peer dependency. <code>npm ci</code> installs a matching eslint in the
   repository anyway, and a global eslint beside it could be a major version
-  typescript-eslint does not support. The image still ships license-checker,
-  but no gate runs it: the license gate is Vergil's own
+  typescript-eslint does not support. The license gate is Vergil's own
   <code>vrg-npm-license-gate</code>, which reads <code>package-lock.json</code> (see the
   TypeScript standards'
   <a href="../typescript/overview/#license-gate">License gate</a>).</li>
