@@ -33,10 +33,6 @@ from vergil_tooling.lib.pending_release import (
 _PAGE_SIZE = 100
 _LABEL_LIMIT = 20
 
-# Language lifecycle PRs (a version added or dropped) are opened from
-# ``lifecycle/<language>-<add|drop>-<version>`` branches.
-_LIFECYCLE_BRANCH_PREFIX = "lifecycle/"
-
 # GitHub shows a deleted account as this login.
 _GHOST = "ghost"
 
@@ -76,6 +72,7 @@ class OpenPRKind(enum.Enum):
 
 _KIND_BY_CHANGE = {
     ChangeKind.AUTOMATION: OpenPRKind.AUTOMATION,
+    ChangeKind.LIFECYCLE: OpenPRKind.LIFECYCLE,
     ChangeKind.DEPS: OpenPRKind.DEPS,
     ChangeKind.RELEASE: OpenPRKind.RELEASE,
     ChangeKind.OTHER: OpenPRKind.OTHER,
@@ -110,9 +107,7 @@ class OpenPR:
 
 
 def classify_open(title: str, branch: str, labels: tuple[str, ...]) -> tuple[OpenPRKind, str]:
-    """The kind and TYPE label of an open PR: a lifecycle branch, else as a pending change."""
-    if branch.startswith(_LIFECYCLE_BRANCH_PREFIX):
-        return OpenPRKind.LIFECYCLE, "lifecycle"
+    """The kind and TYPE label of an open PR, typed as a pending change is."""
     kind, type_label = classify(title, branch, labels)
     return _KIND_BY_CHANGE[kind], type_label
 

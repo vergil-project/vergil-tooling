@@ -972,7 +972,7 @@ def test_pending_section_renders_rows_in_order(capsys: pytest.CaptureFixture[str
     assert section[5].endswith("docs(batch): document batched same-repo PRs")
     assert section[6] == (
         "4 changes pending release: 1 dependency update, 1 release back-merge, "
-        "0 automation PRs, 2 other PRs."
+        "0 automation PRs, 0 lifecycle PRs, 2 other PRs."
     )
     assert len(section) == 7
     # The section sits after the worktree sections, before the summary lines.
@@ -1050,7 +1050,7 @@ def test_no_pr_change_is_problem(capsys: pytest.CaptureFixture[str]) -> None:
     assert section[3] == f"  PROBLEM: {sha7} reached develop without a PR"
     assert section[4] == (
         "1 change pending release: 0 dependency updates, 0 release back-merges, "
-        "0 automation PRs, 0 other PRs, 1 PROBLEM: commits with no PR."
+        "0 automation PRs, 0 lifecycle PRs, 0 other PRs, 1 PROBLEM: commits with no PR."
     )
 
 
@@ -1067,7 +1067,8 @@ def test_untrusted_pr_change_is_problem(capsys: pytest.CaptureFixture[str]) -> N
     )
     assert section[4] == (
         "1 change pending release: 0 dependency updates, 0 release back-merges, "
-        "0 automation PRs, 0 other PRs, 1 PROBLEM: not a same-repo PR with a trusted author."
+        "0 automation PRs, 0 lifecycle PRs, 0 other PRs, "
+        "1 PROBLEM: not a same-repo PR with a trusted author."
     )
 
 
@@ -1094,7 +1095,34 @@ def test_automation_pr_shows_as_automation(capsys: pytest.CaptureFixture[str]) -
     # Counted apart from development (other) PRs.
     assert section[4] == (
         "2 changes pending release: 0 dependency updates, 0 release back-merges, "
-        "1 automation PR, 1 other PR."
+        "1 automation PR, 0 lifecycle PRs, 1 other PR."
+    )
+
+
+def test_lifecycle_pr_shows_as_lifecycle(capsys: pytest.CaptureFixture[str]) -> None:
+    lifecycle = _change(
+        4401,
+        "lifecycle/rust-add-1.99",
+        "feat(versions): add rust 1.99",
+        ChangeKind.LIFECYCLE,
+        "lifecycle",
+        _ago(2),
+        sha=1,
+    )
+    dev = _change(4402, "feature/4402-x", "feat: x", ChangeKind.OTHER, "feat", _ago(1), sha=2)
+    rc, _ = _run([], publish=True, pending=_pending(lifecycle, dev))
+    out = capsys.readouterr().out
+    assert rc == 0
+    section = _section(out)
+    rows = [line.split()[:3] for line in section[2:4]]
+    assert rows == [
+        ["#4401", "lifecycle/rust-add-1.99", "lifecycle"],
+        ["#4402", "feature/4402-x", "feat"],
+    ]
+    # Counted apart from development (other) PRs, as the open-PR section does.
+    assert section[4] == (
+        "2 changes pending release: 0 dependency updates, 0 release back-merges, "
+        "0 automation PRs, 1 lifecycle PR, 1 other PR."
     )
 
 
@@ -1107,12 +1135,13 @@ def test_pending_summary_counts_buckets() -> None:
         _change(5, "automation/a/1", "chore: e", ChangeKind.AUTOMATION, "automation", _NOW),
         _change(6, "automation/a/2", "chore: f", ChangeKind.AUTOMATION, "automation", _NOW),
         _change(7, "automation/b/3", "chore: g", ChangeKind.AUTOMATION, "automation", _NOW),
+        _change(8, "lifecycle/rust-add-1.99", "feat: h", ChangeKind.LIFECYCLE, "lifecycle", _NOW),
         _change(None, None, "e", ChangeKind.NO_PR, "-", _NOW),
         _change(None, None, "f", ChangeKind.NO_PR, "-", _NOW),
     ]
     assert _pending_summary(changes) == (
-        "9 changes pending release: 2 dependency updates, 1 release back-merge, "
-        "3 automation PRs, 1 other PR, 2 PROBLEM: commits with no PR."
+        "10 changes pending release: 2 dependency updates, 1 release back-merge, "
+        "3 automation PRs, 1 lifecycle PR, 1 other PR, 2 PROBLEM: commits with no PR."
     )
 
 
