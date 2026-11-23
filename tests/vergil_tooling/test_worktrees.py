@@ -53,6 +53,7 @@ def _pr_ref(number: int, title: str, *, state: str = "OPEN", head_oid: str = "a"
         title=title,
         head="feature/7-foo",
         head_oid=head_oid,
+        base="develop",
         author_role=Role.HUMAN,
         state=state,
     )

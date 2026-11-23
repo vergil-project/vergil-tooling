@@ -15,7 +15,10 @@ itself in one case only: a provenance violation on an open PR.
 judge it in this order:
 
 1. **Develop PRs only.** A PR whose base is not ``develop``, or whose head is
-   ``release/*``, ends as ``failed: not a develop PR``, untouched.
+   ``release/*``, ends as ``failed: not a develop PR``, untouched. The head
+   branch is taken from the trust layer, read once at start-up
+   (:func:`confirmed_head`): a PR that is not a same-repo PR with a trusted
+   author on its branch ends the same way.
 2. **Merged.** The PR ends as ``merged``, a PR that merged before the watch
    started included. Provenance (:func:`vergil_tooling.lib.pr_provenance.check_pr`)
    runs on it first: a violation cannot be undone, so nothing is disabled,
@@ -73,13 +76,14 @@ keeps every changed table with a timestamp.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from vergil_tooling.lib import auto_merge, github, pr_provenance, progress
+from vergil_tooling.lib import auto_merge, github, pr_provenance, progress, trust
 from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
@@ -188,7 +192,9 @@ class Snapshot:
     """One ``gh pr view`` read of a PR.
 
     *merge_commit* is the merge commit's SHA, or ``""`` while GitHub reports
-    none. *labels* are the PR's label names. ``vrg-pr-await`` and
+    none. *labels* are the PR's label names. *head_ref* is the head branch
+    as ``gh`` reports it, a candidate only: the watch acts on the branch
+    :func:`confirmed_head` gives. ``vrg-pr-await`` and
     ``vrg-repo-status`` read a PR through :func:`snapshot` and judge its
     checks with :func:`check_failures` too.
     """
@@ -273,12 +279,45 @@ def snapshot(pr: str) -> Snapshot:
     )
 
 
-def _not_develop(snap: Snapshot) -> str | None:
-    """Why *snap* is not a develop PR, or ``None`` when it is one."""
+_PR_URL_RE = re.compile(r"github\.com/([^/]+/[^/]+)/pull/(\d+)$")
+
+
+def confirmed_head(snap: Snapshot) -> str | None:
+    """*snap*'s head branch as the trust layer confirms it, or ``None``.
+
+    The snapshot's head branch is only a candidate: it is looked up through
+    :func:`trust.prs_for_branch`, and only the PR with *snap*'s own number
+    counts, so a fork PR on a branch of the same name never stands in for
+    it. The skipped PRs are reported on stderr, metadata only. A URL that
+    names no repo and number, or a read the layer cannot complete, raises
+    :class:`FinalizeWatchError`.
+    """
+    match = _PR_URL_RE.search(snap.url)
+    if match is None:
+        msg = f"{snap.url}: cannot read the repository and number from the PR's URL"
+        raise FinalizeWatchError(msg)
+    repo, number = match.group(1), int(match.group(2))
+    try:
+        prs, skipped = trust.prs_for_branch(repo, snap.head_ref, state="all")
+    except trust.TrustReadError as exc:
+        msg = f"{snap.url}: confirming the PR through the trust layer failed: {exc}"
+        raise FinalizeWatchError(msg) from exc
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return next((pr.head for pr in prs if pr.number == number), None)
+
+
+def _not_develop(snap: Snapshot, head: str | None) -> str | None:
+    """Why *snap* is not a develop PR, or ``None`` when it is one.
+
+    *head* is the head branch :func:`confirmed_head` gave, ``None`` when the
+    trust layer did not confirm the PR.
+    """
     if snap.base != _DEVELOP:
         return f"its base is {snap.base}, not {_DEVELOP}"
-    if snap.head_ref.startswith(_RELEASE_PREFIX):
-        return f"its head is the release branch {snap.head_ref}"
+    if head is None:
+        return "it is not a same-repo PR with a trusted author on its branch"
+    if head.startswith(_RELEASE_PREFIX):
+        return f"its head is the release branch {head}"
     return None
 
 
@@ -461,10 +500,15 @@ class CancelGrace:
 
 @dataclass
 class _Watched:
-    """What the watch remembers about one PR between snapshots."""
+    """What the watch remembers about one PR between snapshots.
+
+    *branch* is the head branch :func:`confirmed_head` gave at start-up, or
+    ``None`` when the trust layer did not confirm the PR.
+    """
 
     required: frozenset[str] | None
     cancel: CancelGrace
+    branch: str | None
     checked_head: str | None = None
     violation: str = ""
 
@@ -477,7 +521,7 @@ def _result(snap: Snapshot, outcome: Outcome, detail: str, watched: _Watched) ->
         detail=detail,
         head=snap.head,
         title=snap.title,
-        branch=snap.head_ref,
+        branch=watched.branch or "",
         labels=snap.labels,
         provenance_violation=bool(watched.violation),
     )
@@ -494,7 +538,7 @@ def _check_provenance(snap: Snapshot, watched: _Watched) -> bool:
 
 def _judge(snap: Snapshot, watched: _Watched, *, now: float) -> PRResult | None:
     """*snap*'s terminal result, in the module docstring's order, or ``None`` while pending."""
-    why = _not_develop(snap)
+    why = _not_develop(snap, watched.branch)
     if why is not None:
         return _result(snap, "failed: not a develop PR", why, watched)
     if snap.state == "MERGED":
@@ -704,9 +748,10 @@ def watch(
         if snap.url in order:
             continue
         order.append(snap.url)
-        watchable = snap.state == "OPEN" and _not_develop(snap) is None
+        branch = confirmed_head(snap)
+        watchable = snap.state == "OPEN" and _not_develop(snap, branch) is None
         required = github.required_check_names(snap.url) if watchable else None
-        judge(snap, _Watched(required=required, cancel=CancelGrace(cancel_grace)))
+        judge(snap, _Watched(required=required, cancel=CancelGrace(cancel_grace), branch=branch))
 
     end = time.monotonic() + deadline
     rows_now = [rows[u] for u in order]

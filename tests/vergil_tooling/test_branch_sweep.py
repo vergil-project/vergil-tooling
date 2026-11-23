@@ -174,6 +174,7 @@ class FakeGitHub:
                         title="a title",
                         head=branch,
                         head_oid=cast("str", pr["headRefOid"]),
+                        base="develop",
                         author_role=trust.Role.AGENTS,
                         state=cast("str", pr["state"]),
                     )

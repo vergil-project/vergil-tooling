@@ -18,8 +18,7 @@ command written out as a list or tuple. Of these, a read is ``issue view``,
 ``issue list``, ``pr view``, ``pr list``, ``search …``, ``api`` with no write
 method, or a GraphQL query (not a mutation). A function of ``lib/github.py``
 that holds a content read is a reader too (:func:`pr_closing_references`,
-:func:`head_ref`, :func:`open_prs_for_head`): a call to it, anywhere, is a
-read of the same fields.
+:func:`head_ref`): a call to it, anywhere, is a read of the same fields.
 
 **Resolution.** The scanner resolves each argument from literals, f-strings,
 ``+``, ``",".join(...)``, module constants (its own and those it imports from
@@ -29,7 +28,7 @@ only ``return`` an expression. A variable inside a value (``repo``, a number)
 is a hole. A read whose ``--json`` fields, ``--jq`` filter, API path or
 GraphQL query cannot be resolved is *unresolved*.
 
-**The exemption file** has three tables, each entry with a reason:
+**The exemption file** has four tables, each entry with a reason:
 
 - ``[[registered]]``: an unresolved read, named by its file, function and the
   unresolved argument's source text, with the fields it requests. The
@@ -40,6 +39,11 @@ GraphQL query cannot be resolved is *unresolved*.
   function (``judge``) that its module calls on them.
 - ``[[exempt]]``: a display-only read (its fields are shown to a human and
   drive no decision), named by its file and function, with its fields.
+- ``[[pending]]``: a read a tracked task moves onto the trust layer, named
+  by its file and function, with its fields and the task's full ref
+  (``owner/repo#N``, in ``task``). It is allowed until that task removes
+  it. The tests check the ref's form and that the read still exists; they
+  never ask GitHub about the task.
 """
 
 from __future__ import annotations
@@ -904,10 +908,20 @@ class Exempt:
 
 
 @dataclass(frozen=True)
+class Pending:
+    path: str
+    function: str
+    fields: frozenset[str]
+    task: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class Exemptions:
     registered: tuple[Registered, ...]
     judged: tuple[Judged, ...]
     exempt: tuple[Exempt, ...]
+    pending: tuple[Pending, ...] = ()
 
 
 def load_exemptions(path: Path = EXEMPTIONS) -> Exemptions:
@@ -924,6 +938,10 @@ def load_exemptions(path: Path = EXEMPTIONS) -> Exemptions:
         exempt=tuple(
             Exempt(e["path"], e["function"], frozenset(e["fields"]), e["reason"])
             for e in data.get("exempt", [])
+        ),
+        pending=tuple(
+            Pending(e["path"], e["function"], frozenset(e["fields"]), e["task"], e["reason"])
+            for e in data.get("pending", [])
         ),
     )
 
@@ -959,7 +977,11 @@ def check(reads: Sequence[Read], exemptions: Exemptions) -> Findings:
         if not fields:
             continue
         key = (read.path, read.function)
-        entries: tuple[Judged | Exempt, ...] = (*exemptions.judged, *exemptions.exempt)
+        entries: tuple[Judged | Exempt | Pending, ...] = (
+            *exemptions.judged,
+            *exemptions.exempt,
+            *exemptions.pending,
+        )
         covering = [e for e in entries if (e.path, e.function) == key]
         allowed: set[str] = set()
         for entry in covering:
@@ -1024,10 +1046,11 @@ def test_no_content_read_outside_trust_layer() -> None:
     exemptions = load_exemptions()
     findings = check(scan(SRC), exemptions)
     assert not findings.failures, "\n".join(findings.failures)
-    entries: tuple[Registered | Judged | Exempt, ...] = (
+    entries: tuple[Registered | Judged | Exempt | Pending, ...] = (
         *exemptions.registered,
         *exemptions.judged,
         *exemptions.exempt,
+        *exemptions.pending,
     )
     stale = [
         f"{type(entry).__name__.lower()} {entry.path} {entry.function}"
@@ -1197,6 +1220,32 @@ def test_reaches_trust() -> None:
     assert reaches_trust("lib/epics.py:_trusted_body")
     assert not reaches_trust("lib/github.py:head_ref")
     assert not reaches_trust("lib/no_such_module.py:f")
+
+
+_TASK_REF = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9._-]+#[1-9][0-9]*")
+
+
+def test_pending_entries_name_their_task() -> None:
+    """Each pending read names its content fields and its fixing task's full ref."""
+    for entry in load_exemptions().pending:
+        where = f"{entry.path} {entry.function}"
+        assert entry.fields, f"{where}: no fields"
+        assert entry.fields <= CONTENT_FIELDS, f"{where}: {sorted(entry.fields - CONTENT_FIELDS)}"
+        assert _TASK_REF.fullmatch(entry.task), f"{where}: {entry.task!r} is not owner/repo#N"
+        assert entry.reason == f"fixed by {entry.task}", f"{where}: {entry.reason!r}"
+
+
+def test_pending_entry_without_its_read_is_stale(tmp_path: Path) -> None:
+    """A pending entry covers its read, and one whose read is gone is unused, so stale."""
+    planted = tmp_path / "lib" / "planted.py"
+    planted.parent.mkdir()
+    planted.write_text(_PLANTED, encoding="utf-8")
+    reads = [r for r in scan(tmp_path) if r.function == "direct_gh"]
+    pending = Pending("lib/planted.py", "direct_gh", frozenset({"body"}), "o/r#1", "fixed by o/r#1")
+    gone = Pending("lib/planted.py", "no_such", frozenset({"body"}), "o/r#2", "fixed by o/r#2")
+    findings = check(reads, Exemptions((), (), (), (pending, gone)))
+    assert findings.failures == []
+    assert findings.used == {pending}
 
 
 def test_registered_reads_have_reasons() -> None:

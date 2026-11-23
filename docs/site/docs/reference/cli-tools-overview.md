@@ -1114,11 +1114,12 @@ Which routes an item allows depends on the container epic it is in:
 
 A planning item's development epics are those an `Epic:` marker in a
 **trusted comment** names (its author and every editor trusted, judged by the
-trust layer), plus every `epic` issue whose body carries a `Planning:` line
-for it. A comment that is not trusted names no epic: it is reported on
-stderr, metadata only (`skipped untrusted content: <owner>/<repo>#<N>
-<comment|edit> <login> at <time> on comment <id> (<cause>)`), and the route
-carries on.
+trust layer), plus every `epic` issue whose **trusted body** carries a
+`Planning:` line for it (each search hit is read again through the trust
+layer). A comment or epic body that is not trusted names no epic: it is
+reported on stderr, metadata only (`skipped untrusted content:
+<owner>/<repo>#<N> <comment|edit> <login> at <time> on comment <id>
+(<cause>)`, or the same line for the body), and the route carries on.
 
 | Attribute | Value |
 |---|---|

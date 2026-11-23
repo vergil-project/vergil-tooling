@@ -1587,14 +1587,16 @@ _EXISTS = _gh_error(
 )
 
 
-def _open_pr(**overrides: Any) -> github.OpenPR:
-    pr = github.OpenPR(
+def _open_pr(**overrides: Any) -> trust.PRRef:
+    pr = trust.PRRef(
+        number=21,
         url=_PR21,
         title="T",
-        head_ref="feature/1673-x",
-        base_ref="develop",
+        head="feature/1673-x",
         head_oid="h0",
-        cross_repo=False,
+        base="develop",
+        author_role=trust.Role.AGENTS,
+        state="OPEN",
     )
     return dataclasses.replace(pr, **overrides)
 
@@ -1606,7 +1608,7 @@ def _submit_with_create(
     with (
         patch(_MOD + "._push_branch"),
         patch(_MOD + "._create_pr", side_effect=create_effect) as create,
-        patch(_MOD + ".github.open_prs_for_head", side_effect=open_prs) as lookup,
+        patch("vergil_tooling.lib.pr_create.open_trusted_prs", side_effect=open_prs) as lookup,
         patch("vergil_tooling.lib.pr_create.time.sleep") as sleep,
         patch(_MOD + ".submission.record_submission") as record,
         patch(_MOD + ".pr_provenance.check_pr", return_value=pr_provenance.ProvenanceResult()),
@@ -1624,7 +1626,8 @@ def test_create_that_landed_is_adopted_not_retried(capsys: pytest.CaptureFixture
     )
     assert summary == SubmitSummary(opened=[_PR21], failed=[])
     create.assert_called_once()
-    lookup.assert_called_once_with("feature/1673-x", base="develop")
+    [spec] = lookup.call_args.args
+    assert (spec.head, spec.base) == ("feature/1673-x", "develop")
     sleep.assert_not_called()
     record.assert_called_once_with(Path("/repo/.worktrees/issue-1673-x"), pr_url=_PR21)
     enable.assert_called_once_with(_PR21, head="h0", method="SQUASH")
@@ -1648,13 +1651,10 @@ def test_already_exists_on_retry_is_adopted() -> None:
     [
         (_open_pr(head_oid="ffff"), "its head commit is 'ffff', not 'h0'"),
         (_open_pr(title="Other"), "its title is 'Other', not 'T'"),
-        (_open_pr(base_ref="main"), "its base is 'main', not 'develop'"),
-        (_open_pr(head_ref="Feature/1673-x"), "its head branch is 'Feature/1673-x'"),
-        (_open_pr(cross_repo=True), "its head is in another repository"),
     ],
 )
 def test_other_open_pr_is_refused_by_name(
-    other: github.OpenPR, reason: str, capsys: pytest.CaptureFixture[str]
+    other: trust.PRRef, reason: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """An open PR submit cannot show it opened fails loudly, naming it, and is not adopted."""
     summary, create, _lookup, record, enable, sleep = _submit_with_create([_EXISTS], [[other]])

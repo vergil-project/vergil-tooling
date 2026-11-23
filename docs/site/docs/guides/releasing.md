@@ -554,11 +554,13 @@ adopted or merged.
 Within a run, `prepare`, `back-merge-bump` and the dependency update never
 retry a failed `gh pr create` blindly, since GitHub can open the PR and
 still return an error. After a failed attempt the stage looks for an open
-PR from its branch into the base. It adopts one only when it has the same
-head branch (in this repository), base, title and head commit, and carries
-on as for a PR it just opened; an adopted dependency-update PR gets its
-`dependency-update` label again. Any other open PR fails the stage, naming
-the PR. With none open, a transient error is retried with backoff.
+PR from its branch into the base, through the trust layer: only a same-repo
+PR with a trusted author counts, and a fork PR on the branch's name is
+reported on stderr and never adopted. It adopts the PR it finds only when
+it has the same title and head commit, and carries on as for a PR it just
+opened; an adopted dependency-update PR gets its `dependency-update` label
+again. Any other such PR fails the stage, naming the PR. With none open, a
+transient error is retried with backoff.
 
 ### Stale job records
 

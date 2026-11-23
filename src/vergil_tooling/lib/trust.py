@@ -265,7 +265,7 @@ query($owner: String!, $name: String!, $branch: String!, $after: String) {{
     pullRequests(headRefName: $branch, {_PR_STATES[state]}first: {_PAGE}, after: $after) {{
       {_PAGE_INFO}
       nodes {{
-        number url title headRefName headRefOid state createdAt author {_ACTOR}
+        number url title headRefName headRefOid baseRefName state createdAt author {_ACTOR}
         {SAME_REPO_FIELDS}
       }}
     }}
@@ -438,8 +438,9 @@ class IssueEvent:
 class PRRef:
     """A same-repo PR with a trusted author, found by its branch.
 
-    *head* is the branch name and *head_oid* the head commit; *state* is
-    GraphQL's ``OPEN``, ``CLOSED`` or ``MERGED``.
+    *head* is the branch name, *head_oid* the head commit and *base* the
+    branch the PR merges into; *state* is GraphQL's ``OPEN``, ``CLOSED`` or
+    ``MERGED``.
     """
 
     number: int
@@ -447,6 +448,7 @@ class PRRef:
     title: str
     head: str
     head_oid: str
+    base: str
     author_role: Role
     state: str
 
@@ -1286,6 +1288,7 @@ def _branch_pr(
         title=_text(pr, "title", call, what, empty=True),
         head=head,
         head_oid=_text(pr, "headRefOid", call, what),
+        base=_text(pr, "baseRefName", call, what),
         author_role=judgement.role,
         state=_text(pr, "state", call, what),
     )

@@ -78,6 +78,7 @@ def _prs_for_branch(
             title="deps",
             head=branch,
             head_oid="a" * 40,
+            base="develop",
             author_role=trust.Role.AUTOMATION,
             state="OPEN",
         )

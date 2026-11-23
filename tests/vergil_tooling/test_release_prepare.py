@@ -461,13 +461,15 @@ _RELEASE_PR = "https://github.com/owner/repo/pull/100"
 _TIMEOUT = github.GitHubAPIError(1, ("gh", "pr", "create"), "", "HTTP 504: Gateway Timeout")
 
 
-_OPEN_RELEASE_PR = github.OpenPR(
+_OPEN_RELEASE_PR = trust.PRRef(
+    number=100,
     url=_RELEASE_PR,
     title="release: 2.1.0",
-    head_ref="release/2.1.0",
-    base_ref="main",
+    head="release/2.1.0",
     head_oid=_HEAD,
-    cross_repo=False,
+    base="main",
+    author_role=trust.Role.AGENTS,
+    state="OPEN",
 )
 
 
@@ -481,7 +483,7 @@ def _prepare_with_create(
         patch(_MOD + ".git.run"),
         patch(_MOD + "._generate_changelog"),
         patch(_MOD + ".github.create_pr", side_effect=create_effect) as create,
-        patch(_MOD + ".github.open_prs_for_head", side_effect=open_prs) as lookup,
+        patch("vergil_tooling.lib.pr_create.open_trusted_prs", side_effect=open_prs) as lookup,
         patch("vergil_tooling.lib.pr_create.time.sleep") as sleep,
     ):
         prepare(ctx)
@@ -499,7 +501,8 @@ def test_prepare_adopts_the_release_pr_a_failed_create_opened() -> None:
     ctx, create, lookup, sleep = _prepare_with_create([_TIMEOUT], [[_OPEN_RELEASE_PR]])
     assert ctx.release_pr_url == _RELEASE_PR
     create.assert_called_once()
-    lookup.assert_called_once_with("release/2.1.0", base="main")
+    [spec] = lookup.call_args.args
+    assert (spec.head, spec.base) == ("release/2.1.0", "main")
     sleep.assert_not_called()
 
 
@@ -517,7 +520,7 @@ def test_prepare_create_that_really_failed_is_retried_then_raised() -> None:
     create = MagicMock(side_effect=[_TIMEOUT] * attempts)
     with (
         patch(_MOD + ".github.create_pr", create),
-        patch(_MOD + ".github.open_prs_for_head", return_value=[]) as lookup,
+        patch("vergil_tooling.lib.pr_create.open_trusted_prs", return_value=[]) as lookup,
         patch("vergil_tooling.lib.pr_create.time.sleep") as sleep,
         pytest.raises(github.GitHubAPIError, match="Gateway Timeout"),
     ):

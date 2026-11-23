@@ -95,6 +95,8 @@ class Env:
         self.api_states: dict[str, str] = {}
         # The 'gh search issues' rows for a planning item's Planning: line.
         self.search_results: Any = []
+        # The search hits whose body an outsider wrote, as the trust layer reads it.
+        self.untrusted_hits: set[int] = set()
         self.transfer: Any = "https://github.com/org/tool/issues/900"
         self.issue_view: dict[str, object] = {
             "title": "Make the thing faster",
@@ -199,7 +201,18 @@ class Env:
             editor=self.body_editor,
             nodes=nodes,
         )
-        fake = trust_stubs.FakeItems({(f"{ITEM.owner}/{ITEM.repo}", ITEM.number): item})
+        items = {(f"{ITEM.owner}/{ITEM.repo}", ITEM.number): item}
+        # Each search hit's body, as the trust layer reads it again: by the
+        # trusted human, or by an outsider for the numbers in *untrusted_hits*.
+        for hit in self.search_results if isinstance(self.search_results, list) else []:
+            repo = str((hit.get("repository") or {}).get("nameWithOwner") or "")
+            outsider = hit["number"] in self.untrusted_hits
+            author = trust_stubs.OUTSIDER if outsider else trust_stubs.HUMAN
+            items.setdefault(
+                (repo, int(hit["number"])),
+                trust_stubs.item(body=str(hit.get("body") or ""), author=author),
+            )
+        fake = trust_stubs.FakeItems(items)
         return fake(query, **variables)
 
     def _read_output(self, *args: str) -> str:
@@ -686,6 +699,22 @@ def test_route_defer_planning_refuses_open_epic_found_by_planning_line(env: Env)
     ):
         route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
     _assert_untouched(env)
+
+
+def test_route_defer_planning_ignores_an_untrusted_planning_line(
+    env: Env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A Planning: line counts only in a body the trust layer trusts, read again per hit."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    _planning_item(env)
+    env.search_results = [_epic_hit(648, "OPEN")]
+    env.untrusted_hits = {648}
+    route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    err = capsys.readouterr().err
+    assert "skipped untrusted content:" in err
+    assert "648" in err
+    assert "Planning: org/.github#352" not in err
 
 
 def test_route_defer_planning_ignores_hit_without_the_exact_planning_line(env: Env) -> None:

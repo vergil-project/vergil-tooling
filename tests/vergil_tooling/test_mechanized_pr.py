@@ -24,6 +24,7 @@ from vergil_tooling.lib import (
     pr_create,
     pr_merge,
     retry,
+    trust,
 )
 from vergil_tooling.lib.develop_clone import clone_develop
 from vergil_tooling.lib.mechanized_pr import (
@@ -189,6 +190,38 @@ class FakeGitHub:
         if self.wait_failure is not None:
             raise self.wait_failure
 
+    def prs_for_branch(
+        self, repo: str, branch: str, *, state: str
+    ) -> tuple[list[trust.PRRef], list[trust.Skipped]]:
+        """The trust layer's open PRs on *branch*: a fork is skipped, never found."""
+        assert (repo, state) == (REPO, "open")
+        self.calls.append(("trust", "prs_for_branch", branch))
+        found: list[trust.PRRef] = []
+        skipped: list[trust.Skipped] = []
+        for pr in self.prs:
+            if pr.head != branch or pr.state != "open":
+                continue
+            if pr.cross:
+                skipped.append(
+                    trust.Skipped(
+                        repo, pr.number, "pr", pr.owner, "t", "head", trust.CROSS_REPOSITORY
+                    )
+                )
+                continue
+            found.append(
+                trust.PRRef(
+                    number=pr.number,
+                    url=pr.url,
+                    title=pr.title,
+                    head=pr.head,
+                    head_oid=pr.head_oid or "0" * 40,
+                    base="develop",
+                    author_role=trust.Role.AUTOMATION,
+                    state="OPEN",
+                )
+            )
+        return found, skipped
+
     def pr_calls(self) -> list[tuple[str, ...]]:
         return [call for call in self.calls if call[0] == "pr"]
 
@@ -229,6 +262,7 @@ def fake(origin: Path, monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
         monkeypatch.setattr(github, name, getattr(api, name))
     monkeypatch.setattr(github, "graphql", api.graphql)
     monkeypatch.setattr(pr_merge, "wait_until_merged", api.wait_until_merged)
+    monkeypatch.setattr(trust, "prs_for_branch", api.prs_for_branch)
     monkeypatch.delenv("VRG_MECHANIZED_PR_DEADLINE", raising=False)
     return api
 

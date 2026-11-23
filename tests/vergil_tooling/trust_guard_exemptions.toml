@@ -11,6 +11,8 @@
 #                 lib/trust.py.
 # [[exempt]]      A display-only read: its content fields are shown to a
 #                 human and drive no decision.
+# [[pending]]     A read a tracked task moves onto the trust layer; `task`
+#                 names it (owner/repo#N), and the task removes its entry.
 
 # --- registered ------------------------------------------------------------------
 
@@ -33,6 +35,15 @@ merged, labels) and, with closing=True, CLOSING_FIELDS (the body with its edit \
 history, closingIssuesReferences and the connected events)."""
 
 # --- judged ----------------------------------------------------------------------
+
+[[judged]]
+path = "bin/vrg_finalize_pr.py"
+function = "_merged_branches"
+fields = ["headRefName"]
+judge = ["bin/vrg_finalize_pr.py:_confirmed_merged_branch"]
+reason = """Each merged PR's head branch is a candidate. The cleanup names it for \
+deletion only when _confirmed_merged_branch finds the PR itself, by number, among \
+trust.prs_for_branch's merged same-repo PRs with a trusted author on that branch."""
 
 [[judged]]
 path = "bin/vrg_pr_review_comments.py"
@@ -104,6 +115,24 @@ fields = ["body"]
 judge = ["lib/epics.py:_trusted_body"]
 reason = """The search hit's body only picks candidates; a child counts only when its \
 body, read again through trust.read_issue, carries the Parent: line."""
+
+[[judged]]
+path = "lib/finalize_watch.py"
+function = "snapshot"
+fields = ["headRefName"]
+judge = ["lib/finalize_watch.py:confirmed_head"]
+reason = """The snapshot's head branch is a candidate. The watch's develop-PR check and \
+its report take the branch from confirmed_head, which finds the PR itself, by number, \
+among trust.prs_for_branch's same-repo PRs with a trusted author; vrg-pr-await and \
+vrg-repo-status do not read it."""
+
+[[judged]]
+path = "lib/intake_route.py"
+function = "_planning_epic_states"
+fields = ["body"]
+judge = ["lib/intake_route.py:_trusted_planning_body"]
+reason = """The search hit's body only picks candidates; an epic counts only when its \
+body, read again through trust.read_issue, carries the exact Planning: line."""
 
 [[judged]]
 path = "lib/mechanized_pr.py"
@@ -193,3 +222,82 @@ function = "_gather"
 fields = ["headRefName"]
 reason = """vrg-repo-status's open-PR view: the head branch is shown in its row and \
 sets the row's displayed type. The view writes nothing and decides nothing."""
+
+# --- pending ---------------------------------------------------------------------
+
+[[pending]]
+path = "bin/vrg_finalize_pr.py"
+function = "_read_closing_refs"
+fields = ["closingIssuesReferences"]
+task = "vergil-project/vergil-tooling#4987"
+reason = "fixed by vergil-project/vergil-tooling#4987"
+
+[[pending]]
+path = "bin/vrg_pr_workflow.py"
+function = "_check_closing_refs"
+fields = ["closingIssuesReferences"]
+task = "vergil-project/vergil-tooling#4988"
+reason = "fixed by vergil-project/vergil-tooling#4988"
+
+[[pending]]
+path = "bin/vrg_pr_workflow.py"
+function = "_check_pr_fields"
+fields = ["body"]
+task = "vergil-project/vergil-tooling#4988"
+reason = "fixed by vergil-project/vergil-tooling#4988"
+
+[[pending]]
+path = "lib/epic_docs.py"
+function = "read_body"
+fields = ["body"]
+task = "vergil-project/vergil-tooling#4989"
+reason = "fixed by vergil-project/vergil-tooling#4989"
+
+[[pending]]
+path = "lib/in_flight.py"
+function = "_open_pr_issues"
+fields = ["closingIssuesReferences", "headRefName"]
+task = "vergil-project/vergil-tooling#4988"
+reason = "fixed by vergil-project/vergil-tooling#4988"
+
+[[pending]]
+path = "lib/intake_route.py"
+function = "_guard_open_closing_pr"
+fields = ["closedByPullRequestsReferences"]
+task = "vergil-project/vergil-tooling#4987"
+reason = "fixed by vergil-project/vergil-tooling#4987"
+
+[[pending]]
+path = "lib/pending_release.py"
+function = "_prs_by_sha"
+fields = ["headRefName"]
+task = "vergil-project/vergil-tooling#4986"
+reason = "fixed by vergil-project/vergil-tooling#4986"
+
+[[pending]]
+path = "lib/queue_view.py"
+function = "planning_items"
+fields = ["body"]
+task = "vergil-project/vergil-tooling#4989"
+reason = "fixed by vergil-project/vergil-tooling#4989"
+
+[[pending]]
+path = "lib/release/rebuild.py"
+function = "_merged_pr"
+fields = ["--head"]
+task = "vergil-project/vergil-tooling#4986"
+reason = "fixed by vergil-project/vergil-tooling#4986"
+
+[[pending]]
+path = "lib/security_records.py"
+function = "_read_issue"
+fields = ["body"]
+task = "vergil-project/vergil-tooling#4990"
+reason = "fixed by vergil-project/vergil-tooling#4990"
+
+[[pending]]
+path = "lib/security_records.py"
+function = "security_issues"
+fields = ["body"]
+task = "vergil-project/vergil-tooling#4990"
+reason = "fixed by vergil-project/vergil-tooling#4990"

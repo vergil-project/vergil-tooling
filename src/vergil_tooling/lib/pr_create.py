@@ -6,11 +6,15 @@ then refused with "a pull request for branch … already exists", leaving an
 open PR the caller never recorded (#4696). So :func:`create_or_adopt` runs the
 create once per attempt (``github.create_pr(..., retry=False)``) and, after
 every failed attempt, looks for the open PR from the head branch into the
-base. It adopts that PR only when it can show it is the one the caller asked
-for: a same-repo head on that branch, that base, that title, and the head
-commit the caller pushed. Any other open PR fails loudly, naming it. With none
-open, a transient error (:func:`retry.is_retryable`) is retried with the
-shared backoff and any other error is raised as it came.
+base through the trust layer (:func:`open_trusted_prs`, over
+:func:`vergil_tooling.lib.trust.prs_for_branch`), which returns only same-repo
+PRs with a trusted author; a fork PR or an untrusted author's PR on the branch
+is reported on stderr, metadata only, and never adopted. It adopts the PR it
+finds only when it can show it is the one the caller asked for: that title
+and the head commit the caller pushed. Any other trusted open PR fails
+loudly, naming it. With none open, a transient error
+(:func:`retry.is_retryable`) is retried with the shared backoff and any other
+error is raised as it came.
 
 Shared by ``vrg-submit-pr`` and the mechanized, release and dependency-update
 PR creators (#4699).
@@ -24,8 +28,9 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import github, retry
+from vergil_tooling.lib import github, retry, trust
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -58,6 +63,21 @@ class CreatedPR:
     adopted: bool
 
 
+def open_trusted_prs(spec: PRSpec) -> list[trust.PRRef]:
+    """The open same-repo PRs with a trusted author from *spec*'s head into its base.
+
+    Read through :func:`trust.prs_for_branch` in *spec*'s repo (the cwd's when
+    it names none). Each PR the layer skips (a fork, or an author with no
+    role) is reported on stderr, metadata only, and never returned. A failed
+    read raises: :class:`subprocess.CalledProcessError` for the repo lookup,
+    :class:`trust.TrustReadError` for the layer's read.
+    """
+    repo = spec.repo if spec.repo is not None else github.current_repo()
+    prs, skipped = trust.prs_for_branch(repo, spec.head, state="open")
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return [pr for pr in prs if pr.base == spec.base]
+
+
 def adoptable(
     spec: PRSpec, error: subprocess.CalledProcessError, *, opener: str, rerun: str
 ) -> str | None:
@@ -69,11 +89,12 @@ def adoptable(
     how to try again once the PR is closed ("submit again").
     """
     try:
-        if spec.repo is None:
-            prs = github.open_prs_for_head(spec.head, base=spec.base)
-        else:
-            prs = github.open_prs_for_head(spec.head, base=spec.base, repo=spec.repo)
-    except subprocess.CalledProcessError as exc:
+        prs = open_trusted_prs(spec)
+    except (
+        subprocess.CalledProcessError,
+        trust.TrustReadError,
+        TrustedAuthorsNotConfiguredError,
+    ) as exc:
         msg = (
             f"creating the PR failed ({error_text(error)}), and looking for an open PR "
             f"from {spec.head} into {spec.base} failed too: {error_text(exc)}"
@@ -93,15 +114,11 @@ def adoptable(
     mismatches = [
         f"its {what} is {got!r}, not {want!r}"
         for what, got, want in (
-            ("head branch", pr.head_ref, spec.head),
-            ("base", pr.base_ref, spec.base),
             ("title", pr.title, spec.title),
             ("head commit", pr.head_oid, spec.head_oid),
         )
         if got != want
     ]
-    if pr.cross_repo:
-        mismatches.insert(0, "its head is in another repository")
     if not mismatches:
         return pr.url
     msg = (
