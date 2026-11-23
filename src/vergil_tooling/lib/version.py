@@ -81,9 +81,8 @@ class VersionSyncError(Exception):
 class CargoVersionError(Exception):
     """A Cargo manifest's version cannot be read, or a bump of it would break the workspace.
 
-    Deliberately not a :class:`ValueError`: :func:`bump` and :func:`bump_paths`
-    skip a language file on ``(FileNotFoundError, ValueError)``, and this error
-    must pass through them rather than leave ``VERSION`` and ``Cargo.toml``
+    Deliberately not a :class:`ValueError`, so a caller catching one for
+    another purpose never hides it and leaves ``VERSION`` and ``Cargo.toml``
     out of step.
     """
 
@@ -435,8 +434,22 @@ def _read_typescript_file(path: Path, fix: str) -> str:
 
 
 def _write_typescript_file(path: Path, text: str) -> None:
+    _write_version_text(path, text, encoding="utf-8")
+
+
+def _read_version_text(path: Path) -> str:
+    """The text of the version file *path*; :class:`VersionSyncError` naming it otherwise."""
     try:
-        path.write_text(text, encoding="utf-8")
+        return path.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        msg = f"cannot read {path.name}: {exc}. Fix: make it a readable text file"
+        raise VersionSyncError(msg) from exc
+
+
+def _write_version_text(path: Path, text: str, *, encoding: str | None = None) -> None:
+    """Write *text* to the version file *path*; :class:`VersionSyncError` naming it otherwise."""
+    try:
+        path.write_text(text, encoding=encoding)
     except OSError as exc:
         msg = f"cannot write {path.name}: {exc}. Fix: make it writable, then bump again"
         raise VersionSyncError(msg) from exc
@@ -484,16 +497,23 @@ def _check_typescript_bump(repo_root: Path, old: str, new: str) -> None:
     _rewrite_package_lock_version(lock_text, new, lockfile.name)
 
 
-def _discover_version_file(repo_root: Path, language: str) -> Path:
+def _discover_version_file(repo_root: Path, language: str) -> Path | None:
+    """The version file *language* keeps beside VERSION, or ``None`` when it has none.
+
+    A language with a fixed file name gets its path whether or not the file
+    exists. Go's file is found by search, so a Go repo with no
+    ``**/version.go`` has no version file: ``None``, an explicit answer
+    rather than an exception, so no caller needs a handler that would also
+    hide a real failure to read or write the file (#4588). A language this
+    function does not know raises :class:`ValueError`: that is a bug in the
+    caller, never a missing file.
+    """
     if language in _DEFAULT_VERSION_FILES:
         return repo_root / _DEFAULT_VERSION_FILES[language]
 
     if language == "go":
         matches = [m for m in repo_root.glob("**/version.go") if ".git" not in m.parts]
-        if not matches:
-            msg = f"No **/version.go found in {repo_root}"
-            raise FileNotFoundError(msg)
-        return matches[0]
+        return matches[0] if matches else None
 
     msg = f"Unsupported language for version discovery: {language}"
     raise ValueError(msg)
@@ -503,9 +523,8 @@ def _cross_check_language_file(
     repo_root: Path, language: str | None, canonical_version: str
 ) -> None:
     if language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
-        try:
-            lang_file = _discover_version_file(repo_root, language)
-        except FileNotFoundError, ValueError:
+        lang_file = _discover_version_file(repo_root, language)
+        if lang_file is None:
             print(
                 f"warning: {language} version file not found; sync check skipped",
                 file=sys.stderr,
@@ -637,7 +656,7 @@ def _write_version(version_file: Path, language: str, old: str, new: str) -> Non
         _write_typescript_file(version_file, _rewrite_package_json_version(text, old, new))
         return
 
-    text = version_file.read_text()
+    text = _read_version_text(version_file)
 
     if language == "rust":
         text = _rewrite_cargo_version(text, old, new)
@@ -650,7 +669,7 @@ def _write_version(version_file: Path, language: str, old: str, new: str) -> Non
     else:
         text = new + "\n"
 
-    version_file.write_text(text)
+    _write_version_text(version_file, text)
 
 
 def _run_lockfile_maintenance(repo_root: Path, language: str) -> None:
@@ -713,13 +732,12 @@ def bump(repo_root: Path, part: str = "patch") -> str:
     # versioned path dependency, fails with nothing changed.
     if language == "rust":
         cargo_toml = _discover_version_file(repo_root, language)
-        if cargo_toml.is_file():
+        if cargo_toml is not None and cargo_toml.is_file():
             _check_cargo_bump(repo_root, cargo_toml, old_version, new_version)
 
     # Likewise for TypeScript: a missing package.json or lockfile, a missing
     # or mismatched version, or a lockfile with no root version fields fails
-    # before VERSION is written. It never reaches the handler in _write_bump,
-    # which other languages keep (#1165 Task 5).
+    # before VERSION is written.
     if language == "typescript":
         _check_typescript_bump(repo_root, old_version, new_version)
 
@@ -783,12 +801,13 @@ def _write_bump(repo_root: Path, language: str | None, old_version: str, new_ver
     if language == "typescript":
         _write_version(repo_root / _PACKAGE_JSON, language, old_version, new_version)
     elif language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
-        try:
-            lang_file = _discover_version_file(repo_root, language)
-            if lang_file.is_file():
-                _write_version(lang_file, language, old_version, new_version)
-        except FileNotFoundError, ValueError:
-            pass
+        # No version file (a Go repo with no version.go, or a missing
+        # pyproject.toml or Cargo.toml) means VERSION alone is bumped, as
+        # #1165 Task 5 kept. Any failure to read or write a file that does
+        # exist propagates, and bump() restores every saved path (#4588).
+        lang_file = _discover_version_file(repo_root, language)
+        if lang_file is not None and lang_file.is_file():
+            _write_version(lang_file, language, old_version, new_version)
 
     for rel_path, fmt in _SECONDARY_VERSION_FILES.items():
         secondary = repo_root / rel_path
@@ -817,13 +836,10 @@ def bump_paths(repo_root: Path) -> frozenset[str]:
     paths = {VERSION_FILE, *_SECONDARY_VERSION_FILES}
     language = read_config(repo_root).project.primary_language
     if language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
-        try:
-            lang_file = _discover_version_file(repo_root, language)
-        except FileNotFoundError, ValueError:
-            # bump() writes no language file then, so none is listed: a dirty
-            # path outside this set is refused by the caller, never ignored.
-            pass
-        else:
+        lang_file = _discover_version_file(repo_root, language)
+        # With no version file bump() writes none, so none is listed: a dirty
+        # path outside this set is refused by the caller, never ignored.
+        if lang_file is not None:
             paths.add(lang_file.relative_to(repo_root).as_posix())
     if language is not None and language in _LOCKFILES:
         paths.add(_LOCKFILES[language])
