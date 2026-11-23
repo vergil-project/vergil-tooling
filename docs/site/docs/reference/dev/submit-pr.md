@@ -108,8 +108,10 @@ one line with its mark, its duration and what it did; piped, each stage
 prints in full (`--output-format` and `--output-window` choose, as for
 the other progress commands, and are passed on to the chained
 `vrg-finalize-pr` when given). Every step's output goes to
-`.vergil/vrg-submit-pr-<stamp>.log` in the main worktree, and the
-summary points at it:
+`.vergil/vrg-submit-pr-<stamp>.log` in the main worktree. The run's first line of output, and the log's first
+line, name the installed vergil-tooling version
+(`vrg-submit-pr: vergil-tooling <version>`), so a run can be tied to the
+release that made it. The summary points at the log:
 
 ```text
 ✓ feature/4709-submit-pr-rollup  1.8s — PR #123 auto-merge on (squash, pinned to 9f8e7d6c5b4a)

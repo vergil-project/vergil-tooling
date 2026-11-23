@@ -170,6 +170,10 @@ def main(argv: list[str] | None = None) -> int:
         print(_AGENT_REFUSAL, file=sys.stderr)
         return 1
 
+    # The installed version heads every run, so its output (and the run log,
+    # whose first line repeats it) ties the run to a release (issue #4994).
+    print(progress.tooling_version_line(_SUBMIT_COMMAND))
+
     refusal = _flag_refusal(args)
     if refusal is not None:
         print(refusal, file=sys.stderr)
@@ -701,15 +705,24 @@ def _submit_all(selection: list[_Submission], args: argparse.Namespace) -> Submi
     once its summary is printed.
     """
     run = _SubmitRun()
-    rc = progress.run_pipeline(
-        run,
-        [run.stage(sub) for sub in selection],
-        command=_SUBMIT_COMMAND,
-        label=_SUBMIT_COMMAND,
-        args=args,
-        repo_root=git.main_worktree_root(),
-        failure_exit=None,
+    log = progress.RunLog(
+        _SUBMIT_COMMAND,
+        git.main_worktree_root(),
+        header=progress.tooling_version_line(_SUBMIT_COMMAND),
     )
+    try:
+        rc = progress.run_pipeline(
+            run,
+            [run.stage(sub) for sub in selection],
+            command=_SUBMIT_COMMAND,
+            label=_SUBMIT_COMMAND,
+            args=args,
+            repo_root=git.main_worktree_root(),
+            log=log,
+            failure_exit=None,
+        )
+    finally:
+        log.close()
     if run.fatal is not None:
         raise run.fatal
     if rc == _INTERRUPTED:
