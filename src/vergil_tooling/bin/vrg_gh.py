@@ -52,6 +52,10 @@ _ALLOWED: dict[str, set[str]] = {
     # deny-by-default. See issue #2539.
     "release": {"list", "view"},
     "label": {"list", "create"},
+    # `variable` is read-only here: `list` and `get` read a repo's or org's
+    # Actions variables (not secrets). `set` and `delete` are denied by the
+    # action-level allowlist's deny-by-default. See issue #5001.
+    "variable": {"list", "get"},
     # `gh search` is read-only across all its subcommands (code/commits/
     # issues/prs/repos), so it fits the wrapper's no-mutation safety model.
     # Enables cross-org GitHub code search for fleet-wide sweeps (#2505).
@@ -327,24 +331,30 @@ class _ParsedArgs:
     positionals: list[str] = field(default_factory=list)
 
 
-def _parse_args(args: list[str], value_flags: frozenset[str]) -> _ParsedArgs:
-    """Split *args* into ``-R``/``--repo`` values, ``--owner`` values and positionals.
+def _parse_args(
+    args: list[str],
+    value_flags: frozenset[str],
+    owner_flags: frozenset[str] = frozenset({"--owner"}),
+) -> _ParsedArgs:
+    """Split *args* into ``-R``/``--repo`` values, owner values and positionals.
 
     *value_flags* names the flags (long ``--x`` and short ``-x``) that take a
-    value, so a flag's value is never mistaken for a positional. ``-R``/
-    ``--repo`` and ``--owner`` always take one. A flag not in the table is
+    value, so a flag's value is never mistaken for a positional. *owner_flags*
+    names the flags whose value is an owner (``--owner`` by default; a
+    command's ``--org``/``-o`` where it names one). ``-R``/``--repo`` and the
+    owner flags always take a value. A flag not in the table is
     treated as boolean: that errs toward reading a token as a positional, so
     an owner it names is found rather than skipped. Handles separate-value
     (``-R x``), equals (``--repo=x``, ``-R=x``), glued-shorthand (``-Rx``) and
     clustered-shorthand (``-wR x``) forms, and ``--`` ending the flags.
     """
-    value_flags = value_flags | {"-R", "--repo", "--owner"}
+    value_flags = value_flags | {"-R", "--repo"} | owner_flags
     parsed = _ParsedArgs()
 
     def record(flag: str, value: str) -> None:
         if flag in ("-R", "--repo"):
             parsed.repo_values.append(value)
-        elif flag == "--owner":
+        elif flag in owner_flags:
             parsed.owner_values.append(value)
 
     i = 0
@@ -456,6 +466,8 @@ _VALUE_FLAGS: dict[tuple[str, str], frozenset[str]] = {
         "-t",
     ),
     ("pr", "update-branch"): _flags(),
+    ("variable", "list"): _flags(*_OUTPUT_FLAGS, "--env", "-e"),
+    ("variable", "get"): _flags(*_OUTPUT_FLAGS, "--env", "-e"),
     ("repo", "view"): _flags(*_OUTPUT_FLAGS, "--branch", "-b"),
     ("repo", "list"): _flags(
         *_OUTPUT_FLAGS, "--language", "-l", "--limit", "-L", "--topic", "--visibility"
@@ -553,6 +565,12 @@ _VALUE_FLAGS: dict[tuple[str, str], frozenset[str]] = {
         "--updated",
     ),
 }
+# The flags whose value is an owner, per command, where they are not just
+# `--owner`. `gh variable list|get --org/-o <org>` reads an organization's
+# variables, so the token must come from that org's installation (#5001).
+_OWNER_FLAGS: dict[str, frozenset[str]] = {
+    "variable": _flags("--org", "-o"),
+}
 _API_VALUE_FLAGS = _flags(
     "--method",
     "-X",
@@ -648,7 +666,11 @@ def _target_owners(argv: list[str]) -> list[str]:
         candidates: list[str | None] = [match.group(1) if match else None]
     else:
         top, sub = argv[0], argv[1]
-        parsed = _parse_args(argv[2:], _VALUE_FLAGS.get((top, sub), _flags()))
+        parsed = _parse_args(
+            argv[2:],
+            _VALUE_FLAGS.get((top, sub), _flags()),
+            _OWNER_FLAGS.get(top, _flags("--owner")),
+        )
         candidates = _positional_owners(top, sub, parsed.positionals)
         if top != "search" and parsed.repo_values:
             # Outside search, -R/--repo takes one value and the last one wins.

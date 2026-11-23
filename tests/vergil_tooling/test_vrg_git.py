@@ -193,8 +193,6 @@ def test_unrecognized_subcommand(capsys: pytest.CaptureFixture[str]) -> None:
 
 _DENIED = [
     "commit",
-    "config",
-    "remote",
     "gc",
     "prune",
     "filter-branch",
@@ -216,17 +214,199 @@ def test_commit_suggests_vrg_commit(capsys: pytest.CaptureFixture[str]) -> None:
     assert "vrg-commit" in err
 
 
-# -- config is denied (no exact-match exceptions) ----------------------------
+# -- remote, config and tag: read forms allowed, writes refused (#5001) ------
 
 
-def test_config_denied(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["config"]) != 0
-    assert "denied" in capsys.readouterr().err.lower()
+def _assert_forwarded(argv: list[str]) -> None:
+    """*argv* runs as git, unchanged, and its exit status comes back."""
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        rc = main(argv)
+    assert rc == 0
+    assert mock_run.call_args[0][0] == ["git", *argv]
 
 
-def test_config_with_args_denied(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["config", "user.email", "x@example.com"]) != 0
-    assert "denied" in capsys.readouterr().err.lower()
+def _assert_refused(argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
+    """*argv* is refused before git runs, naming the subcommand."""
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        rc = main(argv)
+    assert rc != 0
+    mock_run.assert_not_called()
+    err = capsys.readouterr().err
+    assert argv[0] in err
+    assert "denied" in err.lower()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["-v"],
+        ["--verbose"],
+        ["get-url", "origin"],
+        ["get-url", "--push", "origin"],
+        ["get-url", "--all", "origin"],
+        ["get-url", "--push", "--all", "origin"],
+        ["show", "-n", "origin"],
+        ["show", "-n"],
+        ["show", "-n", "origin", "upstream"],
+    ],
+)
+def test_remote_read_forms_are_allowed(args: list[str]) -> None:
+    _assert_forwarded(["remote", *args])
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["add", "evil", "https://example.com/evil.git"],
+        ["-v", "add", "evil", "https://example.com/evil.git"],
+        ["remove", "origin"],
+        ["rm", "origin"],
+        ["rename", "origin", "upstream"],
+        ["set-url", "origin", "https://example.com/evil.git"],
+        ["set-url", "--add", "origin", "https://example.com/evil.git"],
+        ["set-head", "origin", "--auto"],
+        ["set-branches", "origin", "main"],
+        ["prune", "origin"],
+        ["update"],
+        ["show", "origin"],
+        ["show", "-n", "--verbose", "origin"],
+        ["get-url"],
+        ["get-url", "origin", "upstream"],
+        ["get-url", "--delete", "origin"],
+    ],
+)
+def test_remote_write_forms_are_refused(
+    args: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _assert_refused(["remote", *args], capsys)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--get", "user.email"],
+        ["--get", "remote.origin.url"],
+        ["--get-all", "remote.origin.fetch"],
+        ["--get-regexp", "^remote\\."],
+        ["--get-regexp", "^branch\\.", "develop"],
+        ["--list"],
+        ["-l"],
+        ["--global", "--get", "user.name"],
+        ["--local", "--list", "--show-origin"],
+        ["--list", "--show-scope", "--name-only"],
+        ["--null", "--list"],
+        ["--type=bool", "--get", "core.bare"],
+        ["--bool", "--get", "core.bare"],
+    ],
+)
+def test_config_read_forms_are_allowed(args: list[str]) -> None:
+    _assert_forwarded(["config", *args])
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["user.email"],
+        ["user.email", "x@example.com"],
+        ["--global", "user.email", "x@example.com"],
+        ["--add", "remote.origin.fetch", "+refs/*:refs/*"],
+        ["--unset", "user.email"],
+        ["--unset-all", "remote.origin.fetch"],
+        ["--replace-all", "user.email", "x@example.com"],
+        ["--rename-section", "user", "who"],
+        ["--remove-section", "user"],
+        ["-e"],
+        ["--edit"],
+        ["--get", "user.email", "--add", "x"],
+        ["--get", "user.email", "--unset"],
+        ["--get", "--list"],
+        ["--get"],
+        ["--get", "a", "b", "c"],
+        ["--list", "user.email"],
+        ["--file", "/etc/gitconfig", "--list"],
+        ["set", "user.email", "x@example.com"],
+        ["unset", "user.email"],
+    ],
+)
+def test_config_write_forms_are_refused(
+    args: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _assert_refused(["config", *args], capsys)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["--list"],
+        ["-l"],
+        ["-l", "v2.*"],
+        ["--list", "v2.*", "v3.*"],
+        ["--contains"],
+        ["--contains", "HEAD"],
+        ["--contains=HEAD"],
+        ["--no-contains", "HEAD"],
+        ["--points-at", "HEAD"],
+        ["--points-at=HEAD"],
+        ["--merged", "origin/main"],
+        ["--no-merged=origin/main"],
+        ["-n"],
+        ["-n3", "v2.*"],
+        ["--sort=-v:refname"],
+        ["-l", "--sort=-v:refname", "--format=%(refname:short)", "v*"],
+        ["-l", "-i", "V*"],
+    ],
+)
+def test_tag_list_forms_are_allowed(args: list[str]) -> None:
+    _assert_forwarded(["tag", *args])
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["v9.9.9"],
+        ["v9.9.9", "HEAD"],
+        ["-a", "v9.9.9", "-m", "release"],
+        ["-s", "v9.9.9"],
+        ["-u", "key", "v9.9.9"],
+        ["-m", "msg", "v9.9.9"],
+        ["-F", "notes.txt", "v9.9.9"],
+        ["-f", "v1.0"],
+        ["--force", "v1.0"],
+        ["-d", "v1.0"],
+        ["--delete", "v1.0"],
+        ["-l", "-d", "v1.0"],
+        ["--contains", "HEAD", "-d"],
+        ["-v", "v1.0"],
+        ["-e", "v1.0"],
+        ["-ld", "v1.0"],
+        ["--sort=refname", "v9.9.9"],
+        ["-l", "--", "v1.0"],
+    ],
+)
+def test_tag_write_forms_are_refused(args: list[str], capsys: pytest.CaptureFixture[str]) -> None:
+    _assert_refused(["tag", *args], capsys)
+
+
+def test_read_forms_pass_through_git_exit_status() -> None:
+    """A missing key makes `git config --get` exit 1; the wrapper must not mask it."""
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 1
+        rc = main(["config", "--get", "no.such-key"])
+    assert rc == 1
+
+
+def test_help_lists_remote_config_and_tag_read_forms(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["--help"]) == 0
+    out = capsys.readouterr().out
+    assert "remote get-url" in out
+    assert "--get-regexp" in out
+    assert "--points-at" in out
 
 
 # -- reflog: read-only forms allowed, mutating sub-ops denied -----------------

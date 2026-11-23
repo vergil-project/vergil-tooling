@@ -74,6 +74,8 @@ _ALLOWED_PAIRS: list[tuple[str, str]] = [
     ("release", "view"),
     ("label", "list"),
     ("label", "create"),
+    ("variable", "list"),
+    ("variable", "get"),
     ("search", "code"),
     ("search", "commits"),
     ("search", "issues"),
@@ -149,6 +151,26 @@ def test_release_write_actions_rejected(sub: str, capsys: pytest.CaptureFixture[
     assert main(["release", sub]) != 0
     err = capsys.readouterr().err
     assert sub in err
+
+
+# -- variable (read-only) ----------------------------------------------------
+
+
+def test_variable_is_read_only() -> None:
+    # Guard against widening `variable` beyond its read actions (issue #5001).
+    from vergil_tooling.bin.vrg_gh import _ALLOWED, _ALLOWED_AUDIT
+
+    assert _ALLOWED["variable"] == {"list", "get"}
+    assert "variable" not in _ALLOWED_AUDIT
+
+
+@pytest.mark.parametrize("sub", ["set", "delete"])
+def test_variable_write_actions_rejected(sub: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        rc = main(["variable", sub, "NAME", "--body", "x"])
+    assert rc != 0
+    mock_run.assert_not_called()
+    assert f"variable {sub} is not recognized" in capsys.readouterr().err
 
 
 # -- unrecognized subcommands ------------------------------------------------
@@ -523,6 +545,12 @@ class TestTargetOwnerInstallationSelection:
             ["search", "repos", "user:other-owner"],
             ["search", "issues", "(org:other-owner OR org:Other-Owner)"],
             ["search", "code", "secrets: inherit", "--owner", "other-owner"],
+            # variable: -R/--repo, and the --org/-o an org's variables are read from
+            ["variable", "list", "--repo", "other-owner/repo"],
+            ["variable", "list", "--org", "other-owner"],
+            ["variable", "list", "-o", "other-owner", "--json", "name"],
+            ["variable", "get", "NAME", "--org=other-owner"],
+            ["variable", "get", "-e", "prod", "NAME", "-R", "other-owner/repo"],
             # api: an owner-scoped endpoint
             ["api", "repos/other-owner/repo/actions/runs"],
             ["api", "/orgs/other-owner/repos", "--paginate"],
@@ -555,6 +583,10 @@ class TestTargetOwnerInstallationSelection:
             ["repo", "view", "--branch", "other-owner/branch"],
             ["search", "prs", "--json", "repository", "--jq", "{org: .repository}"],
             ["search", "issues", "bug", "-repo:other-owner/r"],
+            ["variable", "list"],
+            ["variable", "get", "other-owner"],
+            # --org names an owner only for variable, not for other commands
+            ["repo", "list", "--org=other-owner"],
             ["api", "repos/{owner}/{repo}/pulls"],
             ["api", "user"],
             ["api", "https://api.github.com/rate_limit"],
