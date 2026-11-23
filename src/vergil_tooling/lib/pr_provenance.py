@@ -16,7 +16,16 @@ stranger, a deleted account, a role's login of the wrong account type) is
 **untrusted**, never human. An untrusted identity may not author, edit,
 close, reopen or merge the PR or turn auto-merge on; its approval counts for
 nothing and is reported on stderr, metadata only, so no outsider's review
-can stop a submit (GHSA-q6hx-8c85-9f56). An action is either allowed or a
+can stop a submit (GHSA-q6hx-8c85-9f56).
+
+The user identity may open, turn auto-merge on for and merge **its own** PR,
+one whose author is the same identity as the action's actor (epic
+vergil-project/.github#1384, its spec's §4.3). On anyone else's PR (the
+human's, automation's, another agent's, an untrusted or deleted author's)
+every action it is forbidden stays a violation, and its approval is one on
+every PR, its own included. Submit never edits or renames a PR after
+creating it, so ``edited`` stays forbidden on its own PR too. An action is
+either allowed or a
 violation, and a violation always fails: there is no override
 (vergil-tooling#4695). It is either a real problem to investigate or a bug
 in this classifier to fix.
@@ -91,7 +100,8 @@ def classify(identity: trust.Identity, *, org: str, authors: TrustedAuthors) -> 
 # ``_EVENT_MAP``).
 _AUTO_MERGE_ENABLED = "auto_merge_enabled"
 
-# Actions an agent role must never perform on a PR it is merging. Every other
+# Actions a role must never perform on a PR it is merging, bar the user
+# identity's own-PR actions (``_USER_OWN_PR``). Every other
 # action is allowed: the check has two outcomes, allowed or a violation, and a
 # violation always fails (vergil-tooling#4695). The audit identity is not in
 # use yet; its entry is kept so its forbidden actions are enforced from the
@@ -110,14 +120,47 @@ _FORBIDDEN: dict[Role, frozenset[str]] = {
     ),
 }
 
+# The forbidden actions the user identity may still perform on its own PR:
+# open it, turn auto-merge on, and merge it (the ``merged_now`` path of
+# ``lib/auto_merge.py``). Submit never renames a PR, so ``edited`` is not
+# among them; nor are closing, reopening or approving.
+_USER_OWN_PR = frozenset({"created", "merged", _AUTO_MERGE_ENABLED})
+
 
 @dataclass(frozen=True)
 class Action:
-    """A single attributed action on the PR."""
+    """A single attributed action on the PR.
+
+    *identity* is the actor as GitHub named it; ``None`` (not known) never
+    makes the PR the actor's own.
+    """
 
     login: str
     role: Role
     action: str
+    identity: trust.Identity | None = None
+
+
+def _same_identity(a: trust.Identity, b: trust.Identity) -> bool:
+    """Whether *a* and *b* are one account: the same login and account type.
+
+    A deleted account (no login) is never the same as anything.
+    """
+    if a.login is None or b.login is None:
+        return False
+    return trust.normalise_login(a.login) == trust.normalise_login(b.login) and (
+        a.typename == b.typename
+    )
+
+
+def _own_pr(act: Action, author: trust.Identity | None) -> bool:
+    """Whether *act* is the user identity acting on the PR it authored."""
+    return (
+        act.role is Role.USER
+        and act.identity is not None
+        and author is not None
+        and _same_identity(act.identity, author)
+    )
 
 
 def _identity(user: object, *, typename_key: str = "type") -> trust.Identity:
@@ -180,8 +223,8 @@ def _map_event(name: str) -> str | None:
     return mapped
 
 
-def _collect_actions(pr: str) -> list[Action]:
-    """Collect the attributed actions on *pr* from GitHub, each with its role.
+def _collect_actions(pr: str) -> tuple[trust.Identity, list[Action]]:
+    """The author of *pr*, and its attributed actions from GitHub, each with its role.
 
     The repo and number come from the PR itself, not the current directory's
     remote: ``vrg-finalize-pr <PR URL>`` run from a checkout of another repo
@@ -195,21 +238,20 @@ def _collect_actions(pr: str) -> list[Action]:
 
     def add(identity: trust.Identity, action: str) -> None:
         actions.append(
-            Action(_shown(identity), classify(identity, org=org, authors=authors), action)
+            Action(_shown(identity), classify(identity, org=org, authors=authors), action, identity)
         )
 
     # ``gh pr view`` names the author's account type by ``is_bot``; an App
     # author's login is ``app/<slug>``, which the trust layer normalises.
     viewed = github.read_json("pr", "view", pr, "--json", "author")
     raw_author = viewed.get("author") if isinstance(viewed, dict) else None
-    author = cast("Mapping[str, object]", raw_author) if isinstance(raw_author, dict) else {}
-    add(
-        trust.Identity(
-            cast("str", author["login"]) if isinstance(author.get("login"), str) else None,
-            "Bot" if author.get("is_bot") is True else "User",
-        ),
-        "created",
+    author_data = cast("Mapping[str, object]", raw_author) if isinstance(raw_author, dict) else {}
+    login = author_data.get("login")
+    author = trust.Identity(
+        login if isinstance(login, str) and login else None,
+        "Bot" if author_data.get("is_bot") is True else "User",
     )
+    add(author, "created")
 
     # Both lists are paginated (issue #3162): a single ``gh api`` call returns
     # only the first 30 items, so a forbidden action past page 1 was never
@@ -238,7 +280,7 @@ def _collect_actions(pr: str) -> list[Action]:
                 )
             )
             continue
-        actions.append(Action(_shown(reviewer), role, "approved"))
+        actions.append(Action(_shown(reviewer), role, "approved", reviewer))
     trust.report_skipped(skipped, stream=sys.stderr)
 
     timeline = cast(
@@ -251,18 +293,27 @@ def _collect_actions(pr: str) -> list[Action]:
             continue
         add(_identity(event.get("actor")), mapped)
 
-    return actions
+    return author, actions
 
 
-def evaluate(actions: list[Action]) -> ProvenanceResult:
-    """The violations among *actions*: each action its role forbids. Pure."""
+def evaluate(actions: list[Action], *, author: trust.Identity | None = None) -> ProvenanceResult:
+    """The violations among *actions* on a PR *author* opened. Pure.
+
+    Each action its role forbids is a violation, except the user identity's
+    opening, auto-merging and merging of its own PR. With no *author*, no
+    PR is anyone's own.
+    """
     result = ProvenanceResult()
     for act in actions:
-        if act.action in _FORBIDDEN.get(act.role, frozenset()):
-            result.violations.append(act)
+        if act.action not in _FORBIDDEN.get(act.role, frozenset()):
+            continue
+        if act.action in _USER_OWN_PR and _own_pr(act, author):
+            continue
+        result.violations.append(act)
     return result
 
 
 def check_pr(pr: str) -> ProvenanceResult:
     """Verify PR provenance by fetching and evaluating its action history."""
-    return evaluate(_collect_actions(pr))
+    author, actions = _collect_actions(pr)
+    return evaluate(actions, author=author)

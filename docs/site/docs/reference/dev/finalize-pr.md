@@ -166,7 +166,9 @@ trusted-authors configuration, never from its name alone: the human may
 do anything, an agent may not author, edit, close, reopen or merge the
 PR or turn auto-merge on (the user identity may not approve it either),
 and an identity with no role is **untrusted**, with the same limits as
-the audit identity. An untrusted approval counts for nothing: it is
+the audit identity. The one exception is the user identity's **own** PR,
+one whose author is that same identity: it may author it, turn
+auto-merge on and merge it, but never edit, close, reopen or approve it. An untrusted approval counts for nothing: it is
 reported on stderr, metadata only, and is no violation. What it does
 depends on whether the PR has merged:
 
