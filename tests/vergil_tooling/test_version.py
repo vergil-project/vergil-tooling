@@ -10,6 +10,7 @@ import pytest
 
 from vergil_tooling.lib.version import (
     CargoVersionError,
+    VersionFileError,
     VersionSyncError,
     bump,
     bump_paths,
@@ -580,15 +581,90 @@ def test_discover_unsupported_language(tmp_path: Path) -> None:
 def test_read_version_go_bad_format() -> None:
     from vergil_tooling.lib.version import _read_version
 
-    with pytest.raises(ValueError, match="No Version"):
+    with pytest.raises(
+        VersionFileError, match=r'^version\.go has no Version = "\.\.\." line\. Fix: '
+    ):
         _read_version("no version here", "go")
 
 
 def test_read_version_claude_plugin_missing_key() -> None:
     from vergil_tooling.lib.version import _read_version
 
-    with pytest.raises(ValueError, match="No 'version' key"):
+    with pytest.raises(
+        VersionFileError, match=r"^\.claude-plugin/plugin\.json has no version\. Fix: "
+    ):
         _read_version('{"name": "example"}', "claude-plugin")
+
+
+def test_version_file_error_is_not_a_value_or_key_error() -> None:
+    """The entry point catches it; a bare ValueError or KeyError stays a bug."""
+    assert not issubclass(VersionFileError, (ValueError, KeyError))
+
+
+@pytest.mark.parametrize(
+    ("text", "match"),
+    [
+        ('[tool.x]\nname = "a"\n', r"^pyproject\.toml has no \[project\] table\. Fix: "),
+        ('[project]\nname = "a"\n', r"^pyproject\.toml has no \[project\] version\. Fix: "),
+        (
+            '[project]\nname = "a"\nversion = 1\n',
+            r"^pyproject\.toml has a \[project\] version that is not a string\. Fix: ",
+        ),
+        ("[project\n", r"^pyproject\.toml is not valid TOML: .*Fix: correct the TOML$"),
+    ],
+)
+def test_show_malformed_pyproject_raises_version_file_error(
+    tmp_path: Path, text: str, match: str
+) -> None:
+    _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    (tmp_path / "pyproject.toml").write_text(text)
+    with pytest.raises(VersionFileError, match=match):
+        show(tmp_path)
+
+
+def test_show_go_without_version_line_names_the_file(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "go")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "version.go").write_text("package pkg\n")
+    with pytest.raises(VersionFileError, match=r"^pkg/version\.go has no Version"):
+        show(tmp_path)
+
+
+def test_show_invalid_cargo_toml_raises_version_file_error(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "rust")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    (tmp_path / "Cargo.toml").write_text("[package\n")
+    with pytest.raises(VersionFileError, match=r"^Cargo\.toml is not valid TOML: .*Fix: "):
+        show(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("text", "match"),
+    [
+        ('{"name": ', r"^\.claude-plugin/plugin\.json is not valid JSON: .*Fix: correct the JSON$"),
+        ('["1.0.0"]', r"^\.claude-plugin/plugin\.json is not a JSON object\. Fix: "),
+        ('{"version": 1}', r"^\.claude-plugin/plugin\.json has a version that is not a string\."),
+    ],
+)
+def test_show_malformed_plugin_json_raises_version_file_error(
+    tmp_path: Path, text: str, match: str
+) -> None:
+    _write_toml(tmp_path)
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(text)
+    with pytest.raises(VersionFileError, match=match):
+        show(tmp_path)
+
+
+def test_show_unreadable_pyproject_fails(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    (tmp_path / "pyproject.toml").write_bytes(b'[project]\nname = "\xff"\nversion = "1.0.0"\n')
+    with pytest.raises(VersionSyncError, match=r"^cannot read pyproject\.toml: "):
+        show(tmp_path)
 
 
 # -- _write_version fallback ---------------------------------------------------

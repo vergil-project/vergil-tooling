@@ -87,6 +87,19 @@ class CargoVersionError(Exception):
     """
 
 
+class VersionFileError(Exception):
+    """A version file holds no version that can be read (#5019).
+
+    Each expected problem with ``pyproject.toml``, ``version.go``,
+    ``Cargo.toml`` or ``.claude-plugin/plugin.json`` (a file that does not
+    parse, no version where one belongs) is raised as this error, naming the
+    file and the fix, so the ``vrg-version`` entry point can print it as one
+    line. Deliberately not a :class:`ValueError` or :class:`KeyError`, which
+    the entry point never catches: one of those is a bug and keeps its
+    traceback.
+    """
+
+
 def cargo_version_table(data: dict[str, Any]) -> tuple[str, ...]:
     """The TOML table path of the table holding a parsed ``Cargo.toml``'s version.
 
@@ -555,7 +568,11 @@ def _cross_check_language_file(
                         raise VersionSyncError(str(exc)) from exc
                     lang_version = _manifest_version(manifest, canonical_version)
                 else:
-                    lang_version = _read_version(lang_file.read_text(), language)
+                    lang_version = _read_version(
+                        _read_version_text(lang_file),
+                        language,
+                        lang_file.relative_to(repo_root).as_posix(),
+                    )
                 if lang_version != canonical_version:
                     lang_rel = lang_file.relative_to(repo_root).as_posix()
                     msg = _version_mismatch(lang_rel, canonical_version, lang_version, language)
@@ -564,34 +581,86 @@ def _cross_check_language_file(
     for rel_path, fmt in _SECONDARY_VERSION_FILES.items():
         secondary = repo_root / rel_path
         if secondary.is_file():
-            sec_version = _read_version(secondary.read_text(), fmt)
+            sec_version = _read_version(_read_version_text(secondary), fmt, rel_path)
             if sec_version != canonical_version:
                 msg = f"VERSION contains {canonical_version} but {rel_path} contains {sec_version}"
                 raise VersionSyncError(msg)
 
 
-def _read_version(text: str, language: str) -> str:
+def _parse_version_toml(text: str, name: str) -> dict[str, Any]:
+    """The TOML *text* of the version file *name*; :class:`VersionFileError` otherwise."""
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        msg = f"{name} is not valid TOML: {exc}. Fix: correct the TOML"
+        raise VersionFileError(msg) from exc
+
+
+def _read_python_version(text: str, name: str) -> str:
+    """The ``[project].version`` of the ``pyproject.toml`` *text*, called *name*."""
+    project = _parse_version_toml(text, name).get("project")
+    if not isinstance(project, dict):
+        problem = "no [project] table"
+    elif "version" not in project:
+        problem = "no [project] version"
+    elif not isinstance(project["version"], str):
+        problem = "a [project] version that is not a string"
+    else:
+        return project["version"]
+    msg = (
+        f"{name} has {problem}. Fix: set [project] version to the VERSION file's "
+        'version, as version = "<version>"'
+    )
+    raise VersionFileError(msg)
+
+
+def _read_plugin_version(text: str, name: str) -> str:
+    """The ``version`` of the ``plugin.json`` *text*, called *name*."""
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        msg = f"{name} is not valid JSON: {exc}. Fix: correct the JSON"
+        raise VersionFileError(msg) from exc
+    if not isinstance(data, dict):
+        msg = f"{name} is not a JSON object. Fix: make its top level an object"
+        raise VersionFileError(msg)
+    version = data.get("version")
+    if not isinstance(version, str):
+        problem = "no version" if version is None else "a version that is not a string"
+        msg = (
+            f"{name} has {problem}. Fix: set its version to the VERSION file's "
+            'version, as "version": "<version>"'
+        )
+        raise VersionFileError(msg)
+    return version
+
+
+def _read_version(text: str, language: str, name: str | None = None) -> str:
+    """The version in *text*, a version file of *language* called *name*.
+
+    *name* names the file in an error; it defaults to the language's usual
+    file name. A version file that does not parse or holds no version raises
+    :class:`VersionFileError`, or for Cargo.toml's version table
+    :class:`CargoVersionError` (#5019).
+    """
     if language == "python":
-        data = tomllib.loads(text)
-        return str(data["project"]["version"])
+        return _read_python_version(text, name or "pyproject.toml")
 
     if language == "rust":
-        return _cargo_version(tomllib.loads(text))
+        return _cargo_version(_parse_version_toml(text, name or "Cargo.toml"))
 
     if language == "go":
         m = _GO_VERSION_RE.search(text)
         if not m:
-            msg = 'No Version = "..." found'
-            raise ValueError(msg)
+            msg = (
+                f'{name or "version.go"} has no Version = "..." line. '
+                'Fix: declare the version in it as Version = "<version>"'
+            )
+            raise VersionFileError(msg)
         return m.group(1)
 
     if language == "claude-plugin":
-        data = json.loads(text)
-        version = data.get("version")
-        if version is None:
-            msg = "No 'version' key in plugin.json"
-            raise ValueError(msg)
-        return str(version)
+        return _read_plugin_version(text, name or ".claude-plugin/plugin.json")
 
     return text.strip()
 
