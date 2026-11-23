@@ -23,9 +23,11 @@ from vergil_tooling.bin.validate_common import (
     _find_workflow_files,
     _find_yaml_files,
     _has_ansible_content,
+    _own_docs_site,
     main,
 )
 from vergil_tooling.lib import dependabot
+from vergil_tooling.lib.repo_init import RepoInitContext, render_readme
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -92,6 +94,19 @@ def _no_workflow_listing() -> Iterator[None]:
     with patch(
         "vergil_tooling.bin.validate_common._find_workflow_files",
         side_effect=_listing,
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _no_own_docs_site() -> Iterator[None]:
+    """Name no own docs site: reading ``origin`` needs a real repository,
+    which most tests' ``tmp_path`` is not. The lookup itself is tested
+    against real repos below, through the name imported at module load,
+    which this patch does not replace (#4612)."""
+    with patch(
+        "vergil_tooling.bin.validate_common._own_docs_site",
+        return_value=None,
     ):
         yield
 
@@ -1726,3 +1741,96 @@ def test_main_docs_links_failure_stops_run(tmp_path: Path) -> None:
         assert main() == 1
     tool_names = [call[0][0][0] for call in mock_run.call_args_list]
     assert tool_names == ["markdownlint"]
+
+
+# -- the repo's own docs site (issue #4612) ----------------------------------
+
+
+def _new_repo_readme(name: str) -> str:
+    """The README ``repo_init`` writes for a new repo that publishes docs."""
+    return render_readme(RepoInitContext(org="vergil-project", name=name, publish_docs=True))
+
+
+def test_docs_links_new_repo_readme_passes_with_own_site(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A new repo's generated README links to its own site, which no release
+    of the fixed lists names yet: the check passes once it knows the site."""
+    _md(tmp_path, "README.md", _new_repo_readme("vergil-new-repo"))
+    assert _check_docs_links(tmp_path) == 1
+    assert "vergil-new-repo, which is not a published Vergil docs site" in capsys.readouterr().err
+    assert _check_docs_links(tmp_path, own_site="vergil-new-repo") == 0
+
+
+def _repo_with_origin(path: Path, url: str | None) -> Path:
+    repo = _git_repo(path, "")
+    if url is not None:
+        subprocess.run(
+            ["git", "-C", str(repo), "remote", "add", "origin", url],
+            check=True,
+            capture_output=True,
+        )
+    return repo
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/vergil-project/vergil-new-repo.git",
+        "git@github.com:vergil-project/vergil-new-repo.git",
+        "https://github.com/Vergil-Project/vergil-new-repo",
+    ],
+)
+def test_own_docs_site_is_repo_name(tmp_path: Path, url: str) -> None:
+    repo = _repo_with_origin(tmp_path / "clone", url)
+    assert _own_docs_site(repo, publishes_docs=True) == "vergil-new-repo"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        None,
+        "https://github.com/other-org/vergil-new-repo.git",
+        "https://gitlab.com/vergil-project/vergil-new-repo.git",
+    ],
+)
+def test_own_docs_site_none_off_the_org(tmp_path: Path, url: str | None) -> None:
+    repo = _repo_with_origin(tmp_path / "clone", url)
+    assert _own_docs_site(repo, publishes_docs=True) is None
+
+
+def test_own_docs_site_none_without_docs(tmp_path: Path) -> None:
+    repo = _repo_with_origin(
+        tmp_path / "clone", "https://github.com/vergil-project/vergil-new-repo.git"
+    )
+    assert _own_docs_site(repo, publishes_docs=False) is None
+
+
+def test_own_docs_site_git_failure_raises(tmp_path: Path) -> None:
+    with pytest.raises(subprocess.CalledProcessError):
+        _own_docs_site(tmp_path, publishes_docs=True)
+
+
+@pytest.mark.parametrize(("docs", "expected"), [("true", True), ("false", False)])
+def test_main_passes_own_site_to_docs_links(tmp_path: Path, docs: str, expected: bool) -> None:
+    """``main`` looks the site up from ``[publish].docs`` and hands it to the
+    check, so a new repo's README passes from its first run."""
+    toml = _MINIMAL_TOML + f"\n[publish]\nrelease = false\ndocs = {docs}\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    _md(tmp_path, "README.md", _new_repo_readme("vergil-new-repo"))
+    with (
+        patch("vergil_tooling.bin.validate_common.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.validate_common.repo_profile.main", return_value=0),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common._own_docs_site",
+            side_effect=lambda _root, *, publishes_docs: (
+                "vergil-new-repo" if publishes_docs else None
+            ),
+        ) as own_site,
+    ):
+        assert main() == (0 if expected else 1)
+    own_site.assert_called_once_with(tmp_path, publishes_docs=expected)

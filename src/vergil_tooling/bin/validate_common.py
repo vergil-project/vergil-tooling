@@ -35,7 +35,7 @@ from pathlib import Path
 import yaml
 
 from vergil_tooling.bin import repo_profile
-from vergil_tooling.lib import dependabot, doc_links, git
+from vergil_tooling.lib import dependabot, doc_links, git, github
 from vergil_tooling.lib.config import read_config
 
 
@@ -68,7 +68,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         if result.returncode != 0:
             return result.returncode
 
-    rc = _check_docs_links(repo_root)
+    own_site = _own_docs_site(repo_root, publishes_docs=cfg.publish.docs)
+    rc = _check_docs_links(repo_root, own_site=own_site)
     if rc != 0:
         return rc
 
@@ -181,7 +182,26 @@ def _check_dependabot_limit(repo_root: Path) -> int:
     return 1 if violations else 0
 
 
-def _check_docs_links(repo_root: Path) -> int:
+def _own_docs_site(repo_root: Path, *, publishes_docs: bool) -> str | None:
+    """Return the checking repository's own site on the org's Pages host, or
+    ``None`` when it has none (issue #4612).
+
+    The site is the repository's name when ``[publish].docs`` is true and
+    ``origin`` is a repository of :data:`doc_links.PAGES_OWNER` on github.com.
+    A repository that publishes no docs, has no ``origin`` or lives elsewhere
+    has no site there, so the check keeps to its fixed lists. A git failure
+    raises rather than checking less.
+    """
+    if not publishes_docs or "origin" not in git.remote_names(repo_root):
+        return None
+    slug = github.github_remote_repo(git.remote_url("origin", repo_root))
+    if slug is None:
+        return None
+    owner, name = slug.split("/", 1)
+    return name if owner.lower() == doc_links.PAGES_OWNER else None
+
+
+def _check_docs_links(repo_root: Path, *, own_site: str | None = None) -> int:
     """Refuse links to a mike-versioned Vergil docs site that lack a version
     segment (issue #3831), and links to a site on the org's Pages host that
     is not published at all (issue #4599).
@@ -194,8 +214,9 @@ def _check_docs_links(repo_root: Path) -> int:
     scope is markdownlint's (``docs/site/**/*.md``, ``README.md``,
     ``epics/**/*.md``) less ``epics/archive/``, and independent of
     ``[markdownlint].ignore``: a file left out of the lint still publishes its
-    links. The sites are the fixed lists in :mod:`vergil_tooling.lib.doc_links`,
-    so no network is used. Each hit is named by path and line, in line order.
+    links. The sites are the fixed lists in :mod:`vergil_tooling.lib.doc_links`
+    plus *own_site*, the repository's own site (:func:`_own_docs_site`), so no
+    network is used. Each hit is named by path and line, in line order.
     """
     archive = repo_root / "epics" / "archive"
     markdown_files = [
@@ -220,11 +241,11 @@ def _check_docs_links(repo_root: Path) -> int:
                 f"{url} has no version segment and returns 404; "
                 f"use {doc_links.versioned_form(url)}",
             )
-            for line, url in doc_links.unversioned_links(text)
+            for line, url in doc_links.unversioned_links(text, own_site=own_site)
         ]
         hits += [
             (line, f"{url} links to {site}, which is not a published Vergil docs site")
-            for line, site, url in doc_links.unpublished_links(text)
+            for line, site, url in doc_links.unpublished_links(text, own_site=own_site)
         ]
         # Stable sort: two hits on one line keep each kind's text order.
         for line, message in sorted(hits, key=lambda hit: hit[0]):

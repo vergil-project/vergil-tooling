@@ -5,7 +5,10 @@ Each mike-versioned site serves its pages under a version segment
 no version segment returns 404; only the bare site root redirects. A link to
 a site name the org does not publish at all returns 404 whatever its path.
 This module finds both kinds of link in markdown text, against fixed lists
-of the published sites, so the check needs no network.
+of the published sites, so the check needs no network. The checking
+repository's own site, when it publishes docs, is published too (issue
+#4612): ``repo_init`` writes a README that links to it before a release of
+this module can list it.
 """
 
 from __future__ import annotations
@@ -39,6 +42,9 @@ UNVERSIONED_SITES: frozenset[str] = frozenset({"docs", "packages"})
 #: name returns 404.
 PUBLISHED_SITES: frozenset[str] = VERSIONED_SITES | UNVERSIONED_SITES
 
+#: The GitHub owner whose Pages host these sites are on.
+PAGES_OWNER = "vergil-project"
+
 #: The version aliases mike publishes besides numbered versions.
 VERSION_ALIASES: frozenset[str] = frozenset({"latest", "dev"})
 
@@ -54,19 +60,22 @@ _SITE_URL = re.compile(
 )
 
 
-def unversioned_links(text: str) -> list[tuple[int, str]]:
+def unversioned_links(text: str, *, own_site: str | None = None) -> list[tuple[int, str]]:
     """Return ``(line, url)`` for every link in *text* to a versioned site
     whose first path segment is not a version, in text order.
 
-    ``line`` is 1-based. A bare site root (with or without a trailing slash,
-    query or fragment) is allowed, since mike redirects it to the default
-    version. A site not in :data:`VERSIONED_SITES` is never flagged here:
+    *own_site*, the checking repository's own site, is versioned too:
+    ``repo_init`` creates every site under mike. ``line`` is 1-based. A bare
+    site root (with or without a trailing slash, query or fragment) is
+    allowed, since mike redirects it to the default version. A site neither
+    in :data:`VERSIONED_SITES` nor *own_site* is never flagged here:
     :func:`unpublished_links` flags one that is not published at all.
     """
+    versioned = (VERSIONED_SITES | {own_site}) if own_site else VERSIONED_SITES
     hits: list[tuple[int, str]] = []
     for number, line in enumerate(text.splitlines(), start=1):
         for match in _SITE_URL.finditer(line):
-            if match.group("site") not in VERSIONED_SITES:
+            if match.group("site") not in versioned:
                 continue
             rest = match.group("rest")
             if not rest.startswith("/"):
@@ -79,9 +88,10 @@ def unversioned_links(text: str) -> list[tuple[int, str]]:
     return hits
 
 
-def unpublished_links(text: str) -> list[tuple[int, str, str]]:
+def unpublished_links(text: str, *, own_site: str | None = None) -> list[tuple[int, str, str]]:
     """Return ``(line, site, url)`` for every link in *text* to a site on the
-    org's Pages host that is not in :data:`PUBLISHED_SITES`, in text order.
+    org's Pages host that is neither in :data:`PUBLISHED_SITES` nor
+    *own_site*, the checking repository's own site, in text order.
 
     ``line`` is 1-based. The site name is compared exactly, as the Pages path
     is. A link to the host alone, with no site name, is never flagged. When
@@ -89,6 +99,7 @@ def unpublished_links(text: str) -> list[tuple[int, str, str]]:
     not part of the name (as GitHub's autolinks treat them), so
     ``…github.io/vergil-tooling.`` is the published site.
     """
+    published = (PUBLISHED_SITES | {own_site}) if own_site else PUBLISHED_SITES
     hits: list[tuple[int, str, str]] = []
     for number, line in enumerate(text.splitlines(), start=1):
         for match in _SITE_URL.finditer(line):
@@ -97,7 +108,7 @@ def unpublished_links(text: str) -> list[tuple[int, str, str]]:
             if not match.group("rest"):
                 site = site.rstrip(".")
                 url = url.rstrip(".")
-            if site and site not in PUBLISHED_SITES:
+            if site and site not in published:
                 hits.append((number, site, url))
     return hits
 
