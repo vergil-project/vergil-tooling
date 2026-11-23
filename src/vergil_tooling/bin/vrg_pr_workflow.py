@@ -57,8 +57,10 @@ none, and 2 on any other failure.
 a push to it (epic vergil-project/.github#1218, spec §6.8): its body's
 ``Closes`` refs against GitHub's closing references, and one commit per issue
 from the PR's base to ``--head`` (or the PR's head). It never runs the hard
-rules, writes nothing and makes no freeze check. It exits 0 when the PR passes
-or is not a batch PR, and 1 otherwise.
+rules, writes nothing and makes no freeze check. The body is read only through
+the trust layer (epic vergil-project/.github#1467): one it does not trust fails
+the check, batch or not, since its ``Closes`` lines are what the check goes by.
+It exits 0 when the PR passes or is not a batch PR, and 1 otherwise.
 """
 
 from __future__ import annotations
@@ -210,7 +212,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Read the PR's body and base. A batch PR (more than one Closes line) "
             "must close exactly the issues GitHub lists as its closing references, "
             "and its branch must hold one commit per issue, in the body's order, "
-            "since the base. The hard rules are not run. Exits 0 when the PR "
+            "since the base. The hard rules are not run. The body is read through "
+            "the trust layer, and an untrusted body fails the check, batch or not. "
+            "Exits 0 when the PR "
             "passes or is not a batch PR, 1 with the rule's message otherwise. It "
             "only reads, so it runs on a submitted, frozen branch, and it never "
             "moves the branch's remote-tracking ref, so a later leased push still "
@@ -855,24 +859,61 @@ _SHA_RE = re.compile(r"[0-9a-f]{40}")
 
 
 def _check_pr_fields(pr: str) -> tuple[str, str, str]:
-    """The PR's body, base branch and head commit; a failed or malformed read refuses."""
+    """The PR's body, base branch and head commit; a failed or malformed read refuses.
+
+    The base and head are read with ``gh pr view``, the body only through the
+    trust layer (:func:`_check_body`, epic vergil-project/.github#1467).
+    """
     try:
-        info = github.read_json("pr", "view", pr, "--json", "body,baseRefName,headRefOid")
+        repo, number = github.pr_repo_and_number(pr, "batch-check")
+        info = github.read_json("pr", "view", pr, "--json", "baseRefName,headRefOid")
     except github.MissingGitHubTokenError:
         raise
     except (subprocess.CalledProcessError, OSError, ValueError) as exc:
         raise WorkflowError(f"batch-check: cannot read PR {pr}: {error_text(exc)}") from exc
     fields = info if isinstance(info, dict) else {}
-    body, base, head = fields.get("body"), fields.get("baseRefName"), fields.get("headRefOid")
-    if not isinstance(body, str) or not isinstance(base, str) or not base:
-        raise WorkflowError(f"batch-check: cannot read PR {pr}: no body or base in {info!r}")
+    base, head = fields.get("baseRefName"), fields.get("headRefOid")
+    if not isinstance(base, str) or not base:
+        raise WorkflowError(f"batch-check: cannot read PR {pr}: no base in {info!r}")
     if not isinstance(head, str) or _SHA_RE.fullmatch(head) is None:
         raise WorkflowError(f"batch-check: cannot read PR {pr}: no head commit in {info!r}")
-    return body, base, head
+    return _check_body(pr, repo, number), base, head
+
+
+def _check_body(pr: str, repo: str, number: int) -> str:
+    """The PR's body, read through the trust layer; an untrusted body refuses.
+
+    The body's ``Closes`` lines say whether the PR is a batch and set the
+    issue order its commits are held to, so a body the layer does not trust
+    (its author or any editor holds no role) leaves nothing to check by: the
+    check fails, naming the untrusted identity by metadata only, rather than
+    pass the PR as "not a batch".
+    """
+    try:
+        content = trust.read_issue(repo, number, require_body=True)
+    except trust.UntrustedContentError as exc:
+        raise WorkflowError(
+            f"batch-check: PR {pr}: its body is untrusted, so its Closes lines cannot be "
+            f"checked: {exc.item.describe()} ({exc.item.cause}). The human decides next."
+        ) from exc
+    except (trust.TrustReadError, TrustedAuthorsNotConfiguredError, ValueError) as exc:
+        raise WorkflowError(
+            f"batch-check: cannot read the body of PR {pr}: {error_text(exc)}"
+        ) from exc
+    if content.body is None:
+        # require_body raises on an untrusted body; a missing one is never read as empty.
+        raise WorkflowError(f"batch-check: cannot read the body of PR {pr}: no trusted body")
+    return content.body
 
 
 def _check_closing_refs(pr: str, body: str) -> str:
-    """Hold the body's ``Closes`` refs to GitHub's closing references; return the PR's repo."""
+    """Hold the body's ``Closes`` refs to GitHub's closing references; return the PR's repo.
+
+    *body* is the trusted body :func:`_check_body` read. GitHub's list is
+    only compared with it, and any difference refuses: a reference the body
+    does not close (a hand link, by anyone) or a ``Closes`` line GitHub does
+    not list.
+    """
     try:
         refs = github.pr_closing_references(pr)
     except github.MissingGitHubTokenError:

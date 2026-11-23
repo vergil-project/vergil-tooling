@@ -287,8 +287,12 @@ takes `--issue` as `N`, `#N` or `owner/repo#N` for this clone's repo:
 
 `batch-check --pr <url> [--head <sha>]` checks a submitted batch PR before a
 push to it, from a clone of the PR's repo (pr-watch runs it on the head it is
-about to push). It reads the PR's body and base. A PR whose body has one
-`Closes` line or none is not a batch PR and passes. A batch PR's `Closes` refs
+about to push). It reads the PR's base and head, and its body only through the
+trust layer: a body whose author or any editor is not a trusted author fails
+the check, batch PR or not, with a one-line error naming that identity by
+metadata only, since the body's `Closes` lines are what the check goes by. A
+PR whose trusted body has one `Closes` line or none is not a batch PR and
+passes. A batch PR's `Closes` refs
 must be exactly the issues GitHub lists as its closing references, and its
 branch must hold one commit per issue, in the body's order, from the base as
 fetched now to `--head` (default: the PR's head, fetched by its SHA so the
@@ -1236,7 +1240,10 @@ when any in-flight mark holds (it outranks blocked), else **blocked** while any
 listed.
 
 A task's **marks**, in this order, are: `open-pr` (an open PR closes it, or has
-a `feature/<N>-` head branch); `report-ready` (a relay ref
+a `feature/<N>-` head branch; only a same-repo PR with a trusted author counts,
+and it closes the task only by a closing line of a trusted body or a hand link
+by trusted actors, so a fork's or an outsider's PR marks nothing and is
+reported on stderr as skipped untrusted content, metadata only); `report-ready` (a relay ref
 `refs/vergil/pr-workflow/<branch>` whose payload has status `ready` and names
 it; a batch's payload names every member); `branch` (a `feature/<N>-` branch on
 the remote); `worktree` (a `feature/<N>-` branch or worktree in the repo's main

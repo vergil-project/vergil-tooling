@@ -29,6 +29,7 @@ from vergil_tooling.lib.pr_workflow import engine, freeze
 from vergil_tooling.lib.pr_workflow.batch_marker import Marker, read_marker, write_markers
 from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -758,22 +759,40 @@ def _push_pr_branch(origin: Path, *subjects: str) -> str:
 
 @pytest.fixture()
 def github_pr(origin: Path) -> Iterator[dict[str, MagicMock]]:
-    """GitHub's view of PR 50 (a batch of #10 and #11) and this clone's repo."""
+    """GitHub's view of PR 50 (a batch of #10 and #11) and this clone's repo.
+
+    The body comes only from the trust layer's read (``read_issue``).
+    """
     with (
+        patch(f"{_WF}.github.pr_repo_and_number", return_value=("acme/tools", 50)) as number,
         patch(f"{_WF}.github.read_json") as read_json,
+        patch(f"{_WF}.trust.read_issue") as read_issue,
         patch(f"{_WF}.github.pr_closing_references", return_value=_closing(10, 11)) as closing,
         patch(f"{_WF}._clone_repo", return_value="acme/tools"),
         patch(RULES) as rules,
     ):
-        yield {"read_json": read_json, "closing": closing, "rules": rules}
+        yield {
+            "number": number,
+            "read_json": read_json,
+            "read_issue": read_issue,
+            "closing": closing,
+            "rules": rules,
+        }
+
+
+def _body(text: str) -> trust.IssueContent:
+    return trust.IssueContent(
+        body=text,
+        body_role=trust.Role.AGENTS,
+        author_role=trust.Role.AGENTS,
+        comments=(),
+        skipped=(),
+    )
 
 
 def _pr_is(github_pr: dict[str, MagicMock], head: str, body: str = _BATCH_BODY) -> None:
-    github_pr["read_json"].return_value = {
-        "body": body,
-        "baseRefName": "develop",
-        "headRefOid": head,
-    }
+    github_pr["read_json"].return_value = {"baseRefName": "develop", "headRefOid": head}
+    github_pr["read_issue"].return_value = _body(body)
 
 
 def test_batch_check_passes_a_batch_pr_at_its_head(
@@ -784,8 +803,9 @@ def test_batch_check_passes_a_batch_pr_at_its_head(
     assert _run("batch-check", "--pr", _PR) == 0
     assert f"Batch check passed for PR {_PR} at {head}" in capsys.readouterr().out
     github_pr["read_json"].assert_called_once_with(
-        "pr", "view", _PR, "--json", "body,baseRefName,headRefOid"
+        "pr", "view", _PR, "--json", "baseRefName,headRefOid"
     )
+    github_pr["read_issue"].assert_called_once_with("acme/tools", 50, require_body=True)
     github_pr["rules"].assert_not_called()
     # The head was fetched by its SHA: the PR branch's tracking ref never moved.
     branch_ref = subprocess.run(
@@ -907,7 +927,7 @@ def test_batch_check_refuses_a_failed_pr_read(
 
 @pytest.mark.parametrize(
     "response",
-    [{}, {"body": "x", "baseRefName": "develop"}, {"body": "x", "headRefOid": "a" * 40}, []],
+    [{}, {"baseRefName": "develop"}, {"headRefOid": "a" * 40}, {"baseRefName": ""}, []],
 )
 def test_batch_check_refuses_a_malformed_pr_read(
     github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str], response: object
@@ -915,6 +935,52 @@ def test_batch_check_refuses_a_malformed_pr_read(
     github_pr["read_json"].return_value = response
     assert _run("batch-check", "--pr", _PR) == 1
     assert f"batch-check: cannot read PR {_PR}" in capsys.readouterr().err
+
+
+_MALLORY = trust.Skipped(
+    "acme/tools", 50, "edit", "mallory", "2026-11-20T00:00:00Z", "body", "untrusted"
+)
+
+
+@pytest.mark.parametrize("body", [_BATCH_BODY, "Closes #10\n"])
+def test_batch_check_fails_on_an_untrusted_body(
+    github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str], body: str
+) -> None:
+    """Batch or not: an untrusted body leaves nothing to check by, so the check fails."""
+    _pr_is(github_pr, "a" * 40, body=body)
+    github_pr["read_issue"].side_effect = trust.UntrustedContentError(
+        _MALLORY, "the pr body is untrusted"
+    )
+    assert _run("batch-check", "--pr", _PR) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    err = captured.err.strip()
+    assert err == (
+        f"error: batch-check: PR {_PR}: its body is untrusted, so its Closes lines cannot be "
+        "checked: acme/tools#50 edit mallory at 2026-11-20T00:00:00Z on body (untrusted). "
+        "The human decides next."
+    )
+    github_pr["closing"].assert_not_called()
+    github_pr["rules"].assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        trust.TrustReadError("read_issue acme/tools#50", "the GraphQL call failed: HTTP 502"),
+        TrustedAuthorsNotConfiguredError("no trusted authors configured"),
+    ],
+)
+def test_batch_check_refuses_a_body_it_cannot_judge(
+    github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str], failure: Exception
+) -> None:
+    _pr_is(github_pr, "a" * 40)
+    github_pr["read_issue"].side_effect = failure
+    assert _run("batch-check", "--pr", _PR) == 1
+    err = capsys.readouterr().err
+    assert f"error: batch-check: cannot read the body of PR {_PR}: {failure}" in err
+    assert len(err.strip().splitlines()) == 1
+    github_pr["closing"].assert_not_called()
 
 
 def test_batch_check_refuses_a_failed_closing_refs_read(
@@ -926,7 +992,7 @@ def test_batch_check_refuses_a_failed_closing_refs_read(
     assert "cannot read the closing issue references" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("read", ["read_json", "closing"])
+@pytest.mark.parametrize("read", ["number", "read_json", "read_issue", "closing"])
 def test_batch_check_lets_a_missing_token_reach_the_cli(
     github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str], read: str
 ) -> None:
@@ -969,10 +1035,7 @@ def test_batch_check_refuses_an_option_as_head(
 def test_batch_check_refuses_a_base_it_cannot_fetch(
     origin: Path, github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    github_pr["read_json"].return_value = {
-        "body": _BATCH_BODY,
-        "baseRefName": "no-such-base",
-        "headRefOid": "a" * 40,
-    }
+    _pr_is(github_pr, "a" * 40)
+    github_pr["read_json"].return_value = {"baseRefName": "no-such-base", "headRefOid": "a" * 40}
     assert _run("batch-check", "--pr", _PR) == 1
     assert "cannot fetch PR" in capsys.readouterr().err

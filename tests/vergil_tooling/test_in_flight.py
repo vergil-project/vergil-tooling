@@ -10,9 +10,22 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import epics, github, in_flight, live_branches, queue_view, trust
+from vergil_tooling.lib import (
+    epics,
+    github,
+    in_flight,
+    live_branches,
+    pending_release,
+    queue_view,
+    trust,
+)
 from vergil_tooling.lib.epics import ChildState, IssueRef
 from vergil_tooling.lib.in_flight import InFlightError, RepoSignals
+from vergil_tooling.lib.trusted_authors import (
+    OrgConfig,
+    TrustedAuthors,
+    TrustedAuthorsNotConfiguredError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -41,12 +54,100 @@ def _payload(issue: str, status: str = "ready", issues: list[str] | None = None)
     return data
 
 
-class _FakeRemote:
-    """``github.read_json`` and ``git.read_output`` stand-ins for one repo's remote.
+_TRUSTED = TrustedAuthors(
+    human=("human",), agents=("agent",), orgs={"org": OrgConfig("org-automation")}
+)
+_CREATED = "2026-11-01T09:30:00Z"
+_TYPES = {"human": "User", "agent": "Bot", "org-automation": "Bot", "mallory": "User"}
 
-    *relays* maps a relay ref's branch to its payload (a dict, or raw bytes for
-    a malformed blob); each gets the commit SHA ``c-<branch>``.
+
+def _actor(who: str | None) -> dict[str, str] | None:
+    return None if who is None else {"__typename": _TYPES[who], "login": who}
+
+
+def _issue(number: int, repo: str = _REPO) -> dict[str, Any]:
+    return {"number": number, "repository": {"nameWithOwner": repo}}
+
+
+def _pr(
+    number: int,
+    head: str = "fix-thing",
+    *,
+    closes: tuple[int | tuple[str, int], ...] = (),
+    body: str | None = None,
+    author: str | None = "human",
+    edits: tuple[str, ...] = (),
+    fork: bool = False,
+    linked: tuple[tuple[str, int], ...] = (),
+) -> dict[str, Any]:
+    """An open PR node as the in-flight query reads it; *closes* are in the body by default.
+
+    *linked* holds each hand link as ``(linker, issue)``: a connected event and
+    a closing reference.
     """
+    refs = [_issue(c) if isinstance(c, int) else _issue(c[1], c[0]) for c in closes]
+    refs += [_issue(issue) for _, issue in linked]
+    if body is None:
+        body = "\n".join(
+            f"Closes #{c}" if isinstance(c, int) else f"Closes {c[0]}#{c[1]}" for c in closes
+        )
+    return {
+        "number": number,
+        "headRefName": head,
+        "isCrossRepository": fork,
+        "headRepositoryOwner": {"login": "someone" if fork else "org"},
+        "headRepository": {"name": "tool"},
+        "repository": {"nameWithOwner": _REPO},
+        "author": _actor(author),
+        "editor": _actor(edits[-1]) if edits else None,
+        "body": body,
+        "createdAt": _CREATED,
+        "lastEditedAt": _CREATED if edits else None,
+        "userContentEdits": {
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+            "nodes": [{"editedAt": _CREATED, "editor": _actor(e)} for e in edits],
+        },
+        "closingIssuesReferences": {"totalCount": len(refs), "nodes": refs},
+        "timelineItems": {
+            "filteredCount": len(linked),
+            "nodes": [
+                {"actor": _actor(who), "createdAt": _CREATED, "subject": _issue(n), "source": {}}
+                for who, n in linked
+            ],
+        },
+    }
+
+
+def _page(nodes: list[Any], cursor: str | None = None) -> dict[str, Any]:
+    return {
+        "repository": {
+            "pullRequests": {
+                "pageInfo": {"hasNextPage": cursor is not None, "endCursor": cursor},
+                "nodes": nodes,
+            }
+        }
+    }
+
+
+@pytest.fixture(autouse=True)
+def _authors() -> Iterator[None]:
+    """The trusted authors, and a repo with no open PR unless a test serves some."""
+    with (
+        patch(f"{_MOD}.load_trusted_authors", return_value=_TRUSTED),
+        patch(f"{_MOD}.github.graphql", return_value=_page([])),
+    ):
+        yield
+
+
+class _FakeRemote:
+    """``github.graphql``, ``github.read_json`` and ``git.read_output`` stand-ins for a remote.
+
+    *prs* are the open PR nodes, served one page of :data:`_PER_PAGE` at a
+    time. *relays* maps a relay ref's branch to its payload (a dict, or raw
+    bytes for a malformed blob); each gets the commit SHA ``c-<branch>``.
+    """
+
+    _PER_PAGE = 2
 
     def __init__(
         self,
@@ -60,11 +161,18 @@ class _FakeRemote:
         self.relays = relays or {}
         self.gh_calls: list[tuple[str, ...]] = []
         self.git_calls: list[tuple[str, ...]] = []
+        self.graphql_calls: list[dict[str, object]] = []
+
+    def graphql(self, query: str, **variables: object) -> dict[str, Any]:
+        assert query == in_flight._OPEN_PRS_QUERY
+        self.graphql_calls.append(variables)
+        start = int(str(variables.get("after", "0")))
+        end = start + self._PER_PAGE
+        more = end < len(self.prs)
+        return _page(self.prs[start:end], str(end) if more else None)
 
     def gh(self, *args: str) -> Any:
         self.gh_calls.append(args)
-        if args[:2] == ("pr", "list"):
-            return self.prs
         assert args[0] == "api"
         path = args[1].removeprefix(f"repos/{_REPO}/git/")
         kind, _, key = path.partition("/")
@@ -90,6 +198,7 @@ class _FakeRemote:
 
 def _signals(remote: _FakeRemote, clone: Path, *, local: tuple[str, ...] = ()) -> RepoSignals:
     with (
+        patch(f"{_MOD}.github.graphql", side_effect=remote.graphql),
         patch(f"{_MOD}.github.read_json", side_effect=remote.gh),
         patch(f"{_MOD}.git.read_output", side_effect=remote.git),
         patch(f"{_MOD}.git.local_branches", return_value=set(local)),
@@ -101,41 +210,100 @@ def _marks(issue: int, remote: _FakeRemote, clone: Path, **kw: Any) -> tuple[str
     return in_flight.marks_for(issue, _signals(remote, clone, **kw))
 
 
-def _closing(number: int, owner: str = "org", name: str = "tool") -> dict[str, Any]:
-    return {"number": number, "repository": {"name": name, "owner": {"login": owner}}}
-
-
 # -- the marks ---------------------------------------------------------------------
 
 
 def test_in_flight_open_pr_closing_the_issue(tmp_path: Path) -> None:
-    prs = [{"number": 90, "headRefName": "fix-thing", "closingIssuesReferences": [_closing(7)]}]
-    remote = _FakeRemote(prs=prs)
+    remote = _FakeRemote(prs=[_pr(90, closes=(7,))])
     assert _marks(7, remote, tmp_path) == ("open-pr",)
-    listing = next(c for c in remote.gh_calls if c[:2] == ("pr", "list"))
     assert _marks(8, remote, tmp_path) == ()
-    assert listing == (
-        "pr",
-        "list",
-        "--repo",
-        _REPO,
-        "--state",
-        "open",
-        "--limit",
-        str(epics.LISTING_LIMIT),
-        "--json",
-        "number,headRefName,closingIssuesReferences",
-    )
+    assert remote.graphql_calls[0] == {"owner": "org", "name": "tool"}
+
+
+def test_in_flight_open_pr_query_reads_what_the_judgement_needs() -> None:
+    query = in_flight._OPEN_PRS_QUERY
+    assert "pullRequests(states: [OPEN]" in query
+    assert trust.SAME_REPO_FIELDS in query
+    assert pending_release.CLOSING_FIELDS in query
+    assert "headRefName" in query
+
+
+def test_in_flight_open_prs_read_every_page(tmp_path: Path) -> None:
+    prs = [_pr(90 + n, f"feature/{n}-x") for n in range(5)]
+    remote = _FakeRemote(prs=prs)
+    signals = _signals(remote, tmp_path)
+    assert signals.open_pr_issues == frozenset(range(5))
+    assert [call.get("after") for call in remote.graphql_calls] == [None, "2", "4"]
 
 
 def test_in_flight_open_pr_closing_another_repos_issue_marks_nothing(tmp_path: Path) -> None:
-    prs = [{"number": 90, "headRefName": "x", "closingIssuesReferences": [_closing(7, "o", "n")]}]
+    prs = [_pr(90, closes=(("o/n", 7),))]
     assert _marks(7, _FakeRemote(prs=prs), tmp_path) == ()
 
 
 def test_in_flight_open_pr_on_feature_branch(tmp_path: Path) -> None:
-    prs = [{"number": 90, "headRefName": "feature/7-x", "closingIssuesReferences": []}]
-    assert _marks(7, _FakeRemote(prs=prs), tmp_path) == ("open-pr",)
+    assert _marks(7, _FakeRemote(prs=[_pr(90, "feature/7-x")]), tmp_path) == ("open-pr",)
+
+
+def test_in_flight_open_pr_by_trusted_agent_counts(tmp_path: Path) -> None:
+    prs = [_pr(90, "feature/7-x", author="agent"), _pr(91, closes=(8,), author="org-automation")]
+    signals = _signals(_FakeRemote(prs=prs), tmp_path)
+    assert signals.open_pr_issues == frozenset({7, 8})
+
+
+@pytest.mark.parametrize(
+    ("pr", "cause"),
+    [
+        (_pr(90, "feature/7-x", closes=(7,), fork=True, author="human"), "cross-repository"),
+        (_pr(90, "feature/7-x", closes=(7,), author="mallory"), "untrusted"),
+        (_pr(90, "feature/7-x", closes=(7,), author=None), "deleted"),
+    ],
+)
+def test_in_flight_fork_or_outsider_pr_marks_nothing(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    pr: dict[str, Any],
+    cause: str,
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    assert _marks(7, _FakeRemote(prs=[pr]), tmp_path) == ()
+    err = capsys.readouterr().err
+    assert f"skipped untrusted content: {_REPO}#90 pr" in err
+    assert f"({cause})" in err
+
+
+def test_in_flight_skipped_pr_is_counted_only_under_actions(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    prs = [_pr(90, "feature/7-x", author="mallory"), _pr(91, "feature/8-x", fork=True)]
+    assert _marks(7, _FakeRemote(prs=prs), tmp_path) == ()
+    err = capsys.readouterr().err
+    assert "skipped 2 untrusted item(s) (cross-repository: 1, untrusted: 1)" in err
+    assert "mallory" not in err
+
+
+def test_in_flight_untrusted_body_keeps_only_the_head_mark(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    prs = [_pr(90, "feature/7-x", closes=(8,), edits=("mallory",))]
+    signals = _signals(_FakeRemote(prs=prs), tmp_path)
+    # The trusted author's head still marks 7; the closing line of a body an
+    # outsider edited marks nothing.
+    assert signals.open_pr_issues == frozenset({7})
+    assert f"{_REPO}#90 edit mallory" in capsys.readouterr().err
+
+
+def test_in_flight_hand_link_counts_only_by_a_trusted_linker(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    prs = [_pr(90, linked=(("human", 7), ("mallory", 8)))]
+    signals = _signals(_FakeRemote(prs=prs), tmp_path)
+    assert signals.open_pr_issues == frozenset({7})
+    assert "link to #8" in capsys.readouterr().err
 
 
 def test_in_flight_report_ready_relay_ref(tmp_path: Path) -> None:
@@ -258,7 +426,7 @@ def test_in_flight_batch_marker_counts(tmp_path: Path) -> None:
 
 
 def test_in_flight_prefix_does_not_overmatch(tmp_path: Path) -> None:
-    prs = [{"number": 90, "headRefName": "feature/12-x", "closingIssuesReferences": []}]
+    prs = [_pr(90, "feature/12-x")]
     remote = _FakeRemote(prs=prs, branches=("feature/12-x", "feature/1x"))
     assert _marks(1, remote, tmp_path, local=("feature/12-x", "feature/1")) == ()
     assert _marks(12, remote, tmp_path) == ("open-pr", "branch")
@@ -268,7 +436,7 @@ def test_in_flight_marks_in_order(tmp_path: Path) -> None:
     (_state_dir(tmp_path, 7) / "merge-review").mkdir()
     (tmp_path / "build" / ".vergil-state" / "issue-implement" / "7" / "batch").write_text("{}")
     remote = _FakeRemote(
-        prs=[{"number": 90, "headRefName": "feature/7-x", "closingIssuesReferences": []}],
+        prs=[_pr(90, "feature/7-x")],
         branches=("feature/7-x",),
         relays={"feature/7-x": _payload("7")},
     )
@@ -292,9 +460,9 @@ def test_disposition_ranks_handed_off_over_local() -> None:
 
 
 def test_in_flight_read_failure_raises(tmp_path: Path) -> None:
-    failure = github.GitHubAPIError(1, ["gh", "pr", "list"], "", "HTTP 502")
+    failure = github.GitHubAPIError(1, ["gh", "api", "graphql"], "", "HTTP 502")
     with (
-        patch(f"{_MOD}.github.read_json", side_effect=failure),
+        patch(f"{_MOD}.github.graphql", side_effect=failure),
         pytest.raises(InFlightError, match=r"org/tool: cannot read its open PRs: .*502"),
     ):
         in_flight.repo_signals(_REPO, tmp_path)
@@ -338,28 +506,53 @@ def test_in_flight_local_branch_failure_raises(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("prs", "match"),
+    ("page", "match"),
     [
-        ({"message": "x"}, "unexpected 'gh pr list' response"),
-        (["row"], "unexpected 'gh pr list' row"),
+        ({"repository": None}, "cannot read its open PRs"),
+        (_page([{"number": 90}]), "cannot read its open PRs: 'author'"),
+        (_page(["row"]), "cannot read its open PRs"),
         (
-            [{"number": 90, "headRefName": "x", "closingIssuesReferences": [{"number": 7}]}],
-            "PR #90 has a malformed closing issue reference",
+            {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": True}, "nodes": []}}},
+            "cannot read its open PRs",
         ),
+        (_page([], cursor=""), "next page but no cursor"),
+        (_page([{**_pr(90), "isCrossRepository": None}]), "no isCrossRepository flag"),
+        (_page([{**_pr(90), "author": {"login": "human"}}]), "cannot read its open PRs"),
     ],
 )
-def test_in_flight_malformed_pr_list_raises(tmp_path: Path, prs: Any, match: str) -> None:
-    with pytest.raises(InFlightError, match=match):
-        _signals(_FakeRemote(prs=prs), tmp_path)
+def test_in_flight_malformed_pr_page_raises(tmp_path: Path, page: Any, match: str) -> None:
+    with (
+        patch(f"{_MOD}.github.graphql", return_value=page),
+        pytest.raises(InFlightError, match=match),
+    ):
+        in_flight.repo_signals(_REPO, tmp_path)
 
 
-def test_in_flight_truncated_pr_list_raises(tmp_path: Path) -> None:
-    prs = [
-        {"number": n, "headRefName": "x", "closingIssuesReferences": []}
-        for n in range(epics.LISTING_LIMIT)
-    ]
-    with pytest.raises(InFlightError, match="limit"):
-        _signals(_FakeRemote(prs=prs), tmp_path)
+def test_in_flight_truncated_closing_refs_raise(tmp_path: Path) -> None:
+    pr = _pr(90, closes=(7,))
+    pr["closingIssuesReferences"]["totalCount"] = 30
+    with pytest.raises(InFlightError, match="closingIssuesReferences of #90 truncated"):
+        _signals(_FakeRemote(prs=[pr]), tmp_path)
+
+
+def test_in_flight_unconfigured_authors_raise(tmp_path: Path) -> None:
+    with (
+        patch(
+            f"{_MOD}.load_trusted_authors",
+            side_effect=TrustedAuthorsNotConfiguredError("no trusted authors"),
+        ),
+        pytest.raises(InFlightError, match="cannot read its open PRs: no trusted authors"),
+    ):
+        in_flight.repo_signals(_REPO, tmp_path)
+
+
+def test_in_flight_missing_token_propagates(tmp_path: Path) -> None:
+    failure = github.MissingGitHubTokenError(1, ["gh"], stderr="GH_TOKEN")
+    with (
+        patch(f"{_MOD}.github.graphql", side_effect=failure),
+        pytest.raises(github.MissingGitHubTokenError),
+    ):
+        in_flight.repo_signals(_REPO, tmp_path)
 
 
 # -- find_clones -----------------------------------------------------------------------

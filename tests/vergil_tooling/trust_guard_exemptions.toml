@@ -55,6 +55,16 @@ thread, URL). A comment is kept only when trust.read_reviews trusts it, and its 
 body is the layer's, never the listing's."""
 
 [[judged]]
+path = "bin/vrg_pr_workflow.py"
+function = "_check_closing_refs"
+fields = ["closingIssuesReferences"]
+judge = ["bin/vrg_pr_workflow.py:_check_body"]
+reason = """batch-check only compares GitHub's closing references with the Closes \
+lines of the PR body that _check_body read through trust.read_issue (an untrusted \
+body fails the check before this read). Any difference refuses; the references \
+never pass the check, pick an issue or set the commit order."""
+
+[[judged]]
 path = "bin/vrg_release_record.py"
 function = "_closing_prs"
 fields = ["body", "closedByPullRequestsReferences", "closingIssuesReferences", "timelineItems", "userContentEdits"]
@@ -125,6 +135,17 @@ reason = """The snapshot's head branch is a candidate. The watch's develop-PR ch
 its report take the branch from confirmed_head, which finds the PR itself, by number, \
 among trust.prs_for_branch's same-repo PRs with a trusted author; vrg-pr-await and \
 vrg-repo-status do not read it."""
+
+[[judged]]
+path = "lib/in_flight.py"
+function = "_open_prs"
+fields = ["body", "closingIssuesReferences", "headRefName", "timelineItems", "userContentEdits"]
+judge = ["lib/in_flight.py:_counted_pr_issues", "lib/pending_release.py:trusted_closing_refs"]
+reason = """Each open PR marks a task in flight only through _counted_pr_issues: a PR \
+counts only when trust.is_same_repo puts its head in the repo and trust.judge_identity \
+trusts its author. Its feature/<N>- head then marks issue N, and only the closing \
+references trusted_closing_refs counts (a closing line of a body trust.judge_body \
+trusts, or a hand link whose every linker holds a role) mark the rest."""
 
 [[judged]]
 path = "lib/intake_route.py"
@@ -233,32 +254,11 @@ task = "vergil-project/vergil-tooling#4987"
 reason = "fixed by vergil-project/vergil-tooling#4987"
 
 [[pending]]
-path = "bin/vrg_pr_workflow.py"
-function = "_check_closing_refs"
-fields = ["closingIssuesReferences"]
-task = "vergil-project/vergil-tooling#4988"
-reason = "fixed by vergil-project/vergil-tooling#4988"
-
-[[pending]]
-path = "bin/vrg_pr_workflow.py"
-function = "_check_pr_fields"
-fields = ["body"]
-task = "vergil-project/vergil-tooling#4988"
-reason = "fixed by vergil-project/vergil-tooling#4988"
-
-[[pending]]
 path = "lib/epic_docs.py"
 function = "read_body"
 fields = ["body"]
 task = "vergil-project/vergil-tooling#4989"
 reason = "fixed by vergil-project/vergil-tooling#4989"
-
-[[pending]]
-path = "lib/in_flight.py"
-function = "_open_pr_issues"
-fields = ["closingIssuesReferences", "headRefName"]
-task = "vergil-project/vergil-tooling#4988"
-reason = "fixed by vergil-project/vergil-tooling#4988"
 
 [[pending]]
 path = "lib/intake_route.py"
