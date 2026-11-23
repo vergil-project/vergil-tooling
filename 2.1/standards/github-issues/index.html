@@ -1472,6 +1472,8 @@
       
         
       
+        
+      
     
     
     
@@ -1524,6 +1526,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.337/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.337
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19484,7 +19514,15 @@ closed by hand once the problem is dealt with. It is homed in
 <code>vrg-issue-create</code> and <code>vrg-epic-move</code> accept the <code>operations</code> sentinel, and
 <code>vrg-epic-create --standing operations --org &lt;org&gt;</code> ensures the epic without
 filing a task. Its closed children drain into per-quarter
-<code>Archive (operations): &lt;org&gt;</code> archives like the other standing kinds.</p>
+<code>Archive (operations): &lt;org&gt;</code> archives like the other standing kinds.
+An ops issue is not PR-workable: <code>vrg-pr-workflow report-ready</code> and
+<code>vrg-submit-pr</code> refuse it as they refuse a queue item, and a code fix found
+while working one is filed as a follow-up task in its own repo. The daily
+sweep's drift close (<code>vrg-epic-audit --close</code>) never closes an ops issue that
+a merged PR names, and <code>vrg-intake-route</code> never routes one out of the
+operations epic. An intake item may be routed <em>into</em> it as a one-off
+(<code>--epic operations</code>), so an operational problem captured by hand reaches the
+queue through intake review.</p>
 <h3 id="proxy-epics">Proxy epics<a class="headerlink" href="#proxy-epics" title="Permanent link">&para;</a></h3>
 <p>A <strong>proxy epic</strong> is a same-org umbrella for the tasks that a development epic
 in another org (its <strong>primary</strong>) has in this org. It is titled
@@ -19608,8 +19646,8 @@ ad-hoc epic ends up holding only its still-open children.</p>
   closed children to the archives; it stays the one perpetual umbrella per repo.</li>
 <li><strong>Only canonical per-repo ad-hoc epics are archived.</strong> Both the batch drain and
   the on-close event path key on the repo named in the <code>Epic (ad hoc): &lt;repo&gt;</code>
-  title, so a closed child always lands in <em>its own repo's</em> quarter archive — even
-  for a public repo whose ad-hoc epic is homed centrally in <code>.github</code>. A
+  title, so a closed child always lands in <em>its own repo's</em> quarter archive, even
+  though every ad-hoc epic is homed centrally in <code>.github</code>. A
   special-purpose <code>ad-hoc</code>-labelled epic whose title bare-name is a description
   rather than a real repo (e.g. a standing reliability collection) is <strong>left
   untouched</strong> — it is not treated as a drainable ad-hoc epic.</li>
@@ -20060,8 +20098,7 @@ worktree, a merge review or a batch marker already exists for it). It is not a
 review queue, so a bare <code>vrg-queue</code> never shows it; it appears only when
 named. Its in-flight marks are read from each repo's main clone, found under
 the repo roots: <code>--root DIR</code> (repeatable) names them, and the platform's roots
-are the default. With <code>--repo</code>, a public repo narrows the list to its own
-ad-hoc epic. The <a href="../../reference/cli-tools-overview/#vrg-queue">CLI reference</a>
+are the default. <code>--repo</code> narrows the list to that repo's own ad-hoc epic. The <a href="../../reference/cli-tools-overview/#vrg-queue">CLI reference</a>
 gives the line format, the marks and the dispositions.</p>
 <p><code>vrg-queue hoshin</code> lists the open tasks under the org's
 <a href="#standing-epics">hoshin epic</a>, the <code>Logbook:</code> tasks <code>/vergil:hoshin</code> files,
@@ -20153,7 +20190,10 @@ parent. A planning item is refused while any of its development epics is open:
 one an <code>Epic:</code> marker in its comments names, or one whose body carries a
 <code>Planning:</code> line for it. Once every such epic is closed, nothing is left to
 orphan and the item can be deferred. An ad-hoc item is refused while an open
-PR would close it.</p>
+PR would close it by a reference the trust layer counts: a closing line in a
+trusted body, or a hand link by a trusted account, in the item's own repo. A
+reference an untrusted body or link made is reported and does not hold the
+route.</p>
 <p><strong>Every deferral records why, and what to check.</strong> <code>--reason</code> and
 <code>--revisit-when</code> are both required:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-intake-route<span class="w"> </span>&lt;ref&gt;<span class="w"> </span>defer<span class="w"> </span>--reason<span class="w"> </span><span class="s2">"&lt;why now is not the time&gt;"</span><span class="w"> </span><span class="se">\</span>
@@ -20279,9 +20319,14 @@ The line does not begin with the keyword, so the PR is not read as a batch PR
 plan next. It checks that each item is still valid and still needs a full epic,
 and leaves it in the queue, defers it, drops it, or routes it as a one-off when
 it is small enough for a repo's ad-hoc epic. Items that <code>epic-create</code> is
-expanding or has finished are only shown, never resumed. Which item to expand
-next is the human's choice, made by running <code>epic-create</code> on it; pick only what
-will be implemented soon, since a plan left sitting goes stale.</p>
+expanding are only shown, never resumed. A <code>ready-to-close</code> item that nothing
+closed (one from before the docs PR closed its planning item, or one whose docs
+PR did not carry the close) is closed as completed with the comment
+<code>Planned as &lt;epic ref&gt;</code>, and its <code>in-progress</code> label is removed. The review
+refuses to close one whose epic was closed as not planned (abandoned): that
+item is not planned, whatever its markers say, and needs planning again. Which
+item to expand next is the human's choice, made by running <code>epic-create</code> on it;
+pick only what will be implemented soon, since a plan left sitting goes stale.</p>
 <h4 id="epic-size">Epic size<a class="headerlink" href="#epic-size" title="Permanent link">&para;</a></h4>
 <p>Every planning and deferred item can carry an <strong>estimated epic size</strong>: how big
 its epic would be once <code>epic-create</code> expands it, counted in tasks (bookends and

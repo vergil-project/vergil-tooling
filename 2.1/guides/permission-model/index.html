@@ -1470,6 +1470,8 @@
       
         
       
+        
+      
     
     
     
@@ -1522,6 +1524,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.337/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.337
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19143,6 +19173,21 @@ shell expansion, no pipes, no redirection.</p>
 <td>Read form only — one ref, optionally <code>-q</code>/<code>--quiet</code>/<code>--short</code></td>
 </tr>
 <tr>
+<td><code>remote</code></td>
+<td><code>add</code>, <code>remove</code>, <code>rename</code>, <code>set-url</code>, <code>set-head</code>, <code>prune</code>, <code>update</code> and every other form</td>
+<td>Read forms only — <code>remote [-v\|--verbose]</code>, <code>remote get-url [--push] [--all] &lt;name&gt;</code>, <code>remote show -n &lt;name&gt;...</code></td>
+</tr>
+<tr>
+<td><code>config</code></td>
+<td>every write (<code>&lt;name&gt; &lt;value&gt;</code>, <code>--add</code>, <code>--unset</code>, <code>--replace-all</code>, section edits, <code>-e</code>)</td>
+<td>Read forms only — one of <code>--get</code>, <code>--get-all</code>, <code>--get-regexp</code>, <code>--list</code>/<code>-l</code>, with scope and output flags</td>
+</tr>
+<tr>
+<td><code>tag</code></td>
+<td><code>-a</code>, <code>-s</code>, <code>-u</code>, <code>-m</code>, <code>-F</code>, <code>-f</code>, <code>-d</code>, <code>-v</code>, <code>-e</code>, and a tag name without a list flag</td>
+<td>List forms only — no tag name, or <code>-l</code>/<code>--list</code>, <code>--contains</code>, <code>--no-contains</code>, <code>--points-at</code>, <code>--merged</code>, <code>--no-merged</code>, <code>-n&lt;num&gt;</code></td>
+</tr>
+<tr>
 <td><code>var</code></td>
 <td>—</td>
 <td>Read-only — logical git variables</td>
@@ -19253,8 +19298,7 @@ vrg-git sets for every rebase (<code>GIT_SEQUENCE_EDITOR=true</code>,
 <p>Anything not on the allowlist is rejected. Notable denials:</p>
 <ul>
 <li><strong><code>commit</code></strong> — all commits flow through <code>vrg-commit</code></li>
-<li><strong><code>config</code></strong> — modifying git configuration</li>
-<li><strong><code>remote</code></strong> — modifying remote configuration</li>
+<li><strong><code>gc</code></strong>, <strong><code>prune</code></strong> — repository maintenance</li>
 <li><strong><code>filter-branch</code></strong>, <strong><code>replace</code></strong> — history rewriting</li>
 </ul>
 <h3 id="escape-hatch">Escape Hatch<a class="headerlink" href="#escape-hatch" title="Permanent link">&para;</a></h3>
@@ -19479,6 +19523,13 @@ rejected as not recognized.</p>
 <td>Read-only release facts</td>
 </tr>
 <tr>
+<td><code>release download</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
+<td>Read-only on GitHub: fetches a release's assets to local files</td>
+</tr>
+<tr>
 <td><code>label list</code></td>
 <td>yes</td>
 <td>yes</td>
@@ -19491,6 +19542,20 @@ rejected as not recognized.</p>
 <td>yes</td>
 <td>—</td>
 <td>Used by <code>vrg-ensure-label</code></td>
+</tr>
+<tr>
+<td><code>variable list</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
+<td>Read-only Actions variables</td>
+</tr>
+<tr>
+<td><code>variable get</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>—</td>
+<td>Read-only Actions variables</td>
 </tr>
 <tr>
 <td><code>search code</code> / <code>commits</code> / <code>issues</code> / <code>prs</code> / <code>repos</code></td>
@@ -19594,7 +19659,8 @@ a bare "not recognized":</p>
 </tbody>
 </table>
 <p>Other write actions of allowed top-level commands (<code>release
-create</code>, <code>workflow enable</code>/<code>disable</code>, <code>cache delete</code> and so on)
+create</code>, <code>workflow enable</code>/<code>disable</code>, <code>cache delete</code>, <code>variable
+set</code>/<code>delete</code> and so on)
 are rejected by the allowlist's deny-by-default.</p>
 <h3 id="gh-api-by-identity"><code>gh api</code> by Identity<a class="headerlink" href="#gh-api-by-identity" title="Permanent link">&para;</a></h3>
 <p><code>gh api</code> can perform any GitHub API operation — create repos,

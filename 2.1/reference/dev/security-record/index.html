@@ -1470,6 +1470,8 @@
       
         
       
+        
+      
     
     
     
@@ -1522,6 +1524,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.337/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.337
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18696,7 +18726,11 @@ message names the file or flag and never quotes its text.</p>
 an existing issue instead of creating one. It adds the <code>security</code> label
 and the <code>Security advisory:</code> line to that issue, then writes the tracking
 line. The issue keeps its current parent. The past-issues audit uses this
-so that one problem never gets two issues.</p>
+so that one problem never gets two issues. The issue's body is read
+through the trust layer before anything is written to it, and only a
+trusted body is written back: an untrusted one stops the mark, exit 1,
+with a metadata-only message and the resume command, which finishes the
+pair once the human has dealt with the body.</p>
 <p><strong>Resume</strong> (<code>--resume</code>) skips the duplicate guard and the advisory, and
 completes whatever steps are missing:</p>
 <ul>
@@ -18840,12 +18874,27 @@ the command that would succeed:</p>
   <code>--drop</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-security-record: advisory &lt;GHSA-id&gt;: this would stop tracking the open issue &lt;ref&gt;; to keep tracking every open issue, run: vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;ref&gt;' --to '&lt;ref&gt;' --to '&lt;ref&gt;'. Leaving an open issue untracked is the human's decision
 </code></pre></div>
+<ul>
+<li><strong>Trust check.</strong> Every issue body <code>retarget</code> reads is read through the
+  trust layer, never from the REST listing, and each one that decides or
+  receives a write must be trusted (its author and every editor trusted).
+  It refuses, exit 1, before anything is written, when any
+  <code>security</code>-labelled issue in the org has an untrusted body (its lines
+  cannot be read, so which issues name this advisory cannot be known),
+  or when a target or an issue to unmark (<code>--from</code> included) has one. A
+  re-run's source tie by a body still naming the advisory counts only
+  from a trusted body; an untrusted one stops the run. The message names
+  metadata only, never the body:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-security-record: advisory &lt;GHSA-id&gt;: stopped before any write: &lt;reason&gt;: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; &lt;kind&gt; &lt;login&gt; at &lt;time&gt; on body (&lt;cause&gt;). The human decides next.
+</code></pre></div>
 <p>The steps then run in order, and each starts only once the one before it
 succeeded:</p>
 <ol>
 <li><strong>Mark</strong> each target: ensure the <code>security</code> label in its repo, add it
    to the issue, and append the <code>Security advisory:</code> line (skipped when
-   already present).</li>
+   already present). The body it appends to and writes back is the
+   trusted body; an untrusted one is never written back.</li>
 <li><strong>Rewrite</strong> the advisory's description: every <code>Tracking issue:</code> line is
    replaced by one line per target. The rest of the description is kept.
    An unchanged description is not written.</li>
@@ -18896,7 +18945,7 @@ number is the source, and its unmark finds the issue already at a target.</p>
 moves the advisory to that org's <code>.github</code> (epic
 vergil-project/.github#1417). GitHub cannot move an advisory, so the move
 copies it. A <code>--to</code> set spanning orgs is refused before any read:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>vrg-security-record: advisory &lt;GHSA-id&gt;: the --to issues span orgs (&lt;org&gt;, &lt;org&gt;), and every fix of one advisory must be in one org. Either duplicate the advisory into each org, each copy tracking that org's own fix tasks, or break the finding up into separate advisories
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>vrg-security-record: advisory &lt;GHSA-id&gt;: the --to issues span orgs (&lt;org&gt;, &lt;org&gt;), and every fix of one advisory must be in one org. Either duplicate the advisory into each org, each copy tracking that org's own fix tasks, or break the finding up into separate advisories
 </code></pre></div>
 <p>Every check runs before the first write, and each refusal exits 1:</p>
 <ul>
@@ -18916,7 +18965,7 @@ copies it. A <code>--to</code> set spanning orgs is refused before any read:</p>
   since a move closes the original and cannot keep tracking an open
   issue in its own org:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>vrg-security-record: advisory &lt;GHSA-id&gt;: this would stop tracking the open issue &lt;ref&gt;; a move to &lt;org&gt;/.github closes this advisory, so it cannot keep tracking an issue in &lt;org&gt;. Close or retarget that work first, then run: vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;ref&gt;' --to '&lt;ref&gt;' …. Leaving an open issue untracked is the human's decision
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vrg-security-record: advisory &lt;GHSA-id&gt;: this would stop tracking the open issue &lt;ref&gt;; a move to &lt;org&gt;/.github closes this advisory, so it cannot keep tracking an issue in &lt;org&gt;. Close or retarget that work first, then run: vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;ref&gt;' --to '&lt;ref&gt;' …. Leaving an open issue untracked is the human's decision
 </code></pre></div>
 <ul>
 <li>The fix org's <code>.github</code> advisories are listed, and each one with a
@@ -18958,7 +19007,7 @@ refuses caller text holding either one. Only the move writes them:
 <code>note</code> refuses a note holding either line, and <code>create</code> refuses a body
 file, details file or <code>--summary</code> holding one (see <a href="#create">create</a>).</p>
 <h2 id="sync">sync<a class="headerlink" href="#sync" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vrg-security-record<span class="w"> </span>sync<span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>vrg-security-record<span class="w"> </span>sync<span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
 </code></pre></div>
 <p>Runs the security-records pass over the current repo's org (from its
 <code>origin</code> remote; there is no <code>--org</code> flag). It lists the advisories in
@@ -18985,7 +19034,7 @@ recognized by its <code>archive</code> label or its stamped title) or was closed
 with any reason other than completed. The parent is read only for an
 issue closed as completed. Each advisory the guard holds is listed by
 GHSA ID and the issue refs that fired it, with the next step:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>- held: GHSA-xxxx-xxxx-xxxx (org/repo#12): retarget it to a fix task, or close it with vrg-security-record close
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>- held: GHSA-xxxx-xxxx-xxxx (org/repo#12): retarget it to a fix task, or close it with vrg-security-record close
 </code></pre></div>
 <p>A hold does not fail the pass. The guard only stops a move to <code>closed</code>:
 an advisory already <code>closed</code> (a human closed it with
@@ -18993,11 +19042,21 @@ an advisory already <code>closed</code> (a human closed it with
 issue's parent cannot be read, that advisory is left unchanged and
 listed as <code>- error: &lt;GHSA-id&gt; (&lt;issue ref&gt;): reading its parent failed,
 left unchanged: &lt;error&gt;</code>; the rest are still synced.</p>
+<p><strong>Untrusted bodies.</strong> Each issue's <code>Security advisory:</code> lines are read
+only from a body the trust layer trusts (its author and every editor
+trusted). An untrusted body is reported, never acted on: it is named on
+stderr, metadata only (<code>skipped untrusted content: …</code>; under GitHub
+Actions only a count by cause), its lines are not read, it is not
+reported as a broken pair, and each advisory that tracks it is left
+unchanged and listed by GHSA ID alone:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>- untrusted: GHSA-xxxx-xxxx-xxxx: an issue it tracks has an untrusted body, left unchanged
+</code></pre></div>
 <p>Its summary line is <code>Security records: &lt;n&gt; advisory states synced, &lt;m&gt;
 broken pairs, &lt;h&gt; held, &lt;e&gt; errors.</code> Each noun agrees with its count, so a
 count of 1 reads <code>1 advisory state synced</code>, <code>1 broken pair</code> or <code>1 error</code>.
 It exits 1 when any pair is broken or any parent read failed (after
-syncing the rest), or when the pass fails. An org with no <code>security</code> issues and no <code>.github</code>
+syncing the rest), when any issue body is untrusted (with <code>--dry-run</code>
+too), or when the pass fails, a trust read failure included. An org with no <code>security</code> issues and no <code>.github</code>
 repo prints <code>Security records: none.</code></p>
 <table>
 <thead>
@@ -19009,7 +19068,7 @@ repo prints <code>Security records: none.</code></p>
 <tbody>
 <tr>
 <td><code>--dry-run</code></td>
-<td>Preview: print the pass as <code>Security records (preview): &lt;n&gt; advisory states would sync, &lt;m&gt; broken pairs, &lt;h&gt; held, &lt;e&gt; errors.</code>, change nothing, and exit 0 even on a broken pair or a failed parent read.</td>
+<td>Preview: print the pass as <code>Security records (preview): &lt;n&gt; advisory states would sync, &lt;m&gt; broken pairs, &lt;h&gt; held, &lt;e&gt; errors.</code>, change nothing, and exit 0 even on a broken pair or a failed parent read (but 1 on an untrusted issue body).</td>
 </tr>
 </tbody>
 </table>
@@ -19022,8 +19081,8 @@ runs <code>sync</code> on a schedule: the human or the user agent runs it, after
 closing or reopening a <code>security</code> issue and regularly in any case, and
 <code>vrg-epic-audit</code> previews it read-only.</p>
 <h2 id="close">close<a class="headerlink" href="#close" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>vrg-security-record<span class="w"> </span>close<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"the work it tracked was dropped with its epic"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>vrg-security-record<span class="w"> </span>close<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"the work it tracked was dropped with its epic"</span>
 </code></pre></div>
 <p>Closes a draft advisory and leaves an audit trail: a public comment with
 the GHSA ID and the reason on every issue the record tracks. It is how an
@@ -19060,7 +19119,11 @@ each starts only once the one before it succeeded:</p>
 <li>any of its issues is still open. <code>sync</code> sets an advisory back to
      draft while any issue it tracks is open, so the close would not
      hold: close the issue first (as not planned, for dropped work), or
-     retarget the record.</li>
+     retarget the record;</li>
+<li>any <code>security</code>-labelled issue in the org has a body the trust layer
+     does not trust: the lines that pick the issues naming the record are
+     read only from trusted bodies, so the issues to comment on cannot be
+     known. The message names metadata only, and the human decides.</li>
 <li><strong>Comment.</strong> Post <code>Security record &lt;GHSA-id&gt; closed: &lt;reason&gt;</code> on each
    issue, skipping one that already carries that exact comment from a
    trusted author (its author and every editor trusted, judged by the trust
@@ -19080,7 +19143,7 @@ Before it, each transferred issue gets a line
 <p><code>close</code> needs the same <strong>Repository security advisories: Read and write</strong>
 as <code>sync</code>, and runs as the human's own <code>gh</code> login or the user App.</p>
 <h2 id="note">note<a class="headerlink" href="#note" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>vrg-security-record<span class="w"> </span>note<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span>--file<span class="w"> </span>note.md
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>vrg-security-record<span class="w"> </span>note<span class="w"> </span>GHSA-xxxx-xxxx-xxxx<span class="w"> </span>--file<span class="w"> </span>note.md
 </code></pre></div>
 <p>Appends a dated note to an advisory's description, so a record can be
 kept accurate as designs change: a resolution later superseded, a
@@ -19159,8 +19222,8 @@ do.</p>
   (<code>advisory still tracks</code> for one, <code>advisories still track</code> for more),
   and ends with the retarget command:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt;
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>held: &lt;k&gt; advisories this planning issue names cannot be read (&lt;GHSA-id&gt;[, …]): re-run with a token that can read the repository's advisories, or have the human check it — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>held: &lt;k&gt; advisories still track this planning issue (&lt;GHSA-id&gt;[, …]) — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt;
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>held: &lt;k&gt; advisories this planning issue names cannot be read (&lt;GHSA-id&gt;[, …]): re-run with a token that can read the repository's advisories, or have the human check it — retarget each to the task or tasks that fix it with vrg-security-record retarget &lt;GHSA&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt;
 </code></pre></div>
 <p>An item held both ways gives both parts, joined by a semicolon. A
   <code>Security advisory:</code> line on an issue without the <code>security</code> label,
@@ -19186,7 +19249,7 @@ do.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Refused (a duplicate, bad refs, an unreadable file, <code>--details</code> under the sweep, a <code>retarget</code>, <code>close</code> or <code>note</code> the checks refuse, a <code>create</code> onto an advisory already paired), a partial pair, a failed retarget, close or note, a broken pair or a failed parent read found by <code>sync</code> (not <code>--dry-run</code>), a GitHub API failure, or an authentication failure</td>
+<td>Refused (a duplicate, bad refs, an unreadable file, <code>--details</code> under the sweep, a <code>retarget</code>, <code>close</code> or <code>note</code> the checks refuse, a <code>create</code> onto an advisory already paired), a partial pair, a failed retarget, close or note, a broken pair or a failed parent read found by <code>sync</code> (not <code>--dry-run</code>), an untrusted issue body found by <code>sync</code> (with <code>--dry-run</code> too), a trust-layer read failure, a GitHub API failure, or an authentication failure</td>
 </tr>
 <tr>
 <td>2</td>

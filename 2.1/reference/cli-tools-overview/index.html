@@ -1470,6 +1470,8 @@
       
         
       
+        
+      
     
     
     
@@ -1522,6 +1524,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.337/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.337
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14776,6 +14806,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-ops-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-ops-report
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-issue-create" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19431,6 +19472,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-ops-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-ops-report
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-issue-create" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -20304,8 +20356,10 @@ frozen; <code>vrg-pr-workflow unfreeze</code> is the way back (see the freeze in
 </table>
 <h3 id="vrg-git">vrg-git<a class="headerlink" href="#vrg-git" title="Permanent link">&para;</a></h3>
 <p>A safe git wrapper for agent sessions. It forwards to <code>git</code> only after
-enforcing policy: a subcommand allowlist, read-only forms of <code>reflog</code> and
-<code>symbolic-ref</code>, denied subcommands (<code>commit</code>, <code>config</code> and others; use
+enforcing policy: a subcommand allowlist, read-only forms of <code>reflog</code>,
+<code>symbolic-ref</code>, <code>remote</code> (the list, <code>get-url</code> and <code>show -n</code>), <code>config</code>
+(<code>--get</code>, <code>--get-all</code>, <code>--get-regexp</code> and <code>--list</code>) and <code>tag</code> (its list
+forms), denied subcommands (<code>commit</code>, <code>gc</code> and others; use
 <code>vrg-commit</code> for commits), a flag deny-list (<code>push --force</code>, <code>branch -D</code>,
 <code>rebase -i</code> without <code>--autosquash</code>), the worktree convention, the
 <code>&lt;type&gt;/&lt;N&gt;-&lt;slug&gt;</code> branch form for an open, non-epic issue opened by a
@@ -20429,8 +20483,8 @@ A single-issue PR whose issue is an epic's documentation task also closes the
 epic's planning issue, on a <code>- Planning issue: Closes &lt;ref&gt;</code> line of its own;
 when it cannot, it says why (see
 <a href="../dev/submit-pr/#the-planning-issue-of-a-docs-task">the planning issue of a docs task</a>).
-It refuses an issue whose native parent is an intake, planning or deferred
-epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>). Human-run: agent
+It refuses an issue whose native parent is an intake, planning, deferred or
+operations epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>). Human-run: agent
 identities are refused, and agents hand off with
 <code>vrg-pr-workflow report-ready</code> instead.</p>
 <p>Every mode takes one path (epic vergil-project/.github#1218): one
@@ -20531,7 +20585,11 @@ its old head, and fails with nothing changed if that push fails (#3815).
 <code>vrg-submit-pr</code>) refuses an issue whose native parent is an intake, planning
 or deferred epic: a queue item is not buildable until it is routed with
 <code>epic-review intake</code>, expanded with <code>epic-create</code>, or revived with
-<code>epic-review deferred</code> (epics vergil-project/.github#176 and #508).
+<code>epic-review deferred</code> (epics vergil-project/.github#176 and #508). Both
+refuse an ops issue too, one whose native parent is the
+<a href="../../standards/github-issues/#standing-epics">operations epic</a>: no PR closes
+it, so a fix is filed as a follow-up task in its own repo and the ops issue
+is closed by hand (epic vergil-project/.github#1494).
 Local-settings guard: <code>report-ready</code> refuses an agent (warns a human), before
 pushing or recording anything, while a loadable <code>.claude/settings.local.json</code>
 is not absent or <code>{}</code> (epic vergil-project/.github#558).
@@ -20556,7 +20614,7 @@ the check again when it builds the body (see
 <a href="../dev/submit-pr/#the-planning-issue-of-a-docs-task">the planning issue of a docs task</a>).
 Any other issue, and a batch, prints no <code>planning_close</code>.</p>
 <p>The batch hard rules are: 2 to 8 issues, none listed twice, every one in
-this repo, a task (not an epic, archive or queue item), not operational, not
+this repo, a task (not an epic, archive, queue item or ops issue), not operational, not
 directly Blocked-by an open deployment task and opened by a trusted author,
 and all with the same parent epic (a finite epic or the repo's ad-hoc epic).
 The one-commit-per-issue check holds the branch, from its base, to exactly
@@ -20584,8 +20642,12 @@ takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/rep
 </ul>
 <p><code>batch-check --pr &lt;url&gt; [--head &lt;sha&gt;]</code> checks a submitted batch PR before a
 push to it, from a clone of the PR's repo (pr-watch runs it on the head it is
-about to push). It reads the PR's body and base. A PR whose body has one
-<code>Closes</code> line or none is not a batch PR and passes. A batch PR's <code>Closes</code> refs
+about to push). It reads the PR's base and head, and its body only through the
+trust layer: a body whose author or any editor is not a trusted author fails
+the check, batch PR or not, with a one-line error naming that identity by
+metadata only, since the body's <code>Closes</code> lines are what the check goes by. A
+PR whose trusted body has one <code>Closes</code> line or none is not a batch PR and
+passes. A batch PR's <code>Closes</code> refs
 must be exactly the issues GitHub lists as its closing references, and its
 branch must hold one commit per issue, in the body's order, from the base as
 fetched now to <code>--head</code> (default: the PR's head, fetched by its SHA so the
@@ -21035,8 +21097,9 @@ nothing: when any step fails, the lockfile refresh included, <code>bump</code> p
 lockfile back as they were, says so on stderr and exits non-zero. Used by
 the CD workflows to read the release version.</p>
 <p>In a TypeScript repo the version is also kept in <code>package.json</code>. <code>show</code>
-fails, naming the fix, when <code>package.json</code> is missing, has no <code>version</code>, or
-holds another version than <code>VERSION</code>; <code>vrg-validate</code>'s TypeScript pre-gate
+fails, naming the fix, when <code>package.json</code> is missing, cannot be read or
+parsed (not UTF-8, not JSON), has no <code>version</code>, or holds another version
+than <code>VERSION</code>; <code>vrg-validate</code>'s TypeScript pre-gate
 makes the same check on the PR. <code>bump</code> rewrites only the top-level <code>version</code>
 of <code>package.json</code> and the two root version fields of <code>package-lock.json</code>
 (its top-level <code>version</code> and <code>packages[""].version</code>), keeping every other
@@ -21075,7 +21138,7 @@ to <code>0.2.0</code> under <code>^0.1.3</code>).</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>An unreadable version raises an uncaught error; for a TypeScript repo's <code>package.json</code> or <code>package-lock.json</code>, its message names the fix</td>
+<td>An expected failure (a missing <code>VERSION</code>, a missing or invalid <code>vergil.toml</code>, a language version file that disagrees with <code>VERSION</code>, a <code>Cargo.toml</code> with no version, a TypeScript repo's <code>package.json</code> or <code>package-lock.json</code> problem, a failed <code>git show</code> or lock command) is one line on stderr, <code>vrg-version: &lt;message&gt;</code>, and exit 1, not a traceback; for <code>package.json</code> or <code>package-lock.json</code>, the message names the fix. Any other error keeps its traceback</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -21342,6 +21405,62 @@ the trust layer; any other is reported on stderr by metadata only. See <a href="
 </tr>
 </tbody>
 </table>
+<h3 id="vrg-ops-report">vrg-ops-report<a class="headerlink" href="#vrg-ops-report" title="Permanent link">&para;</a></h3>
+<p>Report an unattended job's result on its ops issue (epic
+vergil-project/.github#1494), once at the end of the job's run. The report
+key is the repo and a stable job name, never the workflow file: the ops
+issue is the open issue in <code>--repo</code> titled <code>ops: &lt;repo&gt; / &lt;job&gt; failing</code>,
+labelled <code>ops-report</code> and opened by the org's automation App. <code>--results</code>
+combines the GitHub job results of every job that makes up the named job:
+any <code>failure</code> wins, then <code>cancelled</code>, then <code>success</code>; all <code>skipped</code> reports
+nothing. A failure or cancel opens the issue under the org's operations
+epic (<code>Epic (operations): &lt;org&gt;</code>, in <code>&lt;org&gt;/.github</code>), naming the job, run,
+step, date and the most recent closed ops issue with the same title
+(<code>previous occurrence: #N</code>), or comments on the open one. A success
+comments <code>ops-report: recovered</code> only on the first green run after a
+failure or cancel, and otherwise does nothing. Two open ops issues for one
+key get the report on the oldest, naming the others. An issue found or
+created that is not linked under the operations epic is linked. After a
+create it waits until the lookup lists the new issue, so the next run finds
+it. It <strong>never closes an issue</strong>. Every read goes through the trust layer:
+only issues, and report comments, written by the automation App count, so
+an outsider's issue with the same title or an outsider's
+<code>ops-report: recovered</code> comment is ignored. Issue text carries the run link,
+job, step, date and issue numbers only, never log text.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_ops_report</code> (library: <code>lib/ops_report.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo OWNER/NAME</code>, <code>--job NAME</code>, <code>--results R[,R…]</code> (each <code>success</code>, <code>failure</code>, <code>cancelled</code> or <code>skipped</code>), <code>--run-url URL</code>, <code>--step NAME</code> (optional)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>The automation identity: <code>VRG_AUTOMATION_APP</code> set and the token verified as that App's (every other identity is refused before any read); the trusted-authors configuration (<code>VRG_TRUSTED_AUTHORS</code> under Actions)</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A refused identity, a trust-layer read failure, a failed create, comment, label or link, or a created issue never listed exits 1 with the error on stderr, naming any issue it created</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 on every outcome (<code>created</code>, <code>commented</code>, <code>recovered</code>, <code>nothing</code>), 1 any read, write or identity error, 2 bad arguments (a missing flag, or an invalid <code>--repo</code>, <code>--job</code>, <code>--results</code>, <code>--run-url</code> or <code>--step</code> value), before any identity check or read</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
 <h3 id="vrg-issue-create">vrg-issue-create<a class="headerlink" href="#vrg-issue-create" title="Permanent link">&para;</a></h3>
 <p>Create an issue and link it under an epic (a native sub-issue) in one step.
 It is the sanctioned issue-creation path: <code>vrg-gh</code> denies raw
@@ -21583,6 +21702,13 @@ summary count. With <code>--apply</code> each body is read again before its docu
 are looked for, so an edit made since the listing is kept; an edit made
 while that epic is being worked on is not. A failed epic is named and the
 run carries on.</p>
+<p>Every body the command writes back (<code>set</code>, and <code>backfill --apply</code> just
+before each write) is read through the trust layer, and counts only when
+its author and every editor are trusted. An untrusted body is never parsed
+or written: it is a stop, named by its metadata only (<code>stopped before any
+write: the issue body is untrusted: &lt;ref&gt; &lt;issue|edit&gt; &lt;login&gt; at &lt;time&gt; on
+body (&lt;cause&gt;). The human decides next.</code>). The dry run previews the
+listing's bodies and writes nothing.</p>
 <p>Both subcommands run every read and write under the epic owner's App token.</p>
 <table>
 <thead>
@@ -21602,11 +21728,11 @@ run carries on.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>GitHub App credentials for the epic's org</td>
+<td>GitHub App credentials for the epic's org; trusted authors configured (<code>set</code>, and <code>backfill --apply</code>)</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Error on stderr; for <code>set</code>, an issue that is not an epic, a bad <code>PATH</code>, or a malformed section (half a section, a bad entry) is refused with nothing edited. For <code>backfill</code>, a failed listing edits nothing; an epic that needs a decision or fails is named and left unchanged while the rest run</td>
+<td>Error on stderr; for <code>set</code>, an issue that is not an epic, a bad <code>PATH</code>, a malformed section (half a section, a bad entry), an untrusted body, a body the trust layer cannot read in full, or trusted authors not configured is refused with nothing edited. For <code>backfill</code>, a failed listing or (with <code>--apply</code>) trusted authors not configured edits nothing; an epic that needs a decision or fails, an untrusted or unreadable body included, is named and left unchanged while the rest run</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -21848,7 +21974,9 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
   repo (transfer, or recreate with a link back when GitHub refuses the
   transfer) and link it under that repo's ad-hoc epic (default <code>adhoc</code>) or the
   named epic. It refuses the hoshin epic: <code>--epic hoshin</code> before anything
-  resolves (so nothing is created), and a ref that names a hoshin epic. A planning item's <code>in-progress</code> label is removed from the moved
+  resolves (so nothing is created), and a ref that names a hoshin epic. It
+  accepts <code>--epic operations</code>, the org's operations epic, so an operational
+  problem captured by hand reaches the operations queue. A planning item's <code>in-progress</code> label is removed from the moved
   issue once the move has settled; a recreated issue never carries it. A
   one-off also ends the item's estimated size, from intake, planning or
   deferred alike: a recreated issue never carries an <code>epic-size:*</code> label, and
@@ -21931,6 +22059,14 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
 <td><code>planning</code> for a follow-on brainstorm only; any other task is refused, naming the parent</td>
 </tr>
 <tr>
+<td>the hoshin epic</td>
+<td>none — its logbook tasks are never routed</td>
+</tr>
+<tr>
+<td>the operations epic</td>
+<td>none — an ops issue is closed by hand once dealt with, never routed</td>
+</tr>
+<tr>
 <td>anything else</td>
 <td>none — refused, naming the parent</td>
 </tr>
@@ -22003,7 +22139,7 @@ the original closed with <code>Moved to:</code>), <code>sync</code> sets each pa
 reports broken pairs (<code>--dry-run</code> previews it), and <code>close</code> closes a draft
 advisory whose issues are all closed, posting the GHSA ID and a required
 <code>--reason</code> on each of them first, and <code>note</code> appends a dated private note
-from a file to an advisory's description (append-only). Advisory text is printed only by <code>show</code> and <code>list --details</code>. See
+from a file to an advisory's description (append-only). Advisory text is printed only by <code>show</code> and <code>list --details</code>. An issue's <code>Security advisory:</code> lines are read only from a body the trust layer trusts: an untrusted body stops a mark, retarget or close before any write, and <code>sync</code> reports it, metadata only, leaves the advisories tracking it unchanged and exits 1. See
 <a href="../dev/security-record/">vrg-security-record</a> and
 <a href="../../guides/security-records/">Security Records</a>.</p>
 <table>
@@ -22066,9 +22202,11 @@ author and every editor trusted, judged by the trust layer); each comment
 that is not is left out and reported on stderr, metadata only
 (<code>skipped untrusted content: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; &lt;comment|edit&gt; &lt;login&gt; at
 &lt;time&gt; on comment &lt;id&gt; (&lt;cause&gt;)</code>; under GitHub Actions, a count by cause),
-and the view carries on. An item whose comments the trust layer cannot read
-in full is stopped and left out, and the view carries on with the rest; see
-the failure mode below. A bare <code>vrg-queue</code> lists all
+and the view carries on. The planning hold reads an item's <code>Security
+advisory:</code> lines only from a body the trust layer trusts, in the same read as
+its comments. An item whose comments the trust layer cannot read in full, or
+a planning item whose body it does not trust, is stopped and left out, and the
+view carries on with the rest; see the failure mode below. A bare <code>vrg-queue</code> lists all
 three queues in that order (intake, planning, deferred). Used by the
 collect step of <code>epic-review</code> and by <code>epic-create</code>'s no-argument summary.</p>
 <p>Each planning and deferred line shows the item's <strong>epic size</strong> after its age:
@@ -22099,7 +22237,10 @@ when any in-flight mark holds (it outranks blocked), else <strong>blocked</stron
 <code>Blocked-by:</code> dependency is open, else <strong>ready</strong>; only the open blockers are
 listed.</p>
 <p>A task's <strong>marks</strong>, in this order, are: <code>open-pr</code> (an open PR closes it, or has
-a <code>feature/&lt;N&gt;-</code> head branch); <code>report-ready</code> (a relay ref
+a <code>feature/&lt;N&gt;-</code> head branch; only a same-repo PR with a trusted author counts,
+and it closes the task only by a closing line of a trusted body or a hand link
+by trusted actors, so a fork's or an outsider's PR marks nothing and is
+reported on stderr as skipped untrusted content, metadata only); <code>report-ready</code> (a relay ref
 <code>refs/vergil/pr-workflow/&lt;branch&gt;</code> whose payload has status <code>ready</code> and names
 it; a batch's payload names every member); <code>branch</code> (a <code>feature/&lt;N&gt;-</code> branch on
 the remote); <code>worktree</code> (a <code>feature/&lt;N&gt;-</code> branch or worktree in the repo's main
@@ -22165,7 +22306,7 @@ exits 1.</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: no queue yet</code> and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; an advisory line naming another org; a malformed response; trusted authors not configured or invalid) is named on stderr as <code>vrg-queue: &lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt; could not be read: &lt;reason&gt;</code> and the run exits 1; with no queue named, a text run still lists the other queues and prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: not shown (failed; see stderr)</code> in its place, and a <code>--json</code> run prints nothing on stdout. An item whose comments the trust layer cannot read in full is <strong>stopped</strong>, not its queue (a batch run stops the item, not the run): a text run lists the rest, the header reads <code>&lt;N&gt; open item(s), &lt;K&gt; stopped</code> (<code>&lt;N&gt;</code> counting the stopped items; a filtered planning header then adds <code>, &lt;M&gt; shown</code>), each stopped item follows the listed ones as <code>&lt;ref&gt;  stopped: its comments could not be read (see stderr)</code>, and after every listing each stop is named on stderr as <code>stopped on a read failure: &lt;ref&gt; on comments: &lt;reason&gt;</code> (under GitHub Actions, <code>stopped &lt;K&gt; item(s) (read-failure: &lt;K&gt;)</code> and <code>stopped on a read failure: &lt;ref&gt;</code>); the run exits 1. A <code>--json</code> run with any stopped item, named queue or bare, prints nothing on stdout, names every stop on stderr, adds <code>vrg-queue: &lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: &lt;K&gt; item(s) stopped, so no JSON is printed (a list without them is not the whole queue)</code>, and exits 1. For <code>adhoc</code> and <code>hoshin</code>, a task whose body is untrusted or cannot be read in full is <strong>stopped</strong>, as above, never the view. For <code>adhoc</code>, a failed read of the epics, a task's sub-issues, a task or a blocker's state, an epic search that reaches its listing limit, two live ad-hoc epics for one repo, a failed read of any in-flight source (the open PRs, the remote refs, a relay payload, a clone's branches or remotes), a malformed relay payload, repo roots that cannot be determined (no <code>--root</code> on a physical host) or do not exist, or a repo with open ad-hoc tasks and no clone, or two, under the repo roots is reported the same way (<code>adhoc queue for &lt;name&gt; in &lt;home&gt; could not be read</code>) and exits 1; no ad-hoc epic is an empty list and exit 0. For <code>hoshin</code>, the same task, blocker and in-flight failures, a hoshin epic search that reaches its listing limit, or two live hoshin epics, are reported as <code>hoshin queue for &lt;name&gt; in &lt;home&gt; could not be read</code>; no hoshin epic is an empty list and exit 0. When every queue was read but an item's sizing is in error, the full listing is printed (<code>--json</code> included), each such item is named on stderr as <code>vrg-queue: &lt;ref&gt;: &lt;error&gt;</code>, and the run exits 2. <code>--sort</code> or <code>--size</code> with a queue other than <code>planning</code>, or with none, and an unknown <code>--size</code> token exit 1. Nothing is created</td>
+<td>A named queue whose home has no live queue epic exits 1 naming the missing epic; with no queue named, a missing queue prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: no queue yet</code> and the run exits 0. A queue that cannot be read (a failed GitHub call, including the advisory read; an advisory line naming another org; a malformed response; trusted authors not configured or invalid) is named on stderr as <code>vrg-queue: &lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt; could not be read: &lt;reason&gt;</code> and the run exits 1; with no queue named, a text run still lists the other queues and prints <code>&lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: not shown (failed; see stderr)</code> in its place, and a <code>--json</code> run prints nothing on stdout. An item whose comments the trust layer cannot read in full is <strong>stopped</strong>, not its queue (a batch run stops the item, not the run): a text run lists the rest, the header reads <code>&lt;N&gt; open item(s), &lt;K&gt; stopped</code> (<code>&lt;N&gt;</code> counting the stopped items; a filtered planning header then adds <code>, &lt;M&gt; shown</code>), each stopped item follows the listed ones as <code>&lt;ref&gt;  stopped: its comments could not be read (see stderr)</code>, and after every listing each stop is named on stderr as <code>stopped on a read failure: &lt;ref&gt; on comments: &lt;reason&gt;</code> (under GitHub Actions, <code>stopped &lt;K&gt; item(s) (read-failure: &lt;K&gt;)</code> and <code>stopped on a read failure: &lt;ref&gt;</code>); the run exits 1. A planning item whose body the trust layer does not trust is stopped the same way, shown as <code>&lt;ref&gt;  stopped: its body is untrusted (see stderr)</code> and named on stderr as <code>stopped: &lt;ref&gt; &lt;kind&gt; &lt;login&gt; at &lt;time&gt; on body (&lt;cause&gt;)</code> (<code>&lt;kind&gt;</code> is <code>issue</code>, or <code>edit</code> for an untrusted editor); under GitHub Actions it is counted (<code>stopped &lt;K&gt; item(s) (untrusted: &lt;K&gt;)</code>) and never named, on stdout or stderr. A <code>--json</code> run with any stopped item, named queue or bare, prints nothing on stdout, names every stop on stderr, adds <code>vrg-queue: &lt;queue&gt; queue for &lt;name&gt; in &lt;home&gt;: &lt;K&gt; item(s) stopped, so no JSON is printed (a list without them is not the whole queue)</code>, and exits 1. For <code>adhoc</code> and <code>hoshin</code>, a task whose body is untrusted or cannot be read in full is <strong>stopped</strong>, as above, never the view. For <code>adhoc</code>, a failed read of the epics, a task's sub-issues, a task or a blocker's state, an epic search that reaches its listing limit, two live ad-hoc epics for one repo, a failed read of any in-flight source (the open PRs, the remote refs, a relay payload, a clone's branches or remotes), a malformed relay payload, repo roots that cannot be determined (no <code>--root</code> on a physical host) or do not exist, or a repo with open ad-hoc tasks and no clone, or two, under the repo roots is reported the same way (<code>adhoc queue for &lt;name&gt; in &lt;home&gt; could not be read</code>) and exits 1; no ad-hoc epic is an empty list and exit 0. For <code>hoshin</code>, the same task, blocker and in-flight failures, a hoshin epic search that reaches its listing limit, or two live hoshin epics, are reported as <code>hoshin queue for &lt;name&gt; in &lt;home&gt; could not be read</code>; no hoshin epic is an empty list and exit 0. When every queue was read but an item's sizing is in error, the full listing is printed (<code>--json</code> included), each such item is named on stderr as <code>vrg-queue: &lt;ref&gt;: &lt;error&gt;</code>, and the run exits 2. <code>--sort</code> or <code>--size</code> with a queue other than <code>planning</code>, or with none, and an unknown <code>--size</code> token exit 1. Nothing is created</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -22721,7 +22862,8 @@ makes there, and writes only to the path it prints.</p>
 stdout. It is read-only by default. <strong>Drift</strong> is a task still open although
 a merged PR that links it landed within the last <code>--window-days</code> days (a
 body's one linkage line, or every <code>Closes</code> line of a body with several, so
-each issue of a batch PR is checked), and
+each issue of a batch PR is checked; a queue item, an operational task and
+an ops issue under the operations epic never are), and
 an open finite epic whose children are all closed (a standing or
 <a href="../../standards/github-issues/#proxy-epics">proxy epic</a> never is). The <strong>invariant</strong> checks
 are the <a href="../../standards/github-issues/#compliance-invariants">compliance invariants</a>:
@@ -22762,6 +22904,12 @@ a stop on untrusted content is counted, and only read failures are named),
 and the run exits 1. An org with no <code>[orgs.&lt;org&gt;]</code> stanza in the
 configuration is not a Vergil org: the audit says so on stderr and exits 0
 without sweeping it.</p>
+<p>The security-records preview is the exception to the carry-on rule for
+skipped content: a <code>security</code> issue whose body is untrusted is reported on
+stderr (metadata only) and on the preview's <code>- untrusted:</code> line, each
+advisory tracking it is left unchanged, and the report exits 1 after the
+rest of it has run (vergil-tooling#4990). <code>--close</code> never runs the
+preview.</p>
 <p>A <strong>Proxy link drift</strong> section lists each open proxy epic in the home whose
 <code>Primary:</code> line is broken or whose primary carries no matching trusted
 <code>Proxy:</code> comment. It is report-only, and runs with <code>--close</code> too, in the
@@ -22770,8 +22918,8 @@ closed report's report-only section.</p>
 live ad-hoc epic whose title starts <code>Logbook:</code> (it belongs under the hoshin
 epic), or whose body names an <code>epic</code>-labelled issue in another org (it belongs
 under that org's proxy), each with its reason. A cross-org issue the body
-names that cannot be read (private, deleted, or in an org the App cannot
-reach) is listed as a reason of its own. A task drops out of the report once
+names that cannot be read (deleted, or in an org the App cannot reach) is
+listed as a reason of its own. A task drops out of the report once
 a comment the trust layer trusts carries the line <code>Standalone-confirmed</code>, alone
 on its line, recording the human's ruling that it is standalone. The report
 never refuses, moves, closes or labels anything, does not change the exit
@@ -22881,7 +23029,7 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, or error, 2 bad arguments</td>
+<td>0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, an untrusted <code>security</code> issue body found by the security-records preview, or error, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -23039,13 +23187,24 @@ rebase-merged as several commits is one row).</p>
 <li><strong>A commit with no PR</strong> shows <code>PROBLEM</code> in the PR column and <code>-</code> for
   BRANCH and TYPE, with its commit date and subject, and a
   <code>PROBLEM: &lt;sha&gt; reached develop without a PR</code> note after the table.</li>
+<li><strong>A PR the trust layer does not accept</strong> (a fork's, or one whose
+  author holds no role in <code>vrg-trusted-authors</code>) never classifies its
+  row: its title, head branch and labels are not read. It shows its
+  number, <code>-</code> for BRANCH, <code>untrusted</code> for TYPE, its merge time and its
+  commit's subject, and a <code>PROBLEM: #&lt;n&gt; is not a same-repo PR with a
+  trusted author; its title, branch and labels are not read</code> note after
+  the table. The skipped PR is reported on stderr, metadata only (counts
+  by cause under GitHub Actions).</li>
 <li><strong>Nothing pending</strong> prints <code>Nothing pending release: develop and main
   are level.</code> in place of the table.</li>
 <li><strong>The summary line</strong> counts the changes: dependency updates, release
   back-merges, automation PRs and other PRs, every bucket listed, plus
-  <code>&lt;n&gt; PROBLEM: commits with no PR</code> only when there are some.</li>
+  <code>&lt;n&gt; PROBLEM: commits with no PR</code> and <code>&lt;n&gt; PROBLEM: not a same-repo
+  PR with a trusted author</code>, each only when there are some.</li>
 <li><strong>A lookup that fails or is incomplete</strong> (an API error, a missing
-  branch, a truncated answer) is an error, never a partial list: the
+  branch, a truncated answer, the trusted authors failing to load, or a
+  PR whose author or head repository cannot be read) is an error, never
+  a partial list: the
   section prints its heading, with no release line, and
   <code>ERROR: pending release: &lt;reason&gt;</code>
   alone. The rest of the output still prints, then the command exits 1.
