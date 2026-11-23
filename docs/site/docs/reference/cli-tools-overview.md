@@ -1666,7 +1666,8 @@ value.
 A check takes `--fix-base` (the `HEAD` the previous step judged, refused
 unless it is the `head_sha` of that step's stored request), one
 `--earlier-result` per earlier step in step order, each checked against
-that step's stored request, `--fix-id` for each earlier ID asked to change
+that step's stored request and its capture record (so a result edited
+after its own step's check is refused), `--fix-id` for each earlier ID asked to change
 (it becomes `earlier_finding_ids`) and `--ruled-id` for each earlier defect
 the human excused (not sent to the reviewer). It refuses an ID no earlier
 result raised, an ID given to both, a check with no `--fix-id`, and an

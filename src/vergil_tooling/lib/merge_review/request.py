@@ -19,7 +19,8 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 from vergil_tooling.lib import epic_audit, epics, github, proxies, trust
 from vergil_tooling.lib.epics import parse_issue_ref
-from vergil_tooling.lib.merge_review.result import ResultError, parse_result
+from vergil_tooling.lib.merge_review.capture import capture_path, check_capture
+from vergil_tooling.lib.merge_review.result import ResultError, check_request, parse_result
 from vergil_tooling.lib.merge_review.schema import REQUEST_SCHEMA, earlier_steps
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.comments import read_stream
@@ -437,8 +438,11 @@ def read_earlier_results(
     """Check every earlier step's result against that step's stored request.
 
     *result_paths* are in step order, one per step before *step*. Each is
-    checked by :func:`parse_result` against ``request-<earlier>.json`` in
-    *private_dir*. Returns ``(absolute path, checked result)`` pairs.
+    checked as ``vrg-merge-review-check`` checks it, against
+    ``request-<earlier>.json`` in *private_dir*: first its capture record
+    (:func:`check_capture`, rule 10), so a result edited after its own
+    step's check is refused, then :func:`parse_result`. Returns
+    ``(absolute path, checked result)`` pairs.
     """
     steps = earlier_steps(step)
     if len(result_paths) != len(steps):
@@ -452,12 +456,19 @@ def read_earlier_results(
         request_path = private_dir / request_file(earlier)
         try:
             request = json.loads(request_path.read_text(encoding="utf-8"))
-            text = path.read_text(encoding="utf-8")
+            result_bytes = path.read_bytes()
+            text = result_bytes.decode("utf-8")
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             refuse(f"cannot read the {earlier} request or result: {exc}")
         if not isinstance(request, dict):
             refuse(f"{request_path} must hold a JSON object")
         try:
+            check_capture(
+                capture_path(path, earlier),
+                result_bytes,
+                step=earlier,
+                request_id=check_request(request).request_id,
+            )
             checked.append((str(path), parse_result(text, request)))
         except ResultError as exc:
             refuse(f"the {earlier} result {path} fails the result check: {exc}")

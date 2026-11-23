@@ -51,7 +51,8 @@ other than those its previous step's request carried.
 A check (``check`` or ``check-<k>``) also takes ``--fix-base``, the ``HEAD``
 the previous step judged, refused unless it is the ``head_sha`` of that
 step's stored request; one ``--earlier-result`` per earlier step, in
-step order, each checked against that step's stored request; ``--fix-id``
+step order, each checked against that step's stored request and its
+capture record, as ``vrg-merge-review-check`` checks it; ``--fix-id``
 for each earlier ID asked to change; and ``--ruled-id`` for each earlier
 defect the human excused, which is not sent to the reviewer. It refuses an
 ID no earlier result raised, an ID given to both, and a defect named by
