@@ -2664,65 +2664,6 @@ def pr_state(pr: str) -> str:
     return read_output("pr", "view", pr, "--json", "state", "--jq", ".state")
 
 
-def _first_pr_for_branch(branch: str, state: str) -> dict[str, str] | None:
-    """Return the first PR in *state* whose head is *branch*, or None.
-
-    ``headRefOid`` is included so callers can confirm a name-matched PR's
-    head actually corresponds to the branch's current tip — a branch name
-    reused after a same-named PR merged matches by name but not by tip
-    (issue #1719). An empty list is "no PR"; a response that is not a list,
-    or a first PR with no number, URL or head commit, raises
-    :class:`GitHubAPIError` rather than read as "no PR" or blank fields (#4058).
-    """
-    fields = "number,url,title,headRefOid"
-    cmd = ("pr", "list", "--head", branch, "--state", state, "--json", fields)
-    result = read_json(*cmd)
-    if not isinstance(result, list):
-        raise _shape_error(("gh", *cmd), f"the PR list is {type(result).__name__}")
-    if not result:
-        return None
-    first = _as_obj(result[0])
-    number = first.get("number")
-    url = first.get("url")
-    title = first.get("title")
-    head = first.get("headRefOid")
-    if (
-        not isinstance(number, int)
-        or isinstance(number, bool)
-        or number <= 0
-        or not isinstance(url, str)
-        or not url
-        or not isinstance(title, str)
-        or not isinstance(head, str)
-        or not head
-    ):
-        raise _shape_error(("gh", *cmd), f"the first PR is {result[0]!r}")
-    return {"number": str(number), "url": url, "title": title, "headRefOid": head}
-
-
-def pr_for_branch(branch: str) -> dict[str, str] | None:
-    """Return the open PR whose head is *branch*, or None.
-
-    GitHub permits at most one open PR per head/base pair within a
-    repo, so taking the first result is safe for the same-repo
-    workflow this serves.
-    """
-    return _first_pr_for_branch(branch, "open")
-
-
-def closed_pr_for_branch(branch: str) -> dict[str, str] | None:
-    """Return the most recent closed or merged PR whose head is *branch*.
-
-    GitHub's closed state includes merged PRs, so one query covers both.
-    Serves as merge evidence for the vrg-finalize-pr ancestry sweep
-    (issue #1445): a branch tip that is an ancestor of the target proves
-    nothing by itself — a freshly created branch satisfies the ancestry
-    test trivially — while a closed or merged PR shows the branch's work
-    is actually finished.
-    """
-    return _first_pr_for_branch(branch, "closed")
-
-
 def is_draft(pr: str) -> bool:
     """Return True if *pr* is a draft."""
     return read_output("pr", "view", pr, "--json", "isDraft", "--jq", ".isDraft") == "true"

@@ -428,7 +428,10 @@ close of the tracking issue, which any failed stage or missing record holds back
 `--supersede X.Y.Z`, which starts a fresh release that absorbs open release
 `X.Y.Z`'s issues and closes its tracking issue, passes over that release), and while an open PR
 carries the `dependency-update` label, after first closing any whose fix
-task completed. Preflight then prints the release's contents: the
+task completed (deleting its branch only for a same-repo PR with a
+trusted author). A release or back-merge PR is adopted by its branch
+only when it is a same-repo PR with a trusted author; a fork PR is
+reported and never adopted. Preflight then prints the release's contents: the
 pending-release table and the issues its `feature/` PRs close by a
 trusted closing reference. The tracking issue's body carries those
 contents and its state block. The issue is locked, and its state is

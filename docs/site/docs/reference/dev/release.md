@@ -48,6 +48,14 @@ facts against GitHub and git, then runs only the stages not recorded
 done; see
 [Resuming a release](../../guides/releasing.md#resuming-a-release).
 
+`prepare` and `back-merge-bump` adopt an existing release or back-merge
+PR by its branch (`release/X.Y.Z`, `release/post-X.Y.Z`), so a re-run
+never opens a second one. Only a same-repo PR with a trusted author is
+adopted: a fork PR on the same branch name, or a PR whose author holds
+no role, is reported on stderr, metadata only, and never adopted or
+merged. Several open PRs on the branch, or a lookup that cannot
+complete, stop the stage, naming them.
+
 Once every earlier stage has succeeded, `release-records` posts a
 `Released:` record, as the human running the release, on each issue in
 the issue list that has no counting record yet. A record counts only
@@ -153,7 +161,10 @@ release takes `X.Y.(Z+1)` unless `minor` or `major` is given, and
 On a fresh start (not on `--resume`), preflight refuses while an open
 PR carries the `dependency-update` label. First it closes, with a
 comment, any such PR whose linked fix task was closed as completed (the
-update landed through the fix PR), and deletes its head branch. A failed
+update landed through the fix PR), and deletes its head branch. The
+branch is deleted only when the PR is a same-repo PR with a trusted
+author: a fork PR's head is in the fork, so the branch of that name here
+is kept, and the fork PR is reported on stderr, metadata only. A failed
 branch delete is reported, not fatal. The `Fix task:` link counts only
 from a trusted PR body, and a completed close counts only when a trusted
 identity closed the fix task: a close by anyone else stops the release

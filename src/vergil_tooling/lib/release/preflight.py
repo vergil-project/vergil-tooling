@@ -329,13 +329,8 @@ def _trusted_read(repo: str, number: int) -> trust.IssueContent:
     return content
 
 
-def _trusted_fix_task(repo: str, url: str) -> str | None:
-    """The ``Fix task:`` link in the trusted body of deps PR *url*, else ``None``.
-
-    The body is read through :func:`trust.read_issue`, never from the PR
-    listing, so a link an untrusted author or editor wrote is never followed
-    (GHSA-777j-j57r-92ff); the untrusted body is reported on stderr.
-    """
+def _deps_pr_number(url: str) -> int:
+    """The number of deps PR *url*, from the URL ``gh pr list`` gave for it."""
     match = _PR_NUMBER_RE.search(url)
     if match is None:
         raise ReleaseError(
@@ -343,7 +338,17 @@ def _trusted_fix_task(repo: str, url: str) -> str | None:
             command=_PENDING_DEPS_COMMAND,
             message=f"gh pr list returned a PR url with no number: {url!r}",
         )
-    body = _trusted_read(repo, int(match.group(1))).body
+    return int(match.group(1))
+
+
+def _trusted_fix_task(repo: str, url: str) -> str | None:
+    """The ``Fix task:`` link in the trusted body of deps PR *url*, else ``None``.
+
+    The body is read through :func:`trust.read_issue`, never from the PR
+    listing, so a link an untrusted author or editor wrote is never followed
+    (GHSA-777j-j57r-92ff); the untrusted body is reported on stderr.
+    """
+    body = _trusted_read(repo, _deps_pr_number(url)).body
     if body is None:
         return None
     link = _FIX_TASK_RE.search(body)
@@ -547,6 +552,34 @@ def _close_landed_deps_pr(pr: PendingDepsPr) -> None:
         ) from exc
 
 
+def _owns_its_branch(repo: str, pr: PendingDepsPr) -> bool:
+    """True when deps PR *pr* is a same-repo PR with a trusted author on its head branch.
+
+    The gate deletes ``refs/heads/<head>`` in *repo* by the PR's branch name,
+    so it first finds the PR among the trust layer's same-repo trusted PRs on
+    that branch (:func:`trust.prs_for_branch`, GHSA-r4j2-cwcp-xg56). A fork
+    PR's head is in the fork: the branch of that name in *repo* is not its own
+    and is never deleted for it. Each PR skipped is reported on stderr,
+    metadata only; a read failure raises :class:`ReleaseError`.
+    """
+    command = f"prs_for_branch {repo} {pr.head}"
+    try:
+        prs, skipped = trust.prs_for_branch(repo, pr.head, state="open")
+    except (trust.TrustReadError, TrustedAuthorsNotConfiguredError) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=command,
+            message=(
+                f"Could not read the PRs on branch {pr.head} of dependency-update PR "
+                f"{pr.url}; refusing to release blind."
+            ),
+            detail=str(exc),
+        ) from exc
+    trust.report_skipped(skipped, stream=sys.stderr)
+    number = _deps_pr_number(pr.url)
+    return any(found.number == number for found in prs)
+
+
 def _delete_deps_branch(repo: str, pr: PendingDepsPr) -> bool:
     """Delete a closed deps PR's head branch on origin; False if that failed (#3332).
 
@@ -577,13 +610,15 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
 
     A PR whose fix task closed as completed, by a trusted actor, is closed
     (#3286) and its head branch deleted (#3332); a failed delete is recorded,
-    not fatal. A completed close by an untrusted actor stops the release
-    (:func:`_require_trusted_close`). Every fix task is looked up before any PR
-    is closed, so a lookup failure or a stop leaves nothing changed. What
-    remains open blocks (spec §5.3) unless *allow* bypasses it.
+    not fatal. The branch is deleted only for a same-repo PR with a trusted
+    author (:func:`_owns_its_branch`). A completed close by an untrusted actor
+    stops the release (:func:`_require_trusted_close`). Every fix task and
+    branch is looked up before any PR is closed, so a lookup failure or a stop
+    leaves nothing changed. What remains open blocks (spec §5.3) unless
+    *allow* bypasses it.
     """
     pending = pending_deps_prs(repo)
-    landed: list[PendingDepsPr] = []
+    landed: list[tuple[PendingDepsPr, bool]] = []
     blocking: list[tuple[PendingDepsPr, str]] = []
     for pr in pending:
         if pr.fix_task is None:
@@ -599,7 +634,7 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
         state, reason = fix_task_status(pr.fix_task)
         if state == "CLOSED" and reason == "COMPLETED":
             _require_trusted_close(pr.fix_task)
-            landed.append(pr)
+            landed.append((pr, _owns_its_branch(repo, pr)))
         elif state == "CLOSED":
             blocking.append(
                 (
@@ -622,13 +657,19 @@ def _check_pending_deps(repo: str, *, allow: bool) -> _DepsGateOutcome:
 
     cleared: list[str] = []
     undeleted: list[str] = []
-    for pr in landed:
+    for pr, owns_branch in landed:
         _close_landed_deps_pr(pr)
         print(
             f"Closed dependency-update PR {pr.url}: fix task {pr.fix_task} closed as "
             "completed, so the update landed."
         )
         cleared.append(pr.url)
+        if not owns_branch:
+            print(
+                f"Not deleting branch {pr.head}: {pr.url} is not a same-repo PR with a "
+                "trusted author, so the branch of that name here is not its head."
+            )
+            continue
         if not _delete_deps_branch(repo, pr):
             undeleted.append(pr.head)
 

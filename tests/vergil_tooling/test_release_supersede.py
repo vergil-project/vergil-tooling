@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.release_stubs import branch_lookup, branch_pr
 from vergil_tooling.lib import progress, trust
 from vergil_tooling.lib.pending_release import PendingRelease, ReleaseTags
 from vergil_tooling.lib.release import checklist, confirm, records, state, supersede
@@ -670,7 +671,7 @@ def _superseding_state(*, untagged: bool) -> StateBlock:
 @pytest.fixture
 def adopted_pr() -> Iterator[None]:
     """The release PR already exists, so prepare stops right after the tracking issues."""
-    with patch(_PREPARE + ".github.pr_for_branch", return_value={"url": "pr"}):
+    with branch_lookup(branch_pr(100, "OPEN")):
         yield
 
 
@@ -794,8 +795,7 @@ def test_prepare_closes_the_superseded_issue_only_after_the_bump_and_the_pr() ->
     calls: list[str] = []
     failure = ReleaseError(phase="prepare", command="gh issue close", message="closed?")
     with (
-        patch(_PREPARE + ".github.pr_for_branch", return_value=None),
-        patch(_PREPARE + ".github.closed_pr_for_branch", return_value=None),
+        branch_lookup(),
         patch(_PREPARE + ".version.show", return_value="2.1.5"),
         patch(_PREPARE + ".version.bump", side_effect=lambda *a: calls.append("bump")),
         patch(_PREPARE + ".git.run", side_effect=lambda *a: calls.append(" ".join(a[:2]))),

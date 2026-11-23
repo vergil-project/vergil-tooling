@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import dataclasses
-import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib import github, retry
+from tests.vergil_tooling.release_stubs import (
+    BRANCH_LOOKUP,
+    branch_lookup,
+    branch_pr,
+    fork_skip,
+)
+from vergil_tooling.lib import github, retry, trust
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.prepare import _create_pr, prepare
 
@@ -46,8 +51,7 @@ def test_prepare_pushes_branch_and_opens_pr() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        branch_lookup(),
         patch(_MOD + ".git.run"),
         patch(_MOD + "._generate_changelog"),
         patch(
@@ -66,7 +70,7 @@ def test_prepare_fails_without_release_branch() -> None:
     ctx.release_branch = None
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        branch_lookup(),
         pytest.raises(ReleaseError, match="No release branch"),
     ):
         prepare(ctx)
@@ -82,8 +86,7 @@ def test_prepare_never_switches_head() -> None:
 
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        branch_lookup(),
         patch(_MOD + ".git.run", side_effect=capture_git_run),
         patch(_MOD + "._generate_changelog"),
         patch(
@@ -109,8 +112,7 @@ def test_prepare_with_version_override() -> None:
 
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        branch_lookup(),
         patch(_MOD + ".git.run", side_effect=capture_git_run),
         patch(_MOD + ".version.show", return_value="2.0.3"),
         patch(_MOD + ".version.bump", return_value="2.1.0") as m_bump,
@@ -133,8 +135,7 @@ def test_prepare_refuses_a_bump_that_misses_the_target_version() -> None:
     ctx = _ctx(version_override="minor")
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        branch_lookup(),
         patch(_MOD + ".git.run") as m_run,
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + ".version.bump") as m_bump,
@@ -150,10 +151,7 @@ def test_prepare_refuses_an_open_pr_while_the_bump_is_pending() -> None:
     ctx = _ctx(version_override="minor")
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(
-            _MOD + ".github.pr_for_branch",
-            return_value={"url": "https://github.com/owner/repo/pull/100"},
-        ),
+        branch_lookup(branch_pr(100, "OPEN")),
         patch(_MOD + ".version.bump") as m_bump,
         pytest.raises(ReleaseError, match=r"pull/100 exists .* minor bump to the target"),
     ):
@@ -166,12 +164,7 @@ def test_prepare_refuses_a_merged_pr_while_the_bump_is_pending() -> None:
     ctx = _ctx(version_override="minor")
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={"url": "https://github.com/owner/repo/pull/880", "headRefOid": _HEAD},
-        ),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        branch_lookup(branch_pr(880, "MERGED")),
         patch(_MOD + ".version.bump") as m_bump,
         pytest.raises(ReleaseError, match=r"pull/880 exists"),
     ):
@@ -184,8 +177,7 @@ def test_prepare_without_version_override_skips_bump() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        branch_lookup(),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".version.bump") as mock_bump,
         patch(_MOD + "._generate_changelog"),
@@ -203,8 +195,7 @@ def test_prepare_creates_issue_when_not_yet_adopted() -> None:
     ctx.issue_number = None
     with (
         patch(_MOD + ".create_tracking_issue") as m_create,
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        branch_lookup(),
         patch(_MOD + ".git.run"),
         patch(_MOD + "._generate_changelog"),
         patch(_MOD + ".github.create_pr", return_value="https://github.com/o/r/pull/1"),
@@ -217,10 +208,7 @@ def test_prepare_skips_when_release_pr_already_exists() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(
-            _MOD + ".github.pr_for_branch",
-            return_value={"url": "https://github.com/owner/repo/pull/100"},
-        ),
+        branch_lookup(branch_pr(100, "OPEN")),
         patch(_MOD + ".git.run") as m_run,
         patch(_MOD + "._generate_changelog") as m_changelog,
         patch(_MOD + ".github.create_pr") as m_create_pr,
@@ -236,7 +224,7 @@ def test_prepare_adopts_already_merged_release_pr() -> None:
     """Resume-safe: an already-merged release PR is adopted, not recreated (#2998).
 
     A failure at/after ``merge-release`` leaves the release PR merged. On resume
-    ``pr_for_branch`` (open only) returns None, so without this guard ``prepare``
+    the branch has no open PR, so without this guard ``prepare``
     would re-push and ``gh pr create`` would fail ("No commits between ..."). The
     merged PR is adopted so ``merge_release``'s MERGED-skip carries the pipeline
     forward.
@@ -244,15 +232,7 @@ def test_prepare_adopts_already_merged_release_pr() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={
-                "url": "https://github.com/owner/repo/pull/880",
-                "headRefOid": "abc123",
-            },
-        ),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        branch_lookup(branch_pr(880, "MERGED", head="abc123")),
         patch(_MOD + ".git.read_output", return_value="abc123"),
         patch(_MOD + ".git.run") as m_run,
         patch(_MOD + "._generate_changelog") as m_changelog,
@@ -265,45 +245,12 @@ def test_prepare_adopts_already_merged_release_pr() -> None:
     m_run.assert_not_called()
 
 
-def test_prepare_merged_pr_state_retries_404() -> None:
-    """The merged PR URL was just listed by GitHub; a 404 reading it is lag (#3137)."""
-    ctx = _ctx()
-    err = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 404: Not Found")
-    with (
-        patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={
-                "url": "https://github.com/owner/repo/pull/880",
-                "headRefOid": "abc123",
-            },
-        ),
-        patch(_MOD + ".github.pr_state", side_effect=[err, "MERGED"]) as m_state,
-        patch(_MOD + ".git.read_output", return_value="abc123"),
-        patch(_MOD + ".github.create_pr") as m_create_pr,
-        patch("vergil_tooling.lib.retry.time.sleep"),
-    ):
-        prepare(ctx)
-    assert ctx.release_pr_url == "https://github.com/owner/repo/pull/880"
-    assert m_state.call_count == 2
-    m_create_pr.assert_not_called()
-
-
 def test_prepare_ignores_closed_unmerged_release_pr() -> None:
     """A closed-but-unmerged PR for the branch is not adopted (#2998)."""
     ctx = _ctx()
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={
-                "url": "https://github.com/owner/repo/pull/880",
-                "headRefOid": "abc123",
-            },
-        ),
-        patch(_MOD + ".github.pr_state", return_value="CLOSED"),
+        branch_lookup(branch_pr(880, "CLOSED", head="abc123")),
         patch(_MOD + ".git.read_output", return_value="abc123"),
         patch(_MOD + ".git.run"),
         patch(_MOD + "._generate_changelog"),
@@ -332,16 +279,7 @@ def test_prepare_adopts_merged_pr_whose_head_descends_from_local_tip() -> None:
 
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={
-                "number": "880",
-                "url": "https://github.com/owner/repo/pull/880",
-                "headRefOid": "prhead",
-            },
-        ),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        branch_lookup(branch_pr(880, "MERGED", head="prhead")),
         patch(_MOD + ".git.read_output", return_value="localtip"),
         patch(_MOD + ".git.is_ancestor", return_value=True) as m_anc,
         patch(_MOD + ".git.run", side_effect=capture_git_run),
@@ -374,16 +312,7 @@ def test_prepare_fails_loud_on_merged_pr_with_unrelated_tip() -> None:
 
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={
-                "number": "880",
-                "url": "https://github.com/owner/repo/pull/880",
-                "headRefOid": "oldsha",
-            },
-        ),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        branch_lookup(branch_pr(880, "MERGED", head="oldsha")),
         patch(_MOD + ".git.read_output", return_value="newsha"),
         patch(_MOD + ".git.is_ancestor", return_value=False),
         patch(_MOD + ".git.run", side_effect=capture_git_run),
@@ -401,27 +330,60 @@ def test_prepare_fails_loud_on_merged_pr_with_unrelated_tip() -> None:
     assert ctx.release_pr_url is None
 
 
-def test_prepare_fails_loud_on_merged_pr_without_head_oid() -> None:
-    """A merged PR GitHub reports with no head SHA cannot be reconciled — fail loud."""
+def test_prepare_ignores_fork_release_pr(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fork PR on the release branch's name is never adopted, only reported.
+
+    GHSA-r4j2-cwcp-xg56: the fresh path runs and opens the release's own PR.
+    """
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
     ctx = _ctx()
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(
-            _MOD + ".github.closed_pr_for_branch",
-            return_value={
-                "number": "880",
-                "url": "https://github.com/owner/repo/pull/880",
-                "headRefOid": "",
-            },
-        ),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
-        patch(_MOD + ".git.read_output", return_value="localtip"),
-        patch(_MOD + ".git.run") as m_run,
-        patch(_MOD + ".github.create_pr") as m_create_pr,
-        pytest.raises(ReleaseError, match="no head commit"),
+        branch_lookup(skipped=(fork_skip(666),)) as lookup,
+        patch(_MOD + ".git.run"),
+        patch(_MOD + "._generate_changelog"),
+        patch(_MOD + ".github.create_pr", return_value="https://github.com/owner/repo/pull/100"),
     ):
         prepare(ctx)
+    lookup.assert_called_once_with("owner/repo", "release/2.1.0", state="all")
+    assert ctx.release_pr_url == "https://github.com/owner/repo/pull/100"
+    err = capsys.readouterr().err
+    assert "skipped untrusted content" in err
+    assert "#666" in err
+    assert trust.CROSS_REPOSITORY in err
+
+
+def test_prepare_refuses_several_open_prs_on_the_branch() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".create_tracking_issue"),
+        branch_lookup(branch_pr(100, "OPEN"), branch_pr(101, "OPEN")),
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + ".github.create_pr") as m_create_pr,
+        pytest.raises(ReleaseError, match=r"2 open PRs on 'release/2\.1\.0' \(#100, #101\)"),
+    ):
+        prepare(ctx)
+    m_run.assert_not_called()
+    m_create_pr.assert_not_called()
+    assert ctx.release_pr_url is None
+
+
+def test_prepare_fails_loud_when_the_pr_lookup_fails() -> None:
+    """A failed lookup is never "no PR": prepare pushes and opens nothing."""
+    ctx = _ctx()
+    failure = trust.TrustReadError("prs_for_branch owner/repo release/2.1.0", "the call failed")
+    with (
+        patch(_MOD + ".create_tracking_issue"),
+        patch(BRANCH_LOOKUP, side_effect=failure),
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + ".github.create_pr") as m_create_pr,
+        pytest.raises(ReleaseError, match="Could not read the PRs") as info,
+    ):
+        prepare(ctx)
+    assert info.value.phase == "prepare"
+    assert "the call failed" in str(info.value.detail)
     m_run.assert_not_called()
     m_create_pr.assert_not_called()
 
@@ -515,8 +477,7 @@ def _prepare_with_create(
     ctx = _ctx()
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        branch_lookup(),
         patch(_MOD + ".git.run"),
         patch(_MOD + "._generate_changelog"),
         patch(_MOD + ".github.create_pr", side_effect=create_effect) as create,

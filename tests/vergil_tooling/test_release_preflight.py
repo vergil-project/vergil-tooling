@@ -59,15 +59,50 @@ def _read_issue(repo: str, number: int) -> trust.IssueContent:
     )
 
 
+# The deps PRs the trust layer's branch lookup finds on a branch, by number:
+# those in _FORK_PRS are fork PRs, skipped and reported; the rest are same-repo
+# PRs with a trusted author.
+_DEPS_PRS = (9, 10, 11, 12, 3281)
+_FORK_PRS: set[int] = set()
+_FORK_OWNER = "fork-owner"
+
+
+def _prs_for_branch(
+    repo: str, branch: str, *, state: str
+) -> tuple[list[trust.PRRef], list[trust.Skipped]]:
+    assert state == "open"
+    found = [
+        trust.PRRef(
+            number=n,
+            url=f"https://github.com/{repo}/pull/{n}",
+            title="deps",
+            head=branch,
+            head_oid="a" * 40,
+            author_role=trust.Role.AUTOMATION,
+            state="OPEN",
+        )
+        for n in _DEPS_PRS
+        if n not in _FORK_PRS
+    ]
+    skipped = [
+        trust.Skipped(repo, n, "pr", _FORK_OWNER, _AT, "head", trust.CROSS_REPOSITORY)
+        for n in sorted(_FORK_PRS)
+    ]
+    return found, skipped
+
+
 @pytest.fixture(autouse=True)
 def trusted_reads() -> Iterator[MagicMock]:
-    """Serve the trust layer's reads from :data:`_BODIES`; every close is trusted.
+    """Serve the trust layer's reads from :data:`_BODIES` and :data:`_FORK_PRS`.
 
-    Yields the ``close_judgement`` stand-in for a test to change.
+    Every close is trusted. Yields the ``close_judgement`` stand-in for a test
+    to change.
     """
     _BODIES.clear()
+    _FORK_PRS.clear()
     with (
         patch(_MOD + ".trust.read_issue", side_effect=_read_issue),
+        patch(_MOD + ".trust.prs_for_branch", side_effect=_prs_for_branch),
         patch(
             _MOD + ".trust.close_judgement",
             return_value=trust.Judgement(trust.Role.AUTOMATION, None),
@@ -75,6 +110,7 @@ def trusted_reads() -> Iterator[MagicMock]:
     ):
         yield close
     _BODIES.clear()
+    _FORK_PRS.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -1421,6 +1457,67 @@ def test_preflight_branch_already_deleted_counts_as_deleted(
     )
     assert ctx.undeleted_deps_branches == []
     assert "already deleted" in capsys.readouterr().out
+
+
+def test_deps_gate_never_deletes_for_fork_pr(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fork PR's head is in the fork: the same-named branch here is never deleted.
+
+    GHSA-r4j2-cwcp-xg56: the PR is still closed, its fork reported, metadata only.
+    """
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
+    _FORK_PRS.add(9)
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
+    ctx, calls = _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", "COMPLETED")})
+    assert [c[:2] for c in calls] == [["pr", "comment"], ["pr", "close"]]
+    assert not any(c[0] == "api" for c in calls)
+    assert ctx.cleared_deps_prs == [_PR9]
+    assert ctx.undeleted_deps_branches == []
+    out = capsys.readouterr()
+    assert f"Not deleting branch {_HEAD}" in out.out
+    assert f"o/r#9 pr {_FORK_OWNER}" in out.err
+    assert trust.CROSS_REPOSITORY in out.err
+
+
+def test_deps_gate_branch_lookup_failure_changes_nothing() -> None:
+    """A failed branch lookup is never "same repo": nothing is closed or deleted."""
+    pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
+    failure = trust.TrustReadError(f"prs_for_branch o/r {_HEAD}", "the GraphQL call failed")
+    with (
+        patch(_MOD + ".trust.prs_for_branch", side_effect=failure),
+        pytest.raises(ReleaseError, match="Could not read the PRs on branch") as info,
+    ):
+        _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", "COMPLETED")})
+    assert info.value.phase == "preflight"
+    assert "the GraphQL call failed" in str(info.value.detail)
+
+
+def test_deps_gate_looks_up_every_branch_before_closing_any() -> None:
+    pending = [
+        PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10),
+        PendingDepsPr(head="deps/other", url=_PR11, fix_task=_TASK12),
+    ]
+    failure = trust.TrustReadError("prs_for_branch o/r deps/other", "the GraphQL call failed")
+
+    def second_fails(
+        repo: str, branch: str, *, state: str
+    ) -> tuple[list[trust.PRRef], list[trust.Skipped]]:
+        if branch == "deps/other":
+            raise failure
+        return _prs_for_branch(repo, branch, state=state)
+
+    statuses: dict[str, tuple[str, str | None]] = {
+        _TASK10: ("CLOSED", "COMPLETED"),
+        _TASK12: ("CLOSED", "COMPLETED"),
+    }
+    writes: list[list[str]] = []
+    with (
+        patch(_MOD + ".trust.prs_for_branch", side_effect=second_fails),
+        pytest.raises(ReleaseError, match="Could not read the PRs on branch deps/other"),
+    ):
+        _run_preflight_with_tasks(pending, statuses, run_side_effect=writes.append)
+    assert writes == []
 
 
 def test_every_pr_close_in_src_deletes_its_branch() -> None:

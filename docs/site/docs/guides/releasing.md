@@ -544,7 +544,10 @@ tip differs from `origin`'s. Remove or reconcile the branch, then resume.
 
 An open back-merge PR from the earlier run is adopted and merged, and a
 merged one is skipped. A PR closed without merging is not adopted: the
-resume opens a new PR from the reused branch.
+resume opens a new PR from the reused branch. Here, and when `prepare`
+adopts the release PR, only a same-repo PR with a trusted author is
+adopted: a fork PR on the branch's name is reported on stderr and never
+adopted or merged.
 
 Within a run, `prepare`, `back-merge-bump` and the dependency update never
 retry a failed `gh pr create` blindly, since GitHub can open the PR and
@@ -917,8 +920,10 @@ labelled `dependency-update`. For each one:
   merged, so preflight comments on the deps PR, closes it, deletes its
   `deps/update-<version>` branch, and records it in the `prepare` comment
   on the tracking issue. GitHub's delete-on-merge setting never applies
-  to a PR closed without merging, so preflight deletes the branch itself.
-  If that delete fails, the PR stays closed and the gate still clears,
+  to a PR closed without merging, so preflight deletes the branch itself,
+  but only for a same-repo PR with a trusted author: a fork PR's head is
+  in the fork, so the branch of that name here is kept and the fork PR
+  is reported on stderr. If that delete fails, the PR stays closed and the gate still clears,
   but the release prints a warning and the `prepare` comment names the
   branch to delete by hand.
 - **The fix task is still open, the PR has no fix task, or the fix task
