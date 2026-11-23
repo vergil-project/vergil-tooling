@@ -29,10 +29,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict, cast
 from urllib.parse import quote
 
-from vergil_tooling.lib import branch_sweep, epics, github
+from vergil_tooling.lib import branch_sweep, epics, github, trust
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
+
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 DOCS = ("spec", "plan", "retrospective")
 """The three documents, in the order the section lists them."""
@@ -444,23 +446,21 @@ def _issue_endpoint(owner: str, repo: str, number: int) -> str:
     return f"repos/{owner}/{repo}/issues/{number}"
 
 
-def read_body(owner: str, repo: str, number: int) -> str:
-    """The body of issue *owner*/*repo*#*number*; an issue with no body gives ``""``."""
-    endpoint = _issue_endpoint(owner, repo, number)
-    data = github.read_json("api", endpoint)
-    if not isinstance(data, dict):
-        msg = f"unexpected API response for {endpoint}: {type(data).__name__}"
-        raise ValueError(msg)  # noqa: TRY004 - a malformed API answer, not a caller type error
-    if "body" not in data:
-        msg = f"unexpected API response for {endpoint}: no body field"
-        raise ValueError(msg)
-    body = data["body"]
-    if body is None:
-        return ""
-    if not isinstance(body, str):
-        msg = f"unexpected body in API response for {endpoint}: {type(body).__name__}"
-        raise ValueError(msg)  # noqa: TRY004 - a malformed API answer, not a caller type error
-    return body
+def read_body(owner: str, repo: str, number: int, *, authors: TrustedAuthors | None = None) -> str:
+    """The body of issue *owner*/*repo*#*number*, read only when the trust layer trusts it.
+
+    ``vrg-epic-docs`` parses the links in the body and writes the body back,
+    so it is read through :func:`vergil_tooling.lib.trust.read_issue` with
+    ``require_body=True`` (spec §5.2 of epic vergil-project/.github#1467): a
+    body whose author or an editor holds no role raises
+    :class:`~vergil_tooling.lib.trust.UntrustedContentError` (metadata only),
+    and a read the layer cannot complete raises
+    :class:`~vergil_tooling.lib.trust.TrustReadError`. An issue with no body
+    gives ``""``. *authors* defaults to the loaded configuration, whose
+    errors propagate.
+    """
+    content = trust.read_issue(f"{owner}/{repo}", number, require_body=True, authors=authors)
+    return content.body or ""
 
 
 def write_body(owner: str, repo: str, number: int, body: str) -> None:

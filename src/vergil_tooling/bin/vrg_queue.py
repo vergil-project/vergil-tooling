@@ -41,7 +41,11 @@ not the queue (spec §5.3 of epic vergil-project/.github#1467: batch runs stop
 the item, not the run). A text run lists the rest of the queue; its header
 counts the stopped items (``<N> open item(s), <K> stopped``, ``<N>`` counting
 them), and each is shown after the listed items as
-``<ref>  stopped: its comments could not be read (see stderr)``. After every
+``<ref>  stopped: its comments could not be read (see stderr)``. A planning
+item is also stopped when the trust layer does not trust its body, whose
+``Security advisory:`` lines the advisory hold reads: it is shown as
+``<ref>  stopped: its body is untrusted (see stderr)``, and under GitHub
+Actions it is counted, never named. After every
 listing, each stop is named on stderr by the trust layer's
 :class:`~vergil_tooling.lib.trust.BatchStops` (``stopped on a read failure:
 <ref> on comments: <reason>``; under GitHub Actions, a count and the refs),

@@ -8,12 +8,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin.vrg_epic_docs import main, parse_args
-from vergil_tooling.lib import epic_docs, github
+from vergil_tooling.lib import epic_docs, github, trust
 from vergil_tooling.lib.epic_docs import PENDING, DocLink
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 _MOD = "vergil_tooling.bin.vrg_epic_docs"
 
@@ -232,6 +236,79 @@ def test_set_malformed_api_answer_edits_nothing(
     assert "no body field; nothing was edited" in capsys.readouterr().err
 
 
+_UNTRUSTED = trust.Skipped(
+    "o/.github", 1, "edit", "drive-by", trust_stubs.EDITED, "body", trust.UNTRUSTED
+)
+
+
+def test_set_untrusted_body_edits_nothing(fake: _Fake, capsys: pytest.CaptureFixture[str]) -> None:
+    fake.read_body.side_effect = trust.UntrustedContentError(
+        _UNTRUSTED, "the issue body is untrusted"
+    )
+    assert main(["set", "--epic", "o/.github#1", "--spec", "epics/1-x/spec.md"]) == 1
+    fake.write_body.assert_not_called()
+    err = capsys.readouterr().err
+    assert err == (
+        "vrg-epic-docs: o/.github#1: stopped before any write: the issue body is untrusted: "
+        f"o/.github#1 edit drive-by at {trust_stubs.EDITED} on body (untrusted)."
+        " The human decides next.\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("exc", "message"),
+    [
+        (
+            trust.TrustReadError("read_issue o/.github#1", "the body is missing"),
+            "cannot read who wrote the content (read_issue o/.github#1): the body is missing",
+        ),
+        (TrustedAuthorsNotConfiguredError("no trusted authors configured"), "no trusted authors"),
+    ],
+)
+def test_set_trust_layer_failure_edits_nothing(
+    fake: _Fake, capsys: pytest.CaptureFixture[str], exc: Exception, message: str
+) -> None:
+    fake.read_body.side_effect = exc
+    assert main(["set", "--epic", "o/.github#1"]) == 1
+    fake.write_body.assert_not_called()
+    [line] = capsys.readouterr().err.splitlines()
+    assert line.startswith(f"vrg-epic-docs: o/.github#1: {message}")
+    assert line.endswith("; nothing was edited")
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "writes"),
+    [
+        (trust_stubs.HUMAN, None, 1),
+        (trust_stubs.AGENT, trust_stubs.HUMAN, 1),
+        (trust_stubs.OUTSIDER, None, 0),
+        (trust_stubs.HUMAN, trust_stubs.OUTSIDER, 0),
+        (trust_stubs.IMPOSTOR, None, 0),
+    ],
+)
+def test_set_reads_the_body_through_the_trust_layer(
+    capsys: pytest.CaptureFixture[str],
+    author: dict[str, str],
+    editor: dict[str, str] | None,
+    writes: int,
+) -> None:
+    # The real read_body, on the trust layer's GraphQL answer: an untrusted
+    # body is never parsed or written back.
+    answer = trust_stubs.item(body="Epic description.\n", author=author, editor=editor)
+    write = MagicMock()
+    with (
+        patch("vergil_tooling.lib.github.graphql", return_value=answer),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        patch(f"{_MOD}.epic_docs.write_body", write),
+    ):
+        rc = main(["set", "--epic", "o/.github#1"])
+    assert write.call_count == writes
+    assert rc == (0 if writes else 1)
+    if not writes:
+        assert "stopped before any write" in capsys.readouterr().err
+
+
 def test_set_failed_write(fake: _Fake, capsys: pytest.CaptureFixture[str]) -> None:
     fake.write_body.side_effect = _api_error()
     assert main(["set", "--epic", "o/.github#1"]) == 1
@@ -294,6 +371,8 @@ class _Home:
         self.bodies = {r["number"]: r["body"] or "" for r in records}
         self.files = files
         self.calls: list[tuple[str, str | None]] = []
+        self.read_authors: list[TrustedAuthors | None] = []
+        self.load_authors = MagicMock(return_value=trust_stubs.AUTHORS)
         self.list_epics = MagicMock(side_effect=self._list_epics)
         self.read_body = MagicMock(side_effect=self._read)
         self.write_body = MagicMock(side_effect=self._write)
@@ -309,8 +388,11 @@ class _Home:
         self.home = home
         return self.records
 
-    def _read(self, owner: str, repo: str, number: int) -> str:
+    def _read(
+        self, owner: str, repo: str, number: int, *, authors: TrustedAuthors | None = None
+    ) -> str:
         self._note("read")
+        self.read_authors.append(authors)
         return self.bodies[number]
 
     def _write(self, owner: str, repo: str, number: int, body: str) -> None:
@@ -346,7 +428,7 @@ class _Home:
                 "list_dir",
                 "file_exists",
             )
-        ]
+        ] + [patch(f"{_MOD}.load_trusted_authors", self.load_authors)]
 
     def run(self, argv: list[str]) -> int:
         with contextlib.ExitStack() as stack:
@@ -429,6 +511,73 @@ def test_backfill_apply_reads_the_body_again() -> None:
     home.bodies[6] = "Edited since the listing.\n"
     assert home.run(["backfill", "--org", "o", "--apply"]) == 0
     assert home.bodies[6].endswith("\n\nEdited since the listing.\n")
+
+
+def test_backfill_apply_loads_the_authors_once() -> None:
+    home = _Home([_record(1, "One.\n"), _record(2, "Two.\n")], set())
+    assert home.run(["backfill", "--org", "o", "--apply"]) == 0
+    home.load_authors.assert_called_once_with()
+    assert home.read_authors == [trust_stubs.AUTHORS, trust_stubs.AUTHORS]
+
+
+def test_backfill_dry_run_loads_no_authors() -> None:
+    home = _Home([_record(1, "One.\n")], set())
+    assert home.run(["backfill", "--org", "o"]) == 0
+    home.load_authors.assert_not_called()
+
+
+def test_backfill_untrusted_body_left_unchanged(capsys: pytest.CaptureFixture[str]) -> None:
+    home = _Home([_record(3, "Three.\n"), _record(1, "One.\n")], set())
+    untrusted = trust.Skipped(
+        "o/.github", 3, "issue", "drive-by", trust_stubs.CREATED, "body", trust.UNTRUSTED
+    )
+
+    def read(owner: str, repo: str, number: int, *, authors: TrustedAuthors | None = None) -> str:
+        if number == 3:
+            raise trust.UntrustedContentError(untrusted, "the issue body is untrusted")
+        return home.bodies[number]
+
+    home.read_body.side_effect = read
+    assert home.run(["backfill", "--org", "o", "--apply"]) == 1
+    assert [c.args[2] for c in home.write_body.call_args_list] == [1]
+    assert home.bodies[3] == "Three.\n"
+    captured = capsys.readouterr()
+    assert captured.err == (
+        "vrg-epic-docs: o/.github#3: stopped before any write: the issue body is untrusted: "
+        f"o/.github#3 issue drive-by at {trust_stubs.CREATED} on body (untrusted)."
+        " The human decides next.\n"
+    )
+    assert "1 added, 0 changed, 0 no change, 0 need a decision, 1 failed" in captured.out
+
+
+def test_backfill_trust_read_failure_left_unchanged(capsys: pytest.CaptureFixture[str]) -> None:
+    home = _Home([_record(3, "Three.\n"), _record(1, "One.\n")], set())
+    failure = trust.TrustReadError("read_issue o/.github#3", "the body is missing")
+
+    def read(owner: str, repo: str, number: int, *, authors: TrustedAuthors | None = None) -> str:
+        if number == 3:
+            raise failure
+        return home.bodies[number]
+
+    home.read_body.side_effect = read
+    assert home.run(["backfill", "--org", "o", "--apply"]) == 1
+    assert [c.args[2] for c in home.write_body.call_args_list] == [1]
+    captured = capsys.readouterr()
+    assert captured.err == f"vrg-epic-docs: o/.github#3: {failure}; left unchanged\n"
+    assert "1 failed" in captured.out
+
+
+def test_backfill_authors_not_configured_edits_nothing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = _Home([_record(1, "One.\n")], set())
+    home.load_authors.side_effect = TrustedAuthorsNotConfiguredError("no trusted authors")
+    assert home.run(["backfill", "--org", "o", "--apply"]) == 1
+    home.list_epics.assert_not_called()
+    home.write_body.assert_not_called()
+    assert capsys.readouterr().err == (
+        "vrg-epic-docs: o/.github: no trusted authors; nothing was edited\n"
+    )
 
 
 def test_backfill_ambiguous_exit_1(capsys: pytest.CaptureFixture[str]) -> None:

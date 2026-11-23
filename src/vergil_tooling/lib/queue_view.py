@@ -84,6 +84,14 @@ it is left out and recorded in the caller's
 :class:`~vergil_tooling.lib.trust.BatchStops` with its cause, and the view
 carries on with the rest.
 
+The planning view reads each item's ``Security advisory:`` lines, for the
+hold and the broken-pair note, from its body in the same trust-layer read as
+its comments, and the body counts only when the layer trusts it. An item
+whose body is untrusted stops that item only, as in the ad-hoc view: it is
+left out and recorded in the caller's
+:class:`~vergil_tooling.lib.trust.BatchStops` with its cause, never shown
+as naming no advisory.
+
 Planning and deferred items carry an **epic size**
 (:mod:`vergil_tooling.lib.epic_size`): each view derives its size record
 from the item's ``epic-size:*`` label and the latest sizing comment among
@@ -103,6 +111,7 @@ reported as :class:`QueueNotFoundError` rather than an empty queue.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -341,17 +350,61 @@ def _trusted_bodies(
     try:
         return trusted_comments.bodies(ref, authors)
     except trust.TrustReadError as exc:
-        item = trust.Skipped(
-            repo=f"{ref.owner}/{ref.repo}",
-            number=ref.number,
-            kind="issue",
-            login=None,
-            at="",
-            field=STOP_FIELD,
-            cause=trust.READ_FAILURE,
-        )
-        stops.add(item, trust.READ_FAILURE, detail=str(exc))
+        _read_failure(ref, exc, stops)
         return None
+
+
+def _read_failure(ref: IssueRef, exc: trust.TrustReadError, stops: trust.BatchStops) -> None:
+    """Add a read failure on *ref*'s read to *stops*, with *exc*'s message as the detail."""
+    item = trust.Skipped(
+        repo=f"{ref.owner}/{ref.repo}",
+        number=ref.number,
+        kind="issue",
+        login=None,
+        at="",
+        field=STOP_FIELD,
+        cause=trust.READ_FAILURE,
+    )
+    stops.add(item, trust.READ_FAILURE, detail=str(exc))
+
+
+@dataclass(frozen=True)
+class _PlanningText:
+    """A planning item's body and comment bodies, as the trust layer gives them."""
+
+    body: str
+    comments: list[str]
+
+
+def _planning_text(
+    ref: IssueRef, authors: TrustedAuthors, stops: trust.BatchStops
+) -> _PlanningText | None:
+    """*ref*'s body and trusted comment bodies from one read, or ``None`` on a stop.
+
+    The ``Security advisory:`` lines the hold rule reads are in the body, so
+    the body counts only when the trust layer trusts it (``require_body=True``):
+    an untrusted body (:class:`~vergil_tooling.lib.trust.UntrustedContentError`)
+    is a stop on this item, with its own metadata and cause, never "names no
+    advisory". A read the layer cannot complete is a read failure, as
+    :func:`_trusted_bodies` records it. Either way the caller leaves the item
+    out and carries on (spec §5.3). Each comment left out is reported on
+    stderr, metadata only.
+    """
+    try:
+        content = trust.read_issue(
+            f"{ref.owner}/{ref.repo}", ref.number, require_body=True, authors=authors
+        )
+    except trust.UntrustedContentError as exc:
+        stops.add(exc.item, exc.item.cause)
+        return None
+    except trust.TrustReadError as exc:
+        _read_failure(ref, exc, stops)
+        return None
+    # The body is trusted (an untrusted one raised), so every skip is a comment's.
+    trust.report_skipped(content.skipped, stream=sys.stderr)
+    return _PlanningText(
+        body=content.body or "", comments=[comment.body for comment in content.comments]
+    )
 
 
 def intake_items(home: str, name: str, *, stops: trust.BatchStops) -> list[QueueItem]:
@@ -517,23 +570,26 @@ def read_advisory_hold(ref: IssueRef, body: str, labels: set[str]) -> AdvisoryHo
     """:func:`advisory_hold` for one issue, listing its org's advisories itself.
 
     The docs-PR close (:func:`vergil_tooling.lib.planning_close.find`) uses it,
-    so the close and the planning view apply the same rule. Any failed GitHub
-    call propagates.
+    so the close and the planning view apply the same rule. As in the view,
+    *body* is one the trust layer trusts: the caller never passes an
+    untrusted body. Any failed GitHub call propagates.
     """
     advisories = _org_advisories(ref.owner, named=bool(_named_advisories(ref, body)))
     return advisory_hold(ref, body, labels, advisories)
 
 
-def _holds(views: Sequence[tuple[IssueRef, dict[str, Any]]]) -> dict[IssueRef, AdvisoryHold]:
-    """Each item's :func:`advisory_hold`, with each org's advisories listed once."""
+def _holds(
+    items: Sequence[tuple[IssueRef, dict[str, Any], _PlanningText]],
+) -> dict[IssueRef, AdvisoryHold]:
+    """Each item's :func:`advisory_hold` on its trusted body, each org's advisories listed once."""
     named: dict[str, bool] = {}
-    for ref, view in views:
-        names = bool(_named_advisories(ref, str(view.get("body") or "")))
+    for ref, _view_row, text in items:
+        names = bool(_named_advisories(ref, text.body))
         named[ref.owner] = named.get(ref.owner, False) or names
     listings = {org: _org_advisories(org, named=any_named) for org, any_named in named.items()}
     return {
-        ref: advisory_hold(ref, str(view.get("body") or ""), _labels(view), listings[ref.owner])
-        for ref, view in views
+        ref: advisory_hold(ref, text.body, _labels(view), listings[ref.owner])
+        for ref, view, text in items
     }
 
 
@@ -543,20 +599,22 @@ def planning_items(home: str, name: str, *, stops: trust.BatchStops) -> list[Que
     An item is held back from ``ready-to-close`` while :func:`advisory_hold`
     holds it (spec 4.4b of epic vergil-project/.github#517, spec 4.2 of #573,
     spec 6.3 of #1331; #3826, #3996). A broken pair replaces the item's
-    latest-comment note but does not hold it. An item whose comments cannot be
-    read is left out and added to *stops*.
+    latest-comment note but does not hold it. The ``Security advisory:``
+    lines come from the body the trust layer trusts, read with the comments
+    (:func:`_planning_text`): an item whose body is untrusted, or whose body
+    and comments cannot be read in full, is left out and added to *stops*.
     """
     authors = load_trusted_authors()
-    views = [
-        (ref, _view(ref, "title,createdAt,labels,body"))
-        for ref in _open_children(epics.PLANNING, home, name)
-    ]
-    holds = _holds(views)
+    read: list[tuple[IssueRef, dict[str, Any], _PlanningText]] = []
+    for ref in _open_children(epics.PLANNING, home, name):
+        view = _view(ref, "title,createdAt,labels")
+        text = _planning_text(ref, authors, stops)
+        if text is not None:
+            read.append((ref, view, text))
+    holds = _holds(read)
     items: list[QueueItem] = []
-    for ref, view in views:
-        comments = _trusted_bodies(ref, authors, stops)
-        if comments is None:
-            continue
+    for ref, view, text in read:
+        comments = text.comments
         markers = parse_planning_markers(comments)
         hold = holds[ref]
         state, demoted = _planning_state(_labels(view), markers, advisory_held=hold.held)
