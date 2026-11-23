@@ -18977,9 +18977,11 @@ plan, merges. So that PR also closes the epic's <strong>planning issue</strong>
 checks whether that issue is an epic's documentation task:</p>
 <ol>
 <li>Its parent epic's body names the planning issue on a
-   <code>Planning: &lt;owner&gt;/&lt;repo&gt;#&lt;M&gt;</code> line.</li>
+   <code>Planning: &lt;owner&gt;/&lt;repo&gt;#&lt;M&gt;</code> line. The line counts only from a body
+   the trust layer trusts: an untrusted epic body stops the submission.</li>
 <li>That planning issue's latest <code>Docs task:</code> marker names the PR's issue.
-   Only comments by trusted authors count.</li>
+   Only comments the trust layer trusts count, and an untrusted planning
+   issue body closes nothing (the reason is printed).</li>
 </ol>
 <p>If both hold, the body gets one more line under its issue linkage:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="gu">## Issue Linkage</span>

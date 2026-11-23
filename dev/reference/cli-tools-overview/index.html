@@ -21452,9 +21452,13 @@ proxy whose title differs from the derived one is retitled, so a re-run brings
 an older proxy up to date; a proxy is found by its <code>Primary:</code> line and labels,
 never its title. The comment is posted only when no trusted comment on the
 primary already names the proxy, so a re-run on an up-to-date proxy writes
-nothing. It refuses, before any write, a primary in the
+nothing. The <code>Primary:</code> lines and <code>Proxy:</code> comments are read through the
+trust layer: a comment it does not trust is left out and reported on stderr,
+and a proxy body it does not trust stops the command. It refuses, before any
+write, a primary in the
 target's own org and a primary that is not an open development epic (a standing
-epic, a proxy, an archive or a closed epic). It reads and writes each org
+epic, a proxy, an archive or a closed epic), and a body or comment list the
+trust layer does not trust or cannot read in full. It reads and writes each org
 under that org's App token. The title and body are derived, so it takes no
 <code>--title</code>, <code>--body</code>, <code>--body-file</code>, <code>--label</code> or <code>--assignee</code>.</p>
 <p><code>--standing KIND --org ORG</code> instead ensures ORG's standing epic of that kind
@@ -22037,7 +22041,8 @@ collect step of <code>epic-review</code> and by <code>epic-create</code>'s no-ar
 <code>M/14</code> (the size and the estimated task count), <code>?</code> when unsized, or <code>!</code> when
 its sizing is in error: its <code>epic-size:*</code> label and its latest trusted sizing
 comment disagree, one is missing, it has several size labels, or the comment
-is malformed. Only comments by trusted authors count. For an item in error, a
+is malformed. Only comments the trust layer trusts count (the comments the
+item's notes come from). For an item in error, a
 held or deferral note is kept with <code>| size: &lt;error&gt;</code> appended; otherwise
 <code>size: &lt;error&gt;</code> replaces its latest-comment note. <code>--json</code> adds <code>epic_size</code>,
 <code>estimated_tasks</code>, <code>confidence</code> and <code>size_error</code> (each <code>null</code> when unset) to
@@ -22588,7 +22593,9 @@ started clean at <code>HEAD</code>, exited 0 and passed every stage; the passed 
 become <code>validate_stages</code>. The change class is
 <a href="#vrg-change-class"><code>vrg-change-class</code></a>'s, with the allow-list committed at
 the merge base.</p>
-<p>It reads the body of the <code>--issue</code> itself, as <code>issue_body</code>, and derives
+<p>It reads the body of the <code>--issue</code> itself, as <code>issue_body</code>, through the
+trust layer, and refuses when the layer does not trust it (metadata only,
+never the body's text); it derives
 <code>epic_open_tasks</code> from the issue's native parent: when the parent carries
 <code>epic</code> and not <code>ad-hoc</code>, its open sub-issues, every page, as
 <code>{"ref", "title"}</code>, without the issue itself; otherwise <code>[]</code>. When the
@@ -22599,9 +22606,11 @@ again without the issue itself. It refuses when the issue, its parent's
 labels or the sub-issues cannot be read, and, for a proxy, when its
 <code>Primary:</code> line cannot be resolved, the primary has no trusted <code>Proxy:</code>
 comment naming it back, or any of the primary's proxy links is broken.</p>
-<p>It reads the comments of the <code>--issue</code> itself, every page, and keeps only
-those posted by the one human login of the trusted-authors configuration
-(see <a href="#vrg-trusted-authors"><code>vrg-trusted-authors</code></a>), oldest first, as
+<p>It reads the comments of the <code>--issue</code> itself through the trust layer,
+every page, and keeps only those posted by the one human login of the
+trusted-authors configuration (see
+<a href="#vrg-trusted-authors"><code>vrg-trusted-authors</code></a>), a GitHub user account, and
+edited by no one else, oldest first, as
 <code>issue_comments</code>, each <code>{"author", "created_at", "body"}</code>. Agent and
 third-party comments are dropped. A human comment that has been edited is
 left out and counted in <code>issue_comments_excluded_edited</code>. It refuses when
@@ -22618,8 +22627,10 @@ the human excused (not sent to the reviewer). It refuses an ID no earlier
 result raised, an ID given to both, a check with no <code>--fix-id</code>, and an
 earlier defect named by neither unless a later result marks it <code>fixed</code>.</p>
 <p>For a fix to an open PR, <code>--pr</code> names the PR by number or URL. The PR must
-be in the <code>--issue</code> repository, open, and headed by the current branch.
-When its body has more than one <code>Closes</code> line it is a batch PR: the
+be in the <code>--issue</code> repository, open, and a same-repo PR with a trusted
+author headed by the current branch, and its body must be one the trust
+layer trusts: a linkage line an outsider wrote or edited in never names an
+issue. When its body has more than one <code>Closes</code> line it is a batch PR: the
 <code>--issue</code> must be one of them, and every step's request adds
 <code>batch_issues</code> (each other issue's ref, body and human comments, read as
 for the <code>--issue</code>), <code>batch_commits</code> (every commit under review as
@@ -22727,7 +22738,7 @@ epic), or whose body names an <code>epic</code>-labelled issue in another org (i
 under that org's proxy), each with its reason. A cross-org issue the body
 names that cannot be read (private, deleted, or in an org the App cannot
 reach) is listed as a reason of its own. A task drops out of the report once
-a comment by a trusted author carries the line <code>Standalone-confirmed</code>, alone
+a comment the trust layer trusts carries the line <code>Standalone-confirmed</code>, alone
 on its line, recording the human's ruling that it is standalone. The report
 never refuses, moves, closes or labels anything, does not change the exit
 status, and, like the proxy link drift section, runs with <code>--close</code> too.</p>
