@@ -370,6 +370,44 @@ def test_bump_skips_missing_language_file_discover_raises(tmp_path: Path) -> Non
     assert (tmp_path / "VERSION").read_text().strip() == "1.0.1"
 
 
+def test_bump_unreadable_python_version_file_fails_and_restores(tmp_path: Path) -> None:
+    """A version file that cannot be read fails loudly, never a silent skip (#4588)."""
+    _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_bytes(b'[project]\nname = "\xff"\nversion = "1.0.0"\n')
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run") as mock_run,
+        pytest.raises(VersionSyncError, match=r"cannot read pyproject\.toml: .*Fix: "),
+    ):
+        bump(tmp_path)
+    mock_run.assert_not_called()
+    assert (tmp_path / "VERSION").read_text() == "1.0.0\n"
+    assert pyproject.read_bytes() == b'[project]\nname = "\xff"\nversion = "1.0.0"\n'
+
+
+def test_bump_unwritable_go_version_file_fails_and_restores(tmp_path: Path) -> None:
+    """A version file that cannot be written fails loudly, never a silent skip (#4588)."""
+    _write_toml(tmp_path, "go")
+    (tmp_path / "VERSION").write_text("1.0.5\n")
+    version_go = tmp_path / "version.go"
+    version_go.write_text('package pkg\n\nVersion = "1.0.5"\n')
+    original = Path.write_text
+
+    def write_text(self: Path, data: str, encoding: str | None = None) -> int:
+        if self.name == "version.go":
+            raise PermissionError(13, "Permission denied")
+        return original(self, data, encoding=encoding)
+
+    with (
+        patch.object(Path, "write_text", write_text),
+        pytest.raises(VersionSyncError, match=r"cannot write version\.go: .*make it writable"),
+    ):
+        bump(tmp_path)
+    assert (tmp_path / "VERSION").read_text() == "1.0.5\n"
+    assert version_go.read_text() == 'package pkg\n\nVersion = "1.0.5"\n'
+
+
 def test_bump_skips_nonexistent_language_file(tmp_path: Path) -> None:
     _write_toml(tmp_path, "python")
     (tmp_path / "VERSION").write_text("1.0.0\n")
@@ -523,10 +561,10 @@ def test_bump_failed_restore_is_loud(tmp_path: Path) -> None:
 
 
 def test_discover_go_no_match(tmp_path: Path) -> None:
+    """A Go repo with no version.go has no version file: an explicit None (#4588)."""
     from vergil_tooling.lib.version import _discover_version_file
 
-    with pytest.raises(FileNotFoundError, match="No .*/version.go"):
-        _discover_version_file(tmp_path, "go")
+    assert _discover_version_file(tmp_path, "go") is None
 
 
 def test_discover_unsupported_language(tmp_path: Path) -> None:
@@ -841,7 +879,7 @@ def test_cargo_version_table_without_version_fails(data: dict[str, object], matc
 
 
 def test_cargo_version_error_is_not_a_value_error() -> None:
-    """bump()'s ``except (FileNotFoundError, ValueError)`` must not swallow it."""
+    """A caller catching ValueError for another purpose must not swallow it."""
     assert not issubclass(CargoVersionError, ValueError)
 
 
