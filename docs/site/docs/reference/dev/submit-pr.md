@@ -186,7 +186,16 @@ interactive by design: it is a human touch point of the workflow and
 requires a terminal; root launches fail fast when stdin is not a TTY.
 
 A worktree whose PR is already submitted is not submitted again: submit
-says so and points at `vrg-finalize-pr`.
+says so and points at `vrg-finalize-pr`. The root launch also asks GitHub
+whether a ready worktree's branch already has a PR, since one opened by
+hand leaves the worktree's state ready: an open PR holds it back as in
+flight, and a PR merged at the reported head holds it back as cleanup
+(`vrg-finalize-pr --cleanup-only`). Each one held back is named on stderr
+when others go ahead. A merged PR at another head is a reused branch
+name, and the worktree is still submitted.
+
+A push refused because origin deleted the branch after its PR merged says
+so, and names the merged PR, instead of reporting that the remote moved.
 
 ### Several worktrees (`--all` / `--select`)
 
