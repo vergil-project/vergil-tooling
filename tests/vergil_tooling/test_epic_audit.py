@@ -696,7 +696,7 @@ def test_operational_status_classifies_runnable_vs_blocked() -> None:
             "vergil_tooling.lib.epics.blockers_of",
             side_effect=_blockers({7: [_CLOSED_DEP], 8: [_CLOSED_DEP, _OPEN_DEP]}),
         ),
-        patch("vergil_tooling.lib.epics.issue_state", side_effect=_dep_state),
+        patch("vergil_tooling.lib.epics._issue_state", side_effect=_dep_state),
     ):
         status = epic_audit.operational_status(epic, stops=stops)
     assert status.runnable == (val_runnable,)
@@ -748,7 +748,7 @@ def test_operational_status_stops_only_the_untrusted_child() -> None:
             "vergil_tooling.lib.epics.blockers_of",
             side_effect=_blockers({**_STOPPING, 11: [_OPEN_DEP]}),
         ),
-        patch("vergil_tooling.lib.epics.issue_state", side_effect=_dep_state),
+        patch("vergil_tooling.lib.epics._issue_state", side_effect=_dep_state),
     ):
         status = epic_audit.operational_status(epic, stops=stops)
     assert [ref.number for ref in status.runnable] == [10]
@@ -792,7 +792,7 @@ def test_child_status_classifies_every_open_child() -> None:
             "vergil_tooling.lib.epics.blockers_of",
             side_effect=_blockers({10: [_CLOSED_DEP], 11: [_OPEN_DEP]}),
         ),
-        patch("vergil_tooling.lib.epics.issue_state", side_effect=_dep_state),
+        patch("vergil_tooling.lib.epics._issue_state", side_effect=_dep_state),
     ):
         status = epic_audit.child_status(epic, stops=trust.BatchStops())
     # Every open child is classified, plain tasks included — no kind gating.

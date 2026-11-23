@@ -225,10 +225,6 @@ class OperationalStatus:
         return self.runnable + self.blocked + self.stopped
 
 
-def _all_closed(blockers: list[epics.IssueRef]) -> bool:
-    return all(epics.issue_state(dep) == "CLOSED" for dep in blockers)
-
-
 def operational_status(epic: epics.IssueRef, *, stops: trust.BatchStops) -> OperationalStatus:
     """Classify *epic*'s open operational children as runnable vs blocked, by kind.
 
@@ -258,7 +254,7 @@ def operational_status(epic: epics.IssueRef, *, stops: trust.BatchStops) -> Oper
         if blockers is None:
             stopped.append(child.ref)
             continue
-        target = runnable if _all_closed(blockers) else blocked
+        target = runnable if epics.all_blockers_closed(blockers) else blocked
         target.append(child.ref)
     return OperationalStatus(
         epic=epic,
@@ -305,7 +301,7 @@ def child_status(epic: epics.IssueRef, *, stops: trust.BatchStops) -> ChildStatu
         if blockers is None:
             stopped.append(child.ref)
             continue
-        target = runnable if _all_closed(blockers) else blocked
+        target = runnable if epics.all_blockers_closed(blockers) else blocked
         target.append(child.ref)
     return ChildStatus(
         epic=epic, runnable=tuple(runnable), blocked=tuple(blocked), stopped=tuple(stopped)

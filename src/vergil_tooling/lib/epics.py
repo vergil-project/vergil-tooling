@@ -393,14 +393,16 @@ def blockers_of(task: IssueRef) -> list[IssueRef]:
     ]
 
 
-def all_blockers_closed(task: IssueRef) -> bool:
-    """True iff every blocker of *task* is CLOSED.
+def all_blockers_closed(blockers: list[IssueRef]) -> bool:
+    """True iff every one of *blockers*, a task's blockers already read, is CLOSED.
 
-    No blockers means nothing holds *task*, so it is runnable — the empty case is
-    vacuously True. Used by the validation-aware rollup to classify an open
-    validation task as runnable (blockers closed) vs blocked.
+    No blockers means nothing holds the task, so it is runnable — the empty
+    case is vacuously True. It takes the list rather than the task, so a
+    batch run reads the blockers with :func:`blockers_or_stop` and stops an
+    untrusted child alone; the audit uses it to classify an open child as
+    runnable (blockers closed) vs blocked.
     """
-    return all(_issue_state(dep) == "CLOSED" for dep in blockers_of(task))
+    return all(_issue_state(dep) == "CLOSED" for dep in blockers)
 
 
 #: The field a blocker read's stop names: the ``Blocked-by:`` lines are in the body.
