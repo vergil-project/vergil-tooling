@@ -45,6 +45,12 @@ bootstrapped either (issue #4624). See
 with none of its manifests but with sources of its language (a branch that
 deletes ``Cargo.toml``, say) is not unstarted: its install stage fails.
 
+``--markdown [--fix] FILE...`` runs no stage: it markdownlints only the given files,
+exactly as the common stage would (the bundled config, and a file outside
+its scope or ignored is named and skipped), so an ad-hoc lint never
+disagrees with the gate; ``--fix`` lets markdownlint fix what it can. It
+writes no run record (issue #4589).
+
 ``--all-versions`` (Python only) adds one test stage per resolved CI version
 after the test stage, so the coverage gate runs on every interpreter PR-CI
 tests, not only the dev container's (issue #3547).
@@ -158,10 +164,36 @@ def main(argv: list[str] | None = None) -> int:
             "each on a uv-managed interpreter (Python only)."
         ),
     )
+    parser.add_argument(
+        "--markdown",
+        action="store_true",
+        help=(
+            "Only markdownlint the FILEs, exactly as the full run's common stage "
+            "would: the bundled config, and a file outside its scope is skipped."
+        ),
+    )
+    parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="With --markdown, let markdownlint fix what it can.",
+    )
+    parser.add_argument("files", nargs="*", metavar="FILE", help="The files --markdown lints.")
     progress.add_progress_args(parser, ())
     args = parser.parse_args(argv)
     if args.all_versions and args.check not in (None, "test"):
         parser.error("--all-versions runs the test stage; use it alone or with --check test")
+    if args.markdown:
+        if args.check is not None or args.all_versions:
+            parser.error(
+                "--markdown lints only the given files; use it without --check or --all-versions"
+            )
+        if not args.files:
+            parser.error("--markdown needs at least one FILE")
+    else:
+        if args.fix:
+            parser.error("--fix applies to --markdown only")
+        if args.files:
+            parser.error("FILE arguments apply to --markdown only")
 
     if not _in_dev_container():
         print(
@@ -170,6 +202,13 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+
+    # A single-file lint is not a pipeline run: it writes no validate record,
+    # so it never stands in for the full run merge-review reads (issue #4589).
+    if args.markdown:
+        from vergil_tooling.bin.validate_common import lint_markdown
+
+        return lint_markdown(args.files, fix=args.fix)
 
     # Prepend `.venv/bin` unconditionally. Under the container's anonymous
     # `.venv` mask the dir is empty at startup and populated by the install

@@ -68,6 +68,13 @@ config that is now gone.
 
 This runs inside the dev container where `markdownlint` is on PATH.
 
+To lint a few files while working, run
+`vrg-container-run -- vrg-validate --markdown [--fix] <file>...`. It
+lints each given file the gate lints against the same bundled config,
+and names and skips any file the gate does not lint, so its result
+matches the gate's. A bare `markdownlint <file>` does not: it falls back
+to markdownlint's defaults, MD013 included.
+
 ## Links to other Vergil docs sites
 
 Right after markdownlint, the common checks run docs-links over the same
