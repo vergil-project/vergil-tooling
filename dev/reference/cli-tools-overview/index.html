@@ -15056,6 +15056,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-merge-review-close" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-merge-review-close
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-change-class" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19722,6 +19733,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-merge-review-close" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-merge-review-close
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-change-class" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -22742,6 +22764,59 @@ record, and writes nothing.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 the result passed, 1 it failed or a file could not be read, 2 bad arguments</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-merge-review-close">vrg-merge-review-close<a class="headerlink" href="#vrg-merge-review-close" title="Permanent link">&para;</a></h3>
+<p>Posts merge review's closing comment on the task issue, as the agent, with
+its machine-readable record line (epic vergil-project/.github#1384):
+<code>Merge review record: head=&lt;sha&gt; fingerprint=&lt;hex&gt; outcome=&lt;outcome&gt;</code>.
+<code>--body-file</code> holds the closing comment as the merge-review skill writes
+it: the eligibility line for <code>--outcome</code> first, then, on a fix to an open
+PR, the <code>Branch as reviewed:</code> line, then the closing state of every item.
+Every line is kept, and the record line goes right below the eligibility
+line (or the branch line). The command computes the head and the
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/change_fingerprint.py">change fingerprint</a>
+itself; it takes neither as an argument. For an issue of a batch before
+handoff (it has a batch marker), the change is that issue's own, from the
+previous issue's commit to <code>HEAD</code>, which must hold only the issue's first
+commit and its <code>fixup!</code> commits; folded, its fingerprint is the issue's
+commit's. Otherwise, a fix to an open PR included, it is the change since
+the merge base with <code>origin/develop</code>. Submit, the watch and the audit read
+the records back from the trust layer's comment stream, agent role only,
+skipping an edited comment. A re-run that finds the same comment already
+posted by the agent prints its ID and posts nothing.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_merge_review_close</code> (library: <code>lib/merge_review/record.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--issue 'OWNER/REPO#N' --outcome OUTCOME --body-file FILE</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>The <code>user</code> identity mode, as <code>&lt;human&gt;-vergil-user</code>; a clean worktree whose clone's <code>origin</code> is the issue's repository; <code>--outcome</code> <code>eligible</code> or <code>not-eligible (&lt;reason&gt;)</code> (stopped, waiting, fatal and error are refused); a body whose first line is the eligibility line for that outcome and which has no record line of its own</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>vrg-merge-review-close: &lt;reason&gt;</code> on stderr and exit 1, posting nothing. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 posted or already posted (the comment ID on stdout), 1 refused or error, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
