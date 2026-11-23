@@ -276,6 +276,23 @@ def test_main_summary_reports_prepared_count(capsys: pytest.CaptureFixture[str])
     assert "1 PR prepared." in out
 
 
+@pytest.mark.parametrize(
+    "state", [WorktreeState.OPEN_PR, WorktreeState.MERGED, WorktreeState.CLOSED]
+)
+def test_prepared_count_leaves_out_a_branch_that_has_a_pr(
+    capsys: pytest.CaptureFixture[str], state: WorktreeState
+) -> None:
+    """A ready state file whose branch already has a PR (one opened by hand never
+    stamps the state) is not counted as prepared: the count follows the row (#4993)."""
+    statuses = [
+        _status("feature/1-a", WorktreeState.NO_PR, ahead=1, pr_prepared=True),
+        _status("feature/2-b", state, pr=2, ahead=1, pr_prepared=True),
+    ]
+    rc, _ = _run(_raws(statuses), gather=statuses)
+    assert rc == 0
+    assert "1 PR prepared." in capsys.readouterr().out
+
+
 def test_main_surfaces_workflow_read_error_note(capsys: pytest.CaptureFixture[str]) -> None:
     statuses = [
         _status("feature/3-c", WorktreeState.NO_PR, ahead=1, workflow_error="not valid JSON"),

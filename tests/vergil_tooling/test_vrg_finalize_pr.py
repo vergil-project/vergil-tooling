@@ -43,7 +43,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     main,
     parse_args,
 )
-from vergil_tooling.lib import closing_refs, text_table, trust, worktrees
+from vergil_tooling.lib import closing_refs, progress, text_table, trust, worktrees
 from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cd_runs import (
     CDRunProblem,
@@ -3976,6 +3976,29 @@ def test_cleanup_only_settles_without_watch(tmp_path: Path) -> None:
     assert calls == _SETTLED[1:]  # no close-refs: no PR merged in this run
 
 
+def test_cleanup_only_log_is_headed_by_the_version_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A settle with no watch opens its own run log, and its first line names
+    the tooling version, as the run's first output line does (issue #4994)."""
+    with (
+        _settle_env(tmp_path, []),
+        patch("vergil_tooling.lib.progress.metadata.version", return_value="2.1.400"),
+    ):
+        assert main(["--cleanup-only"]) == 0
+    line = "vrg-finalize-pr: vergil-tooling 2.1.400"
+    assert capsys.readouterr().out.splitlines()[0] == line
+    (log,) = sorted((tmp_path / ".vergil").glob("vrg-finalize-pr-*.log"))
+    assert log.read_text().splitlines()[0] == line
+
+
+def test_version_line_heads_even_a_refused_run(capsys: pytest.CaptureFixture[str]) -> None:
+    """The version line comes before a refusal, so every run's output names it."""
+    with patch("vergil_tooling.lib.progress.metadata.version", return_value="2.1.400"):
+        assert main([_PR_A, "--install"]) == 1
+    assert capsys.readouterr().out == "vrg-finalize-pr: vergil-tooling 2.1.400\n"
+
+
 def test_cleanup_only_failed_validate_is_4(tmp_path: Path) -> None:
     with _settle_env(tmp_path, [], validation=_validate_fails):
         assert main(["--cleanup-only"]) == 4
@@ -4561,6 +4584,8 @@ def test_watch_is_a_stage_sharing_the_settle_log(
     # One run log holds the watch and the settle phase.
     (log,) = _run_logs(tmp_path)
     text = log.read_text()
+    # The shared log's first line names the tooling version (issue #4994).
+    assert text.splitlines()[0] == progress.tooling_version_line("vrg-finalize-pr")
     assert text.index("=== watch: started ===") < text.index("=== close-refs: started ===")
     assert "=== watch: ok (2 merged, 0 failed, " in text
     assert f"full log → {log}" in out

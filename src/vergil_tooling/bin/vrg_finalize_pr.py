@@ -199,6 +199,9 @@ RELEASE_CMD: tuple[str, ...] = ("vrg-release",)
 # How many trailing lines of a failed validate's output the report repeats.
 VALIDATE_TAIL_LINES = 40
 
+# The command's own name: its run log, its version line and its rollup label.
+_COMMAND = "vrg-finalize-pr"
+
 # The run log a failed validate's full output is written to, under .vergil/.
 _VALIDATE_LOG_COMMAND = "vrg-finalize-validate"
 
@@ -220,6 +223,10 @@ _NEXT_STEP_BY_OUTCOME: dict[str, str] = {
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    # The installed version heads every run, so its output (and the run log,
+    # whose first line repeats it) ties the run to a release (issue #4994).
+    print(progress.tooling_version_line(_COMMAND))
 
     refusal = _flag_refusal(args)
     if refusal is not None:
@@ -401,7 +408,7 @@ def _run_watched(args: argparse.Namespace, root: Path, prs: list[str]) -> int:
         print("[dry-run] the settle phase below runs only if at least one PR merges")
         settle = _settle(args, root, merged_prs=list(prs))
         return _maybe_release(args, root, _settle_exit(settle))
-    log = progress.RunLog("vrg-finalize-pr", root)
+    log = _run_log(root)
     try:
         try:
             results = progress.run_stage(
@@ -545,6 +552,11 @@ class SettleOutcome:
         return ""
 
 
+def _run_log(root: Path) -> progress.RunLog:
+    """A new run log for this run, its first line the version line (issue #4994)."""
+    return progress.RunLog(_COMMAND, root, header=progress.tooling_version_line(_COMMAND))
+
+
 def _settle(
     args: argparse.Namespace,
     root: Path,
@@ -555,7 +567,8 @@ def _settle(
     """Run the settle phase's stages and surface any stuck worktrees.
 
     *log* is the run log the watch wrote to, which the settle phase goes on
-    writing; with none, the pipeline opens its own.
+    writing; with none, it opens its own, headed by the version line, and
+    closes it.
 
     The checkout lock is taken by the ``checkout-lock`` stage, after
     close-refs, and let go by the CD check, or by the ``with`` block here when
@@ -565,12 +578,15 @@ def _settle(
     purpose = "vrg-finalize-pr settle" if merged_prs else "vrg-finalize-pr --cleanup-only"
     ctx = FinalizeContext(args=args, root=root, merged_prs=merged_prs, lock_purpose=purpose)
     results: list[StageResult] = []
-    with ctx.lock_stack:
+    with contextlib.ExitStack() as log_stack, ctx.lock_stack:
+        if log is None:
+            log = _run_log(root)
+            log_stack.callback(log.close)
         rc = progress.run_pipeline(
             ctx,
             build_stages(close_refs=bool(merged_prs)),
-            command="vrg-finalize-pr",
-            label="vrg-finalize-pr",
+            command=_COMMAND,
+            label=_COMMAND,
             args=args,
             repo_root=root,
             results_sink=results,

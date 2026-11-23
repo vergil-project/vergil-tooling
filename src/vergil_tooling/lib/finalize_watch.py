@@ -40,7 +40,11 @@ judge it in this order:
    of its workflow has replaced, for :data:`CANCEL_GRACE_SECS` on end:
    ``failed: cancelled``, naming the check. Until then the PR is pending,
    since a re-run may still start.
-8. **Conflict** (``mergeStateStatus`` ``DIRTY``): ``failed: conflict``.
+8. **Conflict** (``mergeStateStatus`` ``DIRTY``) reported at the same head
+   for :data:`CONFLICT_SETTLE_SECS` on end: ``failed: conflict``. Until
+   then the PR is pending: GitHub recomputes a PR's mergeable status after
+   a push, and may report the old conflict meanwhile (issue #4998). A new
+   head starts the count again, and any other merge state clears it.
 
 **A superseded run is not a failure** (issue #4692). A push to an open PR
 starts a new CI run, and ``concurrency: cancel-in-progress`` cancels the run
@@ -110,6 +114,11 @@ _DEFAULT_DEADLINE_SECS = 7200
 #: How long a cancelled required check with no newer run holds a PR pending
 #: before the PR ends ``failed: cancelled``: time for a re-run to start.
 CANCEL_GRACE_SECS = 120.0
+
+#: How long a PR must report a conflict at one head before it ends
+#: ``failed: conflict``: time for GitHub to recompute its mergeable status
+#: after a push (issue #4998).
+CONFLICT_SETTLE_SECS = 120.0
 
 _DEVELOP = "develop"
 _RELEASE_PREFIX = "release/"
@@ -499,6 +508,37 @@ class CancelGrace:
 
 
 @dataclass
+class ConflictSettle:
+    """How long a PR has reported a conflict at one head.
+
+    GitHub recomputes a PR's mergeable status after a push, and until it has
+    it may still report the old one: a conflict a rebase has just resolved
+    can read ``DIRTY`` for a minute or so (issue #4998). So a conflict ends
+    the PR only once it has been reported at the same head for *settle*
+    seconds. A new head starts the count again, and any other merge state
+    clears it.
+    """
+
+    settle: float
+    head: str | None = None
+    since: float = 0.0
+
+    def settled(self, *, conflicted: bool, head: str, now: float) -> bool:
+        """Record whether *head* reads as conflicted at *now*; true once it has for *settle*."""
+        if not conflicted:
+            self.head = None
+            return False
+        if head != self.head:
+            self.head, self.since = head, now
+        return now - self.since >= self.settle
+
+    @property
+    def settling(self) -> bool:
+        """Whether a conflict has been reported and has not yet settled or cleared."""
+        return self.head is not None
+
+
+@dataclass
 class _Watched:
     """What the watch remembers about one PR between snapshots.
 
@@ -508,6 +548,7 @@ class _Watched:
 
     required: frozenset[str] | None
     cancel: CancelGrace
+    conflict: ConflictSettle
     branch: str | None
     checked_head: str | None = None
     violation: str = ""
@@ -573,8 +614,13 @@ def _judge(snap: Snapshot, watched: _Watched, *, now: float) -> PRResult | None:
             f"started within {github.format_wait(watched.cancel.grace)}"
         )
         return _result(snap, "failed: cancelled", detail, watched)
-    if snap.merge_state == "DIRTY":
-        return _result(snap, "failed: conflict", "the PR can no longer merge cleanly", watched)
+    conflicted = snap.merge_state == "DIRTY"
+    if watched.conflict.settled(conflicted=conflicted, head=snap.head, now=now):
+        detail = (
+            "the PR can no longer merge cleanly (reported at its head for "
+            f"{github.format_wait(watched.conflict.settle)})"
+        )
+        return _result(snap, "failed: conflict", detail, watched)
     return None
 
 
@@ -603,6 +649,8 @@ def _pending_state(snap: Snapshot, watched: _Watched) -> str:
     """The status table's state for *snap*'s PR while it is still pending."""
     if watched.cancel.names:
         return f"checks cancelled ({len(watched.cancel.names)}), awaiting a re-run"
+    if watched.conflict.settling:
+        return "conflict reported, waiting for GitHub to settle it"
     checks = _pending_checks(snap, watched.required)
     if checks:
         return f"checks pending ({checks})"
@@ -706,6 +754,7 @@ def watch(
     *,
     poll_interval: float = 15.0,
     cancel_grace: float = CANCEL_GRACE_SECS,
+    conflict_settle: float = CONFLICT_SETTLE_SECS,
 ) -> list[PRResult]:
     """Watch *prs* until each reaches a terminal :data:`Outcome` or the deadline passes.
 
@@ -715,7 +764,9 @@ def watch(
     and the status table is shown after start-up and after each poll. A PR
     that ended on its checks alone is read again on every later poll, and
     ends ``merged`` once GitHub reports it merged. *cancel_grace* is how long
-    a cancelled required check with no newer run holds a PR pending.
+    a cancelled required check with no newer run holds a PR pending, and
+    *conflict_settle* how long a conflict must be reported at one head
+    before the PR ends failed: conflict.
     """
     deadline = deadline_secs()
     if poll_interval <= 0:
@@ -751,7 +802,13 @@ def watch(
         branch = confirmed_head(snap)
         watchable = snap.state == "OPEN" and _not_develop(snap, branch) is None
         required = github.required_check_names(snap.url) if watchable else None
-        judge(snap, _Watched(required=required, cancel=CancelGrace(cancel_grace), branch=branch))
+        watched = _Watched(
+            required=required,
+            cancel=CancelGrace(cancel_grace),
+            conflict=ConflictSettle(conflict_settle),
+            branch=branch,
+        )
+        judge(snap, watched)
 
     end = time.monotonic() + deadline
     rows_now = [rows[u] for u in order]

@@ -392,6 +392,10 @@ def _summary(
     return f"{_count(total, 'worktree')}: main checkout ({_main_state(main_status)}), {counts}."
 
 
+# Row states whose branch already has a PR, so nothing is left to submit.
+_HAS_PR = frozenset({WorktreeState.OPEN_PR, WorktreeState.MERGED, WorktreeState.CLOSED})
+
+
 def _development_summary(statuses: list[WorktreeStatus]) -> str:
     total = len(statuses)
     cruft = sum(1 for s in statuses if s.removable)
@@ -399,7 +403,10 @@ def _development_summary(statuses: list[WorktreeStatus]) -> str:
     # A reused-branch worktree lands as NO_PR *and* needs_attention; count it
     # only under attention so the buckets stay disjoint and sum to total.
     stalled = sum(1 for s in statuses if s.state is WorktreeState.NO_PR and not s.needs_attention)
-    prepared = sum(1 for s in statuses if s.pr_prepared)
+    # A ready state file on a branch whose PR is already open, merged or
+    # closed (one opened by hand never stamps the state) is not a prepared
+    # PR: count it by its row's state, not the file (issue #4993).
+    prepared = sum(1 for s in statuses if s.pr_prepared and s.state not in _HAS_PR)
     # Finished-but-stuck worktrees (needs_attention) are pulled out of active:
     # never let a merged-but-dirty worktree pose as live work behind "0 cruft"
     # (issue #2347).

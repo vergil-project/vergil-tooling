@@ -108,8 +108,10 @@ one line with its mark, its duration and what it did; piped, each stage
 prints in full (`--output-format` and `--output-window` choose, as for
 the other progress commands, and are passed on to the chained
 `vrg-finalize-pr` when given). Every step's output goes to
-`.vergil/vrg-submit-pr-<stamp>.log` in the main worktree, and the
-summary points at it:
+`.vergil/vrg-submit-pr-<stamp>.log` in the main worktree. The run's first line of output, and the log's first
+line, name the installed vergil-tooling version
+(`vrg-submit-pr: vergil-tooling <version>`), so a run can be tied to the
+release that made it. The summary points at the log:
 
 ```text
 ✓ feature/4709-submit-pr-rollup  1.8s — PR #123 auto-merge on (squash, pinned to 9f8e7d6c5b4a)
@@ -184,7 +186,16 @@ interactive by design: it is a human touch point of the workflow and
 requires a terminal; root launches fail fast when stdin is not a TTY.
 
 A worktree whose PR is already submitted is not submitted again: submit
-says so and points at `vrg-finalize-pr`.
+says so and points at `vrg-finalize-pr`. The root launch also asks GitHub
+whether a ready worktree's branch already has a PR, since one opened by
+hand leaves the worktree's state ready: an open PR holds it back as in
+flight, and a PR merged at the reported head holds it back as cleanup
+(`vrg-finalize-pr --cleanup-only`). Each one held back is named on stderr
+when others go ahead. A merged PR at another head is a reused branch
+name, and the worktree is still submitted.
+
+A push refused because origin deleted the branch after its PR merged says
+so, and names the merged PR, instead of reporting that the remote moved.
 
 ### Several worktrees (`--all` / `--select`)
 

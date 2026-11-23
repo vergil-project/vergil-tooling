@@ -50,6 +50,9 @@ from vergil_tooling.bin.vrg_submit_pr import (
 from vergil_tooling.bin.vrg_submit_pr import (
     _chain_finalize as _real_chain_finalize,
 )
+from vergil_tooling.bin.vrg_submit_pr import (
+    _published_pr as _real_published_pr,
+)
 from vergil_tooling.lib import (
     auto_merge,
     epics,
@@ -206,6 +209,17 @@ def _finalize_ok() -> Iterator[MagicMock]:
 
 
 @pytest.fixture(autouse=True)
+def _no_published_pr() -> Iterator[None]:
+    """Default every selection to a branch GitHub has no PR for (issue #4993).
+
+    The lookup reads GitHub. Its own tests call the imported function, or
+    re-patch the module attribute, to drive an open or merged PR.
+    """
+    with patch(_MOD + "._published_pr", return_value=None):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _in_worktree() -> Iterator[None]:
     """Default every test to running inside a worktree (legacy behavior).
 
@@ -229,7 +243,7 @@ def _run_log_in_tmp(tmp_path: Path) -> Iterator[Path]:
     """
     with patch(
         "vergil_tooling.lib.progress.RunLog",
-        side_effect=lambda command, _root: _REAL_RUN_LOG(command, tmp_path),
+        side_effect=lambda command, _root, **kw: _REAL_RUN_LOG(command, tmp_path, **kw),
     ):
         yield tmp_path
 
@@ -497,9 +511,97 @@ def test_push_branch_raises_clear_error_on_rejection() -> None:
     err = subprocess.CalledProcessError(1, ["git", "push"])
     with (
         patch("vergil_tooling.bin.vrg_submit_pr.git.run", side_effect=err),
+        patch(_MOD + "._origin_has_branch", return_value=True),
         pytest.raises(SystemExit, match="force-with-lease was refused"),
     ):
         _push_branch("feature/x")
+
+
+_PUSH_REFUSED = subprocess.CalledProcessError(1, ["git", "push"])
+
+
+def test_push_to_a_gone_branch_whose_pr_merged_says_so() -> None:
+    """Origin deleted the branch after its PR merged: the refused lease is
+    explained as that, never as "the remote moved" (issue #4993)."""
+    prs = [
+        _open_pr(number=5, url="https://x/pull/5", state="CLOSED"),
+        _open_pr(number=7, url="https://x/pull/7", state="MERGED"),
+    ]
+    with (
+        patch(_MOD + ".git.run", side_effect=_PUSH_REFUSED),
+        patch(_MOD + "._origin_has_branch", return_value=False),
+        patch(_MOD + ".worktrees.branch_prs", return_value=prs) as lookup,
+        pytest.raises(SystemExit) as exc,
+    ):
+        _push_branch("feature/x")
+    msg = str(exc.value)
+    assert "the branch is gone from origin and its PR #7 has merged (https://x/pull/7)" in msg
+    assert "vrg-finalize-pr --cleanup-only" in msg
+    assert "remote branch moved" not in msg
+    lookup.assert_called_once_with("feature/x", state="all")
+
+
+def test_push_to_a_gone_branch_with_no_merged_pr_keeps_the_lease_message() -> None:
+    with (
+        patch(_MOD + ".git.run", side_effect=_PUSH_REFUSED),
+        patch(_MOD + "._origin_has_branch", return_value=False),
+        patch(_MOD + ".worktrees.branch_prs", return_value=[_open_pr(state="CLOSED")]),
+        pytest.raises(SystemExit, match="force-with-lease was refused"),
+    ):
+        _push_branch("feature/x")
+
+
+def test_push_failure_whose_pr_check_fails_names_both() -> None:
+    """A failed read while explaining the push is said, never hidden."""
+    with (
+        patch(_MOD + ".git.run", side_effect=_PUSH_REFUSED),
+        patch(_MOD + "._origin_has_branch", return_value=False),
+        patch(_MOD + ".worktrees.branch_prs", side_effect=trust.TrustReadError("prs", "boom")),
+        pytest.raises(SystemExit) as exc,
+    ):
+        _push_branch("feature/x")
+    assert str(exc.value) == (
+        "vrg-submit-pr: pushing 'feature/x' to origin failed, and checking "
+        "whether its PR has merged failed too: "
+        "cannot read who wrote the content (prs): boom"
+    )
+
+
+class TestPublishedPR:
+    """GitHub, not the local stamp, says whether a ready branch has a PR (#4993)."""
+
+    def test_open_pr_is_in_flight_whatever_its_head(self) -> None:
+        prs = [_open_pr(number=3, head_oid="other"), _open_pr(number=9, state="MERGED")]
+        with patch(_MOD + ".worktrees.branch_prs", return_value=prs) as lookup:
+            assert _real_published_pr("feature/x", "h0") == prs[0]
+        lookup.assert_called_once_with("feature/x", state="all")
+
+    def test_merged_pr_at_the_reported_head_is_published(self) -> None:
+        prs = [_open_pr(number=3, state="MERGED"), _open_pr(number=4, state="CLOSED")]
+        with patch(_MOD + ".worktrees.branch_prs", return_value=prs):
+            assert _real_published_pr("feature/x", "h0") == prs[0]
+
+    def test_merged_pr_at_another_head_is_a_reused_name(self) -> None:
+        """A merged PR at another head is a reused branch name (#1719): still to submit."""
+        prs = [_open_pr(state="MERGED", head_oid="old")]
+        with patch(_MOD + ".worktrees.branch_prs", return_value=prs):
+            assert _real_published_pr("feature/x", "h0") is None
+
+    def test_no_pr_is_none(self) -> None:
+        with patch(_MOD + ".worktrees.branch_prs", return_value=[]):
+            assert _real_published_pr("feature/x", "h0") is None
+
+    def test_a_failed_read_refuses_the_selection(self) -> None:
+        with (
+            patch(_MOD + ".worktrees.branch_prs", side_effect=trust.TrustReadError("prs", "boom")),
+            pytest.raises(SystemExit) as exc,
+        ):
+            _real_published_pr("feature/x", "h0")
+        assert str(exc.value) == (
+            "vrg-submit-pr: reading the PRs on 'feature/x' failed: "
+            "cannot read who wrote the content (prs): boom; "
+            "nothing was submitted."
+        )
 
 
 def test_main_submits_pr_with_notes(tmp_path: Path) -> None:
@@ -805,6 +907,17 @@ class TestTemplateMode:
         run.assert_not_called()
         assert "--yes was removed" in capsys.readouterr().err
 
+    def test_version_line_heads_every_run(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """The installed vergil-tooling version is the run's first line, ahead of
+        even a refusal, so a run's output ties it to a release (issue #4994)."""
+        with (
+            patch(_MOD + ".progress.metadata.version", return_value="2.1.400"),
+            patch(_MOD + "._run_template_mode") as run,
+        ):
+            assert main(["--yes"]) == 1
+        run.assert_not_called()
+        assert capsys.readouterr().out.splitlines()[0] == "vrg-submit-pr: vergil-tooling 2.1.400"
+
     def test_template_rejects_forbidden_linkage(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -978,7 +1091,13 @@ class TestRootLaunch:
 
     def test_root_single_ready_worktree_chdirs_and_submits(self) -> None:
         wt = self._wt("issue-7-foo", "feature/7-foo")
-        fields = {"issue": "7", "issues": "7", "title": "Foo title", "summary": "S"}
+        fields = {
+            "issue": "7",
+            "issues": "7",
+            "title": "Foo title",
+            "summary": "S",
+            "head_sha": "h7",
+        }
         with (
             patch(_MOD + ".git.is_main_worktree", return_value=True),
             patch(_MOD + ".git.repo_root", return_value="/repo"),
@@ -1020,7 +1139,13 @@ class TestRootLaunch:
 
     def test_root_multiple_ready_worktrees_prompts(self) -> None:
         wts = [self._wt("issue-7-foo", "feature/7-foo"), self._wt("issue-8-bar", "feature/8-bar")]
-        fields = {"issue": "8", "issues": "8", "title": "Bar title", "summary": "S"}
+        fields = {
+            "issue": "8",
+            "issues": "8",
+            "title": "Bar title",
+            "summary": "S",
+            "head_sha": "h8",
+        }
         with (
             patch(_MOD + ".git.is_main_worktree", return_value=True),
             patch(_MOD + ".git.repo_root", return_value="/repo"),
@@ -1091,6 +1216,61 @@ class TestRootLaunch:
             pytest.raises(SystemExit, match="no .worktrees/ entries exist"),
         ):
             main(["--dry-run"])
+
+    def test_all_skips_a_ready_worktree_whose_pr_merged_or_is_open(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A PR opened by hand leaves the state ready; --all asks GitHub and holds
+        back a merged one as cleanup and an open one as in flight (#4993)."""
+        ready = self._wt("issue-1319-a", "feature/1319-a")
+        merged = self._wt("issue-1329-b", "feature/1329-b")
+        opened = self._wt("issue-1340-c", "feature/1340-c")
+        prs = {
+            "feature/1319-a": None,
+            "feature/1329-b": _open_pr(number=1330, url="https://x/pull/1330", state="MERGED"),
+            "feature/1340-c": _open_pr(number=1341, url="https://x/pull/1341"),
+        }
+        with (
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[ready, merged, opened]),
+            patch(_MOD + ".submission.read_pr_fields", return_value={"head_sha": "h0"}),
+            patch(_MOD + "._published_pr", side_effect=lambda branch, _head: prs[branch]) as pub,
+        ):
+            selected = _select_batch_worktrees(Path("/repo"), parse_args(["--all"]))
+        assert selected == [ready]
+        assert [c.args for c in pub.call_args_list] == [
+            ("feature/1319-a", "h0"),
+            ("feature/1329-b", "h0"),
+            ("feature/1340-c", "h0"),
+        ]
+        err = capsys.readouterr().err
+        assert (
+            "vrg-submit-pr: skipping issue-1329-b: PR #1330 has merged "
+            "(https://x/pull/1330); the worktree is cleanup, not a submit.\n"
+        ) in err
+        assert (
+            "vrg-submit-pr: skipping issue-1340-c: PR #1341 is already open "
+            "(https://x/pull/1341).\n"
+        ) in err
+
+    def test_only_merged_worktrees_refuse_naming_the_cleanup(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        merged = self._wt("issue-1329-b", "feature/1329-b")
+        pr = _open_pr(number=1330, url="https://x/pull/1330", state="MERGED")
+        with (
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[merged]),
+            patch(_MOD + ".submission.read_pr_fields", return_value={"head_sha": "h0"}),
+            patch(_MOD + "._published_pr", return_value=pr),
+            pytest.raises(SystemExit) as exc,
+        ):
+            _select_batch_worktrees(Path("/repo"), parse_args(["--all"]))
+        assert str(exc.value) == (
+            "vrg-submit-pr: no submittable worktrees found.\n\n"
+            "  Merged (cleanup — run `vrg-finalize-pr --cleanup-only`):\n"
+            "    issue-1329-b: PR #1330 (https://x/pull/1330)"
+        )
+        # The refusal names it; no separate skip line repeats it.
+        assert capsys.readouterr().err == ""
 
 
 _UNRELEASED_TOML = """\
@@ -1982,6 +2162,8 @@ class TestSubmitRollup:
         [log_path] = (_run_log_in_tmp / ".vergil").glob("vrg-submit-pr-*.log")
         assert f"   full log → {log_path}" in out
         log = _submit_log(_run_log_in_tmp)
+        # The log's first line names the tooling version that wrote it (#4994).
+        assert log.splitlines()[0] == progress.tooling_version_line("vrg-submit-pr")
         assert "=== feature/1-a: started ===" in log
         assert "PR created: https://x/pull/11" in log
         assert "https://x/pull/12: merged directly (squash); it could already merge." in log

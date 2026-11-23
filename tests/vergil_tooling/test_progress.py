@@ -102,6 +102,20 @@ def test_runlog_write_strips_ansi(tmp_path: Path) -> None:
     assert log.path.read_text() == "green line\n"
 
 
+def test_runlog_header_is_the_first_line(tmp_path: Path) -> None:
+    log = progress.RunLog("vrg-release", tmp_path, header="vrg-release: vergil-tooling 9.9.9")
+    log.write("next")
+    log.close()
+    assert log.path.read_text() == "vrg-release: vergil-tooling 9.9.9\nnext\n"
+
+
+def test_tooling_version_line_names_the_installed_version() -> None:
+    with patch(_MOD + ".metadata.version", return_value="2.1.400") as version:
+        line = progress.tooling_version_line("vrg-submit-pr")
+    assert line == "vrg-submit-pr: vergil-tooling 2.1.400"
+    version.assert_called_once_with("vergil-tooling")
+
+
 def test_runlog_prunes_to_retain_count(tmp_path: Path) -> None:
     log_dir = tmp_path / ".vergil"
     log_dir.mkdir()
