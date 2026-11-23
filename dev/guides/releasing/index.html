@@ -19802,11 +19802,13 @@ adopted or merged.</p>
 <p>Within a run, <code>prepare</code>, <code>back-merge-bump</code> and the dependency update never
 retry a failed <code>gh pr create</code> blindly, since GitHub can open the PR and
 still return an error. After a failed attempt the stage looks for an open
-PR from its branch into the base. It adopts one only when it has the same
-head branch (in this repository), base, title and head commit, and carries
-on as for a PR it just opened; an adopted dependency-update PR gets its
-<code>dependency-update</code> label again. Any other open PR fails the stage, naming
-the PR. With none open, a transient error is retried with backoff.</p>
+PR from its branch into the base, through the trust layer: only a same-repo
+PR with a trusted author counts, and a fork PR on the branch's name is
+reported on stderr and never adopted. It adopts the PR it finds only when
+it has the same title and head commit, and carries on as for a PR it just
+opened; an adopted dependency-update PR gets its <code>dependency-update</code> label
+again. Any other such PR fails the stage, naming the PR. With none open, a
+transient error is retried with backoff.</p>
 <h3 id="stale-job-records">Stale job records<a class="headerlink" href="#stale-job-records" title="Permanent link">&para;</a></h3>
 <p>The confirm stages wait a bounded time for every CD job to reach
 <code>completed</code> in the GitHub jobs API, because a job's record can lag the

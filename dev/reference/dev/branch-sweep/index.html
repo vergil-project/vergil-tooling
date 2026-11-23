@@ -18398,8 +18398,10 @@ attention (issue #3333).</p>
 <h2 id="what-counts-as-finished">What counts as finished<a class="headerlink" href="#what-counts-as-finished" title="Permanent link">&para;</a></h2>
 <p>A branch is finished, and deleted under <code>--apply</code>, when all of these hold:</p>
 <ol>
-<li>it has at least one PR from the same repo (fork PRs that share the
-   branch name are ignored);</li>
+<li>it has at least one PR from the same repo with a trusted author, read
+   through the trust layer (a fork PR that shares the branch name, or a PR
+   an untrusted identity opened on it, is ignored and reported on stderr by
+   metadata only);</li>
 <li>none of its PRs is open;</li>
 <li>its newest PR (the highest number) is merged or closed;</li>
 <li>its current tip equals that PR's <code>headRefOid</code>.</li>
@@ -18441,7 +18443,8 @@ command reports an <code>error</code> line with the cause, finishes the remainin
 branches, and then exits 1. A failure to read the repo's default branch or
 branch list stops the sweep at once with exit 1, since nothing can be
 decided without them. Missing or invalid GitHub credentials end the run
-with the standard authentication message.</p>
+with the standard authentication message, and trusted authors that are not
+configured end it with a one-line error and exit 1.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

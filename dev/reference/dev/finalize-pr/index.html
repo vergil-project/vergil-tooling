@@ -18929,7 +18929,10 @@ names what replaced it:</p>
 <ol>
 <li><strong>Develop PRs only.</strong> A PR whose base is not <code>develop</code>, or whose head is
    a <code>release/*</code> branch, ends as <em>failed: not a develop PR</em> and is left
-   untouched. A release PR goes through <code>vrg-release</code>.</li>
+   untouched. A release PR goes through <code>vrg-release</code>. The head branch is
+   read through the trust layer once, at the start: a PR that is not a
+   same-repo PR with a trusted author on its branch (a fork PR, for one)
+   ends the same way, and its branch is not named.</li>
 <li><strong>Merged.</strong> The PR ends as <em>merged</em>. A PR that merged before the run
    started counts as merged at once, and the watch goes on for the rest.</li>
 <li><strong>Closed</strong> without merging: <em>failed: closed</em>.</li>
@@ -19077,7 +19080,10 @@ can take it.</p>
    the CD report and for the report of a develop that did not validate.</li>
 <li><strong>Delete the merged PRs' branches.</strong> Each merged PR's head branch and
    its <code>.worktrees/</code> worktree are deleted by name, since a squash merge
-   hides the branch from <code>git branch --merged</code>. The branch's PR-workflow
+   hides the branch from <code>git branch --merged</code>. A branch is named only
+   once the trust layer finds the PR itself merged, as a same-repo PR with
+   a trusted author, on that branch; otherwise its local branch and
+   worktree are kept, and the PR is named on the output. The branch's PR-workflow
    relay ref (<code>refs/vergil/pr-workflow/&lt;branch&gt;</code>, pushed by
    <code>report-ready</code>) is deleted with it, so a cloud-handoff ref never
    outlives its branch (issue #2369). A branch with no local copy is
