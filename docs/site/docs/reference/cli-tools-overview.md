@@ -579,7 +579,12 @@ Print or bump the repo's version. `show` prints the current version
 increments `patch` (default), `minor` or `major` and prints the new version.
 For a Python or Rust repo, `bump` then refreshes the lockfile (`uv lock`,
 `cargo update --workspace`) in the dev container, through
-`vrg-container-run`, so no host toolchain is needed. A bump is all or
+`vrg-container-run`, so no host toolchain is needed. In a Rust repo, `bump`
+first sets the bumped workspace crates' own entries in `Cargo.lock` to the
+new version, so the lockfile already matches `Cargo.toml` when
+`vrg-container-run` builds the dev image and its `cargo fetch --locked`
+warmup finds nothing stale; `cargo update --workspace` then runs as before.
+A bump is all or
 nothing: when any step fails, the lockfile refresh included, `bump` puts
 `VERSION`, the language manifest, the secondary version files and the
 lockfile back as they were, says so on stderr and exits non-zero. Used by
