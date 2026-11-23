@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, date, datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +12,9 @@ import pytest
 from tests.vergil_tooling import trust_stubs
 from vergil_tooling.lib import epic_audit, epic_docs, epics, github, proxies, roadmap, trust
 from vergil_tooling.lib.epic_audit import TaskDrift
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 # The day the task_drift tests run on: inside the first week of their 2026-06-01
 # window, so the merged-PR search is a single open-ended slice.
@@ -649,7 +652,7 @@ def test_render_closed_empty_says_nothing_to_close() -> None:
 
 
 def _blockers(
-    table: dict[int, list[epics.IssueRef] | Exception],
+    table: Mapping[int, list[epics.IssueRef] | Exception],
 ) -> Any:
     """A ``blockers_of`` fake: each task's blockers, or the exception its read raises."""
 

@@ -18,7 +18,7 @@ from vergil_tooling.lib.queue_view import AdvisoryHold, Deferral, PlanningMarker
 from vergil_tooling.lib.security_records import Advisory
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
 
 _MOD = "vergil_tooling.lib.queue_view"
 _EPIC = IssueRef("org", ".github", 1)
@@ -1285,7 +1285,7 @@ def _adhoc(
     children: dict[int, list[ChildState]],
     views: dict[int, dict[str, Any]],
     *,
-    blockers: dict[int, list[IssueRef] | Exception] | None = None,
+    blockers: Mapping[int, list[IssueRef] | Exception] | None = None,
     states: dict[int, str] | None = None,
     repo: str | None = None,
     stops: trust.BatchStops | None = None,
