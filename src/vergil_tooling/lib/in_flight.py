@@ -3,7 +3,11 @@
 A task is *in flight* when any of these **marks** holds for it, in this order:
 
 - ``open-pr`` — an open PR closes it (``closingIssuesReferences``), or has
-  ``feature/<N>-…`` as its head branch;
+  ``feature/<N>-…`` as its head branch. Only a same-repo PR with a trusted
+  author counts, and only the closing references the trust layer counts (a
+  closing line of a trusted body, or a hand link by trusted actors: epic
+  vergil-project/.github#1467); a fork PR or an outsider's marks nothing, and
+  each one passed over is reported on stderr, metadata only;
 - ``report-ready`` — a relay ref ``refs/vergil/pr-workflow/<branch>`` on the
   remote whose payload has status ``ready`` and names it (a batch's payload
   names every member, so each one is marked);
@@ -41,16 +45,22 @@ import binascii
 import json
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from vergil_tooling.lib import epics, git, github, live_branches, pr_body
+from vergil_tooling.lib import epics, git, github, live_branches, pending_release, pr_body, trust
 from vergil_tooling.lib.pr_workflow import batch_marker
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
+from vergil_tooling.lib.trusted_authors import (
+    TrustedAuthors,
+    TrustedAuthorsNotConfiguredError,
+    load_trusted_authors,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
     from pathlib import Path
 
 MARKS = ("open-pr", "report-ready", "branch", "worktree", "merge-review", "batch")
@@ -67,6 +77,22 @@ _RELAY_FILE = "pr-workflow.json"
 _READY = "ready"
 _MERGE_REVIEW_DIR = "merge-review"
 _FEATURE_NUMBER_RE = re.compile(r"^feature/([0-9]+)-")
+
+# The open PRs, page by page: what _counted_pr_issues judges each one by. The
+# page is small because each PR carries its body's edit history and its
+# connected events.
+_OPEN_PR_PAGE = 50
+_OPEN_PR_FIELDS = f"number headRefName {trust.SAME_REPO_FIELDS} {pending_release.CLOSING_FIELDS}"
+_OPEN_PRS_QUERY = f"""
+query($owner: String!, $name: String!, $after: String) {{
+  repository(owner: $owner, name: $name) {{
+    pullRequests(states: [OPEN], first: {_OPEN_PR_PAGE}, after: $after) {{
+      pageInfo {{ hasNextPage endCursor }}
+      nodes {{ {_OPEN_PR_FIELDS} }}
+    }}
+  }}
+}}
+"""
 
 
 class InFlightError(RuntimeError):
@@ -150,50 +176,97 @@ def _detail(exc: Exception) -> str:
     return " ".join(str(exc).split())
 
 
-def _open_pr_issues(repo: str) -> frozenset[int]:
-    """The issues of *repo* that an open PR closes or carries on a ``feature/<N>-`` head."""
-    try:
-        raw: Any = github.read_json(
-            "pr",
-            "list",
-            "--repo",
-            repo,
-            "--state",
-            "open",
-            "--limit",
-            str(epics.LISTING_LIMIT),
-            "--json",
-            "number,headRefName,closingIssuesReferences",
-        )
-        epics.refuse_truncated(raw, epics.LISTING_LIMIT, f"the open PRs of {repo}")
-    except (subprocess.CalledProcessError, ValueError) as exc:
-        raise InFlightError(f"{repo}: cannot read its open PRs: {_detail(exc)}") from exc
-    if not isinstance(raw, list):
-        raise InFlightError(f"{repo}: unexpected 'gh pr list' response: {raw!r}")
+def _open_prs(repo: str) -> list[dict[str, Any]]:
+    """Every open PR node of *repo*, every page, with :data:`_OPEN_PR_FIELDS`."""
+    owner, _, name = repo.partition("/")
+    nodes: list[dict[str, Any]] = []
+    cursor: str | None = None
+    while True:
+        variables: dict[str, object] = {"owner": owner, "name": name}
+        if cursor is not None:
+            variables["after"] = cursor
+        data: Any = github.graphql(_OPEN_PRS_QUERY, **variables)
+        connection = data["repository"]["pullRequests"]
+        page = connection["nodes"]
+        if not isinstance(page, list):
+            msg = f"unexpected pullRequests nodes: {page!r}"
+            raise TypeError(msg)
+        nodes += page
+        info = connection["pageInfo"]
+        if not info["hasNextPage"]:
+            return nodes
+        cursor = info["endCursor"]
+        if not isinstance(cursor, str) or not cursor:
+            msg = "the open PRs have a next page but no cursor"
+            raise ValueError(msg)
+
+
+def _counted_pr_issues(
+    repo: str, node: Mapping[str, Any], authors: TrustedAuthors
+) -> tuple[set[int], list[trust.Skipped]]:
+    """The issues of *repo* that open PR *node* marks, and what was not counted.
+
+    A PR counts only when its head is in *repo* itself (:func:`trust.is_same_repo`)
+    and its author holds a role (:func:`trust.judge_identity`); a fork PR, or
+    one an outsider opened, marks nothing and is returned as a
+    :class:`trust.Skipped`. A counted PR marks the issue of its
+    ``feature/<N>-`` head and each closing reference
+    :func:`pending_release.trusted_closing_refs` counts (a closing line of a
+    trusted body, or a hand link every linker of which holds a role).
+    """
+    number = int(node["number"])
+    org = repo.partition("/")[0]
+    call = f"open PRs of {repo}"
+    author = trust.identity(node["author"], call=call, what=f"the author of PR {number}")
+    login = None if author.login is None else trust.normalise_login(author.login)
+    at = str(node["createdAt"])
+    if not trust.is_same_repo(repo, node):
+        return set(), [trust.Skipped(repo, number, "pr", login, at, "head", trust.CROSS_REPOSITORY)]
+    judgement = trust.judge_identity(author, org=org, authors=authors)
+    if judgement.role is None:
+        return set(), [trust.Skipped(repo, number, "pr", login, at, "author", str(judgement.cause))]
     issues: set[int] = set()
-    for row in raw:
-        if not isinstance(row, dict):
-            raise InFlightError(f"{repo}: unexpected 'gh pr list' row: {row!r}")
-        number = _feature_number(str(row.get("headRefName") or ""))
-        if number is not None:
-            issues.add(number)
-        for closing in row.get("closingIssuesReferences") or []:
-            issues.update(_closing_issue(repo, row, closing))
-    return frozenset(issues)
+    head = _feature_number(str(node["headRefName"]))
+    if head is not None:
+        issues.add(head)
+    closing, skipped = pending_release.trusted_closing_refs(
+        node, repo=repo, roles=trust.ALL_ROLES, authors=authors
+    )
+    issues.update(closing)
+    return issues, skipped
 
 
-def _closing_issue(repo: str, row: dict[str, Any], closing: Any) -> set[int]:
-    """The issue *closing* names when it is in *repo*; none for another repo's issue."""
+def _open_pr_issues(repo: str) -> frozenset[int]:
+    """The issues of *repo* that a counted open PR closes or carries on a ``feature/<N>-`` head.
+
+    Only same-repo PRs with a trusted author count (:func:`_counted_pr_issues`);
+    each PR, body or hand link not counted is reported on stderr, metadata
+    only (:func:`trust.report_skipped`), so an outsider's PR never hides a
+    task from the runnable frontier.
+    """
     try:
-        owner = closing["repository"]["owner"]["login"]
-        name = closing["repository"]["name"]
-        number = int(closing["number"])
-    except (KeyError, TypeError, ValueError) as exc:
-        msg = (
-            f"{repo}: PR #{row.get('number')} has a malformed closing issue reference: {closing!r}"
-        )
-        raise InFlightError(msg) from exc
-    return {number} if _same_repo(f"{owner}/{name}", repo) else set()
+        authors = load_trusted_authors()
+        issues: set[int] = set()
+        skipped: list[trust.Skipped] = []
+        for node in _open_prs(repo):
+            marked, passed = _counted_pr_issues(repo, node, authors)
+            issues |= marked
+            skipped += passed
+    except github.MissingGitHubTokenError:
+        raise
+    except (
+        subprocess.CalledProcessError,
+        RuntimeError,
+        ValueError,
+        KeyError,
+        TypeError,
+        trust.TrustReadError,
+        TrustedAuthorsNotConfiguredError,
+        pending_release.PendingReleaseError,
+    ) as exc:
+        raise InFlightError(f"{repo}: cannot read its open PRs: {_detail(exc)}") from exc
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return frozenset(issues)
 
 
 def _ls_remote(repo: str, clone: Path) -> tuple[frozenset[str], dict[str, str]]:
