@@ -342,16 +342,44 @@ def test_find_markdown_files_all_scopes(tmp_path: Path) -> None:
     epic = tmp_path / "epics" / "epic-1"
     epic.mkdir(parents=True)
     (epic / "spec.md").write_text("# Spec\n")
+    security = tmp_path / "docs" / "security"
+    security.mkdir()
+    (security / "snapshots.md").write_text("# Snapshots\n")
     result = _find_markdown_files(tmp_path)
-    assert len(result) == 3
+    assert len(result) == 4
 
 
 def test_find_markdown_files_outside_scope_skipped(tmp_path: Path) -> None:
     docs = tmp_path / "docs"
     docs.mkdir()
     (docs / "notes.md").write_text("# Notes\n")
+    for other in ("plans", "specs"):
+        (docs / other).mkdir()
+        (docs / other / "x.md").write_text("# X\n")
     (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
     assert _find_markdown_files(tmp_path) == []
+
+
+def test_find_markdown_files_security_nested(tmp_path: Path) -> None:
+    # issue #5012: docs/security/ is in scope, nested files included.
+    security = tmp_path / "docs" / "security"
+    (security / "advisories").mkdir(parents=True)
+    (security / "openssf-scorecard-snapshots.md").write_text("# Snapshots\n")
+    (security / "advisories" / "a.md").write_text("# A\n")
+    result = _find_markdown_files(tmp_path)
+    assert result == [
+        str(security / "advisories" / "a.md"),
+        str(security / "openssf-scorecard-snapshots.md"),
+    ]
+
+
+def test_find_markdown_files_ignore_security(tmp_path: Path) -> None:
+    security = tmp_path / "docs" / "security"
+    (security / "old").mkdir(parents=True)
+    (security / "keep.md").write_text("# Keep\n")
+    (security / "old" / "drop.md").write_text("# Drop\n")
+    result = _find_markdown_files(tmp_path, ignore=["docs/security/old"])
+    assert result == [str(security / "keep.md")]
 
 
 def test_find_markdown_files_sorted(tmp_path: Path) -> None:
