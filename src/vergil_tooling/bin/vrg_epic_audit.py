@@ -16,11 +16,18 @@ from vergil_tooling.lib import (
     epics,
     github,
     identity_mode,
+    outsider_report,
     proxies,
     security_records,
     trust,
 )
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.trusted_authors import (
+    GITHUB_ACTIONS_ENV,
+    TrustedAuthorsNotConfiguredError,
+    load_trusted_authors,
+    vergil_orgs,
+)
 
 _DEFAULT_WINDOW_DAYS = 30
 
@@ -35,6 +42,10 @@ _SWEEP_ENV = "VRG_EPIC_SWEEP"
 @cli_main
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    # The outsider report (epic vergil-project/.github#1467, spec §6.5) is a
+    # separate read-only mode across the listed orgs, not the cwd's org.
+    if args.untrusted:
+        return _outsider_report(args)
     # Epic-scoped enumeration is a distinct, read-only mode: resolve the epic ref
     # and emit its children (with states) as machine-readable JSON, bypassing the
     # drift-audit path entirely (issue #2538). Qualify + validate directly rather
@@ -83,6 +94,43 @@ def main(argv: list[str] | None = None) -> int:
     # installation can do (#3513).
     with github.target_org(org):
         return _audit(args, org)
+
+
+def _outsider_report(args: argparse.Namespace) -> int:
+    """List the untrusted activity of ``--org``, or of every listed org, since ``--since``.
+
+    Metadata and links only; under GitHub Actions, counts by kind only. A
+    read failure (a search GitHub would cut short included) prints nothing on
+    stdout and exits 1.
+    """
+    try:
+        authors = load_trusted_authors()
+        listed = vergil_orgs(authors)
+        if args.org is None:
+            orgs = list(listed)
+        else:
+            match = next((o for o in listed if o.casefold() == args.org.casefold()), None)
+            if match is None:
+                print(
+                    f"vrg-epic-audit: {args.org} is not a Vergil org: the configuration"
+                    f" has no [orgs.{args.org}] stanza",
+                    file=sys.stderr,
+                )
+                return 1
+            orgs = [match]
+        items: list[outsider_report.OutsiderItem] = []
+        for org in orgs:
+            with github.target_org(org):
+                items += outsider_report.outsider_activity(org, since=args.since, authors=authors)
+    except github.MissingGitHubTokenError:
+        raise  # cli_main prints the auth message
+    except (trust.TrustReadError, TrustedAuthorsNotConfiguredError, ValueError) as exc:
+        print(f"vrg-epic-audit: {exc}", file=sys.stderr)
+        return 1
+    under_actions = os.environ.get(GITHUB_ACTIONS_ENV) == "true"
+    render = outsider_report.render_counts if under_actions else outsider_report.render
+    print(render(items, orgs=orgs, since=args.since))
+    return 0
 
 
 def _epic_listing(epic: epics.IssueRef) -> int:
@@ -264,9 +312,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
         epilog=(
             "Scope: the org is auto-detected from this repo's 'origin' remote, "
-            "so run it from inside a repo in the org you want to audit (there is "
-            "no --org flag). Output is Markdown on stdout. Every read and write "
-            "runs under the audited org's token."
+            "so run it from inside a repo in the org you want to audit (--org "
+            "applies to --untrusted only). Output is Markdown on stdout. Every "
+            "read and write runs under the audited org's token."
         ),
     )
     parser.add_argument(
@@ -315,7 +363,52 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "interactive agent sessions. Default: read-only."
         ),
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--untrusted",
+        action="store_true",
+        help=(
+            "Print the outsider report instead of the drift audit: across the "
+            "repos of every org listed in the Vergil configuration (or of --org), "
+            "the issues and PRs opened by untrusted accounts, untrusted comments, "
+            "reviews and inline review comments, untrusted edits and renames of "
+            "trusted content, and untrusted closes and reopens, done since "
+            "--since. Possible tampering (edits, renames, closes) is listed "
+            "first, then the rest, each newest first. Metadata and links only, "
+            "never the untrusted text; under GitHub Actions, counts only. "
+            "Read-only. Needs --since; ignores the drift-audit flags."
+        ),
+    )
+    parser.add_argument(
+        "--since",
+        type=_since,
+        metavar="ISO",
+        help=(
+            "With --untrusted: list what was done at or after this ISO 8601 "
+            "date (midnight UTC) or time with a zone (e.g. 2026-11-21T08:00:00Z)."
+        ),
+    )
+    parser.add_argument(
+        "--org",
+        metavar="ORG",
+        help="With --untrusted: report on this listed org only.",
+    )
+    args = parser.parse_args(argv)
+    if args.untrusted:
+        if args.since is None:
+            parser.error("--untrusted needs --since")
+        if args.epic is not None or args.close:
+            parser.error("--untrusted cannot be combined with --epic or --close")
+    elif args.since is not None or args.org is not None:
+        parser.error("--since and --org need --untrusted")
+    return args
+
+
+def _since(raw: str) -> str:
+    try:
+        outsider_report.parse_since(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+    return raw
 
 
 def _automated_sweep() -> bool:

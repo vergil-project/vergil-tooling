@@ -42,6 +42,9 @@ The main modules under `src/vergil_tooling/lib/`:
 - **`security_records.py`**: `vrg-security-record`, including the
   security-records pass of `vrg-security-record sync` (previewed by the
   read-only `vrg-epic-audit`).
+- **`outsider_report.py`**: the outsider report of `vrg-epic-audit
+  --untrusted`, the untrusted activity in a listed org's repos, built on the
+  trust layer (`trust.py`).
 - **`release/`**: the mechanized release workflow behind `vrg-release`:
   preflight, prepare, merge, bump, confirm, finalize, handoff, the
   orchestrator, the package-index wait, and the `update-deps` stage.
