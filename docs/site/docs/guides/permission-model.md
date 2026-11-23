@@ -302,6 +302,8 @@ the `automation` identity; agents may run only its `--dry-run` (see
 verifies their attestations, when it builds the package index.
 `vrg-pr-review-comments` calls `gh` only too: it mints its token for the
 `--repo` owner, so it never reads the `origin` remote.
+`vrg-checkpoint` calls `gh` only as well: it mints its token for the
+owner of the issue it names.
 
 These tools call `git` only: `vrg-commit`, `vrg-container-cache`,
 `vrg-container-run`, `vrg-reword`, `vrg-scorecard`, `vrg-validate`,

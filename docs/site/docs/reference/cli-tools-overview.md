@@ -1009,6 +1009,100 @@ Both subcommands run every read and write under the epic owner's App token.
 | Exit codes | 0 written or already correct, or (`backfill`) no epic needs a decision or failed, including a dry run with changes still to make; 1 error, or any epic that needs a decision or failed; 2 bad arguments |
 | Status | Active |
 
+### vrg-checkpoint
+
+Keep a workflow's **stage checklist** in a tracking issue's body, so a fresh
+session can find the stage a multi-session workflow stopped at. Each
+workflow's stage list is defined once in the tool, and the block is
+generated from it. `epic-create` is the first workflow; its stages, in
+order, are `bootstrap`, `brainstorm`, `spec-pushback`, `spec-review`,
+`plan`, `plan-pushback`, `alignment`, `file-tasks` and `docs-pr`.
+
+The block is a GitHub task list between two markers, one block per
+workflow:
+
+```markdown
+<!-- vrg-checkpoint:epic-create -->
+- [x] bootstrap
+- [ ] brainstorm
+...
+<!-- /vrg-checkpoint:epic-create -->
+```
+
+The parse is strict. Every line between the markers must be exactly
+`- [ ] <stage>` or `- [x] <stage>` (a box ticked in the web UI, which may
+write `[X]`, counts as done). A blank line, prose, any text after a stage
+name, a second block for the same workflow, or a marker without its partner
+makes the block **malformed**. Per-stage detail belongs in progress
+comments, not in the block.
+
+`--workflow NAME` is required on every subcommand, so one body can carry the
+blocks of several workflows, each rewritten only by its own operations. The
+issue is a fully qualified `OWNER/REPO#N`.
+
+- `init REF --workflow NAME [--tick STAGE]…` appends the block for the
+  workflow's current stage list after a blank line, all unticked, or with the
+  stages named by `--tick` ticked. The ticked stages must be the first stages
+  of the list, in any order. It refuses a body that already holds a block, and
+  exits 6 if that block is malformed.
+- `status REF --workflow NAME [--json]` prints the stages, their ticks and the
+  **next stage**, the first unticked one. On skew it prints how the block
+  differs from the current list (added and removed stages, and whether the
+  common stages are reordered).
+- `tick REF --workflow NAME STAGE` ticks one stage. It refuses a stage that is
+  not in the block, a stage with an earlier one unticked (stages are linear),
+  and a block with skew. A stage already ticked succeeds and writes nothing,
+  so a re-entry can repeat a tick safely.
+- `reset REF --workflow NAME` removes every closed block of the workflow,
+  from its begin marker to its end marker (a malformed or duplicate block
+  included), and the blank line before each, leaving the rest of the body as
+  it was. With no block it succeeds and writes nothing. A begin marker with no
+  end marker (or an end marker with no begin) is refused with exit 6, since
+  where that block starts or ends is unknown.
+
+A write rewrites only the block: every other byte of the body is kept, and
+the block takes the line ending the body already uses (GitHub's web editor
+saves `\r\n`). A write that would not change the body is skipped.
+
+Every operation reads the body through the trust layer, and counts it only
+when its author and every editor are trusted. A box a trusted human ticks in
+the web UI is a trusted edit; a body an outsider edited (a ticked box
+included) is never parsed or written: it is a stop, named by its metadata
+only (`stopped before any write: the issue body is untrusted: <ref>
+<issue|edit> <login> at <time> on body (<cause>). The human decides
+next.`), with exit 3. Every read and write runs under the issue owner's App
+token.
+
+`status --json` prints:
+
+```json
+{
+  "issue": "OWNER/REPO#N",
+  "workflow": "epic-create",
+  "state": "ok",
+  "stages": [{"name": "bootstrap", "done": true}],
+  "next": "brainstorm",
+  "skew": null
+}
+```
+
+`state` is `ok`, `missing`, `skew` or `malformed`, and the command exits with
+that state's code. `stages` is the block's stages in block order, and `[]`
+for `missing` and `malformed`. `next` is the first unticked stage, and
+`null` when every stage is ticked or the state is not `ok`. `skew` is `null`
+unless the state is `skew`, when it is `{"recorded": [...], "current":
+[...], "added": [...], "removed": [...], "reordered": bool}`: `added` in
+the current list's order, `removed` in the block's.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_checkpoint` (stage lists, format and parser: `lib/checkpoint.py`) |
+| Args | `init`, `status`, `tick`, `reset`, each with `REF` and `--workflow NAME` (required); `init`: `--tick STAGE` (repeatable); `status`: `--json`; `tick`: `STAGE` |
+| Preconditions | GitHub App credentials for the issue's org; trusted authors configured |
+| Failure mode | Error on stderr, nothing written; a failed write says the edit may have been applied, to confirm with `status` |
+| Exit codes | 0 success (including a tick already made and a reset with no block); 1 failure or refusal (a read or write error, an existing block on `init`, a `--tick` that is not the first stages, a refused tick); 2 bad arguments (an unknown workflow included); 3 untrusted body; 4 block missing; 5 skew; 6 malformed block |
+| Status | Active |
+
 ### vrg-epic-link
 
 Link a task under an epic as a native GitHub sub-issue, reopening a closed
