@@ -1901,6 +1901,33 @@ makes there, and writes only to the path it prints.
 | Exit codes | 0 the path was printed, 1 a refusal or error, 2 bad arguments, 3 a check's `--fix-base` is not an ancestor of `HEAD` (the branch was rebased) |
 | Status | Active |
 
+### vrg-state-dir
+
+Create and check a task's private state directory,
+`build/.vergil-state/<kind>/<N>/` in the main clone, as
+[doctrine §1.5](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#15-state-directories)
+requires, and print its absolute path. `--kind` is `operational` (the
+security items of `issue-validate` and `issue-deploy`), `issue-implement` or
+`upstream-report`. `build` must be a real directory (it is created when
+absent), and each level from `.vergil-state` down to `<N>` must be a real
+directory, not a symlink, with mode exactly 700; an absent level is created
+mode 700. A level that fails stops the command before anything is created
+below it. These are the checks
+[`vrg-merge-review-request --ensure-dir`](#vrg-merge-review-request) makes,
+through the same code. Before it creates or checks anything, it refuses
+unless the current clone's `origin` is the `--issue` repository, naming both
+repositories. The caller runs it before every write it makes there, and
+writes only to the path it prints.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_state_dir` (library: `lib/merge_review/state.py`, `lib/build_dir.py`) |
+| Args | `--kind {operational,issue-implement,upstream-report} --issue OWNER/NAME#N --ensure` |
+| Preconditions | Run in a clone (or worktree) of the `--issue` repository |
+| Failure mode | `ERROR: <reason>` on stderr, nothing on stdout |
+| Exit codes | 0 the path was printed, 1 a refusal or error, 2 bad arguments |
+| Status | Active |
+
 ### vrg-epic-audit
 
 Report epic/task drift and invariant violations for an org, as Markdown on
