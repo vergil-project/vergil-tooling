@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from vergil_tooling.bin import vrg_merge_review_request
-from vergil_tooling.lib import epic_audit, github, proxies
+from vergil_tooling.lib import epic_audit, github, proxies, trust
 from vergil_tooling.lib.epics import ChildState, IssueRef, parse_issue_ref
 from vergil_tooling.lib.github import GitHubAPIError, MissingGitHubTokenError
 from vergil_tooling.lib.merge_review import open_pr
@@ -998,6 +998,19 @@ def test_proxy_task_open_tasks_leave_out_the_batch(
             {"proxies": TrustedAuthorsNotConfiguredError("no trusted authors configured")},
             "no trusted authors configured",
         ),
+        (
+            {
+                "primary": trust.UntrustedContentError(
+                    trust.Skipped("acme/.github", 9, "issue", "drive-by", "t", "body", "untrusted"),
+                    "the issue body is untrusted",
+                )
+            },
+            "stopped before any write: the issue body is untrusted: acme/.github#9 issue drive-by",
+        ),
+        (
+            {"primary": trust.TrustReadError("read_issue acme/.github#9", "truncated")},
+            "cannot read who wrote the content (read_issue acme/.github#9): truncated",
+        ),
     ],
     ids=[
         "no-primary-line",
@@ -1006,6 +1019,8 @@ def test_proxy_task_open_tasks_leave_out_the_batch(
         "read-failure",
         "no-installation",
         "trusted-authors-unconfigured",
+        "untrusted-proxy-body",
+        "unreadable-proxy-body",
     ],
 )
 def test_proxy_task_unresolvable_primary_raises(

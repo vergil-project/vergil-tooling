@@ -10,6 +10,7 @@ import argparse
 import os
 import sys
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import (
     epic_audit,
@@ -26,8 +27,13 @@ from vergil_tooling.lib.trusted_authors import (
     GITHUB_ACTIONS_ENV,
     TrustedAuthorsNotConfiguredError,
     load_trusted_authors,
+    org_config,
     vergil_orgs,
 )
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib import epic_docs, roadmap
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 _DEFAULT_WINDOW_DAYS = 30
 
@@ -139,95 +145,89 @@ def _epic_listing(epic: epics.IssueRef) -> int:
     A ``Primary:``/``Proxy:`` disagreement fails the listing, never only reports
     it, so the retrospective gate stops on it (epic vergil-project/.github#1417):
     the problems go to stderr and no JSON is printed. On a proxy the JSON names
-    its primary.
+    its primary. A proxy body the trust layer does not trust, or cannot read in
+    full, gives no link (spec §5.2 of epic vergil-project/.github#1467): the
+    stop goes to stderr, metadata only, and no JSON is printed.
     """
-    problems = epic_audit.proxy_link_problems(epic)
-    if problems:
-        for problem in problems:
-            print(f"vrg-epic-audit: proxy link drift: {problem}", file=sys.stderr)
-        return 1
     try:
+        problems = epic_audit.proxy_link_problems(epic)
+        if problems:
+            for problem in problems:
+                print(f"vrg-epic-audit: proxy link drift: {problem}", file=sys.stderr)
+            return 1
         children = epic_audit.epic_children(epic)
         with github.target_org(epic.owner):
             primary = proxies.primary_of(epic) if proxies.is_proxy_ref(epic) else None
     except proxies.ProxyLinkError as exc:
         print(f"vrg-epic-audit: proxy link drift: {exc}", file=sys.stderr)
         return 1
+    except (trust.UntrustedContentError, trust.TrustReadError) as exc:
+        print(f"vrg-epic-audit: {exc}", file=sys.stderr)
+        return 1
     print(epic_audit.render_epic_children(epic, children, primary=primary))
     return 0
 
 
 def _audit(args: argparse.Namespace, org: str) -> int:
-    """The drift audit (and, with ``--close``, its passes) of *org*, under its token."""
+    """The drift audit (and, with ``--close``, its passes) of *org*, under its token.
+
+    Every pass acts only on trusted content (epic vergil-project/.github#1467,
+    spec §5.2 and §5.3), with or without ``--close``: the trusted authors are
+    loaded once, and an org with no ``[orgs.<org>]`` stanza is not a Vergil
+    org, so it is reported and never swept. A batch run stops the item, not
+    the run: each stop is added to one :class:`trust.BatchStops`, named on
+    stderr at the end (counted under GitHub Actions), and exits 1.
+    """
+    try:
+        authors = load_trusted_authors()
+    except (TrustedAuthorsNotConfiguredError, ValueError) as exc:
+        print(f"vrg-epic-audit: {exc}", file=sys.stderr)
+        return 1
+    if org_config(authors, org) is None:
+        print(
+            f"vrg-epic-audit: {org} is not a Vergil org (the configuration has no"
+            f" [orgs.{org}] stanza); it is not swept",
+            file=sys.stderr,
+        )
+        return 0
     # An owner with no .github has no home to audit (#3613).
     home = epics.require_org_home(org)
+    stops = trust.BatchStops()
     since = (datetime.now(UTC) - timedelta(days=args.window_days)).date().isoformat()
-    tasks = epic_audit.task_drift(since, org=org)
-    epics_drift = epic_audit.epic_drift(org)
+    tasks = epic_audit.task_drift(since, org=org, stops=stops, authors=authors)
+    epics_drift = epic_audit.epic_drift(org, stops=stops, authors=authors)
     # One listing of the home's epics feeds both per-epic checks (epic .github#819).
     # The home is always in the audited org, so the org's token reads it.
     home_epics = epic_audit.list_home_epics(home)
     closed_epic_open_children = epic_audit.closed_epic_open_child(
-        org, home=home, listing=home_epics
+        org, stops=stops, authors=authors, home=home, listing=home_epics
     )
     # The proxy close pass (epic .github#1417): an open proxy whose primary has
     # closed. A proxy whose link fails is collected, never raised mid-run, so
     # every other pass still runs; the exit status reflects it at the end.
-    proxy_plan, proxy_errors = epic_audit.proxy_closures(home, listing=home_epics)
+    proxy_plan, proxy_errors = epic_audit.proxy_closures(
+        home, stops=stops, authors=authors, listing=home_epics
+    )
     for error in proxy_errors:
         print(f"vrg-epic-audit: proxy link error: {error}", file=sys.stderr)
     if args.close:
-        closed = epic_audit.close_drift(tasks, epics_drift, org=org)
-        proxy_drift = epic_audit.close_proxies(proxy_plan)
-        proxies_closed = [c.proxy.slug for c in proxy_plan if not c.open_tasks]
-        # Remediate the closed-epic-with-open-child invariant (issue #2259): reopen
-        # each epic that was wrongly closed while a child was still open.
-        reopened = epic_audit.reopen_epics_with_open_children(closed_epic_open_children)
-        # Backstop ad-hoc drain (epic #238): drain closed children of every live
-        # ad-hoc epic into per-quarter archives and close past archives, under the
-        # org's token that main() scopes the whole audit to (spec §7), matching
-        # vrg-adhoc-epic and vrg-epic-move. The intake, planning and deferred
-        # queue epics (epic vergil-project/.github#176) and the hoshin epic
-        # (epic vergil-project/.github#1417) drain the same way.
-        now = datetime.now(UTC)
-        drained = epics.drain_adhoc_org(org, apply=True, now=now)
-        queue_drained = epics.drain_standing_org(org, apply=True, now=now)
-        # One org-wide enumeration feeds every orphan-pass check.
-        issues = epic_audit.open_issues(org)
-        moved = sum(len(p.moves) for p in drained)
-        closed_archives = sum(len(p.close) for p in drained)
-        print(
-            f"Ad-hoc drain: {moved} child(ren) archived, {closed_archives} past archive(s) closed."
+        return _close(
+            args,
+            org,
+            home,
+            home_epics,
+            stops,
+            authors,
+            tasks=tasks,
+            epics_drift=epics_drift,
+            closed_epic_open_children=closed_epic_open_children,
+            proxy_plan=proxy_plan,
+            proxy_errors=proxy_errors,
         )
-        qmoved = sum(len(p.moves) for p in queue_drained)
-        qclosed = sum(len(p.close) for p in queue_drained)
-        print(
-            f"Intake/planning drain: {qmoved} child(ren) archived, "
-            f"{qclosed} past archive(s) closed."
-        )
-        print(
-            epic_audit.render_closed(
-                closed,
-                org=org,
-                window_days=args.window_days,
-                reopened=reopened,
-                misplaced=epic_audit.misplaced_archives(org, issues=issues),
-                proxies_closed=proxies_closed,
-                proxy_drift=proxy_drift,
-                proxy_errors=proxy_errors,
-            )
-        )
-        # No security-records pass here: it lists and writes security advisories,
-        # which the sweep's scoped token cannot do (vergil-tooling#4313). The
-        # human or the user agent runs it with vrg-security-record sync.
-        orphan_rc = _apply_orphan_pass(org, issues)
-        return 1 if proxy_errors else orphan_rc
     epics_outside = epic_audit.epic_outside_dotgithub(org)
     stray = epic_audit.stray_dotgithub_issue(org)
-    # A batch run stops the child, not the audit (spec §5.3 of epic
-    # vergil-project/.github#1467; #4971): an operational child whose body is
-    # untrusted is counted in the report, named on stderr, and exits 1.
-    stops = trust.BatchStops()
+    # An operational child whose body is untrusted is counted in the report,
+    # named on stderr, and exits 1 (#4971).
     pending_operational = epic_audit.operational_pending(org, stops=stops)
     closed_operational_no_success = epic_audit.closed_operational_without_success(org)
     # Read-only preview of the ad-hoc drain the --close sweep would perform (epic
@@ -243,6 +243,7 @@ def _audit(args: argparse.Namespace, org: str) -> int:
     # Read-only preview of the orphan pass: one shared enumeration, no writes
     # (an absent intake epic is named, not created).
     issues = epic_audit.open_issues(org)
+    parents = epic_audit.body_only_parents(org, stops=stops, authors=authors, issues=issues)
     # Read-only preview of the security-records pass (the reads of
     # vrg-security-record sync, no state writes). --close never runs it.
     security_rc = security_records.records_pass(org, apply=False, prog="vrg-epic-audit")
@@ -257,38 +258,107 @@ def _audit(args: argparse.Namespace, org: str) -> int:
             pending_operational=pending_operational,
             closed_operational_no_success=closed_operational_no_success,
             closed_epic_open_children=closed_epic_open_children,
-            orphans=epic_audit.orphan_drift(org, issues=issues),
+            orphans=epic_audit.orphan_drift(org, parents=parents, issues=issues),
             retired_labels=epic_audit.retired_label_drift(org, issues=issues),
-            body_only=epic_audit.body_only_parents(org, issues=issues),
+            body_only=list(parents.pairs),
             misplaced=epic_audit.misplaced_archives(org, issues=issues),
             epic_docs_findings=epic_audit.epic_documents(org, home=home, listing=home_epics),
-            # It reads trusted comments, so it runs only here, never under --close.
-            proxy_link_drift=epic_audit.proxy_link_drift(home, listing=home_epics),
+            proxy_link_drift=epic_audit.proxy_link_drift(home, stops=stops, listing=home_epics),
             proxy_closures=proxy_plan,
             proxy_errors=proxy_errors,
-            # It reads trusted comments too, so it never runs under --close.
             misplaced_adhoc=epic_audit.misplaced_adhoc(org, issues=issues),
         )
     )
     stops.print_summary(sys.stderr)
-    # A preview with a broken proxy link or a stopped child never exits clean.
+    # A preview with a broken proxy link or a stopped item never exits clean.
     return 1 if proxy_errors or stops.stopped else security_rc
 
 
-def _apply_orphan_pass(org: str, issues: list[epic_audit.OpenIssue]) -> int:
+def _close(  # noqa: PLR0913 - the passes' shared reads, made once by _audit
+    args: argparse.Namespace,
+    org: str,
+    home: str,
+    home_epics: list[epic_docs.EpicRecord],
+    stops: trust.BatchStops,
+    authors: TrustedAuthors,
+    *,
+    tasks: list[epic_audit.TaskDrift],
+    epics_drift: list[roadmap.EpicSummary],
+    closed_epic_open_children: list[epic_audit.EpicOpenChildViolation],
+    proxy_plan: list[epic_audit.ProxyClosure],
+    proxy_errors: list[str],
+) -> int:
+    """Apply the ``--close`` passes of *org*, from the reads :func:`_audit` made."""
+    closed = epic_audit.close_drift(tasks, epics_drift, org=org)
+    proxy_drift = epic_audit.close_proxies(proxy_plan)
+    proxies_closed = [c.proxy.slug for c in proxy_plan if not c.open_tasks]
+    # Remediate the closed-epic-with-open-child invariant (issue #2259): reopen
+    # each epic that was wrongly closed while a child was still open.
+    reopened = epic_audit.reopen_epics_with_open_children(closed_epic_open_children)
+    # Backstop ad-hoc drain (epic #238): drain closed children of every live
+    # ad-hoc epic into per-quarter archives and close past archives, under the
+    # org's token that main() scopes the whole audit to (spec §7), matching
+    # vrg-adhoc-epic and vrg-epic-move. The intake, planning and deferred
+    # queue epics (epic vergil-project/.github#176) and the hoshin epic
+    # (epic vergil-project/.github#1417) drain the same way.
+    now = datetime.now(UTC)
+    drained = epics.drain_adhoc_org(org, apply=True, now=now)
+    queue_drained = epics.drain_standing_org(org, apply=True, now=now)
+    # One org-wide enumeration feeds every orphan-pass check.
+    issues = epic_audit.open_issues(org)
+    moved = sum(len(p.moves) for p in drained)
+    closed_archives = sum(len(p.close) for p in drained)
+    print(f"Ad-hoc drain: {moved} child(ren) archived, {closed_archives} past archive(s) closed.")
+    qmoved = sum(len(p.moves) for p in queue_drained)
+    qclosed = sum(len(p.close) for p in queue_drained)
+    print(f"Intake/planning drain: {qmoved} child(ren) archived, {qclosed} past archive(s) closed.")
+    # The trusted-comment checks run here too: the sweep reads the delivered
+    # configuration (spec §5.1a of epic vergil-project/.github#1467).
+    print(
+        epic_audit.render_closed(
+            closed,
+            org=org,
+            window_days=args.window_days,
+            reopened=reopened,
+            misplaced=epic_audit.misplaced_archives(org, issues=issues),
+            proxies_closed=proxies_closed,
+            proxy_drift=proxy_drift,
+            proxy_errors=proxy_errors,
+            proxy_link_drift=epic_audit.proxy_link_drift(home, stops=stops, listing=home_epics),
+            misplaced_adhoc=epic_audit.misplaced_adhoc(org, issues=issues),
+        )
+    )
+    # No security-records pass here: it lists and writes security advisories,
+    # which the sweep's scoped token cannot do (vergil-tooling#4313). The
+    # human or the user agent runs it with vrg-security-record sync.
+    orphan_rc = _apply_orphan_pass(org, issues, stops=stops, authors=authors)
+    stops.print_summary(sys.stderr)
+    return 1 if proxy_errors or stops.stopped else orphan_rc
+
+
+def _apply_orphan_pass(
+    org: str,
+    issues: list[epic_audit.OpenIssue],
+    *,
+    stops: trust.BatchStops,
+    authors: TrustedAuthors,
+) -> int:
     """Apply the orphan pass (epic .github#176) after the existing ``--close`` passes.
 
     Order: nativize body-only ``Parent:`` links -> strip retired kind labels ->
     attach orphans to intake. Every write runs under the org's token that
     main() scopes the whole audit to. A full queue epic stops the pass with the
-    unlinked items on stderr and exit 1 — never a silent skip.
+    unlinked items on stderr and exit 1 — never a silent skip. An issue the
+    trust layer cannot read is a stop on that issue alone, added to *stops*.
     """
-    nativized = epic_audit.nativize_parents(epic_audit.body_only_parents(org, issues=issues))
+    parents = epic_audit.body_only_parents(org, stops=stops, authors=authors, issues=issues)
+    nativized = epic_audit.nativize_parents(list(parents.pairs))
     print(f"Body-only Parent: links nativized: {nativized}.")
     stripped = epic_audit.strip_retired_labels(epic_audit.retired_label_drift(org, issues=issues))
     print(f"Retired kind labels stripped: {stripped} issue(s).")
+    orphans = epic_audit.orphan_drift(org, parents=parents, issues=issues)
     try:
-        attached = epic_audit.attach_orphans(epic_audit.orphan_drift(org, issues=issues))
+        attached = epic_audit.attach_orphans(orphans, stops=stops, authors=authors)
     except epic_audit.StandingEpicFull as exc:
         print(f"vrg-epic-audit: {exc}", file=sys.stderr)
         return 1

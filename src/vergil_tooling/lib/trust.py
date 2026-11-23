@@ -26,7 +26,8 @@ report, :func:`read_issue_edits` also lists every untrusted edit of trusted
 content, and ``read_events(renames=True)`` every rename. Reviews and
 inline review comments follow the same rule (:func:`read_reviews`). A close
 or reopen is trusted when its actor is (:func:`read_events`,
-:func:`close_judgement`, :func:`require_trusted_close`). A PR found by its
+:func:`close_judgement`, :func:`require_trusted_close`,
+:func:`require_trusted_reopen`). A PR found by its
 branch is same-repo and has a trusted author (:func:`prs_for_branch`); a fork
 PR never matches. A search or list result is trusted when its body is, and
 everyone who renamed it holds a role (:func:`search_items`, :func:`list_items`);
@@ -1043,6 +1044,37 @@ def require_trusted_close(
             repo, number, "event", _bare(close.actor), close.at, "close", str(judgement.cause)
         )
         raise UntrustedContentError(item, "the close is untrusted")
+    return judgement.role
+
+
+def require_trusted_reopen(
+    repo: str,
+    number: int,
+    *,
+    roles: frozenset[Role] = ALL_ROLES,
+    authors: TrustedAuthors | None = None,
+) -> Role | None:
+    """The role of whoever reopened *repo*#*number*, if a reopen is its latest state change.
+
+    For a caller that acts on an item being open: an item that was never
+    closed, or whose latest close or reopen is a close, returns ``None``.
+    When the latest is a reopen whose actor holds no role in *roles*, this
+    raises :class:`UntrustedContentError` on the reopen event (kind
+    ``event``, field ``reopen``), metadata only: an untrusted reopen is not
+    an open for any decision the automation makes (spec §5.2).
+    """
+    if authors is None:
+        authors = load_trusted_authors()
+    changes = [e for e in read_events(repo, number) if e.kind in ("closed", "reopened")]
+    if not changes or changes[-1].kind != "reopened":
+        return None
+    reopen = changes[-1]
+    judgement = _accepted(reopen.actor, org=_split_repo(repo)[0], roles=roles, authors=authors)
+    if judgement.role is None:
+        item = Skipped(
+            repo, number, "event", _bare(reopen.actor), reopen.at, "reopen", str(judgement.cause)
+        )
+        raise UntrustedContentError(item, "the reopen is untrusted")
     return judgement.role
 
 

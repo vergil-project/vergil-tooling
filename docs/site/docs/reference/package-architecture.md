@@ -31,8 +31,8 @@ The main modules under `src/vergil_tooling/lib/`:
   and the parent-based queue-item check that `vrg-pr-workflow report-ready`
   and `vrg-submit-pr` use to refuse intake, planning and deferred items.
 - **`proxies.py`**: the proxy epic's link to its primary, read from the
-  proxy's `Primary:` body line and the primary's trusted `Proxy:` comments
-  (`epics.is_proxy` is the label test every development-epic check skips).
+  proxy's `Primary:` body line (from a body the trust layer trusts) and the
+  primary's trusted `Proxy:` comments (`epics.is_proxy` is the label test every development-epic check skips).
 - **`epic_audit.py`**, **`intake_route.py`** and **`queue_view.py`** build
   on `epics.py`: the `vrg-epic-audit` drift report and orphan pass, the
   `vrg-intake-route` mechanics and route table, and the `vrg-queue` views.

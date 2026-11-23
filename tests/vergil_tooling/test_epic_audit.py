@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
@@ -12,6 +13,7 @@ import pytest
 from tests.vergil_tooling import trust_stubs
 from vergil_tooling.lib import epic_audit, epic_docs, epics, github, proxies, roadmap, trust
 from vergil_tooling.lib.epic_audit import TaskDrift
+from vergil_tooling.lib.trusted_authors import OrgConfig, TrustedAuthors
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -20,6 +22,38 @@ if TYPE_CHECKING:
 # window, so the merged-PR search is a single open-ended slice.
 _TODAY = date(2026, 6, 1)
 _AUDIT = "vergil_tooling.lib.epic_audit"
+
+
+def _drift(
+    prs: Any,
+    org: str,
+    *,
+    stops: trust.BatchStops | None = None,
+    items: dict[str, Any] | None = None,
+) -> list[TaskDrift]:
+    """task_drift over the search's *prs*, each PR body read through the real trust layer.
+
+    Each PR's trusted body is its search body, by the trusted human, unless
+    *items* (keyed ``owner/name#N``) gives that PR's item answer.
+    """
+    answers = {
+        (str(pr["repository"]["nameWithOwner"]), int(pr["number"])): trust_stubs.item(
+            body=str(pr.get("body") or ""), typename="PullRequest"
+        )
+        for pr in (prs if isinstance(prs, list) else [])
+        if (pr.get("repository") or {}).get("nameWithOwner")
+    }
+    for key, answer in (items or {}).items():
+        repo, _, number = key.rpartition("#")
+        answers[(repo, int(number))] = answer
+    with patch("vergil_tooling.lib.github.graphql", side_effect=trust_stubs.FakeItems(answers)):
+        return epic_audit.task_drift(
+            "2026-06-01",
+            today=_TODAY,
+            org=org,
+            stops=trust.BatchStops() if stops is None else stops,
+            authors=trust_stubs.AUTHORS,
+        )
 
 
 def test_task_drift_flags_open_task_behind_merged_pr() -> None:
@@ -62,7 +96,7 @@ def test_task_drift_flags_open_task_behind_merged_pr() -> None:
         patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
         patch("vergil_tooling.lib.epics.parent_of", return_value=None),
     ):
-        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project")
+        result = _drift(prs, "vergil-project")
     assert result == [TaskDrift("vergil-project/vergil-tooling", 1947, 1948, "u1948")]
 
 
@@ -84,7 +118,7 @@ def _drift_with(
         patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
         patch("vergil_tooling.lib.epics.parent_of", return_value=None),
     ):
-        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project")
+        result = _drift(prs, "vergil-project")
     return result, viewed
 
 
@@ -168,7 +202,7 @@ def test_task_drift_skips_release_tracking_issue() -> None:
         {
             ("vergil-project/vergil-containers", 373): trust_stubs.item(
                 body="<!-- vrg-release:progress -->\n- [x] tag\n"
-            )
+            ),
         },
         strict=True,
     )
@@ -177,7 +211,13 @@ def test_task_drift_skips_release_tracking_issue() -> None:
         patch("vergil_tooling.lib.github.graphql", side_effect=layer),
         patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
     ):
-        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project")
+        result = epic_audit.task_drift(
+            "2026-06-01",
+            today=_TODAY,
+            org="vergil-project",
+            stops=trust.BatchStops(),
+            authors=trust_stubs.AUTHORS,
+        )
     assert result == []
     # The release signals count only once the layer trusts the body.
     assert layer.reads == [("vergil-project/vergil-containers", 373)]
@@ -206,7 +246,7 @@ def test_task_drift_resolves_cross_repo_ref() -> None:
         patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
         patch("vergil_tooling.lib.epics.parent_of", return_value=None),
     ):
-        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project")
+        result = _drift(prs, "vergil-project")
     assert looked_up["repo"] == "vergil-project/vergil-tooling"
     assert result == [TaskDrift("vergil-project/vergil-tooling", 42, 7, "u7")]
 
@@ -229,7 +269,7 @@ def test_task_drift_skips_unresolvable_task(capsys: pytest.CaptureFixture[str]) 
         raise github.GitHubAPIError(1, ["gh"], "", "GraphQL: Could not resolve to an issue")
 
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
-        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="logical-minds-foundry")
+        result = _drift(prs, "logical-minds-foundry")
     assert result == []
     assert "skipping vergil-project/vergil-tooling#2105" in capsys.readouterr().err
 
@@ -257,7 +297,7 @@ def test_task_drift_skips_epic_ref() -> None:
         }
 
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
-        assert epic_audit.task_drift("2026-06-01", today=_TODAY, org="logical-minds-foundry") == []
+        assert _drift(prs, "logical-minds-foundry") == []
 
 
 def test_task_drift_skips_operational_refs() -> None:
@@ -282,7 +322,7 @@ def test_task_drift_skips_operational_refs() -> None:
         patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
         patch("vergil_tooling.lib.epics.parent_of") as parent,
     ):
-        assert epic_audit.task_drift("2026-06-01", today=_TODAY, org="org") == []
+        assert _drift(prs, "org") == []
     parent.assert_not_called()
 
 
@@ -307,13 +347,13 @@ def test_task_drift_still_flags_labelled_plain_task() -> None:
         patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
         patch("vergil_tooling.lib.epics.parent_of", return_value=None),
     ):
-        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="org")
+        result = _drift(prs, "org")
     assert result == [TaskDrift("org/repo", 41, 40, "u40")]
 
 
 def test_task_drift_returns_empty_on_non_list() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value={"x": 1}):
-        assert epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project") == []
+        assert _drift([], "vergil-project") == []
 
 
 def test_task_drift_skips_when_issue_view_is_not_an_object() -> None:
@@ -332,7 +372,31 @@ def test_task_drift_skips_when_issue_view_is_not_an_object() -> None:
         return prs if args[0] == "search" else ["unexpected"]
 
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
-        assert epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project") == []
+        assert _drift(prs, "vergil-project") == []
+
+
+def _epic_drift(org: str, stops: trust.BatchStops | None = None) -> list[roadmap.EpicSummary]:
+    """epic_drift of *org*, judged with the stub authors."""
+    return epic_audit.epic_drift(
+        org, stops=trust.BatchStops() if stops is None else stops, authors=trust_stubs.AUTHORS
+    )
+
+
+def _closed_epic_open_child(
+    org: str, *, stops: trust.BatchStops | None = None, **kwargs: Any
+) -> list[epic_audit.EpicOpenChildViolation]:
+    """closed_epic_open_child of *org*, each open child's events read through the real layer.
+
+    Unless the test patches ``github.graphql`` itself, every child was last
+    closed by the trusted human, so no reopen is judged.
+    """
+    with patch("vergil_tooling.lib.github.graphql", side_effect=trust_stubs.FakeItems()):
+        return epic_audit.closed_epic_open_child(
+            org,
+            stops=trust.BatchStops() if stops is None else stops,
+            authors=trust_stubs.AUTHORS,
+            **kwargs,
+        )
 
 
 def test_epic_drift_flags_all_done_open_epics() -> None:
@@ -341,8 +405,13 @@ def test_epic_drift_flags_all_done_open_epics() -> None:
         roadmap.EpicSummary(7, "WIP", "2026-06-01", None, (), 3, 1, "u7"),  # not all done
         roadmap.EpicSummary(8, "Empty", "2026-06-01", None, (), 0, 0, "u8"),  # no children
     ]
-    with patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=summaries):
-        result = epic_audit.epic_drift()
+    closed = [epics.ChildState(epics.IssueRef("org", "tool", 1), "CLOSED")]
+    with (
+        patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=summaries),
+        patch("vergil_tooling.lib.epics.child_states", return_value=closed),
+        patch("vergil_tooling.lib.github.graphql", side_effect=trust_stubs.FakeItems()),
+    ):
+        result = _epic_drift("org")
     assert [e.number for e in result] == [40]
 
 
@@ -453,7 +522,7 @@ def test_closed_epic_open_child_flags_closed_epic_with_open_child() -> None:
         patch("vergil_tooling.lib.epic_docs.list_epics", return_value=listing),
         patch("vergil_tooling.lib.epics.child_states", side_effect=fake_child_states),
     ):
-        result = epic_audit.closed_epic_open_child("org")
+        result = _closed_epic_open_child("org")
     assert result == [(epics.IssueRef("org", ".github", 19), (epics.IssueRef("org", "lab", 462),))]
 
 
@@ -469,7 +538,7 @@ def test_closed_epic_open_child_skips_perpetual_before_fetching_children(
         patch("vergil_tooling.lib.epic_docs.list_epics", return_value=listing),
         patch("vergil_tooling.lib.epics.child_states", child_states),
     ):
-        assert epic_audit.closed_epic_open_child("org") == []
+        assert _closed_epic_open_child("org") == []
     child_states.assert_not_called()
 
 
@@ -483,9 +552,7 @@ def test_closed_epic_open_child_keeps_archived_epics() -> None:
             "vergil_tooling.lib.epics.child_states", return_value=[epics.ChildState(kid, "OPEN")]
         ),
     ):
-        assert epic_audit.closed_epic_open_child("org") == [
-            (epics.IssueRef("org", ".github", 7), (kid,))
-        ]
+        assert _closed_epic_open_child("org") == [(epics.IssueRef("org", ".github", 7), (kid,))]
 
 
 def test_closed_epic_open_child_scopes_to_home() -> None:
@@ -493,7 +560,7 @@ def test_closed_epic_open_child_scopes_to_home() -> None:
         patch("vergil_tooling.lib.epic_docs.list_epics", return_value=[]) as mock_list,
         patch("vergil_tooling.lib.epics.child_states", return_value=[]),
     ):
-        epic_audit.closed_epic_open_child("org", home="org/lab")
+        _closed_epic_open_child("org", home="org/lab")
     # Lists the home, not <org>/.github, with no skips applied.
     mock_list.assert_called_once_with("org/lab", apply_skips=False)
 
@@ -503,7 +570,7 @@ def test_closed_epic_open_child_uses_a_given_listing() -> None:
         patch("vergil_tooling.lib.epic_docs.list_epics") as mock_list,
         patch("vergil_tooling.lib.epics.child_states", return_value=[]),
     ):
-        assert epic_audit.closed_epic_open_child("org", listing=[_record(1)]) == []
+        assert _closed_epic_open_child("org", listing=[_record(1)]) == []
     mock_list.assert_not_called()
 
 
@@ -1047,7 +1114,7 @@ def test_operational_pending_reads_dotgithub_epics() -> None:
 
 def test_epic_drift_reads_the_org_roadmap() -> None:
     with patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=[]) as gather:
-        epic_audit.epic_drift("org")
+        _epic_drift("org")
     gather.assert_called_once_with("org")
 
 
@@ -1218,15 +1285,55 @@ def test_open_issues_reads_a_repository_with_no_issues() -> None:
 @pytest.mark.parametrize(
     "check",
     [
-        epic_audit.orphan_drift,
+        lambda org: epic_audit.orphan_drift(org, parents=epic_audit.BodyParents()),
         epic_audit.retired_label_drift,
-        epic_audit.body_only_parents,
+        lambda org: list(
+            epic_audit.body_only_parents(
+                org, stops=trust.BatchStops(), authors=trust_stubs.AUTHORS
+            ).pairs
+        ),
     ],
+    ids=["orphan_drift", "retired_label_drift", "body_only_parents"],
 )
 def test_orphan_pass_checks_enumerate_when_not_handed_issues(check: Any) -> None:
     with patch("vergil_tooling.lib.epic_audit.open_issues", return_value=[]) as enum:
         assert check("org") == []
     enum.assert_called_once_with("org")
+
+
+def _judged_parents(
+    issues: list[epic_audit.OpenIssue],
+    *,
+    stops: trust.BatchStops | None = None,
+    items: dict[tuple[str, int], Any] | None = None,
+) -> epic_audit.BodyParents:
+    """body_only_parents of *issues*, each body read through the real trust layer.
+
+    Each issue's trusted body is its listed body, by the trusted human, unless
+    *items* gives that issue's item answer.
+    """
+    answers = {(f"{i.ref.owner}/{i.ref.repo}", i.ref.number): trust_stubs.item(body=i.body)
+               for i in issues}  # fmt: skip
+    answers.update(items or {})
+    with patch("vergil_tooling.lib.github.graphql", side_effect=trust_stubs.FakeItems(answers)):
+        return epic_audit.body_only_parents(
+            "org",
+            stops=trust.BatchStops() if stops is None else stops,
+            authors=trust_stubs.AUTHORS,
+            issues=issues,
+        )
+
+
+def _orphan_drift(issues: list[epic_audit.OpenIssue]) -> list[epic_audit.Orphan]:
+    """orphan_drift of *issues*, their body parents judged by :func:`_judged_parents`."""
+    return epic_audit.orphan_drift("org", parents=_judged_parents(issues), issues=issues)
+
+
+def _attach(orphans: list[epic_audit.Orphan], stops: trust.BatchStops | None = None) -> int:
+    """attach_orphans of *orphans*, judged with the stub authors."""
+    return epic_audit.attach_orphans(
+        orphans, stops=trust.BatchStops() if stops is None else stops, authors=trust_stubs.AUTHORS
+    )
 
 
 def _homes(repo: str) -> tuple[str, str]:
@@ -1238,7 +1345,7 @@ def _homes(repo: str) -> tuple[str, str]:
 def test_orphan_drift_targets_intake_epic_of_home() -> None:
     issues = [_issue("org/tool", 5), _issue("org/app", 3)]
     with patch("vergil_tooling.lib.epics.queue_home", side_effect=_homes):
-        orphans = epic_audit.orphan_drift("org", issues=issues)
+        orphans = _orphan_drift(issues)
     assert orphans == [
         epic_audit.Orphan(epics.IssueRef("org", "tool", 5), home="org/.github", name="org"),
         epic_audit.Orphan(epics.IssueRef("org", "app", 3), home="org/.github", name="org"),
@@ -1263,7 +1370,10 @@ def test_orphan_drift_skips_release_tracking_issue() -> None:
         patch("vergil_tooling.lib.github.graphql", side_effect=layer),
         patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
     ):
-        assert epic_audit.orphan_drift("org", issues=issues) == []
+        parents = epic_audit.body_only_parents(
+            "org", stops=trust.BatchStops(), authors=trust_stubs.AUTHORS, issues=issues
+        )
+        assert epic_audit.orphan_drift("org", parents=parents, issues=issues) == []
     qh.assert_not_called()
 
 
@@ -1282,7 +1392,10 @@ def test_orphan_drift_untrusted_release_issue_is_an_orphan(
         patch("vergil_tooling.lib.github.graphql", side_effect=layer),
         patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
     ):
-        orphans = epic_audit.orphan_drift("org", issues=issues)
+        parents = epic_audit.body_only_parents(
+            "org", stops=trust.BatchStops(), authors=trust_stubs.AUTHORS, issues=issues
+        )
+        orphans = epic_audit.orphan_drift("org", parents=parents, issues=issues)
     assert [o.ref for o in orphans] == [epics.IssueRef("org", "tool", 9)]
     err = capsys.readouterr().err
     assert err == (
@@ -1298,7 +1411,7 @@ def test_orphan_drift_skips_archives_and_epics() -> None:
         _issue("org/.github", 2, labels=("archive", "intake")),
         _issue("org/.github", 3, labels=("epic", "intake")),
     ]
-    assert epic_audit.orphan_drift("org", issues=issues) == []
+    assert _orphan_drift(issues) == []
 
 
 def test_orphan_drift_skips_unmanaged_repos() -> None:
@@ -1309,7 +1422,7 @@ def test_orphan_drift_skips_unmanaged_repos() -> None:
         patch("vergil_tooling.lib.epics.is_managed_repo", return_value=False),
         patch("vergil_tooling.lib.github.graphql") as gql,
     ):
-        assert epic_audit.orphan_drift("org") == []
+        assert epic_audit.orphan_drift("org", parents=epic_audit.BodyParents()) == []
     gql.assert_not_called()
 
 
@@ -1319,7 +1432,7 @@ def test_orphan_drift_treats_body_parent_as_parented() -> None:
         _issue("org/tool", 6, native_parent=epics.IssueRef("org", ".github", 40)),
     ]
     with patch("vergil_tooling.lib.epics.is_epic", return_value=True):
-        assert epic_audit.orphan_drift("org", issues=issues) == []
+        assert _orphan_drift(issues) == []
 
 
 def test_orphan_drift_attaches_body_parent_that_is_not_an_epic() -> None:
@@ -1329,7 +1442,7 @@ def test_orphan_drift_attaches_body_parent_that_is_not_an_epic() -> None:
         patch("vergil_tooling.lib.epics.is_epic", return_value=False),
         patch("vergil_tooling.lib.epics.queue_home", side_effect=_homes),
     ):
-        orphans = epic_audit.orphan_drift("org", issues=issues)
+        orphans = _orphan_drift(issues)
     assert [o.ref.number for o in orphans] == [5]
 
 
@@ -1364,7 +1477,7 @@ def test_attach_orphans_attaches_each_under_its_intake_epic() -> None:
         patch("vergil_tooling.lib.epics.child_states", return_value=[]) as cs,
         patch("vergil_tooling.lib.epics.add_child") as add,
     ):
-        assert epic_audit.attach_orphans(orphans) == 3
+        assert _attach(orphans) == 3
     assert ensure.call_count == 2  # resolved once per home
     assert ensure.call_args_list[0].args == (epics.INTAKE, "org/.github", "org")
     assert cs.call_count == 2  # open-children count fetched once per epic
@@ -1386,9 +1499,9 @@ def test_attach_orphans_is_idempotent() -> None:
         patch("vergil_tooling.lib.epics.child_states", return_value=[]),
         patch("vergil_tooling.lib.epics.add_child"),
     ):
-        assert epic_audit.attach_orphans(epic_audit.orphan_drift("org", issues=before)) == 1
+        assert _attach(_orphan_drift(before)) == 1
     after = [_issue("org/tool", 5, native_parent=intake)]
-    assert epic_audit.orphan_drift("org", issues=after) == []
+    assert _orphan_drift(after) == []
 
 
 @pytest.mark.usefixtures("trusted_reads")
@@ -1408,7 +1521,7 @@ def test_attach_orphans_stops_at_cap() -> None:
         patch("vergil_tooling.lib.epics.add_child") as add,
         pytest.raises(epic_audit.StandingEpicFull) as excinfo,
     ):
-        epic_audit.attach_orphans(orphans)
+        _attach(orphans)
     add.assert_not_called()
     exc = excinfo.value
     assert exc.epic == intake
@@ -1437,7 +1550,7 @@ def test_attach_orphans_stops_when_attaching_reaches_cap() -> None:
         patch("vergil_tooling.lib.epics.add_child") as add,
         pytest.raises(epic_audit.StandingEpicFull) as excinfo,
     ):
-        epic_audit.attach_orphans(orphans)
+        _attach(orphans)
     assert add.call_count == 1  # the first fits; the second would exceed the cap
     assert excinfo.value.pending == [epics.IssueRef("org", "tool", 6)]
 
@@ -1485,7 +1598,7 @@ def test_attach_orphans_skips_outsider_issue_clean_exit(
         patch("vergil_tooling.lib.epics.child_states", return_value=[]),
         patch("vergil_tooling.lib.epics.add_child") as add,
     ):
-        assert epic_audit.attach_orphans(orphans) == 2
+        assert _attach(orphans) == 2
     assert [c.args for c in add.call_args_list] == [
         (intake, epics.IssueRef("org", "tool", 6)),
         (intake, epics.IssueRef("org", "tool", 8)),
@@ -1517,7 +1630,7 @@ def test_attach_orphans_outsider_issues_under_actions_are_counts(
         patch("vergil_tooling.lib.epics.child_states", return_value=[]),
         patch("vergil_tooling.lib.epics.add_child"),
     ):
-        assert epic_audit.attach_orphans(orphans) == 2
+        assert _attach(orphans) == 2
     err = capsys.readouterr().err
     assert err == "skipped 3 untrusted item(s) (untrusted: 2, wrong-type: 1)\n"
 
@@ -1539,30 +1652,46 @@ def test_attach_orphans_outsider_issues_stay_out_of_the_cap() -> None:
         patch("vergil_tooling.lib.epics.child_states", return_value=near),
         patch("vergil_tooling.lib.epics.add_child") as add,
     ):
-        assert epic_audit.attach_orphans(orphans) == 1
+        assert _attach(orphans) == 1
     assert [c.args for c in add.call_args_list] == [(intake, epics.IssueRef("org", "tool", 6))]
 
 
-def test_attach_orphans_read_failure_attaches_nothing() -> None:
-    # Every orphan is judged before the first attach: a read the layer cannot
-    # complete stops the pass with nothing written.
-    orphans, _ = _outsider_orphans()
+def test_attach_orphans_read_failure_is_a_per_item_stop(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A read the layer cannot complete stops that orphan alone: it is never
+    # attached, the trusted orphans are, and the stop is recorded for the
+    # run's exit status (spec §5.3 of epic .github#1467).
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    orphans, items = _outsider_orphans()
+    del items.items[("org/tool", 9)]
+    items.strict = False
 
     def failing(query: str, **variables: Any) -> dict[str, Any]:
         if int(variables["number"]) == 9:
             return {"repository": {"issueOrPullRequest": None}}
-        return trust_stubs.item()
+        return items(query, **variables)
 
+    stops = trust.BatchStops()
+    intake = epics.IssueRef("org", ".github", 100)
     with (
         patch("vergil_tooling.lib.github.graphql", side_effect=failing),
-        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
-        patch("vergil_tooling.lib.epics.ensure_standing_epic") as ensure,
+        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=intake),
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
         patch("vergil_tooling.lib.epics.add_child") as add,
-        pytest.raises(trust.TrustReadError),
     ):
-        epic_audit.attach_orphans(orphans)
-    ensure.assert_not_called()
-    add.assert_not_called()
+        assert _attach(orphans, stops) == 2
+    assert [c.args for c in add.call_args_list] == [
+        (intake, epics.IssueRef("org", "tool", 6)),
+        (intake, epics.IssueRef("org", "tool", 8)),
+    ]
+    assert stops.stopped == (
+        trust.Skipped("org/tool", 9, "issue", None, "", "body", trust.READ_FAILURE),
+    )
+    stops.print_summary(sys.stderr)
+    err = capsys.readouterr().err
+    assert "stopped on a read failure: org/tool#9 on body: cannot read who wrote" in err
+    assert "SPAM-MARKER-TEXT" not in err
 
 
 def test_retired_label_drift_lists_kind_labelled_issues() -> None:
@@ -1617,8 +1746,11 @@ def test_body_only_parents_pairs_task_with_body_epic() -> None:
         _issue("org/tool", 8),  # no parent at all
     ]
     with patch("vergil_tooling.lib.epics.is_epic", side_effect=lambda ref: ref.repo == ".github"):
-        pairs = epic_audit.body_only_parents("org", issues=issues)
-    assert pairs == [(epics.IssueRef("org", "tool", 5), epics.IssueRef("org", ".github", 40))]
+        parents = _judged_parents(issues)
+    assert parents.pairs == (
+        (epics.IssueRef("org", "tool", 5), epics.IssueRef("org", ".github", 40)),
+    )
+    assert parents.held == frozenset()
 
 
 def test_nativize_parents_adds_native_link() -> None:
@@ -1649,7 +1781,7 @@ def test_task_drift_skips_pr_ref_to_queue_item() -> None:
         patch("vergil_tooling.lib.epics.parent_of", return_value=intake) as parent,
         patch("vergil_tooling.lib.epics.queue_kind", return_value="intake"),
     ):
-        assert epic_audit.task_drift("2026-06-01", today=_TODAY, org="org") == []
+        assert _drift(prs, "org") == []
     parent.assert_called_once_with(epics.IssueRef("org", "repo", 8))
 
 
@@ -1667,7 +1799,7 @@ def test_task_drift_flags_task_under_finite_epic() -> None:
         ),
         patch("vergil_tooling.lib.epics.queue_kind", return_value=None),
     ):
-        result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="org")
+        result = _drift(prs, "org")
     assert result == [TaskDrift("org/repo", 8, 31, "u")]
 
 
@@ -1728,7 +1860,7 @@ def test_orphan_drift_never_adopts_an_archive_that_lost_its_label() -> None:
     # and no archive label; the orphan pass attached it to an intake epic.
     issues = [_issue("org/.github", 180, labels=("ad-hoc",), title=_LOST_LABEL_TITLE)]
     with patch("vergil_tooling.lib.epics.queue_home", side_effect=_homes) as qh:
-        assert epic_audit.orphan_drift("org", issues=issues) == []
+        assert _orphan_drift(issues) == []
     qh.assert_not_called()
 
 
@@ -2103,7 +2235,12 @@ def test_merged_qualifiers_within_a_week_is_one_open_slice() -> None:
 def test_task_drift_slices_end_today_by_default() -> None:
     since = datetime.now(UTC).date().isoformat()
     with patch("vergil_tooling.lib.github.read_json", return_value=[]) as search:
-        assert epic_audit.task_drift(since, org="org") == []
+        assert (
+            epic_audit.task_drift(
+                since, org="org", stops=trust.BatchStops(), authors=trust_stubs.AUTHORS
+            )
+            == []
+        )
     search.assert_called_once()
     assert f"merged:>={since}" in search.call_args.args
 
@@ -2136,7 +2273,7 @@ def test_task_drift_refuses_a_slice_that_may_be_truncated() -> None:
         ),
         pytest.raises(epics.EpicListTruncatedError, match="merged:>=2026-06-01"),
     ):
-        epic_audit.task_drift("2026-06-01", today=_TODAY, org="org")
+        _drift([], "org")
 
 
 def _closed_operational(count: int) -> list[dict[str, Any]]:
@@ -2241,8 +2378,9 @@ def test_epic_drift_skips_proxy() -> None:
     with (
         patch("vergil_tooling.lib.github.read_json", return_value=epic_list),
         patch("vergil_tooling.lib.epics.child_states", return_value=closed),
+        patch("vergil_tooling.lib.github.graphql", side_effect=trust_stubs.FakeItems()),
     ):
-        result = epic_audit.epic_drift("vergil-project")
+        result = _epic_drift("vergil-project")
     assert [e.number for e in result] == [40]
 
 
@@ -2434,7 +2572,7 @@ def test_proxy_link_drift_checks_only_open_proxies() -> None:
 
     with patch.object(epic_audit, "_proxy_side_problems", side_effect=proxy_side):
         problems = epic_audit.proxy_link_drift(
-            home, listing=cast("list[epic_docs.EpicRecord]", listing)
+            home, stops=trust.BatchStops(), listing=cast("list[epic_docs.EpicRecord]", listing)
         )
     assert checked == [_PROXY]
     assert problems == ["problem with logical-minds-foundry/.github#320"]
@@ -2463,7 +2601,7 @@ def test_proxy_link_drift_lists_the_home_when_not_given() -> None:
         patch.object(epic_audit, "list_home_epics", return_value=[]) as listing,
         patch.object(epic_audit, "_proxy_side_problems") as proxy_side,
     ):
-        assert epic_audit.proxy_link_drift("org/.github") == []
+        assert epic_audit.proxy_link_drift("org/.github", stops=trust.BatchStops()) == []
     listing.assert_called_once_with("org/.github")
     proxy_side.assert_not_called()
 
@@ -2494,21 +2632,33 @@ def test_proxy_link_problems_primary_lists_a_proxy_with_a_bad_primary_line() -> 
 # --- the sweep's proxy close pass (epic .github#1417) -----------------------------
 
 
-def _proxy_closures(
-    *, primary_state: str, children: list[epics.ChildState], primary_of: Any = None
+def _proxy_closures(  # noqa: PLR0913 - each a knob of the faked reads
+    *,
+    primary_state: str,
+    children: list[epics.ChildState],
+    primary_of: Any = None,
+    closer: Any = trust_stubs.HUMAN,
+    stops: trust.BatchStops | None = None,
+    authors: TrustedAuthors = trust_stubs.AUTHORS,
 ) -> tuple[list[epic_audit.ProxyClosure], list[str]]:
+    """proxy_closures of the proxy home, the primary's close (by *closer*) read by the layer."""
     listing = [
         {"number": 320, "state": "OPEN", "labels": ["epic", "proxy"]},
         {"number": 321, "state": "CLOSED", "labels": ["epic", "proxy"]},
         {"number": 5, "state": "OPEN", "labels": ["epic"]},
     ]
+    items = trust_stubs.FakeItems(closers={("vergil-project/.github", 1417): closer}, strict=True)
     with (
         patch(f"{_PX}.primary_of", side_effect=primary_of or (lambda _ref: _PRIMARY)),
         patch("vergil_tooling.lib.epics.issue_state", return_value=primary_state),
         patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
     ):
         return epic_audit.proxy_closures(
-            "logical-minds-foundry/.github", listing=cast("list[epic_docs.EpicRecord]", listing)
+            "logical-minds-foundry/.github",
+            stops=trust.BatchStops() if stops is None else stops,
+            authors=authors,
+            listing=cast("list[epic_docs.EpicRecord]", listing),
         )
 
 
@@ -2580,7 +2730,9 @@ def test_proxy_unreadable_primary_is_an_error_not_raised() -> None:
         ),
         patch.object(epic_audit, "list_home_epics", return_value=listing) as list_epics,
     ):
-        closures, errors = epic_audit.proxy_closures("logical-minds-foundry/.github")
+        closures, errors = epic_audit.proxy_closures(
+            "logical-minds-foundry/.github", stops=trust.BatchStops(), authors=trust_stubs.AUTHORS
+        )
     list_epics.assert_called_once_with("logical-minds-foundry/.github")
     assert closures == []
     assert len(errors) == 1
@@ -2802,3 +2954,473 @@ def test_misplaced_loads_trusted_authors_once() -> None:
     )
     assert [m.task.number for m in found] == [12, 13]
     trusted.assert_called_once_with()
+
+
+# --- trusted content in the sweep (epic vergil-project/.github#1467, Task 8b) ----
+
+_SPAM = trust_stubs.SPAM_TEXT
+_REPO = "vergil-project/vergil-tooling"
+
+
+def _pr_reffing(number: int, body: str) -> dict[str, Any]:
+    return {
+        "number": number,
+        "repository": {"nameWithOwner": _REPO},
+        "url": f"u{number}",
+        "body": body,
+    }
+
+
+def _open_tasks(prs: list[dict[str, Any]], *numbers: int) -> Any:
+    """A read_json fake: the search answers *prs*; each task in *numbers* is open."""
+
+    def read_json(*args: str) -> object:
+        if args[0] == "search":
+            return prs
+        state = "open" if int(args[2]) in numbers else "closed"
+        return {"state": state, "title": f"feat: task {args[2]}", "body": "task body"}
+
+    return read_json
+
+
+@pytest.mark.parametrize(
+    ("author", "cause"),
+    [(trust_stubs.OUTSIDER, "untrusted"), (trust_stubs.IMPOSTOR, "wrong-type")],
+    ids=["outsider", "user-named-like-app"],
+)
+def test_task_drift_ignores_untrusted_closing_line(
+    author: Any, cause: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A linkage line counts only from a trusted PR body: an untrusted one is
+    # reported, metadata only, and closes nothing; the run carries on clean.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    body = f"Ref #1947\n{_SPAM}\n"
+    prs = [_pr_reffing(1948, body)]
+    stops = trust.BatchStops()
+    untrusted = trust_stubs.item(body=body, author=author, typename="PullRequest")
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=_open_tasks(prs, 1947)),
+        patch("vergil_tooling.lib.epics.parent_of", return_value=None),
+    ):
+        result = _drift(prs, "vergil-project", stops=stops, items={f"{_REPO}#1948": untrusted})
+    assert result == []
+    assert stops.stopped == ()
+    login = "drive-by" if author is trust_stubs.OUTSIDER else "vergil-user"
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: {_REPO}#1948 pr {login} at {trust_stubs.CREATED}"
+        f" on body ({cause})\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+def test_task_drift_ignores_body_edited_after_merge_by_outsider(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Every editor counts: an outsider who edits a trusted PR body after its
+    # merge to add a linkage line makes the whole body untrusted.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    body = f"Ref #1947\nCloses #2000\n{_SPAM}\n"
+    prs = [_pr_reffing(1948, body)]
+    edited = trust_stubs.item(body=body, editor=trust_stubs.OUTSIDER, typename="PullRequest")
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=_open_tasks(prs, 1947, 2000)),
+        patch("vergil_tooling.lib.epics.parent_of", return_value=None),
+    ):
+        assert _drift(prs, "vergil-project", items={f"{_REPO}#1948": edited}) == []
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: {_REPO}#1948 edit drive-by at {trust_stubs.EDITED}"
+        " on body (untrusted)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+def test_task_drift_takes_the_refs_from_the_trusted_body() -> None:
+    # The search's copy of the body only picks the candidates: a task the
+    # trusted body, read again through the layer, does not link is not drift.
+    prs = [_pr_reffing(50, "Closes #10\nCloses #11\n")]
+    trusted = trust_stubs.item(body="Closes #10\nRef #12\n", typename="PullRequest")
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=_open_tasks(prs, 10, 11)),
+        patch("vergil_tooling.lib.epics.parent_of", return_value=None),
+    ):
+        result = _drift(prs, "vergil-project", items={f"{_REPO}#50": trusted})
+    assert result == [TaskDrift(_REPO, 10, 50, "u50")]
+
+
+def test_task_drift_counts_only_the_closing_roles() -> None:
+    # #1440's closing-reference roles: a PR body by the org's automation App
+    # is not a closing reference, though its comments would be trusted.
+    authors = TrustedAuthors(
+        human=("human",), agents=("vergil-user",), orgs={"vergil-project": OrgConfig("vp-auto")}
+    )
+    automation = {"__typename": "Bot", "login": "vp-auto"}
+    prs = [_pr_reffing(60, "Ref #59\n")]
+    items = trust_stubs.FakeItems(
+        {(_REPO, 60): trust_stubs.item(body="Ref #59\n", author=automation, typename="PullRequest")}
+    )
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=_open_tasks(prs, 59)),
+        patch("vergil_tooling.lib.epics.parent_of", return_value=None),
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
+    ):
+        result = epic_audit.task_drift(
+            "2026-06-01",
+            today=_TODAY,
+            org="vergil-project",
+            stops=trust.BatchStops(),
+            authors=authors,
+        )
+    assert result == []
+
+
+def test_task_drift_unreadable_pr_body_is_per_item_stop(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A PR body the layer cannot read in full stops that PR alone; the other
+    # PR's drift is still found.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    prs = [_pr_reffing(70, "Ref #69\n"), _pr_reffing(72, "Ref #71\n")]
+    stops = trust.BatchStops()
+    truncated = trust_stubs.item(body="Ref #69\n", typename="PullRequest")
+    edits = truncated["repository"]["issueOrPullRequest"]["userContentEdits"]
+    edits["pageInfo"] = {"hasNextPage": True, "endCursor": None}
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=_open_tasks(prs, 69, 71)),
+        patch("vergil_tooling.lib.epics.parent_of", return_value=None),
+    ):
+        result = _drift(prs, "vergil-project", stops=stops, items={f"{_REPO}#70": truncated})
+    assert result == [TaskDrift(_REPO, 71, 72, "u72")]
+    assert stops.stopped == (trust.Skipped(_REPO, 70, "pr", None, "", "body", trust.READ_FAILURE),)
+    stops.print_summary(sys.stderr)
+    assert f"stopped on a read failure: {_REPO}#70 on body: " in capsys.readouterr().err
+
+
+def test_task_drift_skips_are_counts_under_actions(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    prs = [_pr_reffing(1948, "Ref #1947\n")]
+    untrusted = trust_stubs.item(
+        body="Ref #1947\n", author=trust_stubs.OUTSIDER, typename="PullRequest"
+    )
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=_open_tasks(prs, 1947)),
+        patch("vergil_tooling.lib.epics.parent_of", return_value=None),
+    ):
+        assert _drift(prs, "vergil-project", items={f"{_REPO}#1948": untrusted}) == []
+    assert capsys.readouterr().err == "skipped 1 untrusted item(s) (untrusted: 1)\n"
+
+
+def test_nativize_skips_untrusted_body_parent(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A Parent: line counts only from a trusted body: #5 (an outsider's body)
+    # and #6 (a trusted body an outsider edited) are reported and never
+    # nativized, so each is an orphan; #7's trusted line is nativized.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    line = f"Parent: org/.github#40\n{_SPAM}\n"
+    issues = [_issue("org/tool", n, body=line) for n in (5, 6, 7)]
+    items = {
+        ("org/tool", 5): trust_stubs.item(body=line, author=trust_stubs.OUTSIDER),
+        ("org/tool", 6): trust_stubs.item(body=line, editor=trust_stubs.OUTSIDER),
+    }
+    with (
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics.queue_home", side_effect=_homes),
+    ):
+        parents = _judged_parents(issues, items=items)
+        orphans = epic_audit.orphan_drift("org", parents=parents, issues=issues)
+    task, epic = epics.IssueRef("org", "tool", 7), epics.IssueRef("org", ".github", 40)
+    assert parents.pairs == ((task, epic),)
+    with patch("vergil_tooling.lib.epics.add_child") as add:
+        assert epic_audit.nativize_parents(list(parents.pairs)) == 1
+    add.assert_called_once_with(epic, task)
+    assert [o.ref.number for o in orphans] == [5, 6]
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: org/tool#5 issue drive-by at {trust_stubs.CREATED}"
+        " on body (untrusted)\n"
+        f"skipped untrusted content: org/tool#6 edit drive-by at {trust_stubs.EDITED}"
+        " on body (untrusted)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+def test_body_only_parents_takes_the_parent_from_the_trusted_body() -> None:
+    # The listed body only picks the candidate: the pair is the trusted body's.
+    issues = [_issue("org/tool", 5, body="Parent: org/.github#40\n")]
+    items = {("org/tool", 5): trust_stubs.item(body="Parent: org/.github#41\n")}
+    with patch("vergil_tooling.lib.epics.is_epic", return_value=True) as is_epic:
+        parents = _judged_parents(issues, items=items)
+    assert parents.pairs == (
+        (epics.IssueRef("org", "tool", 5), epics.IssueRef("org", ".github", 41)),
+    )
+    assert [c.args[0].number for c in is_epic.call_args_list] == [40, 41]
+
+
+def test_body_only_parents_unreadable_body_is_held_and_stops() -> None:
+    # A body the layer cannot read stops that issue alone: it is neither
+    # nativized nor attached as an orphan.
+    issues = [_issue("org/tool", 5, body="Parent: org/.github#40\n"), _issue("org/tool", 6)]
+    stops = trust.BatchStops()
+    with (
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics.queue_home", side_effect=_homes),
+    ):
+        parents = _judged_parents(
+            issues, stops=stops, items={("org/tool", 5): {"repository": None}}
+        )
+        orphans = epic_audit.orphan_drift("org", parents=parents, issues=issues)
+    assert parents.pairs == ()
+    assert parents.held == frozenset({epics.IssueRef("org", "tool", 5)})
+    assert [o.ref.number for o in orphans] == [6]
+    assert stops.stopped == (
+        trust.Skipped("org/tool", 5, "issue", None, "", "body", trust.READ_FAILURE),
+    )
+
+
+def _all_closed(*numbers: int) -> list[roadmap.EpicSummary]:
+    return [
+        roadmap.EpicSummary(n, f"Epic {n}", "2026-06-01", None, (), 2, 2, f"u{n}") for n in numbers
+    ]
+
+
+def _children(epic: epics.IssueRef) -> list[epics.ChildState]:
+    """Epic N's two closed children, tool#N1 and tool#N2."""
+    return [
+        epics.ChildState(epics.IssueRef("org", "tool", epic.number * 10 + i), "CLOSED")
+        for i in (1, 2)
+    ]
+
+
+def test_epic_drift_outsider_close_is_per_item_stop(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A child closed by an outsider is not closed: its epic is a stop on that
+    # epic alone, and the other all-closed epic is still drift.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    stops = trust.BatchStops()
+    items = trust_stubs.FakeItems(closers={("org/tool", 42): trust_stubs.OUTSIDER})
+    with (
+        patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=_all_closed(4, 5)),
+        patch("vergil_tooling.lib.epics.child_states", side_effect=_children),
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
+    ):
+        result = _epic_drift("org", stops)
+    assert [e.number for e in result] == [5]
+    assert stops.stopped == (
+        trust.Skipped(
+            "org/tool", 42, "event", "drive-by", trust_stubs.EDITED, "close", "untrusted"
+        ),
+    )
+    assert stops.exit_code() == 1
+    stops.print_summary(sys.stderr)
+    assert capsys.readouterr().err == (
+        f"stopped: org/tool#42 event drive-by at {trust_stubs.EDITED} on close (untrusted)\n"
+    )
+
+
+def test_epic_drift_stops_are_counts_under_actions(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    stops = trust.BatchStops()
+    items = trust_stubs.FakeItems(closers={("org/tool", 41): trust_stubs.OUTSIDER})
+    with (
+        patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=_all_closed(4)),
+        patch("vergil_tooling.lib.epics.child_states", side_effect=_children),
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
+    ):
+        assert _epic_drift("org", stops) == []
+    stops.print_summary(sys.stderr)
+    assert capsys.readouterr().err == "stopped 1 item(s) (untrusted: 1)\n"
+
+
+def test_epic_drift_unreadable_close_is_per_item_stop() -> None:
+    def events(query: str, **variables: Any) -> dict[str, Any]:
+        if int(variables["number"]) == 41:
+            return {"repository": None}
+        return trust_stubs.closed_timeline()
+
+    stops = trust.BatchStops()
+    with (
+        patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=_all_closed(4, 5)),
+        patch("vergil_tooling.lib.epics.child_states", side_effect=_children),
+        patch("vergil_tooling.lib.github.graphql", side_effect=events),
+    ):
+        assert [e.number for e in _epic_drift("org", stops)] == [5]
+    assert stops.stopped == (
+        trust.Skipped("org/tool", 41, "event", None, "", "close", trust.READ_FAILURE),
+    )
+
+
+def test_close_drift_ignores_outsider_closed_child() -> None:
+    # A child's close counts only when close_judgement gives a role: the epic
+    # whose child an outsider closed is never closed by the drift close.
+    items = trust_stubs.FakeItems(closers={("org/tool", 51): trust_stubs.OUTSIDER})
+    with (
+        patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=_all_closed(4, 5)),
+        patch("vergil_tooling.lib.epics.child_states", side_effect=_children),
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
+    ):
+        drift = _epic_drift("org")
+    run = MagicMock()
+    with patch("vergil_tooling.lib.github.run", run):
+        closed = epic_audit.close_drift([], drift, org="org")
+    assert closed == ["org/.github#4"]
+    assert run.call_args.args[:5] == ("issue", "close", "4", "--repo", "org/.github")
+
+
+def _reopened_timeline(actor: Any) -> dict[str, Any]:
+    timeline = trust_stubs.closed_timeline()
+    nodes = timeline["repository"]["issueOrPullRequest"]["timelineItems"]["nodes"]
+    nodes.append({"__typename": "ReopenedEvent", "actor": actor, "createdAt": trust_stubs.EDITED})
+    return timeline
+
+
+def test_closed_epic_open_child_untrusted_reopen_is_per_item_stop() -> None:
+    # A child an outsider reopened is not open: its closed epic is a stop, never
+    # a violation, so the sweep never reopens it; a trusted reopen still counts.
+    listing = [_record(19), _record(20)]
+    kids = {19: epics.IssueRef("org", "lab", 462), 20: epics.IssueRef("org", "lab", 463)}
+
+    def events(query: str, **variables: Any) -> dict[str, Any]:
+        actor = trust_stubs.OUTSIDER if int(variables["number"]) == 462 else trust_stubs.AGENT
+        return _reopened_timeline(actor)
+
+    stops = trust.BatchStops()
+    with (
+        patch("vergil_tooling.lib.epic_docs.list_epics", return_value=listing),
+        patch(
+            "vergil_tooling.lib.epics.child_states",
+            side_effect=lambda epic: [epics.ChildState(kids[epic.number], "OPEN")],
+        ),
+        patch("vergil_tooling.lib.github.graphql", side_effect=events),
+    ):
+        result = epic_audit.closed_epic_open_child("org", stops=stops, authors=trust_stubs.AUTHORS)
+    assert result == [(epics.IssueRef("org", ".github", 20), (kids[20],))]
+    assert stops.stopped == (
+        trust.Skipped(
+            "org/lab", 462, "event", "drive-by", trust_stubs.EDITED, "reopen", "untrusted"
+        ),
+    )
+
+
+_ORGS_AUTHORS = TrustedAuthors(
+    human=("human",),
+    agents=("vergil-user",),
+    orgs={
+        "vergil-project": OrgConfig("vergil-project-automation"),
+        "logical-minds-foundry": OrgConfig("logical-minds-foundry-automation"),
+    },
+)
+
+
+def test_proxy_primary_closed_by_its_own_automation_is_trusted_cross_org() -> None:
+    # The primary's close is judged in the primary's org: its own automation
+    # App is trusted there, read from the proxy's org with the delivered copy.
+    automation = {"__typename": "Bot", "login": "vergil-project-automation"}
+    stops = trust.BatchStops()
+    closures, errors = _proxy_closures(
+        primary_state="CLOSED",
+        children=[],
+        closer=automation,
+        stops=stops,
+        authors=_ORGS_AUTHORS,
+    )
+    assert (closures, errors) == ([epic_audit.ProxyClosure(_PROXY, _PRIMARY, 0)], [])
+    assert stops.stopped == ()
+
+
+@pytest.mark.parametrize(
+    ("closer", "login"),
+    [
+        (trust_stubs.OUTSIDER, "drive-by"),
+        # The proxy org's automation holds no role in the primary's org.
+        (
+            {"__typename": "Bot", "login": "logical-minds-foundry-automation"},
+            "logical-minds-foundry-automation",
+        ),
+    ],
+    ids=["outsider", "other-orgs-automation"],
+)
+def test_proxy_closures_untrusted_primary_close_is_per_item_stop(closer: Any, login: str) -> None:
+    stops = trust.BatchStops()
+    closures, errors = _proxy_closures(
+        primary_state="CLOSED", children=[], closer=closer, stops=stops, authors=_ORGS_AUTHORS
+    )
+    assert (closures, errors) == ([], [])
+    assert stops.stopped == (
+        trust.Skipped(
+            "vergil-project/.github", 1417, "event", login, trust_stubs.EDITED, "close", "untrusted"
+        ),
+    )
+
+
+def _untrusted_proxy_body(_ref: epics.IssueRef) -> epics.IssueRef:
+    item = trust.Skipped(
+        _PROXY.slug.split("#")[0], 320, "issue", "drive-by", "t", "body", "untrusted"
+    )
+    raise trust.UntrustedContentError(item, "the issue body is untrusted")
+
+
+def test_proxy_closures_untrusted_proxy_body_is_per_item_stop() -> None:
+    # A Primary: line counts only from a trusted body: the proxy is a stop,
+    # never closed and never a link error.
+    stops = trust.BatchStops()
+    closures, errors = _proxy_closures(
+        primary_state="CLOSED", children=[], primary_of=_untrusted_proxy_body, stops=stops
+    )
+    assert (closures, errors) == ([], [])
+    assert [(s.repo, s.number, s.cause) for s in stops.stopped] == [
+        ("logical-minds-foundry/.github", 320, "untrusted")
+    ]
+
+
+def test_proxy_closures_unreadable_primary_close_is_per_item_stop() -> None:
+    stops = trust.BatchStops()
+    with (
+        patch(f"{_PX}.primary_of", return_value=_PRIMARY),
+        patch("vergil_tooling.lib.epics.issue_state", return_value="CLOSED"),
+        patch("vergil_tooling.lib.github.graphql", return_value={"repository": None}),
+    ):
+        closures, errors = epic_audit.proxy_closures(
+            "logical-minds-foundry/.github",
+            stops=stops,
+            authors=trust_stubs.AUTHORS,
+            listing=cast(
+                "list[epic_docs.EpicRecord]", [_epic_record(320, "OPEN", ["epic", "proxy"])]
+            ),
+        )
+    assert (closures, errors) == ([], [])
+    assert stops.stopped == (
+        trust.Skipped(
+            "logical-minds-foundry/.github", 320, "issue", None, "", "primary", trust.READ_FAILURE
+        ),
+    )
+
+
+def test_proxy_link_drift_untrusted_proxy_body_is_per_item_stop() -> None:
+    home = "logical-minds-foundry/.github"
+    listing = [
+        _epic_record(320, "OPEN", ["epic", "proxy"]),
+        _epic_record(322, "OPEN", ["epic", "proxy"]),
+    ]
+
+    def primary_of(ref: epics.IssueRef) -> epics.IssueRef:
+        if ref.number == 320:
+            return _untrusted_proxy_body(ref)
+        raise trust.TrustReadError("read_issue x", "truncated")
+
+    stops = trust.BatchStops()
+    with patch(f"{_PX}.primary_of", side_effect=primary_of):
+        problems = epic_audit.proxy_link_drift(
+            home, stops=stops, listing=cast("list[epic_docs.EpicRecord]", listing)
+        )
+    assert problems == []
+    assert [(s.number, s.cause) for s in stops.stopped] == [
+        (320, "untrusted"),
+        (322, trust.READ_FAILURE),
+    ]

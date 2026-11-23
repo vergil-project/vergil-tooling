@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import proxies
+from tests.vergil_tooling import trust_stubs
+from vergil_tooling.lib import proxies, trust
 from vergil_tooling.lib.epics import EpicListTruncatedError, IssueRef
 from vergil_tooling.lib.proxies import ProxyLinkError
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
@@ -32,12 +33,22 @@ def _views(views: dict[IssueRef, dict[str, Any]]) -> Any:
     return fake
 
 
-def _primary_of(body: str, primary_labels: tuple[str, ...] = ("epic",)) -> IssueRef:
-    views = {
-        PROXY: {"body": body},
-        PRIMARY: {"labels": [{"name": name} for name in primary_labels]},
-    }
-    with patch("vergil_tooling.lib.github.read_json", side_effect=_views(views)):
+def _primary_of(
+    body: str,
+    primary_labels: tuple[str, ...] = ("epic",),
+    *,
+    author: Any = trust_stubs.HUMAN,
+    editor: Any = None,
+) -> IssueRef:
+    """:func:`proxies.primary_of` of PROXY, its body read through the real trust layer."""
+    views = {PRIMARY: {"labels": [{"name": name} for name in primary_labels]}}
+    proxy_item = trust_stubs.item(body=body, author=author, editor=editor)
+    items = trust_stubs.FakeItems({("logical-minds-foundry/.github", 320): proxy_item}, strict=True)
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=_views(views)),
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+    ):
         return proxies.primary_of(PROXY)
 
 
@@ -111,18 +122,42 @@ def test_primary_of_non_epic() -> None:
 
 def test_primary_of_unreadable_proxy_raises() -> None:
     with (
-        patch("vergil_tooling.lib.github.read_json", side_effect=RuntimeError("gh failed")),
-        pytest.raises(RuntimeError, match="gh failed"),
+        patch("vergil_tooling.lib.github.graphql", side_effect=RuntimeError("gh failed")),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+        pytest.raises(trust.TrustReadError, match="read_issue logical-minds-foundry/.github#320"),
     ):
         proxies.primary_of(PROXY)
 
 
-def test_primary_of_non_object_view_raises() -> None:
+def test_primary_of_malformed_proxy_read_raises() -> None:
     with (
-        patch("vergil_tooling.lib.github.read_json", return_value=[]),
-        pytest.raises(ProxyLinkError, match="unexpected"),
+        patch("vergil_tooling.lib.github.graphql", return_value={"repository": None}),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+        pytest.raises(trust.TrustReadError),
     ):
         proxies.primary_of(PROXY)
+
+
+_SPAM_PRIMARY = f"Primary: vergil-project/.github#1417\n{trust_stubs.SPAM_TEXT}\n"
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "cause"),
+    [
+        (trust_stubs.OUTSIDER, None, "untrusted"),
+        (trust_stubs.IMPOSTOR, None, "wrong-type"),
+        (trust_stubs.HUMAN, trust_stubs.OUTSIDER, "untrusted"),
+    ],
+    ids=["outsider-body", "user-named-like-app", "edited-by-outsider"],
+)
+def test_primary_of_untrusted_body_is_a_stop(author: Any, editor: Any, cause: str) -> None:
+    # The Primary: line counts only from a trusted body: an untrusted one is a
+    # stop, metadata only, never a link.
+    with pytest.raises(trust.UntrustedContentError) as excinfo:
+        _primary_of(_SPAM_PRIMARY, author=author, editor=editor)
+    assert excinfo.value.item.field == "body"
+    assert excinfo.value.item.cause == cause
+    assert "SPAM-MARKER-TEXT" not in str(excinfo.value)
 
 
 # --- proxies_of -----------------------------------------------------------------
