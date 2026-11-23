@@ -120,7 +120,7 @@ Where each tool lives follows the
   vitest, and Vitest loads `@vitest/coverage-v8` from the repository for the
   coverage run. Its ESLint config imports typescript-eslint and `@eslint/js`,
   and typescript-eslint declares typescript and eslint as peer dependencies.
-- The image owns prettier and license-checker.
+- The image owns prettier.
 
 ### Required devDependencies and their accepted majors
 
@@ -167,7 +167,7 @@ typescript-eslint and Vitest come from the repository's own devDependencies,
 held to their accepted majors (see
 [Required devDependencies](#required-devdependencies-and-their-accepted-majors)),
 and their exact versions float through the lockfile. Only the image's own
-tools, Prettier and license-checker, come with the image.
+tool, Prettier, comes with the image.
 
 ## Typecheck and the Release Build
 

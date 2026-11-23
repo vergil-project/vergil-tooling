@@ -91,15 +91,14 @@ from it.
 
 | Language | The repository declares | The image owns |
 |---|---|---|
-| TypeScript | typescript, eslint, typescript-eslint, `@eslint/js`, vitest, `@vitest/coverage-v8` | prettier, license-checker |
+| TypeScript | typescript, eslint, typescript-eslint, `@eslint/js`, vitest, `@vitest/coverage-v8` | prettier |
 | Python | pytest, pytest-cov, any pytest plugins | ruff, mypy, pip-audit, pip-licenses (migration pending) |
 | Rust | nothing | cargo-deny, cargo-llvm-cov, cargo-nextest; rustfmt and clippy ship with the toolchain |
 
 - **TypeScript.** eslint is on the repository side because typescript-eslint
   declares it as a peer dependency. `npm ci` installs a matching eslint in the
   repository anyway, and a global eslint beside it could be a major version
-  typescript-eslint does not support. The image still ships license-checker,
-  but no gate runs it: the license gate is Vergil's own
+  typescript-eslint does not support. The license gate is Vergil's own
   `vrg-npm-license-gate`, which reads `package-lock.json` (see the
   TypeScript standards'
   [License gate](typescript/overview.md#license-gate)).
