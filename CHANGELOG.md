@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.339] - 2026-11-23
+
+### Bug fixes
+
+- treat the checked repo's own docs site as published in docs-links (#4612)
+- report an unparsable package.json once in the TypeScript pre-gate (#5020)
+- report cached images prune cannot place instead of keeping them silently (#5000)
+- verify earlier steps' capture records when building a check request (#4614)
+- report an unlabelled Security advisory: line on an untracked issue (#4996)
+- fail the C/C++ dependency audit when the Conan token is missing (#4999)
+- fail report-ready when the relay ref is not written (#5051)
+- stop swallowing version-file errors in bump() and bump_paths() (#4588)
+- report a malformed version file in vrg-version show in one line (#5019)
+- leave publish-status out of the tracking issue's stage checklist (#4946)
+- match repository names case-insensitively in vrg-release-record check (#4949)
+- delete the dependency-update branch once its PR merges (#4952)
+- wait for a settled mergeable status before reporting a conflict (#5067)
+- check the minimum gh version in every vrg tool that calls gh (#5068)
+- fail a bump whose text replace leaves a version file unchanged (#5052)
+- type lifecycle PRs as lifecycle in the Pending release section (#4619)
+- check GitHub for an existing PR when run from inside a worktree (#5037)
+- hold back a worktree whose PR was closed without merging (#5038)
+- skip merge commits in git-cliff without a parse warning (#4592)
+- set the bumped crates in Cargo.lock before the lockfile refresh (#4593)
+
+### CI
+
+- pass the App secrets to the shared docs workflows (#5058)
+
+### Documentation
+
+- bring the docs in line with the trusted-content epic (#5066)
+- fix the nested backticks in the Install record line (#5055)
+- drop license-checker from the ts-node image docs (#4734)
+- correct three wordings: vrg-validate --markdown exit codes, type_label, bump() check order (#5070)
+
+### Features
+
+- require gh 2.97.0 or newer and check it before running gh (#5048)
+- keep the install's reported version and commit in the release record (#4945)
+- restrict updates to main (#5061)
+- the protected core and its match (#5063)
+- a rebase-stable change fingerprint (#5064)
+- the user agent may act on its own PR (#5065)
+- converge the automation environment (#5062)
+- add vrg-validate --markdown, an ad-hoc markdown lint that matches the gate (#4589) (#5071)
+- a machine-readable closing record (#5076)
+- protected-change and merge-review exemption requests (#5075)
+- allow secrets inherit only for the App-key workflows (#5074)
+- name a skipped, edited ops issue by number in the new one (#5078)
+
+### Refactoring
+
+- rename the 'not queued' batch rule to 'buildable parent' (#5021)
+
 ## [2.1.338] - 2026-11-23
 
 ### Bug fixes
