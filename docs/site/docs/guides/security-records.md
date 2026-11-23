@@ -94,6 +94,13 @@ copy and `Moved to: <org>/.github <GHSA-id>` on the original (see
 [Moving a record to another org](#moving-a-record-to-another-org)):
 `create` and `note` refuse text holding either line.
 
+An issue's `Security advisory:` lines count only in a body the trust
+layer trusts: its author and every editor are trusted authors. A body
+anyone else wrote or edited is never acted on. `create --issue`,
+`retarget` and `close` stop before any write when a body they rely on is
+untrusted, and `sync` reports it, metadata only, leaves each advisory
+tracking it unchanged, and exits 1 for the human to decide.
+
 ### The labels
 
 | Label | Meaning |

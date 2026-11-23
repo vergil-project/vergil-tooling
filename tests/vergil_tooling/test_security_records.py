@@ -476,6 +476,10 @@ class Issues:
         # ``comments`` is a trusted human's; ``untrusted`` adds an issue's
         # comment nodes by anyone, after those.
         self.untrusted: dict[IssueRef, list[dict[str, Any]]] = {}
+        # Who wrote and last edited each body, when not the trusted human.
+        self.body_author: dict[IssueRef, dict[str, str]] = {}
+        self.body_editor: dict[IssueRef, dict[str, str]] = {}
+        self.trust_reads: list[IssueRef] = []
         monkeypatch.setattr(github, "graphql", self.graphql)
         monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
         monkeypatch.setattr(security_records, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
@@ -517,7 +521,6 @@ class Issues:
             "repository_url": f"https://api.github.com/repos/{ref.owner}/{ref.repo}",
             "state": "closed" if ref in self.closed else "open",
             "labels": sorted(self.labels[ref]),
-            "body": self.bodies[ref],
         }
 
     def write_json(self, method: str, endpoint: str, body: dict[str, object]) -> None:
@@ -554,7 +557,6 @@ class Issues:
                 {
                     "number": ref.number,
                     "state": "closed" if ref in self.closed else "open",
-                    "body": self.bodies[ref],
                 }
                 for ref in sorted(self.labels, key=lambda r: r.number)
                 if (ref.owner, ref.repo) == (owner, repo) and "security" in self.labels[ref]
@@ -562,14 +564,25 @@ class Issues:
         return list(self.comments[self._not_moved(endpoint)])
 
     def graphql(self, query: str, **variables: Any) -> dict[str, Any]:
-        """The trust layer's item read: the issue's comments, followed past a transfer."""
+        """The trust layer's item read: body and comments, followed past a transfer.
+
+        The body is the only copy the module sees (the REST reads carry none),
+        written by the trusted human unless ``body_author`` or ``body_editor``
+        names someone else for the issue.
+        """
         assert query == trust._ITEM_QUERY
         owner, repo, number = variables["owner"], variables["name"], variables["number"]
         ref = IssueRef(str(owner), str(repo), int(str(number)))
         self._maybe_fail(f"GRAPHQL {ref.slug}")
         ref = self.moved.get(ref, ref)
+        self.trust_reads.append(ref)
         nodes = trust_stubs.comments(*self.comments[ref]) + self.untrusted.get(ref, [])
-        return trust_stubs.item(nodes=nodes)
+        return trust_stubs.item(
+            body=self.bodies[ref],
+            author=self.body_author.get(ref, trust_stubs.HUMAN),
+            editor=self.body_editor.get(ref),
+            nodes=nodes,
+        )
 
     def patches(self) -> list[tuple[str, str, dict[str, object]]]:
         return [w for w in self.writes if "security-advisories" in w[1]]
@@ -1306,15 +1319,10 @@ def test_security_issues_reads_every_managed_repo_in_every_state(
     monkeypatch.setattr(epics, "is_managed_repo", lambda repo: repo != "org/unmanaged")
     pages = {
         "org/.github": [
-            {
-                "number": 10,
-                "state": "open",
-                "state_reason": "reopened",
-                "body": f"x\n{advisory_line(HOME, GHSA)}",
-            },
-            {"number": 11, "state": "closed", "state_reason": "NOT_PLANNED", "body": ""},
+            {"number": 10, "state": "open", "state_reason": "reopened"},
+            {"number": 11, "state": "closed", "state_reason": "NOT_PLANNED"},
         ],
-        "org/tool": [{"number": 12, "state": "OPEN", "body": None}],
+        "org/tool": [{"number": 12, "state": "OPEN"}],
     }
     endpoints: list[str] = []
 
@@ -1323,9 +1331,18 @@ def test_security_issues_reads_every_managed_repo_in_every_state(
         assert jq is not None
         assert "pull_request == null" in jq
         assert "state_reason" in jq
+        assert "body" not in jq  # the body comes only from the trust layer
         return list(pages[endpoint.split("/issues")[0].removeprefix("repos/")])
 
     monkeypatch.setattr(github, "read_json_paginated", read)
+    _trusted_bodies(
+        monkeypatch,
+        {
+            ("org/.github", 10): trust_stubs.item(body=f"x\n{advisory_line(HOME, GHSA)}"),
+            ("org/.github", 11): trust_stubs.item(body=""),
+            ("org/tool", 12): trust_stubs.item(body=""),
+        },
+    )
     assert security_issues("org") == [
         SecurityIssue(A, open=True, ghsa_ids=(GHSA,), state_reason=None),
         SecurityIssue(B, open=False, ghsa_ids=(), state_reason="not_planned"),
@@ -1337,32 +1354,116 @@ def test_security_issues_reads_every_managed_repo_in_every_state(
     ]
 
 
+def _trusted_bodies(
+    monkeypatch: pytest.MonkeyPatch, items: dict[tuple[str, int], dict[str, Any]]
+) -> trust_stubs.FakeItems:
+    """Serve the trust layer's item reads from *items*, every other read failing the test."""
+    fake = trust_stubs.FakeItems(items, strict=True)
+    monkeypatch.setattr(github, "graphql", fake)
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+    monkeypatch.setattr(security_records, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    return fake
+
+
 def test_security_issues_returns_every_ghsa_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(github, "list_org_repos", lambda _org: ["tool"])
     monkeypatch.setattr(epics, "is_managed_repo", lambda _repo: True)
     body = f"x\n{advisory_line(HOME, OTHER)}\n\n{advisory_line(HOME, GHSA)}"
     monkeypatch.setattr(
-        github,
-        "read_json_paginated",
-        lambda *_a, **_k: [{"number": 12, "state": "open", "body": body}],
+        github, "read_json_paginated", lambda *_a, **_k: [{"number": 12, "state": "open"}]
     )
+    _trusted_bodies(monkeypatch, {("org/tool", 12): trust_stubs.item(body=body)})
     assert security_issues("org") == [
         SecurityIssue(C, open=True, ghsa_ids=(OTHER, GHSA), state_reason=None)
     ]
 
 
-def test_security_issues_makes_no_parent_reads(monkeypatch: pytest.MonkeyPatch) -> None:
-    # security_issues serves retarget and close too: the guard's parent and
-    # label reads happen only in guard_check, never in the listing.
+def test_security_issues_never_takes_lines_from_the_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Even a listing row that carried a body is ignored: the lines are the
+    # trusted body's, read through the trust layer.
     monkeypatch.setattr(github, "list_org_repos", lambda _org: ["tool"])
     monkeypatch.setattr(epics, "is_managed_repo", lambda _repo: True)
-    row = {"number": 12, "state": "closed", "state_reason": "completed", "body": ""}
+    row = {"number": 12, "state": "open", "body": advisory_line(HOME, OTHER)}
+    monkeypatch.setattr(github, "read_json_paginated", lambda *_a, **_k: [row])
+    _trusted_bodies(
+        monkeypatch, {("org/tool", 12): trust_stubs.item(body=advisory_line(HOME, GHSA))}
+    )
+    assert security_issues("org") == [SecurityIssue(C, True, (GHSA,), None)]
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "cause"),
+    [
+        (trust_stubs.OUTSIDER, None, "untrusted"),
+        (trust_stubs.HUMAN, trust_stubs.OUTSIDER, "untrusted"),
+        (trust_stubs.IMPOSTOR, None, "wrong-type"),
+    ],
+)
+def test_security_issues_lists_an_untrusted_body_with_no_lines(
+    monkeypatch: pytest.MonkeyPatch, author: dict[str, str], editor: Any, cause: str
+) -> None:
+    monkeypatch.setattr(github, "list_org_repos", lambda _org: ["tool"])
+    monkeypatch.setattr(epics, "is_managed_repo", lambda _repo: True)
+    monkeypatch.setattr(
+        github, "read_json_paginated", lambda *_a, **_k: [{"number": 12, "state": "open"}]
+    )
+    body = advisory_line(HOME, GHSA)
+    _trusted_bodies(
+        monkeypatch, {("org/tool", 12): trust_stubs.item(body=body, author=author, editor=editor)}
+    )
+    [issue] = security_issues("org")
+    assert issue.ghsa_ids == ()
+    assert issue.skipped is not None
+    assert (issue.skipped.repo, issue.skipped.number, issue.skipped.field) == (
+        "org/tool",
+        12,
+        "body",
+    )
+    assert issue.skipped.cause == cause
+
+
+def test_security_issues_trust_read_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(github, "list_org_repos", lambda _org: ["tool"])
+    monkeypatch.setattr(epics, "is_managed_repo", lambda _repo: True)
+    monkeypatch.setattr(
+        github, "read_json_paginated", lambda *_a, **_k: [{"number": 12, "state": "open"}]
+    )
+    error = github.GitHubAPIError(1, ("gh", "api", "graphql"), SECRET, "HTTP 502")
+    monkeypatch.setattr(github, "graphql", MagicMock(side_effect=error))
+    monkeypatch.setattr(security_records, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+    with pytest.raises(trust.TrustReadError, match="HTTP 502") as excinfo:
+        security_issues("org")
+    assert SECRET not in str(excinfo.value)
+
+
+def test_security_issues_loads_no_authors_with_no_issue(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(github, "list_org_repos", lambda _org: ["tool"])
+    monkeypatch.setattr(epics, "is_managed_repo", lambda _repo: True)
+    monkeypatch.setattr(github, "read_json_paginated", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        security_records, "load_trusted_authors", MagicMock(side_effect=AssertionError("load"))
+    )
+    assert security_issues("org") == []
+
+
+def test_security_issues_makes_no_parent_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    # security_issues serves retarget and close too: the guard's parent and
+    # label reads happen only in guard_check, never in the listing. Its one
+    # GraphQL read per issue is the trust layer's item read of the body.
+    monkeypatch.setattr(github, "list_org_repos", lambda _org: ["tool"])
+    monkeypatch.setattr(epics, "is_managed_repo", lambda _repo: True)
+    row = {"number": 12, "state": "closed", "state_reason": "completed"}
     monkeypatch.setattr(github, "read_json_paginated", lambda *_a, **_k: [row])
     for name in ("native_parent_of", "queue_or_archive_kind", "queue_kind", "_labels"):
         monkeypatch.setattr(epics, name, MagicMock(side_effect=AssertionError(name)))
-    for name in ("graphql", "read_json", "read_output"):
+    for name in ("read_json", "read_output"):
         monkeypatch.setattr(github, name, MagicMock(side_effect=AssertionError(name)))
+    fake = _trusted_bodies(monkeypatch, {("org/tool", 12): trust_stubs.item(body="")})
     assert security_issues("org") == [SecurityIssue(C, False, (), "completed")]
+    assert fake.reads == [("org/tool", 12)]
 
 
 # --- classification -------------------------------------------------------------
@@ -2000,7 +2101,8 @@ def test_close_of_a_closed_advisory_only_completes_the_comments(
         ("GET repos/org/.github/issues?state=all&labels=security", "listing the security issues"),
         ("GET repos/org/.github/issues/10", "reading org/.github#10"),
         ("POST repos/org/.github/issues/10/comments", "commenting on org/.github#10"),
-        ("GRAPHQL org/.github#10", "commenting on org/.github#10"),
+        # The listing reads each security issue's body through the trust layer.
+        ("GRAPHQL org/.github#10", "listing the security issues"),
     ],
 )
 def test_close_names_the_failed_step(
@@ -2813,3 +2915,272 @@ def test_refuse_move_lines_raises_the_given_error_without_quoting() -> None:
     security_records.refuse_move_lines(
         f"see Moved from: {GHSA}\n> Moved to: fix/.github {COPY}", "x", RefusedError
     )
+
+
+# --- trusted issue bodies only (epic vergil-project/.github#1467) -------------------
+
+
+def _untrusted_body(issues: Issues, ref: IssueRef, *, by: str = "author") -> None:
+    """Make *ref*'s body untrusted: an outsider wrote it, or last edited it."""
+    if by == "author":
+        issues.body_author[ref] = trust_stubs.OUTSIDER
+    else:
+        issues.body_editor[ref] = trust_stubs.OUTSIDER
+
+
+@pytest.mark.parametrize("by", ["author", "editor"])
+def test_mark_issue_refuses_an_untrusted_body_before_any_write(issues: Issues, by: str) -> None:
+    issues.add(C, "Neutral body.")
+    _untrusted_body(issues, C, by=by)
+    with pytest.raises(trust.UntrustedContentError, match="stopped before any write") as excinfo:
+        mark_issue(C, HOME, GHSA)
+    assert "Neutral body." not in str(excinfo.value)
+    assert "org/tool#12" in str(excinfo.value)
+    assert issues.writes == []
+    issues.ensure_labels.assert_not_called()
+    assert issues.bodies[C] == "Neutral body."
+
+
+def test_mark_issue_writes_back_the_trusted_body(issues: Issues) -> None:
+    # The body appended to is the trust layer's copy; the REST read carries none.
+    issues.add(C, "Trusted text.")
+    mark_issue(C, HOME, GHSA)
+    assert issues.trust_reads == [C]
+    [(method, endpoint, body)] = [w for w in issues.writes if w[0] == "PATCH"]
+    assert (method, endpoint) == ("PATCH", "repos/org/tool/issues/12")
+    assert body == {"body": f"Trusted text.\n\n{advisory_line(HOME, GHSA)}"}
+
+
+def test_unmark_issue_refuses_an_untrusted_body_before_any_write(issues: Issues) -> None:
+    issues.add(A, f"Neutral.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    _untrusted_body(issues, A, by="editor")
+    with pytest.raises(trust.UntrustedContentError, match="stopped before any write"):
+        unmark_issue(A, GHSA, (C,))
+    assert issues.writes == []
+    assert issues.comments[A] == []
+
+
+def test_retarget_refuses_an_untrusted_target_before_any_write(issues: Issues) -> None:
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.add(C, "New task.")
+    _untrusted_body(issues, C)
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        retarget(HOME, GHSA, (C,), source=A)
+    message = str(excinfo.value)
+    assert message.startswith(f"advisory {GHSA}: stopped before any write: ")
+    assert "org/tool#12 issue drive-by" in message
+    assert "\n" not in message
+    assert SECRET not in message
+    assert issues.writes == []
+    issues.ensure_labels.assert_not_called()
+
+
+def test_retarget_refuses_an_untrusted_source_body_before_any_write(issues: Issues) -> None:
+    # The source is the last issue unmarked; its body is checked before the
+    # first target is marked, so the run never stops part-way.
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.add(C, "New task.")
+    _untrusted_body(issues, A, by="editor")
+    with pytest.raises(RetargetRefusedError, match="stopped before any write"):
+        retarget(HOME, GHSA, (C,), source=A)
+    assert issues.writes == []
+
+
+def test_retarget_refuses_an_untrusted_listed_security_issue(issues: Issues) -> None:
+    # An untracked security issue whose body is untrusted may or may not name
+    # the advisory; which issues to unmark cannot be known, so nothing moves.
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.add(B, advisory_line(HOME, GHSA), {"security"})
+    issues.add(C, "New task.")
+    _untrusted_body(issues, B)
+    with pytest.raises(RetargetRefusedError) as excinfo:
+        retarget(HOME, GHSA, (C,), source=A)
+    message = str(excinfo.value)
+    assert "a security issue's body is untrusted" in message
+    assert "org/.github#11 issue drive-by" in message
+    assert issues.writes == []
+
+
+def test_retarget_rerun_refuses_an_untrusted_source_tie(issues: Issues) -> None:
+    # After a rewrite, a source is tied to the move by its body still naming
+    # the advisory; an untrusted body ties nothing and stops the run.
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    issues.add(A, advisory_line(HOME, GHSA))
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
+    _untrusted_body(issues, A)
+    with pytest.raises(RetargetError, match="stopped before any write") as excinfo:
+        retarget(HOME, GHSA, (C,), source=A)
+    assert f"advisory {GHSA}: reading org/.github#10 failed: " in str(excinfo.value)
+    assert issues.writes == []
+
+
+def test_retarget_trust_read_failure_fails_before_any_write(issues: Issues) -> None:
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.add(C, "New task.")
+    issues.fail_on = "GRAPHQL org/tool#12"
+    with pytest.raises(RetargetError, match="reading org/tool#12 failed: cannot read who wrote"):
+        retarget(HOME, GHSA, (C,), source=A)
+    assert issues.writes == []
+
+
+def test_move_refuses_an_untrusted_target_before_the_copy(move: Move) -> None:
+    _untrusted_body(move.issues, FIX2)
+    with pytest.raises(RetargetRefusedError, match="fix/tool#21 issue drive-by"):
+        move.run()
+    assert move.created == []
+    assert move.issues.writes == []
+
+
+def test_move_refuses_an_untrusted_listed_issue_before_the_copy(move: Move) -> None:
+    move.issues.add(B, "Other.", {"security"})
+    _untrusted_body(move.issues, B)
+    with pytest.raises(RetargetRefusedError, match="a security issue's body is untrusted"):
+        move.run()
+    assert move.created == []
+    assert move.issues.writes == []
+
+
+def test_pair_refuses_an_untrusted_issue_before_any_write(issues: Issues) -> None:
+    issues.description = SECRET
+    issues.add(C, "Attached.")
+    _untrusted_body(issues, C)
+    with pytest.raises(RetargetError, match=r"marking org/tool#12 failed: stopped before any"):
+        pair(HOME, GHSA, C)
+    assert issues.writes == []
+
+
+def test_close_refuses_an_untrusted_security_issue_before_any_write(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch, _adv(tracking=(A,)))
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
+    issues.closed |= {A, C}
+    _untrusted_body(issues, C)
+    with pytest.raises(CloseError) as excinfo:
+        close_record(HOME, GHSA, REASON)
+    message = str(excinfo.value)
+    assert message.startswith(f"advisory {GHSA}: stopped before any write: ")
+    assert "a security issue's body is untrusted" in message
+    assert "org/tool#12 issue drive-by" in message
+    assert issues.writes == []
+    assert issues.states == {}
+
+
+def test_close_comment_dedup_read_failure_names_its_step(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A tracked issue that lost its label is not listed: its one trust read
+    # is the comment dedup's.
+    _listing(monkeypatch, _adv(tracking=(A,)))
+    issues.add(A, "")
+    issues.closed.add(A)
+    issues.fail_on = "GRAPHQL org/.github#10"
+    with pytest.raises(CloseError) as excinfo:
+        close_record(HOME, GHSA, REASON)
+    assert str(excinfo.value).startswith(f"advisory {GHSA}: commenting on org/.github#10 failed: ")
+    assert issues.writes == []
+
+
+def test_classify_an_untrusted_issue_is_neither_paired_nor_broken() -> None:
+    skip = trust.Skipped("org/tool", 12, "issue", "drive-by", "t", "body", "untrusted")
+    untrusted = SecurityIssue(C, False, (), "completed", skipped=skip)
+    result = classify(
+        [_adv(tracking=(C,)), _adv(OTHER, tracking=(A,))], [untrusted, _iss(A, OTHER)]
+    )
+    assert [a.ghsa_id for a in result.untrusted] == [GHSA]
+    assert [a.ghsa_id for a in result.paired] == [OTHER]
+    assert result.broken == []
+
+
+def test_classify_an_untrusted_issue_never_pairs_the_advisory_it_names() -> None:
+    # Its lines are never read, so the advisory it would name has no issue
+    # naming it back and is reported broken as before.
+    skip = trust.Skipped("org/tool", 12, "issue", "drive-by", "t", "body", "untrusted")
+    untrusted = SecurityIssue(C, True, (), None, skipped=skip)
+    result = classify([_adv(tracking=(A,))], [untrusted])
+    assert result.untrusted == []
+    assert result.paired == []
+    assert result.broken == [f"{GHSA}: no security issue names this advisory"]
+
+
+@pytest.mark.parametrize("apply", [True, False])
+def test_records_pass_reports_an_untrusted_body_and_leaves_it(
+    monkeypatch: pytest.MonkeyPatch,
+    parents: Parents,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    apply: bool,
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    skip = trust.Skipped("org/tool", 12, "issue", "drive-by", "t", "body", "untrusted")
+    issue_list = [
+        SecurityIssue(C, False, (), "completed", skipped=skip),
+        _iss(A, OTHER, open_=False),
+    ]
+    advisories = [_adv(tracking=(C,)), _adv(OTHER, tracking=(A,))]
+    rc, write = _records_pass(monkeypatch, advisories, issue_list, apply=apply)
+    assert rc == 1
+    # The advisory tracking the untrusted issue is left draft; the other syncs.
+    if apply:
+        assert write.call_args_list == [_patched_state(OTHER, "closed")]
+    else:
+        write.assert_not_called()
+    captured = capsys.readouterr()
+    mode, verb = ("", "synced") if apply else (" (preview)", "would sync")
+    assert (
+        f"Security records{mode}: 1 advisory state {verb}, 0 broken pairs, 0 held, 0 errors."
+        in captured.out
+    )
+    assert (
+        f"- untrusted: {GHSA}: an issue it tracks has an untrusted body, left unchanged"
+        in captured.out
+    )
+    assert "org/tool#12" not in captured.out
+    assert "- broken:" not in captured.out
+    assert captured.err == (
+        "skipped untrusted content: org/tool#12 issue drive-by at t on body (untrusted)\n"
+    )
+
+
+def test_records_pass_under_actions_counts_untrusted_bodies(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    skip = trust.Skipped("org/tool", 12, "issue", "drive-by", "t", "body", "untrusted")
+    issue_list = [SecurityIssue(C, True, (), None, skipped=skip)]
+    rc, _write = _records_pass(monkeypatch, [_adv(tracking=(C,))], issue_list, apply=False)
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.err == "skipped 1 untrusted item(s) (untrusted: 1)\n"
+    assert "drive-by" not in captured.out + captured.err
+    assert "org/tool#12" not in captured.out + captured.err
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        trust.TrustReadError("read_issue org/tool#12", "the GraphQL call failed: HTTP 502"),
+        security_records.TrustedAuthorsNotConfiguredError("trusted authors are not configured"),
+    ],
+)
+def test_records_pass_trust_errors_are_one_line_failures(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: Exception
+) -> None:
+    monkeypatch.setattr(security_records, "security_issues", MagicMock(side_effect=error))
+    assert records_pass("org", apply=True, prog="prog") == 1
+    err = capsys.readouterr().err
+    assert err == f"prog: security records pass failed: {error}\n"
+
+
+def test_body_skip_finds_the_body_record_among_others() -> None:
+    comment = trust.Skipped("org/tool", 12, "comment", "drive-by", "t", "comment 1", "untrusted")
+    body = trust.Skipped("org/tool", 12, "issue", "drive-by", "t", "body", "untrusted")
+    content = trust.IssueContent(None, None, None, (), (comment, body))
+    assert security_records._body_skip(content, "org/tool", 12) is body
+
+
+def test_body_skip_without_a_record_fails_loudly() -> None:
+    content = trust.IssueContent(None, None, None, (), ())
+    with pytest.raises(trust.TrustReadError, match="an untrusted body has no skip record"):
+        security_records._body_skip(content, "org/tool", 12)
